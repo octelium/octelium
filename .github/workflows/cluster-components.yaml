@@ -71,8 +71,6 @@ jobs:
           containerfiles: |
             cluster/${{matrix.component}}/Dockerfile
           labels: ${{ steps.meta.outputs.labels }}
-          extra-args: |
-            --secret=id=private-repo-gen-sh,src=/tmp/private-repo-gen-sh
       - name: Push To registry
         uses: redhat-actions/push-to-registry@v2
         with:

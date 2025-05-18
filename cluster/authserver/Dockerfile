@@ -1,7 +1,4 @@
 FROM node:20 as builder-web
-# RUN --mount=type=secret,id=private-repo-gen-sh \
-#     cp /run/secrets/private-repo-gen-sh /tmp/private-repo-gen-sh && \
-#     chmod 755 /tmp/private-repo-gen-sh && /tmp/private-repo-gen-sh || true
 
 COPY cluster/authserver/authserver/web/package /build
 RUN cd /build && npm install && npm run build
