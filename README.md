@@ -87,14 +87,14 @@ Octelium is designed to be generic enough (check out the main features below for
   - Using a single stable route instead of injecting countless routes of the actual different remote private networks into the users' machines which cause routing conflicts.
   - Effortless dual-stack private networking where _Users_ seamlessly access _Services_ at both IPv4/IPv6 regardless of whether the upstream supports them both or not, without having to deal with the pain and inconsistency of NAT64/DNS64.
   - A unified, automatically managed, private DNS using your own domain for all resources scattered across the different remote networks that works consistently and independently of the dynamic network details of the upstreams.
-  - Simultaneous support for WireGuard (Kernel, TUN as well as unprivileged implementations via [gVisor](https://gvisor.dev/)) as well as experimentally QUIC (both TUN and unprivileged via gVisor) tunnels via a lightweight zero-config client that can run in any Linux, MacOS, Windows environment as well as container.
+  - Simultaneous support for WireGuard (Kernel, TUN as well as unprivileged implementations via [gVisor](https://gvisor.dev/)) as well as experimentally QUIC (both TUN and unprivileged via gVisor) tunnels via a lightweight zero-config client that can run in any Linux, MacOS, Windows environment as well as container environments (e.g. Kubernetes sidecar containers for your workloads).
 
 - **Open source and designed for self-hosting** Octelium is fully open source and it is designed for single-tenant self-hosting. There is no proprietary cloud-based control plane, nor this is some crippled demo open source version of a separate fully functional SaaS paid service. You can host it on top of a single-node Kubernetes cluster running on a cheap cloud VM/VPS and you can also host it on scalable production cloud-based or on-prem multi-node Kubernetes installations with no vendor lock-in.
 
 
 ## Install CLI Tools
 
-You can see all available options [here](https://octelium.com/docs/guide/cli/install). You can quickly install the CLIs of the pre-built binaries as follows:
+You can see all available options [here](https://octelium.com/docs/octelium/latest/install/cli/install). You can quickly install the CLIs of the pre-built binaries as follows:
 
 For Linux and MacOS
 
@@ -141,7 +141,7 @@ Octelium is free and open source software:
 
 ## Support
 
-- [Octelium Docs](https://octelium.com/docs)
+- [Octelium Docs](https://octelium.com/docs/octelium/latest/overview/intro)
 - [Discord Community](https://octelium.com/external/discord)
 - [Slack Community](https://octelium.com/external/slack)
 - [Contact via Email](mailto:contact@octelium.com)
@@ -161,7 +161,7 @@ Octelium is free and open source software:
 
 - **Who's behind this project?**
 
-  Octelium, so far, has been developed by George Badawi, the sole owner of Octelium Labs LLC. See how to contact me at [https://octelium.com](https://octelium.com). You can also email me directly at [contact@octelium.com](mailto:contact@octelium.com).
+  Octelium, so far, has been developed by George Badawi, the sole owner of Octelium Labs LLC. See how to contact me at [https://octelium.com/contact](https://octelium.com/contact). You can also email me directly at [contact@octelium.com](mailto:contact@octelium.com).
 
 
 - **Is Octelium a remote access VPN?**
