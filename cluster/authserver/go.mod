@@ -7,8 +7,8 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/crewjam/saml v0.4.14
-	github.com/go-jose/go-jose/v3 v3.0.3
-	github.com/golang-jwt/jwt/v4 v4.5.1
+	github.com/go-jose/go-jose/v3 v3.0.4
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/go-github/v33 v33.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
