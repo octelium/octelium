@@ -1,0 +1,78 @@
+/*
+ * Copyright Octelium Labs, LLC. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License version 3,
+ * as published by the Free Software Foundation of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package rscserver
+
+import (
+	"context"
+	"time"
+
+	"github.com/octelium/octelium/cluster/common/otelutils"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+)
+
+type commonMetrics struct {
+	TotalRequests      metric.Int64Counter
+	ActiveRequests     metric.Int64UpDownCounter
+	RequestDuration    metric.Float64Histogram
+	CommonAttributeSet attribute.Set
+}
+
+func newCommonMetrics(ctx context.Context) (*commonMetrics, error) {
+	ret := &commonMetrics{}
+	var err error
+
+	meter := otelutils.GetMeter()
+
+	ret.ActiveRequests, err = meter.Int64UpDownCounter(
+		otelutils.GetComponentKeyWithPrefix("req.active"), metric.WithDescription("Number of active requests"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.TotalRequests, err = meter.Int64Counter(otelutils.GetComponentKeyWithPrefix("req.total"),
+		metric.WithDescription("Total number of requests"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.RequestDuration, err = meter.Float64Histogram(otelutils.GetComponentKeyWithPrefix("req.duration"),
+		metric.WithUnit("us"), metric.WithDescription("Request duration in microseconds"))
+	if err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
+func (m *commonMetrics) atRequestStart() {
+	m.ActiveRequests.Add(context.Background(), 1, metric.WithAttributeSet(m.CommonAttributeSet))
+}
+
+func (m *commonMetrics) atRequestEnd(startTime time.Time, additionalAttrSet metric.MeasurementOption) {
+
+	ctx := context.Background()
+	m.ActiveRequests.Add(ctx, -1,
+		metric.WithAttributeSet(m.CommonAttributeSet))
+
+	m.RequestDuration.Record(ctx,
+		float64(time.Since(startTime).Nanoseconds())/1000,
+		metric.WithAttributeSet(m.CommonAttributeSet),
+	)
+	m.TotalRequests.Add(ctx, 1,
+		metric.WithAttributeSet(m.CommonAttributeSet))
+}

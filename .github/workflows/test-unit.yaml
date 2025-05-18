@@ -1,0 +1,64 @@
+name: tests-unit-test
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    branches:
+      - master
+      - main
+      - dev*
+      - t-*
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+      mariadb:
+        image: mariadb:10.8.2
+        ports:
+          - 3306:3306
+        env:
+          MARIADB_ROOT_PASSWORD: password
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      minio:
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+        image: fclairamb/minio-github-actions
+        ports:
+          - 9000:9000
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+      - name: Set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{env.GO_VERSION}}"
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+      - name: Install psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Create database
+        run: psql -h localhost -U postgres -c 'CREATE DATABASE octelium;'
+        env:
+          PGPASSWORD: postgres
+      - name: Run tests
+        run: |
+          go version
+          which go
+          gocmd=$(which go)
+          sudo -E $gocmd version
+          sudo -E $gocmd test github.com/octelium/octelium/...

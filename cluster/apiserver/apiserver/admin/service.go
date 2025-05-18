@@ -1,0 +1,960 @@
+/*
+ * Copyright Octelium Labs, LLC. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License version 3,
+ * as published by the Free Software Foundation of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package admin
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"slices"
+	"strconv"
+
+	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/common"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/cluster/common/utilnet"
+	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
+)
+
+func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions) (*corev1.ServiceList, error) {
+
+	var err error
+
+	var listOpts []*rmetav1.ListOptions_Filter
+
+	if req.NamespaceRef != nil {
+		if err := apivalidation.CheckObjectRef(req.NamespaceRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
+			return nil, err
+		}
+		ns, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
+			Uid:  req.NamespaceRef.Uid,
+			Name: req.NamespaceRef.Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+		listOpts = append(listOpts, urscsrv.FilterFieldEQValStr("status.namespaceRef.uid", ns.Metadata.Uid))
+	}
+
+	if req.RegionRef != nil {
+		if err := apivalidation.CheckObjectRef(req.RegionRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
+			return nil, err
+		}
+		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+			Uid:  req.RegionRef.Uid,
+			Name: req.RegionRef.Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+		listOpts = append(listOpts, urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid))
+	}
+
+	itemList, err := s.octeliumC.CoreC().ListService(ctx,
+		urscsrv.GetPublicListOptions(req, listOpts...))
+	if err != nil {
+		return nil, serr.InternalWithErr(err)
+	}
+
+	return itemList, nil
+}
+
+func (s *Server) UpdateService(ctx context.Context, req *corev1.Service) (*corev1.Service, error) {
+
+	if err := s.validateService(ctx, req); err != nil {
+		return nil, serr.InvalidArgWithErr(err)
+	}
+
+	nsName, err := getNamespace(req.Metadata.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: nsName})
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternal(err, "The Namespace `%s` does not exist", nsName)
+	}
+
+	item, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+		Name: vutils.GetServiceFullNameFromName(req.Metadata.Name),
+	})
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternal(err, "The Service `%s` does not exist", req.Metadata.Name)
+	}
+
+	if err := apivalidation.CheckIsSystem(item); err != nil {
+		return nil, err
+	}
+
+	common.MetadataUpdate(item.Metadata, req.Metadata)
+	item.Spec = req.Spec
+
+	if err := s.checkAndSetService(ctx, item); err != nil {
+		return nil, err
+	}
+
+	item, err = s.octeliumC.CoreC().UpdateService(ctx, item)
+	if err != nil {
+		return nil, serr.InternalWithErr(err)
+	}
+
+	return item, nil
+}
+
+func (s *Server) DoCreateService(ctx context.Context, req *corev1.Service, isSystemService bool) (*corev1.Service, error) {
+	if err := s.validateService(ctx, req); err != nil {
+		return nil, serr.InvalidArgWithErr(err)
+	}
+
+	nsName, err := getNamespace(req.Metadata.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	ns, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: nsName})
+	if err != nil {
+		if grpcerr.IsNotFound(err) {
+			return nil, serr.InvalidArg("The Namespace %s does not exist", nsName)
+		}
+		return nil, serr.InternalWithErr(err)
+	}
+
+	{
+		_, err := s.octeliumC.CoreC().GetService(ctx,
+			&rmetav1.GetOptions{
+				Name: vutils.GetServiceFullNameFromName(req.Metadata.Name),
+			})
+		if err == nil {
+			return nil, grpcutils.AlreadyExists("The Service %s already exists in the Namespace: %s",
+				req.Metadata.Name, ns.Metadata.Name)
+		}
+		if !grpcerr.IsNotFound(err) {
+			return nil, grpcutils.InternalWithErr(err)
+		}
+	}
+
+	item := &corev1.Service{
+		Metadata: common.MetadataFrom(req.Metadata),
+		Spec:     req.Spec,
+		Status: &corev1.Service_Status{
+			NamespaceRef: umetav1.GetObjectReference(ns),
+		},
+	}
+
+	if isSystemService && req.Status != nil {
+		item.Status.ManagedService = req.Status.ManagedService
+	}
+
+	item.Metadata.Name = vutils.GetServiceFullNameFromName(item.Metadata.Name)
+
+	if err := s.checkAndSetService(ctx, item); err != nil {
+		return nil, err
+	}
+
+	item.Metadata.IsSystem = isSystemService
+
+	if isSystemService {
+		item.Metadata.IsSystemHidden = req.Metadata.IsSystemHidden
+		item.Metadata.IsUserHidden = req.Metadata.IsUserHidden
+
+		if len(item.Metadata.SystemLabels) == 0 {
+			item.Metadata.SystemLabels = req.Metadata.SystemLabels
+		} else {
+			for k, v := range req.Metadata.SystemLabels {
+				item.Metadata.SystemLabels[k] = v
+			}
+		}
+
+		if len(item.Metadata.SpecLabels) == 0 {
+			item.Metadata.SpecLabels = req.Metadata.SpecLabels
+		} else {
+			for k, v := range req.Metadata.SpecLabels {
+				item.Metadata.SpecLabels[k] = v
+			}
+		}
+	}
+
+	if !isSystemService && item.Status.NamespaceRef != nil && item.Status.NamespaceRef.Name == "default" {
+		if _, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
+			Name: ucorev1.ToService(item).Name(),
+		}); err == nil {
+			return nil, grpcutils.InvalidArg(
+				"You cannot use the Service name :%s in the default Namespace while having another Namespace with the same name",
+				ucorev1.ToService(item).Name())
+		} else if !grpcerr.IsNotFound(err) {
+			return nil, grpcutils.InternalWithErr(err)
+		}
+
+	}
+
+	createdSvc, err := s.octeliumC.CoreC().CreateService(ctx, item)
+	if err != nil {
+		return nil, serr.InternalWithErr(err)
+	}
+
+	return createdSvc, nil
+}
+
+func (s *Server) CreateService(ctx context.Context, req *corev1.Service) (*corev1.Service, error) {
+	return s.DoCreateService(ctx, req, false)
+}
+
+func (s *Server) DeleteService(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	if err := apivalidation.CheckDeleteOptions(req, &apivalidation.CheckGetOptionsOpts{
+		ParentsMax: 1,
+	}); err != nil {
+		return nil, err
+	}
+
+	svc, err := s.octeliumC.CoreC().GetService(ctx,
+		&rmetav1.GetOptions{Name: vutils.GetServiceFullNameFromName(req.Name),
+			Uid: req.Uid,
+		},
+	)
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternal(err, "The Service  does not exist")
+	}
+
+	if err := apivalidation.CheckIsSystem(svc); err != nil {
+		return nil, err
+	}
+
+	ret := &metav1.OperationResult{}
+
+	_, err = s.octeliumC.CoreC().DeleteService(ctx, &rmetav1.DeleteOptions{Uid: svc.Metadata.Uid})
+	if err != nil {
+		return nil, serr.K8sInternal(err)
+	}
+
+	return ret, nil
+}
+
+func (s *Server) checkAndSetService(ctx context.Context,
+	svc *corev1.Service) error {
+
+	octeliumC := s.octeliumC
+
+	svc.Metadata.SpecLabels = make(map[string]string)
+	spec := svc.Spec
+	specLabels := svc.Metadata.SpecLabels
+
+	switch svc.Spec.Mode {
+	case corev1.Service_Spec_MODE_UNSET:
+		return grpcutils.InvalidArg("Service mode must be set")
+	}
+
+	if svc.Spec.Region != "" {
+
+		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: svc.Spec.Region})
+		if err != nil {
+			if grpcerr.IsNotFound(err) {
+				return serr.InvalidArg("The Region %s does not exist", svc.Spec.Region)
+			}
+			return serr.InternalWithErr(err)
+		}
+
+		svc.Status.RegionRef = umetav1.GetObjectReference(rgn)
+	} else {
+		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: "default"})
+		if err != nil {
+			return serr.InternalWithErr(err)
+		}
+		svc.Status.RegionRef = umetav1.GetObjectReference(rgn)
+	}
+
+	if spec.Config != nil && spec.Config.GetUpstream() != nil {
+		if spec.Config.GetUpstream().User != "" {
+			usr, err := octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: spec.Config.GetUpstream().User})
+			if err != nil {
+				if grpcerr.IsNotFound(err) {
+					return serr.InvalidArg("The upstream User %s does not exist", spec.Config.GetUpstream().User)
+				}
+				return serr.InternalWithErr(err)
+			}
+
+			specLabels[fmt.Sprintf("host-user-%s", usr.Metadata.Name)] = usr.Metadata.Uid
+		}
+
+		switch spec.Config.GetUpstream().Type.(type) {
+		case *corev1.Service_Spec_Config_Upstream_Url:
+
+		case *corev1.Service_Spec_Config_Upstream_Loadbalance_:
+
+			eps := spec.Config.GetUpstream().GetLoadbalance().Endpoints
+
+			if len(eps) == 0 {
+				return grpcutils.InvalidArg("There must be at least 1 endpoint in loadBalance")
+			}
+
+			if len(eps) > 100 {
+				return grpcutils.InvalidArg("Too many endpoints: %d in loadBalance", len(eps))
+			}
+
+			for _, ep := range eps {
+
+				if ep.User != "" {
+					usr, err := octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: ep.User})
+					if err != nil {
+						if grpcerr.IsNotFound(err) {
+							return serr.InvalidArg("The upstream User %s does not exist", ep.User)
+						}
+						return serr.InternalWithErr(err)
+					}
+
+					specLabels[fmt.Sprintf("host-user-%s", usr.Metadata.Name)] = usr.Metadata.Uid
+				}
+
+			}
+
+		case *corev1.Service_Spec_Config_Upstream_Container_:
+
+			typ := spec.Config.GetUpstream().GetContainer()
+
+			if typ.Image == "" {
+				return grpcutils.InvalidArg("You must provide a managedContainer image")
+			}
+			if len(typ.Image) > 256 {
+				return grpcutils.InvalidArg("Too long image: %s", typ.Image)
+			}
+
+			if typ.Port < 1 || typ.Port > 65535 {
+				return grpcutils.InvalidArg("Invalid port: %d", typ.Port)
+			}
+
+			if len(typ.Args) > 64 {
+				return grpcutils.InvalidArg("Too many managedContainer args")
+			}
+
+			for _, arg := range typ.Args {
+				if len(arg) > 1024 {
+					return grpcutils.InvalidArg("To long managedContainer arg: %s", arg)
+				}
+			}
+
+			if typ.Replicas > 100 {
+				return grpcutils.InvalidArg("Too many managedContainer replicas: %d", typ.Replicas)
+			}
+
+			if len(typ.Env) > 32 {
+				return grpcutils.InvalidArg("Too many environment variable")
+			}
+			for _, itm := range typ.Env {
+
+				if itm.Name == "" || len(itm.Name) > 32 || !govalidator.IsASCII(itm.Name) {
+					return grpcutils.InvalidArg("Invalid key: %s", itm.Name)
+				}
+				if itm.GetValue() == "" || len(itm.GetValue()) > 1024 {
+					return grpcutils.InvalidArg("Invalid name: %s", itm.Name)
+				}
+
+			}
+
+			if typ.ResourceLimit != nil {
+				if len(typ.ResourceLimit.Ext) > 100 {
+					return grpcutils.InvalidArg("Too many extend resources")
+				}
+
+				for k, v := range typ.ResourceLimit.Ext {
+
+					if err := apivalidation.ValidateGenASCII(k); err != nil {
+						return err
+					}
+
+					if err := apivalidation.ValidateGenASCII(v); err != nil {
+						return err
+					}
+				}
+			}
+
+			if typ.GetCredentials() != nil && typ.GetCredentials().GetUsernamePassword() != nil {
+				uP := typ.GetCredentials().GetUsernamePassword()
+				if uP.Username == "" || len(uP.Username) > 256 {
+					return grpcutils.InvalidArg("Invalid credentials username")
+				}
+				if uP.GetPassword() == nil {
+					return grpcutils.InvalidArg("Password must be supplied")
+				}
+				if err := s.validateSecretOwner(ctx, uP.GetPassword()); err != nil {
+					return err
+				}
+				if uP.Server != "" && !govalidator.IsDNSName(uP.Server) {
+					return grpcutils.InvalidArg("Invalid server: %s", uP.Server)
+				}
+			}
+
+		default:
+			return serr.InvalidArg("Invalid upstream type")
+		}
+	}
+
+	if spec.Authorization != nil {
+
+		for _, inlinePolicy := range spec.Authorization.InlinePolicies {
+			if err := s.validatePolicySpec(ctx, inlinePolicy.Spec); err != nil {
+				return err
+			}
+		}
+
+		for _, p := range spec.Authorization.Policies {
+			_, err := s.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{
+				Name: p,
+			})
+			if grpcerr.IsNotFound(err) {
+				return grpcutils.InvalidArg("The Policy %s is not found", p)
+			}
+		}
+	}
+
+	validateConfig := func(cfg *corev1.Service_Spec_Config) error {
+		if cfg == nil {
+			return grpcutils.InvalidArg("Config is not set")
+		}
+
+		if cfg.GetClientCertificate() != nil &&
+			cfg.GetClientCertificate().GetFromSecret() != "" {
+			_, err := octeliumC.CoreC().GetSecret(ctx,
+				&rmetav1.GetOptions{
+					Name: cfg.GetClientCertificate().GetFromSecret(),
+				})
+			if err != nil {
+				if !grpcerr.IsInternal(err) {
+					return serr.InvalidArg("mTLS Secret: %s does not exist",
+						cfg.GetClientCertificate().GetFromSecret())
+				}
+				return serr.InternalWithErr(err)
+			}
+
+		}
+
+		switch cfg.Type.(type) {
+
+		case *corev1.Service_Spec_Config_Http:
+
+			switch spec.Mode {
+			case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC:
+			default:
+				return grpcutils.InvalidArg("Either HTTP, WEB or GRPC modes must be set for HTTP config to be used")
+			}
+
+			if cfg.GetHttp().Auth != nil {
+				authSpec := cfg.GetHttp().Auth
+
+				if authSpec.GetBearer() != nil {
+					if authSpec.GetBearer().GetFromSecret() != "" {
+						_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+							Name: authSpec.GetBearer().GetFromSecret()})
+						if err != nil {
+							if !grpcerr.IsInternal(err) {
+								return serr.InvalidArg("Bearer Secret: %s does not exist",
+									authSpec.GetBearer().GetFromSecret())
+							}
+							return serr.InternalWithErr(err)
+						}
+
+					}
+				}
+
+				if authSpec.GetBasic() != nil {
+					if authSpec.GetBasic().Username == "" {
+						return serr.InvalidArg("Basic Auth username must be set")
+					}
+
+					if err := s.validateSecretOwner(ctx, authSpec.GetBasic().GetPassword()); err != nil {
+						return err
+					}
+				}
+
+				if authSpec.GetCustom() != nil {
+					if authSpec.GetCustom().Header == "" {
+						return serr.InvalidArg("Auth custom header name must be set")
+					}
+
+					if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {
+						return err
+					}
+				}
+
+				if authSpec.GetOauth2ClientCredentials() != nil {
+					oauth2C := authSpec.GetOauth2ClientCredentials()
+					if oauth2C.ClientID == "" {
+						return serr.InvalidArg("OAuth2 client ID cannot be empty")
+					}
+					if oauth2C.TokenURL == "" {
+						return serr.InvalidArg("OAuth2 token URL must be set")
+					}
+					if err := s.validateSecretOwner(ctx, oauth2C.GetClientSecret()); err != nil {
+						return err
+					}
+
+				}
+			}
+
+		case *corev1.Service_Spec_Config_Kubernetes_:
+			if spec.Mode != corev1.Service_Spec_KUBERNETES {
+				return grpcutils.InvalidArg("KUBERNETES mode must be set for KUBERNETES config to be used")
+			}
+
+			k8s := spec.GetConfig().GetKubernetes()
+
+			switch k8s.Type.(type) {
+			case *corev1.Service_Spec_Config_Kubernetes_Kubeconfig_:
+				if k8s.GetKubeconfig().GetFromSecret() == "" {
+					return serr.InvalidArg("Kubeconfig secret name must be set")
+				}
+				sec, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: k8s.GetKubeconfig().GetFromSecret()})
+				if err != nil {
+					if grpcerr.IsNotFound(err) {
+						return serr.InvalidArg("The Secret %s does not exist", k8s.GetKubeconfig().GetFromSecret())
+					}
+					return serr.InternalWithErr(err)
+				}
+
+				kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(ucorev1.ToSecret(sec).GetValueBytes())
+				if err != nil {
+					return serr.InvalidArg("Could not parse Kubeconfig form the Secret: %s", k8s.GetKubeconfig().GetFromSecret())
+				}
+
+				if clstr := kubeconfig.GetCluster(k8s.GetKubeconfig().Context); clstr == nil {
+					return serr.InvalidArg("No Cluster found in the Kubeconfig")
+				} else {
+					specLabels[fmt.Sprintf("k8s-kubeconfig-url-%s", ucorev1.ToServiceConfig(cfg).GetRealName())] = clstr.Cluster.Server
+				}
+
+				if usr := kubeconfig.GetUser(k8s.GetKubeconfig().Context); usr == nil {
+					return serr.InvalidArg("No User found in the Kubeconfig")
+				} else {
+					if usr.User.Token != "" {
+						specLabels[fmt.Sprintf("k8s-kubeconfig-has-token-%s", ucorev1.ToServiceConfig(cfg).GetRealName())] = "true"
+					}
+
+				}
+
+			case *corev1.Service_Spec_Config_Kubernetes_ClientCertificate:
+				if k8s.GetClientCertificate() == nil ||
+					k8s.GetClientCertificate().GetFromSecret() == "" {
+					return serr.InvalidArg("Client certificate key secret must be supplied")
+				}
+
+				_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+					Name: k8s.GetClientCertificate().GetFromSecret()})
+				if err != nil {
+					if grpcerr.IsNotFound(err) {
+						return serr.InvalidArg("The Secret %s does not exist", k8s.GetKubeconfig().GetFromSecret())
+					}
+					return serr.InternalWithErr(err)
+				}
+			case *corev1.Service_Spec_Config_Kubernetes_BearerToken_:
+
+				if err := s.validateSecretOwner(ctx, k8s.GetBearerToken()); err != nil {
+					return err
+				}
+
+			default:
+				return serr.InvalidArg("Unsupported kubernetes config type")
+			}
+
+		case *corev1.Service_Spec_Config_Ssh:
+			if spec.Mode != corev1.Service_Spec_SSH {
+				return grpcutils.InvalidArg("SSH mode must be set for SSH config to be used")
+			}
+			inSSH := cfg.GetSsh()
+
+			if inSSH.Auth != nil {
+				switch inSSH.Auth.Type.(type) {
+				case *corev1.Service_Spec_Config_SSH_Auth_Password_:
+
+					switch inSSH.Auth.GetPassword().Type.(type) {
+					case *corev1.Service_Spec_Config_SSH_Auth_Password_FromSecret:
+
+						_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: inSSH.Auth.GetPassword().GetFromSecret()})
+						if err != nil {
+							if !grpcerr.IsInternal(err) {
+								return serr.InvalidArg("SSH password Secret: %s does not exist", inSSH.Auth.GetPassword().GetFromSecret())
+							}
+							return serr.InternalWithErr(err)
+						}
+
+					}
+
+				case *corev1.Service_Spec_Config_SSH_Auth_PrivateKey_:
+
+					switch inSSH.Auth.GetPrivateKey().Type.(type) {
+					case *corev1.Service_Spec_Config_SSH_Auth_PrivateKey_FromSecret:
+
+						_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: inSSH.Auth.GetPrivateKey().GetFromSecret()})
+						if err != nil {
+							if !grpcerr.IsInternal(err) {
+								return serr.InvalidArg("SSH private key Secret: %s does not exist", inSSH.Auth.GetPrivateKey().GetFromSecret())
+							}
+							return serr.InternalWithErr(err)
+						}
+
+					}
+				}
+			}
+
+		case *corev1.Service_Spec_Config_Postgres_:
+			if spec.Mode != corev1.Service_Spec_POSTGRES {
+				return grpcutils.InvalidArg("POSTGRES mode must be set for PostgreSQL config to be used")
+			}
+
+			pg := cfg.GetPostgres()
+
+			if pg.User != "" {
+				if err := apivalidation.ValidateGenASCII(pg.User); err != nil {
+					return err
+				}
+			}
+			if pg.GetAuth() != nil && pg.GetAuth().GetPassword() != nil {
+				if err := s.validateSecretOwner(ctx, pg.GetAuth().GetPassword()); err != nil {
+					return err
+				}
+			}
+
+			if pg.Database != "" {
+				if err := apivalidation.ValidateGenASCII(pg.Database); err != nil {
+					return err
+				}
+			}
+		case *corev1.Service_Spec_Config_Mysql:
+			if spec.Mode != corev1.Service_Spec_MYSQL {
+				return grpcutils.InvalidArg("MYSQL mode must be set for MySQL config to be used")
+			}
+
+			mysql := cfg.GetMysql()
+
+			if mysql.User != "" {
+				if err := apivalidation.ValidateGenASCII(mysql.User); err != nil {
+					return err
+				}
+			}
+			if mysql.GetAuth() != nil && mysql.GetAuth().GetPassword() != nil {
+				if err := s.validateSecretOwner(ctx, mysql.GetAuth().GetPassword()); err != nil {
+					return err
+				}
+			}
+
+			if mysql.Database != "" {
+				if err := apivalidation.ValidateGenASCII(mysql.Database); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	}
+
+	if spec.Config != nil {
+		switch spec.Config.Name {
+		case "", "default":
+		default:
+			return serr.InvalidArg("The name of the default Config cannot be set to: %s", spec.Config.Name)
+		}
+		if err := validateConfig(spec.Config); err != nil {
+			return err
+		}
+	}
+
+	if spec.DynamicConfig != nil {
+
+		if len(spec.DynamicConfig.Configs) > 256 {
+			return serr.InvalidArg("Too many dynamic named Configs")
+		}
+		if len(spec.DynamicConfig.Rules) > 1000 {
+			return serr.InvalidArg("Too many dynamic Config rules")
+		}
+
+		names := []string{"default"}
+		for _, cfg := range spec.DynamicConfig.Configs {
+			if err := apivalidation.ValidateName(cfg.Name, 0, 0); err != nil {
+				return err
+			}
+			if slices.Contains(names, cfg.Name) {
+				return serr.InvalidArg("This Config name already exists: %s", cfg.Name)
+			}
+
+			names = append(names, cfg.Name)
+
+			if err := validateConfig(cfg); err != nil {
+				return err
+			}
+		}
+
+		for _, rule := range spec.DynamicConfig.Rules {
+			if rule.Condition == nil {
+				return serr.InvalidArg("DynamicConfig rule Condition must be set")
+			}
+			if err := s.validateCondition(ctx, rule.Condition); err != nil {
+				return err
+			}
+			if err := apivalidation.ValidateName(rule.ConfigName, 0, 0); err != nil {
+				return err
+			}
+		}
+	}
+
+	if svc.Spec.IsPublic && !ucorev1.ToService(svc).IsHTTP() {
+		return serr.InvalidArg("The Service: %s is not an HTTP-based Service to be exposed publicly.", svc.Metadata.Name)
+	}
+
+	svc.Status.PrimaryHostname = func() string {
+		s := ucorev1.ToService(svc)
+
+		name := s.Name()
+		ns := s.Namespace()
+
+		switch {
+		case name == "default" && ns == "default":
+			return ""
+		case ns == "default":
+			return name
+		case name == "default":
+			return ns
+		default:
+			return fmt.Sprintf("%s.%s", name, ns)
+		}
+	}()
+
+	svc.Status.AdditionalHostnames = func() []string {
+		s := ucorev1.ToService(svc)
+
+		name := s.Name()
+		ns := s.Namespace()
+
+		switch {
+		case name == "default" && ns == "default":
+			return []string{"default.default"}
+		case ns == "default":
+			return []string{fmt.Sprintf("%s.default", name)}
+		case name == "default":
+			return []string{fmt.Sprintf("default.%s", ns)}
+		default:
+			return nil
+		}
+	}()
+
+	svc.Status.Port = func() uint32 {
+		if svc.Spec.Port != 0 {
+			return (svc.Spec.Port)
+		}
+
+		l := ucorev1.ToService(svc)
+
+		if l.IsESSH() {
+			return 22
+		}
+
+		if l.IsManagedService() {
+			return 8080
+		}
+
+		upstreamPort := l.UpstreamRealPort()
+
+		if !l.Spec.IsTLS && l.IsHTTP() && upstreamPort == 443 {
+			return 80
+		}
+
+		return uint32(upstreamPort)
+	}()
+
+	if !ucorev1.ToService(svc).IsManagedService() {
+		if svc.Spec.Config == nil &&
+			(svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Configs) == 0) {
+			return grpcutils.InvalidArg("There must be at least a Config or a named dynamic Config")
+		}
+	}
+
+	/*
+		if svc.Spec.Config == nil || svc.Spec.Config.Upstream == nil {
+			switch {
+			case ucorev1.ToService(svc).IsESSH(),
+				ucorev1.ToService(svc).IsManagedService(),
+				ucorev1.ToService(svc).IsKubernetes() && svc.Spec.Config.GetKubernetes().GetKubeconfig() != nil:
+			default:
+				return grpcutils.InvalidArg("An upstream (e.g. a URL) must be set")
+			}
+		}
+	*/
+
+	return nil
+}
+
+func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*corev1.Service, error) {
+	if err := apivalidation.CheckGetOptions(req, &apivalidation.CheckGetOptionsOpts{
+		ParentsMax: 1,
+	}); err != nil {
+		return nil, err
+	}
+
+	ret, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+		Uid:  req.Uid,
+		Name: vutils.GetServiceFullNameFromName(req.Name),
+	})
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	if err := apivalidation.CheckIsSystemHidden(ret); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
+func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error {
+
+	if err := apivalidation.ValidateCommon(itm, &apivalidation.ValidateCommonOpts{
+		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
+			RequireName: true,
+			ParentsMax:  1,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if itm.Spec == nil {
+		return errors.Errorf("You must provide spec")
+	}
+
+	spec := itm.Spec
+
+	if err := apivalidation.ValidateAttrs(spec.Attrs); err != nil {
+		return err
+	}
+
+	backendPorts := []int{}
+	backendSchemes := []string{}
+
+	checkURL := func(u string) error {
+		if u == "" {
+			return errors.Errorf("You must provide backend URL")
+		}
+
+		backendURL, err := url.Parse(u)
+		if err != nil {
+			return errors.Errorf("Invalid upstream URL: %s", u)
+		}
+
+		if backendURL.Scheme == "" {
+			return errors.Errorf("No scheme set in the upstream URL")
+		}
+
+		backendSchemes = append(backendSchemes, backendURL.Scheme)
+
+		if backendURL.Port() != "" {
+			portnum, err := strconv.Atoi(backendURL.Port())
+			if err != nil {
+				return errors.Errorf("Invalid port %+v", err)
+			}
+			if portnum < 1 || portnum > 65535 {
+				return errors.Errorf("Invalid port number: %d", spec.Port)
+			}
+			backendPorts = append(backendPorts, portnum)
+
+		} else {
+			portnum, err := utilnet.GetPortFromScheme(backendURL.Scheme)
+			if err != nil {
+				return errors.Errorf("Provide the port number in the backend URL: %s", u)
+			}
+			backendPorts = append(backendPorts, portnum)
+		}
+		return nil
+	}
+
+	if spec.Config != nil && spec.Config.GetUpstream() != nil {
+		switch spec.Config.GetUpstream().Type.(type) {
+		case *corev1.Service_Spec_Config_Upstream_Url:
+			if err := checkURL(spec.Config.GetUpstream().GetUrl()); err != nil {
+				return err
+			}
+		case *corev1.Service_Spec_Config_Upstream_Loadbalance_:
+			if len(spec.Config.GetUpstream().GetLoadbalance().Endpoints) == 0 {
+				return errors.Errorf("There must be at least one endpoint in the upstream")
+			}
+
+			for _, b := range spec.Config.GetUpstream().GetLoadbalance().Endpoints {
+				if err := checkURL(b.Url); err != nil {
+					return err
+				}
+			}
+		case *corev1.Service_Spec_Config_Upstream_Container_:
+
+			port := spec.Config.GetUpstream().GetContainer().Port
+			if port == 0 {
+				return errors.Errorf("Container exposed port number must be explicitly set")
+			}
+
+			if port < 1 || port > 65535 {
+				return errors.Errorf("Invalid port number: %d", port)
+			}
+
+		}
+	}
+
+	if spec.Port != 0 {
+		if spec.Port < 1 || spec.Port > 65535 {
+			return errors.Errorf("Invalid port number: %d", spec.Port)
+		}
+	}
+
+	if len(backendSchemes) > 1 {
+		for _, itm := range backendSchemes[1:] {
+			if itm != backendSchemes[0] {
+				return errors.Errorf("All backend URL schemes must be identical")
+			}
+		}
+	}
+
+	if spec.Port == 0 && len(backendPorts) > 1 {
+		for _, itm := range backendPorts[1:] {
+			if itm != backendPorts[0] {
+				return errors.Errorf("If you do not explicitly provide a listener port then all backend URL ports must be identical")
+			}
+		}
+	}
+
+	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {
+		return err
+	}
+
+	if itm.Spec.IsAnonymous {
+		if !itm.Spec.IsPublic {
+			return errors.Errorf("Anonymous access mode requires isPublic to be enabled")
+		}
+		switch itm.Spec.Mode {
+		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC:
+		default:
+			return errors.Errorf("Anonymous access mode requires HTTP or WEB modes")
+		}
+		if itm.Spec.Authorization != nil {
+			return errors.Errorf("Anonymous access mode requires no authorization configuration")
+		}
+	}
+
+	return nil
+}

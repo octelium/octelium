@@ -1,0 +1,80 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        os: [linux, darwin, windows]
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+      - name: GitHub vars
+        uses: rlespinasse/github-slug-action@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{env.GO_VERSION}}"
+        id: go
+      - name: Build
+        env:
+          GOARCH: ${{matrix.arch}}
+          GOOS: ${{matrix.os}}
+        run: make build-cli
+      - name: Tarball
+        if: ${{ matrix.os != 'windows' }}
+        run: |
+          cd bin
+          tar -czvf octelium-${{matrix.os}}-${{matrix.arch}}.tar.gz octelium
+          tar -czvf octeliumctl-${{matrix.os}}-${{matrix.arch}}.tar.gz octeliumctl
+          tar -czvf octops-${{matrix.os}}-${{matrix.arch}}.tar.gz octops
+      - name: save artifacts
+        if: ${{ matrix.os != 'windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-${{matrix.os}}-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: bin/*.tar.gz
+          retention-days: 1
+      - name: zip for Windows
+        if: ${{ matrix.os == 'windows' }}
+        run: |
+          curl -L -o wireguard.zip https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
+          unzip wireguard.zip
+
+          cd bin
+          zip octelium-${{matrix.os}}-${{matrix.arch}}.zip octelium.exe ../wireguard-nt/bin/${{matrix.arch}}/wireguard.dll
+          zip octeliumctl-${{matrix.os}}-${{matrix.arch}}.zip octeliumctl.exe
+          zip octops-${{matrix.os}}-${{matrix.arch}}.zip octops.exe
+      - name: save Windows artifacts
+        if: ${{ matrix.os == 'windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-${{matrix.os}}-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: bin/*.zip
+          retention-days: 1
+
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+      - name: GitHub vars
+        uses: rlespinasse/github-slug-action@v4
+      - uses: actions/download-artifact@v4
+        with:
+          # name: release-artifact-${{ env.GITHUB_REF_SLUG }}
+          pattern: release-artifact-*
+      - name: ls
+        run: ls -la
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifact-*/*

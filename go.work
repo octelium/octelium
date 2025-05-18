@@ -1,0 +1,24 @@
+go 1.23.8
+
+use (
+	./apis
+	./client/common
+	./client/octelium
+	./client/octeliumctl
+	./client/octops
+	./cluster/apiserver
+	./cluster/common
+	./cluster/dnsserver
+	./cluster/genesis
+	./cluster/gwagent
+	./cluster/ingress
+	./cluster/nocturne
+	./cluster/nodeinit
+	./cluster/octovigil
+	./cluster/authserver
+	./cluster/portal
+	./cluster/rscserver
+	./cluster/vigil
+	./octelium-go
+	./pkg
+)

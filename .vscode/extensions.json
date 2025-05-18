@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "golang.go",
+        "zxh404.vscode-proto3",
+        "redhat.vscode-yaml",
+        "streetsidesoftware.code-spell-checker",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+    ]
+}

@@ -1,0 +1,46 @@
+{
+  "editor.defaultFormatter": "golang.go",
+  "terminal.integrated.defaultProfile.linux": "zsh",
+  "workbench.colorTheme": "Default Dark Modern",
+  "go.survey.prompt": false,
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml"
+  },
+  "[proto3]": {
+    "editor.defaultFormatter": "zxh404.vscode-proto3"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "cSpell.words": [
+    "apiserver",
+    "Debugf",
+    "Warnf",
+    "octelium",
+    "Octelium",
+    "OCTELIUM",
+    "octeliumctl",
+    "totp",
+    "webauthn",
+    "corev1",
+    "metav1",
+    "rmetav1",
+    "clusterv1",
+    "authv1",
+    "authserver"
+  ],
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  /*
+  "go.toolsEnvVars": {
+    "GOOS": "darwin"
+  }
+  */
+}

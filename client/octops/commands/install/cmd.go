@@ -1,0 +1,199 @@
+// Copyright Octelium Labs, LLC. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package install
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path"
+	"time"
+
+	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
+	k8scorev1 "k8s.io/api/core/v1"
+
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+)
+
+type Opts struct {
+	ClusterDomain string
+	K8sC          kubernetes.Interface
+	Region        *corev1.Region
+	Bootstrap     *cbootstrapv1.Config
+	Version       string
+}
+
+func DoInstall(ctx context.Context, o *Opts) error {
+
+	k8sC := o.K8sC
+	clusterDomain := o.ClusterDomain
+
+	if ldflags.IsPrivateRegistry() {
+		if err := setRegcred(ctx, k8sC); err != nil {
+			return err
+		}
+	}
+
+	if err := setClusterResources(ctx, o); err != nil {
+		return err
+	}
+
+	if err := createGenesis(ctx, o); err != nil {
+		return err
+	}
+
+	if err := setInitialAuthToken(ctx, k8sC, clusterDomain); err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func setInitialAuthToken(ctx context.Context, k8sC kubernetes.Interface, clusterDomain string) error {
+	zap.L().Debug("Getting the initial access token...")
+	s := cliutils.NewSpinner(os.Stdout)
+	s.SetSuffix("Waiting for Cluster installation to finish")
+	s.Start()
+
+	secret, err := func() (*k8scorev1.Secret, error) {
+		for i := 0; i < 4000; i++ {
+			secret, err := k8sC.CoreV1().Secrets("octelium").Get(ctx, "init-token", k8smetav1.GetOptions{})
+			if err != nil {
+				if k8serr.IsNotFound(err) {
+					zap.L().Debug("Init Token not found. Trying again...")
+					time.Sleep(2000 * time.Millisecond)
+					continue
+				} else {
+					return nil, err
+				}
+			}
+			return secret, nil
+		}
+		return nil, errors.Errorf("Could not find init Token secret")
+	}()
+	if err != nil {
+		return err
+	}
+
+	authToken := string(secret.Data["data"])
+
+	s.Stop()
+
+	if err := cliutils.GetDB().Delete(clusterDomain); err != nil {
+		zap.L().Debug("Could not purge DB for domain", zap.Error(err))
+	}
+
+	printClusterMsgs()
+
+	cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
+	cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
+	cliutils.LineInfo(fmt.Sprintf("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken))
+
+	return nil
+}
+
+func printClusterMsgs() {
+	cliutils.LineNotify("The Cluster installation is now complete!\n")
+	cliutils.LineNotify("HOWEVER, you can only start interacting with the Cluster after the Cluster certificate and the public DNS of the Cluster domain are set.")
+	cliutils.LineNotify("For more information, you might want to visit the docs at https://octelium.com/docs\n")
+	cliutils.LineNotify("Also you might need to flush your machine's local DNS cache if you are using one so you do not wait for too long for the Cluster domain's DNS entry to be set\n\n\n")
+}
+
+func setClusterResources(ctx context.Context, o *Opts) error {
+
+	k8sC := o.K8sC
+
+	dataMap := map[string][]byte{
+		"region":    pbutils.MarshalMust(o.Region),
+		"bootstrap": pbutils.MarshalMust(o.Bootstrap),
+		"domain":    []byte(o.ClusterDomain),
+	}
+
+	{
+
+		if secret, err := k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-init", k8smetav1.GetOptions{}); err == nil {
+			secret.Data = dataMap
+			_, err := k8sC.CoreV1().Secrets("default").Update(ctx, secret, k8smetav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
+		} else if k8serr.IsNotFound(err) {
+			_, err := k8sC.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{
+				ObjectMeta: k8smetav1.ObjectMeta{
+					Name: "octelium-init",
+				},
+				Data: dataMap,
+			}, k8smetav1.CreateOptions{})
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func setRegcred(ctx context.Context, k8sC kubernetes.Interface) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dockerJsonBytes, err := os.ReadFile(path.Join(homeDir, ".docker", "config.json"))
+	if err != nil {
+		return err
+	}
+
+	if secret, err := k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-regcred", k8smetav1.GetOptions{}); err == nil {
+		secret.StringData = map[string]string{
+			".dockerconfigjson": string(dockerJsonBytes),
+		}
+		secret.Type = k8scorev1.SecretTypeDockerConfigJson
+
+		_, err := k8sC.CoreV1().Secrets("default").Update(ctx, secret, k8smetav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+	} else if k8serr.IsNotFound(err) {
+		_, err := k8sC.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name: "octelium-regcred",
+			},
+			StringData: map[string]string{
+				".dockerconfigjson": string(dockerJsonBytes),
+			},
+
+			Type: k8scorev1.SecretTypeDockerConfigJson,
+		}, k8smetav1.CreateOptions{})
+		if err != nil {
+			return err
+		}
+	} else {
+		return err
+	}
+
+	return nil
+
+}
