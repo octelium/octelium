@@ -45,9 +45,10 @@ jobs:
         run: |
           curl -L -o wireguard.zip https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
           unzip wireguard.zip
+          cp ./wireguard-nt/bin/${{matrix.arch}}/wireguard.dll ./bin
 
           cd bin
-          zip octelium-${{matrix.os}}-${{matrix.arch}}.zip octelium.exe ../wireguard-nt/bin/${{matrix.arch}}/wireguard.dll
+          zip octelium-${{matrix.os}}-${{matrix.arch}}.zip octelium.exe wireguard.dll
           zip octeliumctl-${{matrix.os}}-${{matrix.arch}}.zip octeliumctl.exe
           zip octops-${{matrix.os}}-${{matrix.arch}}.zip octops.exe
       - name: save Windows artifacts
