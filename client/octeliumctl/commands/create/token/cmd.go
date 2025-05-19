@@ -67,7 +67,7 @@ func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.IsOneTime, "one-time", false, "One time credential")
 
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Credential type (Can take the values: "auth-token", "oauth2" or "access-token"). By default it is an Authentication Token`)
-	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless"). By default it is set to "clientless"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless")`)
 
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
 		`Scope applied to Sessions created by this Credential. Use the flag multiple times to add more Scopes.`)
@@ -133,14 +133,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		expiresAt = pbutils.Timestamp(t)
 	}
 
-	cred, err := c.CreateCredential(ctx, &corev1.Credential{
+	req := &corev1.Credential{
 		Metadata: &metav1.Metadata{
 			Name: i.FirstArg(),
 		},
 		Spec: &corev1.Credential_Spec{
-
 			User: cmdArgs.User,
-
 			MaxAuthentications: func() uint32 {
 				if cmdArgs.IsOneTime {
 					return 1
@@ -168,18 +166,25 @@ func doCmd(cmd *cobra.Command, args []string) error {
 					return corev1.Credential_Spec_AUTH_TOKEN
 				}
 			}(),
-			SessionType: func() corev1.Session_Status_Type {
-				switch cmdArgs.Type {
-				case "client":
-					return corev1.Session_Status_CLIENT
-				case "clientless", "":
-					return corev1.Session_Status_CLIENTLESS
-				default:
-					return corev1.Session_Status_CLIENTLESS
-				}
-			}(),
 		},
-	})
+	}
+
+	switch req.Spec.Type {
+	case corev1.Credential_Spec_AUTH_TOKEN:
+		req.Spec.SessionType = func() corev1.Session_Status_Type {
+			switch cmdArgs.SessionType {
+			case "client":
+				return corev1.Session_Status_CLIENT
+			case "clientless", "":
+				return corev1.Session_Status_CLIENTLESS
+			default:
+				return corev1.Session_Status_CLIENTLESS
+			}
+		}()
+	default:
+		req.Spec.SessionType = corev1.Session_Status_CLIENTLESS
+	}
+	cred, err := c.CreateCredential(ctx, req)
 	if err != nil {
 		return errors.Errorf("Could not create Credential: %+v", err)
 	}
