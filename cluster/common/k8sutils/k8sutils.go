@@ -24,7 +24,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	k8scorev1 "k8s.io/api/core/v1"
 )
 
@@ -63,13 +62,17 @@ func GetGatewayName(node *k8scorev1.Node) string {
 }
 
 func GetImagePullSecrets() []k8scorev1.LocalObjectReference {
-	if ldflags.IsPrivateRegistry() {
-		return []k8scorev1.LocalObjectReference{
-			{
-				Name: "octelium-regcred",
-			},
+
+	return nil
+	/*
+		if ldflags.IsPrivateRegistry() {
+			return []k8scorev1.LocalObjectReference{
+				{
+					Name: "octelium-regcred",
+				},
+			}
+		} else {
+			return nil
 		}
-	} else {
-		return nil
-	}
+	*/
 }

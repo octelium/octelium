@@ -18,14 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -48,11 +46,13 @@ func DoInstall(ctx context.Context, o *Opts) error {
 	k8sC := o.K8sC
 	clusterDomain := o.ClusterDomain
 
-	if ldflags.IsPrivateRegistry() {
-		if err := setRegcred(ctx, k8sC); err != nil {
-			return err
+	/*
+		if ldflags.IsPrivateRegistry() {
+			if err := setRegcred(ctx, k8sC); err != nil {
+				return err
+			}
 		}
-	}
+	*/
 
 	if err := setClusterResources(ctx, o); err != nil {
 		return err
@@ -156,6 +156,7 @@ func setClusterResources(ctx context.Context, o *Opts) error {
 	return nil
 }
 
+/*
 func setRegcred(ctx context.Context, k8sC kubernetes.Interface) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -197,3 +198,4 @@ func setRegcred(ctx context.Context, k8sC kubernetes.Interface) error {
 	return nil
 
 }
+*/

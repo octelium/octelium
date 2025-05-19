@@ -96,15 +96,19 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 					ServiceAccountName: "octelium-genesis",
 					RestartPolicy:      corev1.RestartPolicyNever,
 					ImagePullSecrets: func() []corev1.LocalObjectReference {
-						if ldflags.IsPrivateRegistry() {
-							return []corev1.LocalObjectReference{
-								{
-									Name: "octelium-regcred",
-								},
+
+						return nil
+						/*
+							if ldflags.IsPrivateRegistry() {
+								return []corev1.LocalObjectReference{
+									{
+										Name: "octelium-regcred",
+									},
+								}
+							} else {
+								return nil
 							}
-						} else {
-							return nil
-						}
+						*/
 					}(),
 
 					Containers: []corev1.Container{

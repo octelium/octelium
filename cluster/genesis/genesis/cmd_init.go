@@ -61,9 +61,11 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 		return err
 	}
 
-	if err := g.moveRegcred(ctx); err != nil {
-		return err
-	}
+	/*
+		if err := g.moveRegcred(ctx); err != nil {
+			return err
+		}
+	*/
 
 	initResources, err := g.loadClusterInitResources(ctx, "default")
 	if err != nil {
@@ -872,6 +874,7 @@ func (g *Genesis) setNamespace(ctx context.Context) error {
 	return err
 }
 
+/*
 func (g *Genesis) moveRegcred(ctx context.Context) error {
 	if !ldflags.IsPrivateRegistry() {
 		return nil
@@ -885,6 +888,7 @@ func (g *Genesis) moveRegcred(ctx context.Context) error {
 
 	return g.moveK8SSecret(ctx, regcred)
 }
+*/
 
 func (g *Genesis) moveK8SSecret(ctx context.Context, secFrom *k8scorev1.Secret) error {
 	var err error
