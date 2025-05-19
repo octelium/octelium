@@ -175,10 +175,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			switch cmdArgs.SessionType {
 			case "client":
 				return corev1.Session_Status_CLIENT
-			case "clientless", "":
+			case "clientless":
 				return corev1.Session_Status_CLIENTLESS
 			default:
-				return corev1.Session_Status_CLIENTLESS
+				return corev1.Session_Status_CLIENT
 			}
 		}()
 	default:
