@@ -313,7 +313,7 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		r.HandleFunc("/assets/{file}", s.handleStatic).Methods("GET")
 
 		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			zap.L().Debug("404 req", zap.Any("path", r.URL.Path), zap.String("method", r.Method), zap.Any("hdr", r.Header))
+			zap.L().Debug("404 req", zap.Any("path", r.URL.Path), zap.String("method", r.Method))
 			if r.Method == "GET" {
 				s.redirectToLogin(w, r)
 			} else {
