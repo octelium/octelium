@@ -5,6 +5,7 @@ on:
       - "v*.*.*"
     branches:
       - b-*
+      - main
 jobs:
   build:
     name: Build
