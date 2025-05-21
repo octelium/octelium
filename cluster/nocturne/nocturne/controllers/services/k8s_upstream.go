@@ -71,8 +71,13 @@ func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ow
 			return errors.Errorf("Could not set upstream cred secret: %+v", err)
 		}
 
+		dep, err := c.getK8sUpstreamDeployment(ctx, svc, cfg, passwordSec, ownerCM)
+		if err != nil {
+			return err
+		}
+
 		if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c.k8sC,
-			c.getK8sUpstreamDeployment(svc, cfg, passwordSec, ownerCM)); err != nil {
+			dep); err != nil {
 			return err
 		}
 
@@ -95,8 +100,12 @@ func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ow
 					return errors.Errorf("Could not set upstream cred secret: %+v", err)
 				}
 
+				dep, err := c.getK8sUpstreamDeployment(ctx, svc, cfg, passwordSec, ownerCM)
+				if err != nil {
+					return err
+				}
 				if _, err := k8sutils.CreateOrUpdateDeployment(ctx,
-					c.k8sC, c.getK8sUpstreamDeployment(svc, cfg, passwordSec, ownerCM)); err != nil {
+					c.k8sC, dep); err != nil {
 					return err
 				}
 
@@ -209,11 +218,16 @@ func (c *Controller) setK8sUpstreamCredSecret(ctx context.Context,
 	return passwordSec, nil
 }
 
-func (c *Controller) getK8sUpstreamDeployment(svc *corev1.Service,
-	cfg *corev1.Service_Spec_Config, passwordSec *corev1.Secret, ownerCM *k8scorev1.ConfigMap) *appsv1.Deployment {
+func (c *Controller) getK8sUpstreamDeployment(ctx context.Context, svc *corev1.Service,
+	cfg *corev1.Service_Spec_Config, passwordSec *corev1.Secret, ownerCM *k8scorev1.ConfigMap) (*appsv1.Deployment, error) {
 
 	spec := cfg.GetUpstream().GetContainer()
 	labels := c.getK8sUpstreamLabels(svc, cfg.Name)
+
+	podSpec, err := c.getK8sUpstreamPod(ctx, cfg, svc, passwordSec, ownerCM)
+	if err != nil {
+		return nil, err
+	}
 
 	return &appsv1.Deployment{
 		ObjectMeta: k8smetav1.ObjectMeta{
@@ -241,17 +255,19 @@ func (c *Controller) getK8sUpstreamDeployment(svc *corev1.Service,
 						"octelium.com/install-uid": utilrand.GetRandomStringLowercase(8),
 					},
 				},
-				Spec: c.getK8sUpstreamPod(cfg, svc, passwordSec),
+				Spec: *podSpec,
 			},
 		},
-	}
+	}, nil
 }
 
-func (c *Controller) getK8sUpstreamPod(cfg *corev1.Service_Spec_Config, svc *corev1.Service, passwordSec *corev1.Secret) k8scorev1.PodSpec {
+func (c *Controller) getK8sUpstreamPod(ctx context.Context,
+	cfg *corev1.Service_Spec_Config, svc *corev1.Service, passwordSec *corev1.Secret,
+	ownerCM *k8scorev1.ConfigMap) (*k8scorev1.PodSpec, error) {
 
 	spec := cfg.GetUpstream().GetContainer()
 
-	ret := k8scorev1.PodSpec{
+	ret := &k8scorev1.PodSpec{
 		AutomountServiceAccountToken: utils_types.BoolToPtr(false),
 		EnableServiceLinks:           utils_types.BoolToPtr(false),
 		DNSPolicy:                    k8scorev1.DNSNone,
@@ -358,14 +374,48 @@ func (c *Controller) getK8sUpstreamPod(cfg *corev1.Service_Spec_Config, svc *cor
 
 			case *corev1.Service_Spec_Config_Upstream_Container_Env_Value:
 				env.Value = e.GetValue()
+				if len(env.Name) == 0 || len(env.Name) > 256 ||
+					len(env.Value) == 0 || len(env.Value) > 3000 {
+					continue
+				}
+
+			case *corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret:
+
+				sec, err := c.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+					Name: e.GetFromSecret(),
+				})
+				if err == nil {
+					k8sSecName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid)
+					req := &k8scorev1.Secret{
+						ObjectMeta: k8smetav1.ObjectMeta{
+							Name:      k8sSecName,
+							Namespace: ns,
+							OwnerReferences: []k8smetav1.OwnerReference{
+								*k8smetav1.NewControllerRef(ownerCM, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap")),
+							},
+						},
+						StringData: map[string]string{
+							"data": ucorev1.ToSecret(sec).GetSpecValueStr(),
+						},
+
+						Type: k8scorev1.SecretTypeDockerConfigJson,
+					}
+
+					if _, err := k8sutils.CreateOrUpdateSecret(ctx, c.k8sC, req); err == nil {
+						env.ValueFrom = &k8scorev1.EnvVarSource{
+							SecretKeyRef: &k8scorev1.SecretKeySelector{
+								LocalObjectReference: k8scorev1.LocalObjectReference{
+									Name: k8sSecName,
+								},
+								Key: "data",
+							},
+						}
+					}
+				}
+
 			}
 
 			if !govalidator.IsASCII(env.Name) {
-				continue
-			}
-
-			if len(env.Name) == 0 || len(env.Name) > 256 ||
-				len(env.Value) == 0 || len(env.Value) > 3000 {
 				continue
 			}
 
@@ -374,7 +424,7 @@ func (c *Controller) getK8sUpstreamPod(cfg *corev1.Service_Spec_Config, svc *cor
 		ret.Containers = append(ret.Containers, container)
 	}
 
-	return ret
+	return ret, nil
 }
 
 func (c *Controller) getK8sUpstreamService(svc *corev1.Service, cfg *corev1.Service_Spec_Config, ownerCM *k8scorev1.ConfigMap) *k8scorev1.Service {
