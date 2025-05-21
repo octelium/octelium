@@ -368,8 +368,18 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				if itm.Name == "" || len(itm.Name) > 32 || !govalidator.IsASCII(itm.Name) {
 					return grpcutils.InvalidArg("Invalid key: %s", itm.Name)
 				}
-				if itm.GetValue() == "" || len(itm.GetValue()) > 1024 {
-					return grpcutils.InvalidArg("Invalid name: %s", itm.Name)
+
+				switch itm.Type.(type) {
+				case *corev1.Service_Spec_Config_Upstream_Container_Env_Value:
+					if itm.GetValue() == "" || len(itm.GetValue()) > 1024 {
+						return grpcutils.InvalidArg("Invalid name: %s", itm.Name)
+					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret:
+					if err := s.validateSecretOwner(ctx, itm); err != nil {
+						return err
+					}
+				default:
+					return grpcutils.InvalidArg("either value or fromSecret must be set")
 				}
 
 			}
