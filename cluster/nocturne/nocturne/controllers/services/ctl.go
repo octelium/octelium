@@ -152,8 +152,6 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 		}
 	} else {
 
-		zap.S().Debugf("Updating Service %s", newSvc.Metadata.Name)
-
 		ownerCM, err := c.k8sC.CoreV1().ConfigMaps(ns).
 			Get(ctx, k8sutils.GetSvcHostname(newSvc), k8smetav1.GetOptions{})
 		if err != nil {
@@ -163,6 +161,8 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 		hasNodePoolGateway := true
 
 		if c.shouldRedeploy(newSvc, oldSvc) {
+			zap.L().Debug("Redeploying Service k8s resources", zap.Any("svc", newSvc))
+
 			dep, err := c.k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(newSvc), k8smetav1.GetOptions{})
 			if err != nil {
 				return err
@@ -176,11 +176,16 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 				return err
 			}
 
+		} else {
+			zap.L().Debug("No need to redeploy the Service", zap.String("name", newSvc.Metadata.Name))
+		}
+
+		if c.shouldRedeployUpstream(newSvc, oldSvc) {
 			if err := c.setK8sUpstream(ctx, newSvc, ownerCM); err != nil {
 				return err
 			}
 		} else {
-			zap.L().Debug("No need to redeploy the Service", zap.String("name", newSvc.Metadata.Name))
+			zap.L().Debug("No need to redeploy the Service upstream", zap.String("name", newSvc.Metadata.Name))
 		}
 
 		if err := c.updateK8sService(ctx, newSvc); err != nil {
@@ -212,6 +217,17 @@ func (c *Controller) shouldRedeploy(newSvc, oldSvc *corev1.Service) bool {
 	if !pbutils.IsEqual(newSvc.Status.ManagedService, oldSvc.Status.ManagedService) {
 		return true
 	}
+
+	if newSvc.Metadata.SystemLabels != nil &&
+		oldSvc.Metadata.SystemLabels != nil &&
+		newSvc.Metadata.SystemLabels[vutils.UpgradeIDKey] != oldSvc.Metadata.SystemLabels[vutils.UpgradeIDKey] {
+		return true
+	}
+
+	return false
+}
+
+func (c *Controller) shouldRedeployUpstream(newSvc, oldSvc *corev1.Service) bool {
 
 	needsContainerDeployment := func(new, old *corev1.Service_Spec_Config) bool {
 		newHasContainer := new != nil && new.Upstream != nil && new.Upstream.GetContainer() != nil
@@ -264,12 +280,6 @@ func (c *Controller) shouldRedeploy(newSvc, oldSvc *corev1.Service) bool {
 		}) {
 			return true
 		}
-	}
-
-	if newSvc.Metadata.SystemLabels != nil &&
-		oldSvc.Metadata.SystemLabels != nil &&
-		newSvc.Metadata.SystemLabels[vutils.UpgradeIDKey] != oldSvc.Metadata.SystemLabels[vutils.UpgradeIDKey] {
-		return true
 	}
 
 	return false
