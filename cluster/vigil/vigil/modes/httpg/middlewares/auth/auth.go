@@ -80,6 +80,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		req.Body.Close()
 
+		reqCtx.Body = additional.Body
+
 		if svc.Spec.Config != nil && svc.Spec.Config.GetHttp() != nil && svc.Spec.Config.GetHttp().Body != nil {
 			buffer := svc.Spec.Config.GetHttp().Body
 
@@ -95,6 +97,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
+				reqCtx.BodyJSONMap = additional.bodyMap
 			}
 		}
 
