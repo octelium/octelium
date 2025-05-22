@@ -40,6 +40,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/validation"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
@@ -245,6 +246,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return auth.New(ctx, next, s.octeliumC, s.octovigilC, domain)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return validation.New(ctx, next)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
