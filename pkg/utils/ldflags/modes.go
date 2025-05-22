@@ -29,10 +29,12 @@ func IsDev() bool {
 		return false
 	}
 
-	switch GitBranch {
-	case "main", "master":
-		return false
-	}
+	/*
+		switch GitBranch {
+		case "main", "master":
+			return false
+		}
+	*/
 
 	return true
 }
