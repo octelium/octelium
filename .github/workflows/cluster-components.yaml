@@ -1,4 +1,7 @@
 name: cluster-components
+permissions:
+ contents: read
+ packages: write
 on:
   push:
     tags:
@@ -75,4 +78,4 @@ jobs:
         with:
           tags: ${{ steps.meta.outputs.tags }}
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.OCTELIUM_REGISTRY }}
+          password: ${{ secrets.GITHUB_TOKEN }}
