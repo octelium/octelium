@@ -104,7 +104,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 				}(),
 				ESSHEnable: cmdArgs.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
 				ESSHPort: func() int32 {
-					if port, err := strconv.Atoi(os.Getenv("OCTELIUM_ESSH_PORT")); err == nil {
+					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESSH_PORT"), 10, 32); err == nil {
 						return int32(port)
 					}
 
@@ -190,7 +190,7 @@ func getConnectionConfig(ctx context.Context,
 			IgnoreDNS:         cmdArgs.IgnoreDNS,
 			PublishedServices: publishedSevices,
 			KeepAliveSeconds: func() int32 {
-				ka, err := strconv.Atoi(os.Getenv("OCTELIUM_KEEPALIVE"))
+				ka, err := strconv.ParseInt(os.Getenv("OCTELIUM_KEEPALIVE"), 10, 32)
 				if err != nil {
 					return 0
 				}
@@ -200,7 +200,7 @@ func getConnectionConfig(ctx context.Context,
 				return int32(ka)
 			}(),
 			Mtu: func() int32 {
-				mtu, err := strconv.Atoi(os.Getenv("OCTELIUM_MTU"))
+				mtu, err := strconv.ParseInt(os.Getenv("OCTELIUM_MTU"), 10, 32)
 				if err != nil {
 					return 0
 				}
@@ -243,7 +243,7 @@ func getConnectionConfig(ctx context.Context,
 					return ""
 				}(),
 				Port: func() int32 {
-					if port, err := strconv.Atoi(os.Getenv("OCTELIUM_ESSH_PORT")); err == nil {
+					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESSH_PORT"), 10, 32); err == nil {
 						return int32(port)
 					}
 
@@ -385,7 +385,7 @@ func doGetPublishedService(svcList *userv1.ServiceList, arg, domain string) (*cl
 		return nil, errors.Errorf("The Service %s does not exist", svcNs)
 	}
 
-	hostPort, err := strconv.Atoi(argList[1])
+	hostPort, err := strconv.ParseInt(argList[1], 10, 32)
 	if err != nil {
 		return nil, err
 	}
