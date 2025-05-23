@@ -1,4 +1,7 @@
 name: client-components
+permissions:
+ contents: read
+ packages: write
 on:
   push:
     tags:
@@ -57,7 +60,7 @@ jobs:
         with:
           registry: ${{env.V_CONTAINER_REGISTRY}}
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.OCTELIUM_REGISTRY }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to Registry
         uses: docker/build-push-action@v3
