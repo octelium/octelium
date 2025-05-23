@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -203,8 +202,14 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 	cmd := exec.CommandContext(ctx, shellPath, "-c", cmdStr)
 
 	if !c.sameUser {
-		uid, _ := strconv.Atoi(usr.Uid)
-		gid, _ := strconv.Atoi(usr.Gid)
+		uid, err := strconv.ParseUint(usr.Uid, 10, 32)
+		if err != nil {
+			return err
+		}
+		gid, err := strconv.ParseUint(usr.Gid, 10, 32)
+		if err != nil {
+			return err
+		}
 
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)},

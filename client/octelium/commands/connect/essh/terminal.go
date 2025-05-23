@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -140,10 +139,16 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 	}
 
 	if !dctx.sameUser {
-		uid, _ := strconv.Atoi(dctx.usr.Uid)
-		gid, _ := strconv.Atoi(dctx.usr.Gid)
+		uid, err := strconv.ParseUint(dctx.usr.Uid, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		gid, err := strconv.ParseUint(dctx.usr.Gid, 10, 32)
+		if err != nil {
+			return nil, err
+		}
 
-		zap.L().Debug("uid-gid", zap.Int("uid", uid), zap.Int("gid", gid))
+		zap.L().Debug("uid-gid", zap.Uint64("uid", uid), zap.Uint64("gid", gid))
 
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 	}
