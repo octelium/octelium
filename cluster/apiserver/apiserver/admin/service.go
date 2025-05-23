@@ -553,6 +553,27 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				}
 			}
 
+			if cfg.GetHttp().Path != nil {
+				pth := cfg.GetHttp().Path
+				if pth.AddPrefix != "" {
+					if len(pth.AddPrefix) > 512 {
+						return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
+					}
+					if !govalidator.IsRequestURI(pth.AddPrefix) {
+						return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
+					}
+				}
+
+				if pth.RemovePrefix != "" {
+					if len(pth.RemovePrefix) > 512 {
+						return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
+					}
+					if !govalidator.IsRequestURI(pth.RemovePrefix) {
+						return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
+					}
+				}
+			}
+
 		case *corev1.Service_Spec_Config_Kubernetes_:
 			if spec.Mode != corev1.Service_Spec_KUBERNETES {
 				return grpcutils.InvalidArg("KUBERNETES mode must be set for KUBERNETES config to be used")
