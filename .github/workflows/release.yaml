@@ -1,4 +1,6 @@
 name: release
+permissions:
+  contents: read
 on:
   push:
     tags:
@@ -63,6 +65,8 @@ jobs:
     name: Release
     runs-on: ubuntu-24.04
     needs: build
+    permissions:
+      contents: write
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
