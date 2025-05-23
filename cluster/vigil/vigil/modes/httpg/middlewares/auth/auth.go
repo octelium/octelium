@@ -183,7 +183,8 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		Method:  req.Method,
 		Scheme:  req.URL.Scheme,
 		Size:    req.ContentLength,
-		Path:    req.URL.RequestURI(),
+		Path:    req.URL.Path,
+		Uri:     req.URL.RequestURI(),
 		Body:    additional.Body,
 	}
 

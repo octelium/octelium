@@ -70,7 +70,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	httpC := &corev1.AccessLog_Entry_Info_HTTP{
 		Request: &corev1.AccessLog_Entry_Info_HTTP_Request{
-			Path:      req.URL.RequestURI(),
+			Uri:       req.URL.RequestURI(),
+			Path:      req.URL.Path,
 			UserAgent: req.Header.Get("User-Agent"),
 			Method:    req.Method,
 			Referer:   req.Referer(),
