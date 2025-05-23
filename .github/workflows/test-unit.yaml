@@ -1,4 +1,6 @@
 name: tests-unit-test
+permissions:
+ contents: read
 on:
   push:
     tags:
