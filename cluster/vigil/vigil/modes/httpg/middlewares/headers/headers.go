@@ -72,7 +72,11 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddRequestHeaders {
-			req.Header.Set(hdr.Key, hdr.Value)
+			if hdr.Append {
+				req.Header.Add(hdr.Key, hdr.Value)
+			} else {
+				req.Header.Set(hdr.Key, hdr.Value)
+			}
 		}
 
 		for _, hdr := range cfg.RemoveRequestHeaders {
@@ -227,7 +231,11 @@ func (m *middleware) postRequestModifyResponseHeaders(res *http.Response) error 
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddResponseHeaders {
-			res.Header.Set(hdr.Key, hdr.Value)
+			if hdr.Append {
+				res.Header.Add(hdr.Key, hdr.Value)
+			} else {
+				res.Header.Set(hdr.Key, hdr.Value)
+			}
 		}
 
 		for _, hdr := range cfg.RemoveResponseHeaders {
