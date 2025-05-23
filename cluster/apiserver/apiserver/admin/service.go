@@ -24,6 +24,7 @@ import (
 	"strconv"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/kaptinlin/jsonschema"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -521,6 +522,34 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						return err
 					}
 
+				}
+			}
+
+			if cfg.GetHttp().Body != nil {
+				body := cfg.GetHttp().Body
+
+				if body.Validation != nil {
+					switch body.Validation.Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Body_Validation_JsonSchema:
+						switch body.Validation.GetJsonSchema().Type.(type) {
+						case *corev1.Service_Spec_Config_HTTP_Body_Validation_JSONSchema_Inline:
+							val := body.Validation.GetJsonSchema().GetInline()
+							if len(val) == 0 {
+								return grpcutils.InvalidArg("jsonSchema is empty")
+							}
+							if len(val) > 30000 {
+								return grpcutils.InvalidArg("jsonSchema is too large")
+							}
+							if _, err := jsonschema.NewCompiler().Compile([]byte(val)); err != nil {
+								return grpcutils.InvalidArg("invalid jsonSchema")
+							}
+
+						default:
+							return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
+						}
+					default:
+						return grpcutils.InvalidArg("Invalid validation type")
+					}
 				}
 			}
 
