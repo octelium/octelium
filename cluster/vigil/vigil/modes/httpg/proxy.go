@@ -26,10 +26,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
+
+type directResponseHandler struct {
+	direct *corev1.Service_Spec_Config_HTTP_Response_Direct
+}
+
+func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+
+	resp := h.direct
+	switch resp.Type.(type) {
+	case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
+		w.Write([]byte(resp.GetInline()))
+	case *corev1.Service_Spec_Config_HTTP_Response_Direct_InlineBytes:
+		w.Write(resp.GetInlineBytes())
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Server", "octelium")
+}
 
 func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
@@ -37,6 +57,13 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	// svc := reqCtx.Service
 	// var upstream *loadbalancer.Upstream
 	// var err error
+
+	cfg := reqCtx.ServiceConfig
+	if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Response != nil && cfg.GetHttp().Response.GetDirect() != nil {
+		return &directResponseHandler{
+			direct: cfg.GetHttp().Response.GetDirect(),
+		}, nil
+	}
 
 	upstream, err := s.lbManager.GetUpstream(ctx, reqCtx.AuthResponse)
 	if err != nil {
