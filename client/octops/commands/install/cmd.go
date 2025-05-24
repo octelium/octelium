@@ -115,9 +115,10 @@ func setInitialAuthToken(ctx context.Context, k8sC kubernetes.Interface, cluster
 
 func printClusterMsgs() {
 	cliutils.LineNotify("The Cluster installation is now complete!\n")
-	cliutils.LineNotify("HOWEVER, you can only start interacting with the Cluster after the Cluster certificate and the public DNS of the Cluster domain are set.")
+	cliutils.LineNotify("You can start interacting with the Cluster once you set the Cluster TLS certificate and the public DNS.")
 	cliutils.LineNotify("For more information, you might want to visit the docs at https://octelium.com/docs\n")
-	cliutils.LineNotify("Also you might need to flush your machine's local DNS cache if you are using one so you do not wait for too long for the Cluster domain's DNS entry to be set\n\n\n")
+	cliutils.LineNotify(`You can also interact with the Cluster before setting the Cluster TLS certificate by setting the "OCTELIUM_DEV" environment variable to "true" (i.e. via the "export OCTELIUM_DEV=true" command) in your "octelium" and "octeliumctl" commands\n`)
+	cliutils.LineNotify("Also you might need to flush your machine's local DNS cache if you are using one so you do not wait for too long until the newly set Cluster domain's DNS entry is synchronized with your local machine\n\n\n")
 }
 
 func setClusterResources(ctx context.Context, o *Opts) error {

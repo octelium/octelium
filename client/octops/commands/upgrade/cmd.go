@@ -15,6 +15,7 @@
 package upgrade
 
 import (
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands/initcmd"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
@@ -63,6 +64,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	k8sC, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.RunPromptConfirm("Confirm to proceed with the Cluster upgrade"); err != nil {
 		return err
 	}
 
