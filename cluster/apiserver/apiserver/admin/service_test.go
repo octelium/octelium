@@ -1045,3 +1045,119 @@ func TestServiceDynamicConfig(t *testing.T) {
 
 	// assert.Equal(t, "true", svc.Metadata.SpecLabels["enable-public"])
 }
+
+func TestServiceDirectResponse(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+	srv.isEmbedded = true
+
+	ns, err := srv.octeliumC.CoreC().CreateNamespace(ctx, &corev1.Namespace{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Namespace_Spec{},
+	})
+	assert.Nil(t, err)
+
+	{
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port:     8080,
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Response: &corev1.Service_Spec_Config_HTTP_Response{
+								Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
+									Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+										Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
+											Inline: utilrand.GetRandomString(32),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		_, err = srv.CreateService(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port:     8080,
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+							ConfigName: "cfg-1",
+						},
+					},
+					Configs: []*corev1.Service_Spec_Config{
+						{
+							Name: "cfg-1",
+							Type: &corev1.Service_Spec_Config_Http{
+								Http: &corev1.Service_Spec_Config_HTTP{
+									Response: &corev1.Service_Spec_Config_HTTP_Response{
+										Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
+											Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+												Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
+													Inline: utilrand.GetRandomString(32),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						{
+							Name: "cfg-2",
+							Type: &corev1.Service_Spec_Config_Http{
+								Http: &corev1.Service_Spec_Config_HTTP{
+									Response: &corev1.Service_Spec_Config_HTTP_Response{
+										Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
+											Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+												Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
+													Inline: utilrand.GetRandomString(32),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		_, err = srv.CreateService(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	// assert.Equal(t, "true", svc.Metadata.SpecLabels["enable-public"])
+}
