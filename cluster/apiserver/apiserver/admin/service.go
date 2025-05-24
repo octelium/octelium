@@ -574,6 +574,27 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				}
 			}
 
+			if cfg.GetHttp().Response != nil {
+				resp := cfg.GetHttp().Response
+				switch resp.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Response_Direct_:
+					switch resp.GetDirect().Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
+						if len(resp.GetDirect().GetInline()) > 50000 {
+							return grpcutils.InvalidArg("inline is too large")
+						}
+					case *corev1.Service_Spec_Config_HTTP_Response_Direct_InlineBytes:
+						if len(resp.GetDirect().GetInlineBytes()) > 35000 {
+							return grpcutils.InvalidArg("inlineBytes is too large")
+						}
+					default:
+						return grpcutils.InvalidArg("Invalid direct type")
+					}
+				default:
+					return grpcutils.InvalidArg("Invalid response type")
+				}
+			}
+
 		case *corev1.Service_Spec_Config_Kubernetes_:
 			if spec.Mode != corev1.Service_Spec_KUBERNETES {
 				return grpcutils.InvalidArg("KUBERNETES mode must be set for KUBERNETES config to be used")
