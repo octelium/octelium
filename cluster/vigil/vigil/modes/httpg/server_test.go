@@ -1786,6 +1786,7 @@ func TestDirectResponse(t *testing.T) {
 						Response: &corev1.Service_Spec_Config_HTTP_Response{
 							Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+									ContentType: fmt.Sprintf("application/%s", utilrand.GetRandomStringCanonical(8)),
 									Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
 										Inline: utilrand.GetRandomString(400),
 									},
@@ -1877,4 +1878,6 @@ func TestDirectResponse(t *testing.T) {
 	assert.True(t, resp.IsSuccess())
 
 	assert.Equal(t, svc.Spec.Config.GetHttp().Response.GetDirect().GetInline(), string(resp.Body()))
+	assert.Equal(t, svc.Spec.Config.GetHttp().Response.GetDirect().ContentType,
+		string(resp.Header().Get("Content-Type")))
 }

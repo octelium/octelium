@@ -48,6 +48,13 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	if resp.ContentType != "" {
+		w.Header().Set("Content-Type", resp.ContentType)
+	}
+	if resp.StatusCode != 0 && resp.StatusCode >= 200 && resp.StatusCode <= 599 {
+		w.WriteHeader(int(resp.StatusCode))
+	}
+
 	w.Header().Set("Server", "octelium")
 }
 

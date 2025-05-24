@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"mime"
 	"net/url"
 	"slices"
 	"strconv"
@@ -578,6 +579,20 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				resp := cfg.GetHttp().Response
 				switch resp.Type.(type) {
 				case *corev1.Service_Spec_Config_HTTP_Response_Direct_:
+					if resp.GetDirect().StatusCode != 0 {
+						if resp.GetDirect().StatusCode < 200 || resp.GetDirect().StatusCode > 599 {
+							return grpcutils.InvalidArg("Invalid statusCode: %d", resp.GetDirect().StatusCode)
+						}
+					}
+					if resp.GetDirect().ContentType != "" {
+						if len(resp.GetDirect().ContentType) > 128 {
+							return grpcutils.InvalidArg("contentType is too large")
+						}
+
+						if _, _, err := mime.ParseMediaType(resp.GetDirect().ContentType); err != nil {
+							return grpcutils.InvalidArg("Invalid contentType")
+						}
+					}
 					switch resp.GetDirect().Type.(type) {
 					case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
 						if len(resp.GetDirect().GetInline()) > 50000 {

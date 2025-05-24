@@ -1125,6 +1125,7 @@ func TestServiceDirectResponse(t *testing.T) {
 									Response: &corev1.Service_Spec_Config_HTTP_Response{
 										Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
 											Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+												ContentType: "image/png",
 												Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
 													Inline: utilrand.GetRandomString(32),
 												},
