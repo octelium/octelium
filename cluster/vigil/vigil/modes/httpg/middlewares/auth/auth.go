@@ -72,7 +72,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	additional := &additionalInfo{}
 
-	if svc.Spec.Config != nil && svc.Spec.Config.GetHttp() != nil && svc.Spec.Config.GetHttp().EnableRequestBuffering {
+	cfg := svc.Spec.Config
+
+	if (cfg != nil &&
+		cfg.GetHttp() != nil &&
+		cfg.GetHttp().EnableRequestBuffering) ||
+		(cfg != nil && cfg.GetHttp() != nil &&
+			cfg.GetHttp().Auth != nil &&
+			cfg.GetHttp().Auth.GetSigv4() != nil) {
 		additional.Body, err = io.ReadAll(req.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -82,8 +89,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		reqCtx.Body = additional.Body
 
-		if svc.Spec.Config != nil && svc.Spec.Config.GetHttp() != nil && svc.Spec.Config.GetHttp().Body != nil {
-			buffer := svc.Spec.Config.GetHttp().Body
+		if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Body != nil {
+			buffer := cfg.GetHttp().Body
 
 			if buffer.MaxRequestSize > 0 && len(additional.Body) > int(buffer.MaxRequestSize) {
 				w.WriteHeader(http.StatusRequestEntityTooLarge)

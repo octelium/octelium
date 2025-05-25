@@ -186,6 +186,11 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 				doAppend(authS.GetCustom().GetValue().GetFromSecret())
 			}
 
+			if authS.GetSigv4() != nil && authS.GetSigv4().GetSecretAccessKey() != nil &&
+				authS.GetSigv4().GetSecretAccessKey().GetFromSecret() != "" {
+				doAppend(authS.GetSigv4().GetSecretAccessKey().GetFromSecret())
+			}
+
 			if authS.GetOauth2ClientCredentials() != nil &&
 				authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
 				authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret() != "" {
