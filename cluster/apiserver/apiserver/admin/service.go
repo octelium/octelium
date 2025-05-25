@@ -494,6 +494,10 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				if authSpec.GetBasic() != nil {
 					if authSpec.GetBasic().Username == "" {
 						return serr.InvalidArg("Basic Auth username must be set")
+					} else {
+						if err := apivalidation.ValidateGenASCII(authSpec.GetBasic().Username); err != nil {
+							return err
+						}
 					}
 
 					if err := s.validateSecretOwner(ctx, authSpec.GetBasic().GetPassword()); err != nil {
@@ -507,6 +511,36 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					}
 
 					if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {
+						return err
+					}
+				}
+
+				if authSpec.GetSigv4() != nil {
+					if authSpec.GetSigv4().Service == "" {
+						return serr.InvalidArg("sigv4 service must be set")
+					} else {
+						if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Service); err != nil {
+							return err
+						}
+					}
+
+					if authSpec.GetSigv4().Region == "" {
+						return serr.InvalidArg("sigv4 region must be set")
+					} else {
+						if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Region); err != nil {
+							return err
+						}
+					}
+
+					if authSpec.GetSigv4().AccessKeyID == "" {
+						return serr.InvalidArg("sigv4 accessKeyID be set")
+					} else {
+						if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().AccessKeyID); err != nil {
+							return err
+						}
+					}
+
+					if err := s.validateSecretOwner(ctx, authSpec.GetSigv4().GetSecretAccessKey()); err != nil {
 						return err
 					}
 				}
