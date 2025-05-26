@@ -194,6 +194,10 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
+	if accessToken := os.Getenv("OCTELIUM_ACCESS_TOKEN"); accessToken != "" {
+		return accessToken, nil
+	}
+
 	switch {
 	case a.isRefresh:
 		if !needsNewAccessToken(a.at) {
