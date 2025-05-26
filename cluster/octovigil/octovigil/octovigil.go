@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/httputils"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -48,6 +49,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	devicecontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/devices"
 	groupcontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/groups"
@@ -645,6 +647,7 @@ func (s *Server) run(ctx context.Context) error {
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,
 	})
+	grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", octovigilc.GetPort()))
 	if err != nil {
