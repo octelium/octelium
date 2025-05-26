@@ -247,7 +247,6 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 				},
 			}, nil
 		} else {
-
 			sess, err := sessionc.CreateSession(ctx, &sessionc.CreateSessionOpts{
 				OcteliumC:         s.octeliumC,
 				ClusterConfig:     cc,

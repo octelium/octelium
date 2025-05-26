@@ -170,7 +170,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	switch req.Spec.Type {
-	case corev1.Credential_Spec_AUTH_TOKEN:
+	case corev1.Credential_Spec_AUTH_TOKEN, corev1.Credential_Spec_ACCESS_TOKEN:
 		req.Spec.SessionType = func() corev1.Session_Status_Type {
 			switch cmdArgs.SessionType {
 			case "client":
