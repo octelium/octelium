@@ -353,3 +353,5 @@ const ManagedServiceAddr = "localhost:49999"
 const MaxPolicyParents = 5
 const MaxNameSubArgs = 7
 const ManagedServicePort = 49999
+
+const HealthCheckPortVigil = 49094

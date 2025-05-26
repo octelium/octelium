@@ -321,6 +321,19 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					Requests: getDefaultRequests(),
 					Limits:   getDefaultLimits(),
 				},
+
+				LivenessProbe: &k8scorev1.Probe{
+					InitialDelaySeconds: 60,
+					TimeoutSeconds:      4,
+					PeriodSeconds:       30,
+					FailureThreshold:    3,
+					ProbeHandler: k8scorev1.ProbeHandler{
+						GRPC: &k8scorev1.GRPCAction{
+							Port: int32(vutils.HealthCheckPortVigil),
+						},
+					},
+				},
+
 				SecurityContext: &k8scorev1.SecurityContext{
 					Privileged:               utils_types.BoolToPtr(false),
 					AllowPrivilegeEscalation: utils_types.BoolToPtr(false),

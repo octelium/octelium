@@ -24,8 +24,10 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/pprofsrv"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/controllers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
@@ -248,6 +250,8 @@ func Run() error {
 	defer cancelFn()
 
 	pprofsrv.New().Run(ctx)
+
+	healthcheck.Run(vutils.HealthCheckPortVigil)
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {

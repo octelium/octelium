@@ -18,8 +18,11 @@ package healthcheck
 
 import (
 	"context"
+	"fmt"
+	"net"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
@@ -38,5 +41,34 @@ func (s *Server) Check(ctx context.Context, in *grpc_health_v1.HealthCheckReques
 }
 
 func (s *Server) Watch(*grpc_health_v1.HealthCheckRequest, grpc_health_v1.Health_WatchServer) error {
+	return nil
+}
+
+func Run(port int) {
+	go func() {
+		if err := doRun(port); err != nil {
+			zap.L().Warn("healthCheck server error", zap.Error(err))
+		}
+	}()
+}
+
+func doRun(port int) error {
+	grpcSrv := grpc.NewServer(
+		grpc.MaxConcurrentStreams(1000000),
+	)
+
+	grpc_health_v1.RegisterHealthServer(grpcSrv, NewServer())
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		zap.L().Warn("Could not listen to port for gRPC healthCheck service", zap.Error(err))
+		return err
+	}
+
+	zap.L().Debug("Running healthCheck gRPC service", zap.Int("port", port))
+
+	err = grpcSrv.Serve(lis)
+	zap.L().Debug("healthCheck gRPC service exited", zap.Error(err))
+
 	return nil
 }
