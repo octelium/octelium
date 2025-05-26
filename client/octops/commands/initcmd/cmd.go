@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
@@ -74,7 +75,7 @@ func init() {
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.BootstrapFile, "bootstrap", "", "",
 		`Bootstrap configuration file path`,
 	)
-	// Cmd.PersistentFlags().StringSliceVar(&cmdArgs.ExternalIPs, "external-ip", nil, "The external IP of the K8s Cluster")
+
 	Cmd.MarkFlagRequired("bootstrap")
 }
 
@@ -157,7 +158,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Status: &corev1.Region_Status{},
 	}
 
-	if val := os.Getenv("OCTELIUM_REGION_EXTERNAL_IP"); val != "" && govalidator.IsIP(val) {
+	if val := strings.TrimSpace(os.Getenv("OCTELIUM_REGION_EXTERNAL_IP")); val != "" && govalidator.IsIP(val) {
+		zap.L().Debug("Adding region external IP", zap.String("addr", val))
 		extIPsBytes, err := json.Marshal([]string{val})
 		if err != nil {
 			return err
