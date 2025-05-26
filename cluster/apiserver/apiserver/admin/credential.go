@@ -247,12 +247,18 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 				},
 			}, nil
 		} else {
+
 			sess, err := sessionc.CreateSession(ctx, &sessionc.CreateSessionOpts{
 				OcteliumC:         s.octeliumC,
 				ClusterConfig:     cc,
 				CheckPerUserLimit: true,
 				Usr:               usr,
-				SessType:          corev1.Session_Status_CLIENTLESS,
+				SessType: func() corev1.Session_Status_Type {
+					if cred.Spec.SessionType != corev1.Session_Status_TYPE_UNKNOWN {
+						return cred.Spec.SessionType
+					}
+					return corev1.Session_Status_CLIENTLESS
+				}(),
 
 				Authorization: func() *corev1.Session_Spec_Authorization {
 					if cred.Spec.Authorization == nil {
