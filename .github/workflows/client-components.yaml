@@ -1,7 +1,7 @@
 name: client-components
 permissions:
- contents: read
- packages: write
+  contents: read
+  packages: write
 on:
   push:
     tags:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        component: [octelium]
+        component: [octelium, octeliumctl, octops]
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
