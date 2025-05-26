@@ -40,6 +40,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 )
 
@@ -911,6 +912,15 @@ func (s *Server) checkAndSetService(ctx context.Context,
 
 		return uint32(upstreamPort)
 	}()
+
+	if !ldflags.IsTest() {
+		reservedPorts := []uint32{
+			uint32(vutils.HealthCheckPortVigil),
+		}
+		if slices.Contains(reservedPorts, svc.Status.Port) {
+			return grpcutils.InvalidArg("This Service port number is reserved by the Cluster: %d", svc.Status.Port)
+		}
+	}
 
 	if !ucorev1.ToService(svc).IsManagedService() {
 		if svc.Spec.Config == nil &&
