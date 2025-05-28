@@ -45,7 +45,6 @@ type AuthenticateOpts struct {
 }
 
 type AuthenticateOptsAssertion struct {
-	// IdentityProvider string
 	Arg string
 }
 
@@ -53,10 +52,23 @@ func isAuthProxyMode() bool {
 	return os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET") != ""
 }
 
+func isStaticAccessToken() bool {
+	return getStaticAccessToken() != ""
+}
+
+func getStaticAccessToken() string {
+	return os.Getenv("OCTELIUM_ACCESS_TOKEN")
+}
+
 func Authenticate(ctx context.Context, opts *AuthenticateOpts) error {
 
 	if isAuthProxyMode() {
 		zap.L().Debug("Auth proxy mode. No need to authenticate")
+		return nil
+	}
+
+	if isStaticAccessToken() {
+		zap.L().Debug("static accessToken mode. No need to authenticate")
 		return nil
 	}
 
@@ -71,6 +83,11 @@ func StartGetAccessToken(ctx context.Context, domain string) {
 
 	if isAuthProxyMode() {
 		zap.L().Debug("Auth proxy mode. No need to periodically fetch access token")
+		return
+	}
+
+	if isStaticAccessToken() {
+		zap.L().Debug("static accessToken mode. No need to periodically fetch access token")
 		return
 	}
 
@@ -97,6 +114,10 @@ func GetAccessToken(ctx context.Context, domain string) (string, error) {
 
 	if isAuthProxyMode() {
 		return "", nil
+	}
+
+	if isStaticAccessToken() {
+		return getStaticAccessToken(), nil
 	}
 
 	authC, err := newAuthenticator(ctx, &AuthenticateOpts{
@@ -141,7 +162,7 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 		skipStore: false,
 	}
 
-	if isAuthProxyMode() {
+	if isAuthProxyMode() || isStaticAccessToken() {
 		return ret, nil
 	}
 
@@ -194,8 +215,8 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
-	if accessToken := os.Getenv("OCTELIUM_ACCESS_TOKEN"); accessToken != "" {
-		return accessToken, nil
+	if isStaticAccessToken() {
+		return getStaticAccessToken(), nil
 	}
 
 	switch {
