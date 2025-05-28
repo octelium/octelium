@@ -80,7 +80,7 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Loaded Cluster resources",
-		zap.Any("bootstrap", bootstrap),
+		//zap.Any("bootstrap", bootstrap),
 		zap.Any("region", region))
 
 	clusterCfg, err := g.initClusterConfig(ctx, bootstrap, initResources.Domain)
