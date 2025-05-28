@@ -75,6 +75,13 @@ func (d *DB) SetSessionToken(clusterDomain string, resp *authv1.SessionToken) er
 }
 
 func (d *DB) GetSessionToken(clusterDomain string) (*authv1.SessionToken, error) {
+
+	if accessToken := os.Getenv("OCTELIUM_ACCESS_TOKEN"); accessToken != "" {
+		return &authv1.SessionToken{
+			AccessToken: accessToken,
+		}, nil
+	}
+
 	ret, err := d.db.get(context.Background(), clusterDomain)
 	if err != nil {
 		return nil, err
