@@ -333,6 +333,9 @@ func (c *Client) streamClientInterceptor() grpc.StreamClientInterceptor {
 }
 
 func (c *Client) doGetAccessToken(ctx context.Context) (string, error) {
+	if accessToken := os.Getenv("OCTELIUM_ACCESS_TOKEN"); accessToken != "" {
+		return accessToken, nil
+	}
 	if !c.needsNewAccessToken() {
 		return c.sessToken.getAccessToken()
 	}
