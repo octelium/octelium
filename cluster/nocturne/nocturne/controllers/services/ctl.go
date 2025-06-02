@@ -309,8 +309,6 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 			},
 		},
 
-		ImagePullSecrets: k8sutils.GetImagePullSecrets(),
-
 		Containers: []k8scorev1.Container{
 
 			{
@@ -385,6 +383,15 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 	}
 
 	if ucorev1.ToService(svc).IsManagedService() && svc.Status.ManagedService != nil {
+
+		if svc.Status.ManagedService.ImagePullSecret != "" {
+			ret.ImagePullSecrets = []k8scorev1.LocalObjectReference{
+				{
+					Name: svc.Status.ManagedService.ImagePullSecret,
+				},
+			}
+		}
+
 		if svc.Status.ManagedService.Type == "vigil" && svc.Status.ManagedService.Image != "" {
 			ret.Containers[0].Image = svc.Status.ManagedService.Image
 		} else {

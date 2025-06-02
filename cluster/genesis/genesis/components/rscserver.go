@@ -80,7 +80,6 @@ func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
 					NodeSelector:                 getNodeSelectorControlPlane(c),
-					ImagePullSecrets:             k8sutils.GetImagePullSecrets(),
 
 					Containers: []k8scorev1.Container{
 						{

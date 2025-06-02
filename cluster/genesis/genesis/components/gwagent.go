@@ -53,7 +53,6 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 				Spec: k8scorev1.PodSpec{
 					ServiceAccountName: getComponentName(componentGWAgent),
 					NodeSelector:       getNodeSelectorDataPlane(c),
-					ImagePullSecrets:   k8sutils.GetImagePullSecrets(),
 					HostNetwork:        true,
 					DNSPolicy:          k8scorev1.DNSClusterFirstWithHostNet,
 					Tolerations: func() []k8scorev1.Toleration {

@@ -50,7 +50,6 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 				Spec: k8scorev1.PodSpec{
 					NodeSelector:       getNodeSelectorControlPlane(c),
 					ServiceAccountName: getComponentName(componentNocturne),
-					ImagePullSecrets:   k8sutils.GetImagePullSecrets(),
 
 					Containers: []k8scorev1.Container{
 						{

@@ -178,7 +178,6 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
 					NodeSelector:                 getNodeSelectorControlPlane(c),
-					ImagePullSecrets:             k8sutils.GetImagePullSecrets(),
 
 					Containers: []k8scorev1.Container{
 						{
@@ -236,7 +235,6 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 							},
 						},
 					},
-					ImagePullSecrets: k8sutils.GetImagePullSecrets(),
 
 					Containers: []k8scorev1.Container{
 

@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	batchv1 "k8s.io/api/batch/v1"
@@ -62,7 +61,6 @@ func getGenesisJob(domain, version string) *batchv1.Job {
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "octelium-nocturne",
 					RestartPolicy:      corev1.RestartPolicyNever,
-					ImagePullSecrets:   k8sutils.GetImagePullSecrets(),
 
 					Containers: []corev1.Container{
 						{
