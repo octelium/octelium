@@ -45,7 +45,7 @@ var file_rcorev1_proto_rawDesc = []byte{
 	0x61, 0x76, 0x31, 0x2f, 0x72, 0x6d, 0x65, 0x74, 0x61, 0x76, 0x31, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x1a, 0x26, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66,
 	0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x76, 0x31, 0x2f, 0x63, 0x6f, 0x72,
-	0x65, 0x76, 0x31, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x32, 0xe2, 0x41, 0x0a, 0x0f, 0x52, 0x65,
+	0x65, 0x76, 0x31, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x32, 0xe3, 0x46, 0x0a, 0x0f, 0x52, 0x65,
 	0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x64, 0x0a,
 	0x10, 0x47, 0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69,
 	0x67, 0x12, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
@@ -571,11 +571,51 @@ var file_rcorev1_proto_rawDesc = []byte{
 	0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x57, 0x61, 0x74, 0x63, 0x68, 0x4f, 0x70, 0x74,
 	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
 	0x61, 0x70, 0x69, 0x2e, 0x72, 0x73, 0x63, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x57, 0x61, 0x74, 0x63, 0x68, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x22, 0x00, 0x30, 0x01, 0x42, 0x2f,
-	0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x61,
-	0x70, 0x69, 0x73, 0x2f, 0x72, 0x73, 0x63, 0x2f, 0x72, 0x63, 0x6f, 0x72, 0x65, 0x76, 0x31, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x57, 0x61, 0x74, 0x63, 0x68, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x22, 0x00, 0x30, 0x01, 0x12, 0x6b,
+	0x0a, 0x13, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69,
+	0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x1a,
+	0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68,
+	0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55,
+	0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x1a, 0x28, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12, 0x64, 0x0a, 0x10, 0x47, 0x65, 0x74, 0x41,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x24, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x72, 0x73, 0x63, 0x2e,
+	0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12, 0x6a,
+	0x0a, 0x11, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61,
+	0x74, 0x6f, 0x72, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x72, 0x73, 0x63, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4c,
+	0x69, 0x73, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2c, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x44, 0x65,
+	0x6c, 0x65, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
+	0x72, 0x12, 0x27, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x72, 0x73, 0x63, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c,
+	0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x29, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x72, 0x73, 0x63, 0x2e, 0x6d, 0x65,
+	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52,
+	0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x12, 0x57, 0x61, 0x74, 0x63, 0x68,
+	0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x26, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x72, 0x73, 0x63,
+	0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x57, 0x61, 0x74, 0x63, 0x68, 0x4f, 0x70,
+	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x72, 0x73, 0x63, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31,
+	0x2e, 0x57, 0x61, 0x74, 0x63, 0x68, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x22, 0x00, 0x30, 0x01, 0x42,
+	0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f,
+	0x61, 0x70, 0x69, 0x73, 0x2f, 0x72, 0x73, 0x63, 0x2f, 0x72, 0x63, 0x6f, 0x72, 0x65, 0x76, 0x31,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var file_rcorev1_proto_goTypes = []any{
@@ -598,22 +638,24 @@ var file_rcorev1_proto_goTypes = []any{
 	(*corev1.Region)(nil),               // 16: octelium.api.main.core.v1.Region
 	(*corev1.Gateway)(nil),              // 17: octelium.api.main.core.v1.Gateway
 	(*corev1.PolicyTrigger)(nil),        // 18: octelium.api.main.core.v1.PolicyTrigger
-	(*rmetav1.WatchEvent)(nil),          // 19: octelium.api.rsc.meta.v1.WatchEvent
-	(*corev1.PolicyList)(nil),           // 20: octelium.api.main.core.v1.PolicyList
-	(*rmetav1.OperationResult)(nil),     // 21: octelium.api.rsc.meta.v1.OperationResult
-	(*corev1.UserList)(nil),             // 22: octelium.api.main.core.v1.UserList
-	(*corev1.GroupList)(nil),            // 23: octelium.api.main.core.v1.GroupList
-	(*corev1.NamespaceList)(nil),        // 24: octelium.api.main.core.v1.NamespaceList
-	(*corev1.ServiceList)(nil),          // 25: octelium.api.main.core.v1.ServiceList
-	(*corev1.SessionList)(nil),          // 26: octelium.api.main.core.v1.SessionList
-	(*corev1.DeviceList)(nil),           // 27: octelium.api.main.core.v1.DeviceList
-	(*corev1.SecretList)(nil),           // 28: octelium.api.main.core.v1.SecretList
-	(*corev1.CredentialList)(nil),       // 29: octelium.api.main.core.v1.CredentialList
-	(*corev1.ConfigList)(nil),           // 30: octelium.api.main.core.v1.ConfigList
-	(*corev1.IdentityProviderList)(nil), // 31: octelium.api.main.core.v1.IdentityProviderList
-	(*corev1.RegionList)(nil),           // 32: octelium.api.main.core.v1.RegionList
-	(*corev1.GatewayList)(nil),          // 33: octelium.api.main.core.v1.GatewayList
-	(*corev1.PolicyTriggerList)(nil),    // 34: octelium.api.main.core.v1.PolicyTriggerList
+	(*corev1.Authenticator)(nil),        // 19: octelium.api.main.core.v1.Authenticator
+	(*rmetav1.WatchEvent)(nil),          // 20: octelium.api.rsc.meta.v1.WatchEvent
+	(*corev1.PolicyList)(nil),           // 21: octelium.api.main.core.v1.PolicyList
+	(*rmetav1.OperationResult)(nil),     // 22: octelium.api.rsc.meta.v1.OperationResult
+	(*corev1.UserList)(nil),             // 23: octelium.api.main.core.v1.UserList
+	(*corev1.GroupList)(nil),            // 24: octelium.api.main.core.v1.GroupList
+	(*corev1.NamespaceList)(nil),        // 25: octelium.api.main.core.v1.NamespaceList
+	(*corev1.ServiceList)(nil),          // 26: octelium.api.main.core.v1.ServiceList
+	(*corev1.SessionList)(nil),          // 27: octelium.api.main.core.v1.SessionList
+	(*corev1.DeviceList)(nil),           // 28: octelium.api.main.core.v1.DeviceList
+	(*corev1.SecretList)(nil),           // 29: octelium.api.main.core.v1.SecretList
+	(*corev1.CredentialList)(nil),       // 30: octelium.api.main.core.v1.CredentialList
+	(*corev1.ConfigList)(nil),           // 31: octelium.api.main.core.v1.ConfigList
+	(*corev1.IdentityProviderList)(nil), // 32: octelium.api.main.core.v1.IdentityProviderList
+	(*corev1.RegionList)(nil),           // 33: octelium.api.main.core.v1.RegionList
+	(*corev1.GatewayList)(nil),          // 34: octelium.api.main.core.v1.GatewayList
+	(*corev1.PolicyTriggerList)(nil),    // 35: octelium.api.main.core.v1.PolicyTriggerList
+	(*corev1.AuthenticatorList)(nil),    // 36: octelium.api.main.core.v1.AuthenticatorList
 }
 var file_rcorev1_proto_depIdxs = []int32{
 	0,  // 0: octelium.api.rsc.core.v1.ResourceService.GetClusterConfig:input_type -> octelium.api.rsc.meta.v1.GetOptions
@@ -703,95 +745,107 @@ var file_rcorev1_proto_depIdxs = []int32{
 	4,  // 84: octelium.api.rsc.core.v1.ResourceService.ListPolicyTrigger:input_type -> octelium.api.rsc.meta.v1.ListOptions
 	5,  // 85: octelium.api.rsc.core.v1.ResourceService.DeletePolicyTrigger:input_type -> octelium.api.rsc.meta.v1.DeleteOptions
 	2,  // 86: octelium.api.rsc.core.v1.ResourceService.WatchPolicyTrigger:input_type -> octelium.api.rsc.meta.v1.WatchOptions
-	1,  // 87: octelium.api.rsc.core.v1.ResourceService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	1,  // 88: octelium.api.rsc.core.v1.ResourceService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	19, // 89: octelium.api.rsc.core.v1.ResourceService.WatchClusterConfig:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	3,  // 90: octelium.api.rsc.core.v1.ResourceService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	3,  // 91: octelium.api.rsc.core.v1.ResourceService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	3,  // 92: octelium.api.rsc.core.v1.ResourceService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
-	20, // 93: octelium.api.rsc.core.v1.ResourceService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
-	21, // 94: octelium.api.rsc.core.v1.ResourceService.DeletePolicy:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 95: octelium.api.rsc.core.v1.ResourceService.WatchPolicy:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	6,  // 96: octelium.api.rsc.core.v1.ResourceService.CreateUser:output_type -> octelium.api.main.core.v1.User
-	6,  // 97: octelium.api.rsc.core.v1.ResourceService.UpdateUser:output_type -> octelium.api.main.core.v1.User
-	6,  // 98: octelium.api.rsc.core.v1.ResourceService.GetUser:output_type -> octelium.api.main.core.v1.User
-	22, // 99: octelium.api.rsc.core.v1.ResourceService.ListUser:output_type -> octelium.api.main.core.v1.UserList
-	21, // 100: octelium.api.rsc.core.v1.ResourceService.DeleteUser:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 101: octelium.api.rsc.core.v1.ResourceService.WatchUser:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	7,  // 102: octelium.api.rsc.core.v1.ResourceService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
-	7,  // 103: octelium.api.rsc.core.v1.ResourceService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
-	7,  // 104: octelium.api.rsc.core.v1.ResourceService.GetGroup:output_type -> octelium.api.main.core.v1.Group
-	23, // 105: octelium.api.rsc.core.v1.ResourceService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
-	21, // 106: octelium.api.rsc.core.v1.ResourceService.DeleteGroup:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 107: octelium.api.rsc.core.v1.ResourceService.WatchGroup:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	8,  // 108: octelium.api.rsc.core.v1.ResourceService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	8,  // 109: octelium.api.rsc.core.v1.ResourceService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	8,  // 110: octelium.api.rsc.core.v1.ResourceService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	24, // 111: octelium.api.rsc.core.v1.ResourceService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
-	21, // 112: octelium.api.rsc.core.v1.ResourceService.DeleteNamespace:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 113: octelium.api.rsc.core.v1.ResourceService.WatchNamespace:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	9,  // 114: octelium.api.rsc.core.v1.ResourceService.CreateService:output_type -> octelium.api.main.core.v1.Service
-	9,  // 115: octelium.api.rsc.core.v1.ResourceService.UpdateService:output_type -> octelium.api.main.core.v1.Service
-	9,  // 116: octelium.api.rsc.core.v1.ResourceService.GetService:output_type -> octelium.api.main.core.v1.Service
-	25, // 117: octelium.api.rsc.core.v1.ResourceService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
-	21, // 118: octelium.api.rsc.core.v1.ResourceService.DeleteService:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 119: octelium.api.rsc.core.v1.ResourceService.WatchService:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	10, // 120: octelium.api.rsc.core.v1.ResourceService.CreateSession:output_type -> octelium.api.main.core.v1.Session
-	10, // 121: octelium.api.rsc.core.v1.ResourceService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
-	10, // 122: octelium.api.rsc.core.v1.ResourceService.GetSession:output_type -> octelium.api.main.core.v1.Session
-	26, // 123: octelium.api.rsc.core.v1.ResourceService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
-	21, // 124: octelium.api.rsc.core.v1.ResourceService.DeleteSession:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 125: octelium.api.rsc.core.v1.ResourceService.WatchSession:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	11, // 126: octelium.api.rsc.core.v1.ResourceService.CreateDevice:output_type -> octelium.api.main.core.v1.Device
-	11, // 127: octelium.api.rsc.core.v1.ResourceService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
-	11, // 128: octelium.api.rsc.core.v1.ResourceService.GetDevice:output_type -> octelium.api.main.core.v1.Device
-	27, // 129: octelium.api.rsc.core.v1.ResourceService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
-	21, // 130: octelium.api.rsc.core.v1.ResourceService.DeleteDevice:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 131: octelium.api.rsc.core.v1.ResourceService.WatchDevice:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	12, // 132: octelium.api.rsc.core.v1.ResourceService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
-	12, // 133: octelium.api.rsc.core.v1.ResourceService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
-	12, // 134: octelium.api.rsc.core.v1.ResourceService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
-	28, // 135: octelium.api.rsc.core.v1.ResourceService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
-	21, // 136: octelium.api.rsc.core.v1.ResourceService.DeleteSecret:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 137: octelium.api.rsc.core.v1.ResourceService.WatchSecret:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	13, // 138: octelium.api.rsc.core.v1.ResourceService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
-	13, // 139: octelium.api.rsc.core.v1.ResourceService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
-	13, // 140: octelium.api.rsc.core.v1.ResourceService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
-	29, // 141: octelium.api.rsc.core.v1.ResourceService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
-	21, // 142: octelium.api.rsc.core.v1.ResourceService.DeleteCredential:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 143: octelium.api.rsc.core.v1.ResourceService.WatchCredential:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	14, // 144: octelium.api.rsc.core.v1.ResourceService.CreateConfig:output_type -> octelium.api.main.core.v1.Config
-	14, // 145: octelium.api.rsc.core.v1.ResourceService.UpdateConfig:output_type -> octelium.api.main.core.v1.Config
-	14, // 146: octelium.api.rsc.core.v1.ResourceService.GetConfig:output_type -> octelium.api.main.core.v1.Config
-	30, // 147: octelium.api.rsc.core.v1.ResourceService.ListConfig:output_type -> octelium.api.main.core.v1.ConfigList
-	21, // 148: octelium.api.rsc.core.v1.ResourceService.DeleteConfig:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 149: octelium.api.rsc.core.v1.ResourceService.WatchConfig:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	15, // 150: octelium.api.rsc.core.v1.ResourceService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	15, // 151: octelium.api.rsc.core.v1.ResourceService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	31, // 152: octelium.api.rsc.core.v1.ResourceService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
-	15, // 153: octelium.api.rsc.core.v1.ResourceService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	21, // 154: octelium.api.rsc.core.v1.ResourceService.DeleteIdentityProvider:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 155: octelium.api.rsc.core.v1.ResourceService.WatchIdentityProvider:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	16, // 156: octelium.api.rsc.core.v1.ResourceService.CreateRegion:output_type -> octelium.api.main.core.v1.Region
-	16, // 157: octelium.api.rsc.core.v1.ResourceService.UpdateRegion:output_type -> octelium.api.main.core.v1.Region
-	16, // 158: octelium.api.rsc.core.v1.ResourceService.GetRegion:output_type -> octelium.api.main.core.v1.Region
-	32, // 159: octelium.api.rsc.core.v1.ResourceService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
-	21, // 160: octelium.api.rsc.core.v1.ResourceService.DeleteRegion:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 161: octelium.api.rsc.core.v1.ResourceService.WatchRegion:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	17, // 162: octelium.api.rsc.core.v1.ResourceService.CreateGateway:output_type -> octelium.api.main.core.v1.Gateway
-	17, // 163: octelium.api.rsc.core.v1.ResourceService.UpdateGateway:output_type -> octelium.api.main.core.v1.Gateway
-	17, // 164: octelium.api.rsc.core.v1.ResourceService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
-	33, // 165: octelium.api.rsc.core.v1.ResourceService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
-	21, // 166: octelium.api.rsc.core.v1.ResourceService.DeleteGateway:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 167: octelium.api.rsc.core.v1.ResourceService.WatchGateway:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	18, // 168: octelium.api.rsc.core.v1.ResourceService.CreatePolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
-	18, // 169: octelium.api.rsc.core.v1.ResourceService.UpdatePolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
-	18, // 170: octelium.api.rsc.core.v1.ResourceService.GetPolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
-	34, // 171: octelium.api.rsc.core.v1.ResourceService.ListPolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTriggerList
-	21, // 172: octelium.api.rsc.core.v1.ResourceService.DeletePolicyTrigger:output_type -> octelium.api.rsc.meta.v1.OperationResult
-	19, // 173: octelium.api.rsc.core.v1.ResourceService.WatchPolicyTrigger:output_type -> octelium.api.rsc.meta.v1.WatchEvent
-	87, // [87:174] is the sub-list for method output_type
-	0,  // [0:87] is the sub-list for method input_type
+	19, // 87: octelium.api.rsc.core.v1.ResourceService.CreateAuthenticator:input_type -> octelium.api.main.core.v1.Authenticator
+	19, // 88: octelium.api.rsc.core.v1.ResourceService.UpdateAuthenticator:input_type -> octelium.api.main.core.v1.Authenticator
+	0,  // 89: octelium.api.rsc.core.v1.ResourceService.GetAuthenticator:input_type -> octelium.api.rsc.meta.v1.GetOptions
+	4,  // 90: octelium.api.rsc.core.v1.ResourceService.ListAuthenticator:input_type -> octelium.api.rsc.meta.v1.ListOptions
+	5,  // 91: octelium.api.rsc.core.v1.ResourceService.DeleteAuthenticator:input_type -> octelium.api.rsc.meta.v1.DeleteOptions
+	2,  // 92: octelium.api.rsc.core.v1.ResourceService.WatchAuthenticator:input_type -> octelium.api.rsc.meta.v1.WatchOptions
+	1,  // 93: octelium.api.rsc.core.v1.ResourceService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	1,  // 94: octelium.api.rsc.core.v1.ResourceService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	20, // 95: octelium.api.rsc.core.v1.ResourceService.WatchClusterConfig:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	3,  // 96: octelium.api.rsc.core.v1.ResourceService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	3,  // 97: octelium.api.rsc.core.v1.ResourceService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	3,  // 98: octelium.api.rsc.core.v1.ResourceService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
+	21, // 99: octelium.api.rsc.core.v1.ResourceService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
+	22, // 100: octelium.api.rsc.core.v1.ResourceService.DeletePolicy:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 101: octelium.api.rsc.core.v1.ResourceService.WatchPolicy:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	6,  // 102: octelium.api.rsc.core.v1.ResourceService.CreateUser:output_type -> octelium.api.main.core.v1.User
+	6,  // 103: octelium.api.rsc.core.v1.ResourceService.UpdateUser:output_type -> octelium.api.main.core.v1.User
+	6,  // 104: octelium.api.rsc.core.v1.ResourceService.GetUser:output_type -> octelium.api.main.core.v1.User
+	23, // 105: octelium.api.rsc.core.v1.ResourceService.ListUser:output_type -> octelium.api.main.core.v1.UserList
+	22, // 106: octelium.api.rsc.core.v1.ResourceService.DeleteUser:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 107: octelium.api.rsc.core.v1.ResourceService.WatchUser:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	7,  // 108: octelium.api.rsc.core.v1.ResourceService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
+	7,  // 109: octelium.api.rsc.core.v1.ResourceService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
+	7,  // 110: octelium.api.rsc.core.v1.ResourceService.GetGroup:output_type -> octelium.api.main.core.v1.Group
+	24, // 111: octelium.api.rsc.core.v1.ResourceService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
+	22, // 112: octelium.api.rsc.core.v1.ResourceService.DeleteGroup:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 113: octelium.api.rsc.core.v1.ResourceService.WatchGroup:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	8,  // 114: octelium.api.rsc.core.v1.ResourceService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	8,  // 115: octelium.api.rsc.core.v1.ResourceService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	8,  // 116: octelium.api.rsc.core.v1.ResourceService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	25, // 117: octelium.api.rsc.core.v1.ResourceService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
+	22, // 118: octelium.api.rsc.core.v1.ResourceService.DeleteNamespace:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 119: octelium.api.rsc.core.v1.ResourceService.WatchNamespace:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	9,  // 120: octelium.api.rsc.core.v1.ResourceService.CreateService:output_type -> octelium.api.main.core.v1.Service
+	9,  // 121: octelium.api.rsc.core.v1.ResourceService.UpdateService:output_type -> octelium.api.main.core.v1.Service
+	9,  // 122: octelium.api.rsc.core.v1.ResourceService.GetService:output_type -> octelium.api.main.core.v1.Service
+	26, // 123: octelium.api.rsc.core.v1.ResourceService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
+	22, // 124: octelium.api.rsc.core.v1.ResourceService.DeleteService:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 125: octelium.api.rsc.core.v1.ResourceService.WatchService:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	10, // 126: octelium.api.rsc.core.v1.ResourceService.CreateSession:output_type -> octelium.api.main.core.v1.Session
+	10, // 127: octelium.api.rsc.core.v1.ResourceService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
+	10, // 128: octelium.api.rsc.core.v1.ResourceService.GetSession:output_type -> octelium.api.main.core.v1.Session
+	27, // 129: octelium.api.rsc.core.v1.ResourceService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
+	22, // 130: octelium.api.rsc.core.v1.ResourceService.DeleteSession:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 131: octelium.api.rsc.core.v1.ResourceService.WatchSession:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	11, // 132: octelium.api.rsc.core.v1.ResourceService.CreateDevice:output_type -> octelium.api.main.core.v1.Device
+	11, // 133: octelium.api.rsc.core.v1.ResourceService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
+	11, // 134: octelium.api.rsc.core.v1.ResourceService.GetDevice:output_type -> octelium.api.main.core.v1.Device
+	28, // 135: octelium.api.rsc.core.v1.ResourceService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
+	22, // 136: octelium.api.rsc.core.v1.ResourceService.DeleteDevice:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 137: octelium.api.rsc.core.v1.ResourceService.WatchDevice:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	12, // 138: octelium.api.rsc.core.v1.ResourceService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
+	12, // 139: octelium.api.rsc.core.v1.ResourceService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
+	12, // 140: octelium.api.rsc.core.v1.ResourceService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
+	29, // 141: octelium.api.rsc.core.v1.ResourceService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
+	22, // 142: octelium.api.rsc.core.v1.ResourceService.DeleteSecret:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 143: octelium.api.rsc.core.v1.ResourceService.WatchSecret:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	13, // 144: octelium.api.rsc.core.v1.ResourceService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
+	13, // 145: octelium.api.rsc.core.v1.ResourceService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
+	13, // 146: octelium.api.rsc.core.v1.ResourceService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
+	30, // 147: octelium.api.rsc.core.v1.ResourceService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
+	22, // 148: octelium.api.rsc.core.v1.ResourceService.DeleteCredential:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 149: octelium.api.rsc.core.v1.ResourceService.WatchCredential:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	14, // 150: octelium.api.rsc.core.v1.ResourceService.CreateConfig:output_type -> octelium.api.main.core.v1.Config
+	14, // 151: octelium.api.rsc.core.v1.ResourceService.UpdateConfig:output_type -> octelium.api.main.core.v1.Config
+	14, // 152: octelium.api.rsc.core.v1.ResourceService.GetConfig:output_type -> octelium.api.main.core.v1.Config
+	31, // 153: octelium.api.rsc.core.v1.ResourceService.ListConfig:output_type -> octelium.api.main.core.v1.ConfigList
+	22, // 154: octelium.api.rsc.core.v1.ResourceService.DeleteConfig:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 155: octelium.api.rsc.core.v1.ResourceService.WatchConfig:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	15, // 156: octelium.api.rsc.core.v1.ResourceService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	15, // 157: octelium.api.rsc.core.v1.ResourceService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	32, // 158: octelium.api.rsc.core.v1.ResourceService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
+	15, // 159: octelium.api.rsc.core.v1.ResourceService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	22, // 160: octelium.api.rsc.core.v1.ResourceService.DeleteIdentityProvider:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 161: octelium.api.rsc.core.v1.ResourceService.WatchIdentityProvider:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	16, // 162: octelium.api.rsc.core.v1.ResourceService.CreateRegion:output_type -> octelium.api.main.core.v1.Region
+	16, // 163: octelium.api.rsc.core.v1.ResourceService.UpdateRegion:output_type -> octelium.api.main.core.v1.Region
+	16, // 164: octelium.api.rsc.core.v1.ResourceService.GetRegion:output_type -> octelium.api.main.core.v1.Region
+	33, // 165: octelium.api.rsc.core.v1.ResourceService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
+	22, // 166: octelium.api.rsc.core.v1.ResourceService.DeleteRegion:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 167: octelium.api.rsc.core.v1.ResourceService.WatchRegion:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	17, // 168: octelium.api.rsc.core.v1.ResourceService.CreateGateway:output_type -> octelium.api.main.core.v1.Gateway
+	17, // 169: octelium.api.rsc.core.v1.ResourceService.UpdateGateway:output_type -> octelium.api.main.core.v1.Gateway
+	17, // 170: octelium.api.rsc.core.v1.ResourceService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
+	34, // 171: octelium.api.rsc.core.v1.ResourceService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
+	22, // 172: octelium.api.rsc.core.v1.ResourceService.DeleteGateway:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 173: octelium.api.rsc.core.v1.ResourceService.WatchGateway:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	18, // 174: octelium.api.rsc.core.v1.ResourceService.CreatePolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
+	18, // 175: octelium.api.rsc.core.v1.ResourceService.UpdatePolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
+	18, // 176: octelium.api.rsc.core.v1.ResourceService.GetPolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTrigger
+	35, // 177: octelium.api.rsc.core.v1.ResourceService.ListPolicyTrigger:output_type -> octelium.api.main.core.v1.PolicyTriggerList
+	22, // 178: octelium.api.rsc.core.v1.ResourceService.DeletePolicyTrigger:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 179: octelium.api.rsc.core.v1.ResourceService.WatchPolicyTrigger:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	19, // 180: octelium.api.rsc.core.v1.ResourceService.CreateAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	19, // 181: octelium.api.rsc.core.v1.ResourceService.UpdateAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	19, // 182: octelium.api.rsc.core.v1.ResourceService.GetAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	36, // 183: octelium.api.rsc.core.v1.ResourceService.ListAuthenticator:output_type -> octelium.api.main.core.v1.AuthenticatorList
+	22, // 184: octelium.api.rsc.core.v1.ResourceService.DeleteAuthenticator:output_type -> octelium.api.rsc.meta.v1.OperationResult
+	20, // 185: octelium.api.rsc.core.v1.ResourceService.WatchAuthenticator:output_type -> octelium.api.rsc.meta.v1.WatchEvent
+	93, // [93:186] is the sub-list for method output_type
+	0,  // [0:93] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name

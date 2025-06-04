@@ -122,6 +122,12 @@ const (
 	ResourceService_ListPolicyTrigger_FullMethodName      = "/octelium.api.rsc.core.v1.ResourceService/ListPolicyTrigger"
 	ResourceService_DeletePolicyTrigger_FullMethodName    = "/octelium.api.rsc.core.v1.ResourceService/DeletePolicyTrigger"
 	ResourceService_WatchPolicyTrigger_FullMethodName     = "/octelium.api.rsc.core.v1.ResourceService/WatchPolicyTrigger"
+	ResourceService_CreateAuthenticator_FullMethodName    = "/octelium.api.rsc.core.v1.ResourceService/CreateAuthenticator"
+	ResourceService_UpdateAuthenticator_FullMethodName    = "/octelium.api.rsc.core.v1.ResourceService/UpdateAuthenticator"
+	ResourceService_GetAuthenticator_FullMethodName       = "/octelium.api.rsc.core.v1.ResourceService/GetAuthenticator"
+	ResourceService_ListAuthenticator_FullMethodName      = "/octelium.api.rsc.core.v1.ResourceService/ListAuthenticator"
+	ResourceService_DeleteAuthenticator_FullMethodName    = "/octelium.api.rsc.core.v1.ResourceService/DeleteAuthenticator"
+	ResourceService_WatchAuthenticator_FullMethodName     = "/octelium.api.rsc.core.v1.ResourceService/WatchAuthenticator"
 )
 
 // ResourceServiceClient is the client API for ResourceService service.
@@ -217,6 +223,12 @@ type ResourceServiceClient interface {
 	ListPolicyTrigger(ctx context.Context, in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.PolicyTriggerList, error)
 	DeletePolicyTrigger(ctx context.Context, in *rmetav1.DeleteOptions, opts ...grpc.CallOption) (*rmetav1.OperationResult, error)
 	WatchPolicyTrigger(ctx context.Context, in *rmetav1.WatchOptions, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rmetav1.WatchEvent], error)
+	CreateAuthenticator(ctx context.Context, in *corev1.Authenticator, opts ...grpc.CallOption) (*corev1.Authenticator, error)
+	UpdateAuthenticator(ctx context.Context, in *corev1.Authenticator, opts ...grpc.CallOption) (*corev1.Authenticator, error)
+	GetAuthenticator(ctx context.Context, in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Authenticator, error)
+	ListAuthenticator(ctx context.Context, in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.AuthenticatorList, error)
+	DeleteAuthenticator(ctx context.Context, in *rmetav1.DeleteOptions, opts ...grpc.CallOption) (*rmetav1.OperationResult, error)
+	WatchAuthenticator(ctx context.Context, in *rmetav1.WatchOptions, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rmetav1.WatchEvent], error)
 }
 
 type resourceServiceClient struct {
@@ -1232,6 +1244,75 @@ func (c *resourceServiceClient) WatchPolicyTrigger(ctx context.Context, in *rmet
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ResourceService_WatchPolicyTriggerClient = grpc.ServerStreamingClient[rmetav1.WatchEvent]
 
+func (c *resourceServiceClient) CreateAuthenticator(ctx context.Context, in *corev1.Authenticator, opts ...grpc.CallOption) (*corev1.Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(corev1.Authenticator)
+	err := c.cc.Invoke(ctx, ResourceService_CreateAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resourceServiceClient) UpdateAuthenticator(ctx context.Context, in *corev1.Authenticator, opts ...grpc.CallOption) (*corev1.Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(corev1.Authenticator)
+	err := c.cc.Invoke(ctx, ResourceService_UpdateAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resourceServiceClient) GetAuthenticator(ctx context.Context, in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(corev1.Authenticator)
+	err := c.cc.Invoke(ctx, ResourceService_GetAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resourceServiceClient) ListAuthenticator(ctx context.Context, in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.AuthenticatorList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(corev1.AuthenticatorList)
+	err := c.cc.Invoke(ctx, ResourceService_ListAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resourceServiceClient) DeleteAuthenticator(ctx context.Context, in *rmetav1.DeleteOptions, opts ...grpc.CallOption) (*rmetav1.OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(rmetav1.OperationResult)
+	err := c.cc.Invoke(ctx, ResourceService_DeleteAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resourceServiceClient) WatchAuthenticator(ctx context.Context, in *rmetav1.WatchOptions, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rmetav1.WatchEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ResourceService_ServiceDesc.Streams[15], ResourceService_WatchAuthenticator_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[rmetav1.WatchOptions, rmetav1.WatchEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ResourceService_WatchAuthenticatorClient = grpc.ServerStreamingClient[rmetav1.WatchEvent]
+
 // ResourceServiceServer is the server API for ResourceService service.
 // All implementations must embed UnimplementedResourceServiceServer
 // for forward compatibility.
@@ -1325,6 +1406,12 @@ type ResourceServiceServer interface {
 	ListPolicyTrigger(context.Context, *rmetav1.ListOptions) (*corev1.PolicyTriggerList, error)
 	DeletePolicyTrigger(context.Context, *rmetav1.DeleteOptions) (*rmetav1.OperationResult, error)
 	WatchPolicyTrigger(*rmetav1.WatchOptions, grpc.ServerStreamingServer[rmetav1.WatchEvent]) error
+	CreateAuthenticator(context.Context, *corev1.Authenticator) (*corev1.Authenticator, error)
+	UpdateAuthenticator(context.Context, *corev1.Authenticator) (*corev1.Authenticator, error)
+	GetAuthenticator(context.Context, *rmetav1.GetOptions) (*corev1.Authenticator, error)
+	ListAuthenticator(context.Context, *rmetav1.ListOptions) (*corev1.AuthenticatorList, error)
+	DeleteAuthenticator(context.Context, *rmetav1.DeleteOptions) (*rmetav1.OperationResult, error)
+	WatchAuthenticator(*rmetav1.WatchOptions, grpc.ServerStreamingServer[rmetav1.WatchEvent]) error
 	mustEmbedUnimplementedResourceServiceServer()
 }
 
@@ -1595,6 +1682,24 @@ func (UnimplementedResourceServiceServer) DeletePolicyTrigger(context.Context, *
 }
 func (UnimplementedResourceServiceServer) WatchPolicyTrigger(*rmetav1.WatchOptions, grpc.ServerStreamingServer[rmetav1.WatchEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method WatchPolicyTrigger not implemented")
+}
+func (UnimplementedResourceServiceServer) CreateAuthenticator(context.Context, *corev1.Authenticator) (*corev1.Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateAuthenticator not implemented")
+}
+func (UnimplementedResourceServiceServer) UpdateAuthenticator(context.Context, *corev1.Authenticator) (*corev1.Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateAuthenticator not implemented")
+}
+func (UnimplementedResourceServiceServer) GetAuthenticator(context.Context, *rmetav1.GetOptions) (*corev1.Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAuthenticator not implemented")
+}
+func (UnimplementedResourceServiceServer) ListAuthenticator(context.Context, *rmetav1.ListOptions) (*corev1.AuthenticatorList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAuthenticator not implemented")
+}
+func (UnimplementedResourceServiceServer) DeleteAuthenticator(context.Context, *rmetav1.DeleteOptions) (*rmetav1.OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteAuthenticator not implemented")
+}
+func (UnimplementedResourceServiceServer) WatchAuthenticator(*rmetav1.WatchOptions, grpc.ServerStreamingServer[rmetav1.WatchEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method WatchAuthenticator not implemented")
 }
 func (UnimplementedResourceServiceServer) mustEmbedUnimplementedResourceServiceServer() {}
 func (UnimplementedResourceServiceServer) testEmbeddedByValue()                         {}
@@ -3078,6 +3183,107 @@ func _ResourceService_WatchPolicyTrigger_Handler(srv interface{}, stream grpc.Se
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ResourceService_WatchPolicyTriggerServer = grpc.ServerStreamingServer[rmetav1.WatchEvent]
 
+func _ResourceService_CreateAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(corev1.Authenticator)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceServiceServer).CreateAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ResourceService_CreateAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceServiceServer).CreateAuthenticator(ctx, req.(*corev1.Authenticator))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ResourceService_UpdateAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(corev1.Authenticator)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceServiceServer).UpdateAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ResourceService_UpdateAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceServiceServer).UpdateAuthenticator(ctx, req.(*corev1.Authenticator))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ResourceService_GetAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(rmetav1.GetOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceServiceServer).GetAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ResourceService_GetAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceServiceServer).GetAuthenticator(ctx, req.(*rmetav1.GetOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ResourceService_ListAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(rmetav1.ListOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceServiceServer).ListAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ResourceService_ListAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceServiceServer).ListAuthenticator(ctx, req.(*rmetav1.ListOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ResourceService_DeleteAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(rmetav1.DeleteOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceServiceServer).DeleteAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ResourceService_DeleteAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceServiceServer).DeleteAuthenticator(ctx, req.(*rmetav1.DeleteOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ResourceService_WatchAuthenticator_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(rmetav1.WatchOptions)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ResourceServiceServer).WatchAuthenticator(m, &grpc.GenericServerStream[rmetav1.WatchOptions, rmetav1.WatchEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ResourceService_WatchAuthenticatorServer = grpc.ServerStreamingServer[rmetav1.WatchEvent]
+
 // ResourceService_ServiceDesc is the grpc.ServiceDesc for ResourceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3373,6 +3579,26 @@ var ResourceService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeletePolicyTrigger",
 			Handler:    _ResourceService_DeletePolicyTrigger_Handler,
 		},
+		{
+			MethodName: "CreateAuthenticator",
+			Handler:    _ResourceService_CreateAuthenticator_Handler,
+		},
+		{
+			MethodName: "UpdateAuthenticator",
+			Handler:    _ResourceService_UpdateAuthenticator_Handler,
+		},
+		{
+			MethodName: "GetAuthenticator",
+			Handler:    _ResourceService_GetAuthenticator_Handler,
+		},
+		{
+			MethodName: "ListAuthenticator",
+			Handler:    _ResourceService_ListAuthenticator_Handler,
+		},
+		{
+			MethodName: "DeleteAuthenticator",
+			Handler:    _ResourceService_DeleteAuthenticator_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -3448,6 +3674,11 @@ var ResourceService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WatchPolicyTrigger",
 			Handler:       _ResourceService_WatchPolicyTrigger_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchAuthenticator",
+			Handler:       _ResourceService_WatchAuthenticator_Handler,
 			ServerStreams: true,
 		},
 	},
