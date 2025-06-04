@@ -89,6 +89,9 @@ const (
 	MainService_GetGateway_FullMethodName              = "/octelium.api.main.core.v1.MainService/GetGateway"
 	MainService_GetClusterConfig_FullMethodName        = "/octelium.api.main.core.v1.MainService/GetClusterConfig"
 	MainService_UpdateClusterConfig_FullMethodName     = "/octelium.api.main.core.v1.MainService/UpdateClusterConfig"
+	MainService_ListAuthenticator_FullMethodName       = "/octelium.api.main.core.v1.MainService/ListAuthenticator"
+	MainService_DeleteAuthenticator_FullMethodName     = "/octelium.api.main.core.v1.MainService/DeleteAuthenticator"
+	MainService_GetAuthenticator_FullMethodName        = "/octelium.api.main.core.v1.MainService/GetAuthenticator"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -205,6 +208,12 @@ type MainServiceClient interface {
 	GetClusterConfig(ctx context.Context, in *GetClusterConfigRequest, opts ...grpc.CallOption) (*ClusterConfig, error)
 	// UpdateConfig updates the Cluster Configuration.
 	UpdateClusterConfig(ctx context.Context, in *ClusterConfig, opts ...grpc.CallOption) (*ClusterConfig, error)
+	// ListAuthenticator lists Authenticators
+	ListAuthenticator(ctx context.Context, in *ListAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error)
+	// DeleteAuthenticator deletes an Authenticator
+	DeleteAuthenticator(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
+	// GetAuthenticator retrieves a specific Authenticator
+	GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error)
 }
 
 type mainServiceClient struct {
@@ -765,6 +774,36 @@ func (c *mainServiceClient) UpdateClusterConfig(ctx context.Context, in *Cluster
 	return out, nil
 }
 
+func (c *mainServiceClient) ListAuthenticator(ctx context.Context, in *ListAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticatorList)
+	err := c.cc.Invoke(ctx, MainService_ListAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) DeleteAuthenticator(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(metav1.OperationResult)
+	err := c.cc.Invoke(ctx, MainService_DeleteAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Authenticator)
+	err := c.cc.Invoke(ctx, MainService_GetAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -879,6 +918,12 @@ type MainServiceServer interface {
 	GetClusterConfig(context.Context, *GetClusterConfigRequest) (*ClusterConfig, error)
 	// UpdateConfig updates the Cluster Configuration.
 	UpdateClusterConfig(context.Context, *ClusterConfig) (*ClusterConfig, error)
+	// ListAuthenticator lists Authenticators
+	ListAuthenticator(context.Context, *ListAuthenticatorOptions) (*AuthenticatorList, error)
+	// DeleteAuthenticator deletes an Authenticator
+	DeleteAuthenticator(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
+	// GetAuthenticator retrieves a specific Authenticator
+	GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -1053,6 +1098,15 @@ func (UnimplementedMainServiceServer) GetClusterConfig(context.Context, *GetClus
 }
 func (UnimplementedMainServiceServer) UpdateClusterConfig(context.Context, *ClusterConfig) (*ClusterConfig, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateClusterConfig not implemented")
+}
+func (UnimplementedMainServiceServer) ListAuthenticator(context.Context, *ListAuthenticatorOptions) (*AuthenticatorList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) DeleteAuthenticator(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAuthenticator not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -2065,6 +2119,60 @@ func _MainService_UpdateClusterConfig_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_ListAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAuthenticatorOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).ListAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_ListAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).ListAuthenticator(ctx, req.(*ListAuthenticatorOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_DeleteAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.DeleteOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).DeleteAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_DeleteAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).DeleteAuthenticator(ctx, req.(*metav1.DeleteOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_GetAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.GetOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).GetAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_GetAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).GetAuthenticator(ctx, req.(*metav1.GetOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2291,6 +2399,18 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateClusterConfig",
 			Handler:    _MainService_UpdateClusterConfig_Handler,
+		},
+		{
+			MethodName: "ListAuthenticator",
+			Handler:    _MainService_ListAuthenticator_Handler,
+		},
+		{
+			MethodName: "DeleteAuthenticator",
+			Handler:    _MainService_DeleteAuthenticator_Handler,
+		},
+		{
+			MethodName: "GetAuthenticator",
+			Handler:    _MainService_GetAuthenticator_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -22,6 +22,7 @@ package authv1
 
 import (
 	context "context"
+	metav1 "github.com/octelium/octelium/apis/main/metav1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -39,6 +40,14 @@ const (
 	MainService_Logout_FullMethodName                              = "/octelium.api.main.auth.v1.MainService/Logout"
 	MainService_RegisterDeviceBegin_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/RegisterDeviceBegin"
 	MainService_RegisterDeviceFinish_FullMethodName                = "/octelium.api.main.auth.v1.MainService/RegisterDeviceFinish"
+	MainService_GetAuthenticator_FullMethodName                    = "/octelium.api.main.auth.v1.MainService/GetAuthenticator"
+	MainService_CreateAuthenticator_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/CreateAuthenticator"
+	MainService_UpdateAuthenticator_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/UpdateAuthenticator"
+	MainService_ListAuthenticator_FullMethodName                   = "/octelium.api.main.auth.v1.MainService/ListAuthenticator"
+	MainService_DeleteAuthenticator_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/DeleteAuthenticator"
+	MainService_RegisterAuthenticatorBegin_FullMethodName          = "/octelium.api.main.auth.v1.MainService/RegisterAuthenticatorBegin"
+	MainService_RegisterAuthenticatorFinish_FullMethodName         = "/octelium.api.main.auth.v1.MainService/RegisterAuthenticatorFinish"
+	MainService_AuthenticateAuthenticatorBegin_FullMethodName      = "/octelium.api.main.auth.v1.MainService/AuthenticateAuthenticatorBegin"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -51,6 +60,14 @@ type MainServiceClient interface {
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
 	RegisterDeviceBegin(ctx context.Context, in *RegisterDeviceBeginRequest, opts ...grpc.CallOption) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(ctx context.Context, in *RegisterDeviceFinishRequest, opts ...grpc.CallOption) (*RegisterDeviceFinishResponse, error)
+	GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error)
+	CreateAuthenticator(ctx context.Context, in *CreateAuthenticatorRequest, opts ...grpc.CallOption) (*Authenticator, error)
+	UpdateAuthenticator(ctx context.Context, in *Authenticator, opts ...grpc.CallOption) (*Authenticator, error)
+	ListAuthenticator(ctx context.Context, in *ListAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error)
+	DeleteAuthenticator(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
+	RegisterAuthenticatorBegin(ctx context.Context, in *RegisterAuthenticatorBeginRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorBeginResponse, error)
+	RegisterAuthenticatorFinish(ctx context.Context, in *RegisterAuthenticatorFinishRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorFinishResponse, error)
+	AuthenticateAuthenticatorBegin(ctx context.Context, in *AuthenticateAuthenticatorBeginRequest, opts ...grpc.CallOption) (*AuthenticateAuthenticatorBeginResponse, error)
 }
 
 type mainServiceClient struct {
@@ -121,6 +138,86 @@ func (c *mainServiceClient) RegisterDeviceFinish(ctx context.Context, in *Regist
 	return out, nil
 }
 
+func (c *mainServiceClient) GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Authenticator)
+	err := c.cc.Invoke(ctx, MainService_GetAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) CreateAuthenticator(ctx context.Context, in *CreateAuthenticatorRequest, opts ...grpc.CallOption) (*Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Authenticator)
+	err := c.cc.Invoke(ctx, MainService_CreateAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) UpdateAuthenticator(ctx context.Context, in *Authenticator, opts ...grpc.CallOption) (*Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Authenticator)
+	err := c.cc.Invoke(ctx, MainService_UpdateAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) ListAuthenticator(ctx context.Context, in *ListAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticatorList)
+	err := c.cc.Invoke(ctx, MainService_ListAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) DeleteAuthenticator(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(metav1.OperationResult)
+	err := c.cc.Invoke(ctx, MainService_DeleteAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) RegisterAuthenticatorBegin(ctx context.Context, in *RegisterAuthenticatorBeginRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorBeginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterAuthenticatorBeginResponse)
+	err := c.cc.Invoke(ctx, MainService_RegisterAuthenticatorBegin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) RegisterAuthenticatorFinish(ctx context.Context, in *RegisterAuthenticatorFinishRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorFinishResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterAuthenticatorFinishResponse)
+	err := c.cc.Invoke(ctx, MainService_RegisterAuthenticatorFinish_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) AuthenticateAuthenticatorBegin(ctx context.Context, in *AuthenticateAuthenticatorBeginRequest, opts ...grpc.CallOption) (*AuthenticateAuthenticatorBeginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticateAuthenticatorBeginResponse)
+	err := c.cc.Invoke(ctx, MainService_AuthenticateAuthenticatorBegin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -131,6 +228,14 @@ type MainServiceServer interface {
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
 	RegisterDeviceBegin(context.Context, *RegisterDeviceBeginRequest) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(context.Context, *RegisterDeviceFinishRequest) (*RegisterDeviceFinishResponse, error)
+	GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error)
+	CreateAuthenticator(context.Context, *CreateAuthenticatorRequest) (*Authenticator, error)
+	UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error)
+	ListAuthenticator(context.Context, *ListAuthenticatorOptions) (*AuthenticatorList, error)
+	DeleteAuthenticator(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
+	RegisterAuthenticatorBegin(context.Context, *RegisterAuthenticatorBeginRequest) (*RegisterAuthenticatorBeginResponse, error)
+	RegisterAuthenticatorFinish(context.Context, *RegisterAuthenticatorFinishRequest) (*RegisterAuthenticatorFinishResponse, error)
+	AuthenticateAuthenticatorBegin(context.Context, *AuthenticateAuthenticatorBeginRequest) (*AuthenticateAuthenticatorBeginResponse, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -158,6 +263,30 @@ func (UnimplementedMainServiceServer) RegisterDeviceBegin(context.Context, *Regi
 }
 func (UnimplementedMainServiceServer) RegisterDeviceFinish(context.Context, *RegisterDeviceFinishRequest) (*RegisterDeviceFinishResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterDeviceFinish not implemented")
+}
+func (UnimplementedMainServiceServer) GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) CreateAuthenticator(context.Context, *CreateAuthenticatorRequest) (*Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) ListAuthenticator(context.Context, *ListAuthenticatorOptions) (*AuthenticatorList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) DeleteAuthenticator(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) RegisterAuthenticatorBegin(context.Context, *RegisterAuthenticatorBeginRequest) (*RegisterAuthenticatorBeginResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterAuthenticatorBegin not implemented")
+}
+func (UnimplementedMainServiceServer) RegisterAuthenticatorFinish(context.Context, *RegisterAuthenticatorFinishRequest) (*RegisterAuthenticatorFinishResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterAuthenticatorFinish not implemented")
+}
+func (UnimplementedMainServiceServer) AuthenticateAuthenticatorBegin(context.Context, *AuthenticateAuthenticatorBeginRequest) (*AuthenticateAuthenticatorBeginResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateAuthenticatorBegin not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -288,6 +417,150 @@ func _MainService_RegisterDeviceFinish_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_GetAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.GetOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).GetAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_GetAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).GetAuthenticator(ctx, req.(*metav1.GetOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_CreateAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAuthenticatorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).CreateAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_CreateAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).CreateAuthenticator(ctx, req.(*CreateAuthenticatorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_UpdateAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Authenticator)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).UpdateAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_UpdateAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).UpdateAuthenticator(ctx, req.(*Authenticator))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_ListAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAuthenticatorOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).ListAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_ListAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).ListAuthenticator(ctx, req.(*ListAuthenticatorOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_DeleteAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.DeleteOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).DeleteAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_DeleteAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).DeleteAuthenticator(ctx, req.(*metav1.DeleteOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_RegisterAuthenticatorBegin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterAuthenticatorBeginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).RegisterAuthenticatorBegin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_RegisterAuthenticatorBegin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).RegisterAuthenticatorBegin(ctx, req.(*RegisterAuthenticatorBeginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_RegisterAuthenticatorFinish_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterAuthenticatorFinishRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).RegisterAuthenticatorFinish(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_RegisterAuthenticatorFinish_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).RegisterAuthenticatorFinish(ctx, req.(*RegisterAuthenticatorFinishRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_AuthenticateAuthenticatorBegin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateAuthenticatorBeginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).AuthenticateAuthenticatorBegin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_AuthenticateAuthenticatorBegin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).AuthenticateAuthenticatorBegin(ctx, req.(*AuthenticateAuthenticatorBeginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -318,6 +591,38 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterDeviceFinish",
 			Handler:    _MainService_RegisterDeviceFinish_Handler,
+		},
+		{
+			MethodName: "GetAuthenticator",
+			Handler:    _MainService_GetAuthenticator_Handler,
+		},
+		{
+			MethodName: "CreateAuthenticator",
+			Handler:    _MainService_CreateAuthenticator_Handler,
+		},
+		{
+			MethodName: "UpdateAuthenticator",
+			Handler:    _MainService_UpdateAuthenticator_Handler,
+		},
+		{
+			MethodName: "ListAuthenticator",
+			Handler:    _MainService_ListAuthenticator_Handler,
+		},
+		{
+			MethodName: "DeleteAuthenticator",
+			Handler:    _MainService_DeleteAuthenticator_Handler,
+		},
+		{
+			MethodName: "RegisterAuthenticatorBegin",
+			Handler:    _MainService_RegisterAuthenticatorBegin_Handler,
+		},
+		{
+			MethodName: "RegisterAuthenticatorFinish",
+			Handler:    _MainService_RegisterAuthenticatorFinish_Handler,
+		},
+		{
+			MethodName: "AuthenticateAuthenticatorBegin",
+			Handler:    _MainService_AuthenticateAuthenticatorBegin_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

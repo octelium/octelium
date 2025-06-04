@@ -192,6 +192,55 @@ func (TokenT0_Content_Type) EnumDescriptor() ([]byte, []int) {
 	return file_authv1_proto_rawDescGZIP(), []int{12, 0, 0}
 }
 
+type Authenticator_Status_Type int32
+
+const (
+	Authenticator_Status_TYPE_UNKNOWN Authenticator_Status_Type = 0
+	Authenticator_Status_FIDO         Authenticator_Status_Type = 1
+	Authenticator_Status_TOTP         Authenticator_Status_Type = 2
+)
+
+// Enum value maps for Authenticator_Status_Type.
+var (
+	Authenticator_Status_Type_name = map[int32]string{
+		0: "TYPE_UNKNOWN",
+		1: "FIDO",
+		2: "TOTP",
+	}
+	Authenticator_Status_Type_value = map[string]int32{
+		"TYPE_UNKNOWN": 0,
+		"FIDO":         1,
+		"TOTP":         2,
+	}
+)
+
+func (x Authenticator_Status_Type) Enum() *Authenticator_Status_Type {
+	p := new(Authenticator_Status_Type)
+	*p = x
+	return p
+}
+
+func (x Authenticator_Status_Type) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Authenticator_Status_Type) Descriptor() protoreflect.EnumDescriptor {
+	return file_authv1_proto_enumTypes[3].Descriptor()
+}
+
+func (Authenticator_Status_Type) Type() protoreflect.EnumType {
+	return &file_authv1_proto_enumTypes[3]
+}
+
+func (x Authenticator_Status_Type) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Authenticator_Status_Type.Descriptor instead.
+func (Authenticator_Status_Type) EnumDescriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{17, 1, 0}
+}
+
 type SessionToken struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	AccessToken           string                 `protobuf:"bytes,1,opt,name=accessToken,proto3" json:"accessToken,omitempty"`
@@ -820,6 +869,619 @@ func (x *TokenT0) GetContent() *TokenT0_Content {
 	return nil
 }
 
+type AuthenticateAuthenticatorBeginRequest struct {
+	state            protoimpl.MessageState  `protogen:"open.v1"`
+	AuthenticatorRef *metav1.ObjectReference `protobuf:"bytes,1,opt,name=authenticatorRef,proto3" json:"authenticatorRef,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AuthenticateAuthenticatorBeginRequest) Reset() {
+	*x = AuthenticateAuthenticatorBeginRequest{}
+	mi := &file_authv1_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticateAuthenticatorBeginRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticateAuthenticatorBeginRequest) ProtoMessage() {}
+
+func (x *AuthenticateAuthenticatorBeginRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticateAuthenticatorBeginRequest.ProtoReflect.Descriptor instead.
+func (*AuthenticateAuthenticatorBeginRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *AuthenticateAuthenticatorBeginRequest) GetAuthenticatorRef() *metav1.ObjectReference {
+	if x != nil {
+		return x.AuthenticatorRef
+	}
+	return nil
+}
+
+type AuthenticateAuthenticatorBeginResponse struct {
+	state            protoimpl.MessageState                                   `protogen:"open.v1"`
+	ChallengeRequest *AuthenticateAuthenticatorBeginResponse_ChallengeRequest `protobuf:"bytes,1,opt,name=challengeRequest,proto3" json:"challengeRequest,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse) Reset() {
+	*x = AuthenticateAuthenticatorBeginResponse{}
+	mi := &file_authv1_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticateAuthenticatorBeginResponse) ProtoMessage() {}
+
+func (x *AuthenticateAuthenticatorBeginResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticateAuthenticatorBeginResponse.ProtoReflect.Descriptor instead.
+func (*AuthenticateAuthenticatorBeginResponse) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse) GetChallengeRequest() *AuthenticateAuthenticatorBeginResponse_ChallengeRequest {
+	if x != nil {
+		return x.ChallengeRequest
+	}
+	return nil
+}
+
+type RegisterAuthenticatorBeginRequest struct {
+	state            protoimpl.MessageState                          `protogen:"open.v1"`
+	AuthenticatorRef *metav1.ObjectReference                         `protobuf:"bytes,1,opt,name=authenticatorRef,proto3" json:"authenticatorRef,omitempty"`
+	PreChallenge     *RegisterAuthenticatorBeginRequest_PreChallenge `protobuf:"bytes,2,opt,name=preChallenge,proto3" json:"preChallenge,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginRequest) Reset() {
+	*x = RegisterAuthenticatorBeginRequest{}
+	mi := &file_authv1_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginRequest) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginRequest.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *RegisterAuthenticatorBeginRequest) GetAuthenticatorRef() *metav1.ObjectReference {
+	if x != nil {
+		return x.AuthenticatorRef
+	}
+	return nil
+}
+
+func (x *RegisterAuthenticatorBeginRequest) GetPreChallenge() *RegisterAuthenticatorBeginRequest_PreChallenge {
+	if x != nil {
+		return x.PreChallenge
+	}
+	return nil
+}
+
+type RegisterAuthenticatorBeginResponse struct {
+	state            protoimpl.MessageState                               `protogen:"open.v1"`
+	ChallengeRequest *RegisterAuthenticatorBeginResponse_ChallengeRequest `protobuf:"bytes,1,opt,name=challengeRequest,proto3" json:"challengeRequest,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginResponse) Reset() {
+	*x = RegisterAuthenticatorBeginResponse{}
+	mi := &file_authv1_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginResponse) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginResponse.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginResponse) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RegisterAuthenticatorBeginResponse) GetChallengeRequest() *RegisterAuthenticatorBeginResponse_ChallengeRequest {
+	if x != nil {
+		return x.ChallengeRequest
+	}
+	return nil
+}
+
+type Authenticator struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// APIVersion is the API version of the object.
+	ApiVersion string `protobuf:"bytes,1,opt,name=apiVersion,proto3" json:"apiVersion,omitempty"`
+	// Kind is the resource name (i.e. `Group`).
+	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	// octelium.api.main.meta.v1.Metadata is the object's metadata.
+	Metadata *metav1.Metadata `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	// Spec is the Group specification.
+	Spec *Authenticator_Spec `protobuf:"bytes,4,opt,name=spec,proto3" json:"spec,omitempty"`
+	// Status is the current status of the Group.
+	Status        *Authenticator_Status `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Authenticator) Reset() {
+	*x = Authenticator{}
+	mi := &file_authv1_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Authenticator) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Authenticator) ProtoMessage() {}
+
+func (x *Authenticator) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Authenticator.ProtoReflect.Descriptor instead.
+func (*Authenticator) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *Authenticator) GetApiVersion() string {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return ""
+}
+
+func (x *Authenticator) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Authenticator) GetMetadata() *metav1.Metadata {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *Authenticator) GetSpec() *Authenticator_Spec {
+	if x != nil {
+		return x.Spec
+	}
+	return nil
+}
+
+func (x *Authenticator) GetStatus() *Authenticator_Status {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+type AuthenticatorList struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// APIVersion is the API version of the object.
+	ApiVersion string `protobuf:"bytes,1,opt,name=apiVersion,proto3" json:"apiVersion,omitempty"`
+	// Kind is the resource name (i.e. `GroupList`).
+	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	// Items is the list of Groups.
+	Items []*Authenticator `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	// ListResponseMeta is common information about the list.
+	ListResponseMeta *metav1.ListResponseMeta `protobuf:"bytes,4,opt,name=listResponseMeta,proto3" json:"listResponseMeta,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AuthenticatorList) Reset() {
+	*x = AuthenticatorList{}
+	mi := &file_authv1_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticatorList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticatorList) ProtoMessage() {}
+
+func (x *AuthenticatorList) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticatorList.ProtoReflect.Descriptor instead.
+func (*AuthenticatorList) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *AuthenticatorList) GetApiVersion() string {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return ""
+}
+
+func (x *AuthenticatorList) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *AuthenticatorList) GetItems() []*Authenticator {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *AuthenticatorList) GetListResponseMeta() *metav1.ListResponseMeta {
+	if x != nil {
+		return x.ListResponseMeta
+	}
+	return nil
+}
+
+type ListAuthenticatorOptions struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Page is the page number. Starts at 0
+	Page uint32 `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
+	// ItemsPerPage is the number of items per page
+	ItemsPerPage  uint32 `protobuf:"varint,2,opt,name=itemsPerPage,proto3" json:"itemsPerPage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAuthenticatorOptions) Reset() {
+	*x = ListAuthenticatorOptions{}
+	mi := &file_authv1_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAuthenticatorOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAuthenticatorOptions) ProtoMessage() {}
+
+func (x *ListAuthenticatorOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAuthenticatorOptions.ProtoReflect.Descriptor instead.
+func (*ListAuthenticatorOptions) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ListAuthenticatorOptions) GetPage() uint32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListAuthenticatorOptions) GetItemsPerPage() uint32 {
+	if x != nil {
+		return x.ItemsPerPage
+	}
+	return 0
+}
+
+type CreateAuthenticatorRequest struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Type          Authenticator_Status_Type `protobuf:"varint,1,opt,name=type,proto3,enum=octelium.api.main.auth.v1.Authenticator_Status_Type" json:"type,omitempty"`
+	DisplayName   string                    `protobuf:"bytes,2,opt,name=displayName,proto3" json:"displayName,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAuthenticatorRequest) Reset() {
+	*x = CreateAuthenticatorRequest{}
+	mi := &file_authv1_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAuthenticatorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAuthenticatorRequest) ProtoMessage() {}
+
+func (x *CreateAuthenticatorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAuthenticatorRequest.ProtoReflect.Descriptor instead.
+func (*CreateAuthenticatorRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *CreateAuthenticatorRequest) GetType() Authenticator_Status_Type {
+	if x != nil {
+		return x.Type
+	}
+	return Authenticator_Status_TYPE_UNKNOWN
+}
+
+func (x *CreateAuthenticatorRequest) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+type RegisterAuthenticatorFinishRequest struct {
+	state             protoimpl.MessageState  `protogen:"open.v1"`
+	AuthenticatorRef  *metav1.ObjectReference `protobuf:"bytes,1,opt,name=authenticatorRef,proto3" json:"authenticatorRef,omitempty"`
+	ChallengeResponse *ChallengeResponse      `protobuf:"bytes,2,opt,name=challengeResponse,proto3" json:"challengeResponse,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorFinishRequest) Reset() {
+	*x = RegisterAuthenticatorFinishRequest{}
+	mi := &file_authv1_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorFinishRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorFinishRequest) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorFinishRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorFinishRequest.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorFinishRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RegisterAuthenticatorFinishRequest) GetAuthenticatorRef() *metav1.ObjectReference {
+	if x != nil {
+		return x.AuthenticatorRef
+	}
+	return nil
+}
+
+func (x *RegisterAuthenticatorFinishRequest) GetChallengeResponse() *ChallengeResponse {
+	if x != nil {
+		return x.ChallengeResponse
+	}
+	return nil
+}
+
+type RegisterAuthenticatorFinishResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorFinishResponse) Reset() {
+	*x = RegisterAuthenticatorFinishResponse{}
+	mi := &file_authv1_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorFinishResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorFinishResponse) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorFinishResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorFinishResponse.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorFinishResponse) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{22}
+}
+
+type ChallengeResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Type:
+	//
+	//	*ChallengeResponse_Fido
+	//	*ChallengeResponse_Totp
+	Type          isChallengeResponse_Type `protobuf_oneof:"type"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChallengeResponse) Reset() {
+	*x = ChallengeResponse{}
+	mi := &file_authv1_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChallengeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChallengeResponse) ProtoMessage() {}
+
+func (x *ChallengeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChallengeResponse.ProtoReflect.Descriptor instead.
+func (*ChallengeResponse) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ChallengeResponse) GetType() isChallengeResponse_Type {
+	if x != nil {
+		return x.Type
+	}
+	return nil
+}
+
+func (x *ChallengeResponse) GetFido() *ChallengeResponse_FIDO {
+	if x != nil {
+		if x, ok := x.Type.(*ChallengeResponse_Fido); ok {
+			return x.Fido
+		}
+	}
+	return nil
+}
+
+func (x *ChallengeResponse) GetTotp() *ChallengeResponse_TOTP {
+	if x != nil {
+		if x, ok := x.Type.(*ChallengeResponse_Totp); ok {
+			return x.Totp
+		}
+	}
+	return nil
+}
+
+type isChallengeResponse_Type interface {
+	isChallengeResponse_Type()
+}
+
+type ChallengeResponse_Fido struct {
+	Fido *ChallengeResponse_FIDO `protobuf:"bytes,1,opt,name=fido,proto3,oneof"`
+}
+
+type ChallengeResponse_Totp struct {
+	Totp *ChallengeResponse_TOTP `protobuf:"bytes,2,opt,name=totp,proto3,oneof"`
+}
+
+func (*ChallengeResponse_Fido) isChallengeResponse_Type() {}
+
+func (*ChallengeResponse_Totp) isChallengeResponse_Type() {}
+
 type RegisterDeviceBeginRequest_Info struct {
 	state         protoimpl.MessageState                 `protogen:"open.v1"`
 	OsType        RegisterDeviceBeginRequest_Info_OSType `protobuf:"varint,1,opt,name=osType,proto3,enum=octelium.api.main.auth.v1.RegisterDeviceBeginRequest_Info_OSType" json:"osType,omitempty"`
@@ -833,7 +1495,7 @@ type RegisterDeviceBeginRequest_Info struct {
 
 func (x *RegisterDeviceBeginRequest_Info) Reset() {
 	*x = RegisterDeviceBeginRequest_Info{}
-	mi := &file_authv1_proto_msgTypes[13]
+	mi := &file_authv1_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -845,7 +1507,7 @@ func (x *RegisterDeviceBeginRequest_Info) String() string {
 func (*RegisterDeviceBeginRequest_Info) ProtoMessage() {}
 
 func (x *RegisterDeviceBeginRequest_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[13]
+	mi := &file_authv1_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -910,7 +1572,7 @@ type RegisterDeviceBeginResponse_Request struct {
 
 func (x *RegisterDeviceBeginResponse_Request) Reset() {
 	*x = RegisterDeviceBeginResponse_Request{}
-	mi := &file_authv1_proto_msgTypes[14]
+	mi := &file_authv1_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -922,7 +1584,7 @@ func (x *RegisterDeviceBeginResponse_Request) String() string {
 func (*RegisterDeviceBeginResponse_Request) ProtoMessage() {}
 
 func (x *RegisterDeviceBeginResponse_Request) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[14]
+	mi := &file_authv1_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -996,7 +1658,7 @@ type RegisterDeviceBeginResponse_Request_Command struct {
 
 func (x *RegisterDeviceBeginResponse_Request_Command) Reset() {
 	*x = RegisterDeviceBeginResponse_Request_Command{}
-	mi := &file_authv1_proto_msgTypes[15]
+	mi := &file_authv1_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1008,7 +1670,7 @@ func (x *RegisterDeviceBeginResponse_Request_Command) String() string {
 func (*RegisterDeviceBeginResponse_Request_Command) ProtoMessage() {}
 
 func (x *RegisterDeviceBeginResponse_Request_Command) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[15]
+	mi := &file_authv1_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1709,7 @@ type RegisterDeviceBeginResponse_Request_File struct {
 
 func (x *RegisterDeviceBeginResponse_Request_File) Reset() {
 	*x = RegisterDeviceBeginResponse_Request_File{}
-	mi := &file_authv1_proto_msgTypes[16]
+	mi := &file_authv1_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1059,7 +1721,7 @@ func (x *RegisterDeviceBeginResponse_Request_File) String() string {
 func (*RegisterDeviceBeginResponse_Request_File) ProtoMessage() {}
 
 func (x *RegisterDeviceBeginResponse_Request_File) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[16]
+	mi := &file_authv1_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1096,7 +1758,7 @@ type RegisterDeviceFinishRequest_Response struct {
 
 func (x *RegisterDeviceFinishRequest_Response) Reset() {
 	*x = RegisterDeviceFinishRequest_Response{}
-	mi := &file_authv1_proto_msgTypes[17]
+	mi := &file_authv1_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1108,7 +1770,7 @@ func (x *RegisterDeviceFinishRequest_Response) String() string {
 func (*RegisterDeviceFinishRequest_Response) ProtoMessage() {}
 
 func (x *RegisterDeviceFinishRequest_Response) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[17]
+	mi := &file_authv1_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1181,7 +1843,7 @@ type RegisterDeviceFinishRequest_Response_Command struct {
 
 func (x *RegisterDeviceFinishRequest_Response_Command) Reset() {
 	*x = RegisterDeviceFinishRequest_Response_Command{}
-	mi := &file_authv1_proto_msgTypes[18]
+	mi := &file_authv1_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1193,7 +1855,7 @@ func (x *RegisterDeviceFinishRequest_Response_Command) String() string {
 func (*RegisterDeviceFinishRequest_Response_Command) ProtoMessage() {}
 
 func (x *RegisterDeviceFinishRequest_Response_Command) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[18]
+	mi := &file_authv1_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1225,7 +1887,7 @@ type RegisterDeviceFinishRequest_Response_File struct {
 
 func (x *RegisterDeviceFinishRequest_Response_File) Reset() {
 	*x = RegisterDeviceFinishRequest_Response_File{}
-	mi := &file_authv1_proto_msgTypes[19]
+	mi := &file_authv1_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1237,7 +1899,7 @@ func (x *RegisterDeviceFinishRequest_Response_File) String() string {
 func (*RegisterDeviceFinishRequest_Response_File) ProtoMessage() {}
 
 func (x *RegisterDeviceFinishRequest_Response_File) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[19]
+	mi := &file_authv1_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1273,7 +1935,7 @@ type TokenT0_Content struct {
 
 func (x *TokenT0_Content) Reset() {
 	*x = TokenT0_Content{}
-	mi := &file_authv1_proto_msgTypes[20]
+	mi := &file_authv1_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1285,7 +1947,7 @@ func (x *TokenT0_Content) String() string {
 func (*TokenT0_Content) ProtoMessage() {}
 
 func (x *TokenT0_Content) ProtoReflect() protoreflect.Message {
-	mi := &file_authv1_proto_msgTypes[20]
+	mi := &file_authv1_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1334,6 +1996,562 @@ func (x *TokenT0_Content) GetExpiresAt() *timestamppb.Timestamp {
 		return x.ExpiresAt
 	}
 	return nil
+}
+
+type AuthenticateAuthenticatorBeginResponse_ChallengeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Type:
+	//
+	//	*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido
+	//	*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp
+	Type          isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type `protobuf_oneof:"type"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) Reset() {
+	*x = AuthenticateAuthenticatorBeginResponse_ChallengeRequest{}
+	mi := &file_authv1_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest) ProtoMessage() {}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticateAuthenticatorBeginResponse_ChallengeRequest.ProtoReflect.Descriptor instead.
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{14, 0}
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) GetType() isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type {
+	if x != nil {
+		return x.Type
+	}
+	return nil
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) GetFido() *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO {
+	if x != nil {
+		if x, ok := x.Type.(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido); ok {
+			return x.Fido
+		}
+	}
+	return nil
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest) GetTotp() *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP {
+	if x != nil {
+		if x, ok := x.Type.(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp); ok {
+			return x.Totp
+		}
+	}
+	return nil
+}
+
+type isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type interface {
+	isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type()
+}
+
+type AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido struct {
+	Fido *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO `protobuf:"bytes,1,opt,name=fido,proto3,oneof"`
+}
+
+type AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp struct {
+	Totp *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP `protobuf:"bytes,2,opt,name=totp,proto3,oneof"`
+}
+
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido) isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type() {
+}
+
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp) isAuthenticateAuthenticatorBeginResponse_ChallengeRequest_Type() {
+}
+
+type AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       string                 `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) Reset() {
+	*x = AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO{}
+	mi := &file_authv1_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) ProtoMessage() {}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO.ProtoReflect.Descriptor instead.
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{14, 0, 0}
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO) GetRequest() string {
+	if x != nil {
+		return x.Request
+	}
+	return ""
+}
+
+type AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP) Reset() {
+	*x = AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP{}
+	mi := &file_authv1_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP) ProtoMessage() {}
+
+func (x *AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP.ProtoReflect.Descriptor instead.
+func (*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{14, 0, 1}
+}
+
+type RegisterAuthenticatorBeginRequest_PreChallenge struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginRequest_PreChallenge) Reset() {
+	*x = RegisterAuthenticatorBeginRequest_PreChallenge{}
+	mi := &file_authv1_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginRequest_PreChallenge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginRequest_PreChallenge) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginRequest_PreChallenge) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginRequest_PreChallenge.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginRequest_PreChallenge) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{15, 0}
+}
+
+type RegisterAuthenticatorBeginResponse_ChallengeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Type:
+	//
+	//	*RegisterAuthenticatorBeginResponse_ChallengeRequest_Fido
+	//	*RegisterAuthenticatorBeginResponse_ChallengeRequest_Totp
+	Type          isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type `protobuf_oneof:"type"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) Reset() {
+	*x = RegisterAuthenticatorBeginResponse_ChallengeRequest{}
+	mi := &file_authv1_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginResponse_ChallengeRequest.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{16, 0}
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) GetType() isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type {
+	if x != nil {
+		return x.Type
+	}
+	return nil
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) GetFido() *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO {
+	if x != nil {
+		if x, ok := x.Type.(*RegisterAuthenticatorBeginResponse_ChallengeRequest_Fido); ok {
+			return x.Fido
+		}
+	}
+	return nil
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest) GetTotp() *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP {
+	if x != nil {
+		if x, ok := x.Type.(*RegisterAuthenticatorBeginResponse_ChallengeRequest_Totp); ok {
+			return x.Totp
+		}
+	}
+	return nil
+}
+
+type isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type interface {
+	isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type()
+}
+
+type RegisterAuthenticatorBeginResponse_ChallengeRequest_Fido struct {
+	Fido *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO `protobuf:"bytes,1,opt,name=fido,proto3,oneof"`
+}
+
+type RegisterAuthenticatorBeginResponse_ChallengeRequest_Totp struct {
+	Totp *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP `protobuf:"bytes,2,opt,name=totp,proto3,oneof"`
+}
+
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_Fido) isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type() {
+}
+
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_Totp) isRegisterAuthenticatorBeginResponse_ChallengeRequest_Type() {
+}
+
+type RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       string                 `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) Reset() {
+	*x = RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO{}
+	mi := &file_authv1_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{16, 0, 0}
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO) GetRequest() string {
+	if x != nil {
+		return x.Request
+	}
+	return ""
+}
+
+type RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) Reset() {
+	*x = RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP{}
+	mi := &file_authv1_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) ProtoMessage() {}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP.ProtoReflect.Descriptor instead.
+func (*RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{16, 0, 1}
+}
+
+func (x *RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+type Authenticator_Spec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DisplayName   string                 `protobuf:"bytes,1,opt,name=displayName,proto3" json:"displayName,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Authenticator_Spec) Reset() {
+	*x = Authenticator_Spec{}
+	mi := &file_authv1_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Authenticator_Spec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Authenticator_Spec) ProtoMessage() {}
+
+func (x *Authenticator_Spec) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Authenticator_Spec.ProtoReflect.Descriptor instead.
+func (*Authenticator_Spec) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{17, 0}
+}
+
+func (x *Authenticator_Spec) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+type Authenticator_Status struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	IsRegistered  bool                      `protobuf:"varint,1,opt,name=isRegistered,proto3" json:"isRegistered,omitempty"`
+	Type          Authenticator_Status_Type `protobuf:"varint,2,opt,name=type,proto3,enum=octelium.api.main.auth.v1.Authenticator_Status_Type" json:"type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Authenticator_Status) Reset() {
+	*x = Authenticator_Status{}
+	mi := &file_authv1_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Authenticator_Status) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Authenticator_Status) ProtoMessage() {}
+
+func (x *Authenticator_Status) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Authenticator_Status.ProtoReflect.Descriptor instead.
+func (*Authenticator_Status) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{17, 1}
+}
+
+func (x *Authenticator_Status) GetIsRegistered() bool {
+	if x != nil {
+		return x.IsRegistered
+	}
+	return false
+}
+
+func (x *Authenticator_Status) GetType() Authenticator_Status_Type {
+	if x != nil {
+		return x.Type
+	}
+	return Authenticator_Status_TYPE_UNKNOWN
+}
+
+type ChallengeResponse_FIDO struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Response      string                 `protobuf:"bytes,1,opt,name=response,proto3" json:"response,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChallengeResponse_FIDO) Reset() {
+	*x = ChallengeResponse_FIDO{}
+	mi := &file_authv1_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChallengeResponse_FIDO) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChallengeResponse_FIDO) ProtoMessage() {}
+
+func (x *ChallengeResponse_FIDO) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChallengeResponse_FIDO.ProtoReflect.Descriptor instead.
+func (*ChallengeResponse_FIDO) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{23, 0}
+}
+
+func (x *ChallengeResponse_FIDO) GetResponse() string {
+	if x != nil {
+		return x.Response
+	}
+	return ""
+}
+
+type ChallengeResponse_TOTP struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Response      string                 `protobuf:"bytes,1,opt,name=response,proto3" json:"response,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChallengeResponse_TOTP) Reset() {
+	*x = ChallengeResponse_TOTP{}
+	mi := &file_authv1_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChallengeResponse_TOTP) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChallengeResponse_TOTP) ProtoMessage() {}
+
+func (x *ChallengeResponse_TOTP) ProtoReflect() protoreflect.Message {
+	mi := &file_authv1_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChallengeResponse_TOTP.ProtoReflect.Descriptor instead.
+func (*ChallengeResponse_TOTP) Descriptor() ([]byte, []int) {
+	return file_authv1_proto_rawDescGZIP(), []int{23, 1}
+}
+
+func (x *ChallengeResponse_TOTP) GetResponse() string {
+	if x != nil {
+		return x.Response
+	}
+	return ""
 }
 
 var File_authv1_proto protoreflect.FileDescriptor
@@ -1508,8 +2726,180 @@ var file_authv1_proto_rawDesc = []byte{
 	0x55, 0x4e, 0x4b, 0x4e, 0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x10, 0x0a, 0x0c, 0x41, 0x43, 0x43,
 	0x45, 0x53, 0x53, 0x5f, 0x54, 0x4f, 0x4b, 0x45, 0x4e, 0x10, 0x01, 0x12, 0x11, 0x0a, 0x0d, 0x52,
 	0x45, 0x46, 0x52, 0x45, 0x53, 0x48, 0x5f, 0x54, 0x4f, 0x4b, 0x45, 0x4e, 0x10, 0x02, 0x12, 0x0e,
-	0x0a, 0x0a, 0x43, 0x52, 0x45, 0x44, 0x45, 0x4e, 0x54, 0x49, 0x41, 0x4c, 0x10, 0x03, 0x32, 0xaf,
-	0x06, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x97,
+	0x0a, 0x0a, 0x43, 0x52, 0x45, 0x44, 0x45, 0x4e, 0x54, 0x49, 0x41, 0x4c, 0x10, 0x03, 0x22, 0x7f,
+	0x0a, 0x25, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x65, 0x41, 0x75,
+	0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x56, 0x0a, 0x10, 0x61, 0x75, 0x74, 0x68, 0x65,
+	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x66, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x62,
+	0x6a, 0x65, 0x63, 0x74, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x10, 0x61,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x66, 0x22,
+	0xcd, 0x03, 0x0a, 0x26, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x65,
+	0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67,
+	0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x7e, 0x0a, 0x10, 0x63, 0x68,
+	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x0b, 0x32, 0x52, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31,
+	0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74,
+	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67,
+	0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x52, 0x10, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65,
+	0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0xa2, 0x02, 0x0a, 0x10, 0x43,
+	0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
+	0x6d, 0x0a, 0x04, 0x66, 0x69, 0x64, 0x6f, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x57, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e,
+	0x74, 0x69, 0x63, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61,
+	0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x2e, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x2e, 0x46, 0x49, 0x44, 0x4f, 0x48, 0x00, 0x52, 0x04, 0x66, 0x69, 0x64, 0x6f, 0x12, 0x6d,
+	0x0a, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x57, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e,
+	0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x2e, 0x54, 0x4f, 0x54, 0x50, 0x48, 0x00, 0x52, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x1a, 0x20, 0x0a,
+	0x04, 0x46, 0x49, 0x44, 0x4f, 0x12, 0x18, 0x0a, 0x07, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x06, 0x0a, 0x04, 0x54, 0x4f, 0x54, 0x50, 0x42, 0x06, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x22,
+	0xfa, 0x01, 0x0a, 0x21, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68,
+	0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x56, 0x0a, 0x10, 0x61, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x66, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32,
+	0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x62, 0x6a, 0x65,
+	0x63, 0x74, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x10, 0x61, 0x75, 0x74,
+	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x66, 0x12, 0x6d, 0x0a,
+	0x0c, 0x70, 0x72, 0x65, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x49, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e,
+	0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69,
+	0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x2e, 0x50, 0x72, 0x65, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x0c,
+	0x70, 0x72, 0x65, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x1a, 0x0e, 0x0a, 0x0c,
+	0x50, 0x72, 0x65, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x22, 0xcf, 0x03, 0x0a,
+	0x22, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x12, 0x7a, 0x0a, 0x10, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x4e, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74,
+	0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42,
+	0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x43, 0x68, 0x61,
+	0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x52, 0x10, 0x63,
+	0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0xac, 0x02, 0x0a, 0x10, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x12, 0x69, 0x0a, 0x04, 0x66, 0x69, 0x64, 0x6f, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x53, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x52,
+	0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x2e, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x2e, 0x46, 0x49, 0x44, 0x4f, 0x48, 0x00, 0x52, 0x04, 0x66, 0x69, 0x64, 0x6f, 0x12,
+	0x69, 0x0a, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x53, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74,
+	0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42,
+	0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x43, 0x68, 0x61,
+	0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x2e, 0x54, 0x4f,
+	0x54, 0x50, 0x48, 0x00, 0x52, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x1a, 0x20, 0x0a, 0x04, 0x46, 0x49,
+	0x44, 0x4f, 0x12, 0x18, 0x0a, 0x07, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x07, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18, 0x0a, 0x04,
+	0x54, 0x4f, 0x54, 0x50, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x42, 0x06, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x22, 0xe1,
+	0x03, 0x0a, 0x0d, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
+	0x12, 0x1e, 0x0a, 0x0a, 0x61, 0x70, 0x69, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x61, 0x70, 0x69, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+	0x12, 0x12, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04,
+	0x6b, 0x69, 0x6e, 0x64, 0x12, 0x3f, 0x0a, 0x08, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e,
+	0x76, 0x31, 0x2e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52, 0x08, 0x6d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0x12, 0x41, 0x0a, 0x04, 0x73, 0x70, 0x65, 0x63, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x2d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e,
+	0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x2e, 0x53, 0x70,
+	0x65, 0x63, 0x52, 0x04, 0x73, 0x70, 0x65, 0x63, 0x12, 0x47, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74,
+	0x75, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74,
+	0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x2e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75,
+	0x73, 0x1a, 0x28, 0x0a, 0x04, 0x53, 0x70, 0x65, 0x63, 0x12, 0x20, 0x0a, 0x0b, 0x64, 0x69, 0x73,
+	0x70, 0x6c, 0x61, 0x79, 0x4e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b,
+	0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x4e, 0x61, 0x6d, 0x65, 0x1a, 0xa4, 0x01, 0x0a, 0x06,
+	0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x22, 0x0a, 0x0c, 0x69, 0x73, 0x52, 0x65, 0x67, 0x69,
+	0x73, 0x74, 0x65, 0x72, 0x65, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0c, 0x69, 0x73,
+	0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x65, 0x64, 0x12, 0x48, 0x0a, 0x04, 0x74, 0x79,
+	0x70, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x34, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74,
+	0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x2e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x2e, 0x54, 0x79, 0x70, 0x65, 0x52, 0x04,
+	0x74, 0x79, 0x70, 0x65, 0x22, 0x2c, 0x0a, 0x04, 0x54, 0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x0c,
+	0x54, 0x59, 0x50, 0x45, 0x5f, 0x55, 0x4e, 0x4b, 0x4e, 0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x08,
+	0x0a, 0x04, 0x46, 0x49, 0x44, 0x4f, 0x10, 0x01, 0x12, 0x08, 0x0a, 0x04, 0x54, 0x4f, 0x54, 0x50,
+	0x10, 0x02, 0x22, 0xe0, 0x01, 0x0a, 0x11, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x61, 0x70, 0x69, 0x56,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x61, 0x70,
+	0x69, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x12, 0x3e, 0x0a, 0x05,
+	0x69, 0x74, 0x65, 0x6d, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x28, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69,
+	0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x05, 0x69, 0x74, 0x65, 0x6d, 0x73, 0x12, 0x57, 0x0a, 0x10,
+	0x6c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x4d, 0x65, 0x74, 0x61,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e,
+	0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x4d,
+	0x65, 0x74, 0x61, 0x52, 0x10, 0x6c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x4d, 0x65, 0x74, 0x61, 0x22, 0x52, 0x0a, 0x18, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74,
+	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x12, 0x12, 0x0a, 0x04, 0x70, 0x61, 0x67, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52,
+	0x04, 0x70, 0x61, 0x67, 0x65, 0x12, 0x22, 0x0a, 0x0c, 0x69, 0x74, 0x65, 0x6d, 0x73, 0x50, 0x65,
+	0x72, 0x50, 0x61, 0x67, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0c, 0x69, 0x74, 0x65,
+	0x6d, 0x73, 0x50, 0x65, 0x72, 0x50, 0x61, 0x67, 0x65, 0x22, 0x88, 0x01, 0x0a, 0x1a, 0x43, 0x72,
+	0x65, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
+	0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x48, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x34, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e,
+	0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
+	0x2e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x2e, 0x54, 0x79, 0x70, 0x65, 0x52, 0x04, 0x74, 0x79,
+	0x70, 0x65, 0x12, 0x20, 0x0a, 0x0b, 0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x4e, 0x61, 0x6d,
+	0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79,
+	0x4e, 0x61, 0x6d, 0x65, 0x22, 0xd8, 0x01, 0x0a, 0x22, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65,
+	0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x46, 0x69,
+	0x6e, 0x69, 0x73, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x56, 0x0a, 0x10, 0x61,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x66, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76,
+	0x31, 0x2e, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x52, 0x10, 0x61, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
+	0x52, 0x65, 0x66, 0x12, 0x5a, 0x0a, 0x11, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2c,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x68, 0x61, 0x6c, 0x6c,
+	0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x11, 0x63, 0x68,
+	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
+	0x25, 0x0a, 0x23, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65,
+	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xf5, 0x01, 0x0a, 0x11, 0x43, 0x68, 0x61, 0x6c, 0x6c,
+	0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x47, 0x0a, 0x04,
+	0x66, 0x69, 0x64, 0x6f, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x31, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61,
+	0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x46, 0x49, 0x44, 0x4f, 0x48, 0x00, 0x52,
+	0x04, 0x66, 0x69, 0x64, 0x6f, 0x12, 0x47, 0x0a, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x31, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e,
+	0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x2e, 0x54, 0x4f, 0x54, 0x50, 0x48, 0x00, 0x52, 0x04, 0x74, 0x6f, 0x74, 0x70, 0x1a, 0x22,
+	0x0a, 0x04, 0x46, 0x49, 0x44, 0x4f, 0x12, 0x1a, 0x0a, 0x08, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x1a, 0x22, 0x0a, 0x04, 0x54, 0x4f, 0x54, 0x50, 0x12, 0x1a, 0x0a, 0x08, 0x72, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x72, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42, 0x06, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x32, 0xcf,
+	0x0e, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x97,
 	0x01, 0x0a, 0x23, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x65, 0x57,
 	0x69, 0x74, 0x68, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f,
 	0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x45, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
@@ -1560,6 +2950,72 @@ var file_authv1_proto_rawDesc = []byte{
 	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76,
 	0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65,
 	0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
+	0x12, 0x65, 0x0a, 0x10, 0x47, 0x65, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31,
+	0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69,
+	0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12, 0x78, 0x0a, 0x13, 0x43, 0x72, 0x65, 0x61, 0x74,
+	0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x35,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x61, 0x74,
+	0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76,
+	0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22,
+	0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65,
+	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74,
+	0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12, 0x78,
+	0x0a, 0x11, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61,
+	0x74, 0x6f, 0x72, 0x12, 0x33, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e,
+	0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
+	0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74,
+	0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x6d, 0x0a, 0x13, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12,
+	0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
+	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52,
+	0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x9b, 0x01, 0x0a, 0x1a, 0x52, 0x65, 0x67, 0x69,
+	0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
+	0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x12, 0x3c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e,
+	0x76, 0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65,
+	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x3d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31,
+	0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x9e, 0x01, 0x0a, 0x1b, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74,
+	0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x46,
+	0x69, 0x6e, 0x69, 0x73, 0x68, 0x12, 0x3d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76,
+	0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e,
+	0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x3e, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31,
+	0x2e, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0xa7, 0x01, 0x0a, 0x1e, 0x41, 0x75, 0x74, 0x68, 0x65,
+	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x12, 0x40, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x61, 0x75,
+	0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61,
+	0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x42,
+	0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x41, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x61, 0x75, 0x74, 0x68, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69,
+	0x63, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
+	0x72, 0x42, 0x65, 0x67, 0x69, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
 	0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f,
 	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
 	0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x61, 0x75, 0x74, 0x68, 0x76,
@@ -1578,67 +3034,131 @@ func file_authv1_proto_rawDescGZIP() []byte {
 	return file_authv1_proto_rawDescData
 }
 
-var file_authv1_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_authv1_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_authv1_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_authv1_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_authv1_proto_goTypes = []any{
-	(ClientLoginRequest_APIVersion)(0),                   // 0: octelium.api.main.auth.v1.ClientLoginRequest.APIVersion
-	(RegisterDeviceBeginRequest_Info_OSType)(0),          // 1: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.OSType
-	(TokenT0_Content_Type)(0),                            // 2: octelium.api.main.auth.v1.TokenT0.Content.Type
-	(*SessionToken)(nil),                                 // 3: octelium.api.main.auth.v1.SessionToken
-	(*ClientLoginRequest)(nil),                           // 4: octelium.api.main.auth.v1.ClientLoginRequest
-	(*ClientLoginResponse)(nil),                          // 5: octelium.api.main.auth.v1.ClientLoginResponse
-	(*LogoutRequest)(nil),                                // 6: octelium.api.main.auth.v1.LogoutRequest
-	(*LogoutResponse)(nil),                               // 7: octelium.api.main.auth.v1.LogoutResponse
-	(*RegisterDeviceBeginRequest)(nil),                   // 8: octelium.api.main.auth.v1.RegisterDeviceBeginRequest
-	(*RegisterDeviceBeginResponse)(nil),                  // 9: octelium.api.main.auth.v1.RegisterDeviceBeginResponse
-	(*RegisterDeviceFinishRequest)(nil),                  // 10: octelium.api.main.auth.v1.RegisterDeviceFinishRequest
-	(*RegisterDeviceFinishResponse)(nil),                 // 11: octelium.api.main.auth.v1.RegisterDeviceFinishResponse
-	(*AuthenticateWithAuthenticationTokenRequest)(nil),   // 12: octelium.api.main.auth.v1.AuthenticateWithAuthenticationTokenRequest
-	(*AuthenticateWithAssertionRequest)(nil),             // 13: octelium.api.main.auth.v1.AuthenticateWithAssertionRequest
-	(*AuthenticateWithRefreshTokenRequest)(nil),          // 14: octelium.api.main.auth.v1.AuthenticateWithRefreshTokenRequest
-	(*TokenT0)(nil),                                      // 15: octelium.api.main.auth.v1.TokenT0
-	(*RegisterDeviceBeginRequest_Info)(nil),              // 16: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info
-	(*RegisterDeviceBeginResponse_Request)(nil),          // 17: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request
-	(*RegisterDeviceBeginResponse_Request_Command)(nil),  // 18: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.Command
-	(*RegisterDeviceBeginResponse_Request_File)(nil),     // 19: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.File
-	(*RegisterDeviceFinishRequest_Response)(nil),         // 20: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response
-	(*RegisterDeviceFinishRequest_Response_Command)(nil), // 21: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.Command
-	(*RegisterDeviceFinishRequest_Response_File)(nil),    // 22: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.File
-	(*TokenT0_Content)(nil),                              // 23: octelium.api.main.auth.v1.TokenT0.Content
-	(*metav1.ObjectReference)(nil),                       // 24: octelium.api.main.meta.v1.ObjectReference
-	(*timestamppb.Timestamp)(nil),                        // 25: google.protobuf.Timestamp
+	(ClientLoginRequest_APIVersion)(0),                                   // 0: octelium.api.main.auth.v1.ClientLoginRequest.APIVersion
+	(RegisterDeviceBeginRequest_Info_OSType)(0),                          // 1: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.OSType
+	(TokenT0_Content_Type)(0),                                            // 2: octelium.api.main.auth.v1.TokenT0.Content.Type
+	(Authenticator_Status_Type)(0),                                       // 3: octelium.api.main.auth.v1.Authenticator.Status.Type
+	(*SessionToken)(nil),                                                 // 4: octelium.api.main.auth.v1.SessionToken
+	(*ClientLoginRequest)(nil),                                           // 5: octelium.api.main.auth.v1.ClientLoginRequest
+	(*ClientLoginResponse)(nil),                                          // 6: octelium.api.main.auth.v1.ClientLoginResponse
+	(*LogoutRequest)(nil),                                                // 7: octelium.api.main.auth.v1.LogoutRequest
+	(*LogoutResponse)(nil),                                               // 8: octelium.api.main.auth.v1.LogoutResponse
+	(*RegisterDeviceBeginRequest)(nil),                                   // 9: octelium.api.main.auth.v1.RegisterDeviceBeginRequest
+	(*RegisterDeviceBeginResponse)(nil),                                  // 10: octelium.api.main.auth.v1.RegisterDeviceBeginResponse
+	(*RegisterDeviceFinishRequest)(nil),                                  // 11: octelium.api.main.auth.v1.RegisterDeviceFinishRequest
+	(*RegisterDeviceFinishResponse)(nil),                                 // 12: octelium.api.main.auth.v1.RegisterDeviceFinishResponse
+	(*AuthenticateWithAuthenticationTokenRequest)(nil),                   // 13: octelium.api.main.auth.v1.AuthenticateWithAuthenticationTokenRequest
+	(*AuthenticateWithAssertionRequest)(nil),                             // 14: octelium.api.main.auth.v1.AuthenticateWithAssertionRequest
+	(*AuthenticateWithRefreshTokenRequest)(nil),                          // 15: octelium.api.main.auth.v1.AuthenticateWithRefreshTokenRequest
+	(*TokenT0)(nil),                                                      // 16: octelium.api.main.auth.v1.TokenT0
+	(*AuthenticateAuthenticatorBeginRequest)(nil),                        // 17: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginRequest
+	(*AuthenticateAuthenticatorBeginResponse)(nil),                       // 18: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse
+	(*RegisterAuthenticatorBeginRequest)(nil),                            // 19: octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest
+	(*RegisterAuthenticatorBeginResponse)(nil),                           // 20: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse
+	(*Authenticator)(nil),                                                // 21: octelium.api.main.auth.v1.Authenticator
+	(*AuthenticatorList)(nil),                                            // 22: octelium.api.main.auth.v1.AuthenticatorList
+	(*ListAuthenticatorOptions)(nil),                                     // 23: octelium.api.main.auth.v1.ListAuthenticatorOptions
+	(*CreateAuthenticatorRequest)(nil),                                   // 24: octelium.api.main.auth.v1.CreateAuthenticatorRequest
+	(*RegisterAuthenticatorFinishRequest)(nil),                           // 25: octelium.api.main.auth.v1.RegisterAuthenticatorFinishRequest
+	(*RegisterAuthenticatorFinishResponse)(nil),                          // 26: octelium.api.main.auth.v1.RegisterAuthenticatorFinishResponse
+	(*ChallengeResponse)(nil),                                            // 27: octelium.api.main.auth.v1.ChallengeResponse
+	(*RegisterDeviceBeginRequest_Info)(nil),                              // 28: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info
+	(*RegisterDeviceBeginResponse_Request)(nil),                          // 29: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request
+	(*RegisterDeviceBeginResponse_Request_Command)(nil),                  // 30: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.Command
+	(*RegisterDeviceBeginResponse_Request_File)(nil),                     // 31: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.File
+	(*RegisterDeviceFinishRequest_Response)(nil),                         // 32: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response
+	(*RegisterDeviceFinishRequest_Response_Command)(nil),                 // 33: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.Command
+	(*RegisterDeviceFinishRequest_Response_File)(nil),                    // 34: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.File
+	(*TokenT0_Content)(nil),                                              // 35: octelium.api.main.auth.v1.TokenT0.Content
+	(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest)(nil),      // 36: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest
+	(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_FIDO)(nil), // 37: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.FIDO
+	(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP)(nil), // 38: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.TOTP
+	(*RegisterAuthenticatorBeginRequest_PreChallenge)(nil),               // 39: octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest.PreChallenge
+	(*RegisterAuthenticatorBeginResponse_ChallengeRequest)(nil),          // 40: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest
+	(*RegisterAuthenticatorBeginResponse_ChallengeRequest_FIDO)(nil),     // 41: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.FIDO
+	(*RegisterAuthenticatorBeginResponse_ChallengeRequest_TOTP)(nil),     // 42: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.TOTP
+	(*Authenticator_Spec)(nil),                                           // 43: octelium.api.main.auth.v1.Authenticator.Spec
+	(*Authenticator_Status)(nil),                                         // 44: octelium.api.main.auth.v1.Authenticator.Status
+	(*ChallengeResponse_FIDO)(nil),                                       // 45: octelium.api.main.auth.v1.ChallengeResponse.FIDO
+	(*ChallengeResponse_TOTP)(nil),                                       // 46: octelium.api.main.auth.v1.ChallengeResponse.TOTP
+	(*metav1.ObjectReference)(nil),                                       // 47: octelium.api.main.meta.v1.ObjectReference
+	(*metav1.Metadata)(nil),                                              // 48: octelium.api.main.meta.v1.Metadata
+	(*metav1.ListResponseMeta)(nil),                                      // 49: octelium.api.main.meta.v1.ListResponseMeta
+	(*timestamppb.Timestamp)(nil),                                        // 50: google.protobuf.Timestamp
+	(*metav1.GetOptions)(nil),                                            // 51: octelium.api.main.meta.v1.GetOptions
+	(*metav1.DeleteOptions)(nil),                                         // 52: octelium.api.main.meta.v1.DeleteOptions
+	(*metav1.OperationResult)(nil),                                       // 53: octelium.api.main.meta.v1.OperationResult
 }
 var file_authv1_proto_depIdxs = []int32{
 	0,  // 0: octelium.api.main.auth.v1.ClientLoginRequest.apiVersion:type_name -> octelium.api.main.auth.v1.ClientLoginRequest.APIVersion
-	16, // 1: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.info:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info
-	17, // 2: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.requests:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request
-	20, // 3: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.responses:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response
-	24, // 4: octelium.api.main.auth.v1.AuthenticateWithAssertionRequest.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	23, // 5: octelium.api.main.auth.v1.TokenT0.content:type_name -> octelium.api.main.auth.v1.TokenT0.Content
-	1,  // 6: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.osType:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.OSType
-	18, // 7: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.command:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.Command
-	19, // 8: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.file:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.File
-	21, // 9: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.command:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.Command
-	22, // 10: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.file:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.File
-	2,  // 11: octelium.api.main.auth.v1.TokenT0.Content.type:type_name -> octelium.api.main.auth.v1.TokenT0.Content.Type
-	25, // 12: octelium.api.main.auth.v1.TokenT0.Content.expiresAt:type_name -> google.protobuf.Timestamp
-	12, // 13: octelium.api.main.auth.v1.MainService.AuthenticateWithAuthenticationToken:input_type -> octelium.api.main.auth.v1.AuthenticateWithAuthenticationTokenRequest
-	13, // 14: octelium.api.main.auth.v1.MainService.AuthenticateWithAssertion:input_type -> octelium.api.main.auth.v1.AuthenticateWithAssertionRequest
-	14, // 15: octelium.api.main.auth.v1.MainService.AuthenticateWithRefreshToken:input_type -> octelium.api.main.auth.v1.AuthenticateWithRefreshTokenRequest
-	6,  // 16: octelium.api.main.auth.v1.MainService.Logout:input_type -> octelium.api.main.auth.v1.LogoutRequest
-	8,  // 17: octelium.api.main.auth.v1.MainService.RegisterDeviceBegin:input_type -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest
-	10, // 18: octelium.api.main.auth.v1.MainService.RegisterDeviceFinish:input_type -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest
-	3,  // 19: octelium.api.main.auth.v1.MainService.AuthenticateWithAuthenticationToken:output_type -> octelium.api.main.auth.v1.SessionToken
-	3,  // 20: octelium.api.main.auth.v1.MainService.AuthenticateWithAssertion:output_type -> octelium.api.main.auth.v1.SessionToken
-	3,  // 21: octelium.api.main.auth.v1.MainService.AuthenticateWithRefreshToken:output_type -> octelium.api.main.auth.v1.SessionToken
-	7,  // 22: octelium.api.main.auth.v1.MainService.Logout:output_type -> octelium.api.main.auth.v1.LogoutResponse
-	9,  // 23: octelium.api.main.auth.v1.MainService.RegisterDeviceBegin:output_type -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse
-	11, // 24: octelium.api.main.auth.v1.MainService.RegisterDeviceFinish:output_type -> octelium.api.main.auth.v1.RegisterDeviceFinishResponse
-	19, // [19:25] is the sub-list for method output_type
-	13, // [13:19] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	28, // 1: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.info:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info
+	29, // 2: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.requests:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request
+	32, // 3: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.responses:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response
+	47, // 4: octelium.api.main.auth.v1.AuthenticateWithAssertionRequest.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	35, // 5: octelium.api.main.auth.v1.TokenT0.content:type_name -> octelium.api.main.auth.v1.TokenT0.Content
+	47, // 6: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginRequest.authenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	36, // 7: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.challengeRequest:type_name -> octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest
+	47, // 8: octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest.authenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	39, // 9: octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest.preChallenge:type_name -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest.PreChallenge
+	40, // 10: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.challengeRequest:type_name -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest
+	48, // 11: octelium.api.main.auth.v1.Authenticator.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	43, // 12: octelium.api.main.auth.v1.Authenticator.spec:type_name -> octelium.api.main.auth.v1.Authenticator.Spec
+	44, // 13: octelium.api.main.auth.v1.Authenticator.status:type_name -> octelium.api.main.auth.v1.Authenticator.Status
+	21, // 14: octelium.api.main.auth.v1.AuthenticatorList.items:type_name -> octelium.api.main.auth.v1.Authenticator
+	49, // 15: octelium.api.main.auth.v1.AuthenticatorList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	3,  // 16: octelium.api.main.auth.v1.CreateAuthenticatorRequest.type:type_name -> octelium.api.main.auth.v1.Authenticator.Status.Type
+	47, // 17: octelium.api.main.auth.v1.RegisterAuthenticatorFinishRequest.authenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	27, // 18: octelium.api.main.auth.v1.RegisterAuthenticatorFinishRequest.challengeResponse:type_name -> octelium.api.main.auth.v1.ChallengeResponse
+	45, // 19: octelium.api.main.auth.v1.ChallengeResponse.fido:type_name -> octelium.api.main.auth.v1.ChallengeResponse.FIDO
+	46, // 20: octelium.api.main.auth.v1.ChallengeResponse.totp:type_name -> octelium.api.main.auth.v1.ChallengeResponse.TOTP
+	1,  // 21: octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.osType:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest.Info.OSType
+	30, // 22: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.command:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.Command
+	31, // 23: octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.file:type_name -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse.Request.File
+	33, // 24: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.command:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.Command
+	34, // 25: octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.file:type_name -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest.Response.File
+	2,  // 26: octelium.api.main.auth.v1.TokenT0.Content.type:type_name -> octelium.api.main.auth.v1.TokenT0.Content.Type
+	50, // 27: octelium.api.main.auth.v1.TokenT0.Content.expiresAt:type_name -> google.protobuf.Timestamp
+	37, // 28: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.fido:type_name -> octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.FIDO
+	38, // 29: octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.totp:type_name -> octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse.ChallengeRequest.TOTP
+	41, // 30: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.fido:type_name -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.FIDO
+	42, // 31: octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.totp:type_name -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse.ChallengeRequest.TOTP
+	3,  // 32: octelium.api.main.auth.v1.Authenticator.Status.type:type_name -> octelium.api.main.auth.v1.Authenticator.Status.Type
+	13, // 33: octelium.api.main.auth.v1.MainService.AuthenticateWithAuthenticationToken:input_type -> octelium.api.main.auth.v1.AuthenticateWithAuthenticationTokenRequest
+	14, // 34: octelium.api.main.auth.v1.MainService.AuthenticateWithAssertion:input_type -> octelium.api.main.auth.v1.AuthenticateWithAssertionRequest
+	15, // 35: octelium.api.main.auth.v1.MainService.AuthenticateWithRefreshToken:input_type -> octelium.api.main.auth.v1.AuthenticateWithRefreshTokenRequest
+	7,  // 36: octelium.api.main.auth.v1.MainService.Logout:input_type -> octelium.api.main.auth.v1.LogoutRequest
+	9,  // 37: octelium.api.main.auth.v1.MainService.RegisterDeviceBegin:input_type -> octelium.api.main.auth.v1.RegisterDeviceBeginRequest
+	11, // 38: octelium.api.main.auth.v1.MainService.RegisterDeviceFinish:input_type -> octelium.api.main.auth.v1.RegisterDeviceFinishRequest
+	51, // 39: octelium.api.main.auth.v1.MainService.GetAuthenticator:input_type -> octelium.api.main.meta.v1.GetOptions
+	24, // 40: octelium.api.main.auth.v1.MainService.CreateAuthenticator:input_type -> octelium.api.main.auth.v1.CreateAuthenticatorRequest
+	21, // 41: octelium.api.main.auth.v1.MainService.UpdateAuthenticator:input_type -> octelium.api.main.auth.v1.Authenticator
+	23, // 42: octelium.api.main.auth.v1.MainService.ListAuthenticator:input_type -> octelium.api.main.auth.v1.ListAuthenticatorOptions
+	52, // 43: octelium.api.main.auth.v1.MainService.DeleteAuthenticator:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	19, // 44: octelium.api.main.auth.v1.MainService.RegisterAuthenticatorBegin:input_type -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginRequest
+	25, // 45: octelium.api.main.auth.v1.MainService.RegisterAuthenticatorFinish:input_type -> octelium.api.main.auth.v1.RegisterAuthenticatorFinishRequest
+	17, // 46: octelium.api.main.auth.v1.MainService.AuthenticateAuthenticatorBegin:input_type -> octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginRequest
+	4,  // 47: octelium.api.main.auth.v1.MainService.AuthenticateWithAuthenticationToken:output_type -> octelium.api.main.auth.v1.SessionToken
+	4,  // 48: octelium.api.main.auth.v1.MainService.AuthenticateWithAssertion:output_type -> octelium.api.main.auth.v1.SessionToken
+	4,  // 49: octelium.api.main.auth.v1.MainService.AuthenticateWithRefreshToken:output_type -> octelium.api.main.auth.v1.SessionToken
+	8,  // 50: octelium.api.main.auth.v1.MainService.Logout:output_type -> octelium.api.main.auth.v1.LogoutResponse
+	10, // 51: octelium.api.main.auth.v1.MainService.RegisterDeviceBegin:output_type -> octelium.api.main.auth.v1.RegisterDeviceBeginResponse
+	12, // 52: octelium.api.main.auth.v1.MainService.RegisterDeviceFinish:output_type -> octelium.api.main.auth.v1.RegisterDeviceFinishResponse
+	21, // 53: octelium.api.main.auth.v1.MainService.GetAuthenticator:output_type -> octelium.api.main.auth.v1.Authenticator
+	21, // 54: octelium.api.main.auth.v1.MainService.CreateAuthenticator:output_type -> octelium.api.main.auth.v1.Authenticator
+	21, // 55: octelium.api.main.auth.v1.MainService.UpdateAuthenticator:output_type -> octelium.api.main.auth.v1.Authenticator
+	22, // 56: octelium.api.main.auth.v1.MainService.ListAuthenticator:output_type -> octelium.api.main.auth.v1.AuthenticatorList
+	53, // 57: octelium.api.main.auth.v1.MainService.DeleteAuthenticator:output_type -> octelium.api.main.meta.v1.OperationResult
+	20, // 58: octelium.api.main.auth.v1.MainService.RegisterAuthenticatorBegin:output_type -> octelium.api.main.auth.v1.RegisterAuthenticatorBeginResponse
+	26, // 59: octelium.api.main.auth.v1.MainService.RegisterAuthenticatorFinish:output_type -> octelium.api.main.auth.v1.RegisterAuthenticatorFinishResponse
+	18, // 60: octelium.api.main.auth.v1.MainService.AuthenticateAuthenticatorBegin:output_type -> octelium.api.main.auth.v1.AuthenticateAuthenticatorBeginResponse
+	47, // [47:61] is the sub-list for method output_type
+	33, // [33:47] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_authv1_proto_init() }
@@ -1646,21 +3166,33 @@ func file_authv1_proto_init() {
 	if File_authv1_proto != nil {
 		return
 	}
-	file_authv1_proto_msgTypes[14].OneofWrappers = []any{
+	file_authv1_proto_msgTypes[23].OneofWrappers = []any{
+		(*ChallengeResponse_Fido)(nil),
+		(*ChallengeResponse_Totp)(nil),
+	}
+	file_authv1_proto_msgTypes[25].OneofWrappers = []any{
 		(*RegisterDeviceBeginResponse_Request_Command_)(nil),
 		(*RegisterDeviceBeginResponse_Request_File_)(nil),
 	}
-	file_authv1_proto_msgTypes[17].OneofWrappers = []any{
+	file_authv1_proto_msgTypes[28].OneofWrappers = []any{
 		(*RegisterDeviceFinishRequest_Response_Command_)(nil),
 		(*RegisterDeviceFinishRequest_Response_File_)(nil),
+	}
+	file_authv1_proto_msgTypes[32].OneofWrappers = []any{
+		(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido)(nil),
+		(*AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp)(nil),
+	}
+	file_authv1_proto_msgTypes[36].OneofWrappers = []any{
+		(*RegisterAuthenticatorBeginResponse_ChallengeRequest_Fido)(nil),
+		(*RegisterAuthenticatorBeginResponse_ChallengeRequest_Totp)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_authv1_proto_rawDesc,
-			NumEnums:      3,
-			NumMessages:   21,
+			NumEnums:      4,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
