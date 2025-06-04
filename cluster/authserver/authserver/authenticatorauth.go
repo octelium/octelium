@@ -61,7 +61,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil
 	}
 
-	zap.L().Debug("____________ 000")
 	if authn.Status.AuthenticationAttempt == nil ||
 		authn.Status.AuthenticationAttempt.SessionRef == nil {
 		return nil, s.errPermissionDenied("No valid current authentication attempt...")
@@ -80,8 +79,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 
 		return nil, s.errPermissionDenied("No valid current authentication attempt")
 	}
-
-	zap.L().Debug("____________ 333333")
 
 	if authn.Status.AuthenticationAttempt == nil ||
 		!authn.Status.AuthenticationAttempt.CreatedAt.IsValid() ||
@@ -138,13 +135,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, s.errInvalidArg("Invalid challengeRequest type")
 	}
 
-	zap.L().Debug("____________ 1")
 	factor, err = s.getAuthenticatorCtl(ctx, authn, usr, cc)
 	if err != nil {
 		return nil, err
 	}
 
-	zap.L().Debug("____________ 2")
 	if err := factor.Finish(ctx, &authenticators.FinishReq{
 		Resp:             resp,
 		ChallengeRequest: challengeReq,
@@ -155,7 +150,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		}
 		return nil, err
 	}
-	zap.L().Debug("____________ 3")
 
 	authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
 	if err := nullifyCurrAndUpdate(); err != nil {
