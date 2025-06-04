@@ -2,100 +2,93 @@ package vwebauthn
 
 import (
 	"context"
-	"strings"
 
-	"slices"
-
-	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/google/uuid"
-
-	"github.com/pkg/errors"
 )
 
 func (c *WebAuthNFactor) verifyAttestation(ctx context.Context, r *protocol.ParsedCredentialCreationData, cred *webauthn.Credential) error {
 
-	
-	
-
-	if c.mds == nil {
-		return nil
-	}
-
-	aaguid, err := uuid.FromBytes(r.Response.AttestationObject.AuthData.AttData.AAGUID)
-	if err != nil {
-		return err
-	}
-
-	aaguidStr := aaguid.String()
-
-	if len(profile.Spec.Authenticator.Webauthn.AllowedAAGUIDs) > 0 {
-		if !slices.Contains(profile.Spec.Authenticator.Webauthn.AllowedAAGUIDs, aaguidStr) {
-			return errors.Errorf("AAGUID is not allowed")
+	/*
+		if c.mds == nil {
+			return nil
 		}
-	}
 
-	if len(profile.Spec.Authenticator.Webauthn.DisallowedAAGUIDs) > 0 {
-		if slices.Contains(profile.Spec.Authenticator.Webauthn.DisallowedAAGUIDs, aaguidStr) {
-			return errors.Errorf("AAGUID is not allowed")
-		}
-	}
 
-	switch r.Response.AttestationObject.Format {
-	case "none":
-		return errors.Errorf("None attestation format")
-	case "tpm", "apple", "packed", "android-key", "android-safetynet", "fido-u2f":
-	default:
-		return errors.Errorf("Unknown attestation format: %s", r.Response.AttestationObject.Format)
-	}
+			aaguid, err := uuid.FromBytes(r.Response.AttestationObject.AuthData.AttData.AAGUID)
+			if err != nil {
+				return err
+			}
 
-	if err := cred.Verify(c.mds); err != nil {
-		return err
-	}
+			aaguidStr := aaguid.String()
 
-	entry, err := c.mds.GetEntry(ctx, aaguid)
-	if err != nil {
-		return err
-	}
-	if entry == nil {
-		return errors.Errorf("MDS Entry not found")
-	}
+			if len(profile.Spec.Authenticator.Webauthn.AllowedAAGUIDs) > 0 {
+				if !slices.Contains(profile.Spec.Authenticator.Webauthn.AllowedAAGUIDs, aaguidStr) {
+					return errors.Errorf("AAGUID is not allowed")
+				}
+			}
 
-	if !slices.ContainsFunc(entry.MetadataStatement.AuthenticatorGetInfo.Versions, func(arg string) bool {
-		return strings.HasPrefix(strings.ToLower(arg), "fido_2")
-	}) {
-		return errors.Errorf("Not FIDO2")
-	}
+			if len(profile.Spec.Authenticator.Webauthn.DisallowedAAGUIDs) > 0 {
+				if slices.Contains(profile.Spec.Authenticator.Webauthn.DisallowedAAGUIDs, aaguidStr) {
+					return errors.Errorf("AAGUID is not allowed")
+				}
+			}
 
-	if !slices.ContainsFunc(entry.MetadataStatement.KeyProtection, func(arg string) bool {
-		switch strings.ToLower(arg) {
-		case "hardware", "secure_element":
-			return true
-		default:
-			return false
-		}
-	}) {
-		return errors.Errorf("Not FIDO2")
-	}
+			switch r.Response.AttestationObject.Format {
+			case "none":
+				return errors.Errorf("None attestation format")
+			case "tpm", "apple", "packed", "android-key", "android-safetynet", "fido-u2f":
+			default:
+				return errors.Errorf("Unknown attestation format: %s", r.Response.AttestationObject.Format)
+			}
 
-	if strings.ToLower(entry.MetadataStatement.ProtocolFamily) != "fido2" {
-		return errors.Errorf("Not FIDO2")
-	}
+			if err := cred.Verify(c.mds); err != nil {
+				return err
+			}
 
-	if !slices.ContainsFunc(entry.StatusReports, func(arg metadata.StatusReport) bool {
-		switch arg.Status {
-		case metadata.FidoCertified,
-			metadata.FidoCertifiedL1, metadata.FidoCertifiedL1plus,
-			metadata.FidoCertifiedL2, metadata.FidoCertifiedL2plus,
-			metadata.FidoCertifiedL3, metadata.FidoCertifiedL3plus:
-			return true
-		default:
-			return false
-		}
-	}) {
-		return errors.Errorf("Not FIDO certified")
-	}
+			entry, err := c.mds.GetEntry(ctx, aaguid)
+			if err != nil {
+				return err
+			}
+			if entry == nil {
+				return errors.Errorf("MDS Entry not found")
+			}
+
+			if !slices.ContainsFunc(entry.MetadataStatement.AuthenticatorGetInfo.Versions, func(arg string) bool {
+				return strings.HasPrefix(strings.ToLower(arg), "fido_2")
+			}) {
+				return errors.Errorf("Not FIDO2")
+			}
+
+			if !slices.ContainsFunc(entry.MetadataStatement.KeyProtection, func(arg string) bool {
+				switch strings.ToLower(arg) {
+				case "hardware", "secure_element":
+					return true
+				default:
+					return false
+				}
+			}) {
+				return errors.Errorf("Not FIDO2")
+			}
+
+			if strings.ToLower(entry.MetadataStatement.ProtocolFamily) != "fido2" {
+				return errors.Errorf("Not FIDO2")
+			}
+
+			if !slices.ContainsFunc(entry.StatusReports, func(arg metadata.StatusReport) bool {
+				switch arg.Status {
+				case metadata.FidoCertified,
+					metadata.FidoCertifiedL1, metadata.FidoCertifiedL1plus,
+					metadata.FidoCertifiedL2, metadata.FidoCertifiedL2plus,
+					metadata.FidoCertifiedL3, metadata.FidoCertifiedL3plus:
+					return true
+				default:
+					return false
+				}
+			}) {
+				return errors.Errorf("Not FIDO certified")
+			}
+	*/
 
 	/*
 		switch c.factor.Spec.GetWebauthn().AuthenticatorType {

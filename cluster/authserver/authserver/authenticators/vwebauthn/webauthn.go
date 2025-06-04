@@ -191,8 +191,8 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 	resp := reqCtx.Resp
 	authn := c.opts.Authenticator
 
-	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetWebauthn() == nil ||
-		resp.ChallengeResponse.GetWebauthn().Response == "" {
+	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetFido() == nil ||
+		resp.ChallengeResponse.GetFido().Response == "" {
 		return errors.Errorf("Invalid Response")
 	}
 
@@ -275,7 +275,7 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 	*/
 	{
 		parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
-			strings.NewReader(resp.ChallengeResponse.GetWebauthn().Response))
+			strings.NewReader(resp.ChallengeResponse.GetFido().Response))
 		if err != nil {
 			return err
 		}
