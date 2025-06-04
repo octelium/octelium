@@ -85,7 +85,8 @@ func NewObject(kind string) (umetav1.ResourceObjectI, error) {
 		return &corev1.ClusterConfig{}, nil
 	case KindPolicyTrigger:
 		return &corev1.PolicyTrigger{}, nil
-
+	case KindAuthenticator:
+		return &corev1.Authenticator{}, nil
 	default:
 		return nil, errors.Errorf("Invalid kind: %s", kind)
 	}
@@ -119,7 +120,8 @@ func NewObjectListOptions(kind string) (proto.Message, error) {
 		return &corev1.ListRegionOptions{}, nil
 	case KindGateway:
 		return &corev1.ListGatewayOptions{}, nil
-
+	case KindAuthenticator:
+		return &corev1.ListAuthenticatorOptions{}, nil
 	default:
 		return nil, errors.Errorf("Invalid kind: %s", kind)
 	}
@@ -158,6 +160,8 @@ func NewObjectList(kind string) (umetav1.ObjectI, error) {
 	case KindPolicyTrigger:
 		return &corev1.PolicyTriggerList{}, nil
 
+	case KindAuthenticator:
+		return &corev1.AuthenticatorList{}, nil
 	default:
 		return nil, errors.Errorf("Invalid kind: %s", kind)
 	}
