@@ -9,6 +9,7 @@ on:
     branches:
       - b-*
       - main
+      - dev
 jobs:
   build:
     name: Build
