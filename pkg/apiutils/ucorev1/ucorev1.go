@@ -1052,3 +1052,32 @@ func (s *Service) GetHostnames() []string {
 func (r *Region) IsDefault() bool {
 	return r.Metadata.Name == "default"
 }
+
+type Authenticator struct {
+	*corev1.Authenticator
+}
+
+func ToAuthenticator(a *corev1.Authenticator) *Authenticator {
+	return &Authenticator{
+		Authenticator: a,
+	}
+}
+
+func (a *Authenticator) PrependToLastAttempts() {
+
+	if a.Status.AuthenticationAttempt == nil {
+		return
+	}
+
+	maxLen := 10
+
+	if len(a.Status.LastAuthenticationAttempts) >= maxLen {
+		a.Status.LastAuthenticationAttempts = a.Status.LastAuthenticationAttempts[:maxLen-2]
+	}
+
+	a.Status.LastAuthenticationAttempts = append([]*corev1.Authenticator_Status_AuthenticationAttempt{
+		a.Status.AuthenticationAttempt,
+	}, a.Status.LastAuthenticationAttempts...)
+
+	a.Status.AuthenticationAttempt = nil
+}

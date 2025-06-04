@@ -507,3 +507,121 @@ func (s *server) setCookiesGRPC(ctx context.Context, cookies []*http.Cookie) err
 
 	return nil
 }
+
+
+func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
+	sess, err := s.getSessionFromGRPCCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.validateChallengeResponse(req.ChallengeResponse); err != nil {
+		return nil, err
+	}
+
+	zap.L().Debug("Got Session from creds", zap.Any("sess", sess))
+
+	if !s.needsReAuth(sess) {
+		return nil, s.errAlreadyExists("The Session is valid and does not need a authenticatorFinish")
+	}
+
+	usr, err := s.getUserFromSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, grpcutils.InternalWithErr(err)
+	}
+
+	authInfo, err := s.doAuthenticateAuthenticator(ctx, cc, req, usr, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+		Uid: authInfo.GetExternal().OwnerRef.Uid,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	/*
+		if authn.Status.Ext != nil {
+			if devStruct, ok := authn.Status.Ext["registeredDev"]; ok && devStruct != nil {
+				dev := &corev1.Device{}
+				if err := pbutils.StructToMessage(devStruct, dev); err != nil {
+					return nil, err
+				}
+
+				dev, err = s.octeliumC.CoreC().CreateDevice(ctx, dev)
+				if err != nil {
+					return nil, err
+				}
+
+				delete(authn.Status.Ext, "registeredDev")
+				authn.Status.DeviceRef = umetav1.GetObjectReference(dev)
+
+				if authn.Metadata.SystemLabels != nil &&
+					authn.Metadata.SystemLabels["waiting-device-registration"] == "true" {
+					delete(authn.Metadata.SystemLabels, "waiting-device-registration")
+				}
+
+				authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	*/
+
+	if authn.Status.DeviceRef != nil {
+		sess.Status.DeviceRef = authn.Status.DeviceRef
+	}
+
+	s.setCurrAuthenticationGRPC(ctx, sess, cc, authInfo)
+
+	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+		return nil, grpcutils.InternalWithErr(err)
+	}
+
+	ret, err := s.generateSessionTokenResponse(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	if sess.Status.Type == corev1.Session_Status_CLIENTLESS &&
+		sess.Status.IsBrowser {
+
+		accessTokenCookie := &http.Cookie{
+			Name:     "octelium_auth",
+			Value:    ret.AccessToken,
+			Secure:   true,
+			HttpOnly: true,
+			Domain:   s.domain,
+			Path:     "/",
+			SameSite: http.SameSiteLaxMode,
+			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToGo()),
+		}
+
+		refreshTokenCookie := &http.Cookie{
+			Name:     "octelium_rt",
+			Value:    ret.RefreshToken,
+			Secure:   true,
+			HttpOnly: true,
+			Domain:   s.domain,
+			Path:     "/",
+			SameSite: http.SameSiteLaxMode,
+			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()),
+		}
+
+		s.setCookiesGRPC(ctx, []*http.Cookie{
+			accessTokenCookie, refreshTokenCookie,
+		})
+
+		ret = &authv1.SessionToken{}
+	}
+
+	return ret, nil
+}

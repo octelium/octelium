@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/metadata"
+	"github.com/go-webauthn/webauthn/metadata/providers/cached"
 	"github.com/gorilla/mux"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -43,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -71,7 +74,8 @@ type server struct {
 	jwkCtl *jwkctl.Controller
 	ccCtl  *ccctl.Controller
 
-	celEngine *celengine.CELEngine
+	celEngine   *celengine.CELEngine
+	mdsProvider metadata.Provider
 }
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
@@ -148,6 +152,15 @@ func initServer(ctx context.Context,
 	}
 
 	ret.celEngine, err = celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return nil, err
+	}
+
+	ret.mdsProvider, err = cached.New(
+		cached.WithPath(fmt.Sprintf("/tmp/mds-%s", utilrand.GetRandomStringCanonical(8))),
+		cached.WithForceUpdate(true),
+		cached.WithUpdate(true),
+	)
 	if err != nil {
 		return nil, err
 	}
