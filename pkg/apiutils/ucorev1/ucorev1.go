@@ -172,7 +172,7 @@ type ResourceObjectRefG interface {
 		*corev1.User | *corev1.Group | *corev1.Namespace | *corev1.Config | *corev1.Policy |
 		*corev1.IdentityProvider |
 		*corev1.Region | *corev1.Gateway |
-		*corev1.ClusterConfig | *corev1.PolicyTrigger | *corev1.Credential
+		*corev1.ClusterConfig | *corev1.PolicyTrigger | *corev1.Credential | *corev1.Authenticator
 }
 
 type Session struct {

@@ -175,6 +175,16 @@ func (c *CoreV1Watcher) Credential(
 	return runWatcherCoreV1(ctx, c.octeliumC, opts, string(ucorev1.KindCredential), onCreate, onUpdate, onDelete)
 }
 
+func (c *CoreV1Watcher) Authenticator(
+	ctx context.Context,
+	opts *Opts,
+	onCreate func(ctx context.Context, item *corev1.Authenticator) error,
+	onUpdate func(ctx context.Context, new, old *corev1.Authenticator) error,
+	onDelete func(ctx context.Context, item *corev1.Authenticator) error,
+) error {
+	return runWatcherCoreV1(ctx, c.octeliumC, opts, string(ucorev1.KindAuthenticator), onCreate, onUpdate, onDelete)
+}
+
 func (c *CoreV1Watcher) ClusterConfig(
 	ctx context.Context,
 	opts *Opts,
