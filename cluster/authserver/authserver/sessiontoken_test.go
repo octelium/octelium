@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -38,6 +39,8 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -573,5 +576,155 @@ func TestGetSessionFromGRPCCtx(t *testing.T) {
 
 		_, err = srv.getSessionFromGRPCCtx(getCtxRT(usrT))
 		assert.Nil(t, err)
+	}
+}
+
+func TestAuthenticateWithAuthenticator(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	{
+
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		usrT.Device.Status.OsType = corev1.Device_Status_LINUX
+
+		usrT.Device, err = srv.octeliumC.CoreC().UpdateDevice(ctx, usrT.Device)
+		assert.Nil(t, err)
+
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		/*
+			factor, err := srv.octeliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_Totp{
+						Totp: &corev1.IdentityProvider_Spec_TOTP{},
+					},
+				},
+			})
+
+			assert.Nil(t, err)
+		*/
+
+		authn, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Authenticator_Spec{},
+			Status: &corev1.Authenticator_Status{
+				UserRef: umetav1.GetObjectReference(usrT.Usr),
+				Type:    corev1.Authenticator_Status_TOTP,
+				// IdentityProviderRef: umetav1.GetObjectReference(factor),
+			},
+		})
+		assert.Nil(t, err)
+
+		cc, err = srv.octeliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+
+		usrT.Usr, err = srv.octeliumC.CoreC().UpdateUser(ctx, usrT.Usr)
+		assert.Nil(t, err)
+
+		usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+		assert.Nil(t, err)
+		usrT.Resync()
+
+		usrT.Resync()
+
+		authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: authn.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		getSecret := func(ctx context.Context, usr *corev1.User) (string, error) {
+			authn, err := tst.C.OcteliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+				Uid: authn.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+			info := authn.Status.GetInfo().GetTotp().GetSharedSecret()
+
+			plaintext, err := authenticators.DecryptData(ctx, fakeC.OcteliumC, info)
+			if err != nil {
+				return "", err
+			}
+
+			return string(plaintext), nil
+		}
+
+		authBeginResp, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
+			AuthenticatorRef: umetav1.GetObjectReference(authn),
+		})
+		assert.Nil(t, err)
+
+		k, err := otp.NewKeyFromURL(authBeginResp.ChallengeRequest.GetTotp().Url)
+		assert.Nil(t, err)
+
+		{
+			passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+			assert.Nil(t, err)
+
+			postResp, err := srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: passcode,
+						},
+					},
+				},
+			})
+			assert.Nil(t, err)
+			assert.NotNil(t, postResp)
+		}
+
+		{
+
+			secret, err := getSecret(ctx, usrT.Usr)
+			assert.Nil(t, err)
+			passcode, err := totp.GenerateCode(secret, time.Now())
+			assert.Nil(t, err)
+
+			_, err = srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+			})
+			assert.Nil(t, err, "%+v", err)
+
+			postResp, err := srv.doAuthenticateWithAuthenticator(getCtxRT(usrT), &authv1.AuthenticateWithAuthenticatorRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: passcode,
+						},
+					},
+				},
+			})
+			assert.Nil(t, err, "%+v", err)
+			assert.NotNil(t, postResp, "%+v", err)
+		}
+
 	}
 }

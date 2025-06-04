@@ -508,7 +508,6 @@ func (s *server) setCookiesGRPC(ctx context.Context, cookies []*http.Cookie) err
 	return nil
 }
 
-
 func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
