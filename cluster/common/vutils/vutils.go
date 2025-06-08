@@ -356,3 +356,4 @@ const ManagedServicePort = 49999
 
 const HealthCheckPortVigil = 49094
 const HealthCheckPortManagedService = 49095
+const HealthCheckPortMain = 49090

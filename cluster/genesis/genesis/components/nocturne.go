@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -57,6 +58,18 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 							Resources:       getDefaultResourceRequirements(),
 							Image:           components.GetImage(components.Nocturne, ""),
 							ImagePullPolicy: k8scorev1.PullAlways,
+
+							LivenessProbe: &k8scorev1.Probe{
+								InitialDelaySeconds: 60,
+								TimeoutSeconds:      4,
+								PeriodSeconds:       30,
+								FailureThreshold:    3,
+								ProbeHandler: k8scorev1.ProbeHandler{
+									GRPC: &k8scorev1.GRPCAction{
+										Port: int32(vutils.HealthCheckPortMain),
+									},
+								},
+							},
 							Env: func() []k8scorev1.EnvVar {
 								ret := []k8scorev1.EnvVar{
 									{

@@ -28,6 +28,7 @@ import (
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
@@ -47,6 +48,8 @@ import (
 func Run() error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
+
+	healthcheck.Run(vutils.HealthCheckPortMain)
 
 	cfg, err := clientcmd.BuildConfigFromFlags("", "")
 	if err != nil {
