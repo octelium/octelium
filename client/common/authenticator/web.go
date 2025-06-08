@@ -65,6 +65,7 @@ func newWebAuthenticator(domain string, scopes []string) (*webAuthenticator, err
 		successCallbackPath: fmt.Sprintf("/callback/success/%s", suffix),
 		callbackSuffix:      suffix,
 		loginURL:            fmt.Sprintf("https://%s/login", domain),
+		scopes:              scopes,
 	}, nil
 }
 
