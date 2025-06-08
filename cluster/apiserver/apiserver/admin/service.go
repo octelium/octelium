@@ -916,7 +916,9 @@ func (s *Server) checkAndSetService(ctx context.Context,
 	if !ldflags.IsTest() {
 		reservedPorts := []uint32{
 			uint32(vutils.HealthCheckPortVigil),
+			uint32(vutils.HealthCheckPortManagedService),
 		}
+
 		if slices.Contains(reservedPorts, svc.Status.Port) {
 			return grpcutils.InvalidArg("This Service port number is reserved by the Cluster: %d", svc.Status.Port)
 		}

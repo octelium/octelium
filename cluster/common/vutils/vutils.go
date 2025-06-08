@@ -355,3 +355,4 @@ const MaxNameSubArgs = 7
 const ManagedServicePort = 49999
 
 const HealthCheckPortVigil = 49094
+const HealthCheckPortManagedService = 49095

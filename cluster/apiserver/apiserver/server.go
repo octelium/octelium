@@ -26,16 +26,15 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
-	"github.com/octelium/octelium/cluster/apiserver/apiserver/healthcheck"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	hc "github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/health/grpc_health_v1"
 
 	gwcontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/gateways"
 	svccontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/services"
@@ -53,6 +52,8 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+
+	hc.Run(vutils.HealthCheckPortManagedService)
 
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
@@ -111,19 +112,6 @@ func Run() error {
 		if err := s.Serve(lis); err != nil {
 			zap.S().Infof("gRPC server closed: %+v", err)
 		}
-	}()
-
-	go func() error {
-		lis, err := net.Listen("tcp", "localhost:8090")
-		if err != nil {
-			return err
-		}
-		grpcSrv := grpc.NewServer()
-		grpc_health_v1.RegisterHealthServer(grpcSrv, healthcheck.NewServer())
-		if err := grpcSrv.Serve(lis); err != nil {
-			zap.S().Infof("gRPC health check server closed: %+v", err)
-		}
-		return nil
 	}()
 
 	zap.L().Info("API Server is now running")

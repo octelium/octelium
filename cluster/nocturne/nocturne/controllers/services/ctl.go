@@ -422,6 +422,23 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					Args:            svc.Status.ManagedService.Args,
 					ImagePullPolicy: k8scorev1.PullAlways,
 					Env:             envVars,
+					LivenessProbe: func() *k8scorev1.Probe {
+						if svc.Status.ManagedService.Type != "apiserver" {
+							return nil
+						}
+
+						return &k8scorev1.Probe{
+							InitialDelaySeconds: 60,
+							TimeoutSeconds:      4,
+							PeriodSeconds:       30,
+							FailureThreshold:    3,
+							ProbeHandler: k8scorev1.ProbeHandler{
+								GRPC: &k8scorev1.GRPCAction{
+									Port: int32(vutils.HealthCheckPortManagedService),
+								},
+							},
+						}
+					}(),
 				})
 			}
 		}
