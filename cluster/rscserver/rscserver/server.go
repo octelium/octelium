@@ -80,10 +80,6 @@ func NewServer(ctx context.Context, o *Opts) (*Server, error) {
 		return nil, errors.Errorf("Could not migrate database: %+v", err)
 	}
 
-	if err := redisC.Ping(ctx).Err(); err != nil {
-		return nil, errors.Errorf("Could not ping Redis: %+v", err)
-	}
-
 	if o == nil {
 		o = &Opts{}
 	}
@@ -179,6 +175,21 @@ type Opts struct {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+
+	if err := func() error {
+		for range 100 {
+			err := s.redisC.Ping(ctx).Err()
+			if err == nil {
+				zap.L().Debug("Successfully ping'ed Redis server")
+				return nil
+			}
+			zap.L().Warn("Could not ping redis. Trying again", zap.Error(err))
+			time.Sleep(3 * time.Second)
+		}
+		return errors.Errorf("Could not ping redis")
+	}(); err != nil {
+		return err
+	}
 
 	s.grpcSrv = grpc.NewServer(
 		grpc.MaxConcurrentStreams(1000000),
