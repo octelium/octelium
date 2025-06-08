@@ -15,13 +15,16 @@
 package logout
 
 import (
+	"context"
 	"os"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var Cmd = &cobra.Command{
@@ -54,8 +57,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx := cmd.Context()
-	defer cliutils.GetDB().Delete(i.Domain)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := cliutils.GetDB().Delete(i.Domain); err != nil {
+		zap.L().Debug("Could not delete db state", zap.Error(err))
+	}
 
 	c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
 		GetRefreshToken: cliutils.GetRefreshToken,
