@@ -87,7 +87,7 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 						{
 							Name:            "octelium-node-init",
 							Image:           components.GetImage(components.NodeInit, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							Env:             *envVars,
 							VolumeMounts: []k8scorev1.VolumeMount{{
 								Name:      "debian-modules",
@@ -125,7 +125,7 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 									k8scorev1.ResourceCPU:    resource.MustParse("1500m"),
 								},
 							},
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							Env:             *envVars,
 							VolumeMounts: []k8scorev1.VolumeMount{{
 								Name:      "etc-cni",

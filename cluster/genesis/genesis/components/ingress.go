@@ -184,7 +184,7 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 							Name:            componentIngress,
 							Resources:       getDefaultResourceRequirements(),
 							Image:           components.GetImage(components.Ingress, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							Env: []k8scorev1.EnvVar{
 								{
 									Name:  "OCTELIUM_REGION_NAME",

@@ -60,3 +60,7 @@ func GetGatewayName(node *k8scorev1.Node) string {
 	out := strings.ToLower(base32.StdEncoding.EncodeToString(sh[:]))[:8]
 	return fmt.Sprintf("%s-%s", vutils.GetMyRegionName(), out)
 }
+
+func GetImagePullPolicy() k8scorev1.PullPolicy {
+	return k8scorev1.PullIfNotPresent
+}

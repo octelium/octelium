@@ -97,7 +97,7 @@ func getAuthServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 							Name:            componentAuthServer,
 							Env:             getRedisEnv(),
 							Image:           components.GetImage(components.AuthServer, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 						},
 					},
 				},

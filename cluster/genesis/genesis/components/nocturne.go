@@ -57,7 +57,7 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 							Name:            componentNocturne,
 							Resources:       getDefaultResourceRequirements(),
 							Image:           components.GetImage(components.Nocturne, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 
 							LivenessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 60,

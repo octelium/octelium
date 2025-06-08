@@ -116,7 +116,7 @@ func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 							},
 
 							Image:           components.GetImage(components.RscServer, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 
 							Resources: k8scorev1.ResourceRequirements{
 								Requests: getDefaultRequests(),

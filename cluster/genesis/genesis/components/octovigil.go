@@ -84,7 +84,7 @@ func getOctovigilDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 						{
 							Name:            componentOctovigil,
 							Image:           components.GetImage(components.Octovigil, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 
 							LivenessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 60,

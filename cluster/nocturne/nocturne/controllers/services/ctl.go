@@ -314,7 +314,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 			{
 				Name:            "vigil",
 				Image:           components.GetImage(components.Vigil, ""),
-				ImagePullPolicy: k8scorev1.PullAlways,
+				ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 				Resources: k8scorev1.ResourceRequirements{
 					Requests: getDefaultRequests(),
 					Limits:   getDefaultLimits(),
@@ -420,7 +420,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					Image:           svc.Status.ManagedService.Image,
 					Command:         svc.Status.ManagedService.Command,
 					Args:            svc.Status.ManagedService.Args,
-					ImagePullPolicy: k8scorev1.PullAlways,
+					ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 					Env:             envVars,
 					LivenessProbe: func() *k8scorev1.Probe {
 						if svc.Status.ManagedService.Type != "apiserver" {

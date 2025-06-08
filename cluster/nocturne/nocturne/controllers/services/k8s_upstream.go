@@ -338,7 +338,7 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 			Image:   spec.Image,
 			Command: spec.Command,
 			Args:    spec.Args,
-			// ImagePullPolicy: k8scorev1.PullAlways,
+			// ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 			Resources: k8scorev1.ResourceRequirements{
 				Requests: k8scorev1.ResourceList{
 					k8scorev1.ResourceMemory:           resource.MustParse("5Mi"),

@@ -88,7 +88,7 @@ func getAPIServerDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.D
 						{
 							Name:            componentAPIServer,
 							Image:           components.GetImage(components.APIServer, ""),
-							ImagePullPolicy: k8scorev1.PullAlways,
+							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 
 							ReadinessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 10,
