@@ -496,6 +496,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 				ManagedService: &corev1.Service_Status_ManagedService{
 					Image: oc.GetImage(oc.AuthServer, ""),
 					Args:  []string{"http"},
+					Type:  "authserver",
 				},
 			},
 		}

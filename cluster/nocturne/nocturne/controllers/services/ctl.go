@@ -423,7 +423,9 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 					Env:             envVars,
 					LivenessProbe: func() *k8scorev1.Probe {
-						if svc.Status.ManagedService.Type != "apiserver" {
+						switch svc.Status.ManagedService.Type {
+						case "apiserver", "authserver":
+						default:
 							return nil
 						}
 

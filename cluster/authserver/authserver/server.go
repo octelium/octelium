@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -353,6 +354,8 @@ func Run(grpcMode bool) error {
 
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
+
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
