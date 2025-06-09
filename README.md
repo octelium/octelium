@@ -25,18 +25,19 @@
 
 ## What is Octelium?
 
-Octelium is a free and open source, self-hosted, unified platform for zero trust resource access that is primarily meant to be a modern alternative to corporate VPNs and remote access tools. It is built to be generic enough to not only operate as a ZTNA/BeyondCorp platform and a zero-config remote access VPN, but also as an API gateway, an AI gateway, an infrastructure for MCP gateways and A2A architectures, a PaaS-like platform for secure as well as anonymous hosting and deployment for containerized applications, a Kubernetes gateway/ingress/load balancer and even as an infrastructure for your own homelab. Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secret-less secure access, via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access (i.e. BeyondCorp), for users, both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases via context-aware access control on a per-request basis through policy-as-code.
+Octelium is a free and open source, self-hosted, unified platform for zero trust resource access that is primarily meant to be a modern alternative to remote access VPNs and similar tools. It is built to be generic enough to not only operate as a zero-config remote access VPN (i.e. alternative to OpenVPN Access Server, Twingate, Taislcale, etc...), a ZTNA platform (i.e. alternative to Cloudflare Access, Teleport, Google BeyondCorp, etc...), a scalable infrastructure for secure tunnels (i.e. alternative to ngrok), but can also operate as an API gateway, an AI gateway, an infrastructure for MCP gateways and A2A architectures, a PaaS-like platform for secure as well as anonymous hosting and deployment for containerized applications, a Kubernetes gateway/ingress/load balancer and even as an infrastructure for your own homelab. Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secret-less secure access, via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access (i.e. BeyondCorp), for users, both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases via context-aware access control on a per-request basis through policy-as-code.
 
 ## Use Cases
 
 Octelium is designed to be generic enough (check out the main features below for more details) to be completely or partially used as a solution for various use cases depending on your needs/requirements, notably:
 
-- **Unified ZTNA/BeyondCorp architecture** A Zero Trust Network Access (ZTNA) platform/ BeyondCorp architecture (i.e. alternative to Cloudflare Zero Trust, Google BeyondCorp, Zscaler Private Access, Teleport, Fortinet, etc...).
+- **Unified ZTNA/BeyondCorp architecture** A Zero Trust Network Access (ZTNA) platform/ BeyondCorp architecture (i.e. alternative to Cloudflare Access, Google BeyondCorp, Zscaler Private Access, Teleport, Fortinet, etc...).
 - **Modern remote access VPN** A modern zero trust L-7 aware alternative to commercial remote access/corporate VPNs to provide zero-config client-based over WireGuard/QUIC tunnels as well as client-less secret-less access via dynamic identity-based, L-7 aware, context-aware access control via policy-as-code (i.e. alternative to OpenVPN Access Server, Twingate, Tailscale, etc...).
 - **Secure tunnels** A self-hosted secure tunnels and reverse proxy programmable infrastructure (i.e. alternative to ngrok, Cloudflare Tunnel, etc...). You can see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/open-source-self-hosted-ngrok-alternative).
 - **Self-hosted PaaS** A scalable PaaS-like hosting/deployment platform to deploy, scale and provide both secure as well as anonymous public hosting for your containerized applications (i.e. similar to Vercel, Netlify, etc...). You can see examples for [Next.js/Vite apps](https://octelium.com/docs/octelium/latest/management/guide/service/http/nextjs-vite), [remote VSCode](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/remote-vscode-code-server), [remote Ollama](https://octelium.com/docs/octelium/latest/management/guide/service/ai/remote-ollama) and [Pi-hole](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/pihole).
 - **API gateway** A self-hosted, scalable, secure API gateway that takes care of access, routing, deployment and scaling of containerized microservices, authentication, L-7 aware/context aware authorization and visibility (i.e. alternative to Kong Gateway, Apigee, etc...). You can see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/api-gateway).
 - **AI gateway** A scalable AI gateway to any AI LLM providers with identity-based, context-aware access control, routing and visibility (see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/ai/ai-gateway)).
+- **Unified Zero Trust Access to SaaS APIs** Unified, secret-less that eliminates distributing and sharing the typically long-lived/over-privileged API keys and access tokens, access to all HTTP-based SaaS APIs for teams and workloads/applications where you can control access on a per-request basis via policy-as-code. Octelium also supports secret-less access to Kubernetes clusters, PostgreSQL/MySQL-based databases as well as to SSH servers (see the main features [here](#main-features) for more information and links).
 - **MCP gateways and A2A-based architectures** A secure infrastructure for Model Context Protocol [(MCP)](https://modelcontextprotocol.io/introduction) gateways and Agent2Agent Protocol [(A2A)](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/)-based architectures that provides identity management, authentication over standard OAuth2 client credentials and bearer authentication, secure remote access and deployment as well as identity-based, L7-aware access control via policy-as-code and visibility (see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/ai/self-hosted-mcp)).
 - **Kubernetes ingress alternative** A much more advanced alternative to Kubernetes Ingress and load balancers where you can route to any remotely accessible internal resources from anywhere, not just Kubernetes services running on the same cluster, via much more than just path prefixes (e.g. identity, request headers, body content, context such as time of the day, etc...) via dynamic policy-as-code.
 - **Homelab** A unified self-hosted Homelab infrastructure to connect and provide secure remote access to all your resources behind NAT from anywhere (e.g. all your devices including your laptop, IoT, cloud providers, Raspberry Pis, routers, etc...) as well as a secure deployment platform to deploy and privately as well as publicly host your websites, blogs, APIs or to remotely test heavy containers (e.g. LLM runtimes such as Ollama, databases such as ClickHouse and Elasticsearch, Pi-hole, etc...).
@@ -104,13 +105,13 @@ curl -fsSL https://octelium.com/install.sh | sh
 
 For Windows in Powershell
 
-```
+```powershell
 iwr https://octelium.com/install.ps1 -useb | iex
 ```
 
 ## Install your First Cluster
 
-Read this quick guide [here](https://octelium.com/docs/octelium/latest/overview/quick-install) to install a single-node Octelium _Cluster_ on top of any cheap cloud VM/VPS instance (e.g. DigitalOcean Droplet, Hetzner server, AWS EC2, etc...) with at least 4GB of RAM, 2vCPUs and 20GB of disk storage running a recent Ubuntu distribution (24.04 LTS is recommended), which is good enough for most development, personal or undemanding production use cases. Once you SSH into your VPS as root, you can install the _Cluster_ as follows:
+Read this quick guide [here](https://octelium.com/docs/octelium/latest/overview/quick-install) to install a single-node Octelium _Cluster_ on top of any cheap cloud VM/VPS instance (e.g. DigitalOcean Droplet, Hetzner server, AWS EC2, Vultr, etc...) or a local Linux machine/Linux VM inside a MacOS/Windows machine with at least 2GB of RAM and 20GB of disk storage running a recent Linux distribution (Ubuntu 24.04 LTS or later, Debian 12+, etc...), which is good enough for most development, personal or undemanding production use cases that do not require highly available multi-node _Clusters_. Once you SSH into your VPS/VM as root, you can install the _Cluster_ as follows:
 
 ```bash
 curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
@@ -119,6 +120,8 @@ chmod +x install-demo-cluster.sh
 # Replace <DOMAIN> with your actual domain
 ./install-demo-cluster.sh --domain <DOMAIN>
 ```
+
+Once the _Cluster_ is installed. You can start managing it as shown in the guide [here](https://octelium.com/docs/octelium/latest/overview/management).
 
 
 ## Useful Links
