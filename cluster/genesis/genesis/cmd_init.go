@@ -190,6 +190,10 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 		return err
 	}
 
+	if err := g.installBuiltinPolicies(ctx); err != nil {
+		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
+	}
+
 	if err := g.createInitAuthenticationToken(ctx); err != nil {
 		return err
 	}
