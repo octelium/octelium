@@ -443,9 +443,35 @@ func (s *Server) checkAndSetService(ctx context.Context,
 		}
 	}
 
+	cfgNames := func() []string {
+		if spec.DynamicConfig == nil || len(spec.DynamicConfig.Configs) < 1 {
+			return nil
+		}
+
+		var ret []string
+		for _, cfg := range spec.DynamicConfig.Configs {
+			ret = append(ret, cfg.Name)
+		}
+
+		return ret
+	}()
+
 	validateConfig := func(cfg *corev1.Service_Spec_Config) error {
 		if cfg == nil {
 			return grpcutils.InvalidArg("Config is not set")
+		}
+
+		if cfg.Parent != "" {
+			if cfg.Parent == cfg.Name {
+				return grpcutils.InvalidArg("Config parent cannot have the Config name")
+			}
+			switch cfg.Parent {
+			case "default", "":
+			default:
+				if idx := slices.Index(cfgNames, cfg.Parent); idx < 0 {
+					return grpcutils.InvalidArg("Parent config name: %s does not exist", cfg.Parent)
+				}
+			}
 		}
 
 		if cfg.GetClientCertificate() != nil &&
@@ -806,6 +832,11 @@ func (s *Server) checkAndSetService(ctx context.Context,
 		default:
 			return serr.InvalidArg("The name of the default Config cannot be set to: %s", spec.Config.Name)
 		}
+
+		if spec.Config.Parent != "" {
+			return grpcutils.InvalidArg("Default config cannot have a parent")
+		}
+
 		if err := validateConfig(spec.Config); err != nil {
 			return err
 		}
