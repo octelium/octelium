@@ -65,6 +65,9 @@ func getMergedConfig(cfg *corev1.Service_Spec_Config, svc *corev1.Service) *core
 
 	if cfg.Parent == "default" {
 		parent = svc.Spec.Config
+		if parent == nil {
+			parent = &corev1.Service_Spec_Config{}
+		}
 	} else {
 		idx := slices.IndexFunc(svc.Spec.DynamicConfig.Configs, func(itm *corev1.Service_Spec_Config) bool {
 			return itm.Name == cfg.Parent

@@ -234,6 +234,42 @@ func TestGetMergedConfig(t *testing.T) {
 	{
 		svc := &corev1.Service{
 			Spec: &corev1.Service_Spec{
+
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Configs: []*corev1.Service_Spec_Config{
+						{
+							Name:   utilrand.GetRandomStringCanonical(7),
+							Parent: "default",
+							Type: &corev1.Service_Spec_Config_Http{
+								Http: &corev1.Service_Spec_Config_HTTP{
+									Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+										Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_{
+											Basic: &corev1.Service_Spec_Config_HTTP_Auth_Basic{
+												Password: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password{
+													Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password_FromSecret{
+														FromSecret: utilrand.GetRandomStringCanonical(8),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		cfg := svc.Spec.DynamicConfig.Configs[0]
+		res := getMergedConfig(cfg, svc)
+
+		assert.True(t, pbutils.IsEqual(res, cfg))
+	}
+
+	{
+		svc := &corev1.Service{
+			Spec: &corev1.Service_Spec{
 				Config: &corev1.Service_Spec_Config{
 					Type: &corev1.Service_Spec_Config_Http{
 						Http: &corev1.Service_Spec_Config_HTTP{
