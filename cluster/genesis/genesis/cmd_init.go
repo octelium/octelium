@@ -388,9 +388,9 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 				},
 			},
 			Status: &corev1.Service_Status{
-
 				ManagedService: &corev1.Service_Status_ManagedService{
 					Image: oc.GetImage(oc.DNSServer, ""),
+					Type:  "dnsserver",
 				},
 			},
 		}

@@ -424,7 +424,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					Env:             envVars,
 					LivenessProbe: func() *k8scorev1.Probe {
 						switch svc.Status.ManagedService.Type {
-						case "apiserver", "authserver":
+						case "apiserver", "authserver", "dnsserver":
 						default:
 							return nil
 						}

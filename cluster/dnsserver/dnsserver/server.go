@@ -22,7 +22,9 @@ import (
 	"os/signal"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	servicecontroller "github.com/octelium/octelium/cluster/dnsserver/dnsserver/controllers/services"
 	server "github.com/octelium/octelium/cluster/dnsserver/dnsserver/dnsserver"
@@ -32,6 +34,8 @@ import (
 func Run() error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
+
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
 
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
