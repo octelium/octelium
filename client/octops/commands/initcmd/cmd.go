@@ -121,16 +121,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	clusterDomain := args[0]
 
-	/*
-		hasProvider, err := hasProvider()
-		if err != nil {
-			return err
-		}
-		if hasProvider {
-			return doCmdProvider(cmd, args)
-		}
-	*/
-
 	zap.S().Debugf("Chosen cluster domain: %s", clusterDomain)
 
 	kubeConfigPath, err := getKubeConfigFilePath(cmdArgs.KubeConfigFilePath, clusterDomain)
@@ -195,11 +185,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	return install.DoInstall(ctx, &install.Opts{
-		ClusterDomain: clusterDomain,
-		Region:        region,
-		Bootstrap:     bootstrap,
-		K8sC:          k8sC,
-		Version:       cmdArgs.Version,
+		ClusterDomain:     clusterDomain,
+		Region:            region,
+		Bootstrap:         bootstrap,
+		K8sC:              k8sC,
+		Version:           cmdArgs.Version,
+		AuthTokenSavePath: os.Getenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH"),
 	})
 }
 
@@ -255,81 +246,3 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 
 	return nil
 }
-
-/*
-func hasProvider() (bool, error) {
-	if cmdArgs.KubeConfigFilePath != "" || cmdArgs.KubeContext != "" {
-		return false, nil
-	}
-
-	if cmdArgs.BootstrapFile == "" {
-		return false, nil
-	}
-
-	bootstrapBytes, err := os.ReadFile(cmdArgs.BootstrapFile)
-	if err != nil {
-		return false, err
-	}
-
-	bootstrap := &cbootstrapv1.Config{}
-	if err := pbutils.UnmarshalYAML(bootstrapBytes, bootstrap); err != nil {
-		return false, err
-	}
-
-	if bootstrap.Spec != nil && bootstrap.Spec.Provider != nil {
-		return true, nil
-	}
-	return false, nil
-}
-
-*/
-
-/*
-func InitClusterConfig(clusterDomain string, clusterCfgPath string, externalIPs []string) (*pbcluster.ClusterConfig, error) {
-	var ret *pbcluster.ClusterConfig
-
-	if clusterCfgPath != "" {
-		cfg, err := cluster_config.LoadClusterConfig(clusterCfgPath)
-		if err != nil {
-			return nil, err
-		}
-		ret = cfg
-		if ret.Metadata == nil {
-			return nil, errors.Errorf("No Cluster config metadata")
-		}
-
-		if ret.Metadata.Domain == "" {
-			return nil, errors.Errorf("Empty domain in the Cluster configuration")
-		}
-
-		if ret.Metadata.Domain != clusterDomain {
-			return nil, errors.Errorf("CLI Cluster domain does not match the Cluster domain specificed in the Cluster config")
-		}
-	} else if clusterDomain != "" {
-		ret = &pbcluster.ClusterConfig{
-			Kind: ucorev1.KindClusterConfig,
-			Metadata: &metav1.Metadata{
-				Domain: clusterDomain,
-				Name:   "default",
-			},
-		}
-	} else {
-		return nil, errors.Errorf("You must provide either cluster domain or a cluster config path")
-	}
-
-	ret.ApiVersion = "v1"
-	if ret.Spec == nil {
-		ret.Spec = &pbcluster.ClusterConfig_Spec{}
-	}
-	ret.Status = &pbcluster.ClusterConfig_Status{
-		Network: &pbcluster.ClusterConfig_Status_Network{},
-	}
-
-	if err := validation.NewClusterConfigValidator(ret).Validate(); err != nil {
-		return nil, err
-	}
-
-	return ret, nil
-}
-
-*/

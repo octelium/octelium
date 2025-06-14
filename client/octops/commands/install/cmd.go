@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
@@ -34,25 +35,15 @@ import (
 )
 
 type Opts struct {
-	ClusterDomain string
-	K8sC          kubernetes.Interface
-	Region        *corev1.Region
-	Bootstrap     *cbootstrapv1.Config
-	Version       string
+	ClusterDomain     string
+	K8sC              kubernetes.Interface
+	Region            *corev1.Region
+	Bootstrap         *cbootstrapv1.Config
+	Version           string
+	AuthTokenSavePath string
 }
 
 func DoInstall(ctx context.Context, o *Opts) error {
-
-	k8sC := o.K8sC
-	clusterDomain := o.ClusterDomain
-
-	/*
-		if ldflags.IsPrivateRegistry() {
-			if err := setRegcred(ctx, k8sC); err != nil {
-				return err
-			}
-		}
-	*/
 
 	if err := setClusterResources(ctx, o); err != nil {
 		return err
@@ -62,7 +53,7 @@ func DoInstall(ctx context.Context, o *Opts) error {
 		return err
 	}
 
-	if err := setInitialAuthToken(ctx, k8sC, clusterDomain); err != nil {
+	if err := setInitialAuthToken(ctx, o); err != nil {
 		return err
 	}
 
@@ -70,7 +61,9 @@ func DoInstall(ctx context.Context, o *Opts) error {
 
 }
 
-func setInitialAuthToken(ctx context.Context, k8sC kubernetes.Interface, clusterDomain string) error {
+func setInitialAuthToken(ctx context.Context, o *Opts) error {
+	k8sC := o.K8sC
+	clusterDomain := o.ClusterDomain
 	zap.L().Debug("Getting the initial access token...")
 	s := cliutils.NewSpinner(os.Stdout)
 	s.SetSuffix("Waiting for Cluster installation to finish")
@@ -109,6 +102,18 @@ func setInitialAuthToken(ctx context.Context, k8sC kubernetes.Interface, cluster
 	cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
 	cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
 	cliutils.LineInfo(fmt.Sprintf("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken))
+
+	if o.AuthTokenSavePath != "" {
+		dir := filepath.Dir(o.AuthTokenSavePath)
+
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(o.AuthTokenSavePath, []byte(authToken), 0600); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
