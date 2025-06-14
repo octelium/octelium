@@ -18,6 +18,7 @@ package authserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -248,4 +249,27 @@ type oauthAccessTokenResponse struct {
 	TokenType    string `json:"token_type,omitempty"`
 	ExpiresIn    int    `json:"expires_in,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+}
+
+type oauth2Metadata struct {
+	Issuer                            string   `json:"issuer"`
+	TokenEndpoint                     string   `json:"token_endpoint"`
+	GrantTypesSupported               []string `json:"grant_types_supported"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+	ResponseTypesSupported            []string `json:"response_types_supported"`
+}
+
+func (s *server) handleOAuth2Metadata(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(oauth2Metadata{
+		Issuer:                 s.rootURL,
+		TokenEndpoint:          fmt.Sprintf("%s/oauth2/token", s.rootURL),
+		ResponseTypesSupported: []string{"code"},
+		GrantTypesSupported: []string{
+			"client_credentials",
+		},
+		TokenEndpointAuthMethodsSupported: []string{
+			"client_secret_post",
+		},
+	})
 }

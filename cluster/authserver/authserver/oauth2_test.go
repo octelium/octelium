@@ -252,3 +252,37 @@ func TestHandleOAuth2(t *testing.T) {
 
 	}
 }
+
+func TestHandleOAuth2Metadata(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+
+		reqHTTP := httptest.NewRequest("GET", "http://localhost/auth/v1/oauth2/token", nil)
+		w := httptest.NewRecorder()
+		srv.handleOAuth2Metadata(w, reqHTTP)
+		resp := w.Result()
+		assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+		bb, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+		resp.Body.Close()
+		var oauth2Metadata oauth2Metadata
+		err = json.Unmarshal(bb, &oauth2Metadata)
+		assert.Nil(t, err)
+
+		assert.Equal(t, srv.rootURL, oauth2Metadata.Issuer)
+	}
+}

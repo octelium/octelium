@@ -324,6 +324,8 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		r.HandleFunc("/callback/success", s.handleAuthSuccess).Methods("GET")
 		r.HandleFunc("/oauth2/token", s.handleOAuth2Token).Methods("POST")
 
+		r.HandleFunc("/.well-known/oauth-authorization-server", s.handleOAuth2Metadata).Methods("GET")
+
 		r.HandleFunc("/assets/{file}", s.handleStatic).Methods("GET")
 
 		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
