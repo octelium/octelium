@@ -117,6 +117,10 @@ func doMain(ctx context.Context) error {
 		return err
 	}
 
+	if err := setHeader(ctx, "./cluster", agplHeader); err != nil {
+		return err
+	}
+
 	return nil
 }
 
