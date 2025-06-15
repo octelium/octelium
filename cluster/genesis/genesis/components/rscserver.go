@@ -96,9 +96,17 @@ func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 								TimeoutSeconds:      4,
 								PeriodSeconds:       20,
 								FailureThreshold:    3,
+
+								/*
+									ProbeHandler: k8scorev1.ProbeHandler{
+										Exec: &k8scorev1.ExecAction{
+											Command: []string{"/bin/grpc_health_probe", "-addr=127.0.0.1:8080"},
+										},
+									},
+								*/
 								ProbeHandler: k8scorev1.ProbeHandler{
-									Exec: &k8scorev1.ExecAction{
-										Command: []string{"/bin/grpc_health_probe", "-addr=127.0.0.1:8080"},
+									GRPC: &k8scorev1.GRPCAction{
+										Port: int32(8080),
 									},
 								},
 							},
