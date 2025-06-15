@@ -97,11 +97,15 @@ func setInitialAuthToken(ctx context.Context, o *Opts) error {
 		zap.L().Debug("Could not purge DB for domain", zap.Error(err))
 	}
 
-	printClusterMsgs()
+	switch {
+	case os.Getenv("OCTELIUM_SKIP_MESSAGES") == "true":
+	default:
+		printClusterMsgs()
 
-	cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
-	cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
-	cliutils.LineInfo(fmt.Sprintf("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken))
+		cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
+		cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
+		cliutils.LineInfo(fmt.Sprintf("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken))
+	}
 
 	if o.AuthTokenSavePath != "" {
 		dir := filepath.Dir(o.AuthTokenSavePath)
