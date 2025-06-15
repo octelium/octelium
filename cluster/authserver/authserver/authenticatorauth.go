@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/totp"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/tpm"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
@@ -131,7 +132,13 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		if authn.Status.Type != corev1.Authenticator_Status_TOTP {
 			return nil, s.errInvalidArg("Invalid Authenticator type")
 		}
-
+	case *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Tpm:
+		if resp.ChallengeResponse.GetTpm() == nil {
+			return nil, s.errInvalidArg("Mismatch auth factor type")
+		}
+		if authn.Status.Type != corev1.Authenticator_Status_TPM {
+			return nil, s.errInvalidArg("Invalid Authenticator type")
+		}
 	default:
 		return nil, s.errInvalidArg("Invalid challengeRequest type")
 	}
@@ -296,6 +303,58 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context, req *auth
 }
 
 func (s *server) validatePreChallenge(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge) error {
+	if req == nil {
+		return nil
+	}
+
+	checkBytes := func(arg []byte, fieldName string) error {
+		argLen := len(arg)
+		if argLen == 0 {
+			return s.errInvalidArg("Empty %s", fieldName)
+		}
+		if argLen > 3000 {
+			return s.errInvalidArg("Invalid %s", fieldName)
+		}
+		return nil
+	}
+	if req.GetTpm() != nil {
+		arg := req.GetTpm()
+		if err := checkBytes(arg.AkBytes, "akBytes"); err != nil {
+			return err
+		}
+		if len(arg.GetEkCertificateDER()) == 0 && len(arg.GetEkPublicKey()) == 0 {
+			return s.errInvalidArg("Either an ekCert or ekPubKey must be provided")
+		}
+
+		if arg.GetEkCertificateDER() != nil {
+			if err := checkBytes(arg.GetEkCertificateDER(), "ekCert"); err != nil {
+				return err
+			}
+		}
+
+		if arg.GetEkPublicKey() != nil {
+			if err := checkBytes(arg.GetEkPublicKey(), "ekCert"); err != nil {
+				return err
+			}
+		}
+
+		if arg.AttestationParameters == nil {
+			return s.errInvalidArg("Nil attestationParams")
+		}
+
+		if err := checkBytes(arg.AttestationParameters.Public, "public"); err != nil {
+			return err
+		}
+		if err := checkBytes(arg.AttestationParameters.CreateAttestation, "createAttestation"); err != nil {
+			return err
+		}
+		if err := checkBytes(arg.AttestationParameters.CreateData, "createData"); err != nil {
+			return err
+		}
+		if err := checkBytes(arg.AttestationParameters.CreateSignature, "createSignature"); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -421,10 +480,10 @@ func (s *server) getAuthenticatorCtl(ctx context.Context,
 	switch authn.Status.Type {
 	case corev1.Authenticator_Status_FIDO:
 		return vwebauthn.NewFactor(ctx, opts, s.mdsProvider)
-
 	case corev1.Authenticator_Status_TOTP:
 		return totp.NewFactor(ctx, opts)
-
+	case corev1.Authenticator_Status_TPM:
+		return tpm.NewFactor(ctx, opts)
 	default:
 		return nil, errors.Errorf("Unknown factor type")
 	}
@@ -546,6 +605,13 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 			return nil, s.errInvalidArg("Invalid Authenticator type")
 		}
 
+	case *authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest_Tpm:
+		if req.ChallengeResponse.GetTpm() == nil {
+			return nil, s.errInvalidArg("Mismatch auth factor type")
+		}
+		if authn.Status.Type != corev1.Authenticator_Status_TPM {
+			return nil, s.errInvalidArg("Invalid Authenticator type")
+		}
 	default:
 		return nil, s.errInvalidArg("Invalid challengeRequest type")
 	}
@@ -599,7 +665,11 @@ func (s *server) validateChallengeResponse(req *authv1.ChallengeResponse) error 
 		if len(req.GetFido().Response) > 30000 {
 			return s.errInvalidArg("Response is too long")
 		}
-
+	case *authv1.ChallengeResponse_Tpm:
+		respLen := len(req.GetTpm().Response)
+		if respLen < 8 || respLen > 256 {
+			return s.errInvalidArg("Invalid response")
+		}
 	default:
 		return s.errInvalidArg("Invalid authenticator response")
 	}
