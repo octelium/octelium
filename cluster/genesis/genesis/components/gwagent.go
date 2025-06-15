@@ -132,6 +132,20 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 								ReadOnly:  false,
 								MountPath: "/etc/cni",
 							}},
+							LivenessProbe: &k8scorev1.Probe{
+								InitialDelaySeconds: 60,
+								TimeoutSeconds:      4,
+								PeriodSeconds:       30,
+								FailureThreshold:    3,
+
+								ProbeHandler: k8scorev1.ProbeHandler{
+									Exec: &k8scorev1.ExecAction{
+										Command: []string{
+											"/bin/grpc_health_probe", "-addr=localhost:10101",
+										},
+									},
+								},
+							},
 							SecurityContext: &k8scorev1.SecurityContext{
 								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(false),
 								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),

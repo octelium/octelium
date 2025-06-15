@@ -46,26 +46,34 @@ func (s *Server) Watch(*grpc_health_v1.HealthCheckRequest, grpc_health_v1.Health
 
 func Run(port int) {
 	go func() {
-		if err := doRun(port); err != nil {
+		if err := doRun(fmt.Sprintf(":%d", port)); err != nil {
 			zap.L().Warn("healthCheck server error", zap.Error(err))
 		}
 	}()
 }
 
-func doRun(port int) error {
+func RunWithAddr(addr string) {
+	go func() {
+		if err := doRun(addr); err != nil {
+			zap.L().Warn("healthCheck server error", zap.Error(err))
+		}
+	}()
+}
+
+func doRun(addr string) error {
 	grpcSrv := grpc.NewServer(
 		grpc.MaxConcurrentStreams(1000000),
 	)
 
 	grpc_health_v1.RegisterHealthServer(grpcSrv, NewServer())
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		zap.L().Warn("Could not listen to port for gRPC healthCheck service", zap.Error(err))
 		return err
 	}
 
-	zap.L().Debug("Running healthCheck gRPC service", zap.Int("port", port))
+	zap.L().Debug("Running healthCheck gRPC service", zap.String("addr", addr))
 
 	err = grpcSrv.Serve(lis)
 	zap.L().Debug("healthCheck gRPC service exited", zap.Error(err))
