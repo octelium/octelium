@@ -391,6 +391,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 				ManagedService: &corev1.Service_Status_ManagedService{
 					Image: oc.GetImage(oc.DNSServer, ""),
 					Type:  "dnsserver",
+					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+								Port: vutils.HealthCheckPortManagedService,
+							},
+						},
+					},
 				},
 			},
 		}
@@ -441,6 +448,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 				ManagedService: &corev1.Service_Status_ManagedService{
 					Type:  "apiserver",
 					Image: oc.GetImage(oc.APIServer, ""),
+					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+								Port: vutils.HealthCheckPortManagedService,
+							},
+						},
+					},
 				},
 			},
 		}
@@ -473,6 +487,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 					Type:  "apiserver",
 					Image: oc.GetImage(oc.AuthServer, ""),
 					Args:  []string{"grpc"},
+					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+								Port: vutils.HealthCheckPortManagedService,
+							},
+						},
+					},
 				},
 			},
 		}
@@ -501,6 +522,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 					Image: oc.GetImage(oc.AuthServer, ""),
 					Args:  []string{"http"},
 					Type:  "authserver",
+					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+								Port: vutils.HealthCheckPortManagedService,
+							},
+						},
+					},
 				},
 			},
 		}
