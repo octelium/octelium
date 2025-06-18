@@ -37,6 +37,7 @@ const (
 	MainService_AuthenticateWithAuthenticationToken_FullMethodName = "/octelium.api.main.auth.v1.MainService/AuthenticateWithAuthenticationToken"
 	MainService_AuthenticateWithAssertion_FullMethodName           = "/octelium.api.main.auth.v1.MainService/AuthenticateWithAssertion"
 	MainService_AuthenticateWithRefreshToken_FullMethodName        = "/octelium.api.main.auth.v1.MainService/AuthenticateWithRefreshToken"
+	MainService_AuthenticateWithAuthenticator_FullMethodName       = "/octelium.api.main.auth.v1.MainService/AuthenticateWithAuthenticator"
 	MainService_Logout_FullMethodName                              = "/octelium.api.main.auth.v1.MainService/Logout"
 	MainService_RegisterDeviceBegin_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/RegisterDeviceBegin"
 	MainService_RegisterDeviceFinish_FullMethodName                = "/octelium.api.main.auth.v1.MainService/RegisterDeviceFinish"
@@ -57,6 +58,7 @@ type MainServiceClient interface {
 	AuthenticateWithAuthenticationToken(ctx context.Context, in *AuthenticateWithAuthenticationTokenRequest, opts ...grpc.CallOption) (*SessionToken, error)
 	AuthenticateWithAssertion(ctx context.Context, in *AuthenticateWithAssertionRequest, opts ...grpc.CallOption) (*SessionToken, error)
 	AuthenticateWithRefreshToken(ctx context.Context, in *AuthenticateWithRefreshTokenRequest, opts ...grpc.CallOption) (*SessionToken, error)
+	AuthenticateWithAuthenticator(ctx context.Context, in *AuthenticateWithAuthenticatorRequest, opts ...grpc.CallOption) (*SessionToken, error)
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
 	RegisterDeviceBegin(ctx context.Context, in *RegisterDeviceBeginRequest, opts ...grpc.CallOption) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(ctx context.Context, in *RegisterDeviceFinishRequest, opts ...grpc.CallOption) (*RegisterDeviceFinishResponse, error)
@@ -102,6 +104,16 @@ func (c *mainServiceClient) AuthenticateWithRefreshToken(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionToken)
 	err := c.cc.Invoke(ctx, MainService_AuthenticateWithRefreshToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) AuthenticateWithAuthenticator(ctx context.Context, in *AuthenticateWithAuthenticatorRequest, opts ...grpc.CallOption) (*SessionToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionToken)
+	err := c.cc.Invoke(ctx, MainService_AuthenticateWithAuthenticator_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +237,7 @@ type MainServiceServer interface {
 	AuthenticateWithAuthenticationToken(context.Context, *AuthenticateWithAuthenticationTokenRequest) (*SessionToken, error)
 	AuthenticateWithAssertion(context.Context, *AuthenticateWithAssertionRequest) (*SessionToken, error)
 	AuthenticateWithRefreshToken(context.Context, *AuthenticateWithRefreshTokenRequest) (*SessionToken, error)
+	AuthenticateWithAuthenticator(context.Context, *AuthenticateWithAuthenticatorRequest) (*SessionToken, error)
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
 	RegisterDeviceBegin(context.Context, *RegisterDeviceBeginRequest) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(context.Context, *RegisterDeviceFinishRequest) (*RegisterDeviceFinishResponse, error)
@@ -254,6 +267,9 @@ func (UnimplementedMainServiceServer) AuthenticateWithAssertion(context.Context,
 }
 func (UnimplementedMainServiceServer) AuthenticateWithRefreshToken(context.Context, *AuthenticateWithRefreshTokenRequest) (*SessionToken, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithRefreshToken not implemented")
+}
+func (UnimplementedMainServiceServer) AuthenticateWithAuthenticator(context.Context, *AuthenticateWithAuthenticatorRequest) (*SessionToken, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithAuthenticator not implemented")
 }
 func (UnimplementedMainServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Logout not implemented")
@@ -359,6 +375,24 @@ func _MainService_AuthenticateWithRefreshToken_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MainServiceServer).AuthenticateWithRefreshToken(ctx, req.(*AuthenticateWithRefreshTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_AuthenticateWithAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateWithAuthenticatorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).AuthenticateWithAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_AuthenticateWithAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).AuthenticateWithAuthenticator(ctx, req.(*AuthenticateWithAuthenticatorRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -579,6 +613,10 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AuthenticateWithRefreshToken",
 			Handler:    _MainService_AuthenticateWithRefreshToken_Handler,
+		},
+		{
+			MethodName: "AuthenticateWithAuthenticator",
+			Handler:    _MainService_AuthenticateWithAuthenticator_Handler,
 		},
 		{
 			MethodName: "Logout",

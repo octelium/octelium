@@ -8,6 +8,7 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/gofrs/flock v0.8.1
+	github.com/google/go-attestation v0.5.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
@@ -29,6 +30,9 @@ require (
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/google/certificate-transparency-go v1.1.2 // indirect
+	github.com/google/go-tpm v0.9.0 // indirect
+	github.com/google/go-tspi v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
@@ -40,6 +44,7 @@ require (
 	github.com/rogpeppe/go-internal v1.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
+	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
