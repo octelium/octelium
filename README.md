@@ -14,9 +14,10 @@
 - [What is Octelium?](#what-is-octelium)
 - [Use Cases](#use-cases)
 - [Main Features](#main-features)
-- [Useful Links](#useful-links)
+- [Try Octelium in a Codespace](#try-octelium-in-a-codespace)
 - [Install CLI Tools](#install-cli-tools)
 - [Install your First Cluster](#install-your-first-cluster)
+- [Useful Links](#useful-links)
 - [License](#license)
 - [Support](#support)
 - [Frequently Asked Questions](#frequently-asked-questions)
@@ -92,6 +93,10 @@ Octelium is designed to be generic enough (check out the main features below for
 
 - **Open source and designed for self-hosting** Octelium is fully open source and it is designed for single-tenant self-hosting. There is no proprietary cloud-based control plane, nor this is some crippled demo open source version of a separate fully functional SaaS paid service. You can host it on top of a single-node Kubernetes cluster running on a cheap cloud VM/VPS and you can also host it on scalable production cloud-based or on-prem multi-node Kubernetes installations with no vendor lock-in.
 
+
+## Try Octelium in a Codespace
+
+You can install and manage a demo Octelium _Cluster_ inside a GitHub Codespace without having to install it on a real VM/machine/Kubernetes cluster and simply use it as a playground to get familiar of how the _Cluster_ is managed. Visit the playground GitHub repository [here](https://github.com/octelium/playground) and run it in a Codespace then follow the README instructions there to install the _Cluster_ and start interacting with it.
 
 ## Install CLI Tools
 
