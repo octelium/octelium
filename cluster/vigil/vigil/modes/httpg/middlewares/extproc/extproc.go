@@ -19,7 +19,6 @@ package extproc
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -44,6 +43,7 @@ type middleware struct {
 func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 	return &middleware{
 		next: next,
+		cMap: make(map[string]extprocsvc.ExternalProcessorClient),
 	}, nil
 }
 
@@ -148,6 +148,20 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				default:
 				}
 			}
+		case *extprocsvc.ProcessingResponse_ImmediateResponse:
+			resp := msg.GetImmediateResponse()
+			if resp.Headers != nil {
+				for _, hdr := range resp.Headers.SetHeaders {
+					rw.Header().Set(hdr.Header.Key, hdr.Header.Value)
+				}
+
+				for _, hdr := range resp.Headers.RemoveHeaders {
+					rw.Header().Del(hdr)
+				}
+			}
+			rw.Header().Set("Server", "octelium")
+			rw.Write(resp.Body)
+			return
 		}
 	}
 
@@ -204,11 +218,6 @@ func (m *middleware) getHost(p *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc) 
 	default:
 		return "", errors.Errorf("Unset extProc type")
 	}
-}
-
-func getKey(schemaContent string) string {
-	hsh := sha256.Sum256([]byte(schemaContent))
-	return fmt.Sprintf("%x", hsh[:])
 }
 
 func getGRPCConn(host string) (*grpc.ClientConn, error) {
