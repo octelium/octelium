@@ -47,6 +47,11 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 	}, nil
 }
 
+type clientInfo struct {
+	c      extprocsvc.ExternalProcessor_ProcessClient
+	plugin *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc
+}
+
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	reqCtx := middlewares.GetCtxRequestContext(req.Context())
 	cfg := reqCtx.ServiceConfig
@@ -58,7 +63,12 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 
-	var clients []extprocsvc.ExternalProcessor_ProcessClient
+	var clientInfos []*clientInfo
+	closeGRPC := func() {
+		for _, c := range clientInfos {
+			c.c.CloseSend()
+		}
+	}
 
 	for _, plugin := range cfg.GetHttp().Plugins {
 		switch plugin.Type.(type) {
@@ -73,7 +83,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				continue
 			}
 
-			clients = append(clients, client)
+			clientInfos = append(clientInfos, &clientInfo{
+				c:      client,
+				plugin: plugin.GetExtProc(),
+			})
 		default:
 			continue
 		}
@@ -90,90 +103,94 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		})
 	}
 
-	for _, c := range clients {
-		if err := c.Send(&extprocsvc.ProcessingRequest{
-			Request: &extprocsvc.ProcessingRequest_RequestHeaders{
-				RequestHeaders: &extprocsvc.HttpHeaders{
-					Headers: headers,
+	for _, c := range clientInfos {
+		if c.plugin.ProcessingMode == nil ||
+			c.plugin.ProcessingMode.RequestHeaderMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_HEADER_SEND_MODE_UNSET ||
+			c.plugin.ProcessingMode.RequestHeaderMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
+
+			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				Request: &extprocsvc.ProcessingRequest_RequestHeaders{
+					RequestHeaders: &extprocsvc.HttpHeaders{
+						Headers: headers,
+					},
 				},
-			},
-		}); err != nil {
-			continue
-		}
-		msg, err := c.Recv()
-		if err != nil {
-			continue
-		}
+			}); err != nil {
+				continue
+			}
+			msg, err := c.c.Recv()
+			if err != nil {
+				continue
+			}
 
-		switch msg.Response.(type) {
-		case *extprocsvc.ProcessingResponse_RequestHeaders:
-			resp := msg.GetRequestHeaders()
-			if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
-				mut := resp.Response.HeaderMutation
-				for _, hdr := range mut.RemoveHeaders {
-					req.Header.Del(hdr)
-				}
+			switch msg.Response.(type) {
+			case *extprocsvc.ProcessingResponse_RequestHeaders:
+				resp := msg.GetRequestHeaders()
+				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
+					mut := resp.Response.HeaderMutation
+					for _, hdr := range mut.RemoveHeaders {
+						req.Header.Del(hdr)
+					}
 
-				for _, hdr := range mut.SetHeaders {
-					req.Header.Set(hdr.Header.Key, hdr.Header.Value)
+					for _, hdr := range mut.SetHeaders {
+						req.Header.Set(hdr.Header.Key, hdr.Header.Value)
+					}
 				}
 			}
 		}
 
-		if err := c.Send(&extprocsvc.ProcessingRequest{
-			Request: &extprocsvc.ProcessingRequest_RequestBody{
-				RequestBody: &extprocsvc.HttpBody{
-					Body:        reqCtx.Body,
-					EndOfStream: true,
+		if c.plugin.ProcessingMode != nil &&
+			c.plugin.ProcessingMode.RequestBodyMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
+			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				Request: &extprocsvc.ProcessingRequest_RequestBody{
+					RequestBody: &extprocsvc.HttpBody{
+						Body:        reqCtx.Body,
+						EndOfStream: true,
+					},
 				},
-			},
-		}); err != nil {
-			continue
-		}
-		msg, err = c.Recv()
-		if err != nil {
-			continue
+			}); err != nil {
+				continue
+			}
+			msg, err := c.c.Recv()
+			if err != nil {
+				continue
+			}
+
+			switch msg.Response.(type) {
+			case *extprocsvc.ProcessingResponse_RequestBody:
+				resp := msg.GetRequestBody()
+				if resp != nil && resp.Response != nil && resp.Response.BodyMutation != nil {
+					mut := resp.Response.BodyMutation
+					switch mut.Mutation.(type) {
+					case *extprocsvc.BodyMutation_Body:
+						req.Body = io.NopCloser(bytes.NewReader(mut.GetBody()))
+					case *extprocsvc.BodyMutation_ClearBody:
+						req.Body = io.NopCloser(bytes.NewReader(nil))
+					default:
+					}
+				}
+			case *extprocsvc.ProcessingResponse_ImmediateResponse:
+				resp := msg.GetImmediateResponse()
+				if resp.Headers != nil {
+					for _, hdr := range resp.Headers.SetHeaders {
+						rw.Header().Set(hdr.Header.Key, hdr.Header.Value)
+					}
+
+					for _, hdr := range resp.Headers.RemoveHeaders {
+						rw.Header().Del(hdr)
+					}
+				}
+				rw.Header().Set("Server", "octelium")
+				rw.Write(resp.Body)
+
+				closeGRPC()
+				return
+			}
 		}
 
-		switch msg.Response.(type) {
-		case *extprocsvc.ProcessingResponse_RequestBody:
-			resp := msg.GetRequestBody()
-			if resp != nil && resp.Response != nil && resp.Response.BodyMutation != nil {
-				mut := resp.Response.BodyMutation
-				switch mut.Mutation.(type) {
-				case *extprocsvc.BodyMutation_Body:
-					req.Body = io.NopCloser(bytes.NewReader(mut.GetBody()))
-				case *extprocsvc.BodyMutation_ClearBody:
-					req.Body = io.NopCloser(bytes.NewReader(nil))
-				default:
-				}
-			}
-		case *extprocsvc.ProcessingResponse_ImmediateResponse:
-			resp := msg.GetImmediateResponse()
-			if resp.Headers != nil {
-				for _, hdr := range resp.Headers.SetHeaders {
-					rw.Header().Set(hdr.Header.Key, hdr.Header.Value)
-				}
-
-				for _, hdr := range resp.Headers.RemoveHeaders {
-					rw.Header().Del(hdr)
-				}
-			}
-			rw.Header().Set("Server", "octelium")
-			rw.Write(resp.Body)
-
-			for _, c := range clients {
-				c.CloseSend()
-			}
-			return
-		}
 	}
 
 	m.next.ServeHTTP(rw, req)
-
-	for _, c := range clients {
-		c.CloseSend()
-	}
+	closeGRPC()
 }
 
 func (m *middleware) getClient(p *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc) (extprocsvc.ExternalProcessorClient, error) {
