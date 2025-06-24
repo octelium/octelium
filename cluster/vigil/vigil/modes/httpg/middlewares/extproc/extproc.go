@@ -161,6 +161,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 			rw.Header().Set("Server", "octelium")
 			rw.Write(resp.Body)
+
+			for _, c := range clients {
+				c.CloseSend()
+			}
 			return
 		}
 	}

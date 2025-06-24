@@ -1,0 +1,168 @@
+/*
+ * Copyright Octelium Labs, LLC. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License version 3,
+ * as published by the Free Software Foundation of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package extproc
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+type tstSrv struct {
+}
+
+func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
+	ctx := srv.Context()
+
+	for {
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req, err := srv.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return status.Errorf(codes.Unknown, "%v", err)
+		}
+
+		zap.L().Debug("___________Received REQ", zap.Any("req", req))
+		switch req.Request.(type) {
+		case *extprocsvc.ProcessingRequest_RequestBody:
+			srv.Send(&extprocsvc.ProcessingResponse{
+				Response: &extprocsvc.ProcessingResponse_ResponseBody{},
+			})
+		case *extprocsvc.ProcessingRequest_RequestHeaders:
+			err = srv.Send(&extprocsvc.ProcessingResponse{
+				Response: &extprocsvc.ProcessingResponse_RequestHeaders{
+					RequestHeaders: &extprocsvc.HeadersResponse{
+						Response: &extprocsvc.CommonResponse{
+							HeaderMutation: &extprocsvc.HeaderMutation{
+								SetHeaders: []*envoycore.HeaderValueOption{
+									{
+										Header: &envoycore.HeaderValue{
+											Key:   "X-Octelium-Custom-1",
+											Value: "OCTELIUM_VAL_1",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+			zap.L().Debug("Sent resp", zap.Error(err))
+		case *extprocsvc.ProcessingRequest_ResponseBody:
+		case *extprocsvc.ProcessingRequest_ResponseHeaders:
+		default:
+			zap.L().Debug("Unknown req type")
+		}
+	}
+}
+
+func TestMiddleware(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	port := tests.GetPort()
+	{
+		grpcSrv := grpc.NewServer(
+			grpc.MaxConcurrentStreams(100*1000),
+			grpc.ConnectionTimeout(10000*time.Second),
+			grpc.MaxRecvMsgSize(200*1024),
+			grpc.ReadBufferSize(32*1024),
+		)
+		extprocsvc.RegisterExternalProcessorServer(grpcSrv, &tstSrv{})
+
+		lisGRPC, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		assert.Nil(t, err)
+
+		go func() {
+			zap.S().Debug("running gRPC server...")
+			if err := grpcSrv.Serve(lisGRPC); err != nil {
+				zap.S().Infof("gRPC server closed: %+v", err)
+			}
+		}()
+
+		time.Sleep(2 * time.Second)
+	}
+
+	var rReq *http.Request
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rReq = r
+	})
+	mdlwr, err := New(ctx, next)
+	assert.Nil(t, err)
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+								{
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
+												Address: fmt.Sprintf("localhost:%d", port),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}))
+		mdlwr.ServeHTTP(nil, req)
+
+		assert.Equal(t, "OCTELIUM_VAL_1", rReq.Header.Get("X-Octelium-Custom-1"))
+	}
+
+}
