@@ -15,6 +15,7 @@
 package secret
 
 import (
+	"io"
 	"os"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -127,7 +128,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 func getValue() ([]byte, error) {
 	if cmdArgs.FromFile != "" {
-		return os.ReadFile(cmdArgs.FromFile)
+		if cmdArgs.FromFile == "-" {
+			return io.ReadAll(os.Stdin)
+
+		} else {
+			return os.ReadFile(cmdArgs.FromFile)
+		}
 	}
 
 	if cmdArgs.Value != "" {
