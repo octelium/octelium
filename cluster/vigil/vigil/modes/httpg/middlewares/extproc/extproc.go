@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -117,7 +118,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := c.c.Recv()
+			msg, err := doReadResponse(ctx, c.c)
 			if err != nil {
 				continue
 			}
@@ -150,7 +151,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := c.c.Recv()
+			msg, err := doReadResponse(ctx, c.c)
 			if err != nil {
 				continue
 			}
@@ -247,4 +248,31 @@ func getGRPCConn(host string) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	return grpc.NewClient(host, opts...)
+}
+
+type readResp struct {
+	res *extprocsvc.ProcessingResponse
+	err error
+}
+
+func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessClient) (*extprocsvc.ProcessingResponse, error) {
+
+	resCh := make(chan *readResp, 1)
+
+	go func() {
+		res, err := c.Recv()
+		resCh <- &readResp{
+			res: res,
+			err: err,
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-resCh:
+		return res.res, res.err
+	case <-time.After(200 * time.Millisecond):
+		return nil, errors.Errorf("read msg timeout")
+	}
 }
