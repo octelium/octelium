@@ -18,7 +18,9 @@ package httpg
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -26,8 +28,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -98,8 +103,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 			case "wss":
 				outReq.URL.Scheme = "https"
 			default:
-				if svc.Spec.Config != nil &&
-					svc.Spec.Config.ClientCertificate != nil {
+				if cfg != nil && cfg.ClientCertificate != nil {
 					outReq.URL.Scheme = "https"
 				} else {
 					outReq.URL.Scheme = "http"
@@ -132,6 +136,32 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Proto = "HTTP/1.1"
 				outReq.ProtoMajor = 1
 				outReq.ProtoMinor = 1
+			}
+
+			if cfg != nil &&
+				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
+				cfg.GetHttp().GetAuth().GetSigv4() != nil {
+
+				sigv4Opts := cfg.GetHttp().GetAuth().GetSigv4()
+				secret, err := s.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
+				if err == nil {
+					signer := sigv4.NewSigner()
+					if err := signer.SignHTTP(ctx,
+						aws.Credentials{
+							AccessKeyID:     sigv4Opts.AccessKeyID,
+							SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
+						},
+						outReq,
+						fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body))),
+						sigv4Opts.Service, sigv4Opts.Region,
+						time.Now(),
+					); err != nil {
+						zap.L().Warn("Could not signHTTP for sigv4", zap.Error(err))
+						return
+					}
+				} else {
+					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
+				}
 			}
 		},
 
