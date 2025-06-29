@@ -106,8 +106,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	for _, c := range clientInfos {
 		if c.plugin.ProcessingMode == nil ||
-			c.plugin.ProcessingMode.RequestHeaderMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_HEADER_SEND_MODE_UNSET ||
-			c.plugin.ProcessingMode.RequestHeaderMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
+			c.plugin.ProcessingMode.RequestHeaderMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_HEADER_SEND_MODE_UNSET ||
+			c.plugin.ProcessingMode.RequestHeaderMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
 
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
 				Request: &extprocsvc.ProcessingRequest_RequestHeaders{
@@ -140,7 +142,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		if c.plugin.ProcessingMode != nil &&
-			c.plugin.ProcessingMode.RequestBodyMode == corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
+			c.plugin.ProcessingMode.RequestBodyMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
 				Request: &extprocsvc.ProcessingRequest_RequestBody{
 					RequestBody: &extprocsvc.HttpBody{
@@ -190,7 +193,95 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	m.next.ServeHTTP(rw, req)
+	crw := newResponseWriter(rw)
+	m.next.ServeHTTP(crw, req)
+
+	headers = &envoycore.HeaderMap{}
+	for k, v := range crw.headers {
+		if len(v) < 1 {
+			continue
+		}
+		headers.Headers = append(headers.Headers, &envoycore.HeaderValue{
+			Key:   k,
+			Value: v[0],
+		})
+	}
+
+	for _, c := range clientInfos {
+		if c.plugin.ProcessingMode == nil ||
+			c.plugin.ProcessingMode.ResponseHeaderMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_HEADER_SEND_MODE_UNSET ||
+			c.plugin.ProcessingMode.ResponseHeaderMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
+
+			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				Request: &extprocsvc.ProcessingRequest_ResponseHeaders{
+					ResponseHeaders: &extprocsvc.HttpHeaders{
+						Headers: headers,
+					},
+				},
+			}); err != nil {
+				continue
+			}
+			msg, err := doReadResponse(ctx, c.c)
+			if err != nil {
+				continue
+			}
+
+			switch msg.Response.(type) {
+			case *extprocsvc.ProcessingResponse_ResponseHeaders:
+				resp := msg.GetResponseHeaders()
+				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
+					mut := resp.Response.HeaderMutation
+					for _, hdr := range mut.RemoveHeaders {
+						crw.ResponseWriter.Header().Del(hdr)
+					}
+
+					for _, hdr := range mut.SetHeaders {
+						crw.ResponseWriter.Header().Set(hdr.Header.Key, hdr.Header.Value)
+					}
+				}
+			}
+		}
+
+		if c.plugin.ProcessingMode != nil &&
+			c.plugin.ProcessingMode.ResponseBodyMode ==
+				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
+			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				Request: &extprocsvc.ProcessingRequest_ResponseBody{
+					ResponseBody: &extprocsvc.HttpBody{
+						Body:        crw.body.Bytes(),
+						EndOfStream: true,
+					},
+				},
+			}); err != nil {
+				continue
+			}
+			msg, err := doReadResponse(ctx, c.c)
+			if err != nil {
+				continue
+			}
+
+			switch msg.Response.(type) {
+			case *extprocsvc.ProcessingResponse_ResponseBody:
+				resp := msg.GetResponseBody()
+				if resp != nil && resp.Response != nil && resp.Response.BodyMutation != nil {
+					mut := resp.Response.BodyMutation
+					switch mut.Mutation.(type) {
+					case *extprocsvc.BodyMutation_Body:
+						crw.body.Reset()
+						crw.body.Write(mut.GetBody())
+					case *extprocsvc.BodyMutation_ClearBody:
+						crw.body.Reset()
+					default:
+					}
+				}
+			}
+		}
+
+	}
+
+	crw.ResponseWriter.Write(crw.body.Bytes())
 	closeGRPC()
 }
 
@@ -275,4 +366,32 @@ func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessC
 	case <-time.After(200 * time.Millisecond):
 		return nil, errors.Errorf("read msg timeout")
 	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	headers    http.Header
+	body       *bytes.Buffer
+}
+
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		statusCode:     http.StatusOK,
+		headers:        make(http.Header),
+		body:           new(bytes.Buffer),
+	}
+}
+
+func (rw *responseWriter) Header() http.Header {
+	return rw.headers
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	return rw.body.Write(b)
 }
