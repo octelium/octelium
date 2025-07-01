@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -39,6 +40,9 @@ import (
 )
 
 type tstSrv struct {
+	reqHeader string
+	rspHeader string
+	rspBody   string
 }
 
 func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
@@ -76,7 +80,7 @@ func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
 									{
 										Header: &envoycore.HeaderValue{
 											Key:   "X-Octelium-Custom-1",
-											Value: "OCTELIUM_VAL_1",
+											Value: s.reqHeader,
 										},
 									},
 								},
@@ -87,7 +91,40 @@ func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
 			})
 			zap.L().Debug("Sent resp", zap.Error(err))
 		case *extprocsvc.ProcessingRequest_ResponseBody:
+			err = srv.Send(&extprocsvc.ProcessingResponse{
+				Response: &extprocsvc.ProcessingResponse_ResponseBody{
+					ResponseBody: &extprocsvc.BodyResponse{
+						Response: &extprocsvc.CommonResponse{
+							BodyMutation: &extprocsvc.BodyMutation{
+								Mutation: &extprocsvc.BodyMutation_Body{
+									Body: []byte(s.rspBody),
+								},
+							},
+						},
+					},
+				},
+			})
 		case *extprocsvc.ProcessingRequest_ResponseHeaders:
+
+			err = srv.Send(&extprocsvc.ProcessingResponse{
+				Response: &extprocsvc.ProcessingResponse_ResponseHeaders{
+					ResponseHeaders: &extprocsvc.HeadersResponse{
+						Response: &extprocsvc.CommonResponse{
+							HeaderMutation: &extprocsvc.HeaderMutation{
+								SetHeaders: []*envoycore.HeaderValueOption{
+									{
+										Header: &envoycore.HeaderValue{
+											Key:   "X-Octelium-Custom-1",
+											Value: s.rspHeader,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+			zap.L().Debug("Sent resp", zap.Error(err))
 		default:
 			zap.L().Debug("Unknown req type")
 		}
@@ -105,27 +142,33 @@ func TestMiddleware(t *testing.T) {
 	})
 
 	port := tests.GetPort()
-	{
-		grpcSrv := grpc.NewServer(
-			grpc.MaxConcurrentStreams(100*1000),
-			grpc.ConnectionTimeout(10000*time.Second),
-			grpc.MaxRecvMsgSize(200*1024),
-			grpc.ReadBufferSize(32*1024),
-		)
-		extprocsvc.RegisterExternalProcessorServer(grpcSrv, &tstSrv{})
 
-		lisGRPC, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		assert.Nil(t, err)
+	grpcSrv := grpc.NewServer(
+		grpc.MaxConcurrentStreams(100*1000),
+		grpc.ConnectionTimeout(10000*time.Second),
+		grpc.MaxRecvMsgSize(200*1024),
+		grpc.ReadBufferSize(32*1024),
+	)
 
-		go func() {
-			zap.S().Debug("running gRPC server...")
-			if err := grpcSrv.Serve(lisGRPC); err != nil {
-				zap.S().Infof("gRPC server closed: %+v", err)
-			}
-		}()
-
-		time.Sleep(2 * time.Second)
+	tstSrv := &tstSrv{
+		reqHeader: utilrand.GetRandomString(32),
+		rspHeader: utilrand.GetRandomString(32),
+		rspBody:   utilrand.GetRandomString(32),
 	}
+
+	extprocsvc.RegisterExternalProcessorServer(grpcSrv, tstSrv)
+
+	lisGRPC, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	assert.Nil(t, err)
+
+	go func() {
+		zap.S().Debug("running gRPC server...")
+		if err := grpcSrv.Serve(lisGRPC); err != nil {
+			zap.S().Infof("gRPC server closed: %+v", err)
+		}
+	}()
+
+	time.Sleep(2 * time.Second)
 
 	var rReq *http.Request
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +195,9 @@ func TestMiddleware(t *testing.T) {
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
 												Address: fmt.Sprintf("localhost:%d", port),
 											},
+											ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
+												ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
+											},
 										},
 									},
 								},
@@ -160,9 +206,15 @@ func TestMiddleware(t *testing.T) {
 					},
 				},
 			}))
-		mdlwr.ServeHTTP(nil, req)
 
-		assert.Equal(t, "OCTELIUM_VAL_1", rReq.Header.Get("X-Octelium-Custom-1"))
+		rw := httptest.NewRecorder()
+
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t, tstSrv.reqHeader, rReq.Header.Get("X-Octelium-Custom-1"))
+		assert.Equal(t, tstSrv.rspHeader, rw.Header().Get("X-Octelium-Custom-1"))
+
+		assert.Equal(t, tstSrv.rspBody, rw.Body.String())
 	}
 
 }

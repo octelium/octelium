@@ -265,6 +265,18 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			switch msg.Response.(type) {
 			case *extprocsvc.ProcessingResponse_ResponseBody:
 				resp := msg.GetResponseBody()
+
+				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
+					mut := resp.Response.HeaderMutation
+					for _, hdr := range mut.RemoveHeaders {
+						crw.ResponseWriter.Header().Del(hdr)
+					}
+
+					for _, hdr := range mut.SetHeaders {
+						crw.ResponseWriter.Header().Set(hdr.Header.Key, hdr.Header.Value)
+					}
+				}
+
 				if resp != nil && resp.Response != nil && resp.Response.BodyMutation != nil {
 					mut := resp.Response.BodyMutation
 					switch mut.Mutation.(type) {
@@ -363,7 +375,7 @@ func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessC
 		return nil, ctx.Err()
 	case res := <-resCh:
 		return res.res, res.err
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(800 * time.Millisecond):
 		return nil, errors.Errorf("read msg timeout")
 	}
 }
