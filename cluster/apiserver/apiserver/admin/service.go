@@ -342,7 +342,7 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("You must provide a managedContainer image")
 			}
 			if len(typ.Image) > 256 {
-				return grpcutils.InvalidArg("Too long image: %s", typ.Image)
+				return grpcutils.InvalidArg("Image address is too long: %s", typ.Image)
 			}
 
 			if typ.Port < 1 || typ.Port > 65535 {
@@ -668,6 +668,47 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					}
 				default:
 					return grpcutils.InvalidArg("Invalid response type")
+				}
+			}
+
+			if len(cfg.GetHttp().Plugins) > 0 {
+				if len(cfg.GetHttp().Plugins) > 12 {
+					return grpcutils.InvalidArg("Too many plugins")
+				}
+
+				var names []string
+				for _, plugin := range cfg.GetHttp().Plugins {
+
+					if err := apivalidation.ValidateName(plugin.Name, 0, 0); err != nil {
+						return err
+					}
+					if slices.Contains(names, plugin.Name) {
+						return serr.InvalidArg("This Plugin name already exists: %s", cfg.Name)
+					}
+					names = append(names, plugin.Name)
+
+					switch plugin.Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
+
+						switch plugin.GetExtProc().Type.(type) {
+						case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
+							if err := apivalidation.ValidateHostPort(
+								plugin.GetExtProc().GetAddress()); err != nil {
+								return err
+							}
+						case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Container_:
+							if plugin.GetExtProc().GetContainer().Image == "" {
+								return grpcutils.InvalidArg("Image address is empty")
+							}
+
+							if len(plugin.GetExtProc().GetContainer().Image) > 256 {
+								return grpcutils.InvalidArg("Image address is too long: %s",
+									plugin.GetExtProc().GetContainer().Image)
+							}
+						}
+					default:
+						return grpcutils.InvalidArg("plugin type must be set")
+					}
 				}
 			}
 

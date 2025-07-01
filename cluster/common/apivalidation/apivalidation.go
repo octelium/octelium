@@ -542,3 +542,24 @@ func ObjectReferenceToDeleteOptions(arg *metav1.ObjectReference) *metav1.DeleteO
 		Uid:  arg.Uid,
 	}
 }
+
+func ValidateHostPort(hostPort string) error {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return grpcutils.InvalidArg("Invalid host:port %s", hostPort)
+	}
+
+	if !govalidator.IsHost(host) {
+		return grpcutils.InvalidArg("Invalid host: %s", host)
+	}
+
+	if port == "" {
+		return grpcutils.InvalidArg("Empty port")
+	}
+
+	if !govalidator.IsPort(port) {
+		return grpcutils.InvalidArg("Invalid port: %s", port)
+	}
+
+	return nil
+}
