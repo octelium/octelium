@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
@@ -262,6 +263,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return paths.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return extproc.New(ctx, next)
 	})
 
 	handler, err := chain.Then(s)
