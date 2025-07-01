@@ -17,6 +17,7 @@ package commands
 import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/commands/version"
+	"github.com/octelium/octelium/client/octops/commands/cert"
 	"github.com/octelium/octelium/client/octops/commands/initcmd"
 	"github.com/octelium/octelium/client/octops/commands/upgrade"
 	"github.com/spf13/cobra"
@@ -36,6 +37,7 @@ var Cmd = &cobra.Command{
 func InitCmds() {
 	Cmd.AddCommand(initcmd.Cmd)
 	Cmd.AddCommand(upgrade.Cmd)
+	Cmd.AddCommand(cert.Cmd)
 	Cmd.AddCommand(version.Cmd)
 }
 
