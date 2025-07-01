@@ -30,9 +30,11 @@ import (
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type middleware struct {
@@ -104,6 +106,12 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		})
 	}
 
+	metadataContext := &envoycore.Metadata{
+		FilterMetadata: map[string]*structpb.Struct{
+			"ctx": pbutils.MessageToStructMust(reqCtx.DownstreamInfo),
+		},
+	}
+
 	for _, c := range clientInfos {
 		if c.plugin.ProcessingMode == nil ||
 			c.plugin.ProcessingMode.RequestHeaderMode ==
@@ -112,6 +120,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
 
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_RequestHeaders{
 					RequestHeaders: &extprocsvc.HttpHeaders{
 						Headers: headers,
@@ -145,6 +154,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			c.plugin.ProcessingMode.RequestBodyMode ==
 				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_RequestBody{
 					RequestBody: &extprocsvc.HttpBody{
 						Body:        reqCtx.Body,
@@ -215,6 +225,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_SEND {
 
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_ResponseHeaders{
 					ResponseHeaders: &extprocsvc.HttpHeaders{
 						Headers: headers,
@@ -248,6 +259,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			c.plugin.ProcessingMode.ResponseBodyMode ==
 				corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED {
 			if err := c.c.Send(&extprocsvc.ProcessingRequest{
+				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_ResponseBody{
 					ResponseBody: &extprocsvc.HttpBody{
 						Body:        crw.body.Bytes(),
