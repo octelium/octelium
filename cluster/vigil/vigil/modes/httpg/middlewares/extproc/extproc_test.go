@@ -43,6 +43,7 @@ type tstSrv struct {
 	reqHeader string
 	rspHeader string
 	rspBody   string
+	reqBody   string
 
 	timeout time.Duration
 }
@@ -69,10 +70,19 @@ func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
 		zap.L().Debug("___________Received REQ", zap.Any("req", req))
 		switch req.Request.(type) {
 		case *extprocsvc.ProcessingRequest_RequestBody:
-
 			time.Sleep(s.timeout)
 			if err := srv.Send(&extprocsvc.ProcessingResponse{
-				Response: &extprocsvc.ProcessingResponse_ResponseBody{},
+				Response: &extprocsvc.ProcessingResponse_RequestBody{
+					RequestBody: &extprocsvc.BodyResponse{
+						Response: &extprocsvc.CommonResponse{
+							BodyMutation: &extprocsvc.BodyMutation{
+								Mutation: &extprocsvc.BodyMutation_Body{
+									Body: []byte(s.reqBody),
+								},
+							},
+						},
+					},
+				},
 			}); err != nil {
 				return err
 			}
@@ -168,6 +178,7 @@ func TestMiddleware(t *testing.T) {
 		reqHeader: utilrand.GetRandomString(32),
 		rspHeader: utilrand.GetRandomString(32),
 		rspBody:   utilrand.GetRandomString(32),
+		reqBody:   utilrand.GetRandomString(32),
 	}
 
 	extprocsvc.RegisterExternalProcessorServer(grpcSrv, tstSrv)
@@ -211,6 +222,7 @@ func TestMiddleware(t *testing.T) {
 											},
 											ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
 												ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
+												RequestBodyMode:  corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
 											},
 										},
 									},
@@ -225,10 +237,15 @@ func TestMiddleware(t *testing.T) {
 
 		mdlwr.ServeHTTP(rw, req)
 
+		defer rReq.Body.Close()
+		reqBody, err := io.ReadAll(rReq.Body)
+		assert.Nil(t, err)
+
 		assert.Equal(t, tstSrv.reqHeader, rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, tstSrv.rspHeader, rw.Header().Get("X-Octelium-Custom-1"))
 
 		assert.Equal(t, tstSrv.rspBody, rw.Body.String())
+		assert.Equal(t, tstSrv.reqBody, string(reqBody))
 	}
 
 	{
