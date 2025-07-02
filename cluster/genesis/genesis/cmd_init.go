@@ -166,7 +166,7 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 		return err
 	}
 
-	if err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
+	if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
 		return err
 	}
 

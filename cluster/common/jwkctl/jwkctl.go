@@ -72,7 +72,7 @@ func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface) 
 	}
 
 	if len(secrets.Items) < 1 {
-		if err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
+		if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
 			return nil, err
 		}
 

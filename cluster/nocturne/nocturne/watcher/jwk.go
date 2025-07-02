@@ -74,7 +74,7 @@ func (w *Watcher) doRunJWKSecret(ctx context.Context) error {
 
 func (w *Watcher) doProcessJWKSecret(ctx context.Context, secret *corev1.Secret) error {
 	if w.needsRotation(secret) {
-		if err := jwkutils.CreateJWKSecret(ctx, w.octeliumC); err != nil {
+		if _, err := jwkutils.CreateJWKSecret(ctx, w.octeliumC); err != nil {
 			return err
 		}
 

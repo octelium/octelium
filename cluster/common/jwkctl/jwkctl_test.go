@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/jwkctl/jwkutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -494,4 +495,67 @@ func TestRegexTokenT0(t *testing.T) {
 	}
 
 	assert.True(t, rgxT0.MatchString(utilrand.GetRandomString(178)))
+}
+
+func TestChooseJWK(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC)
+	assert.Nil(t, err)
+
+	{
+		assert.True(t, len(jwkCtl.ctl.keyMap) > 0)
+	}
+
+	{
+		k1, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+		time.Sleep(1 * time.Second)
+
+		sec2, err := jwkutils.CreateJWKSecret(ctx, jwkCtl.octeliumC)
+		assert.Nil(t, err)
+
+		err = jwkCtl.ctl.setKey(sec2)
+		assert.Nil(t, err)
+
+		k2, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+
+		assert.Equal(t, k2.uid, sec2.Metadata.Uid)
+
+		time.Sleep(1 * time.Second)
+
+		sec3, err := jwkutils.CreateJWKSecret(ctx, jwkCtl.octeliumC)
+		assert.Nil(t, err)
+
+		err = jwkCtl.ctl.setKey(sec3)
+		assert.Nil(t, err)
+
+		k3, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+
+		assert.Equal(t, k3.uid, sec3.Metadata.Uid)
+
+		err = jwkCtl.ctl.onDeleteSecret(ctx, sec2)
+		assert.Nil(t, err)
+
+		k31, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+
+		assert.Equal(t, k31.uid, sec3.Metadata.Uid)
+
+		err = jwkCtl.ctl.onDeleteSecret(ctx, sec3)
+		assert.Nil(t, err)
+
+		k11, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+
+		assert.Equal(t, k11.uid, k1.uid)
+	}
 }

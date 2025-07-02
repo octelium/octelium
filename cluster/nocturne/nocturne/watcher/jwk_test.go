@@ -39,7 +39,7 @@ func TestJWK(t *testing.T) {
 	})
 	fakeC := tst.C
 
-	err = jwkutils.CreateJWKSecret(ctx, fakeC.OcteliumC)
+	_, err = jwkutils.CreateJWKSecret(ctx, fakeC.OcteliumC)
 	assert.Nil(t, err)
 
 	w := InitWatcher(fakeC.OcteliumC)

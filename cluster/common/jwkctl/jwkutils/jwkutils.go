@@ -28,16 +28,16 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 )
 
-func CreateJWKSecret(ctx context.Context, octeliumC octeliumc.ClientInterface) error {
+func CreateJWKSecret(ctx context.Context, octeliumC octeliumc.ClientInterface) (*corev1.Secret, error) {
 
 	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	privPEM, err := utils_cert.GetPrivateKeyPEM(priv)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	secret := &corev1.Secret{
@@ -62,9 +62,5 @@ func CreateJWKSecret(ctx context.Context, octeliumC octeliumc.ClientInterface) e
 		},
 	}
 
-	if _, err := octeliumC.CoreC().CreateSecret(ctx, secret); err != nil {
-		return err
-	}
-
-	return nil
+	return octeliumC.CoreC().CreateSecret(ctx, secret)
 }
