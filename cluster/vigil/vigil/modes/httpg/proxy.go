@@ -138,6 +138,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.ProtoMinor = 1
 			}
 
+			outReq.Header.Del("Forwarded")
+			outReq.Header.Del("X-Forwarded-For")
+			outReq.Header.Del("X-Forwarded-Host")
+			outReq.Header.Del("X-Forwarded-Proto")
+
 			if cfg != nil &&
 				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
 				cfg.GetHttp().GetAuth().GetSigv4() != nil {
