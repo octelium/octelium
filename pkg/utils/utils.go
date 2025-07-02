@@ -14,10 +14,9 @@
 
 package utils
 
-
-
 import (
 	"crypto/subtle"
+	"os"
 	"time"
 )
 
@@ -32,4 +31,8 @@ func SecureStringEqual(a, b string) bool {
 func MustParseTime(arg string) time.Time {
 	ret, _ := time.Parse(time.RFC3339Nano, arg)
 	return ret
+}
+
+func IsInsecureTLS() bool {
+	return os.Getenv("OCTELIUM_INSECURE_TLS") == "true"
 }

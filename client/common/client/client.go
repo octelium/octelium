@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/client/common/client/middleware/auth"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/octelium-go/authc"
+	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
@@ -68,7 +69,7 @@ func getTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	if ldflags.IsDev() {
+	if ldflags.IsDev() || utils.IsInsecureTLS() {
 		ret.InsecureSkipVerify = true
 	}
 

@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -225,7 +226,7 @@ func getTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	if ldflags.IsDev() {
+	if ldflags.IsDev() || utils.IsInsecureTLS() {
 		ret.InsecureSkipVerify = true
 	}
 
@@ -420,7 +421,7 @@ func createTransport() *http.Transport {
 		TLSClientConfig: &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			MaxVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: ldflags.IsDev(),
+			InsecureSkipVerify: ldflags.IsDev() || utils.IsInsecureTLS(),
 		},
 		Proxy:             http.ProxyFromEnvironment,
 		DialContext:       dialer.DialContext,

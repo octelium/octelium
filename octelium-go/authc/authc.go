@@ -24,6 +24,7 @@ import (
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -70,7 +71,7 @@ func getTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	if ldflags.IsDev() {
+	if ldflags.IsDev() || utils.IsInsecureTLS() {
 		ret.InsecureSkipVerify = true
 	}
 

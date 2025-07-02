@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/quic-go/quic-go"
@@ -324,7 +325,7 @@ func (c *quicGW) connect(ctx context.Context) error {
 		MinVersion:         tls.VersionTLS13,
 		MaxVersion:         tls.VersionTLS13,
 		NextProtos:         []string{"h3"},
-		InsecureSkipVerify: ldflags.IsDev(),
+		InsecureSkipVerify: ldflags.IsDev() || utils.IsInsecureTLS(),
 	}
 
 	quicCfg := &quic.Config{
