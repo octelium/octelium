@@ -449,10 +449,7 @@ func GetDefaultRequests() k8scorev1.ResourceList {
 }
 
 func getDefaultLimits() k8scorev1.ResourceList {
-	return k8scorev1.ResourceList{
-		k8scorev1.ResourceMemory: resource.MustParse("700Mi"),
-		k8scorev1.ResourceCPU:    resource.MustParse("1200m"),
-	}
+	return k8sutils.GetDefaultLimits()
 }
 
 func GetDefaultLimits() k8scorev1.ResourceList {

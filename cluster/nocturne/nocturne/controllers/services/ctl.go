@@ -18,6 +18,7 @@ package svccontroller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -422,6 +423,42 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway boo
 					Args:            svc.Status.ManagedService.Args,
 					ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 					Env:             envVars,
+					Resources: func() k8scorev1.ResourceRequirements {
+
+						ret := k8scorev1.ResourceRequirements{
+							Requests: k8scorev1.ResourceList{
+								k8scorev1.ResourceMemory: resource.MustParse("5Mi"),
+								k8scorev1.ResourceCPU:    resource.MustParse("10m"),
+							},
+							Limits: k8sutils.GetDefaultLimits(),
+						}
+						if svc.Status.ManagedService.ResourceLimit == nil {
+							return ret
+						}
+
+						ret.Limits = k8scorev1.ResourceList{
+							k8scorev1.ResourceMemory: func() resource.Quantity {
+								if svc.Status.ManagedService.ResourceLimit.Memory != nil &&
+									svc.Status.ManagedService.ResourceLimit.Memory.Megabytes > 0 {
+									return resource.MustParse(
+										fmt.Sprintf("%dMi", svc.Status.ManagedService.ResourceLimit.Memory.Megabytes))
+								}
+								return resource.MustParse(
+									fmt.Sprintf("%dMi", k8sutils.DefaultLimitMemoryMegabytes))
+							}(),
+							k8scorev1.ResourceCPU: func() resource.Quantity {
+								if svc.Status.ManagedService.ResourceLimit.Cpu != nil &&
+									svc.Status.ManagedService.ResourceLimit.Cpu.Millicores > 0 {
+									return resource.MustParse(
+										fmt.Sprintf("%dm", svc.Status.ManagedService.ResourceLimit.Cpu.Millicores))
+								}
+								return resource.MustParse(
+									fmt.Sprintf("%dm", k8sutils.DefaultLimitCPUMillicores))
+							}(),
+						}
+
+						return ret
+					}(),
 					LivenessProbe: func() *k8scorev1.Probe {
 						if svc.Status.ManagedService.HealthCheck != nil {
 							switch svc.Status.ManagedService.HealthCheck.Type.(type) {
