@@ -66,9 +66,7 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 
-	// svc := reqCtx.Service
-	// var upstream *loadbalancer.Upstream
-	// var err error
+	isManagedSvc := ucorev1.ToService(reqCtx.Service).IsManagedService()
 
 	cfg := reqCtx.ServiceConfig
 	if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Response != nil && cfg.GetHttp().Response.GetDirect() != nil {
@@ -138,10 +136,12 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.ProtoMinor = 1
 			}
 
-			outReq.Header.Del("Forwarded")
-			outReq.Header.Del("X-Forwarded-For")
-			outReq.Header.Del("X-Forwarded-Host")
-			outReq.Header.Del("X-Forwarded-Proto")
+			if !isManagedSvc {
+				outReq.Header.Del("Forwarded")
+				outReq.Header.Del("X-Forwarded-For")
+				outReq.Header.Del("X-Forwarded-Host")
+				outReq.Header.Del("X-Forwarded-Proto")
+			}
 
 			if cfg != nil &&
 				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
