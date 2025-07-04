@@ -353,9 +353,19 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("Too many managedContainer args")
 			}
 
+			if len(typ.Command) > 64 {
+				return grpcutils.InvalidArg("Too many command items")
+			}
+
 			for _, arg := range typ.Args {
 				if len(arg) > 1024 {
-					return grpcutils.InvalidArg("To long managedContainer arg: %s", arg)
+					return grpcutils.InvalidArg("Too long managedContainer arg: %s", arg)
+				}
+			}
+
+			for _, arg := range typ.Command {
+				if len(arg) > 1024 {
+					return grpcutils.InvalidArg("Too long managedContainer command: %s", arg)
 				}
 			}
 
