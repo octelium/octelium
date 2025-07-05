@@ -1253,5 +1253,75 @@ func TestMergedServiceConfig(t *testing.T) {
 			svc.Spec.Config.GetHttp().Auth.GetBasic().Password.GetFromSecret(),
 			cfg.GetHttp().Auth.GetBasic().Password.GetFromSecret())
 		assert.Equal(t, "child", cfg.GetHttp().Auth.GetBasic().Username)
+
+		assert.True(t, pbutils.IsEqual(req.Spec, svc.Spec))
+	}
+
+	{
+		// Test with a dynamic config parent
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port: 8080,
+				Mode: corev1.Service_Spec_POSTGRES,
+
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Configs: []*corev1.Service_Spec_Config{
+						{
+							Name: "parent",
+							Upstream: &corev1.Service_Spec_Config_Upstream{
+								Type: &corev1.Service_Spec_Config_Upstream_Url{
+									Url: fmt.Sprintf("postgres://%s", utilrand.GetRandomStringCanonical(8)),
+								},
+							},
+							Type: &corev1.Service_Spec_Config_Postgres_{
+								Postgres: &corev1.Service_Spec_Config_Postgres{
+									User:     utilrand.GetRandomStringCanonical(8),
+									Database: utilrand.GetRandomStringCanonical(8),
+									Auth: &corev1.Service_Spec_Config_Postgres_Auth{
+										Type: &corev1.Service_Spec_Config_Postgres_Auth_Password_{
+											Password: &corev1.Service_Spec_Config_Postgres_Auth_Password{
+												Type: &corev1.Service_Spec_Config_Postgres_Auth_Password_FromSecret{
+													FromSecret: sec.Metadata.Name,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						{
+							Parent: "parent",
+							Name:   "child",
+							Type: &corev1.Service_Spec_Config_Postgres_{
+								Postgres: &corev1.Service_Spec_Config_Postgres{
+									Database: utilrand.GetRandomStringCanonical(8),
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		svc, err := srv.CreateService(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+
+		cfg := rscutils.GetMergedServiceConfig(svc.Spec.DynamicConfig.Configs[1], svc)
+		assert.Equal(t,
+			svc.Spec.DynamicConfig.Configs[1].GetPostgres().Database,
+			cfg.GetPostgres().Database)
+
+		assert.Equal(t,
+			svc.Spec.DynamicConfig.Configs[0].GetPostgres().User,
+			cfg.GetPostgres().User)
+
+		assert.Equal(t,
+			svc.Spec.DynamicConfig.Configs[0].GetUpstream().GetUrl(),
+			cfg.GetUpstream().GetUrl())
+
+		assert.True(t, pbutils.IsEqual(req.Spec, svc.Spec))
 	}
 }
