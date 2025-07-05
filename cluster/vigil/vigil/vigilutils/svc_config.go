@@ -19,11 +19,10 @@ package vigilutils
 import (
 	"context"
 	"net"
-	"slices"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"google.golang.org/protobuf/proto"
+	"github.com/octelium/octelium/cluster/common/rscutils"
 )
 
 type GetServiceConfigRequest struct {
@@ -49,39 +48,11 @@ func GetServiceConfig(ctx context.Context, req *coctovigilv1.AuthenticateAndAuth
 
 	for _, namedCfg := range svc.Spec.DynamicConfig.Configs {
 		if namedCfg.Name == cfgName {
-			return getMergedConfig(namedCfg, svc)
+			return rscutils.GetMergedServiceConfig(namedCfg, svc)
 		}
 	}
 
 	return svc.Spec.Config
-}
-
-func getMergedConfig(cfg *corev1.Service_Spec_Config, svc *corev1.Service) *corev1.Service_Spec_Config {
-	if cfg.Parent == "" {
-		return cfg
-	}
-
-	var parent *corev1.Service_Spec_Config
-
-	if cfg.Parent == "default" {
-		parent = svc.Spec.Config
-		if parent == nil {
-			parent = &corev1.Service_Spec_Config{}
-		}
-	} else {
-		idx := slices.IndexFunc(svc.Spec.DynamicConfig.Configs, func(itm *corev1.Service_Spec_Config) bool {
-			return itm.Name == cfg.Parent
-		})
-		if idx < 0 {
-			return cfg
-		}
-		parent = svc.Spec.DynamicConfig.Configs[idx]
-	}
-
-	ret := proto.Clone(parent).(*corev1.Service_Spec_Config)
-	proto.Merge(ret, cfg)
-
-	return ret
 }
 
 func GetDownstreamRequestSource(c net.Conn) *coctovigilv1.DownstreamRequest_Source {

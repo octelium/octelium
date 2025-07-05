@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/components"
+	"github.com/octelium/octelium/cluster/common/rscutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -1159,6 +1160,98 @@ func TestServiceDirectResponse(t *testing.T) {
 		_, err = srv.CreateService(ctx, req)
 		assert.Nil(t, err, "%+v", err)
 	}
+}
 
-	// assert.Equal(t, "true", svc.Metadata.SpecLabels["enable-public"])
+func TestMergedServiceConfig(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+	srv.isEmbedded = true
+
+	ns, err := srv.octeliumC.CoreC().CreateNamespace(ctx, &corev1.Namespace{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Namespace_Spec{},
+	})
+	assert.Nil(t, err)
+
+	sec, err := srv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port:     8080,
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+								Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_{
+									Basic: &corev1.Service_Spec_Config_HTTP_Auth_Basic{
+										Username: "parent",
+										Password: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password{
+											Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password_FromSecret{
+												FromSecret: sec.Metadata.Name,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Configs: []*corev1.Service_Spec_Config{
+						{
+							Parent: "default",
+							Name:   "child-cfg",
+							Type: &corev1.Service_Spec_Config_Http{
+								Http: &corev1.Service_Spec_Config_HTTP{
+									Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+										Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_{
+											Basic: &corev1.Service_Spec_Config_HTTP_Auth_Basic{
+												Username: "child",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		svc, err := srv.CreateService(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+
+		cfg := rscutils.GetMergedServiceConfig(svc.Spec.DynamicConfig.Configs[0], svc)
+		assert.Equal(t,
+			svc.Spec.Config.GetHttp().Auth.GetBasic().Password.GetFromSecret(),
+			cfg.GetHttp().Auth.GetBasic().Password.GetFromSecret())
+		assert.Equal(t, "child", cfg.GetHttp().Auth.GetBasic().Username)
+	}
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/rscutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/utilnet"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -482,6 +483,8 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					return grpcutils.InvalidArg("Parent config name: %s does not exist", cfg.Parent)
 				}
 			}
+
+			cfg = rscutils.GetMergedServiceConfig(cfg, svc)
 		}
 
 		if cfg.GetClientCertificate() != nil &&
