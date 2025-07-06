@@ -30,6 +30,7 @@ import (
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -51,8 +52,9 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 }
 
 type clientInfo struct {
-	c      extprocsvc.ExternalProcessor_ProcessClient
-	plugin *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc
+	c        extprocsvc.ExternalProcessor_ProcessClient
+	plugin   *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc
+	duration time.Duration
 }
 
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -86,9 +88,17 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				continue
 			}
 
+			duration := 800 * time.Millisecond
+
+			confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
+			if confDuration > 0 && confDuration < 6000*time.Millisecond {
+				duration = confDuration
+			}
+
 			clientInfos = append(clientInfos, &clientInfo{
-				c:      client,
-				plugin: plugin.GetExtProc(),
+				c:        client,
+				plugin:   plugin.GetExtProc(),
+				duration: duration,
 			})
 		default:
 			continue
@@ -129,7 +139,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := doReadResponse(ctx, c.c)
+			msg, err := doReadResponse(ctx, c.c, c.duration)
 			if err != nil {
 				continue
 			}
@@ -164,7 +174,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := doReadResponse(ctx, c.c)
+			msg, err := doReadResponse(ctx, c.c, c.duration)
 			if err != nil {
 				continue
 			}
@@ -177,8 +187,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					switch mut.Mutation.(type) {
 					case *extprocsvc.BodyMutation_Body:
 						req.Body = io.NopCloser(bytes.NewReader(mut.GetBody()))
+						req.ContentLength = int64(len(mut.GetBody()))
 					case *extprocsvc.BodyMutation_ClearBody:
 						req.Body = io.NopCloser(bytes.NewReader(nil))
+						req.ContentLength = 0
 					default:
 					}
 				}
@@ -234,7 +246,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := doReadResponse(ctx, c.c)
+			msg, err := doReadResponse(ctx, c.c, c.duration)
 			if err != nil {
 				continue
 			}
@@ -269,7 +281,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}); err != nil {
 				continue
 			}
-			msg, err := doReadResponse(ctx, c.c)
+			msg, err := doReadResponse(ctx, c.c, c.duration)
 			if err != nil {
 				continue
 			}
@@ -370,7 +382,7 @@ type readResp struct {
 	err error
 }
 
-func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessClient) (*extprocsvc.ProcessingResponse, error) {
+func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessClient, duration time.Duration) (*extprocsvc.ProcessingResponse, error) {
 
 	resCh := make(chan *readResp, 1)
 
@@ -387,7 +399,7 @@ func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessC
 		return nil, ctx.Err()
 	case res := <-resCh:
 		return res.res, res.err
-	case <-time.After(800 * time.Millisecond):
+	case <-time.After(duration):
 		return nil, errors.Errorf("read msg timeout")
 	}
 }

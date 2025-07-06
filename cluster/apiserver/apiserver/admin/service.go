@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/kaptinlin/jsonschema"
@@ -702,6 +703,11 @@ func (s *Server) checkAndSetService(ctx context.Context,
 
 					switch plugin.Type.(type) {
 					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
+
+						confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
+						if confDuration > 6000*time.Millisecond {
+							return serr.InvalidArg("message timeout upper limit is exceeded")
+						}
 
 						switch plugin.GetExtProc().Type.(type) {
 						case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
