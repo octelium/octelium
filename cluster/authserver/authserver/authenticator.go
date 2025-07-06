@@ -51,11 +51,6 @@ func (s *server) doCreateAuthenticator(ctx context.Context, req *authv1.CreateAu
 		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
 	}
 
-	/*
-		if err := apivalidation.CheckObjectRef(req.IdentityProviderRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
-			return nil, s.errInvalidArgErr(err)
-		}
-	*/
 	if len(req.DisplayName) > 120 {
 		return nil, s.errInvalidArg("displayName is too long")
 	}
@@ -64,6 +59,15 @@ func (s *server) doCreateAuthenticator(ctx context.Context, req *authv1.CreateAu
 	}
 
 	switch req.Type {
+	case authv1.Authenticator_Status_FIDO:
+		if usr.Spec.Type != corev1.User_Spec_HUMAN {
+			return nil, s.errPermissionDenied("FIDO Authenticators require a HUMAN User")
+		}
+	case authv1.Authenticator_Status_TOTP:
+		if usr.Spec.Type != corev1.User_Spec_HUMAN {
+			return nil, s.errPermissionDenied("TOTP Authenticators require a HUMAN User")
+		}
+	case authv1.Authenticator_Status_TPM:
 	case authv1.Authenticator_Status_TYPE_UNKNOWN:
 		return nil, s.errInvalidArg("Unknown type")
 	}
@@ -78,19 +82,6 @@ func (s *server) doCreateAuthenticator(ctx context.Context, req *authv1.CreateAu
 		}
 
 	}
-
-	/*
-		authFactor, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-			Uid:  req.IdentityProviderRef.Uid,
-			Name: req.IdentityProviderRef.Name,
-		})
-		if err != nil {
-			if grpcerr.IsNotFound(err) {
-				return nil, s.errInvalidArg("This IdentityProvider does not exist")
-			}
-			return nil, s.errInternalErr(err)
-		}
-	*/
 
 	authenticator := &corev1.Authenticator{
 		Metadata: &metav1.Metadata{
@@ -123,9 +114,7 @@ func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator 
 			DisplayName: i.Spec.DisplayName,
 		},
 		Status: &authv1.Authenticator_Status{
-			// IdentityProviderRef: i.Status.IdentityProviderRef,
 			Type: authv1.Authenticator_Status_Type(i.Status.Type),
-			// IsRegistrationDone: i.Status.IsRegistered,
 		},
 	}
 }
@@ -154,8 +143,9 @@ func (s *server) doListAuthenticator(ctx context.Context, req *authv1.ListAuthen
 	}
 
 	ret := &authv1.AuthenticatorList{
-		ApiVersion: "auth/v1",
-		Kind:       "AuthenticatorList",
+		ApiVersion:       "auth/v1",
+		Kind:             "AuthenticatorList",
+		ListResponseMeta: itmList.ListResponseMeta,
 	}
 
 	for _, itm := range itmList.Items {
