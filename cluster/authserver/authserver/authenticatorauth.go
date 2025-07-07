@@ -88,12 +88,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, s.errInternal("Nil AuthenticationAttempt")
 	}
 
-	/*
-		if authn.Status.IdentityProviderRef == nil {
-			return nil, s.errInternal("Nil IdentityProviderRef")
-		}
-	*/
-
 	challengeReqBytes, err := authenticators.DecryptData(ctx, s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
 		return nil, err
@@ -103,15 +97,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	if err := pbutils.Unmarshal(challengeReqBytes, challengeReq); err != nil {
 		return nil, err
 	}
-
-	/*
-		authFactor, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-			Uid: authn.Status.IdentityProviderRef.Uid,
-		})
-		if err != nil {
-			return nil, err
-		}
-	*/
 
 	var factor authenticators.Factor
 
@@ -223,12 +208,6 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context, req *auth
 		return nil, err
 	}
 
-	/*
-		if err := s.validatePreChallenge(req.PreChallenge); err != nil {
-			return nil, err
-		}
-	*/
-
 	if authn.Status.AuthenticationAttempt != nil {
 
 		if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().Add(2 * time.Second).After(time.Now()) {
@@ -243,23 +222,6 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context, req *auth
 
 		ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
 	}
-
-	/*
-		if len(authn.Status.LastAuthenticationAttempts) > 0 {
-			if authn.Status.LastAuthenticationAttempts[0].CreatedAt.AsTime().Add(2 * time.Second).After(time.Now()) {
-				return nil, errors.Errorf("Authenticator rate limit exceeded..")
-			}
-		}
-	*/
-
-	/*
-		authFactor, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-			Uid: authn.Status.IdentityProviderRef.Uid,
-		})
-		if err != nil {
-			return nil, err
-		}
-	*/
 
 	fac, err := s.getAuthenticatorCtl(ctx, authn, usr, cc)
 	if err != nil {
@@ -459,7 +421,7 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context, req *authv1.R
 
 	authn.Status.AuthenticationAttempt.EncryptedChallengeRequest = encryptedChallengeRequest
 
-	authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+	_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 	if err != nil {
 		return nil, err
 	}
@@ -560,12 +522,6 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 		return nil, s.errInternal("Nil AuthenticationAttempt")
 	}
 
-	/*
-		if authn.Status.IdentityProviderRef == nil {
-			return nil, s.errInternal("Nil IdentityProviderRef")
-		}
-	*/
-
 	challengeReqBytes, err := authenticators.DecryptData(ctx, s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
 		return nil, err
@@ -575,15 +531,6 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 	if err := pbutils.Unmarshal(challengeReqBytes, challengeReq); err != nil {
 		return nil, err
 	}
-
-	/*
-		authFactor, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-			Uid: authn.Status.IdentityProviderRef.Uid,
-		})
-		if err != nil {
-			return nil, err
-		}
-	*/
 
 	var factor authenticators.Factor
 

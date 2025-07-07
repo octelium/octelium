@@ -20,6 +20,8 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 )
 
 type authMainSvc struct {
@@ -49,4 +51,76 @@ func (s *authMainSvc) RegisterDeviceBegin(ctx context.Context, req *authv1.Regis
 
 func (s *authMainSvc) RegisterDeviceFinish(ctx context.Context, req *authv1.RegisterDeviceFinishRequest) (*authv1.RegisterDeviceFinishResponse, error) {
 	return s.s.doRegisterDeviceFinish(ctx, req)
+}
+
+func (s *authMainSvc) AuthenticateWithAuthenticator(ctx context.Context, req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doAuthenticateWithAuthenticator(ctx, req)
+}
+
+func (s *authMainSvc) CreateAuthenticator(ctx context.Context, req *authv1.CreateAuthenticatorRequest) (*authv1.Authenticator, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doCreateAuthenticator(ctx, req)
+}
+
+func (s *authMainSvc) ListAuthenticator(ctx context.Context, req *authv1.ListAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doListAuthenticator(ctx, req)
+}
+
+func (s *authMainSvc) GetAuthenticator(ctx context.Context, req *metav1.GetOptions) (*authv1.Authenticator, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doGetAuthenticator(ctx, req)
+}
+
+func (s *authMainSvc) DeleteAuthenticator(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doDeleteAuthenticator(ctx, req)
+}
+
+func (s *authMainSvc) AuthenticateAuthenticatorBegin(ctx context.Context, req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doAuthenticateAuthenticatorBegin(ctx, req)
+}
+
+func (s *authMainSvc) RegisterAuthenticatorBegin(ctx context.Context, req *authv1.RegisterAuthenticatorBeginRequest) (*authv1.RegisterAuthenticatorBeginResponse, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doRegisterAuthenticatorBegin(ctx, req)
+}
+
+func (s *authMainSvc) RegisterAuthenticatorFinish(ctx context.Context, req *authv1.RegisterAuthenticatorFinishRequest) (*authv1.RegisterAuthenticatorFinishResponse, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doRegisterAuthenticatorFinish(ctx, req)
+}
+
+func (s *authMainSvc) doCheckProduction() error {
+	if !ldflags.IsDev() {
+		return s.s.errNotFound("")
+	}
+
+	return nil
 }
