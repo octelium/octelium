@@ -199,6 +199,15 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		httpC.BodyMap, _ = pbutils.MapToStruct(additional.bodyMap)
 	}
 
+	if qry := req.URL.Query(); len(qry) > 0 {
+		httpC.Params = make(map[string]string)
+		for k, v := range qry {
+			if len(v) > 0 {
+				httpC.Params[k] = v[0]
+			}
+		}
+	}
+
 	switch {
 	case ucorev1.ToService(svc).IsKubernetes():
 		k8sReq, err := httputils.ParseKubernetesRequest(req)
