@@ -540,7 +540,7 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	}
 
 	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Uid: authInfo.GetExternal().OwnerRef.Uid,
+		Uid: authInfo.GetAuthenticator().AuthenticatorRef.Uid,
 	})
 	if err != nil {
 		return nil, err
@@ -575,8 +575,19 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 		}
 	*/
 
-	if authn.Status.DeviceRef != nil {
+	switch {
+	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef == nil:
 		sess.Status.DeviceRef = authn.Status.DeviceRef
+	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef != nil:
+		if authn.Status.DeviceRef.Uid != sess.Status.DeviceRef.Uid {
+			return nil, grpcutils.PermissionDenied("Invalid Device")
+		}
+	case authn.Status.DeviceRef == nil && sess.Status.DeviceRef != nil:
+		authn.Status.DeviceRef = sess.Status.DeviceRef
+		_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+		if err != nil {
+			return nil, grpcutils.InternalWithErr(err)
+		}
 	}
 
 	s.setCurrAuthenticationGRPC(ctx, sess, cc, authInfo)

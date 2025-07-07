@@ -150,12 +150,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	}
 
 	return &corev1.Session_Status_Authentication_Info{
-		Type: corev1.Session_Status_Authentication_Info_EXTERNAL,
-		Details: &corev1.Session_Status_Authentication_Info_External_{
-			External: &corev1.Session_Status_Authentication_Info_External{
-				OwnerRef: umetav1.GetObjectReference(authn),
-				// IdentityProviderRef: authn.Status.IdentityProviderRef,
-				// Type: authn.Status.Type,
+		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
+		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
+			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				Type:             authn.Status.Type,
 			},
 		},
 	}, nil
