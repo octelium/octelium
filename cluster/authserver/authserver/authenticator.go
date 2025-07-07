@@ -63,11 +63,17 @@ func (s *server) doCreateAuthenticator(ctx context.Context, req *authv1.CreateAu
 		if usr.Spec.Type != corev1.User_Spec_HUMAN {
 			return nil, s.errPermissionDenied("FIDO Authenticators require a HUMAN User")
 		}
+		if !sess.Status.IsBrowser {
+			return nil, s.errPermissionDenied("FIDO Authenticators require Browser-based Sessions")
+		}
 	case authv1.Authenticator_Status_TOTP:
 		if usr.Spec.Type != corev1.User_Spec_HUMAN {
 			return nil, s.errPermissionDenied("TOTP Authenticators require a HUMAN User")
 		}
 	case authv1.Authenticator_Status_TPM:
+		if sess.Status.Type == corev1.Session_Status_CLIENTLESS {
+			return nil, s.errPermissionDenied("TPM Authenticators require CLIENT-based Sessions")
+		}
 	case authv1.Authenticator_Status_TYPE_UNKNOWN:
 		return nil, s.errInvalidArg("Unknown type")
 	}

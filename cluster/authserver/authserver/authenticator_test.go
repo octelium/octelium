@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -79,10 +80,20 @@ func TestAuthenticator(t *testing.T) {
 	}
 
 	{
-		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
 		assert.Nil(t, err)
 
-		usr2T, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		usrT.Session.Status.Type = corev1.Session_Status_CLIENTLESS
+		usrT.Session.Status.IsBrowser = true
+		usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+		assert.Nil(t, err)
+
+		usr2T, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		usr2T.Session.Status.Type = corev1.Session_Status_CLIENTLESS
+		usr2T.Session.Status.IsBrowser = true
+		usr2T.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usr2T.Session)
 		assert.Nil(t, err)
 
 		itmList, err := srv.doListAuthenticator(getCtxRT(usrT), &authv1.ListAuthenticatorOptions{})
