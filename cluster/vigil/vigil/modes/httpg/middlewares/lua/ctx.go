@@ -17,27 +17,32 @@
 package lua
 
 import (
-	"bufio"
 	"net/http"
-	"os"
 
-	"github.com/yuin/gopher-lua/parse"
-
+	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 )
 
 type luaCtx struct {
-	req   *http.Request
-	rw    http.ResponseWriter
-	state *lua.LState
+	req     *http.Request
+	rw      http.ResponseWriter
+	state   *lua.LState
+	fnProto *lua.FunctionProto
 }
 
-func newCtx(req *http.Request, rw http.ResponseWriter) (*luaCtx, error) {
+type newCtxOpts struct {
+	req     *http.Request
+	rw      http.ResponseWriter
+	fnProto *lua.FunctionProto
+}
+
+func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	return &luaCtx{
-		req:   req,
-		rw:    rw,
-		state: lua.NewState(),
+		req:     o.req,
+		rw:      o.rw,
+		state:   lua.NewState(),
+		fnProto: o.fnProto,
 	}, nil
 }
 
@@ -48,27 +53,35 @@ func (l *luaCtx) close() {
 	}
 }
 
-func compileLua(filePath string) (*lua.FunctionProto, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	chunk, err := parse.Parse(reader, filePath)
-	if err != nil {
-		return nil, err
-	}
-	proto, err := lua.Compile(chunk, filePath)
-	if err != nil {
-		return nil, err
-	}
-	return proto, nil
+func (c *luaCtx) compiledFile(proto *lua.FunctionProto) error {
+	lfunc := c.state.NewFunctionFromProto(proto)
+	c.state.Push(lfunc)
+	return c.state.PCall(0, lua.MultRet, nil)
 }
 
-func doCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
-	lfunc := L.NewFunctionFromProto(proto)
-	L.Push(lfunc)
-	return L.PCall(0, lua.MultRet, nil)
+func (c *luaCtx) callOnFunction(name string) error {
+	f := c.state.GetGlobal(name)
+	if f.Type() != lua.LTFunction {
+		return errors.Errorf("Not a function: %s", name)
+	}
+	c.state.Push(f)
+	if err := c.state.PCall(0, 0, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *luaCtx) callOnRequest() error {
+	f := c.state.GetGlobal("on_request")
+	if f.Type() != lua.LTFunction {
+		return errors.Errorf("on_request function is not defined")
+	}
+
+	c.state.Push(f)
+	if err := c.state.PCall(0, 0, nil); err != nil {
+		return err
+	}
+
+	return nil
 }
