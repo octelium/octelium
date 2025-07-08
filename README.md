@@ -111,7 +111,7 @@ You can see all available options [here](https://octelium.com/docs/octelium/late
 For Linux and MacOS
 
 ```bash
-curl -fsSL https://octelium.com/install.sh | sh
+curl -fsSL https://octelium.com/install.sh | bash
 ```
 
 For Windows in Powershell
