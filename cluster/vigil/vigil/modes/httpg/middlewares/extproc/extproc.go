@@ -186,9 +186,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					mut := resp.Response.BodyMutation
 					switch mut.Mutation.(type) {
 					case *extprocsvc.BodyMutation_Body:
+						defer req.Body.Close()
 						req.Body = io.NopCloser(bytes.NewReader(mut.GetBody()))
 						req.ContentLength = int64(len(mut.GetBody()))
 					case *extprocsvc.BodyMutation_ClearBody:
+						defer req.Body.Close()
 						req.Body = io.NopCloser(bytes.NewReader(nil))
 						req.ContentLength = 0
 					default:
