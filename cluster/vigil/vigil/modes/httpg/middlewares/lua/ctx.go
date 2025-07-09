@@ -43,8 +43,13 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 		rw:      o.rw,
 		fnProto: o.fnProto,
 	}
-	ret.state = lua.NewState()
+	ret.state = lua.NewState(lua.Options{
+		SkipOpenLibs: true,
+	})
 	ret.state.SetContext(o.req.Context())
+
+	lua.OpenString(ret.state)
+	lua.OpenMath(ret.state)
 
 	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
 	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
@@ -69,21 +74,9 @@ func (c *luaCtx) compiledFile() error {
 	return c.state.PCall(0, lua.MultRet, nil)
 }
 
-func (c *luaCtx) callOnFunction(name string) error {
-	f := c.state.GetGlobal(name)
-	if f.Type() != lua.LTFunction {
-		return errors.Errorf("Not a function: %s", name)
-	}
-	c.state.Push(f)
-	if err := c.state.PCall(0, 0, nil); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (c *luaCtx) callOnRequest() error {
 	f := c.state.GetGlobal("on_request")
+
 	if f.Type() != lua.LTFunction {
 		return errors.Errorf("on_request function is not defined")
 	}

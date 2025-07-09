@@ -17,13 +17,12 @@
 package lua
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"os"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -122,19 +121,8 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 func (m *middleware) compileLua(luaContent string) (*lua.FunctionProto, error) {
-	file, err := os.CreateTemp("/tmp", "octelium-lua")
-	if err != nil {
-		return nil, err
-	}
-	filePath := file.Name()
-	defer os.Remove(filePath)
-
-	if _, err := file.WriteString(luaContent); err != nil {
-		return nil, err
-	}
-
-	reader := bufio.NewReader(file)
-	chunk, err := parse.Parse(reader, filePath)
+	filePath := m.getKey(luaContent)
+	chunk, err := parse.Parse(strings.NewReader(luaContent), filePath)
 	if err != nil {
 		return nil, err
 	}
