@@ -30,6 +30,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -173,4 +174,12 @@ func (m *middleware) doGetLuaFnProto(content string) (*lua.FunctionProto, error)
 
 func (m *middleware) getKey(content string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+}
+
+func (m *middleware) getRequestContextLValue(reqCtx *corev1.RequestContext) lua.LValue {
+	state := lua.NewState(lua.Options{
+		SkipOpenLibs: true,
+	})
+
+	return toLuaValue(state, pbutils.MustConvertToMap(reqCtx))
 }

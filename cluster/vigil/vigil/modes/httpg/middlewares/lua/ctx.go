@@ -18,30 +18,35 @@ package lua
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
+	"go.uber.org/zap"
 )
 
 type luaCtx struct {
-	req     *http.Request
-	rw      http.ResponseWriter
-	state   *lua.LState
-	fnProto *lua.FunctionProto
+	req          *http.Request
+	rw           http.ResponseWriter
+	state        *lua.LState
+	fnProto      *lua.FunctionProto
+	reqCtxLValue lua.LValue
 }
 
 type newCtxOpts struct {
-	req     *http.Request
-	rw      http.ResponseWriter
-	fnProto *lua.FunctionProto
+	req          *http.Request
+	rw           http.ResponseWriter
+	fnProto      *lua.FunctionProto
+	reqCtxLValue lua.LValue
 }
 
 func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret := &luaCtx{
-		req:     o.req,
-		rw:      o.rw,
-		fnProto: o.fnProto,
+		req:          o.req,
+		rw:           o.rw,
+		fnProto:      o.fnProto,
+		reqCtxLValue: o.reqCtxLValue,
 	}
 	ret.state = lua.NewState(lua.Options{
 		SkipOpenLibs: true,
@@ -81,11 +86,16 @@ func (c *luaCtx) callOnRequest() error {
 		return errors.Errorf("on_request function is not defined")
 	}
 
+	startedAt := time.Now()
 	c.state.Push(f)
-	if err := c.state.PCall(0, 0, nil); err != nil {
+	c.state.Push(c.reqCtxLValue)
+
+	if err := c.state.PCall(1, 0, nil); err != nil {
 		return err
 	}
 
+	zap.L().Debug("on_request done",
+		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 	return nil
 }
 

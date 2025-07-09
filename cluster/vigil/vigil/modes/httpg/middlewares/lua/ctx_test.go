@@ -22,7 +22,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -46,14 +49,25 @@ func TestLuaCtx(t *testing.T) {
 	}
 
 	fnProto, err := mdlwr.doGetAndSetLuaFnProto(`
-function on_request()
+function on_request(ctx)
   set_request_header("X-Lua-Header", "octelium")
+  set_request_header("X-User-Uid", ctx.user.metadata.uid)
 end`)
 	assert.Nil(t, err)
 
+	reqCtx := &corev1.RequestContext{
+		User: &corev1.User{
+			Metadata: &metav1.Metadata{
+				Uid: vutils.UUIDv4(),
+			},
+		},
+	}
+	reqCtxLVal := mdlwr.getRequestContextLValue(reqCtx)
+
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:     httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil),
-		fnProto: fnProto,
+		req:          httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil),
+		fnProto:      fnProto,
+		reqCtxLValue: reqCtxLVal,
 	})
 	assert.Nil(t, err)
 
@@ -71,4 +85,5 @@ end`)
 	assert.Nil(t, err)
 
 	assert.Equal(t, "octelium", luaCtx.req.Header.Get("X-Lua-Header"))
+	assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.req.Header.Get("X-User-Uid"))
 }
