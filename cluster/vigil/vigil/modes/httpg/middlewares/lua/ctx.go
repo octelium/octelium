@@ -38,12 +38,22 @@ type newCtxOpts struct {
 
 func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
-	return &luaCtx{
+	ret := &luaCtx{
 		req:     o.req,
 		rw:      o.rw,
-		state:   lua.NewState(),
 		fnProto: o.fnProto,
-	}, nil
+	}
+	ret.state = lua.NewState()
+	ret.state.SetContext(o.req.Context())
+
+	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
+	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
+
+	if err := ret.compiledFile(); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
 }
 
 func (l *luaCtx) close() {
@@ -53,8 +63,8 @@ func (l *luaCtx) close() {
 	}
 }
 
-func (c *luaCtx) compiledFile(proto *lua.FunctionProto) error {
-	lfunc := c.state.NewFunctionFromProto(proto)
+func (c *luaCtx) compiledFile() error {
+	lfunc := c.state.NewFunctionFromProto(c.fnProto)
 	c.state.Push(lfunc)
 	return c.state.PCall(0, lua.MultRet, nil)
 }
@@ -84,4 +94,42 @@ func (c *luaCtx) callOnRequest() error {
 	}
 
 	return nil
+}
+
+func (c *luaCtx) setRequestHeader(L *lua.LState) int {
+	name := L.Get(1)
+	value := L.Get(2)
+
+	if name.Type() != lua.LTString {
+		L.Push(lua.LString("Header key is not a string"))
+		return 1
+	}
+
+	if value.Type() != lua.LTString {
+		L.Push(lua.LString("Header value is not a string"))
+		return 1
+	}
+
+	c.req.Header.Set(name.String(), value.String())
+
+	return 0
+}
+
+func (c *luaCtx) setResponseHeader(L *lua.LState) int {
+	name := L.Get(1)
+	value := L.Get(2)
+
+	if name.Type() != lua.LTString {
+		L.Push(lua.LString("Header key is not a string"))
+		return 1
+	}
+
+	if value.Type() != lua.LTString {
+		L.Push(lua.LString("Header value is not a string"))
+		return 1
+	}
+
+	c.rw.Header().Set(name.String(), value.String())
+
+	return 0
 }

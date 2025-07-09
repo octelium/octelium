@@ -78,7 +78,15 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	for _, luaCtx := range luaContexts {
+		luaCtx.callOnRequest()
+	}
+
 	m.next.ServeHTTP(crw, req)
+
+	for _, luaCtx := range luaContexts {
+		luaCtx.callOnRequest()
+	}
 
 	for _, luaCtx := range luaContexts {
 		luaCtx.close()
