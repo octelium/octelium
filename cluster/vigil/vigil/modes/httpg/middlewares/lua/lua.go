@@ -85,7 +85,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(crw, req)
 
 	for _, luaCtx := range luaContexts {
-		luaCtx.callOnRequest()
+		luaCtx.callOnResponse()
+	}
+
+	if crw.isSet {
+		crw.ResponseWriter.Write(crw.body.Bytes())
 	}
 
 	for _, luaCtx := range luaContexts {
@@ -98,6 +102,7 @@ type responseWriter struct {
 	statusCode int
 	headers    http.Header
 	body       *bytes.Buffer
+	isSet      bool
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {

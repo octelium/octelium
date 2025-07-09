@@ -29,7 +29,7 @@ import (
 
 type luaCtx struct {
 	req          *http.Request
-	rw           http.ResponseWriter
+	rw           *responseWriter
 	state        *lua.LState
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
@@ -37,7 +37,7 @@ type luaCtx struct {
 
 type newCtxOpts struct {
 	req          *http.Request
-	rw           http.ResponseWriter
+	rw           *responseWriter
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
 }
@@ -61,6 +61,7 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
 	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
 	ret.state.SetGlobal("set_request_body", ret.state.NewFunction(ret.setRequestBody))
+	ret.state.SetGlobal("set_response_body", ret.state.NewFunction(ret.setResponseBody))
 
 	if err := ret.compiledFile(); err != nil {
 		return nil, err
@@ -87,6 +88,26 @@ func (c *luaCtx) callOnRequest() error {
 
 	if f.Type() != lua.LTFunction {
 		return errors.Errorf("on_request function is not defined")
+	}
+
+	startedAt := time.Now()
+	c.state.Push(f)
+	c.state.Push(c.reqCtxLValue)
+
+	if err := c.state.PCall(1, 0, nil); err != nil {
+		return err
+	}
+
+	zap.L().Debug("on_request done",
+		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
+	return nil
+}
+
+func (c *luaCtx) callOnResponse() error {
+	f := c.state.GetGlobal("on_response")
+
+	if f.Type() != lua.LTFunction {
+		return errors.Errorf("on_response function is not defined")
 	}
 
 	startedAt := time.Now()
@@ -159,6 +180,30 @@ func (c *luaCtx) setResponseHeader(L *lua.LState) int {
 	}
 
 	c.rw.Header().Set(name.String(), value.String())
+
+	return 0
+}
+
+func (c *luaCtx) setResponseBody(L *lua.LState) int {
+
+	body := L.Get(1)
+
+	if body.Type() != lua.LTString {
+		L.Push(lua.LString("Body is not a string"))
+		return 1
+	}
+
+	bodyBytesI := toGoValue(body)
+	bodyBytesStr, ok := bodyBytesI.(string)
+	if !ok {
+		return 1
+	}
+
+	bodyBytes := []byte(bodyBytesStr)
+
+	c.rw.body.Reset()
+	c.rw.body.Write(bodyBytes)
+	c.rw.isSet = true
 
 	return 0
 }
