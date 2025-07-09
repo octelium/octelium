@@ -18,6 +18,7 @@ package lua
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,6 +53,7 @@ func TestLuaCtx(t *testing.T) {
 function on_request(ctx)
   set_request_header("X-Lua-Header", "octelium")
   set_request_header("X-User-Uid", ctx.user.metadata.uid)
+  set_request_body(ctx.user.metadata.uid)
 end`)
 	assert.Nil(t, err)
 
@@ -86,4 +88,10 @@ end`)
 
 	assert.Equal(t, "octelium", luaCtx.req.Header.Get("X-Lua-Header"))
 	assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.req.Header.Get("X-User-Uid"))
+	defer luaCtx.req.Body.Close()
+	reqBody, err := io.ReadAll(luaCtx.req.Body)
+	assert.Nil(t, err)
+
+	assert.Equal(t, reqCtx.User.Metadata.Uid, string(reqBody))
+	assert.Equal(t, int64(len([]byte(reqBody))), luaCtx.req.ContentLength)
 }

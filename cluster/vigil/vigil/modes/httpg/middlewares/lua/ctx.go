@@ -17,6 +17,8 @@
 package lua
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"time"
 
@@ -58,6 +60,7 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
 	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
+	ret.state.SetGlobal("set_request_body", ret.state.NewFunction(ret.setRequestBody))
 
 	if err := ret.compiledFile(); err != nil {
 		return nil, err
@@ -114,6 +117,29 @@ func (c *luaCtx) setRequestHeader(L *lua.LState) int {
 	}
 
 	c.req.Header.Set(name.String(), value.String())
+
+	return 0
+}
+
+func (c *luaCtx) setRequestBody(L *lua.LState) int {
+
+	body := L.Get(1)
+
+	if body.Type() != lua.LTString {
+		L.Push(lua.LString("Body is not a string"))
+		return 1
+	}
+
+	bodyBytesI := toGoValue(body)
+	bodyBytesStr, ok := bodyBytesI.(string)
+	if !ok {
+		return 1
+	}
+
+	bodyBytes := []byte(bodyBytesStr)
+
+	c.req.Body = io.NopCloser(bytes.NewBuffer([]byte(bodyBytes)))
+	c.req.ContentLength = int64(len(bodyBytes))
 
 	return 0
 }

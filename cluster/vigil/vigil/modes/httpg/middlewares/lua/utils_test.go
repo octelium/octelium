@@ -60,6 +60,9 @@ func TestLuaConversion(t *testing.T) {
 						},
 					},
 				},
+				Connection: &corev1.Session_Status_Connection{
+					Ed25519PublicKey: utilrand.GetRandomBytesMust(32),
+				},
 			},
 		},
 	}
