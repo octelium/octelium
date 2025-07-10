@@ -109,6 +109,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		req.Body = io.NopCloser(bytes.NewReader(additional.Body))
+		req.ContentLength = int64(len(additional.Body))
 	}
 
 	reqCtx = middlewares.GetCtxRequestContext(ctx)
