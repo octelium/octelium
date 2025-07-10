@@ -309,8 +309,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					case *extprocsvc.BodyMutation_Body:
 						crw.body.Reset()
 						crw.body.Write(mut.GetBody())
+						crw.isSet = true
 					case *extprocsvc.BodyMutation_ClearBody:
 						crw.body.Reset()
+						crw.isSet = true
 					default:
 					}
 				}
@@ -319,7 +321,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	crw.ResponseWriter.Write(crw.body.Bytes())
+	if crw.isSet {
+		crw.ResponseWriter.Write(crw.body.Bytes())
+	}
+
 	closeGRPC()
 }
 
@@ -411,6 +416,7 @@ type responseWriter struct {
 	statusCode int
 	headers    http.Header
 	body       *bytes.Buffer
+	isSet      bool
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {

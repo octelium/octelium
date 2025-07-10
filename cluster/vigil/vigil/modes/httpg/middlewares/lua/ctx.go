@@ -121,7 +121,7 @@ func (c *luaCtx) callOnResponse() error {
 		return err
 	}
 
-	zap.L().Debug("on_request done",
+	zap.L().Debug("on_response done",
 		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 	return nil
 }
@@ -227,7 +227,6 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 }
 
 func (c *luaCtx) getResponseBody(L *lua.LState) int {
-	zap.L().Debug("________RESP BODY", zap.String("rr", c.rw.body.String()))
 	L.Push(lua.LString(c.rw.body.String()))
 	return 1
 }
