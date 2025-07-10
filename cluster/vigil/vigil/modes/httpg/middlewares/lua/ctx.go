@@ -227,6 +227,7 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 }
 
 func (c *luaCtx) getResponseBody(L *lua.LState) int {
+	zap.L().Debug("________RESP BODY", zap.String("rr", c.rw.body.String()))
 	L.Push(lua.LString(c.rw.body.String()))
 	return 1
 }

@@ -17,6 +17,7 @@
 package lua
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -53,8 +55,14 @@ func TestLuaCtx(t *testing.T) {
 function on_request(ctx)
   set_request_header("X-Lua-Header", "octelium")
   set_request_header("X-User-Uid", ctx.user.metadata.uid)
-  set_request_body(ctx.user.metadata.uid)
-end`)
+  set_request_body("octelium:"..get_request_body())
+end
+
+function on_response(ctx)
+  set_response_header("X-Resp", ctx.user.metadata.uid)
+  set_response_body("octelium:"..get_response_body())
+end
+`)
 	assert.Nil(t, err)
 
 	reqCtx := &corev1.RequestContext{
@@ -66,12 +74,20 @@ end`)
 	}
 	reqCtxLVal := mdlwr.getRequestContextLValue(reqCtx)
 
+	bodyReq := utilrand.GetRandomString(32)
+	bodyResp := utilrand.GetRandomString(32)
+
+	rw := httptest.NewRecorder()
+
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:          httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil),
+		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer([]byte(bodyReq))),
 		fnProto:      fnProto,
 		reqCtxLValue: reqCtxLVal,
+		rw:           newResponseWriter(rw),
 	})
 	assert.Nil(t, err)
+
+	luaCtx.rw.body.Write([]byte(bodyResp))
 
 	{
 		globalTable := luaCtx.state.Get(lua.GlobalsIndex).(*lua.LTable)
@@ -83,15 +99,28 @@ end`)
 		})
 	}
 
-	err = luaCtx.callOnRequest()
-	assert.Nil(t, err)
+	{
+		err = luaCtx.callOnRequest()
+		assert.Nil(t, err)
 
-	assert.Equal(t, "octelium", luaCtx.req.Header.Get("X-Lua-Header"))
-	assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.req.Header.Get("X-User-Uid"))
-	defer luaCtx.req.Body.Close()
-	reqBody, err := io.ReadAll(luaCtx.req.Body)
-	assert.Nil(t, err)
+		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.req.Header.Get("X-User-Uid"))
+		defer luaCtx.req.Body.Close()
+		reqBody, err := io.ReadAll(luaCtx.req.Body)
+		assert.Nil(t, err)
 
-	assert.Equal(t, reqCtx.User.Metadata.Uid, string(reqBody))
-	assert.Equal(t, int64(len([]byte(reqBody))), luaCtx.req.ContentLength)
+		expectedBody := fmt.Sprintf("octelium:%s", bodyReq)
+		assert.Equal(t, expectedBody, string(reqBody))
+		assert.Equal(t, int64(len([]byte(expectedBody))), luaCtx.req.ContentLength)
+	}
+
+	{
+		err = luaCtx.callOnResponse()
+		assert.Nil(t, err)
+
+		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.rw.headers.Get("X-Resp"))
+
+		expectedBody := fmt.Sprintf("octelium:%s", bodyResp)
+		assert.Equal(t, expectedBody, luaCtx.rw.body.String())
+	}
+
 }
