@@ -60,10 +60,14 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
 	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
+
 	ret.state.SetGlobal("set_request_body", ret.state.NewFunction(ret.setRequestBody))
 	ret.state.SetGlobal("set_response_body", ret.state.NewFunction(ret.setResponseBody))
 
-	if err := ret.compiledFile(); err != nil {
+	ret.state.SetGlobal("get_request_body", ret.state.NewFunction(ret.getRequestBody))
+	ret.state.SetGlobal("get_response_body", ret.state.NewFunction(ret.getResponseBody))
+
+	if err := ret.loadFromProto(); err != nil {
 		return nil, err
 	}
 
@@ -71,13 +75,12 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 }
 
 func (l *luaCtx) close() {
-
 	if l.state != nil {
 		l.state.Close()
 	}
 }
 
-func (c *luaCtx) compiledFile() error {
+func (c *luaCtx) loadFromProto() error {
 	lfunc := c.state.NewFunctionFromProto(c.fnProto)
 	c.state.Push(lfunc)
 	return c.state.PCall(0, lua.MultRet, nil)
@@ -206,4 +209,24 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 	c.rw.isSet = true
 
 	return 0
+}
+func (c *luaCtx) getRequestBody(L *lua.LState) int {
+	bodyBytes, err := io.ReadAll(c.req.Body)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	defer c.req.Body.Close()
+	body := string(bodyBytes)
+	c.req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	L.Push(lua.LString(body))
+
+	return 1
+}
+
+func (c *luaCtx) getResponseBody(L *lua.LState) int {
+	L.Push(lua.LString(c.rw.body.String()))
+	return 1
 }
