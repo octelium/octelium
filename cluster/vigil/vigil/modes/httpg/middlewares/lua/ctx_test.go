@@ -133,8 +133,7 @@ func TestJSON(t *testing.T) {
 		tst.Destroy()
 	})
 
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	})
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 
 	mdlwr := &middleware{
 		next: next,

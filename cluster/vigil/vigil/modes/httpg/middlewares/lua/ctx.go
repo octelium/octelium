@@ -17,9 +17,7 @@
 package lua
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 
@@ -67,6 +65,10 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret.state.SetGlobal("get_request_body", ret.state.NewFunction(ret.getRequestBody))
 	ret.state.SetGlobal("get_response_body", ret.state.NewFunction(ret.getResponseBody))
+
+	ret.state.SetGlobal("set_query_param", ret.state.NewFunction(ret.setQueryParam))
+	ret.state.SetGlobal("delete_query_param", ret.state.NewFunction(ret.deleteQueryParam))
+	ret.state.SetGlobal("get_query_param", ret.state.NewFunction(ret.getQueryParam))
 
 	ret.loadModules()
 
@@ -129,111 +131,6 @@ func (c *luaCtx) callOnResponse() error {
 	return nil
 }
 
-func (c *luaCtx) setRequestHeader(L *lua.LState) int {
-	name := L.Get(1)
-	value := L.Get(2)
-
-	if name.Type() != lua.LTString {
-		L.Push(lua.LString("Header key is not a string"))
-		return 1
-	}
-
-	if value.Type() != lua.LTString {
-		L.Push(lua.LString("Header value is not a string"))
-		return 1
-	}
-
-	c.req.Header.Set(name.String(), value.String())
-
-	return 0
-}
-
-func (c *luaCtx) setRequestBody(L *lua.LState) int {
-
-	body := L.Get(1)
-
-	if body.Type() != lua.LTString {
-		L.Push(lua.LString("Body is not a string"))
-		return 1
-	}
-
-	bodyBytesI := toGoValue(body)
-	bodyBytesStr, ok := bodyBytesI.(string)
-	if !ok {
-		return 1
-	}
-
-	bodyBytes := []byte(bodyBytesStr)
-
-	c.req.Body = io.NopCloser(bytes.NewBuffer([]byte(bodyBytes)))
-	c.req.ContentLength = int64(len(bodyBytes))
-
-	return 0
-}
-
-func (c *luaCtx) setResponseHeader(L *lua.LState) int {
-	name := L.Get(1)
-	value := L.Get(2)
-
-	if name.Type() != lua.LTString {
-		L.Push(lua.LString("Header key is not a string"))
-		return 1
-	}
-
-	if value.Type() != lua.LTString {
-		L.Push(lua.LString("Header value is not a string"))
-		return 1
-	}
-
-	c.rw.Header().Set(name.String(), value.String())
-
-	return 0
-}
-
-func (c *luaCtx) setResponseBody(L *lua.LState) int {
-
-	body := L.Get(1)
-
-	if body.Type() != lua.LTString {
-		L.Push(lua.LString("Body is not a string"))
-		return 1
-	}
-
-	bodyBytesI := toGoValue(body)
-	bodyBytesStr, ok := bodyBytesI.(string)
-	if !ok {
-		return 1
-	}
-
-	bodyBytes := []byte(bodyBytesStr)
-
-	c.rw.body.Reset()
-	c.rw.body.Write(bodyBytes)
-	c.rw.isSet = true
-
-	return 0
-}
-func (c *luaCtx) getRequestBody(L *lua.LState) int {
-	bodyBytes, err := io.ReadAll(c.req.Body)
-	if err != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
-		return 2
-	}
-
-	defer c.req.Body.Close()
-	body := string(bodyBytes)
-	c.req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	L.Push(lua.LString(body))
-
-	return 1
-}
-
-func (c *luaCtx) getResponseBody(L *lua.LState) int {
-	L.Push(lua.LString(c.rw.body.String()))
-	return 1
-}
-
 func (c *luaCtx) jsonEncode(L *lua.LState) int {
 
 	val := L.Get(1)
@@ -274,11 +171,15 @@ func (c *luaCtx) jsonDecode(L *lua.LState) int {
 
 func (c *luaCtx) loadModules() {
 	L := c.state
+	startedAt := time.Now()
 	{
 		L.Push(L.NewFunction(c.loadModuleJSON))
 		L.Push(lua.LString("json"))
 		L.Call(1, 0)
 	}
+
+	zap.L().Debug("loadModules done",
+		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 }
 
 func (c *luaCtx) loadModuleJSON(L *lua.LState) int {
