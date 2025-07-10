@@ -18,6 +18,7 @@ package lua
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"time"
@@ -66,6 +67,8 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret.state.SetGlobal("get_request_body", ret.state.NewFunction(ret.getRequestBody))
 	ret.state.SetGlobal("get_response_body", ret.state.NewFunction(ret.getResponseBody))
+
+	ret.loadModules()
 
 	if err := ret.loadFromProto(); err != nil {
 		return nil, err
@@ -228,5 +231,65 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 
 func (c *luaCtx) getResponseBody(L *lua.LState) int {
 	L.Push(lua.LString(c.rw.body.String()))
+	return 1
+}
+
+func (c *luaCtx) jsonEncode(L *lua.LState) int {
+
+	val := L.Get(1)
+
+	res, err := json.Marshal(toGoValue(val))
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	L.Push(lua.LString(string(res)))
+
+	return 1
+}
+
+func (c *luaCtx) jsonDecode(L *lua.LState) int {
+
+	jsonVal := L.Get(1)
+
+	if jsonVal.Type() != lua.LTString {
+		L.Push(lua.LString("Input is not a string"))
+		return 1
+	}
+
+	var goVal any
+
+	if err := json.Unmarshal([]byte(jsonVal.String()), &goVal); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	L.Push(toLuaValue(L, goVal))
+
+	return 1
+}
+
+func (c *luaCtx) loadModules() {
+	L := c.state
+	{
+		L.Push(L.NewFunction(c.loadModuleJSON))
+		L.Push(lua.LString("json"))
+		L.Call(1, 0)
+	}
+}
+
+func (c *luaCtx) loadModuleJSON(L *lua.LState) int {
+
+	fns := map[string]lua.LGFunction{
+		"encode": c.jsonEncode,
+		"decode": c.jsonDecode,
+	}
+
+	mod := L.RegisterModule("json", fns).(*lua.LTable)
+	L.Push(mod)
+
 	return 1
 }

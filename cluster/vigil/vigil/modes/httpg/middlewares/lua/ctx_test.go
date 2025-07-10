@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	lua "github.com/yuin/gopher-lua"
@@ -123,4 +124,68 @@ end
 		assert.Equal(t, expectedBody, luaCtx.rw.body.String())
 	}
 
+}
+
+func TestJSON(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+
+	mdlwr := &middleware{
+		next: next,
+		cMap: make(map[string]*lua.FunctionProto),
+	}
+
+	fnProto, err := mdlwr.doGetAndSetLuaFnProto(`
+function on_request(ctx)
+  local body = get_request_body()
+  local map = json.decode(body)
+  map.user.metadata.name = "octelium"
+  set_request_body(json.encode(map))
+end
+`)
+	assert.Nil(t, err)
+
+	reqCtx := &corev1.RequestContext{
+		User: &corev1.User{
+			Metadata: &metav1.Metadata{
+				Name: "root",
+				Uid:  vutils.UUIDv4(),
+			},
+		},
+	}
+	reqCtxLVal := mdlwr.getRequestContextLValue(reqCtx)
+
+	reqCtxJSON, err := pbutils.MarshalJSON(reqCtx, false)
+	assert.Nil(t, err)
+
+	rw := httptest.NewRecorder()
+
+	luaCtx, err := newCtx(&newCtxOpts{
+		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer(reqCtxJSON)),
+		fnProto:      fnProto,
+		reqCtxLValue: reqCtxLVal,
+		rw:           newResponseWriter(rw),
+	})
+	assert.Nil(t, err)
+
+	{
+		err = luaCtx.callOnRequest()
+		assert.Nil(t, err)
+
+		defer luaCtx.req.Body.Close()
+		reqBody, err := io.ReadAll(luaCtx.req.Body)
+		assert.Nil(t, err)
+
+		reqCtx2 := &corev1.RequestContext{}
+		err = pbutils.UnmarshalJSON(reqBody, reqCtx2)
+		assert.Nil(t, err)
+
+		assert.Equal(t, "octelium", reqCtx2.User.Metadata.Name)
+	}
 }
