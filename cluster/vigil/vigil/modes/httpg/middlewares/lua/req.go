@@ -203,3 +203,28 @@ func (c *luaCtx) setStatusCode(L *lua.LState) int {
 
 	return 0
 }
+
+func (c *luaCtx) setPath(L *lua.LState) int {
+	val := L.Get(1)
+
+	if val.Type() != lua.LTString {
+		L.Push(lua.LString("Path is not a string"))
+		return 1
+	}
+
+	c.req.URL.Path = val.String()
+	c.req.RequestURI = c.req.URL.RequestURI()
+
+	return 0
+}
+
+func (c *luaCtx) exit(L *lua.LState) int {
+
+	if ret := c.setStatusCode(L); ret != 0 {
+		return ret
+	}
+
+	c.isExit = true
+
+	return 0
+}

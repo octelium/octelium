@@ -27,6 +27,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/yuin/gopher-lua/parse"
+	"go.uber.org/zap"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -79,13 +80,32 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, luaCtx := range luaContexts {
-		luaCtx.callOnRequest()
+		if err := luaCtx.callOnRequest(); err != nil {
+			zap.L().Debug("Could not callOnRequest", zap.Error(err))
+		} else {
+			if luaCtx.isExit {
+				if crw.isSet {
+					crw.ResponseWriter.Write(crw.body.Bytes())
+				}
+				if crw.statusCode > 0 {
+					crw.WriteHeader(crw.statusCode)
+				}
+
+				for _, luaCtx := range luaContexts {
+					luaCtx.close()
+				}
+
+				return
+			}
+		}
 	}
 
 	m.next.ServeHTTP(crw, req)
 
 	for _, luaCtx := range luaContexts {
-		luaCtx.callOnResponse()
+		if err := luaCtx.callOnResponse(); err != nil {
+			zap.L().Debug("Could not callOnResponse", zap.Error(err))
+		}
 	}
 
 	if crw.isSet {

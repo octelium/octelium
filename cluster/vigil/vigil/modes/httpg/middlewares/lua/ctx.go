@@ -32,6 +32,7 @@ type luaCtx struct {
 	state        *lua.LState
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
+	isExit       bool
 }
 
 type newCtxOpts struct {
@@ -204,6 +205,8 @@ func (c *luaCtx) loadModuleReq(L *lua.LState) int {
 		"deleteQueryParam": c.deleteQueryParam,
 
 		"setStatusCode": c.setStatusCode,
+		"setPath":       c.setPath,
+		"exit":          c.exit,
 	}
 
 	mod := L.RegisterModule("octelium.req", fns).(*lua.LTable)
