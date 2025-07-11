@@ -19,6 +19,7 @@ package lua
 import (
 	"bytes"
 	"io"
+	"strconv"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -177,4 +178,28 @@ func (c *luaCtx) getQueryParam(L *lua.LState) int {
 	L.Push(lua.LString(qry.Get(name.String())))
 
 	return 1
+}
+
+func (c *luaCtx) setStatusCode(L *lua.LState) int {
+	val := L.Get(1)
+
+	if val.Type() != lua.LTNumber {
+		L.Push(lua.LString("Query param is not a string"))
+		return 1
+	}
+
+	code, err := strconv.Atoi(val.String())
+	if err != nil {
+		L.Push(lua.LString("Query param is not a string"))
+		return 1
+	}
+
+	if code < 200 || code >= 600 {
+		L.Push(lua.LString("Invalid code number"))
+		return 1
+	}
+
+	c.rw.statusCode = code
+
+	return 0
 }

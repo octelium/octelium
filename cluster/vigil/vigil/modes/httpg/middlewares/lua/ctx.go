@@ -199,9 +199,11 @@ func (c *luaCtx) loadModuleReq(L *lua.LState) int {
 		"setResponseBody":   c.setResponseBody,
 		"getResponseBody":   c.getResponseBody,
 
-		"set_query_param":    c.setQueryParam,
-		"get_query_param":    c.getQueryParam,
-		"delete_query_param": c.deleteQueryParam,
+		"setQueryParam":    c.setQueryParam,
+		"getQueryParam":    c.getQueryParam,
+		"deleteQueryParam": c.deleteQueryParam,
+
+		"setStatusCode": c.setStatusCode,
 	}
 
 	mod := L.RegisterModule("octelium.req", fns).(*lua.LTable)
