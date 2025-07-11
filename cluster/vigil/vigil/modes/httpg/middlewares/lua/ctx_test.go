@@ -57,6 +57,11 @@ function onRequest(ctx)
   octelium.req.setRequestHeader("X-Lua-Header", "octelium")
   octelium.req.setRequestHeader("X-User-Uid", ctx.user.metadata.uid)
   octelium.req.setRequestBody("octelium:"..octelium.req.getRequestBody())
+  if octelium.req.getQueryParam("type") == "octelium" then
+    octelium.req.setPath("/users/"..ctx.user.metadata.uid)
+    octelium.req.setQueryParam("user", ctx.user.metadata.uid)
+    octelium.req.deleteQueryParam("type")
+  end
 end
 
 function onResponse(ctx)
@@ -81,7 +86,7 @@ end
 	rw := httptest.NewRecorder()
 
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer([]byte(bodyReq))),
+		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1?type=octelium", bytes.NewBuffer([]byte(bodyReq))),
 		fnProto:      fnProto,
 		reqCtxLValue: reqCtxLVal,
 		rw:           newResponseWriter(rw),
@@ -112,6 +117,13 @@ end
 		expectedBody := fmt.Sprintf("octelium:%s", bodyReq)
 		assert.Equal(t, expectedBody, string(reqBody))
 		assert.Equal(t, int64(len([]byte(expectedBody))), luaCtx.req.ContentLength)
+		assert.Equal(t, fmt.Sprintf("/users/%s", reqCtx.User.Metadata.Uid), luaCtx.req.URL.Path)
+		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.req.URL.Query().Get("user"))
+		assert.Equal(t, "", luaCtx.req.URL.Query().Get("type"))
+
+		assert.Equal(t,
+			fmt.Sprintf("/users/%s?user=%s", reqCtx.User.Metadata.Uid, reqCtx.User.Metadata.Uid),
+			luaCtx.req.URL.RequestURI())
 	}
 
 	{
