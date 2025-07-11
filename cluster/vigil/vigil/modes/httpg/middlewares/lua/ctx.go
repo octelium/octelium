@@ -79,10 +79,10 @@ func (c *luaCtx) loadFromProto() error {
 }
 
 func (c *luaCtx) callOnRequest() error {
-	f := c.state.GetGlobal("on_request")
+	f := c.state.GetGlobal("onRequest")
 
 	if f.Type() != lua.LTFunction {
-		return errors.Errorf("on_request function is not defined")
+		return errors.Errorf("onRequest function is not defined")
 	}
 
 	startedAt := time.Now()
@@ -93,16 +93,16 @@ func (c *luaCtx) callOnRequest() error {
 		return err
 	}
 
-	zap.L().Debug("on_request done",
+	zap.L().Debug("onRequest done",
 		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 	return nil
 }
 
 func (c *luaCtx) callOnResponse() error {
-	f := c.state.GetGlobal("on_response")
+	f := c.state.GetGlobal("onResponse")
 
 	if f.Type() != lua.LTFunction {
-		return errors.Errorf("on_response function is not defined")
+		return errors.Errorf("onResponse function is not defined")
 	}
 
 	startedAt := time.Now()
@@ -113,7 +113,7 @@ func (c *luaCtx) callOnResponse() error {
 		return err
 	}
 
-	zap.L().Debug("on_response done",
+	zap.L().Debug("onResponse done",
 		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 	return nil
 }
