@@ -59,6 +59,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var luaContexts []*luaCtx
 	crw := newResponseWriter(rw)
+	reqCtxVal := m.getRequestContextLValue(reqCtx.DownstreamInfo)
 
 	for _, plugin := range cfg.GetHttp().Plugins {
 		switch plugin.Type.(type) {
@@ -68,9 +69,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				continue
 			}
 			luaCtx, err := newCtx(&newCtxOpts{
-				req:     req,
-				rw:      crw,
-				fnProto: fnProto,
+				req:          req,
+				rw:           crw,
+				fnProto:      fnProto,
+				reqCtxLValue: reqCtxVal,
 			})
 			if err != nil {
 				continue
@@ -167,7 +169,7 @@ func (m *middleware) getLuaFnProto(plugin *corev1.Service_Spec_Config_HTTP_Plugi
 	case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline:
 		return m.doGetAndSetLuaFnProto(plugin.GetInline())
 	default:
-		return nil, errors.Errorf("Only lua inline is supported")
+		return nil, errors.Errorf("Only inline mode is supported")
 	}
 }
 
