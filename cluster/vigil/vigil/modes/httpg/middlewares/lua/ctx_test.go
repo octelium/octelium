@@ -54,14 +54,14 @@ func TestLuaCtx(t *testing.T) {
 
 	fnProto, err := mdlwr.doGetAndSetLuaFnProto(`
 function on_request(ctx)
-  set_request_header("X-Lua-Header", "octelium")
-  set_request_header("X-User-Uid", ctx.user.metadata.uid)
-  set_request_body("octelium:"..get_request_body())
+  octelium.req.setRequestHeader("X-Lua-Header", "octelium")
+  octelium.req.setRequestHeader("X-User-Uid", ctx.user.metadata.uid)
+  octelium.req.setRequestBody("octelium:"..octelium.req.getRequestBody())
 end
 
 function on_response(ctx)
-  set_response_header("X-Resp", ctx.user.metadata.uid)
-  set_response_body("octelium:"..get_response_body())
+  octelium.req.setResponseHeader("X-Resp", ctx.user.metadata.uid)
+  octelium.req.setResponseBody("octelium:"..octelium.req.getResponseBody())
 end
 `)
 	assert.Nil(t, err)
@@ -142,10 +142,10 @@ func TestJSON(t *testing.T) {
 
 	fnProto, err := mdlwr.doGetAndSetLuaFnProto(`
 function on_request(ctx)
-  local body = get_request_body()
+  local body = octelium.req.getRequestBody()
   local map = json.decode(body)
   map.user.metadata.name = "octelium"
-  set_request_body(json.encode(map))
+  octelium.req.setRequestBody(json.encode(map))
 end
 `)
 	assert.Nil(t, err)

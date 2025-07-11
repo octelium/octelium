@@ -57,19 +57,6 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 	lua.OpenString(ret.state)
 	lua.OpenMath(ret.state)
 
-	ret.state.SetGlobal("set_request_header", ret.state.NewFunction(ret.setRequestHeader))
-	ret.state.SetGlobal("set_response_header", ret.state.NewFunction(ret.setResponseHeader))
-
-	ret.state.SetGlobal("set_request_body", ret.state.NewFunction(ret.setRequestBody))
-	ret.state.SetGlobal("set_response_body", ret.state.NewFunction(ret.setResponseBody))
-
-	ret.state.SetGlobal("get_request_body", ret.state.NewFunction(ret.getRequestBody))
-	ret.state.SetGlobal("get_response_body", ret.state.NewFunction(ret.getResponseBody))
-
-	ret.state.SetGlobal("set_query_param", ret.state.NewFunction(ret.setQueryParam))
-	ret.state.SetGlobal("delete_query_param", ret.state.NewFunction(ret.deleteQueryParam))
-	ret.state.SetGlobal("get_query_param", ret.state.NewFunction(ret.getQueryParam))
-
 	ret.loadModules()
 
 	if err := ret.loadFromProto(); err != nil {
@@ -178,6 +165,12 @@ func (c *luaCtx) loadModules() {
 		L.Call(1, 0)
 	}
 
+	{
+		L.Push(L.NewFunction(c.loadModuleReq))
+		L.Push(lua.LString("octelium.req"))
+		L.Call(1, 0)
+	}
+
 	zap.L().Debug("loadModules done",
 		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 }
@@ -190,6 +183,28 @@ func (c *luaCtx) loadModuleJSON(L *lua.LState) int {
 	}
 
 	mod := L.RegisterModule("json", fns).(*lua.LTable)
+	L.Push(mod)
+
+	return 1
+}
+
+func (c *luaCtx) loadModuleReq(L *lua.LState) int {
+
+	fns := map[string]lua.LGFunction{
+		"setRequestHeader": c.setRequestHeader,
+		"setRequestBody":   c.setRequestBody,
+		"getRequestBody":   c.getRequestBody,
+
+		"setResponseHeader": c.setResponseHeader,
+		"setResponseBody":   c.setResponseBody,
+		"getResponseBody":   c.getResponseBody,
+
+		"set_query_param":    c.setQueryParam,
+		"get_query_param":    c.getQueryParam,
+		"delete_query_param": c.deleteQueryParam,
+	}
+
+	mod := L.RegisterModule("octelium.req", fns).(*lua.LTable)
 	L.Push(mod)
 
 	return 1
