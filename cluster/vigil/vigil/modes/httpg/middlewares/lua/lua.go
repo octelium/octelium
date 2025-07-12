@@ -114,11 +114,24 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if crw.isSet {
-		crw.ResponseWriter.Write(crw.body.Bytes())
+	if len(crw.headers) > 0 {
+		for k, v := range crw.headers {
+			if len(v) < 1 {
+				continue
+			}
+
+			crw.ResponseWriter.Header().Set(k, v[0])
+		}
 	}
+
 	if crw.statusCode > 0 {
 		crw.WriteHeader(crw.statusCode)
+	}
+
+	if crw.isSet {
+		if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
+			zap.L().Warn("Could not write to lua crw", zap.Error(err))
+		}
 	}
 
 	for _, luaCtx := range luaContexts {
@@ -137,22 +150,9 @@ type responseWriter struct {
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
-		statusCode:     http.StatusOK,
 		headers:        make(http.Header),
 		body:           new(bytes.Buffer),
 	}
-}
-
-func (rw *responseWriter) Header() http.Header {
-	return rw.headers
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
-}
-
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	return rw.body.Write(b)
 }
 
 func (m *middleware) compileLua(luaContent string) (*lua.FunctionProto, error) {

@@ -192,9 +192,10 @@ func (c *luaCtx) loadModuleJSON(L *lua.LState) int {
 func (c *luaCtx) loadModuleReq(L *lua.LState) int {
 
 	fns := map[string]lua.LGFunction{
-		"setRequestHeader": c.setRequestHeader,
-		"setRequestBody":   c.setRequestBody,
-		"getRequestBody":   c.getRequestBody,
+		"setRequestHeader":    c.setRequestHeader,
+		"setRequestBody":      c.setRequestBody,
+		"getRequestBody":      c.getRequestBody,
+		"deleteRequestHeader": c.deleteRequestHeader,
 
 		"setResponseHeader": c.setResponseHeader,
 		"setResponseBody":   c.setResponseBody,

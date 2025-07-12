@@ -18,6 +18,7 @@ package lua
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -101,13 +103,18 @@ end`,
 
 		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
 
-		/*
-			assert.Equal(t, reqCtx.DownstreamInfo.Session.Metadata.Uid, rw.Header().Get("X-Session-Uid"))
+		assert.Equal(t, reqCtx.DownstreamInfo.Session.Metadata.Uid, rw.Header().Get("X-Session-Uid"))
 
-			usr := &corev1.User{}
-			err = pbutils.UnmarshalJSON(rw.Body.Bytes(), usr)
-			assert.Nil(t, err)
-			assert.True(t, pbutils.IsEqual(reqCtx.DownstreamInfo.User, usr))
-		*/
+		resp := rw.Result()
+		assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+		bb, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+		resp.Body.Close()
+		usr := &corev1.User{}
+		err = pbutils.UnmarshalJSON(bb, usr)
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(reqCtx.DownstreamInfo.User, usr))
+
 	}
 }

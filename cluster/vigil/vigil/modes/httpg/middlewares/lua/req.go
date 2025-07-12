@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	lua "github.com/yuin/gopher-lua"
+	"go.uber.org/zap"
 )
 
 func (c *luaCtx) setRequestHeader(L *lua.LState) int {
@@ -80,7 +81,7 @@ func (c *luaCtx) setResponseHeader(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.Header().Set(name.String(), value.String())
+	c.rw.headers.Set(name.String(), value.String())
 
 	return 0
 }
@@ -105,6 +106,8 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 	c.rw.body.Reset()
 	c.rw.body.Write(bodyBytes)
 	c.rw.isSet = true
+
+	zap.L().Debug("SET BODY______________", zap.String("body", c.rw.body.String()))
 
 	return 0
 }
@@ -225,6 +228,19 @@ func (c *luaCtx) exit(L *lua.LState) int {
 	}
 
 	c.isExit = true
+
+	return 0
+}
+
+func (c *luaCtx) deleteRequestHeader(L *lua.LState) int {
+	name := L.Get(1)
+
+	if name.Type() != lua.LTString {
+		L.Push(lua.LString("Header key is not a string"))
+		return 1
+	}
+
+	c.req.Header.Del(name.String())
 
 	return 0
 }

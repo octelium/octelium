@@ -111,6 +111,10 @@ func convertLuaTableToGoMapOrSlice(lt *lua.LTable) any {
 		}
 	})
 
+	if lt.Len() < 1 {
+		isSlice = false
+	}
+
 	if isSlice {
 		sliceValues := make([]any, maxIndex)
 		allConsecutive := true
