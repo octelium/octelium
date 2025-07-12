@@ -39,6 +39,20 @@ func TestIdentityProvider(t *testing.T) {
 	})
 	srv := newFakeServer(tst.C)
 
+	sec, err := srv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec:   &corev1.Secret_Spec{},
+		Status: &corev1.Secret_Status{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
 	invalids := []*corev1.IdentityProvider{
 		{
 			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
@@ -99,11 +113,47 @@ func TestIdentityProvider(t *testing.T) {
 				},
 			},
 		},
+
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Oidc{
+					Oidc: &corev1.IdentityProvider_Spec_OIDC{
+						ClientID: utilrand.GetRandomStringCanonical(32),
+					},
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Oidc{
+					Oidc: &corev1.IdentityProvider_Spec_OIDC{
+						ClientID: utilrand.GetRandomStringCanonical(32),
+						ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
+							Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
+								FromSecret: sec.Metadata.Name,
+							},
+						},
+					},
+				},
+			},
+		},
 		{
 			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
 			Spec: &corev1.IdentityProvider_Spec{
 				Type: &corev1.IdentityProvider_Spec_Saml{
 					Saml: &corev1.IdentityProvider_Spec_SAML{},
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Saml{
+					Saml: &corev1.IdentityProvider_Spec_SAML{
+						EntityID: utilrand.GetRandomStringCanonical(8),
+					},
 				},
 			},
 		},
@@ -118,10 +168,63 @@ func TestIdentityProvider(t *testing.T) {
 	}
 
 	for _, invalid := range invalids {
-
 		_, err = srv.CreateIdentityProvider(ctx, invalid)
 		assert.NotNil(t, err)
-		assert.True(t, grpcerr.IsInvalidArg(err))
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	valids := []*corev1.IdentityProvider{
+
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Github_{
+					Github: &corev1.IdentityProvider_Spec_Github{
+						ClientID: utilrand.GetRandomString(32),
+						ClientSecret: &corev1.IdentityProvider_Spec_Github_ClientSecret{
+							Type: &corev1.IdentityProvider_Spec_Github_ClientSecret_FromSecret{
+								FromSecret: sec.Metadata.Name,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Oidc{
+					Oidc: &corev1.IdentityProvider_Spec_OIDC{
+						ClientID:  utilrand.GetRandomString(32),
+						IssuerURL: "https://example.com",
+						ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
+							Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
+								FromSecret: sec.Metadata.Name,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Saml{
+					Saml: &corev1.IdentityProvider_Spec_SAML{
+						MetadataType: &corev1.IdentityProvider_Spec_SAML_MetadataURL{
+							MetadataURL: "https://example.com/metadata",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, valid := range valids {
+		_, err = srv.CreateIdentityProvider(ctx, valid)
+		assert.Nil(t, err)
 	}
 
 }

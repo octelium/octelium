@@ -179,12 +179,36 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		req.Status.Type = corev1.IdentityProvider_Status_GITHUB
 	case *corev1.IdentityProvider_Spec_Oidc:
 		typ := spec.GetOidc()
+		if typ.IssuerURL == "" {
+			return grpcutils.InvalidArg("issuerURL must be set")
+		}
+		if !govalidator.IsURL(typ.IssuerURL) {
+			return grpcutils.InvalidArg("issuerURL is not a valid URL: %s", typ.IssuerURL)
+		}
 		if err := s.validateGenStr(typ.ClientID, true, "clientID"); err != nil {
 			return err
 		}
 		if err := s.validateSecretOwner(ctx, typ.ClientSecret); err != nil {
 			return err
 		}
+
+		if len(typ.Scopes) > 0 {
+			if len(typ.Scopes) > 32 {
+				return grpcutils.InvalidArg("Too many scopes")
+			}
+			for _, scope := range typ.Scopes {
+				if err := apivalidation.ValidateGenASCII(scope); err != nil {
+					return err
+				}
+			}
+		}
+
+		if typ.IdentifierClaim != "" {
+			if err := apivalidation.ValidateGenASCII(typ.IdentifierClaim); err != nil {
+				return err
+			}
+		}
+
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC
 	case *corev1.IdentityProvider_Spec_OidcIdentityToken:
 		typ := spec.GetOidcIdentityToken()
@@ -223,6 +247,18 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 			}
 		default:
 			return grpcutils.InvalidArg("Either metadataURL or metadata must be supplied")
+		}
+
+		if typ.IdentifierAttribute != "" {
+			if err := apivalidation.ValidateGenASCII(typ.IdentifierAttribute); err != nil {
+				return err
+			}
+		}
+
+		if typ.EntityID != "" {
+			if err := apivalidation.ValidateGenASCII(typ.EntityID); err != nil {
+				return err
+			}
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_SAML
