@@ -17,6 +17,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gosimple/slug v1.15.0
 	github.com/mileusna/useragent v1.3.5
+	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
