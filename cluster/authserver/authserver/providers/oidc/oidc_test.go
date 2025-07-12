@@ -59,13 +59,6 @@ func TestProvider(t *testing.T) {
 
 	defer oidcSrv.Shutdown()
 
-	myUsr := &mockoidc.MockUser{
-		Subject:       utilrand.GetRandomStringCanonical(16),
-		Email:         fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
-		EmailVerified: true,
-	}
-	oidcSrv.QueueUser(myUsr)
-
 	time.Sleep(1 * time.Second)
 
 	sec, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
@@ -108,33 +101,166 @@ func TestProvider(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
-	state := utilrand.GetRandomStringCanonical(32)
-	codeURL, reqID, err := provider.LoginURL(state)
-	assert.Nil(t, err)
-
-	var redirectURL string
 	{
-		req := httptest.NewRequest(http.MethodGet, codeURL, nil)
-		rw := httptest.NewRecorder()
-		oidcSrv.Authorize(rw, req)
+		myUsr := &mockoidc.MockUser{
+			Subject:       utilrand.GetRandomStringCanonical(16),
+			Email:         fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+			EmailVerified: true,
+		}
+		oidcSrv.QueueUser(myUsr)
 
-		resp := rw.Result()
-		assert.Equal(t, http.StatusFound, resp.StatusCode)
-
-		redirURL, err := url.Parse(rw.Header().Get("Location"))
+		state := utilrand.GetRandomStringCanonical(32)
+		codeURL, reqID, err := provider.LoginURL(state)
 		assert.Nil(t, err)
-		assert.Equal(t, state, redirURL.Query().Get("state"))
 
-		redirectURL = redirURL.String()
+		var redirectURL string
+		{
+			req := httptest.NewRequest(http.MethodGet, codeURL, nil)
+			rw := httptest.NewRecorder()
+			oidcSrv.Authorize(rw, req)
+
+			resp := rw.Result()
+			assert.Equal(t, http.StatusFound, resp.StatusCode)
+
+			redirURL, err := url.Parse(rw.Header().Get("Location"))
+			assert.Nil(t, err)
+			assert.Equal(t, state, redirURL.Query().Get("state"))
+
+			redirectURL = redirURL.String()
+		}
+
+		{
+			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
+
+			usr, err := provider.HandleCallback(req, reqID)
+			assert.Nil(t, err)
+
+			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
+			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Identifier)
+			assert.Equal(t, idp.Metadata.Uid, usr.GetIdentityProvider().IdentityProviderRef.Uid)
+		}
 	}
 
 	{
-		req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
+		// With subject as the identifier
+		idp.Spec.GetOidc().IdentifierClaim = "sub"
+		myUsr := &mockoidc.MockUser{
+			Subject:       utilrand.GetRandomStringCanonical(16),
+			Email:         fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+			EmailVerified: true,
+		}
+		oidcSrv.QueueUser(myUsr)
 
-		usr, err := provider.HandleCallback(req, reqID)
+		state := utilrand.GetRandomStringCanonical(32)
+		codeURL, reqID, err := provider.LoginURL(state)
 		assert.Nil(t, err)
 
-		assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
-		assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Identifier)
+		var redirectURL string
+		{
+			req := httptest.NewRequest(http.MethodGet, codeURL, nil)
+			rw := httptest.NewRecorder()
+			oidcSrv.Authorize(rw, req)
+
+			resp := rw.Result()
+			assert.Equal(t, http.StatusFound, resp.StatusCode)
+
+			redirURL, err := url.Parse(rw.Header().Get("Location"))
+			assert.Nil(t, err)
+			assert.Equal(t, state, redirURL.Query().Get("state"))
+
+			redirectURL = redirURL.String()
+		}
+
+		{
+			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
+
+			usr, err := provider.HandleCallback(req, reqID)
+			assert.Nil(t, err)
+
+			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
+			assert.Equal(t, myUsr.Subject, usr.GetIdentityProvider().Identifier)
+			assert.Equal(t, idp.Metadata.Uid, usr.GetIdentityProvider().IdentityProviderRef.Uid)
+		}
+		idp.Spec.GetOidc().IdentifierClaim = ""
 	}
+
+	{
+		// Without EmailVerified
+		myUsr := &mockoidc.MockUser{
+			Subject: utilrand.GetRandomStringCanonical(16),
+			Email:   fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+		}
+		oidcSrv.QueueUser(myUsr)
+
+		state := utilrand.GetRandomStringCanonical(32)
+		codeURL, reqID, err := provider.LoginURL(state)
+		assert.Nil(t, err)
+
+		var redirectURL string
+		{
+			req := httptest.NewRequest(http.MethodGet, codeURL, nil)
+			rw := httptest.NewRecorder()
+			oidcSrv.Authorize(rw, req)
+
+			resp := rw.Result()
+			assert.Equal(t, http.StatusFound, resp.StatusCode)
+
+			redirURL, err := url.Parse(rw.Header().Get("Location"))
+			assert.Nil(t, err)
+			assert.Equal(t, state, redirURL.Query().Get("state"))
+
+			redirectURL = redirURL.String()
+		}
+
+		{
+			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
+
+			usr, err := provider.HandleCallback(req, reqID)
+			assert.Nil(t, err)
+
+			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
+			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Identifier)
+			assert.Equal(t, idp.Metadata.Uid, usr.GetIdentityProvider().IdentityProviderRef.Uid)
+		}
+	}
+
+	{
+		// Now check for EmailVerified while the email is not verified
+		idp.Spec.GetOidc().CheckEmailVerified = true
+		myUsr := &mockoidc.MockUser{
+			Subject: utilrand.GetRandomStringCanonical(16),
+			Email:   fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+		}
+		oidcSrv.QueueUser(myUsr)
+
+		state := utilrand.GetRandomStringCanonical(32)
+		codeURL, reqID, err := provider.LoginURL(state)
+		assert.Nil(t, err)
+
+		var redirectURL string
+		{
+			req := httptest.NewRequest(http.MethodGet, codeURL, nil)
+			rw := httptest.NewRecorder()
+			oidcSrv.Authorize(rw, req)
+
+			resp := rw.Result()
+			assert.Equal(t, http.StatusFound, resp.StatusCode)
+
+			redirURL, err := url.Parse(rw.Header().Get("Location"))
+			assert.Nil(t, err)
+			assert.Equal(t, state, redirURL.Query().Get("state"))
+
+			redirectURL = redirURL.String()
+		}
+
+		{
+			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
+
+			_, err := provider.HandleCallback(req, reqID)
+			assert.NotNil(t, err)
+
+		}
+		idp.Spec.GetOidc().CheckEmailVerified = false
+	}
+
 }
