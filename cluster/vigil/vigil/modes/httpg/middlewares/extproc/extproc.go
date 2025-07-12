@@ -76,6 +76,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, plugin := range cfg.GetHttp().Plugins {
+		if plugin.IsDisabled {
+			continue
+		}
+
 		switch plugin.Type.(type) {
 		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
 			c, err := m.getClient(plugin.GetExtProc())
