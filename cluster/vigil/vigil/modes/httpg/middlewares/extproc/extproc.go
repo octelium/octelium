@@ -212,6 +212,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					}
 				}
 				rw.Header().Set("Server", "octelium")
+				if resp.Status != nil && resp.Status.Code >= 200 && resp.Status.Code < 600 {
+					rw.WriteHeader(int(resp.Status.Code))
+				}
 				rw.Write(resp.Body)
 
 				closeGRPC()
@@ -263,11 +266,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.ResponseWriter.Header().Del(hdr)
+						crw.headers.Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.ResponseWriter.Header().Set(hdr.Header.Key, hdr.Header.Value)
+						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 			}
@@ -299,11 +302,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.ResponseWriter.Header().Del(hdr)
+						crw.headers.Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.ResponseWriter.Header().Set(hdr.Header.Key, hdr.Header.Value)
+						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 
@@ -323,6 +326,14 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 
+	}
+
+	if len(crw.headers) > 0 {
+		for k, v := range crw.headers {
+			if len(v) > 0 {
+				crw.ResponseWriter.Header().Set(k, v[0])
+			}
+		}
 	}
 
 	if crw.isSet {
@@ -426,7 +437,6 @@ type responseWriter struct {
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
-		statusCode:     http.StatusOK,
 		headers:        make(http.Header),
 		body:           new(bytes.Buffer),
 	}
