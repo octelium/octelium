@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/strings"
 	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 	"go.uber.org/zap"
@@ -56,7 +57,7 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 	})
 	ret.state.SetContext(o.req.Context())
 
-	lua.OpenString(ret.state)
+	// lua.OpenString(ret.state)
 	lua.OpenMath(ret.state)
 
 	ret.loadModules()
@@ -176,6 +177,12 @@ func (c *luaCtx) loadModules() {
 	{
 		L.Push(L.NewFunction(base64.Register))
 		L.Push(lua.LString("base64"))
+		L.Call(1, 0)
+	}
+
+	{
+		L.Push(L.NewFunction(strings.Register))
+		L.Push(lua.LString("strings"))
 		L.Call(1, 0)
 	}
 
