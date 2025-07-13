@@ -61,6 +61,32 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	crw := newResponseWriter(rw)
 	reqCtxVal := m.getRequestContextLValue(reqCtx.DownstreamInfo)
 
+	doAfterResponse := func() {
+		if len(crw.headers) > 0 {
+			for k, v := range crw.headers {
+				if len(v) < 1 {
+					continue
+				}
+
+				crw.ResponseWriter.Header().Set(k, v[0])
+			}
+		}
+
+		if crw.statusCode > 0 {
+			crw.WriteHeader(crw.statusCode)
+		}
+
+		if crw.isSet {
+			if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
+				zap.L().Warn("Could not write to lua crw", zap.Error(err))
+			}
+		}
+
+		for _, luaCtx := range luaContexts {
+			luaCtx.close()
+		}
+	}
+
 	for _, plugin := range cfg.GetHttp().Plugins {
 		if plugin.IsDisabled {
 			continue
@@ -90,17 +116,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			zap.L().Debug("Could not callOnRequest", zap.Error(err))
 		} else {
 			if luaCtx.isExit {
-				if crw.isSet {
-					crw.ResponseWriter.Write(crw.body.Bytes())
-				}
-				if crw.statusCode > 0 {
-					crw.WriteHeader(crw.statusCode)
-				}
-
-				for _, luaCtx := range luaContexts {
-					luaCtx.close()
-				}
-
+				doAfterResponse()
 				return
 			}
 		}
@@ -114,29 +130,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if len(crw.headers) > 0 {
-		for k, v := range crw.headers {
-			if len(v) < 1 {
-				continue
-			}
-
-			crw.ResponseWriter.Header().Set(k, v[0])
-		}
-	}
-
-	if crw.statusCode > 0 {
-		crw.WriteHeader(crw.statusCode)
-	}
-
-	if crw.isSet {
-		if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
-			zap.L().Warn("Could not write to lua crw", zap.Error(err))
-		}
-	}
-
-	for _, luaCtx := range luaContexts {
-		luaCtx.close()
-	}
+	doAfterResponse()
 }
 
 type responseWriter struct {

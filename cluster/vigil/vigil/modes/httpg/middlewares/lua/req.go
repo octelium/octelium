@@ -22,7 +22,6 @@ import (
 	"strconv"
 
 	lua "github.com/yuin/gopher-lua"
-	"go.uber.org/zap"
 )
 
 func (c *luaCtx) setRequestHeader(L *lua.LState) int {
@@ -106,8 +105,6 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 	c.rw.body.Reset()
 	c.rw.body.Write(bodyBytes)
 	c.rw.isSet = true
-
-	zap.L().Debug("SET BODY______________", zap.String("body", c.rw.body.String()))
 
 	return 0
 }

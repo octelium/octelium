@@ -118,3 +118,87 @@ end`,
 
 	}
 }
+
+func TestWithExit(t *testing.T) {
+
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	})
+	mdlwr, err := New(ctx, next)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	{
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				DownstreamInfo: &corev1.RequestContext{
+					User:    usrT.Usr,
+					Session: usrT.Session,
+				},
+
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+								{
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+												Inline: `
+function onRequest(ctx)
+  octelium.req.setResponseBody(json.encode(ctx.session))
+  octelium.req.setResponseHeader("X-Uid", ctx.user.metadata.uid)
+  octelium.req.exit(207)
+end
+
+function onResponse(ctx)
+  octelium.req.setResponseHeader("X-Session-Uid", ctx.session.metadata.uid)
+  octelium.req.setResponseBody(json.encode(ctx.user))
+end`,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}))
+
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		rw := httptest.NewRecorder()
+
+		mdlwr.ServeHTTP(rw, req)
+
+		resp := rw.Result()
+		assert.Equal(t, 207, resp.StatusCode)
+
+		assert.Equal(t, usrT.Usr.Metadata.Uid, rw.Header().Get("X-Uid"))
+
+		bb, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+		resp.Body.Close()
+		sess := &corev1.Session{}
+		err = pbutils.UnmarshalJSON(bb, sess)
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(reqCtx.DownstreamInfo.Session, sess))
+
+	}
+}
