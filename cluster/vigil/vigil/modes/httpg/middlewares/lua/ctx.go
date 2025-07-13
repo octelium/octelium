@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 	"go.uber.org/zap"
@@ -169,6 +170,12 @@ func (c *luaCtx) loadModules() {
 	{
 		L.Push(L.NewFunction(c.loadModuleReq))
 		L.Push(lua.LString("octelium.req"))
+		L.Call(1, 0)
+	}
+
+	{
+		L.Push(L.NewFunction(base64.Register))
+		L.Push(lua.LString("base64"))
 		L.Call(1, 0)
 	}
 
