@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
+	httpm "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/http"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/strings"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/table"
 	"github.com/pkg/errors"
@@ -191,6 +192,12 @@ func (c *luaCtx) loadModules() {
 	{
 		L.Push(L.NewFunction(table.Register))
 		L.Push(lua.LString("table"))
+		L.Call(1, 0)
+	}
+
+	{
+		L.Push(L.NewFunction(httpm.Register))
+		L.Push(lua.LString("http"))
 		L.Call(1, 0)
 	}
 
