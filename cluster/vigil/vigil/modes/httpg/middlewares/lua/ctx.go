@@ -23,6 +23,7 @@ import (
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/strings"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/table"
 	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 	"go.uber.org/zap"
@@ -184,6 +185,12 @@ func (c *luaCtx) loadModules() {
 	{
 		L.Push(L.NewFunction(strings.Register))
 		L.Push(lua.LString("strings"))
+		L.Call(1, 0)
+	}
+
+	{
+		L.Push(L.NewFunction(table.Register))
+		L.Push(lua.LString("table"))
 		L.Call(1, 0)
 	}
 
