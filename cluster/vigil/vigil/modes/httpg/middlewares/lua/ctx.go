@@ -60,6 +60,7 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 	// lua.OpenString(ret.state)
 	lua.OpenMath(ret.state)
 
+	ret.loadGlobalFns()
 	ret.loadModules()
 
 	if err := ret.loadFromProto(); err != nil {
@@ -228,4 +229,15 @@ func (c *luaCtx) loadModuleReq(L *lua.LState) int {
 	L.Push(mod)
 
 	return 1
+}
+
+func (c *luaCtx) loadGlobalFns() {
+	L := c.state
+
+	L.SetGlobal("assert", L.NewFunction(doGlobalFnAssert))
+	L.SetGlobal("type", L.NewFunction(doGlobalFnType))
+	L.SetGlobal("error", L.NewFunction(doGlobalFnError))
+	L.SetGlobal("print", L.NewFunction(doGlobalFnPrint))
+	L.SetGlobal("ipairs", L.NewClosure(doIpairs, L.NewFunction(ipairsaux)))
+	L.SetGlobal("pairs", L.NewClosure(doPairs, L.NewFunction(pairsaux)))
 }
