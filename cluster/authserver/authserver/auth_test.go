@@ -677,3 +677,146 @@ func TestHandleSuccessCallback(t *testing.T) {
 	})
 
 }
+
+func TestDoPostAuthenticationRules(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	sec, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	idp, err := adminSrv.CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.IdentityProvider_Spec{
+			Type: &corev1.IdentityProvider_Spec_Oidc{
+				Oidc: &corev1.IdentityProvider_Spec_OIDC{
+					IssuerURL: "https://example.com",
+					ClientID:  utilrand.GetRandomString(32),
+					ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
+						Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
+							FromSecret: sec.Metadata.Name,
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		err := srv.doPostAuthenticationRules(ctx, idp, nil, nil)
+		assert.Nil(t, err)
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		err = srv.doPostAuthenticationRules(ctx, idp, usrT.Usr, &corev1.Session_Status_Authentication_Info{})
+		assert.Nil(t, err)
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		idp.Spec.PostAuthenticationRules = []*corev1.IdentityProvider_Spec_PostAuthenticationRule{
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: `ctx.authenticationInfo.aal == "AAL1"`,
+					},
+				},
+				Effect: corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY,
+			},
+		}
+
+		err = srv.doPostAuthenticationRules(ctx, idp, usrT.Usr, &corev1.Session_Status_Authentication_Info{
+			Aal: corev1.Session_Status_Authentication_Info_AAL1,
+		})
+		assert.NotNil(t, err)
+
+		idp.Spec.PostAuthenticationRules = nil
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		idp.Spec.PostAuthenticationRules = []*corev1.IdentityProvider_Spec_PostAuthenticationRule{
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: fmt.Sprintf(`ctx.user.metadata.name == "%s"`, usrT.Usr.Metadata.Name),
+					},
+				},
+				Effect: corev1.IdentityProvider_Spec_PostAuthenticationRule_ALLOW,
+			},
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: `ctx.authenticationInfo.aal == "AAL1"`,
+					},
+				},
+				Effect: corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY,
+			},
+		}
+
+		err = srv.doPostAuthenticationRules(ctx, idp, usrT.Usr, &corev1.Session_Status_Authentication_Info{
+			Aal: corev1.Session_Status_Authentication_Info_AAL1,
+		})
+		assert.Nil(t, err)
+
+		idp.Spec.PostAuthenticationRules = nil
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		idp.Spec.PostAuthenticationRules = []*corev1.IdentityProvider_Spec_PostAuthenticationRule{
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: fmt.Sprintf(`ctx.identityProvider.metadata.uid == "%s"`, idp.Metadata.Uid),
+					},
+				},
+				Effect: corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY,
+			},
+		}
+
+		err = srv.doPostAuthenticationRules(ctx, idp, usrT.Usr, &corev1.Session_Status_Authentication_Info{
+			Aal: corev1.Session_Status_Authentication_Info_AAL1,
+		})
+		assert.NotNil(t, err)
+
+		idp.Spec.PostAuthenticationRules = nil
+	}
+}

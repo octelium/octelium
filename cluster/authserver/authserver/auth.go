@@ -251,12 +251,14 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.Provider().Spec.IsDisabled {
+	idp := provider.Provider()
+
+	if idp.Spec.IsDisabled {
 		doRedirect(errors.Errorf("IdentityProvider is disabled"))
 		return
 	}
 
-	if provider.Provider().Status.IsLocked {
+	if idp.Status.IsLocked {
 		doRedirect(errors.Errorf("IdentityProvider is locked"))
 		return
 	}
@@ -270,7 +272,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	zap.L().Debug("Successful IdentityProvider authentication", zap.Any("userInfo", userInfo))
 
-	usr, err := s.authenticateUser(ctx, userInfo, provider.Provider())
+	usr, err := s.authenticateUser(ctx, userInfo, idp)
 	if err != nil {
 		zap.L().Debug("Could not authenticateUser", zap.Error(err))
 		doRedirect(err)
@@ -278,6 +280,11 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	zap.L().Debug("Successful authenticateUser", zap.Any("user", usr))
+
+	if err := s.doPostAuthenticationRules(ctx, idp, usr, userInfo); err != nil {
+		doRedirect(err)
+		return
+	}
 
 	webResp, err := s.createOrUpdateSessWeb(r, usr, userInfo, cc)
 	if err != nil {
@@ -659,4 +666,38 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+func (s *server) doPostAuthenticationRules(ctx context.Context,
+	idp *corev1.IdentityProvider, usr *corev1.User, authInfo *corev1.Session_Status_Authentication_Info) error {
+
+	if len(idp.Spec.PostAuthenticationRules) == 0 {
+		return nil
+	}
+	inputMap := map[string]any{
+		"ctx": map[string]any{
+			"user":               pbutils.MustConvertToMap(usr),
+			"identityProvider":   pbutils.MustConvertToMap(idp),
+			"authenticationInfo": pbutils.MustConvertToMap(authInfo),
+		},
+	}
+
+	for _, rule := range idp.Spec.PostAuthenticationRules {
+		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
+		if err != nil {
+			zap.L().Debug("Could not eval postAuthentication condition", zap.Error(err))
+			continue
+		}
+
+		if isMatched {
+			switch rule.Effect {
+			case corev1.IdentityProvider_Spec_PostAuthenticationRule_ALLOW:
+				return nil
+			case corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY:
+				return errors.Errorf("Denied by postAuthentication rule")
+			}
+		}
+	}
+
+	return nil
 }

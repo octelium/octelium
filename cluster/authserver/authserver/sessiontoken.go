@@ -289,6 +289,10 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		return nil, s.errPermissionDenied("User is deactivated")
 	}
 
+	if err := s.doPostAuthenticationRules(ctx, provider.Provider(), usr, info); err != nil {
+		return nil, s.errPermissionDenied("denied by postAuthenticationRules")
+	}
+
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return nil, s.errInternalErr(err)
