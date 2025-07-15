@@ -18,6 +18,7 @@ package mtls
 
 import (
 	"context"
+	"crypto/x509"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -28,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -142,4 +144,145 @@ users:
 	assert.Nil(t, err)
 	assert.NotNil(t, tlscfg)
 
+}
+
+func TestGetClientTLSCfgNew(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	rootCA, err := utils_cert.GenerateCARoot()
+	assert.Nil(t, err)
+
+	crt, err := utils_cert.GenerateCertificateTmp("example.com", rootCA, false)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: 8080,
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://example.com",
+					},
+				},
+
+				Tls: &corev1.Service_Spec_Config_TLS{
+					TrustedCAs: []string{
+						string(rootCA.MustGetCertPEM()),
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svc)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	lb := loadbalancer.NewLbManager(fakeC.OcteliumC, vCache)
+
+	upstream, err := lb.GetUpstream(ctx, &coctovigilv1.AuthenticateAndAuthorizeResponse{
+		RequestContext: &corev1.RequestContext{
+			Service: vCache.GetService(),
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		tlscfg, err := GetClientTLSCfg(ctx, svc, nil, secretMan, upstream)
+		assert.Nil(t, err)
+
+		pool := x509.NewCertPool()
+		pool.AddCert(rootCA.Certificate)
+
+		assert.True(t, tlscfg.RootCAs.Equal(tlscfg.RootCAs))
+		assert.False(t, tlscfg.InsecureSkipVerify)
+	}
+
+	{
+		svc.Spec.Config.Tls.AppendToSystemPool = true
+		tlscfg, err := GetClientTLSCfg(ctx, svc, nil, secretMan, upstream)
+		assert.Nil(t, err)
+
+		pool, err := x509.SystemCertPool()
+		assert.Nil(t, err)
+		pool.AddCert(rootCA.Certificate)
+
+		assert.True(t, tlscfg.RootCAs.Equal(tlscfg.RootCAs))
+		assert.False(t, tlscfg.InsecureSkipVerify)
+	}
+
+	{
+		svc.Spec.Config.Tls.AppendToSystemPool = true
+		svc.Spec.Config.Tls.InsecureSkipVerify = true
+		tlscfg, err := GetClientTLSCfg(ctx, svc, nil, secretMan, upstream)
+		assert.Nil(t, err)
+
+		pool, err := x509.SystemCertPool()
+		assert.Nil(t, err)
+		pool.AddCert(rootCA.Certificate)
+
+		assert.True(t, tlscfg.RootCAs.Equal(tlscfg.RootCAs))
+		assert.True(t, tlscfg.InsecureSkipVerify)
+	}
+
+	{
+
+		sec, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Secret_Spec{
+				Data: &corev1.Secret_Spec_Data{
+					Type: &corev1.Secret_Spec_Data_Value{
+						Value: string(crt.MustGetCertPEM()),
+					},
+				},
+			},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: string(crt.MustGetPrivateKeyPEM()),
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		svc.Spec.Config.Tls.AppendToSystemPool = false
+		svc.Spec.Config.Tls.InsecureSkipVerify = false
+		svc.Spec.Config.ClientCertificate = &corev1.Service_Spec_Config_ClientCertificate{
+			Type: &corev1.Service_Spec_Config_ClientCertificate_FromSecret{
+				FromSecret: sec.Metadata.Name,
+			},
+		}
+
+		tlscfg, err := GetClientTLSCfg(ctx, svc, nil, secretMan, upstream)
+		assert.Nil(t, err)
+
+		pool, err := x509.SystemCertPool()
+		assert.Nil(t, err)
+		pool.AddCert(rootCA.Certificate)
+
+		assert.True(t, tlscfg.RootCAs.Equal(tlscfg.RootCAs))
+		assert.Equal(t, crt.Certificate.Raw, tlscfg.Certificates[0].Leaf.Raw)
+		assert.False(t, tlscfg.InsecureSkipVerify)
+	}
 }

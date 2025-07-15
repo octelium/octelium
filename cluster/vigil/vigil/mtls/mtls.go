@@ -33,7 +33,78 @@ import (
 	"github.com/pkg/errors"
 )
 
-func GetClientTLSCfg(ctx context.Context, svc *corev1.Service, svcCfg *corev1.Service_Spec_Config, secretMan *secretman.SecretManager, upstream *loadbalancer.Upstream) (*tls.Config, error) {
+func GetClientTLSCfg(ctx context.Context,
+	svc *corev1.Service, svcCfg *corev1.Service_Spec_Config, secretMan *secretman.SecretManager, upstream *loadbalancer.Upstream) (*tls.Config, error) {
+
+	if svcCfg == nil {
+		svcCfg = svc.Spec.Config
+	}
+
+	var err error
+
+	if ucorev1.ToService(svc).IsKubernetes() {
+		return getMTLSCfgK8s(ctx, svc, svcCfg, secretMan)
+	}
+
+	if svcCfg != nil && svcCfg.ClientCertificate != nil && svcCfg.ClientCertificate.GetFromSecret() != "" {
+		return getClientTLSCfgWithDeprecatedClientCert(ctx, svc, svcCfg, secretMan, upstream)
+	}
+
+	if svcCfg == nil || svcCfg.Tls == nil {
+		return getGenTLSCfg(ctx, svc, secretMan, upstream)
+	}
+
+	ret := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		MaxVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: svcCfg.Tls.InsecureSkipVerify,
+		ServerName:         upstream.SNIHost,
+	}
+
+	if len(svcCfg.Tls.TrustedCAs) > 0 {
+
+		if svcCfg.Tls.AppendToSystemPool {
+			ret.RootCAs, err = x509.SystemCertPool()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			ret.RootCAs = x509.NewCertPool()
+		}
+
+		for _, caBytes := range svcCfg.Tls.TrustedCAs {
+			ca, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(caBytes))
+			if err != nil {
+				return nil, err
+			}
+
+			ret.RootCAs.AddCert(ca)
+		}
+
+	}
+
+	if svcCfg.Tls.ClientCertificate != nil && svcCfg.Tls.ClientCertificate.GetFromSecret() != "" {
+		secret, err := secretMan.GetByName(ctx, svcCfg.Tls.ClientCertificate.GetFromSecret())
+		if err != nil {
+			return nil, err
+		}
+
+		if !vutils.IsCertReady(secret) {
+			return nil, errors.Errorf("Secret %s is not a Certificate Secret", secret.Metadata.Name)
+		}
+
+		crt, err := ocrypto.GetTLSCertificate(secret)
+		if err != nil {
+			return nil, err
+		}
+
+		ret.Certificates = append(ret.Certificates, *crt)
+	}
+
+	return ret, nil
+}
+
+func getClientTLSCfgWithDeprecatedClientCert(ctx context.Context, svc *corev1.Service, svcCfg *corev1.Service_Spec_Config, secretMan *secretman.SecretManager, upstream *loadbalancer.Upstream) (*tls.Config, error) {
 
 	if svcCfg == nil {
 		svcCfg = svc.Spec.Config

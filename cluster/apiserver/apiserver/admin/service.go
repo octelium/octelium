@@ -42,6 +42,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 )
@@ -488,20 +489,44 @@ func (s *Server) checkAndSetService(ctx context.Context,
 			cfg = rscutils.GetMergedServiceConfig(cfg, svc)
 		}
 
-		if cfg.GetClientCertificate() != nil &&
-			cfg.GetClientCertificate().GetFromSecret() != "" {
-			_, err := octeliumC.CoreC().GetSecret(ctx,
-				&rmetav1.GetOptions{
-					Name: cfg.GetClientCertificate().GetFromSecret(),
-				})
-			if err != nil {
-				if !grpcerr.IsInternal(err) {
-					return serr.InvalidArg("mTLS Secret: %s does not exist",
-						cfg.GetClientCertificate().GetFromSecret())
+		if cfg.Tls != nil {
+			if len(cfg.Tls.TrustedCAs) > 0 {
+				if len(cfg.Tls.TrustedCAs) > 32 {
+					return grpcutils.InvalidArg("Too many trusted CAs")
 				}
-				return serr.InternalWithErr(err)
+
+				for _, ca := range cfg.Tls.TrustedCAs {
+					_, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(ca))
+					if err != nil {
+						return grpcutils.InvalidArg("Invalid trusted CA PEM: %s", ca)
+					}
+				}
 			}
 
+			if cfg.Tls.ClientCertificate != nil {
+				if err := s.validateSecretOwner(ctx, cfg.Tls.ClientCertificate); err != nil {
+					return err
+				}
+			}
+		}
+
+		if cfg.ClientCertificate != nil {
+			if err := s.validateSecretOwner(ctx, cfg.ClientCertificate); err != nil {
+				return err
+			}
+
+			if len(cfg.ClientCertificate.TrustedCAs) > 0 {
+				if len(cfg.ClientCertificate.TrustedCAs) > 32 {
+					return grpcutils.InvalidArg("Too many trusted CAs")
+				}
+
+				for _, ca := range cfg.ClientCertificate.TrustedCAs {
+					_, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(ca))
+					if err != nil {
+						return grpcutils.InvalidArg("Invalid trusted CA PEM: %s", ca)
+					}
+				}
+			}
 		}
 
 		switch cfg.Type.(type) {
