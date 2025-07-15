@@ -38,10 +38,12 @@ func Register(L *lua.LState) int {
 	http_request_ud := L.NewTypeMetatable(`http_request_ud`)
 	L.SetGlobal("http_request_ud", http_request_ud)
 	L.SetField(http_request_ud, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		"get":    doRequestGet,
-		"post":   doRequestPost,
-		"put":    doRequestPut,
-		"delete": doRequestDelete,
+		"setHeader": doRequestSetHeader,
+		"setBody":   doRequestSetBody,
+		"get":       doRequestGet,
+		"post":      doRequestPost,
+		"put":       doRequestPut,
+		"delete":    doRequestDelete,
 	}))
 
 	http_response_ud := L.NewTypeMetatable(`http_response_ud`)
@@ -95,7 +97,7 @@ func doRequestNew(L *lua.LState) int {
 	c := checkClient(L)
 
 	ud := L.NewUserData()
-	ud.Value = c.R()
+	ud.Value = c.R().SetDebug(ldflags.IsTest())
 	L.SetMetatable(ud, L.GetTypeMetatable("http_request_ud"))
 	L.Push(ud)
 
@@ -178,6 +180,22 @@ func doRequestDo(L *lua.LState, method string) int {
 	L.Push(ud)
 
 	return 1
+}
+
+func doRequestSetHeader(L *lua.LState) int {
+
+	req := checkRequest(L)
+	req.SetHeader(L.CheckString(2), L.CheckString(3))
+
+	return 0
+}
+
+func doRequestSetBody(L *lua.LState) int {
+
+	req := checkRequest(L)
+	req.SetBody(L.CheckString(2))
+
+	return 0
 }
 
 func doResponseBody(L *lua.LState) int {
