@@ -201,10 +201,10 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 	}
 
 	if qry := req.URL.Query(); len(qry) > 0 {
-		httpC.Params = make(map[string]string)
+		httpC.QueryParams = make(map[string]string)
 		for k, v := range qry {
 			if len(v) > 0 {
-				httpC.Params[k] = v[0]
+				httpC.QueryParams[k] = v[0]
 			}
 		}
 	}
