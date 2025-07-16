@@ -14,34 +14,49 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package auth
+package preauth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
-	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 )
 
 type middleware struct {
-	octeliumC  octeliumc.ClientInterface
-	octovigilC *octovigilc.Client
-	next       http.Handler
-	domain     string
+	octeliumC octeliumc.ClientInterface
+
+	next      http.Handler
+	domain    string
+	celEngine *celengine.CELEngine
 }
 
-func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, octovigilC *octovigilc.Client, domain string) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, domain string) (http.Handler, error) {
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return nil, err
+	}
 
 	return &middleware{
-		next:       next,
-		octeliumC:  octeliumC,
-		octovigilC: octovigilC,
-		domain:     domain,
+		next:      next,
+		octeliumC: octeliumC,
+		domain:    domain,
+		celEngine: celEngine,
 	}, nil
 }
 
@@ -49,39 +64,95 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
+	svc := reqCtx.Service
 
 	var err error
 
+	additional := &additionalInfo{}
+
+	cfg := svc.Spec.Config
+
+	if (cfg != nil &&
+		cfg.GetHttp() != nil &&
+		cfg.GetHttp().EnableRequestBuffering) ||
+		(cfg != nil && cfg.GetHttp() != nil &&
+			cfg.GetHttp().Auth != nil &&
+			cfg.GetHttp().Auth.GetSigv4() != nil) {
+		additional.Body, err = io.ReadAll(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		req.Body.Close()
+
+		reqCtx.Body = additional.Body
+
+		if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Body != nil {
+			buffer := cfg.GetHttp().Body
+
+			if buffer.MaxRequestSize > 0 && len(additional.Body) > int(buffer.MaxRequestSize) {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				return
+			}
+
+			switch buffer.Mode {
+			case corev1.Service_Spec_Config_HTTP_Body_JSON:
+				additional.bodyMap = make(map[string]any)
+				if err := json.Unmarshal(additional.Body, &additional.bodyMap); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				reqCtx.BodyJSONMap = additional.bodyMap
+			}
+		}
+
+		req.Body = io.NopCloser(bytes.NewReader(additional.Body))
+		req.ContentLength = int64(len(additional.Body))
+	}
+
+	reqCtx = middlewares.GetCtxRequestContext(ctx)
+
+	downstreamReq, err := m.getDownstreamReq(req, reqCtx, additional)
+	if err != nil {
+		zap.L().Debug("Could not get downstreamReq", zap.Error(err))
+		if ucorev1.ToService(reqCtx.Service).IsGRPC() {
+			w.Header().Set("Grpc-Status", fmt.Sprintf("%d", codes.Unimplemented))
+			w.Header().Set("Grpc-Message", "Octelium: unimplemented")
+			w.Header().Set("Content-Type", "application/grpc")
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+
+		return
+	}
+
+	reqCtx.DownstreamRequest = downstreamReq
+
 	if httputils.IsAnonymousMode(req) {
+		reqCtx.DownstreamInfo = &corev1.RequestContext{
+			Request: downstreamReq.Request,
+			Service: svc,
+		}
+		reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext:    reqCtx.DownstreamInfo,
+			IsAuthorized:      true,
+			ServiceConfigName: m.getServiceConfigName(ctx, reqCtx.DownstreamInfo),
+		}
+		reqCtx.IsAuthorized = true
+		reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
+
 		m.next.ServeHTTP(w, req)
 		return
 	}
 
-	auth, err := m.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
-		Request: reqCtx.DownstreamRequest,
-	})
-	if err != nil {
-		zap.L().Error("Could not do AuthenticateAndAuthorize", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	reqCtx.IsAuthenticated = auth.IsAuthenticated
-	reqCtx.IsAuthorized = auth.IsAuthorized
-	reqCtx.DownstreamInfo = auth.RequestContext
-	reqCtx.DecisionReason = auth.AuthorizationDecisionReason
-	reqCtx.AuthResponse = auth
-	reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, auth)
-
-	if !reqCtx.IsAuthorized {
-		m.handleUnauthorized(w, req, reqCtx)
-		return
+	reqCtx.DownstreamInfo = &corev1.RequestContext{
+		Request: downstreamReq.Request,
+		Service: svc,
 	}
 
 	m.next.ServeHTTP(w, req)
 }
 
-/*
 type additionalInfo struct {
 	Body       []byte
 	IsBodyJSON bool
@@ -202,4 +273,3 @@ func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.Re
 
 	return ""
 }
-*/

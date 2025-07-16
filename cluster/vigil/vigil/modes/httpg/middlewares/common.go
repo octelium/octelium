@@ -82,11 +82,11 @@ type RequestContext struct {
 	Conn      net.Conn
 	CreatedAt time.Time
 
-	IsAuthorized    bool
-	IsAuthenticated bool
-	DownstreamInfo  *corev1.RequestContext
-
-	ServiceConfig *corev1.Service_Spec_Config
+	IsAuthorized      bool
+	IsAuthenticated   bool
+	DownstreamInfo    *corev1.RequestContext
+	DownstreamRequest *coctovigilv1.DownstreamRequest
+	ServiceConfig     *corev1.Service_Spec_Config
 
 	DecisionReason *corev1.AccessLog_Entry_Common_Reason
 	AuthResponse   *coctovigilv1.AuthenticateAndAuthorizeResponse
