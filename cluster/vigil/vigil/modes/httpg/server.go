@@ -247,6 +247,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return extproc.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return accesslog.New(ctx, next)
 	})
 
@@ -271,7 +275,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return extproc.New(ctx, next)
+		return extproc.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	})
 
 	handler, err := chain.Then(s)

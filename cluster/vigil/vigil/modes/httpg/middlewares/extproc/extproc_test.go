@@ -199,7 +199,7 @@ func TestMiddleware(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
 	})
-	mdlwr, err := New(ctx, next)
+	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	assert.Nil(t, err)
 
 	{
@@ -313,7 +313,7 @@ func TestMiddlewareTimeout(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
 	})
-	mdlwr, err := New(ctx, next)
+	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	assert.Nil(t, err)
 
 	{

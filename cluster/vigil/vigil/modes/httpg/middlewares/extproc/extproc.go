@@ -41,10 +41,11 @@ import (
 type middleware struct {
 	next http.Handler
 	sync.RWMutex
-	cMap map[string]extprocsvc.ExternalProcessorClient
+	cMap  map[string]extprocsvc.ExternalProcessorClient
+	phase corev1.Service_Spec_Config_HTTP_Plugin_Phase
 }
 
-func New(ctx context.Context, next http.Handler) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) (http.Handler, error) {
 	return &middleware{
 		next: next,
 		cMap: make(map[string]extprocsvc.ExternalProcessorClient),
@@ -78,6 +79,19 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	for _, plugin := range cfg.GetHttp().Plugins {
 		if plugin.IsDisabled {
 			continue
+		}
+
+		switch m.phase {
+		case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
+			if plugin.Phase != corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH {
+				continue
+			}
+		case corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
+			switch plugin.Phase {
+			case corev1.Service_Spec_Config_HTTP_Plugin_PHASE_UNSET, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
+			default:
+				continue
+			}
 		}
 
 		switch plugin.Type.(type) {
