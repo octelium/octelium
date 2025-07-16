@@ -33,11 +33,12 @@ var Cmd = &cobra.Command{
 	Use:   "secret",
 	Short: "Delete a Secret",
 	Example: `
-octeliumctl delete secret example.com/secret-1
-octeliumctl del secret example.com -n secret-1
+octeliumctl delete secret secret-1
+octeliumctl del sec top-secret
 	`,
 
-	Args: cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
+	Aliases: []string{"sec"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
@@ -46,7 +47,6 @@ octeliumctl del secret example.com -n secret-1
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Name, "name", "n", "", "Secret name")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

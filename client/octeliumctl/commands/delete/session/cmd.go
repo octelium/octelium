@@ -33,8 +33,8 @@ var Cmd = &cobra.Command{
 	Use:   "session",
 	Short: "Delete a Session",
 	Example: `
-octeliumctl delete session example.com/user1-0vgiqs75psre
-octeliumctl del sess example.com -n user1-0vgiqs75psre
+octeliumctl delete session user1-0vgiqs75psre
+octeliumctl del sess user1-0vgiqs75psre
 	`,
 	Args:    cobra.ExactArgs(1),
 	Aliases: []string{"sess", "sessions"},
@@ -46,7 +46,6 @@ octeliumctl del sess example.com -n user1-0vgiqs75psre
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Name, "name", "n", "", "Session name")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

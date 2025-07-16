@@ -32,8 +32,8 @@ var Cmd = &cobra.Command{
 	Use:   "namespace",
 	Short: "Delete a Namespace",
 	Example: `
-octeliumctl delete namespace example.com/ns1
-octeliumctl del ns example.com -n ns2
+octeliumctl delete namespace ns1
+octeliumctl del ns ns2
 	`,
 
 	Aliases: []string{"ns"},
@@ -46,8 +46,6 @@ octeliumctl del ns example.com -n ns2
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Name, "name", "n", "", "Namespace name")
-
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

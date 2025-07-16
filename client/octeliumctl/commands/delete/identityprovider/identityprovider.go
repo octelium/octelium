@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package device
+package identityprovider
 
 import (
 	"context"
@@ -29,14 +29,14 @@ type args struct {
 }
 
 var Cmd = &cobra.Command{
-	Use:   "device",
-	Short: "Delete a Device",
+	Use:   "group",
+	Short: "Delete a Group",
 	Example: `
-octeliumctl delete device usr1-linux-p4wbr
-octeliumctl del dev usr1-linux-p4wbr
+octeliumctl delete identityprovider my-idp
+octeliumctl del idp oidc
 	`,
 
-	Aliases: []string{"dev", "devices"},
+	Aliases: []string{"idp"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -55,9 +55,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
-
-	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
+	conn, err := client.GetGRPCClientConn(context.Background(), i.Domain)
 	if err != nil {
 		return err
 	}
@@ -65,11 +63,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	defer conn.Close()
 	c := corev1.NewMainServiceClient(conn)
 
-	if _, err := c.DeleteDevice(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
+	ctx := context.Background()
+
+	if _, err := c.DeleteIdentityProvider(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
 		return err
 	}
 
-	cliutils.LineInfo("Device `%s` successfully deleted\n", i.FirstArg())
+	cliutils.LineInfo("IdentityProvider `%s` successfully deleted\n", i.FirstArg())
 
 	return nil
 }

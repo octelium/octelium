@@ -32,8 +32,8 @@ var Cmd = &cobra.Command{
 	Use:   "user",
 	Short: "Delete a User",
 	Example: `
-octeliumctl delete user example.com/user-1
-octeliumctl del user example.com -n user-1
+octeliumctl delete user user-1
+octeliumctl del user john
 	`,
 
 	Aliases: []string{"usr", "users"},

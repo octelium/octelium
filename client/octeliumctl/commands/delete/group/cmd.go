@@ -56,15 +56,15 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(context.Background(), i.Domain)
+	ctx := context.Background()
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
 
 	defer conn.Close()
 	c := corev1.NewMainServiceClient(conn)
-
-	ctx := context.Background()
 
 	if _, err := c.DeleteGroup(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
 		return err
