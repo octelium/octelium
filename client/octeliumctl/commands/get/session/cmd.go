@@ -33,7 +33,7 @@ type args struct {
 
 const example = `
 octeliumctl get session
-octeliumctl get sess
+octeliumctl get sess root-cavzne
 octeliumctl get sessions -o json
 octeliumctl get sessions -o yaml
 `
@@ -105,7 +105,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "User", "Type", "Expires In", "Age")
+	p := printer.NewPrinter("Name", "User", "Type", "Expires In", "Age", "State")
 
 	for _, itm := range itmList.Items {
 
@@ -123,7 +123,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 				return ret
 			}(),
 			utils_types.HumanDuration(itm.Spec.ExpiresAt.AsTime().Sub(time.Now())),
-			cliutils.GetResourceAge(itm))
+			cliutils.GetResourceAge(itm), itm.Spec.State.String())
 	}
 
 	p.Render()

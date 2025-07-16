@@ -113,12 +113,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Addresses")
+	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses")
 	for _, svc := range svcList.Items {
 
 		p.AppendRow(svc.Metadata.Name, getNamespace(svc), svc.Spec.Mode.String(),
 			fmt.Sprintf("%d", ucorev1.ToService(svc).RealPort()), cliutils.GetResourceAge(svc),
-			cliutils.PrintBoolean(svc.Spec.IsPublic), getServiceAddrs(svc))
+			cliutils.PrintBoolean(svc.Spec.IsPublic), cliutils.PrintBoolean(svc.Spec.IsAnonymous), getServiceAddrs(svc))
 	}
 
 	p.Render()

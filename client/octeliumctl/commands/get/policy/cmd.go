@@ -99,7 +99,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "Rules", "Age")
+	p := printer.NewPrinter("Name", "Rules", "Age", "Disabled")
 
 	for _, u := range itmList.Items {
 
@@ -110,7 +110,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			return ""
 		}()
 
-		p.AppendRow(u.Metadata.Name, rules, cliutils.GetResourceAge(u))
+		p.AppendRow(u.Metadata.Name, rules, cliutils.GetResourceAge(u), cliutils.PrintBoolean(u.Spec.IsDisabled))
 	}
 	p.Render()
 
