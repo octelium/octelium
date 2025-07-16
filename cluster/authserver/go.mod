@@ -5,7 +5,7 @@ go 1.23.8
 require (
 	github.com/PuerkitoBio/goquery v1.10.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/coreos/go-oidc/v3 v3.11.0
+	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/crewjam/saml v0.4.14
 	github.com/go-jose/go-jose/v3 v3.0.4
 	github.com/go-webauthn/webauthn v0.13.0
@@ -31,7 +31,7 @@ require (
 	go.etcd.io/bbolt v1.3.11
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.40.0
-	golang.org/x/oauth2 v0.26.0
+	golang.org/x/oauth2 v0.28.0
 	google.golang.org/grpc v1.71.1
 )
 

@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -29,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 )
 
 func (s *Server) CreateIdentityProvider(ctx context.Context, req *corev1.IdentityProvider) (*corev1.IdentityProvider, error) {
@@ -185,6 +187,13 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		if !govalidator.IsURL(typ.IssuerURL) {
 			return grpcutils.InvalidArg("issuerURL is not a valid URL: %s", typ.IssuerURL)
 		}
+
+		if !ldflags.IsTest() {
+			if _, err := oidc.NewProvider(ctx, typ.IssuerURL); err != nil {
+				return grpcutils.InvalidArg("failed to get oidc provider : %s", err.Error())
+			}
+		}
+
 		if err := s.validateGenStr(typ.ClientID, true, "clientID"); err != nil {
 			return err
 		}
