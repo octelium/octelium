@@ -23,6 +23,7 @@ import (
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	httpm "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/http"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/regexp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/strings"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/table"
 	"github.com/pkg/errors"
@@ -198,6 +199,12 @@ func (c *luaCtx) loadModules() {
 	{
 		L.Push(L.NewFunction(httpm.Register))
 		L.Push(lua.LString("http"))
+		L.Call(1, 0)
+	}
+
+	{
+		L.Push(L.NewFunction(regexp.Register))
+		L.Push(lua.LString("regexp"))
 		L.Call(1, 0)
 	}
 
