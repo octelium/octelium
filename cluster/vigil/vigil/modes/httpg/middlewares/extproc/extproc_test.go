@@ -29,6 +29,7 @@ import (
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -199,7 +200,10 @@ func TestMiddleware(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
 	})
-	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+	mdlwr, err := New(ctx, next, celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	assert.Nil(t, err)
 
 	{
@@ -313,9 +317,10 @@ func TestMiddlewareTimeout(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
 	})
-	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
 	assert.Nil(t, err)
-
+	mdlwr, err := New(ctx, next, celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	assert.Nil(t, err)
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 

@@ -30,7 +30,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -38,20 +40,24 @@ import (
 type middleware struct {
 	next http.Handler
 	sync.RWMutex
-	cMap  map[string]*lua.FunctionProto
-	phase corev1.Service_Spec_Config_HTTP_Plugin_Phase
+	cMap      map[string]*lua.FunctionProto
+	phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
+	celEngine *celengine.CELEngine
 }
 
-func New(ctx context.Context, next http.Handler, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, celEngine *celengine.CELEngine, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) (http.Handler, error) {
 	return &middleware{
-		next:  next,
-		cMap:  make(map[string]*lua.FunctionProto),
-		phase: phase,
+		next:      next,
+		cMap:      make(map[string]*lua.FunctionProto),
+		phase:     phase,
+		celEngine: celEngine,
 	}, nil
 }
 
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	reqCtx := middlewares.GetCtxRequestContext(req.Context())
+
+	ctx := req.Context()
+	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	cfg := reqCtx.ServiceConfig
 
 	if cfg == nil || cfg.GetHttp() == nil || len(cfg.GetHttp().Plugins) == 0 {
@@ -94,17 +100,15 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		switch m.phase {
-		case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
-			if plugin.Phase != corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH {
-				continue
-			}
-		case corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
-			switch plugin.Phase {
-			case corev1.Service_Spec_Config_HTTP_Plugin_PHASE_UNSET, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
-			default:
-				continue
-			}
+		if !commonplugin.MatchesPhase(plugin, m.phase) {
+			continue
+		}
+
+		if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
+			Plugin:    plugin,
+			CELEngine: m.celEngine,
+		}) {
+			continue
 		}
 
 		switch plugin.Type.(type) {

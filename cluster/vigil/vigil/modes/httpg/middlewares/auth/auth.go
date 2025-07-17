@@ -89,6 +89,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	reqCtx.AuthResponse = auth
 	reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, auth)
 
+	// Now nullify the ReqCtxMap in order to re-construct it again by the first post-auth plugin
+	reqCtx.ReqCtxMap = nil
+
 	if !reqCtx.IsAuthorized {
 		m.handleUnauthorized(w, req, reqCtx)
 		return

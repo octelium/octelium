@@ -93,6 +93,8 @@ type RequestContext struct {
 
 	Body        []byte
 	BodyJSONMap map[string]any
+
+	ReqCtxMap map[string]any
 }
 
 func GetCtxRequestContext(ctx context.Context) *RequestContext {

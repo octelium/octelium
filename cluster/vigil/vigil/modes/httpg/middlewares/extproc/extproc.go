@@ -29,7 +29,9 @@ import (
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
@@ -41,14 +43,17 @@ import (
 type middleware struct {
 	next http.Handler
 	sync.RWMutex
-	cMap  map[string]extprocsvc.ExternalProcessorClient
-	phase corev1.Service_Spec_Config_HTTP_Plugin_Phase
+	cMap      map[string]extprocsvc.ExternalProcessorClient
+	phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
+	celEngine *celengine.CELEngine
 }
 
-func New(ctx context.Context, next http.Handler, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) (http.Handler, error) {
+func New(ctx context.Context, next http.Handler, celEngine *celengine.CELEngine, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) (http.Handler, error) {
 	return &middleware{
-		next: next,
-		cMap: make(map[string]extprocsvc.ExternalProcessorClient),
+		next:      next,
+		cMap:      make(map[string]extprocsvc.ExternalProcessorClient),
+		phase:     phase,
+		celEngine: celEngine,
 	}, nil
 }
 
@@ -59,15 +64,16 @@ type clientInfo struct {
 }
 
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	reqCtx := middlewares.GetCtxRequestContext(req.Context())
+
+	ctx := req.Context()
+
+	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	cfg := reqCtx.ServiceConfig
 
 	if cfg == nil || cfg.GetHttp() == nil || len(cfg.GetHttp().Plugins) == 0 {
 		m.next.ServeHTTP(rw, req)
 		return
 	}
-
-	ctx := req.Context()
 
 	var clientInfos []*clientInfo
 	closeGRPC := func() {
@@ -81,17 +87,15 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		switch m.phase {
-		case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
-			if plugin.Phase != corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH {
-				continue
-			}
-		case corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
-			switch plugin.Phase {
-			case corev1.Service_Spec_Config_HTTP_Plugin_PHASE_UNSET, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
-			default:
-				continue
-			}
+		if !commonplugin.MatchesPhase(plugin, m.phase) {
+			continue
+		}
+
+		if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
+			Plugin:    plugin,
+			CELEngine: m.celEngine,
+		}) {
+			continue
 		}
 
 		switch plugin.Type.(type) {

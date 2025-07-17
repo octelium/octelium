@@ -26,6 +26,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -47,7 +48,9 @@ func TestMiddleware(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
 	})
-	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+	mdlwr, err := New(ctx, next, celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	assert.Nil(t, err)
 
 	adminSrv := admin.NewServer(&admin.Opts{
@@ -131,7 +134,9 @@ func TestWithExit(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 	})
-	mdlwr, err := New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+	mdlwr, err := New(ctx, next, celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	assert.Nil(t, err)
 
 	adminSrv := admin.NewServer(&admin.Opts{

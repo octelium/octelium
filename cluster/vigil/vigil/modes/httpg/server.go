@@ -27,6 +27,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/ocrypto"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -81,6 +82,8 @@ type Server struct {
 		crt *corev1.Secret
 	}
 	metricsStore *metricsStore
+
+	celEngine *celengine.CELEngine
 }
 
 type metricsStore struct {
@@ -116,6 +119,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 	// server.sessionCtl.FnOnUpdate = server.onSessionUpdate
 	var err error
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	if err != nil {
+		return nil, err
+	}
+
+	server.celEngine, err = celengine.New(ctx, &celengine.Opts{})
 	if err != nil {
 		return nil, err
 	}
@@ -248,11 +256,11 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return lua.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
+		return lua.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return extproc.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
+		return extproc.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -280,11 +288,11 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return lua.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+		return lua.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return extproc.New(ctx, next, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+		return extproc.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	})
 
 	handler, err := chain.Then(s)
