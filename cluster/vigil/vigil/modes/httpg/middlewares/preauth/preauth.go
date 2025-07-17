@@ -26,7 +26,6 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -40,23 +39,26 @@ import (
 type middleware struct {
 	octeliumC octeliumc.ClientInterface
 
-	next      http.Handler
-	domain    string
-	celEngine *celengine.CELEngine
+	next   http.Handler
+	domain string
+	// celEngine *celengine.CELEngine
 }
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, domain string) (http.Handler, error) {
 
-	celEngine, err := celengine.New(ctx, &celengine.Opts{})
-	if err != nil {
-		return nil, err
-	}
+	/*
+		celEngine, err := celengine.New(ctx, &celengine.Opts{})
+		if err != nil {
+			return nil, err
+		}
+
+	*/
 
 	return &middleware{
 		next:      next,
 		octeliumC: octeliumC,
 		domain:    domain,
-		celEngine: celEngine,
+		// celEngine: celEngine,
 	}, nil
 }
 
@@ -134,12 +136,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Service: svc,
 		}
 		reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
-			RequestContext:    reqCtx.DownstreamInfo,
-			IsAuthorized:      true,
-			ServiceConfigName: m.getServiceConfigName(ctx, reqCtx.DownstreamInfo),
+			RequestContext: reqCtx.DownstreamInfo,
+			IsAuthorized:   true,
+			// ServiceConfigName: m.getServiceConfigName(ctx, reqCtx.DownstreamInfo),
 		}
+
 		reqCtx.IsAuthorized = true
-		reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
+		// reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
 
 		m.next.ServeHTTP(w, req)
 		return
@@ -149,6 +152,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Request: downstreamReq.Request,
 		Service: svc,
 	}
+
+	reqCtx.ServiceConfig = svc.Spec.Config
 
 	m.next.ServeHTTP(w, req)
 }
@@ -246,6 +251,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 	}
 }
 
+/*
 func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.RequestContext) string {
 	svc := reqCtx.Service
 	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
@@ -273,3 +279,4 @@ func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.Re
 
 	return ""
 }
+*/

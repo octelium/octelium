@@ -20,11 +20,15 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
 )
 
@@ -33,15 +37,22 @@ type middleware struct {
 	octovigilC *octovigilc.Client
 	next       http.Handler
 	domain     string
+	celEngine  *celengine.CELEngine
 }
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, octovigilC *octovigilc.Client, domain string) (http.Handler, error) {
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return nil, err
+	}
 
 	return &middleware{
 		next:       next,
 		octeliumC:  octeliumC,
 		octovigilC: octovigilC,
 		domain:     domain,
+		celEngine:  celEngine,
 	}, nil
 }
 
@@ -53,6 +64,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 
 	if httputils.IsAnonymousMode(req) {
+		if reqCtx.AuthResponse == nil {
+			reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{}
+		}
+		reqCtx.AuthResponse.ServiceConfigName = m.getServiceConfigName(ctx, reqCtx.DownstreamInfo)
+		reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
 		m.next.ServeHTTP(w, req)
 		return
 	}
@@ -175,6 +191,8 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 	}
 }
 
+*/
+
 func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.RequestContext) string {
 	svc := reqCtx.Service
 	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
@@ -202,4 +220,3 @@ func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.Re
 
 	return ""
 }
-*/
