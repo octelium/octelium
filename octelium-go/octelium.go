@@ -148,6 +148,7 @@ func NewClient(ctx context.Context, cc *ClientConfig) (*Client, error) {
 			}
 			return "", errors.Errorf("No refresh token found")
 		},
+		UserAgent: "octelium-sdk",
 	})
 	if err != nil {
 		return nil, err
