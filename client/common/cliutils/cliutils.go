@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/manifoldco/promptui"
+	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -146,4 +147,14 @@ func OpenFileByDefaultAppCmd(url string) (*exec.Cmd, error) {
 	default:
 		return nil, errors.Errorf("This OS is not supported currently")
 	}
+}
+
+type NewAuthClientOpts struct {
+}
+
+func NewAuthClient(ctx context.Context, domain string, o *NewAuthClientOpts) (*authc.Client, error) {
+	return authc.NewClient(ctx, domain, &authc.Opts{
+		GetRefreshToken: GetRefreshToken,
+		UserAgent:       fmt.Sprintf("octelium-cli/%s", ldflags.SemVer),
+	})
 }

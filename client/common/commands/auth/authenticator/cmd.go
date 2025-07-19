@@ -57,9 +57,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	c, err := cliutils.NewAuthClient(ctx, i.Domain, nil)
 	if err != nil {
 		return err
 	}

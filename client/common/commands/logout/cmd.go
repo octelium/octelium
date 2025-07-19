@@ -21,7 +21,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -64,9 +63,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		zap.L().Debug("Could not delete db state", zap.Error(err))
 	}
 
-	c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	c, err := cliutils.NewAuthClient(ctx, i.Domain, nil)
 	if err != nil {
 		return err
 	}

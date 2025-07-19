@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/common/components"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -72,9 +71,7 @@ func PostRun(cmd *cobra.Command, args []string) error {
 
 		ctx := cmd.Context()
 
-		c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
-			GetRefreshToken: GetRefreshToken,
-		})
+		c, err := NewAuthClient(ctx, i.Domain, nil)
 		if err != nil {
 			return err
 		}

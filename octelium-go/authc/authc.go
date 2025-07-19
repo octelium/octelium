@@ -35,6 +35,7 @@ import (
 
 type Opts struct {
 	GetRefreshToken func(ctx context.Context, domain string) (string, error)
+	UserAgent       string
 }
 
 type Client struct {
@@ -123,6 +124,9 @@ func (c *Client) doGetGRPCClientConn(ctx context.Context, domain string) (*grpc.
 	}
 
 	opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+	if c.opts.UserAgent != "" {
+		opts = append(opts, grpc.WithUserAgent(c.opts.UserAgent))
+	}
 
 	return grpc.NewClient(GetAPIServerAddr(domain), opts...)
 }

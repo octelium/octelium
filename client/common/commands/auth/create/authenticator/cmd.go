@@ -18,7 +18,6 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/commands/auth/authcommon"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -58,9 +57,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	c, err := cliutils.NewAuthClient(ctx, i.Domain, nil)
 	if err != nil {
 		return err
 	}

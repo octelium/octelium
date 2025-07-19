@@ -166,9 +166,7 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 		return ret, nil
 	}
 
-	ret.c, err = authc.NewClient(ctx, opts.Domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	ret.c, err = cliutils.NewAuthClient(ctx, opts.Domain, nil)
 	if err != nil {
 		return nil, err
 	}

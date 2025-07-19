@@ -17,7 +17,6 @@ package authenticator
 import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/spf13/cobra"
 )
 
@@ -41,9 +40,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	c, err := authc.NewClient(ctx, i.Domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	c, err := cliutils.NewAuthClient(ctx, i.Domain, nil)
 	if err != nil {
 		return err
 	}

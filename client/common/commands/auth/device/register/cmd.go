@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/deviceinfo"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -54,9 +53,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 }
 
 func DoRegister(ctx context.Context, domain string) error {
-	c, err := authc.NewClient(ctx, domain, &authc.Opts{
-		GetRefreshToken: cliutils.GetRefreshToken,
-	})
+	c, err := cliutils.NewAuthClient(ctx, domain, nil)
 	if err != nil {
 		return err
 	}
