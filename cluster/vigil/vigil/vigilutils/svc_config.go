@@ -56,6 +56,9 @@ func GetServiceConfig(ctx context.Context, req *coctovigilv1.AuthenticateAndAuth
 }
 
 func GetDownstreamRequestSource(c net.Conn) *coctovigilv1.DownstreamRequest_Source {
+	if c == nil {
+		return &coctovigilv1.DownstreamRequest_Source{}
+	}
 
 	return &coctovigilv1.DownstreamRequest_Source{
 		Address: func() string {
