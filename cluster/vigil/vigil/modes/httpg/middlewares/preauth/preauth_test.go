@@ -27,7 +27,9 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -42,6 +44,11 @@ func TestMiddleware(t *testing.T) {
 	assert.Nil(t, err)
 	t.Cleanup(func() {
 		tst.Destroy()
+	})
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
 	})
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +142,50 @@ func TestMiddleware(t *testing.T) {
 		assert.False(t, reqCtx.IsAuthenticated)
 		assert.Nil(t, reqCtx.Body)
 		assert.True(t, pbutils.IsEqual(svc.Spec.Config, reqCtx.ServiceConfig))
+	}
+
+	{
+
+		reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		jsn, err := pbutils.MarshalJSON(usrT.Usr, false)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodGet, reqPath, bytes.NewBuffer(jsn))
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							EnableRequestBuffering: true,
+							Body: &corev1.Service_Spec_Config_HTTP_Body{
+								Mode: corev1.Service_Spec_Config_HTTP_Body_JSON,
+							},
+						},
+					},
+				},
+			},
+		}
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service:   svc,
+			}))
+
+		mdlwr.ServeHTTP(nil, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		bodyUsr := &corev1.User{}
+		err = pbutils.UnmarshalJSON(reqCtx.Body, bodyUsr)
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(bodyUsr, usrT.Usr))
+		assert.Equal(t, reqCtx.BodyJSONMap, pbutils.MustConvertToMap(usrT.Usr))
 	}
 
 }
