@@ -541,7 +541,7 @@ func (a *authenticator) getAssertionAzure(aud string) (string, error) {
 
 func (a *authenticator) getAssertionGithubActions(aud string) (string, error) {
 	if aud == "" {
-		aud = a.domain
+		aud = fmt.Sprintf("https://%s", a.domain)
 	}
 
 	reqToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
