@@ -65,10 +65,15 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if httputils.IsAnonymousMode(req) {
 		if reqCtx.AuthResponse == nil {
-			reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{}
+			// AuthResponse is already set by preauth
+			reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
+				IsAuthorized: true,
+			}
 		}
 		reqCtx.AuthResponse.ServiceConfigName = m.getServiceConfigName(ctx, reqCtx.DownstreamInfo)
 		reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
+		// Already set by preauth
+		// reqCtx.IsAuthorized = true
 		m.next.ServeHTTP(w, req)
 		return
 	}
