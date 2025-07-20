@@ -1371,17 +1371,20 @@ func TestUserUpstream(t *testing.T) {
 		host:       "example.com",
 		port:       80,
 		listenPort: 23000,
+		ready:      make(chan struct{}),
 	}
 	err = tstP.run(ctx)
 	assert.Nil(t, err)
 
 	zap.L().Debug("Running tcp proxy", zap.Int("port", tstP.listenPort))
 
-	time.Sleep(3 * time.Second)
+	<-tstP.ready
+	time.Sleep(1 * time.Second)
 
-	resp, err = resty.New().SetDebug(true).R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+	resp, err = resty.New().SetDebug(true).R().
+		SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
 	assert.Nil(t, err, "%+v", err)
-	assert.True(t, resp.IsSuccess())
+	assert.True(t, resp.IsSuccess(), "code: %d", resp.StatusCode())
 }
 
 type tstTCPProxy struct {
@@ -1389,6 +1392,8 @@ type tstTCPProxy struct {
 	port int
 
 	listenPort int
+
+	ready chan struct{}
 }
 
 func (p *tstTCPProxy) run(ctx context.Context) error {
@@ -1409,8 +1414,10 @@ func (p *tstTCPProxy) doRun(ctx context.Context) error {
 		for i := 0; i < 100; i++ {
 			listener, err = net.Listen("tcp", fmt.Sprintf(":%d", p.listenPort))
 			if err == nil {
+				p.ready <- struct{}{}
 				return nil
 			}
+			zap.L().Debug("Could not listen tstTCPProxy. Trying again...", zap.Error(err))
 			time.Sleep(1 * time.Second)
 		}
 		return err
@@ -1419,6 +1426,8 @@ func (p *tstTCPProxy) doRun(ctx context.Context) error {
 	}
 
 	zap.L().Debug("created listener")
+
+	defer listener.Close()
 
 	for {
 		select {
