@@ -116,7 +116,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses")
 	for _, svc := range svcList.Items {
 
-		p.AppendRow(svc.Metadata.Name, getNamespace(svc), svc.Spec.Mode.String(),
+		p.AppendRow(svc.Status.PrimaryHostname, svc.Status.NamespaceRef.Name, svc.Spec.Mode.String(),
 			fmt.Sprintf("%d", ucorev1.ToService(svc).RealPort()), cliutils.GetResourceAge(svc),
 			cliutils.PrintBoolean(svc.Spec.IsPublic), cliutils.PrintBoolean(svc.Spec.IsAnonymous), getServiceAddrs(svc))
 	}
@@ -124,11 +124,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	p.Render()
 
 	return nil
-}
-
-func getNamespace(svc *corev1.Service) string {
-	svcNs, _ := cliutils.ParseServiceNamespace(svc.Metadata.Name)
-	return svcNs.Namespace
 }
 
 func getServiceAddrs(svc *corev1.Service) string {

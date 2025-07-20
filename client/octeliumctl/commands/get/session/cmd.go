@@ -105,7 +105,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "User", "Type", "Expires In", "Age", "State")
+	p := printer.NewPrinter("Name", "User", "Type", "Expires In", "Age", "State", "Connected")
 
 	for _, itm := range itmList.Items {
 
@@ -123,7 +123,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 				return ret
 			}(),
 			utils_types.HumanDuration(itm.Spec.ExpiresAt.AsTime().Sub(time.Now())),
-			cliutils.GetResourceAge(itm), itm.Spec.State.String())
+			cliutils.GetResourceAge(itm), itm.Spec.State.String(),
+			cliutils.PrintBoolean(itm.Status.IsConnected))
 	}
 
 	p.Render()
