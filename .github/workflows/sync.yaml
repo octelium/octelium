@@ -1,0 +1,18 @@
+name: git-sync
+on: push
+jobs:
+  gitlab:
+    name: Gitlab
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to GitLab
+        uses: keninkujovic/gitlab-sync@2.1.0
+        with:
+          gitlab_url: https://gitlab.com/octelium/octelium.git
+          username: geoctl
+          gitlab_pat: ${{ secrets.GITLAB_PAT }}
