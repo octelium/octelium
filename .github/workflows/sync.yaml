@@ -1,4 +1,6 @@
 name: git-sync
+permissions:
+  contents: read
 on: push
 jobs:
   gitlab:
