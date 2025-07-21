@@ -39,7 +39,7 @@ type args struct {
 var example = `
 octeliumctl update secret -f /path/to/secret/file secret1
 octeliumctl update secret --value TOP_SECRET secret2
-octeliumctl update secret secret3
+octeliumctl update sec secret3
 `
 
 var Cmd = &cobra.Command{

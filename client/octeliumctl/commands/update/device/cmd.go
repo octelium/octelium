@@ -23,7 +23,8 @@ import (
 )
 
 const example = `
- octeliumctl update device usr1-linux-uvc4
+ octeliumctl update device --approve usr1-linux-uvc4
+ octeliumctl update dev --reject usr1-linux-uvc4
  `
 
 var Cmd = &cobra.Command{

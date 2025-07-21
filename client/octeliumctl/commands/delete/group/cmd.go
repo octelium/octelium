@@ -32,8 +32,8 @@ var Cmd = &cobra.Command{
 	Use:   "group",
 	Short: "Delete a Group",
 	Example: `
-octeliumctl delete group example.com/group-1
-octeliumctl del group example.com -n group-1
+octeliumctl delete group group-1
+octeliumctl del grp friends
 	`,
 
 	Aliases: []string{"grp", "groups"},

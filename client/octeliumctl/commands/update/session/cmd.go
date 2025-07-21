@@ -27,7 +27,9 @@ import (
 )
 
 const example = `
-  octeliumctl update session usr1-linux-uvc4
+  octeliumctl update session --expire-in 3month usr1-linux-uvc4
+  octeliumctl update sess --approve usr1-linux-uvc4
+  octeliumctl update sess --reject usr1-linux-uvc4
   `
 
 var Cmd = &cobra.Command{
