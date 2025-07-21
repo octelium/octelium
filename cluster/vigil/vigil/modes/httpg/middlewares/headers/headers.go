@@ -127,33 +127,6 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				zap.L().Warn("Could not get oauth2 client credentials access token", zap.Error(err))
 			}
 		}
-
-		/*
-			else if authS.GetSigv4() != nil &&
-				authS.GetSigv4().GetSecretAccessKey() != nil &&
-				authS.GetSigv4().GetSecretAccessKey().GetFromSecret() != "" {
-				sigv4Opts := authS.GetSigv4()
-				secret, err := m.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
-				if err == nil {
-					signer := sigv4.NewSigner()
-					if err := signer.SignHTTP(ctx,
-						aws.Credentials{
-							AccessKeyID:     sigv4Opts.AccessKeyID,
-							SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
-						},
-						req,
-						fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body))),
-						sigv4Opts.Service, sigv4Opts.Region,
-						time.Now(),
-					); err != nil {
-						zap.L().Warn("Could not signHTTP for sigv4", zap.Error(err))
-						return
-					}
-				} else {
-					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
-				}
-			}
-		*/
 	}
 
 	if !isManagedSvc {
