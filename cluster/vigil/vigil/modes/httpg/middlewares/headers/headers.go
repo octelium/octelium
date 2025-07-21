@@ -51,10 +51,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	m.setRequestHeaders(req, reqCtx)
-
-	if m.next != nil {
-		m.next.ServeHTTP(newResponseModifier(rw, req, m.postRequestModifyResponseHeaders), req)
-	}
+	m.next.ServeHTTP(rw, req)
+	m.postRequestModifyResponseHeaders(rw, req, reqCtx)
 }
 
 func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.RequestContext) {
@@ -250,49 +248,46 @@ func (m *middleware) processCORSHeaders(rw http.ResponseWriter, req *http.Reques
 	return false
 }
 
-func (m *middleware) postRequestModifyResponseHeaders(res *http.Response) error {
-
-	reqCtx := middlewares.GetCtxRequestContext(res.Request.Context())
+func (m *middleware) postRequestModifyResponseHeaders(rw http.ResponseWriter, req *http.Request, reqCtx *middlewares.RequestContext) {
 	svcCfg := reqCtx.ServiceConfig
+
+	rwHdr := rw.Header()
 
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddResponseHeaders {
 			if hdr.Append {
-				res.Header.Add(hdr.Key, hdr.Value)
+				rwHdr.Add(hdr.Key, hdr.Value)
 			} else {
-				res.Header.Set(hdr.Key, hdr.Value)
+				rwHdr.Set(hdr.Key, hdr.Value)
 			}
 		}
 
 		for _, hdr := range cfg.RemoveResponseHeaders {
-			res.Header.Del(hdr)
+			rwHdr.Del(hdr)
 		}
 
 	}
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Cors != nil {
 		cors := svcCfg.GetHttp().Cors
-		if res != nil && res.Request != nil {
-			originHeader := res.Request.Header.Get("Origin")
-			allowed, match := m.isOriginAllowed(originHeader, cors.AllowOriginStringMatch)
 
-			if allowed {
-				res.Header.Set("Access-Control-Allow-Origin", match)
-			}
+		originHeader := req.Header.Get("Origin")
+		allowed, match := m.isOriginAllowed(originHeader, cors.AllowOriginStringMatch)
+
+		if allowed {
+			rwHdr.Set("Access-Control-Allow-Origin", match)
 		}
 
 		if cors.AllowCredentials {
-			res.Header.Set("Access-Control-Allow-Credentials", "true")
+			rwHdr.Set("Access-Control-Allow-Credentials", "true")
 		}
 		if cors.AllowHeaders != "" {
-			res.Header.Set("Access-Control-Expose-Headers", cors.AllowHeaders)
+			rwHdr.Set("Access-Control-Expose-Headers", cors.AllowHeaders)
 		}
 
 	}
 
-	res.Header.Set("Server", "octelium")
-
-	return nil
+	rwHdr.Set("Server", "octelium")
 }
 
 func (m *middleware) isOriginAllowed(origin string, allowOriginList []string) (bool, string) {

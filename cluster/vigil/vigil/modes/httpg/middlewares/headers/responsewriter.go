@@ -16,14 +16,25 @@
 
 package headers
 
-import (
-	"bufio"
-	"net"
-	"net/http"
+/*
+type responseWriter struct {
+	http.ResponseWriter
+	headers http.Header
+	isSet   bool
+}
 
-	"github.com/pkg/errors"
-)
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		headers:        make(http.Header),
+	}
+}
 
+func (rw *responseWriter) Header() http.Header {
+	return rw.headers
+}
+*/
+/*
 type responseModifier struct {
 	req *http.Request
 	rw  http.ResponseWriter
@@ -114,3 +125,4 @@ type responseModifierWithCloseNotify struct {
 func (r *responseModifierWithCloseNotify) CloseNotify() <-chan bool {
 	return r.responseModifier.rw.(http.CloseNotifier).CloseNotify()
 }
+*/
