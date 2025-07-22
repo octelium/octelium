@@ -583,6 +583,44 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 		}
 	}
 
+	{
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name:        "nginx.default",
+				DisplayName: "Nginx",
+				Description: "A Demo nginx server that is deployed as a managed container and accessible by all Users",
+			},
+			Spec: &corev1.Service_Spec{
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_WEB,
+
+				Authorization: &corev1.Service_Spec_Authorization{
+					InlinePolicies: []*corev1.InlinePolicy{
+						{
+							Spec: &corev1.Policy_Spec{
+								Rules: []*corev1.Policy_Spec_Rule{
+									{
+										Effect: corev1.Policy_Spec_Rule_ALLOW,
+										Condition: &corev1.Condition{
+											Type: &corev1.Condition_MatchAny{
+												MatchAny: true,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
