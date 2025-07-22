@@ -81,13 +81,18 @@ func init() {
 
 func BuildConfigFromFlags(context, kubeconfigPath string) (*rest.Config, error) {
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: mustGetKubeConfigFilePath(kubeconfigPath)},
 		&clientcmd.ConfigOverrides{
 			CurrentContext: context,
 		}).ClientConfig()
 }
 
-func getKubeConfigFilePath(kubeConfigPath, clusterDomain string) (string, error) {
+func mustGetKubeConfigFilePath(kubeConfigPath string) string {
+	ret, _ := getKubeConfigFilePath(kubeConfigPath)
+	return ret
+}
+
+func getKubeConfigFilePath(kubeConfigPath string) (string, error) {
 	if kubeConfigPath != "" {
 		_, err := os.Stat(kubeConfigPath)
 		if err == nil {
@@ -123,12 +128,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	zap.S().Debugf("Chosen cluster domain: %s", clusterDomain)
 
-	kubeConfigPath, err := getKubeConfigFilePath(cmdArgs.KubeConfigFilePath, clusterDomain)
-	if err != nil {
-		return err
-	}
-
-	cfg, err := BuildConfigFromFlags("", kubeConfigPath)
+	cfg, err := BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}
