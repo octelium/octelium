@@ -101,6 +101,10 @@ func PrintServiceList(svcList []*userv1.Service) {
 }
 
 func getName(svc *userv1.Service) string {
+	if svc.Status.PrimaryHostname != "" {
+		return svc.Status.PrimaryHostname
+	}
+
 	svcNs, _ := cliutils.ParseServiceNamespace(svc.Metadata.Name)
 	return svcNs.Service
 }
