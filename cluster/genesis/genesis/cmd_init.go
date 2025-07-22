@@ -594,7 +594,16 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Spec: &corev1.Service_Spec{
 				IsPublic: true,
 				Mode:     corev1.Service_Spec_WEB,
-
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Container_{
+							Container: &corev1.Service_Spec_Config_Upstream_Container{
+								Image: "nginx",
+								Port:  80,
+							},
+						},
+					},
+				},
 				Authorization: &corev1.Service_Spec_Authorization{
 					InlinePolicies: []*corev1.InlinePolicy{
 						{
