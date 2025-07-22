@@ -155,7 +155,7 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
         <div className="flex flex-col flex-1">
           <div className="flex items-center font-bold">
             <Text className="mr-2 flex flex-row" size="sm" fw={"bold"}>
-              <CopyText value={item.metadata!.name} />
+              <CopyText value={item.status?.primaryHostname ?? item.metadata!.name} />
 
               {md.displayName && (
                 <Text className="ml-3" c="gray.7" inherit>

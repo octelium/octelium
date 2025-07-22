@@ -324,8 +324,9 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 
 	if err := genesisutils.CreateOrUpdateNamespace(ctx, g.octeliumC, &corev1.Namespace{
 		Metadata: &metav1.Metadata{
-			Name:     "default",
-			IsSystem: true,
+			Name:        "default",
+			IsSystem:    true,
+			DisplayName: "Default Namespace",
 		},
 		Spec:   &corev1.Namespace_Spec{},
 		Status: &corev1.Namespace_Status{},
