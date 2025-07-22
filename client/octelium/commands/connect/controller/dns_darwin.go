@@ -16,6 +16,7 @@ package controller
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -65,7 +66,8 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 
 			var dnsServers []string
 			var dnsDomains []string
-			if strings.Contains(strings.ToLower(string(outServers)), `there aren't`) {
+			if strings.Contains(strings.ToLower(string(outServers)), `there aren`) ||
+				strings.Contains(strings.ToLower(string(outServers)), `any dns servers`) {
 				dnsServers = []string{"Empty"}
 			} else {
 				dnsServers = strings.Split(strings.TrimSpace(string(outServers)), "\n")
@@ -74,8 +76,9 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 				}
 			}
 
-			if strings.Contains(strings.ToLower(string(outDomains)), `there aren't`) {
-				dnsServers = []string{"Empty"}
+			if strings.Contains(strings.ToLower(string(outDomains)), `there aren`) ||
+				strings.Contains(strings.ToLower(string(outDomains)), `any search domains`) {
+				dnsDomains = []string{"Empty"}
 			} else {
 				dnsDomains = strings.Split(strings.TrimSpace(string(outDomains)), "\n")
 				if len(dnsDomains) == 0 || !govalidator.IsDNSName(dnsDomains[0]) {
@@ -183,12 +186,14 @@ func setNetworkSetupDNSServers(svc string, dnsServers []string, networkDomains [
 
 	cmd := []string{"-setdnsservers", svc}
 	cmd = append(cmd, dnsServers...)
+	zap.L().Debug("Executing cmd", zap.String("cmd", fmt.Sprintf("networksetup %s", strings.Join(cmd, " "))))
 	if o, err := exec.Command("networksetup", cmd...).CombinedOutput(); err != nil {
 		return errors.Errorf("Could not set dns servers: %s. %+v", string(o), err)
 	}
 
 	cmd = []string{"-setsearchdomains", svc}
 	cmd = append(cmd, networkDomains...)
+	zap.L().Debug("Executing cmd", zap.String("cmd", fmt.Sprintf("networksetup %s", strings.Join(cmd, " "))))
 	if o, err := exec.Command("networksetup", cmd...).CombinedOutput(); err != nil {
 		return errors.Errorf("Could not set dns search domains: %s. %+v", string(o), err)
 	}
