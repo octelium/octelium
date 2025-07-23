@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/jwkctl/jwkutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -557,5 +558,106 @@ func TestChooseJWK(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.Equal(t, k11.uid, k1.uid)
+	}
+}
+
+func TestMulti(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC)
+	assert.Nil(t, err)
+
+	var sec1 *corev1.Secret
+	{
+		assert.Equal(t, 1, len(jwkCtl.ctl.keyMap))
+		for _, v := range jwkCtl.ctl.keyMap {
+			sec1, err = jwkCtl.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+				Uid: v.uid,
+			})
+			assert.Nil(t, err)
+		}
+	}
+
+	{
+
+		content := &authv1.TokenT0_Content{
+			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Type:    authv1.TokenT0_Content_CREDENTIAL,
+		}
+
+		tknStr, err := jwkCtl.createToken(content)
+		assert.Nil(t, err)
+
+		t0, err := jwkCtl.parseToken(tknStr)
+		assert.Nil(t, err)
+
+		kUID, err := jwkCtl.getUID(t0.Content.KeyID)
+		assert.Nil(t, err)
+		assert.Equal(t, sec1.Metadata.Uid, kUID)
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		sec2, err := jwkutils.CreateJWKSecret(ctx, jwkCtl.octeliumC)
+		assert.Nil(t, err)
+
+		err = jwkCtl.ctl.setKey(sec2)
+		assert.Nil(t, err)
+
+		assert.Equal(t, 2, len(jwkCtl.ctl.keyMap))
+
+		content := &authv1.TokenT0_Content{
+			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Type:    authv1.TokenT0_Content_CREDENTIAL,
+		}
+
+		tknStr, err := jwkCtl.createToken(content)
+		assert.Nil(t, err)
+
+		t0, err := jwkCtl.parseToken(tknStr)
+		assert.Nil(t, err)
+
+		kUID, err := jwkCtl.getUID(t0.Content.KeyID)
+		assert.Nil(t, err)
+		assert.Equal(t, sec2.Metadata.Uid, kUID)
+
+		{
+			_, err := jwkCtl.parseToken(tknStr)
+			assert.Nil(t, err)
+		}
+
+		err = jwkCtl.ctl.onDeleteSecret(ctx, sec2)
+		assert.Nil(t, err)
+
+		assert.Equal(t, 1, len(jwkCtl.ctl.keyMap))
+
+		_, err = jwkCtl.parseToken(tknStr)
+		assert.NotNil(t, err)
+	}
+
+	{
+		content := &authv1.TokenT0_Content{
+			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Type:    authv1.TokenT0_Content_CREDENTIAL,
+		}
+
+		tknStr, err := jwkCtl.createToken(content)
+		assert.Nil(t, err)
+
+		t0, err := jwkCtl.parseToken(tknStr)
+		assert.Nil(t, err)
+
+		kUID, err := jwkCtl.getUID(t0.Content.KeyID)
+		assert.Nil(t, err)
+		assert.Equal(t, sec1.Metadata.Uid, kUID)
 	}
 }
