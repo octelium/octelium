@@ -260,6 +260,15 @@ func (s *Server) doCreate(ctx context.Context, req umetav1.ResourceObjectI, api,
 		return nil, rerr.InternalWithErr(err)
 	}
 
+	if s.isTypeSecret(kind) {
+		req, err = s.doGet(ctx, &rmetav1.GetOptions{
+			Uid: md.Uid,
+		}, api, version, kind)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if s.opts.PostCreate != nil {
 		if err := s.opts.PostCreate(ctx, req, api, version, kind); err != nil {
 			return nil, err
@@ -328,6 +337,15 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 
 	if _, err := s.db.ExecContext(ctx, sqln, sqlargs...); err != nil {
 		return nil, nil, rerr.InternalWithErr(err)
+	}
+
+	if s.isTypeSecret(kind) {
+		req, err = s.doGet(ctx, &rmetav1.GetOptions{
+			Uid: mdNew.Uid,
+		}, api, version, kind)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	if s.opts.PostUpdate != nil {

@@ -25,6 +25,7 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -336,6 +337,36 @@ func TestCommon(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.Equal(t, n, len(lst))
+
+	})
+
+	t.Run("secret", func(t *testing.T) {
+
+		api := "core"
+		version := "v1"
+
+		{
+
+			sec := &corev1.Secret{
+				ApiVersion: ucorev1.APIVersion,
+				Kind:       ucorev1.KindSecret,
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+				Spec:   &corev1.Secret_Spec{},
+				Status: &corev1.Secret_Status{},
+				Data: &corev1.Secret_Data{
+					Type: &corev1.Secret_Data_Value{
+						Value: utilrand.GetRandomString(32),
+					},
+				},
+			}
+
+			rscOut, err := srv.doCreate(ctx, sec, api, version, ucorev1.KindSecret)
+			assert.Nil(t, err)
+
+			assert.True(t, pbutils.IsEqual(rscOut.(*corev1.Secret).Data, sec.Data))
+		}
 
 	})
 

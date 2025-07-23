@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/csecretmanv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver/rerr"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -211,4 +212,81 @@ func TestSecretMan(t *testing.T) {
 		assert.Equal(t, 1, len(secLst))
 		assert.True(t, pbutils.IsEqual(sec2, secLst[0].(*corev1.Secret)))
 	}
+}
+
+func TestSecretManOps(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := initTest()
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	tstSecretManSrv := newTstSecretMan(t)
+	tstSecretManSrv.run(ctx)
+	defer tstSecretManSrv.close()
+
+	time.Sleep(2 * time.Second)
+
+	srv, err := NewServer(ctx, &Opts{})
+	assert.Nil(t, err)
+
+	grpcConn, err := grpc.NewClient(
+		"127.0.0.1:12012", grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	assert.Nil(t, err, "%+v", err)
+	srv.secretmanC = csecretmanv1.NewMainServiceClient(grpcConn)
+
+	srv.hasSecretManager = true
+
+	sec1 := &corev1.Secret{
+		ApiVersion: ucorev1.APIVersion,
+		Kind:       ucorev1.KindSecret,
+		Metadata: &metav1.Metadata{
+			Uid:  vutils.UUIDv4(),
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec:   &corev1.Secret_Spec{},
+		Status: &corev1.Secret_Status{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(12),
+			},
+		},
+	}
+
+	sec11, err := srv.doCreate(ctx, sec1, ucorev1.API, ucorev1.Version, sec1.Kind)
+	assert.Nil(t, err)
+
+	assert.True(t, pbutils.IsEqual(sec11.(*corev1.Secret).Data, sec1.Data))
+	{
+		_, ok := tstSecretManSrv.c.Get(sec11.GetMetadata().Uid)
+		assert.True(t, ok)
+	}
+
+	sec12, err := srv.doGet(ctx, &rmetav1.GetOptions{
+		Uid: sec11.GetMetadata().Uid,
+	}, ucorev1.API, ucorev1.Version, sec1.Kind)
+	assert.Nil(t, err)
+
+	assert.True(t, pbutils.IsEqual(sec11.(*corev1.Secret), sec12))
+
+	sec12.(*corev1.Secret).Data = &corev1.Secret_Data{
+		Type: &corev1.Secret_Data_Value{
+			Value: utilrand.GetRandomString(32),
+		},
+	}
+
+	sec13, _, err := srv.doUpdate(ctx, sec12, ucorev1.API, ucorev1.Version, sec1.Kind)
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(sec13.(*corev1.Secret).Data, sec12.(*corev1.Secret).Data))
+
+	_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{
+		Uid: sec13.GetMetadata().Uid,
+	}, ucorev1.API, ucorev1.Version, sec1.Kind)
+	assert.Nil(t, err)
+	_, ok := tstSecretManSrv.c.Get(sec13.GetMetadata().Uid)
+	assert.False(t, ok)
 }
