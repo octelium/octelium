@@ -153,6 +153,9 @@ func (c *diffCtl) Run(ctx context.Context) error {
 	if c.doDelete {
 		for _, itm := range c.deleteItems {
 			if err := c.doDeleteItem(ctx, itm); err != nil {
+				if grpcerr.IsNotFound(err) {
+					continue
+				}
 				return err
 			}
 			cliutils.LineNotify("%s %s deleted\n", c.kind, itm.GetMetadata().Name)
