@@ -130,7 +130,7 @@ func (c *diffCtl) Run(ctx context.Context) error {
 
 	for _, itm := range c.createItems {
 		if err := c.doCreateItem(ctx, itm); err != nil {
-			if grpcerr.IsInvalidArg(err) {
+			if isUserError(err) {
 				cliutils.LineWarn("Could not create Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
 				continue
 			}
@@ -141,7 +141,7 @@ func (c *diffCtl) Run(ctx context.Context) error {
 
 	for _, itm := range c.updateItems {
 		if err := c.doUpdateItem(ctx, itm); err != nil {
-			if grpcerr.IsInvalidArg(err) {
+			if isUserError(err) {
 				cliutils.LineWarn("Could not update Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
 				continue
 			}
@@ -160,6 +160,11 @@ func (c *diffCtl) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func isUserError(err error) bool {
+	return grpcerr.IsInvalidArg(err) || grpcerr.IsNotFound(err) ||
+		grpcerr.AlreadyExists(err) || grpcerr.IsResourceChanged(err)
 }
 
 func getFieldSpec(item umetav1.ResourceObjectI) proto.Message {
