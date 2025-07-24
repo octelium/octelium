@@ -587,8 +587,8 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 	{
 		svc := &corev1.Service{
 			Metadata: &metav1.Metadata{
-				Name:        "nginx.default",
-				DisplayName: "Nginx",
+				Name:        "demo-nginx.default",
+				DisplayName: "Demo nginx",
 				Description: "A Demo nginx server that is deployed as a managed container and accessible by all Users",
 			},
 			Spec: &corev1.Service_Spec{
