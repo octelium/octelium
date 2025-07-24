@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
@@ -69,7 +70,8 @@ func PostRun(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		ctx := cmd.Context()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 
 		c, err := NewAuthClient(ctx, i.Domain, nil)
 		if err != nil {
