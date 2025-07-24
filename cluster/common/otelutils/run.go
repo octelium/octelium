@@ -26,6 +26,13 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+type otelErrorHandler struct {
+}
+
+func (h *otelErrorHandler) Handle(err error) {
+	zap.L().Debug("OTEL error", zap.Error(err))
+}
+
 func RunOTEL(ctx context.Context) error {
 
 	logProvider, err := CreateLoggerProvider(ctx, "")
@@ -40,6 +47,8 @@ func RunOTEL(ctx context.Context) error {
 	otel.SetMeterProvider(metricProvider)
 
 	zapLogger := otelcore.NewOTELCore(GetLogger())
+
+	otel.SetErrorHandler(&otelErrorHandler{})
 
 	zap.ReplaceGlobals(zap.New(zapcore.NewTee(zap.L().Core(), zapLogger)))
 
