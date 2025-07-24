@@ -174,6 +174,14 @@ type Opts struct {
 	NewResourceObjectList func(api string, version string, kind string) (protoreflect.ProtoMessage, error)
 }
 
+func (s *Server) GetDB() *sql.DB {
+	return s.db
+}
+
+func (s *Server) GetRedisC() *redis.Client {
+	return s.redisC
+}
+
 func (s *Server) Run(ctx context.Context) error {
 
 	if err := func() error {

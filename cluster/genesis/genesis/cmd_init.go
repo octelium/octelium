@@ -104,6 +104,14 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 			return err
 		}
 
+		if _, err := rscSrv.GetDB().ExecContext(ctx, `TRUNCATE TABLE octelium_resources`); err != nil {
+			zap.L().Error("Could not truncate the octelium_resources table", zap.Error(err))
+		}
+
+		if err := rscSrv.GetRedisC().FlushDB(ctx).Err(); err != nil {
+			zap.L().Debug("Could not Redis flushDB", zap.Error(err))
+		}
+
 		clusterCfgI, err := rscSrv.CreateResource(ctx,
 			clusterCfg, ucorev1.API, ucorev1.Version, ucorev1.KindClusterConfig)
 		if err != nil {
