@@ -50,6 +50,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
@@ -231,7 +232,18 @@ func newSrvGRPC(t *testing.T, port int, crt *tls.Certificate) *tstSrvGRPC {
 
 func (s *tstSrvGRPC) run(t *testing.T) {
 	addr := fmt.Sprintf("localhost:%d", s.port)
-	lis, err := net.Listen("tcp", addr)
+	lis, err := func() (net.Listener, error) {
+		for i := 0; i < 100; i++ {
+			listener, err := net.Listen("tcp", addr)
+			if err == nil {
+				return listener, nil
+			}
+			zap.L().Debug("Could not listen tstTCPProxy. Trying again...", zap.Error(err))
+			time.Sleep(1 * time.Second)
+		}
+		return nil, errors.Errorf("Could not listen tstTCPProxy")
+	}()
+
 	assert.Nil(t, err)
 
 	s.grpcSrv = grpc.NewServer()
@@ -242,6 +254,7 @@ func (s *tstSrvGRPC) run(t *testing.T) {
 		s.grpcSrv.Serve(lis)
 		zap.S().Debugf("gRPC server exited...")
 	}()
+	time.Sleep(1 * time.Second)
 }
 
 func (s *tstSrvGRPC) CreateUser(ctx context.Context, req *corev1.User) (*corev1.User, error) {
