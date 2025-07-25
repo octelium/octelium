@@ -111,24 +111,22 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 
 func (c *Controller) doSetDNSResolvConf() error {
 
-	oldResolvConf, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return err
-	}
-
-	resolvconf, err := c.getResolvConf()
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile("/etc/resolv.conf", resolvconf, 0644); err != nil {
-		return errors.Errorf("Could not write to /etc/resolv.conf: %+v", err)
-	}
-
-	c.c.Preferences.MacosPrefs.DnsMode = pbconfig.Connection_Preferences_MacOS_RESOLVCONF
 	if !c.dnsConfigSaved {
+		oldResolvConf, err := os.ReadFile("/etc/resolv.conf")
+		if err != nil {
+			return err
+		}
 		c.c.Preferences.MacosPrefs.ResolvConf = oldResolvConf
 		c.dnsConfigSaved = true
+	}
+
+	resolvConfOpts, err := parseResolvConf(c.c.Preferences.MacosPrefs.ResolvConf)
+	if err != nil {
+		zap.L().Warn("Could not parse resolv.conf", zap.Error(err))
+	}
+
+	if err := c._doSetDNSResolvConf(resolvConfOpts); err != nil {
+		return err
 	}
 
 	return nil

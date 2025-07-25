@@ -52,13 +52,13 @@ func (c *Controller) doSetDNSResolvConf() error {
 		c.dnsConfigSaved = true
 	}
 
-	resolvconf, err := c.getResolvConf()
+	resolvConfOpts, err := parseResolvConf(c.c.Preferences.LinuxPrefs.ResolvConf)
 	if err != nil {
-		return err
+		zap.L().Warn("Could not parse resolv.conf", zap.Error(err))
 	}
 
-	if err := os.WriteFile("/etc/resolv.conf", resolvconf, 0644); err != nil {
-		return errors.Errorf("Could not write to /etc/resolv.conf: %+v", err)
+	if err := c._doSetDNSResolvConf(resolvConfOpts); err != nil {
+		return err
 	}
 
 	c.c.Preferences.LinuxPrefs.DnsMode = cliconfigv1.Connection_Preferences_Linux_RESOLVCONF
