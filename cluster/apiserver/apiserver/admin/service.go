@@ -711,7 +711,7 @@ func (s *Server) checkAndSetService(ctx context.Context,
 			}
 
 			if len(cfg.GetHttp().Plugins) > 0 {
-				if len(cfg.GetHttp().Plugins) > 12 {
+				if len(cfg.GetHttp().Plugins) > 256 {
 					return grpcutils.InvalidArg("Too many plugins")
 				}
 
@@ -726,7 +726,32 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					}
 					names = append(names, plugin.Name)
 
+					if len(plugin.Rules) > 0 {
+						if len(plugin.Rules) > 100 {
+							return serr.InvalidArg("Too many plugin rules")
+						}
+
+						for _, rule := range plugin.Rules {
+							if err := s.validateCondition(ctx, rule.Condition); err != nil {
+								return err
+							}
+
+							switch rule.Effect {
+							case corev1.Service_Spec_Config_HTTP_Plugin_Rule_EFFECT_UNKNOWN:
+								return serr.InvalidArg("Plugin rule effect must be set to either ENFORCE or IGNORE")
+							}
+						}
+					}
+
 					switch plugin.Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
+						if len(plugin.GetLua().GetInline()) == 0 {
+							return serr.InvalidArg("Lua script is empty")
+						}
+
+						if len(plugin.GetLua().GetInline()) > 20000 {
+							return serr.InvalidArg("Lua script is too large")
+						}
 					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
 
 						confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
