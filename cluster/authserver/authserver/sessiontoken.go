@@ -142,21 +142,11 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 	}
 
 	sessType := func() corev1.Session_Status_Type {
-
 		if tkn.Spec.SessionType != corev1.Session_Status_TYPE_UNKNOWN {
 			return tkn.Spec.SessionType
 		}
 
-		if ua := grpcutils.GetHeaderValueMust(ctx, "User-Agent"); ua != "" {
-			switch {
-			case strings.HasPrefix(ua, "octelium-cli"):
-				return corev1.Session_Status_CLIENT
-			case strings.HasPrefix(ua, "octelium-sdk"):
-				return corev1.Session_Status_CLIENTLESS
-			}
-		}
-
-		return corev1.Session_Status_CLIENTLESS
+		return s.mustGetSessionTypeFromUserAgent(ctx)
 	}()
 
 	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
@@ -304,19 +294,7 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		return nil, s.errInvalidArgErr(err)
 	}
 
-	sessType := func() corev1.Session_Status_Type {
-
-		if ua := grpcutils.GetHeaderValueMust(ctx, "User-Agent"); ua != "" {
-			switch {
-			case strings.HasPrefix(ua, "octelium-cli"):
-				return corev1.Session_Status_CLIENT
-			case strings.HasPrefix(ua, "octelium-sdk"):
-				return corev1.Session_Status_CLIENTLESS
-			}
-		}
-
-		return corev1.Session_Status_CLIENTLESS
-	}()
+	sessType := s.mustGetSessionTypeFromUserAgent(ctx)
 
 	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
 		return nil, err
@@ -638,4 +616,18 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	}
 
 	return ret, nil
+}
+
+func (s *server) mustGetSessionTypeFromUserAgent(ctx context.Context) corev1.Session_Status_Type {
+
+	if ua := grpcutils.GetHeaderValueMust(ctx, "User-Agent"); ua != "" {
+		switch {
+		case strings.HasPrefix(ua, "octelium-cli"):
+			return corev1.Session_Status_CLIENT
+		case strings.HasPrefix(ua, "octelium-sdk"):
+			return corev1.Session_Status_CLIENTLESS
+		}
+	}
+
+	return corev1.Session_Status_CLIENTLESS
 }
