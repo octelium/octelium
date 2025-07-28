@@ -144,7 +144,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Header.Del("X-Forwarded-Proto")
 			}
 
-			outReq.Header.Set("Origin", upstream.URL.String())
+			if outReq.Header.Get("Origin") != "" {
+				outReq.Header.Set("Origin", upstream.URL.String())
+			}
 
 			if cfg != nil &&
 				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
