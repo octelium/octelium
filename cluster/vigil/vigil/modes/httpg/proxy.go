@@ -101,7 +101,8 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 			case "wss":
 				outReq.URL.Scheme = "https"
 			default:
-				if cfg != nil && cfg.ClientCertificate != nil {
+				if cfg != nil && (cfg.ClientCertificate != nil ||
+					(cfg.Tls != nil && cfg.Tls.ClientCertificate != nil)) {
 					outReq.URL.Scheme = "https"
 				} else {
 					outReq.URL.Scheme = "http"
@@ -142,6 +143,8 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Header.Del("X-Forwarded-Host")
 				outReq.Header.Del("X-Forwarded-Proto")
 			}
+
+			outReq.Header.Set("Origin", upstream.URL.String())
 
 			if cfg != nil &&
 				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
