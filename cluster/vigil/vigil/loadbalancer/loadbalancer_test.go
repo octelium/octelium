@@ -86,6 +86,35 @@ func TestLoadBalancer(t *testing.T) {
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: "https://google.com/search?q=linux",
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		})
+		lb := NewLbManager(fakeC.OcteliumC, vCache)
+
+		u, err := lb.GetUpstream(ctx, &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: &corev1.RequestContext{
+				Service: vCache.GetService(),
+			},
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, "https://google.com", u.URL.String())
+		assert.Equal(t, "google.com:443", u.HostPort)
+	}
+
+	{
+		vCache, err := vcache.NewCache(ctx)
+		assert.Nil(t, err)
+		vCache.SetService(&corev1.Service{
+			Metadata: &metav1.Metadata{},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
 							Url: "https://google.com",
 						},
 					},

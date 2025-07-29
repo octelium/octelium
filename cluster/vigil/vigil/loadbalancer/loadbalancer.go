@@ -103,9 +103,13 @@ func (l *LBManager) getUpstreamFromSvc(ctx context.Context,
 
 	u := upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
 
-	url, err := url.Parse(u.Url)
+	murl, err := url.Parse(u.Url)
 	if err != nil {
 		return nil, err
+	}
+	url := &url.URL{
+		Scheme: murl.Scheme,
+		Host:   murl.Host,
 	}
 
 	if u.User == "" {
