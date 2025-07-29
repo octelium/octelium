@@ -70,6 +70,7 @@ type tstSrvHTTP struct {
 	isWS        bool
 	bearerToken string
 	caPool      *x509.CertPool
+	lis         net.Listener
 }
 
 type tstResp struct {
@@ -178,18 +179,34 @@ func (s *tstSrvHTTP) run(t *testing.T) {
 		Handler: handler,
 	}
 
-	var lis net.Listener
-
 	if s.crt != nil {
 		zap.L().Debug("upstream listening over TLS")
-		lis, err = tls.Listen("tcp", addr, s.getTLSConfig())
+		s.lis, err = func() (net.Listener, error) {
+			for range 100 {
+				ret, err := tls.Listen("tcp", addr, s.getTLSConfig())
+				if err == nil {
+					return ret, nil
+				}
+				time.Sleep(1 * time.Second)
+			}
+			return nil, errors.Errorf("Could not listen tstSrvHTTP")
+		}()
 		assert.Nil(t, err)
 	} else {
-		lis, err = net.Listen("tcp", addr)
+		s.lis, err = func() (net.Listener, error) {
+			for range 100 {
+				ret, err := net.Listen("tcp", addr)
+				if err == nil {
+					return ret, nil
+				}
+				time.Sleep(1 * time.Second)
+			}
+			return nil, errors.Errorf("Could not listen tstSrvHTTP")
+		}()
 		assert.Nil(t, err)
 	}
 
-	go s.srv.Serve(lis)
+	go s.srv.Serve(s.lis)
 }
 
 func (s *tstSrvHTTP) getTLSConfig() *tls.Config {
@@ -212,7 +229,13 @@ func (s *tstSrvHTTP) getTLSConfig() *tls.Config {
 }
 
 func (s *tstSrvHTTP) close() {
-	s.srv.Close()
+	if s.srv != nil {
+		s.srv.Close()
+	}
+	if s.lis != nil {
+		s.lis.Close()
+	}
+
 	time.Sleep(1 * time.Second)
 }
 
