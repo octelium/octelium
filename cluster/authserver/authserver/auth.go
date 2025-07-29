@@ -141,18 +141,21 @@ func getLoginReq(arg string) (*authv1.ClientLoginRequest, error) {
 func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
-	{
-		hdr := r.Header.Get("Origin")
-		if hdr == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
 
-		if hdr != s.rootURL {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+	/*
+		{
+			hdr := r.Header.Get("Origin")
+			if hdr == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			if hdr != s.rootURL {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 		}
-	}
+	*/
 
 	defer r.Body.Close()
 	b, err := io.ReadAll(r.Body)
