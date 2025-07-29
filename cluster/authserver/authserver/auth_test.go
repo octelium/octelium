@@ -114,7 +114,7 @@ func TestHandleAuth(t *testing.T) {
 
 	t.Run("null body", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
-		req.Header.Set("origin", srv.rootURL)
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
 		w := httptest.NewRecorder()
 		srv.handleAuth(w, req)
 		resp := w.Result()
@@ -127,7 +127,7 @@ func TestHandleAuth(t *testing.T) {
 		}
 		reqBodyBytes, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
-		req.Header.Set("origin", srv.rootURL)
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
 		w := httptest.NewRecorder()
 		srv.handleAuth(w, req)
 		resp := w.Result()
@@ -144,7 +144,7 @@ func TestHandleAuth(t *testing.T) {
 
 		reqBodyBytes, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
-		req.Header.Set("origin", srv.rootURL)
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
 		req.Header.Set("user-agent", defaultUA)
 
 		w := httptest.NewRecorder()
@@ -160,24 +160,22 @@ func TestHandleAuth(t *testing.T) {
 		assert.Nil(t, err)
 	})
 
-	/*
-		t.Run("github-no-origin", func(t *testing.T) {
-			reqBody := &postAuthReq{
-				UID:       githubIDP.Metadata.Uid,
-				UserAgent: defaultUA,
-			}
+	t.Run("github-no-origin", func(t *testing.T) {
+		reqBody := &postAuthReq{
+			UID:       githubIDP.Metadata.Uid,
+			UserAgent: defaultUA,
+		}
 
-			reqBodyBytes, _ := json.Marshal(reqBody)
-			req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
-			req.Header.Set("user-agent", defaultUA)
+		reqBodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
+		req.Header.Set("user-agent", defaultUA)
 
-			w := httptest.NewRecorder()
-			srv.handleAuth(w, req)
-			resp := w.Result()
-			assert.Equal(t, resp.StatusCode, http.StatusBadRequest)
+		w := httptest.NewRecorder()
+		srv.handleAuth(w, req)
+		resp := w.Result()
+		assert.Equal(t, resp.StatusCode, http.StatusBadRequest)
 
-		})
-	*/
+	})
 
 	t.Run("oidc", func(t *testing.T) {
 		reqBody := &postAuthReq{
@@ -188,7 +186,7 @@ func TestHandleAuth(t *testing.T) {
 		reqBodyBytes, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
 		req.Header.Set("user-agent", defaultUA)
-		req.Header.Set("origin", srv.rootURL)
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
 		w := httptest.NewRecorder()
 		srv.handleAuth(w, req)
 		resp := w.Result()

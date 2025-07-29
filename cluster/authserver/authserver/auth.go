@@ -142,20 +142,20 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	/*
-		{
-			hdr := r.Header.Get("Origin")
-			if hdr == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			if hdr != s.rootURL {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
+	{
+		hdr := r.Header.Get("X-Octelium-Origin")
+		if hdr == "" {
+			zap.L().Debug("X-Octelium-Origin header is not set")
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
-	*/
+
+		if hdr != s.rootURL {
+			zap.L().Debug("X-Octelium-Origin header does not match", zap.String("val", hdr))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	}
 
 	defer r.Body.Close()
 	b, err := io.ReadAll(r.Body)
@@ -182,6 +182,7 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Header.Get("user-agent") != req.UserAgent {
+		zap.L().Debug("user-agent header does not match")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
