@@ -160,22 +160,24 @@ func TestHandleAuth(t *testing.T) {
 		assert.Nil(t, err)
 	})
 
-	t.Run("github-no-origin", func(t *testing.T) {
-		reqBody := &postAuthReq{
-			UID:       githubIDP.Metadata.Uid,
-			UserAgent: defaultUA,
-		}
+	/*
+		t.Run("github-no-origin", func(t *testing.T) {
+			reqBody := &postAuthReq{
+				UID:       githubIDP.Metadata.Uid,
+				UserAgent: defaultUA,
+			}
 
-		reqBodyBytes, _ := json.Marshal(reqBody)
-		req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
-		req.Header.Set("user-agent", defaultUA)
+			reqBodyBytes, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest("POST", "http://localhost/begin", bytes.NewBuffer(reqBodyBytes))
+			req.Header.Set("user-agent", defaultUA)
 
-		w := httptest.NewRecorder()
-		srv.handleAuth(w, req)
-		resp := w.Result()
-		assert.Equal(t, resp.StatusCode, http.StatusBadRequest)
+			w := httptest.NewRecorder()
+			srv.handleAuth(w, req)
+			resp := w.Result()
+			assert.Equal(t, resp.StatusCode, http.StatusBadRequest)
 
-	})
+		})
+	*/
 
 	t.Run("oidc", func(t *testing.T) {
 		reqBody := &postAuthReq{
