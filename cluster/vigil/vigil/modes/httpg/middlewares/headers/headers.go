@@ -151,6 +151,12 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		req.Header.Set("X-Octelium-Req-Path", req.URL.Path)
 	}
 
+	if isManagedSvc {
+		if val := req.Header.Get("Origin"); val != "" {
+			req.Header.Set("X-Octelium-Origin", val)
+		}
+	}
+
 	if ucorev1.ToService(svc).IsKubernetes() && svcCfg != nil && svcCfg.GetKubernetes() != nil &&
 		svcCfg.GetKubernetes().GetBearerToken() != nil &&
 		svcCfg.GetKubernetes().GetBearerToken().GetFromSecret() != "" {
