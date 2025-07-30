@@ -106,6 +106,6 @@ func doFindAllStringSubmatch(L *lua.LState) int {
 
 func doReplaceAll(L *lua.LState) int {
 	reg := checkRegexp(L)
-	L.Push(lua.LString(reg.ReplaceAllString(L.CheckString(1), L.CheckString(2))))
+	L.Push(lua.LString(reg.ReplaceAllString(L.CheckString(2), L.CheckString(3))))
 	return 1
 }
