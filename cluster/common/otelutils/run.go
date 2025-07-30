@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/cluster/common/components/otelcore"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/log/global"
 	"go.uber.org/zap"
@@ -30,6 +31,10 @@ type otelErrorHandler struct {
 }
 
 func (h *otelErrorHandler) Handle(err error) {
+	switch {
+	case grpcerr.IsUnavailable(err):
+		return
+	}
 	zap.L().Debug("OTEL error", zap.Error(err))
 }
 
