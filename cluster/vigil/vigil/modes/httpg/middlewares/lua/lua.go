@@ -81,7 +81,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		if crw.statusCode > 0 {
-			crw.WriteHeader(crw.statusCode)
+			crw.ResponseWriter.WriteHeader(crw.statusCode)
 		}
 
 		{
