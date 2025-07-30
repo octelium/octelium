@@ -75,6 +75,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	cliutils.LineNotify("Upgrading the Cluster has started.\n")
+
 	return nil
 
 }
