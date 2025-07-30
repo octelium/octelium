@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -45,8 +46,15 @@ func TestMiddleware(t *testing.T) {
 	})
 
 	var rReq *http.Request
+
+	type tstResp struct {
+		Name string `json:"name,omitempty"`
+		Id   int    `json:"id,omitempty"`
+	}
+
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
+
 	})
 	celEngine, err := celengine.New(ctx, &celengine.Opts{})
 	assert.Nil(t, err)
@@ -57,6 +65,57 @@ func TestMiddleware(t *testing.T) {
 		OcteliumC:  tst.C.OcteliumC,
 		IsEmbedded: true,
 	})
+
+	{
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				DownstreamInfo: &corev1.RequestContext{
+					User:    usrT.Usr,
+					Session: usrT.Session,
+				},
+
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+								{
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+												Inline: `
+function onRequest(ctx)
+  octelium.req.setRequestHeader("X-User-Uid", ctx.user.metadata.uid)
+end
+
+function onResponse(ctx)
+end`,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}))
+
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		rw := httptest.NewRecorder()
+
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
+
+		resp := rw.Result()
+		assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+	}
 
 	{
 		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
@@ -114,6 +173,8 @@ end`,
 		bb, err := io.ReadAll(resp.Body)
 		assert.Nil(t, err)
 		resp.Body.Close()
+
+		zap.L().Debug("_________________", zap.String("uu", string(bb)))
 		usr := &corev1.User{}
 		err = pbutils.UnmarshalJSON(bb, usr)
 		assert.Nil(t, err)

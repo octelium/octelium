@@ -84,7 +84,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			crw.WriteHeader(crw.statusCode)
 		}
 
-		if crw.isSet {
+		{
+			crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
+			crw.ResponseWriter.Header().Del("Content-Encoding")
 			if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
 				zap.L().Warn("Could not write to lua crw", zap.Error(err))
 			}
@@ -166,6 +168,15 @@ func newResponseWriter(w http.ResponseWriter) *responseWriter {
 		headers:        make(http.Header),
 		body:           new(bytes.Buffer),
 	}
+}
+
+func (w *responseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	zap.L().Debug("____________________ WRITING", zap.String("cc", string(b)))
+	return w.body.Write(b)
 }
 
 func (m *middleware) compileLua(luaContent string) (*lua.FunctionProto, error) {
