@@ -30,6 +30,7 @@ func Register(L *lua.LState) int {
 	L.SetField(regexp_regexp_ud, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 		"match":                 doRegexpMatch,
 		"findAllStringSubmatch": doFindAllStringSubmatch,
+		"replaceAll":            doReplaceAll,
 	}))
 
 	L.Push(mod)
@@ -100,5 +101,11 @@ func doFindAllStringSubmatch(L *lua.LState) int {
 		result.Append(row)
 	}
 	L.Push(result)
+	return 1
+}
+
+func doReplaceAll(L *lua.LState) int {
+	reg := checkRegexp(L)
+	L.Push(lua.LString(reg.ReplaceAllString(L.CheckString(1), L.CheckString(2))))
 	return 1
 }
