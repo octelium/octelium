@@ -175,7 +175,6 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
-	zap.L().Debug("____________________ WRITING", zap.String("cc", string(b)))
 	return w.body.Write(b)
 }
 
