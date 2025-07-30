@@ -85,6 +85,19 @@ func (c *luaCtx) setResponseHeader(L *lua.LState) int {
 	return 0
 }
 
+func (c *luaCtx) deleteResponseHeader(L *lua.LState) int {
+	name := L.Get(1)
+
+	if name.Type() != lua.LTString {
+		L.Push(lua.LString("Header key is not a string"))
+		return 1
+	}
+
+	c.rw.headers.Del(name.String())
+
+	return 0
+}
+
 func (c *luaCtx) setResponseBody(L *lua.LState) int {
 
 	body := L.Get(1)

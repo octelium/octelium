@@ -80,13 +80,14 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		if crw.statusCode > 0 {
-			crw.ResponseWriter.WriteHeader(crw.statusCode)
-		}
-
 		{
 			crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
 			crw.ResponseWriter.Header().Del("Content-Encoding")
+
+			if crw.statusCode > 0 {
+				crw.ResponseWriter.WriteHeader(crw.statusCode)
+			}
+
 			if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
 				zap.L().Warn("Could not write to lua crw", zap.Error(err))
 			}
@@ -167,6 +168,7 @@ func newResponseWriter(w http.ResponseWriter) *responseWriter {
 		ResponseWriter: w,
 		headers:        make(http.Header),
 		body:           new(bytes.Buffer),
+		statusCode:     200,
 	}
 }
 

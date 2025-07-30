@@ -233,9 +233,10 @@ func (c *luaCtx) loadModuleReq(L *lua.LState) int {
 		"getRequestBody":      c.getRequestBody,
 		"deleteRequestHeader": c.deleteRequestHeader,
 
-		"setResponseHeader": c.setResponseHeader,
-		"setResponseBody":   c.setResponseBody,
-		"getResponseBody":   c.getResponseBody,
+		"setResponseHeader":    c.setResponseHeader,
+		"setResponseBody":      c.setResponseBody,
+		"getResponseBody":      c.getResponseBody,
+		"deleteResponseHeader": c.deleteResponseHeader,
 
 		"setQueryParam":    c.setQueryParam,
 		"getQueryParam":    c.getQueryParam,
