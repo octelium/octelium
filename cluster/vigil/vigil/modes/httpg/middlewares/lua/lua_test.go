@@ -88,6 +88,48 @@ func TestMiddleware(t *testing.T) {
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+												Inline: ``,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+
+		mdlwr.ServeHTTP(rw, req)
+
+		resp := rw.Result()
+		assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+	}
+
+	{
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				DownstreamInfo: &corev1.RequestContext{
+					User:    usrT.Usr,
+					Session: usrT.Session,
+				},
+
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+								{
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
 												Inline: `
 function onRequest(ctx)
   octelium.req.setRequestHeader("X-User-Uid", ctx.user.metadata.uid)
