@@ -26,8 +26,3 @@ func IsAnonymousMode(req *http.Request) bool {
 	svc := middlewares.GetCtxRequestContext(req.Context()).Service
 	return svc.Spec.IsAnonymous
 }
-
-func IsBuffered(req *http.Request) bool {
-	svc := middlewares.GetCtxRequestContext(req.Context()).Service
-	return svc.Spec.Config != nil && svc.Spec.Config.GetHttp() != nil && svc.Spec.Config.GetHttp().EnableRequestBuffering
-}

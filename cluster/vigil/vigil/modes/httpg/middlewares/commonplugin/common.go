@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"go.uber.org/zap"
 )
 
 type ShouldEnforcePluginOpts struct {
@@ -72,15 +73,16 @@ func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
 func MatchesPhase(plugin *corev1.Service_Spec_Config_HTTP_Plugin, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) bool {
 	switch phase {
 	case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
-		if plugin.Phase != corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH {
-			return false
-		}
+		return plugin.Phase == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
 	case corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
 		switch plugin.Phase {
 		case corev1.Service_Spec_Config_HTTP_Plugin_PHASE_UNSET, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
+			return true
 		default:
 			return false
 		}
+	default:
+		zap.L().Debug("Middleware Phase is unset. This should not happen in production")
+		return false
 	}
-	return true
 }
