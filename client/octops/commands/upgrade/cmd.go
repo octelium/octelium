@@ -16,6 +16,7 @@ package upgrade
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-version"
@@ -36,6 +37,7 @@ type args struct {
 	KubeContext        string
 	Version            string
 	CheckMode          bool
+	CheckModeClient    bool
 }
 
 var examples = `
@@ -61,7 +63,9 @@ func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.KubeContext, "kubecontext", "", "kubecontext")
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckMode, "check", false,
-		"Just check whether there is a more recent latest release without actually upgrading")
+		"Check whether there is a more recent latest release without actually upgrading the Cluster")
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckModeClient, "check-client", false,
+		"Check whether there is a more recent latest release for Octelium CLIs")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "", `The desired Octelium Cluster version. By default it is set to "latest"`)
 }
 
@@ -71,8 +75,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	clusterDomain := args[0]
 
-	if cmdArgs.CheckMode {
+	switch {
+	case cmdArgs.CheckMode:
 		return doCheck(ctx, clusterDomain)
+	case cmdArgs.CheckModeClient:
+		return doCheckClient(ctx)
 	}
 
 	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
@@ -116,18 +123,7 @@ func doCheck(ctx context.Context, domain string) error {
 		return err
 	}
 
-	resp, err := resty.New().SetDebug(ldflags.IsDev()).
-		R().
-		Get("https://raw.githubusercontent.com/octelium/octelium/refs/heads/main/unsorted/latest_release")
-	if err != nil {
-		return err
-	}
-
-	if !resp.IsSuccess() {
-		return errors.Errorf("Could not get latest Cluster version release")
-	}
-
-	latestVersion, err := version.NewSemver(string(resp.Body()))
+	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
 		return err
 	}
@@ -151,4 +147,53 @@ func doCheck(ctx context.Context, domain string) error {
 	cliutils.LineNotify("Latest Cluster Version: %s.\n", latestVersion.String())
 
 	return nil
+}
+
+func doCheckClient(ctx context.Context) error {
+
+	latestVersion, err := getLatestVersion(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentVersion, err := version.NewSemver(ldflags.SemVer)
+	if err != nil {
+		return err
+	}
+
+	if latestVersion.LessThanOrEqual(currentVersion) {
+		cliutils.LineNotify("Your client version is up-to-date.\n")
+		return nil
+	}
+
+	cliutils.LineNotify("Current Client Version: %s.\n", currentVersion.String())
+	cliutils.LineNotify("Latest Client Version: %s.\n", latestVersion.String())
+	cliutils.LineNotify("Your Octelium CLIs can be upgraded using the following command:\n")
+
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		cliutils.LineNotify("curl -fsSL https://octelium.com/install.sh | bash\n")
+	case "windows":
+		cliutils.LineNotify("iwr https://octelium.com/install.ps1 -useb | iex\n")
+	default:
+		return errors.Errorf("Unsupported OS platform")
+	}
+
+	return nil
+}
+
+func getLatestVersion(ctx context.Context) (*version.Version, error) {
+	resp, err := resty.New().SetDebug(ldflags.IsDev()).
+		R().
+		SetContext(ctx).
+		Get("https://raw.githubusercontent.com/octelium/octelium/refs/heads/main/unsorted/latest_release")
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.IsSuccess() {
+		return nil, errors.Errorf("Could not get latest Octelium version release")
+	}
+
+	return version.NewSemver(string(resp.Body()))
 }
