@@ -31,27 +31,29 @@ func Register(L *lua.LState) int {
 }
 
 var fns = map[string]lua.LGFunction{
-	"upper":       doUpper,
-	"toUpper":     doUpper,
-	"lower":       doLower,
-	"toLower":     doLower,
-	"hasSuffix":   doHasSuffix,
-	"hasPrefix":   doHasPrefix,
-	"trimSpace":   doTrimSpace,
-	"contains":    doContains,
-	"containsAny": doContainsAny,
-	"count":       doCount,
-	"replace":     doReplace,
-	"replaceAll":  doReplaceAll,
-	"split":       doSplit,
-	"trim":        doTrim,
-	"trimPrefix":  doTrimPrefix,
-	"trimSuffix":  doTrimSuffix,
-	"join":        doJoin,
-	"compare":     doCompare,
-	"len":         doLen,
-	"lenUnicode":  doLenUnicode,
-	"index":       doIndex,
+	"upper":           doUpper,
+	"toUpper":         doUpper,
+	"lower":           doLower,
+	"toLower":         doLower,
+	"hasSuffix":       doHasSuffix,
+	"hasPrefix":       doHasPrefix,
+	"trimSpace":       doTrimSpace,
+	"contains":        doContains,
+	"containsAny":     doContainsAny,
+	"count":           doCount,
+	"replace":         doReplace,
+	"replaceAll":      doReplaceAll,
+	"split":           doSplit,
+	"trim":            doTrim,
+	"trimPrefix":      doTrimPrefix,
+	"trimSuffix":      doTrimSuffix,
+	"join":            doJoin,
+	"compare":         doCompare,
+	"len":             doLen,
+	"lenUnicode":      doLenUnicode,
+	"index":           doIndex,
+	"truncate":        doTruncate,
+	"truncateUnicode": doTruncateUnicode,
 }
 
 func doUpper(L *lua.LState) int {
@@ -167,4 +169,36 @@ func doJoin(L *lua.LState) int {
 func doIndex(L *lua.LState) int {
 	L.Push(lua.LNumber(strings.Index(L.CheckString(1), L.CheckString(2))))
 	return 1
+}
+
+func doTruncate(L *lua.LState) int {
+	str := L.CheckString(1)
+	truncateLen := L.CheckInt(2)
+
+	L.Push(lua.LString(_doTruncate(str, truncateLen)))
+	return 1
+}
+
+func doTruncateUnicode(L *lua.LState) int {
+	str := L.CheckString(1)
+	truncateLen := L.CheckInt(2)
+
+	L.Push(lua.LString(_doTruncateUnicode(str, truncateLen)))
+	return 1
+}
+
+func _doTruncate(s string, maxBytes int) string {
+	if len(s) > maxBytes {
+		return s[:maxBytes]
+	}
+	return s
+}
+
+func _doTruncateUnicode(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes])
+	}
+
+	return s
 }
