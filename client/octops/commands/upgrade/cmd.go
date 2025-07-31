@@ -142,9 +142,13 @@ func doCheck(ctx context.Context, domain string) error {
 	zap.L().Debug("Current release", zap.String("version", currentVersion.String()))
 
 	if latestVersion.LessThanOrEqual(currentVersion) {
-		cliutils.LineNotify("No Cluster upgraded is needed.\n")
+		cliutils.LineNotify("No Cluster upgrade is needed.\n")
 		return nil
 	}
+
+	cliutils.LineNotify("Cluster can be upgraded\n")
+	cliutils.LineNotify("Current Cluster Version: %s.\n", currentVersion.String())
+	cliutils.LineNotify("Latest Cluster Version: %s.\n", latestVersion.String())
 
 	return nil
 }
