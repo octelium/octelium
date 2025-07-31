@@ -2124,6 +2124,7 @@ func TestLua(t *testing.T) {
 function onResponse(ctx)
   octelium.req.setResponseHeader("Content-Encoding", "application/json")
   octelium.req.setResponseBody(json.encode(ctx.user))
+  octelium.req.setStatusCode(218)
 end
 																`,
 										},
@@ -2213,6 +2214,7 @@ end
 		Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
 	assert.Nil(t, err, "%+v", err)
 	assert.True(t, resp.IsSuccess())
+	assert.Equal(t, 218, resp.StatusCode())
 
 }
 
@@ -2274,7 +2276,7 @@ function onRequest(ctx)
     local resp = {}
 	resp.uid = ctx.user.metadata.uid
 	octelium.req.setResponseBody(json.encode(resp))
-    octelium.req.exit(200)
+    octelium.req.exit(400)
   end
 end
 																`,
@@ -2378,6 +2380,7 @@ end
 		res := make(map[string]any)
 		err = json.Unmarshal(resp.Body(), &res)
 		assert.Nil(t, err)
+		assert.Equal(t, 400, resp.StatusCode())
 
 		assert.Equal(t, usr.Usr.Metadata.Uid, res["uid"].(string))
 	}

@@ -83,23 +83,23 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, plugin := range cfg.GetHttp().Plugins {
-		if plugin.IsDisabled {
-			continue
-		}
-
-		if !commonplugin.MatchesPhase(plugin, m.phase) {
-			continue
-		}
-
-		if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
-			Plugin:    plugin,
-			CELEngine: m.celEngine,
-		}) {
-			continue
-		}
-
 		switch plugin.Type.(type) {
 		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
+			if plugin.IsDisabled {
+				continue
+			}
+
+			if !commonplugin.MatchesPhase(plugin, m.phase) {
+				continue
+			}
+
+			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
+				Plugin:    plugin,
+				CELEngine: m.celEngine,
+			}) {
+				continue
+			}
+
 			c, err := m.getClient(plugin.GetExtProc())
 			if err != nil {
 				continue
@@ -125,6 +125,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		default:
 			continue
 		}
+	}
+
+	if len(clientInfos) == 0 {
+		m.next.ServeHTTP(rw, req)
+		return
 	}
 
 	headers := &envoycore.HeaderMap{}
