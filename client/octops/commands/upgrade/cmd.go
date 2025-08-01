@@ -16,7 +16,9 @@ package upgrade
 
 import (
 	"context"
+	"os"
 	"runtime"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-version"
@@ -38,6 +40,7 @@ type args struct {
 	Version            string
 	CheckMode          bool
 	CheckModeClient    bool
+	Wait               bool
 }
 
 var examples = `
@@ -66,7 +69,11 @@ func init() {
 		"Check whether there is a more recent latest release without actually upgrading the Cluster")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckModeClient, "check-client", false,
 		"Check whether there is a more recent latest release for Octelium CLIs")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "", `The desired Octelium Cluster version. By default it is set to "latest"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "",
+		`The desired Octelium Cluster version. By default it is set to "latest"`)
+
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.Wait, "wait", false,
+		"Wait until the upgrade is complete")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -102,6 +109,43 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	cliutils.LineNotify("Upgrading the Cluster has started.\n")
 
+	if cmdArgs.Wait {
+		s := cliutils.NewSpinner(os.Stdout)
+		s.SetSuffix("Waiting for the Cluster upgrade to finish")
+		s.Start()
+
+		conn, err := client.GetGRPCClientConn(ctx, clusterDomain)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		c := corev1.NewMainServiceClient(conn)
+
+		versionInit, err := getCurrentClusterVersion(ctx, c)
+		if err != nil {
+			return err
+		}
+
+		for range 1000 {
+			versionCurrent, err := getCurrentClusterVersion(ctx, c)
+			if err == nil && !versionCurrent.Equal(versionInit) {
+				s.Stop()
+				cliutils.LineNotify("Cluster has been upgraded.\n")
+				return nil
+			} else if err != nil {
+				zap.L().Debug("Could not getCurrentClusterVersion", zap.Error(err))
+			} else {
+				zap.L().Debug("Versions still match",
+					zap.String("current", versionCurrent.String()),
+					zap.String("init", versionInit.String()))
+			}
+			time.Sleep(1 * time.Second)
+		}
+
+		s.Stop()
+	}
+
 	return nil
 
 }
@@ -116,13 +160,6 @@ func doCheck(ctx context.Context, domain string) error {
 
 	c := corev1.NewMainServiceClient(conn)
 
-	rgn, err := c.GetRegion(ctx, &metav1.GetOptions{
-		Name: "default",
-	})
-	if err != nil {
-		return err
-	}
-
 	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
 		return err
@@ -130,9 +167,9 @@ func doCheck(ctx context.Context, domain string) error {
 
 	zap.L().Debug("Latest release", zap.String("version", latestVersion.String()))
 
-	currentVersion, err := version.NewSemver(rgn.Status.Version)
+	currentVersion, err := getCurrentClusterVersion(ctx, c)
 	if err != nil {
-		return errors.Errorf("Could not parse current Cluster version. Not a semVer release: %s", rgn.Status.Version)
+		return errors.Errorf("Could not parse current Cluster version. Possibly not a production semVer release")
 	}
 
 	zap.L().Debug("Current release", zap.String("version", currentVersion.String()))
@@ -196,4 +233,15 @@ func getLatestVersion(ctx context.Context) (*version.Version, error) {
 	}
 
 	return version.NewSemver(string(resp.Body()))
+}
+
+func getCurrentClusterVersion(ctx context.Context, c corev1.MainServiceClient) (*version.Version, error) {
+	rgn, err := c.GetRegion(ctx, &metav1.GetOptions{
+		Name: "default",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return version.NewSemver(rgn.Status.Version)
 }
