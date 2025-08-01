@@ -59,6 +59,7 @@ accepts both single yaml files and directories. For the case of directories, all
 `,
 
 	Example: examples,
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
