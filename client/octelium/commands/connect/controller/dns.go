@@ -170,12 +170,14 @@ func (c *Controller) _doSetDNSResolvConf(initOpts *resolvConfOpts) error {
 
 	opts.Nameservers = append(opts.Nameservers, initOpts.Nameservers...)
 	opts.SearchDomains = append(opts.SearchDomains, initOpts.SearchDomains...)
-	opts.Options = append(opts.Options, initOpts.Options...)
+	// opts.Options = append(opts.Options, initOpts.Options...)
 
 	resolvConfStr, err := generateResolvConf(opts)
 	if err != nil {
 		return errors.Errorf("Could not generate resolv.conf file: %+v", err)
 	}
+
+	zap.L().Debug("Setting resolv.conf", zap.String("content", resolvConfStr))
 
 	if err := os.WriteFile("/etc/resolv.conf", []byte(resolvConfStr), 0644); err != nil {
 		return errors.Errorf("Could not write to /etc/resolv.conf: %+v", err)
