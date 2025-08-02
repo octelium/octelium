@@ -105,11 +105,21 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 		}
 
 		if _, err := rscSrv.GetDB().ExecContext(ctx, `TRUNCATE TABLE octelium_resources`); err != nil {
-			zap.L().Error("Could not truncate the octelium_resources table", zap.Error(err))
+			zap.L().Warn("Could not truncate the octelium_resources table", zap.Error(err))
 		}
 
-		if err := rscSrv.GetRedisC().FlushDB(ctx).Err(); err != nil {
-			zap.L().Debug("Could not Redis flushDB", zap.Error(err))
+		redisC := rscSrv.GetRedisC()
+		if err := redisC.FlushDB(ctx).Err(); err != nil {
+			zap.L().Debug("Could not do Redis flushDB. Trying to manually delete keys", zap.Error(err))
+
+			keys, err := redisC.Keys(ctx, "*").Result()
+			if err == nil {
+				if err := redisC.Del(ctx, keys...).Err(); err != nil {
+					zap.L().Warn("Could not delete Redis database keys", zap.Error(err))
+				}
+			} else {
+				zap.L().Warn("Could not fetch current Redis keys", zap.Error(err))
+			}
 		}
 
 		clusterCfgI, err := rscSrv.CreateResource(ctx,
