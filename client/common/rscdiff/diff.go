@@ -67,7 +67,7 @@ func (c *diffCtl) getFullName(itm umetav1.ResourceObjectI) string {
 }
 
 func DiffCoreResource(ctx context.Context,
-	kind string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete bool) error {
+	kind string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete bool) (*DiffCtlResponse, error) {
 	ctl, err := NewDiffCtl("core", kind, corev1.NewMainServiceClient(conn),
 		func() (umetav1.ResourceObjectI, error) {
 			return ucorev1.NewObject(kind)
@@ -75,8 +75,9 @@ func DiffCoreResource(ctx context.Context,
 			return ucorev1.NewObjectListOptions(kind)
 		}, desiredItems, doDelete)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
 	return ctl.Run(ctx)
 }
 
@@ -120,10 +121,17 @@ func NewDiffCtl(api, kind string, client any,
 	}, nil
 }
 
-func (c *diffCtl) Run(ctx context.Context) error {
+type DiffCtlResponse struct {
+	CountCreated int
+	CountUpdated int
+	CountDeleted int
+}
 
+func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
+
+	ret := &DiffCtlResponse{}
 	if err := c.setCurrentItems(ctx); err != nil {
-		return err
+		return nil, err
 	}
 
 	c.setDiff()
@@ -134,8 +142,9 @@ func (c *diffCtl) Run(ctx context.Context) error {
 				cliutils.LineWarn("Could not create Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
 				continue
 			}
-			return err
+			return nil, err
 		}
+		ret.CountCreated += 1
 		cliutils.LineNotify("%s %s created\n", c.kind, itm.GetMetadata().Name)
 	}
 
@@ -145,8 +154,9 @@ func (c *diffCtl) Run(ctx context.Context) error {
 				cliutils.LineWarn("Could not update Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
 				continue
 			}
-			return err
+			return nil, err
 		}
+		ret.CountUpdated += 1
 		cliutils.LineNotify("%s %s updated\n", c.kind, itm.GetMetadata().Name)
 	}
 
@@ -156,13 +166,14 @@ func (c *diffCtl) Run(ctx context.Context) error {
 				if grpcerr.IsNotFound(err) {
 					continue
 				}
-				return err
+				return nil, err
 			}
+			ret.CountDeleted += 1
 			cliutils.LineNotify("%s %s deleted\n", c.kind, itm.GetMetadata().Name)
 		}
 	}
 
-	return nil
+	return ret, nil
 }
 
 func isUserError(err error) bool {

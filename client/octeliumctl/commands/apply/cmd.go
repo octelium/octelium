@@ -110,9 +110,15 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	zap.L().Debug("All available resource kinds set for diff", zap.Strings("kinds", allKinds))
 
+	totalDiffResp := &rscdiff.DiffCtlResponse{}
+
 	for _, kindRsc := range allKinds {
-		if err := rscdiff.DiffCoreResource(ctx, kindRsc, conn, resources, doDelete); err != nil {
+		if resp, err := rscdiff.DiffCoreResource(ctx, kindRsc, conn, resources, doDelete); err != nil {
 			return err
+		} else {
+			totalDiffResp.CountCreated += resp.CountCreated
+			totalDiffResp.CountUpdated += resp.CountUpdated
+			totalDiffResp.CountDeleted += resp.CountDeleted
 		}
 	}
 
@@ -125,6 +131,21 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}()
 
+	if totalDiffResp.CountCreated+totalDiffResp.CountUpdated+totalDiffResp.CountDeleted > 0 {
+		cliutils.LineNotify("Cluster Core resources successfully applied\n")
+		if totalDiffResp.CountCreated > 0 {
+			cliutils.LineInfo(" %d resources created\n", totalDiffResp.CountCreated)
+		}
+		if totalDiffResp.CountUpdated > 0 {
+			cliutils.LineInfo(" %d resources updated\n", totalDiffResp.CountUpdated)
+		}
+		if totalDiffResp.CountDeleted > 0 {
+			cliutils.LineInfo(" %d resources deleted\n", totalDiffResp.CountDeleted)
+		}
+	} else {
+		cliutils.LineNotify("No applied changes in Cluster Core resources\n")
+	}
+
 	if cc != nil {
 		curCC, err := client.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
 		if err != nil {
@@ -134,11 +155,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			if _, err := client.UpdateClusterConfig(ctx, cc); err != nil {
 				return err
 			}
-			cliutils.LineNotify("\n Cluster Configuration update\n")
+			cliutils.LineNotify("\n ClusterConfig updated\n")
 		}
 	}
-
-	cliutils.LineNotify("Cluster Core resources successfully applied\n")
 
 	return nil
 }
