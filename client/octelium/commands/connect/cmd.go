@@ -198,5 +198,11 @@ func runDetached(cmd *cobra.Command, domain string) error {
 		args = append(args, "--homedir", vHome)
 	}
 
-	return doRunDetached(args)
+	if err := doRunDetached(args); err != nil {
+		return err
+	}
+
+	cliutils.LineNotify("Octelium has started running in detached mode.\n")
+
+	return nil
 }

@@ -17,7 +17,6 @@ package cliutils
 import (
 	"context"
 	"os"
-	"path"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -36,8 +35,7 @@ func PreRun(cmd *cobra.Command, args []string) error {
 	cmd.SetContext(context.Background())
 
 	if cmd.Flags() != nil && cmd.Flags().Lookup("homedir") != nil && cmd.Flags().Lookup("homedir").Value.String() != "" {
-		oPath := path.Join(cmd.Flags().Lookup("homedir").Value.String(), "octelium.db")
-		if err := OpenDB(oPath); err != nil {
+		if err := OpenDB(cmd.Flags().Lookup("homedir").Value.String()); err != nil {
 			return err
 		}
 	} else {

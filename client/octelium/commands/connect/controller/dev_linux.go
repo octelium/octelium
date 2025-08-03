@@ -34,10 +34,11 @@ import (
 )
 
 func (c *Controller) doInitDev(ctx context.Context) error {
-	zap.S().Debugf("Initializing dev")
+	zap.L().Debug("Initializing dev")
 
 	if c.c.Preferences.LinuxPrefs.EnforceImplementationMode {
-		zap.S().Debugf("Enforcing WireGuard mode: %s", c.c.Preferences.LinuxPrefs.ImplementationMode)
+		zap.L().Debug("Enforcing WireGuard mode",
+			zap.String("mode", c.c.Preferences.LinuxPrefs.ImplementationMode.String()))
 		switch c.c.Preferences.LinuxPrefs.ImplementationMode {
 		case cliconfigv1.Connection_Preferences_Linux_WG_KERNEL:
 			return c.doInitDevKernel()
@@ -52,20 +53,20 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 
 	if !c.isQUIC {
 		if err := c.doInitDevKernel(); err == nil {
-			zap.S().Debugf("WG mode chosen: kernel")
+			zap.L().Debug("WG mode chosen: kernel")
 			return nil
 		} else {
 			c.c.Preferences.LinuxPrefs.ImplementationMode = cliconfigv1.Connection_Preferences_Linux_WG_USERSPACE
-			zap.S().Warnf("Could not init kernel implementation: %s. Trying userspace.", err)
+			zap.L().Debug("Could not init kernel implementation. Trying userspace.", zap.Error(err))
 		}
 	}
 	{
 		if err := c.doInitDevTUN(ctx); err == nil {
-			zap.S().Debugf("WG mode chosen: TUN mode")
+			zap.L().Debug("WG mode chosen: TUN mode")
 			return nil
 		} else {
 			c.c.Preferences.LinuxPrefs.ImplementationMode = cliconfigv1.Connection_Preferences_Linux_WG_NETSTACK
-			zap.S().Warnf("Could not init userspace implementation: %s. Trying gVisor netstack mode.", err)
+			zap.L().Debug("Could not init userspace implementation. Trying gVisor netstack mode.", zap.Error(err))
 		}
 	}
 
@@ -82,14 +83,14 @@ func (c *Controller) prepareTUN() error {
 	zap.S().Debugf("Checking whether /dev/net/tun exists")
 	_, err := os.Stat("/dev/net/tun")
 	if err == nil {
-		zap.S().Debugf("/dev/net/tun exists. No mknod needed")
+		zap.L().Debug("/dev/net/tun exists. No mknod needed")
 		return nil
 	}
 	if !os.IsNotExist(err) {
 		return err
 	}
 
-	zap.S().Debugf("mknoding /dev/net/tun")
+	zap.L().Debug("mknoding /dev/net/tun")
 
 	cmds := []string{
 		"mkdir -p /dev/net",
@@ -148,7 +149,7 @@ func (c *Controller) doSetDevUp() error {
 		return nil
 	}
 
-	zap.S().Debugf("Setting dev up")
+	zap.L().Debug("Setting dev up")
 	link := newWgLink(c.c.Preferences.DeviceName, c.getMTU())
 
 	if err := netlink.LinkSetUp(link); err != nil {
@@ -162,7 +163,7 @@ func (c *Controller) doDeleteDev() error {
 		return nil
 	}
 
-	zap.S().Debugf("Deleting dev")
+	zap.L().Debug("Deleting dev")
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func (c *Controller) doSetDevAddrs() error {
 		return nil
 	}
 
-	zap.S().Debugf("Setting dev addresses")
+	zap.L().Debug("Setting dev addresses")
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
 	if err != nil {
 		return err

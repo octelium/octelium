@@ -599,12 +599,12 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	cliutils.LineNotify("Connected successfully...\n")
 	select {
 	case <-ctx.Done():
-		zap.S().Infof("Received shutdown signal")
+		zap.L().Debug("Received shutdown signal")
 	case err := <-ctl.stateController.getConnErrCh:
 		needsReconnect = true
 		retErr = errors.Errorf("Abruptly disconnected by API Server: %s", err)
 	case <-ctl.stateController.apiserverDisconnectCh:
-		zap.S().Infof("Disconnected by API Server")
+		zap.L().Debug("Disconnected by API Server")
 	}
 
 	ctl.close()
