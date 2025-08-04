@@ -27,13 +27,13 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/sshutils"
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -43,7 +43,7 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 	sess *corev1.Session, cc *corev1.ClusterConfig, privK wgtypes.Key, ed25519Priv ed25519.PrivateKey) (*userv1.ConnectResponse, error) {
 
 	if sess.Status == nil || sess.Status.Connection == nil {
-		return nil, errors.Errorf("Conn not set in Session")
+		return nil, grpcutils.InvalidArg("Conn not set in Session")
 	}
 
 	conn := sess.Status.Connection
@@ -146,7 +146,8 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 				},
 			},
 		})
-	} else if !grpcerr.IsNotFound(err) {
+	} else {
+		zap.L().Warn("Could not do GetCAPublicKey", zap.Error(err))
 		return nil, serr.InternalWithErr(err)
 	}
 
