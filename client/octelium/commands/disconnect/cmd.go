@@ -34,12 +34,14 @@ octelium disconnect
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
+
+	ctx := cmd.Context()
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -47,6 +49,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := userv1.NewMainServiceClient(conn)
 
-	_, err = c.Disconnect(cmd.Context(), &userv1.DisconnectRequest{})
-	return err
+	if _, err = c.Disconnect(ctx, &userv1.DisconnectRequest{}); err != nil {
+		return err
+	}
+
+	cliutils.LineInfo("You're now disconnected.\n")
+	return nil
 }
