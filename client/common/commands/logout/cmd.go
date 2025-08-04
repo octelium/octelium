@@ -56,7 +56,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Second)
 	defer cancel()
 
 	if err := cliutils.GetDB().Delete(i.Domain); err != nil {
@@ -69,7 +69,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := c.C().Logout(ctx, &authv1.LogoutRequest{}); err != nil {
-		return err
+		zap.L().Warn("Could not call logout", zap.Error(err))
 	}
 
 	cliutils.LineInfo("You are now logged out.\n")
