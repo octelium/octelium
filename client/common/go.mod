@@ -7,9 +7,11 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/fatih/color v1.18.0
 	github.com/ghodss/yaml v1.0.0
+	github.com/go-resty/resty/v2 v2.16.5
 	github.com/gofrs/flock v0.8.1
 	github.com/google/go-attestation v0.5.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
+	github.com/hashicorp/go-version v1.2.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/octelium-go v0.0.0-00010101000000-000000000000

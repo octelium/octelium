@@ -17,7 +17,6 @@ package upgrade
 import (
 	"context"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -39,7 +38,6 @@ type args struct {
 	KubeContext        string
 	Version            string
 	CheckMode          bool
-	CheckModeClient    bool
 	Wait               bool
 }
 
@@ -67,8 +65,6 @@ func init() {
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckMode, "check", false,
 		"Check whether there is a more recent latest release without actually upgrading the Cluster")
-	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckModeClient, "check-client", false,
-		"Check whether there is a more recent latest release for Octelium CLIs")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "",
 		`The desired Octelium Cluster version. By default it is set to "latest"`)
 
@@ -85,8 +81,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	switch {
 	case cmdArgs.CheckMode:
 		return doCheck(ctx, clusterDomain)
-	case cmdArgs.CheckModeClient:
-		return doCheckClient(ctx)
 	}
 
 	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
@@ -182,39 +176,6 @@ func doCheck(ctx context.Context, domain string) error {
 	cliutils.LineNotify("Cluster can be upgraded\n")
 	cliutils.LineNotify("Current Cluster Version: %s.\n", currentVersion.String())
 	cliutils.LineNotify("Latest Cluster Version: %s.\n", latestVersion.String())
-
-	return nil
-}
-
-func doCheckClient(ctx context.Context) error {
-
-	latestVersion, err := getLatestVersion(ctx)
-	if err != nil {
-		return err
-	}
-
-	currentVersion, err := version.NewSemver(ldflags.SemVer)
-	if err != nil {
-		return err
-	}
-
-	if latestVersion.LessThanOrEqual(currentVersion) {
-		cliutils.LineNotify("Your client version is up-to-date.\n")
-		return nil
-	}
-
-	cliutils.LineNotify("Current Client Version: %s.\n", currentVersion.String())
-	cliutils.LineNotify("Latest Client Version: %s.\n", latestVersion.String())
-	cliutils.LineNotify("Your Octelium CLIs can be upgraded using the following command:\n")
-
-	switch runtime.GOOS {
-	case "linux", "darwin":
-		cliutils.LineNotify("curl -fsSL https://octelium.com/install.sh | bash\n")
-	case "windows":
-		cliutils.LineNotify("iwr https://octelium.com/install.ps1 -useb | iex\n")
-	default:
-		return errors.Errorf("Unsupported OS platform")
-	}
 
 	return nil
 }
