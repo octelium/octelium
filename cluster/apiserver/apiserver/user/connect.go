@@ -85,7 +85,7 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		return serr.InternalWithErr(err)
 	}
 
-	zap.S().Debugf("starting the loop for conn state for %s", i.Session.Metadata.Name)
+	zap.L().Debug("Starting the connect loop", zap.String("sessionName", i.Session.Metadata.Name))
 
 	tickerCh := time.NewTicker(5 * time.Minute)
 	defer tickerCh.Stop()
@@ -98,28 +98,35 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 	for {
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("Exiting GetConnectionState for connection %s. err: %+v",
-				i.Session.Metadata.Name, ctx.Err())
+			zap.L().Debug("Exiting GetConnectionState",
+				zap.String("sessName", i.Session.Metadata.Name), zap.Error(ctx.Err()))
 			return nil
 		case <-tickerCh.C:
 			if sess, err := s.octeliumC.CoreC().GetSession(ctx,
 				&rmetav1.GetOptions{Uid: i.Session.Metadata.Uid}); err == nil {
-				sess.Status.Connection.LastSeenAt = pbutils.Now()
-				if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-					if grpcerr.IsNotFound(err) {
-						return nil
-					}
 
-					zap.L().Error("Could not update Session after updating lastSeen",
-						zap.String("uid", i.Session.Metadata.Uid), zap.Error(err))
+				if sess.Status.Connection != nil {
+					sess.Status.Connection.LastSeenAt = pbutils.Now()
+					if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+						if grpcerr.IsNotFound(err) {
+							return nil
+						}
+
+						zap.L().Error("Could not update Session after updating lastSeen",
+							zap.String("uid", i.Session.Metadata.Uid), zap.Error(err))
+					}
+				} else {
+					zap.L().Debug("Session's Connection is nil. Exiting the loop")
+					return nil
 				}
+
 			} else {
 				if grpcerr.IsNotFound(err) {
 					return nil
 				}
 
 				zap.L().Error("Could not get Session to update lastSeen",
-					zap.String("uid", i.Session.Metadata.Uid), zap.Error(err))
+					zap.String("name", i.Session.Metadata.Name), zap.Error(err))
 			}
 
 		}
