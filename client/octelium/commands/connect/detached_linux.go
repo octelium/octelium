@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -35,19 +34,19 @@ func doRunDetached(args []string) error {
 	octeliumCmd = append(octeliumCmd, args...)
 
 	zap.L().Debug("running systemd-run")
-	usr, err := user.Current()
-	if err != nil {
-		return err
-	}
 
 	cmd := []string{"systemd-run"}
 	cmd = append(cmd, "-p", "User=root")
-	cmd = append(cmd, "-p", fmt.Sprintf(`Environment="OCTELIUM_USER_HOME=%s"`, usr.HomeDir))
 	cmd = append(cmd, "-p", `Restart=on-failure`)
+
+	env := getDetachedModeEnvVars()
+	for k, v := range env {
+		cmd = append(cmd, "-p", fmt.Sprintf(`Environment="%s=%s"`, k, v))
+	}
 
 	cmd = append(cmd, octeliumCmd...)
 
-	zap.S().Debugf("running detached octelium `%s`", strings.Join(cmd, " "))
+	zap.L().Debug("running detached octelium ", zap.String("cmd", strings.Join(cmd, " ")))
 
 	if b, err := exec.Command("sudo", cmd...).CombinedOutput(); err != nil {
 		return errors.Errorf("Could not execute systemd-run %s. %+v", string(b), err)

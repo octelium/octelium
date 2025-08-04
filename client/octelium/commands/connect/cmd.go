@@ -17,6 +17,8 @@ package connect
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -205,4 +207,23 @@ func runDetached(cmd *cobra.Command, domain string) error {
 	cliutils.LineNotify("Octelium has started running in detached mode.\n")
 
 	return nil
+}
+
+func getDetachedModeEnvVars() map[string]string {
+	ret := make(map[string]string)
+
+	env := os.Environ()
+
+	for _, envVar := range env {
+		if !strings.HasPrefix(envVar, "OCTELIUM_") {
+			continue
+		}
+
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 {
+			ret[parts[0]] = parts[1]
+		}
+	}
+
+	return ret
 }

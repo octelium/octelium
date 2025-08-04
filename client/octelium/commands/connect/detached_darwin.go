@@ -16,7 +16,6 @@ package connect
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,7 +35,7 @@ func doRunDetached(args []string) error {
 	cmd := []string{executable}
 	cmd = append(cmd, args...)
 
-	tmpfile, err := ioutil.TempFile("", "octelium-detached")
+	tmpfile, err := os.CreateTemp("", "octelium-detached")
 	if err != nil {
 		return err
 	}
@@ -52,7 +51,7 @@ func doRunDetached(args []string) error {
 		return err
 	}
 
-	if err := ioutil.WriteFile(tempfPath, scriptContent, 0700); err != nil {
+	if err := os.WriteFile(tempfPath, scriptContent, 0700); err != nil {
 		return err
 	}
 
