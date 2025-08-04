@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +83,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Request: reqCtx.DownstreamRequest,
 	})
 	if err != nil {
+		if grpcerr.IsCanceled(err) || grpcerr.IsDeadlineExceeded(err) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		zap.L().Error("Could not do AuthenticateAndAuthorize", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
