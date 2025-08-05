@@ -101,11 +101,14 @@ func doCheckClient(ctx context.Context) error {
 
 	if latestVersion.LessThanOrEqual(currentVersion) {
 		cliutils.LineNotify("Your client version is up-to-date.\n")
+		cliutils.LineNotify("Current Client Version: %s\n", currentVersion.String())
+		cliutils.LineNotify("Latest Client Version: %s\n", latestVersion.String())
 		return nil
 	}
 
-	cliutils.LineNotify("Current Client Version: %s.\n", currentVersion.String())
-	cliutils.LineNotify("Latest Client Version: %s.\n", latestVersion.String())
+	cliutils.LineNotify("Current Client Version: %s\n", currentVersion.String())
+	cliutils.LineNotify("Latest Client Version: %s\n", latestVersion.String())
+
 	cliutils.LineNotify("Your Octelium CLIs can be upgraded using the following command:\n")
 
 	switch runtime.GOOS {

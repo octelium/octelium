@@ -104,10 +104,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	cliutils.LineNotify("Upgrading the Cluster has started.\n")
 
 	if cmdArgs.Wait {
-		s := cliutils.NewSpinner(os.Stdout)
-		s.SetSuffix("Waiting for the Cluster upgrade to finish")
-		s.Start()
-
 		conn, err := client.GetGRPCClientConn(ctx, clusterDomain)
 		if err != nil {
 			return err
@@ -121,6 +117,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		s := cliutils.NewSpinner(os.Stdout)
+		s.SetSuffix("Waiting for the Cluster upgrade to finish")
+		s.Start()
 		for range 1000 {
 			versionCurrent, err := getCurrentClusterVersion(ctx, c)
 			if err == nil && !versionCurrent.Equal(versionInit) {
@@ -136,7 +135,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			}
 			time.Sleep(1 * time.Second)
 		}
-
+		cliutils.LineWarn("Could not check of the Cluster upgrade\n")
 		s.Stop()
 	}
 
@@ -170,12 +169,14 @@ func doCheck(ctx context.Context, domain string) error {
 
 	if latestVersion.LessThanOrEqual(currentVersion) {
 		cliutils.LineNotify("No Cluster upgrade is needed.\n")
+		cliutils.LineNotify("Current Cluster Version: %s\n", currentVersion.String())
+		cliutils.LineNotify("Latest Cluster Version: %s\n", latestVersion.String())
 		return nil
 	}
 
 	cliutils.LineNotify("Cluster can be upgraded\n")
-	cliutils.LineNotify("Current Cluster Version: %s.\n", currentVersion.String())
-	cliutils.LineNotify("Latest Cluster Version: %s.\n", latestVersion.String())
+	cliutils.LineNotify("Current Cluster Version: %s\n", currentVersion.String())
+	cliutils.LineNotify("Latest Cluster Version: %s\n", latestVersion.String())
 
 	return nil
 }
