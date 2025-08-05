@@ -151,32 +151,12 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if _, ok := node.Labels["octelium.com/wireguard-installed"]; !ok {
-		zap.S().Debugf("WireGuard kernel module is not installed. Going for the user implementation instead...")
+		zap.L().Debug("WireGuard kernel module is not installed. Going for the user implementation instead...")
 		s.isUserspaceMode = true
 	}
 
-	{
-		if ipv4, ok := node.Annotations["octelium.com/public-ipv4"]; ok {
-			s.publicIPs = append(s.publicIPs, ipv4)
-		}
-
-		if ipv6, ok := node.Annotations["octelium.com/public-ipv6"]; ok {
-			s.publicIPs = append(s.publicIPs, ipv6)
-		}
-
-		if s.publicIPs == nil {
-			if nIP, ok := node.Annotations["octelium.com/public-ip"]; ok {
-				s.publicIPs = append(s.publicIPs, nIP)
-			}
-		}
-
-		if s.publicIPs == nil {
-			if err := s.setExternalIP(ctx); err != nil {
-				return err
-			}
-		}
-
-		zap.S().Debugf("Found public IPs: %+v", s.publicIPs)
+	if err := s.setNodePublicIPs(ctx); err != nil {
+		return err
 	}
 
 	initWGPrivateKey, err := wgtypes.GeneratePrivateKey()

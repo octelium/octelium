@@ -19,17 +19,78 @@ package gwagent
 import (
 	"context"
 	"net"
+	"slices"
+	"strings"
+	"time"
 
+	"github.com/go-resty/resty/v2"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (s *Server) setExternalIP(ctx context.Context) error {
+func (s *Server) setNodePublicIPs(ctx context.Context) error {
 
+	node := s.node
+
+	if ipv4, ok := node.Annotations["octelium.com/public-ipv4"]; ok {
+		s.doAppendPublicIPAddr(ipv4)
+	}
+
+	if ipv6, ok := node.Annotations["octelium.com/public-ipv6"]; ok {
+		s.doAppendPublicIPAddr(ipv6)
+	}
+
+	if len(s.publicIPs) == 0 {
+		if nIP, ok := node.Annotations["octelium.com/public-ip"]; ok {
+			s.doAppendPublicIPAddr(nIP)
+		}
+	}
+
+	if len(s.publicIPs) == 0 {
+		if err := s.setExternalIPFromNode(ctx); err != nil {
+			zap.L().Debug("Could not find the node public IP addr via k8s node", zap.Error(err))
+
+		}
+	}
+
+	if len(s.publicIPs) == 0 {
+		if err := s.setExternalIPFromDev(); err != nil {
+			zap.L().Debug("Could not get public IP addr from dev", zap.Error(err))
+		}
+	}
+
+	if len(s.publicIPs) == 0 {
+		if err := s.setPublicIPAddrsFromPublicAPIs(ctx); err != nil {
+			zap.L().Warn("Could not get node public IP addrs from public APIs", zap.Error(err))
+		}
+	}
+
+	if len(s.publicIPs) == 0 {
+		return errors.Errorf("Could not obtain the node public IP addrs")
+	}
+
+	zap.L().Debug("Set node public IP addresses", zap.Strings("addrs", s.publicIPs))
+
+	return nil
+}
+
+func (s *Server) doAppendPublicIPAddr(addr string) {
+	if !isPublicIP(addr) {
+		return
+	}
+
+	if !slices.Contains(s.publicIPs, addr) {
+		zap.L().Debug("Adding public IP addr for node", zap.String("addr", addr))
+		s.publicIPs = append(s.publicIPs, addr)
+	}
+}
+
+func (s *Server) setExternalIP(ctx context.Context) error {
 	if err := s.setExternalIPFromNode(ctx); err != nil {
-		zap.S().Debug("Could not fin the node external IP via k8s node resource")
+		zap.L().Debug("Could not find the node public IP addr via k8s node", zap.Error(err))
 		if err := s.setExternalIPFromDev(); err != nil {
 			return errors.Errorf("Could not get external node IP from devices: %+v", err)
 		}
@@ -40,7 +101,6 @@ func (s *Server) setExternalIP(ctx context.Context) error {
 
 func (s *Server) setExternalIPFromNode(ctx context.Context) error {
 	node, err := s.k8sC.CoreV1().Nodes().Get(ctx, s.nodeName, k8smetav1.GetOptions{})
-
 	if err != nil {
 		return err
 	}
@@ -53,7 +113,7 @@ func (s *Server) setExternalIPFromNode(ctx context.Context) error {
 				continue
 			}
 
-			s.publicIPs = append(s.publicIPs, nodeAddr.String())
+			s.doAppendPublicIPAddr(nodeAddr.String())
 			return nil
 		}
 	}
@@ -81,8 +141,7 @@ func (s *Server) setExternalIPFromDev() error {
 
 		for _, addr := range addrs {
 			if addr.Scope == int(netlink.SCOPE_UNIVERSE) {
-				s.publicIPs = append(s.publicIPs, addr.IP.String())
-				zap.S().Debugf("Found IPv4 public address %s", addr.IP.String())
+				s.doAppendPublicIPAddr(addr.IP.String())
 				break
 			}
 		}
@@ -96,8 +155,7 @@ func (s *Server) setExternalIPFromDev() error {
 
 		for _, addr := range addrs {
 			if addr.Scope == int(netlink.SCOPE_UNIVERSE) {
-				s.publicIPs = append(s.publicIPs, addr.IP.String())
-				zap.S().Debugf("Found IPv6 public address %s", addr.IP.String())
+				s.doAppendPublicIPAddr(addr.IP.String())
 				break
 			}
 		}
@@ -143,4 +201,53 @@ func getDefaultInterface() (string, error) {
 	}
 
 	return "", errors.Errorf("Could not find default route")
+}
+
+func isPublicIP(addr string) bool {
+	return doIsPublicIP(net.ParseIP(strings.TrimSpace(addr)))
+}
+
+func doIsPublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return false
+	}
+
+	return !ip.IsPrivate()
+}
+
+func (s *Server) setPublicIPAddrsFromPublicAPIs(ctx context.Context) error {
+
+	publicAPIs := []string{
+		"https://checkip.amazonaws.com",
+		"https://api.ipify.org",
+		"https://ifconfig.me",
+	}
+
+	for _, publicAPI := range publicAPIs {
+		if err := s.doSetPublicIPAddrFromAPI(ctx, publicAPI); err == nil {
+			if len(s.publicIPs) > 0 {
+				return nil
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) doSetPublicIPAddrFromAPI(ctx context.Context, apiURL string) error {
+
+	resp, err := resty.New().SetDebug(ldflags.IsDev()).SetTimeout(5 * time.Second).
+		R().
+		SetContext(ctx).
+		Get(apiURL)
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.Errorf("Could not get public IP addr via: %s", apiURL)
+	}
+
+	s.doAppendPublicIPAddr(string(resp.Body()))
+
+	return nil
 }
