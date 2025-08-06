@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -43,6 +44,7 @@ type directResponseHandler struct {
 
 func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
+	w.Header().Set("Server", "octelium")
 	resp := h.direct
 	switch resp.Type.(type) {
 	case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
@@ -59,8 +61,6 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	if resp.StatusCode >= 200 && resp.StatusCode <= 599 {
 		w.WriteHeader(int(resp.StatusCode))
 	}
-
-	w.Header().Set("Server", "octelium")
 }
 
 func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
@@ -157,7 +157,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				sigv4Opts := cfg.GetHttp().GetAuth().GetSigv4()
 				secret, err := s.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
 				if err == nil {
-					signer := sigv4.NewSigner()
+					signer := sigv4.NewSigner(func(signer *sigv4.SignerOptions) {
+						if sigv4Opts.Service == "s3" {
+							signer.DisableURIPathEscaping = true
+						}
+					})
 					if err := signer.SignHTTP(ctx,
 						aws.Credentials{
 							AccessKeyID:     sigv4Opts.AccessKeyID,
@@ -174,6 +178,12 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				} else {
 					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
 				}
+
+				if ldflags.IsDev() {
+					zap.L().Debug("AWS req",
+						zap.Any("headers", outReq.Header),
+						zap.String("url", outReq.URL.String()))
+				}
 			}
 		},
 
@@ -185,7 +195,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 		ErrorHandler: func(w http.ResponseWriter, request *http.Request, err error) {
 			statusCode := http.StatusInternalServerError
-			zap.S().Debugf("Handling response err: %+v", err)
+			zap.L().Debug("Handling response error", zap.Error(err))
 			switch {
 			case errors.Is(err, io.EOF):
 				statusCode = http.StatusBadGateway
@@ -202,6 +212,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				}
 			}
 
+			w.Header().Set("Server", "octelium")
 			w.WriteHeader(statusCode)
 			w.Write([]byte(http.StatusText(statusCode)))
 		},
