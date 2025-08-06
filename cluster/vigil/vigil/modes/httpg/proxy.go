@@ -33,7 +33,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -157,11 +156,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				sigv4Opts := cfg.GetHttp().GetAuth().GetSigv4()
 				secret, err := s.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
 				if err == nil {
-					signer := sigv4.NewSigner(func(signer *sigv4.SignerOptions) {
-						if sigv4Opts.Service == "s3" {
-							signer.DisableURIPathEscaping = true
-						}
-					})
+					signer := sigv4.NewSigner()
 
 					payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body)))
 					outReq.Header.Set("X-Amz-Content-Sha256", payloadHash)
@@ -183,11 +178,13 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
 				}
 
-				if ldflags.IsDev() {
-					zap.L().Debug("AWS req",
-						zap.Any("headers", outReq.Header),
-						zap.String("url", outReq.URL.String()))
-				}
+				/*
+					if ldflags.IsDev() {
+						zap.L().Debug("AWS req",
+							zap.Any("headers", outReq.Header),
+							zap.String("url", outReq.URL.String()))
+					}
+				*/
 			}
 		},
 
