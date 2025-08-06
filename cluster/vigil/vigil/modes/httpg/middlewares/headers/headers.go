@@ -67,6 +67,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		req.Header.Del("Authorization")
 	}
 
+	req.Header.Del("X-Envoy-Internal")
+	req.Header.Del("X-Request-Id")
+
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddRequestHeaders {

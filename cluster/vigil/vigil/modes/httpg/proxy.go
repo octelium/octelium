@@ -162,13 +162,17 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 							signer.DisableURIPathEscaping = true
 						}
 					})
+
+					payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body)))
+					outReq.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
 					if err := signer.SignHTTP(ctx,
 						aws.Credentials{
 							AccessKeyID:     sigv4Opts.AccessKeyID,
 							SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
 						},
 						outReq,
-						fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body))),
+						payloadHash,
 						sigv4Opts.Service, sigv4Opts.Region,
 						time.Now(),
 					); err != nil {
