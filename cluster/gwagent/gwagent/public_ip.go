@@ -78,9 +78,17 @@ func (s *Server) setNodePublicIPs(ctx context.Context) error {
 }
 
 func (s *Server) doAppendPublicIPAddr(addr string) {
-	if !isPublicIP(addr) {
+
+	addrNet := net.ParseIP(strings.TrimSpace(addr))
+	if addrNet == nil {
 		return
 	}
+
+	if !doIsPublicIP(addrNet) {
+		return
+	}
+
+	addr = addrNet.String()
 
 	if !slices.Contains(s.publicIPs, addr) {
 		zap.L().Debug("Adding public IP addr for node", zap.String("addr", addr))
@@ -201,10 +209,6 @@ func getDefaultInterface() (string, error) {
 	}
 
 	return "", errors.Errorf("Could not find default route")
-}
-
-func isPublicIP(addr string) bool {
-	return doIsPublicIP(net.ParseIP(strings.TrimSpace(addr)))
 }
 
 func doIsPublicIP(ip net.IP) bool {
