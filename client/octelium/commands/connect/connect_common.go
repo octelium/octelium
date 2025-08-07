@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/pprofsrv"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
@@ -520,7 +521,13 @@ func connect(ctx context.Context, domain string) error {
 			}
 			time.Sleep(2 * time.Second)
 			if ret.err != nil {
-				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", ret.err)
+				err := ret.err
+
+				switch {
+				case grpcerr.IsInvalidArg(err):
+					return err
+				}
+				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err)
 			}
 		}
 	}
