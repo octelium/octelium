@@ -138,7 +138,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 
 	pp, err := tcp.NewProxy(l.svcFQDN)
 	if err != nil {
-		zap.S().Errorf("Could not initialize new TCP proxy: %+v", err)
+		zap.L().Error("Could not initialize new TCP proxy", zap.Error(err))
 		return err
 	}
 
@@ -148,23 +148,24 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 
 		var err error
 		var listener net.Listener
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			listener, err = net.Listen("tcp", listenerAddr)
 			if err == nil {
 				return listener, nil
 			}
 
-			zap.S().Warnf("Could not listen on TCP port on %s: %+v. Trying again (attempt %d).", listenerAddr, err, i)
+			zap.L().Warn("Could not listen on TCP port",
+				zap.String("addr", listenerAddr), zap.Error(err), zap.Int("attempt", i))
 			time.Sleep(250 * time.Millisecond)
 		}
 		return nil, errors.Errorf("Could not listen on TCP port on %s:.", listenerAddr)
 	}()
 	if err != nil {
-		zap.S().Errorf("Could not listen on TCP port on %s: %+v", listenerAddr, err)
+		zap.L().Error("Could not listen on TCP", zap.String("addr", listenerAddr), zap.Error(err))
 		return err
 	}
 
-	zap.S().Debugf("TCP listener %s successfully started", listenerAddr)
+	zap.L().Debug("TCP listener successfully started", zap.String("addr", listenerAddr))
 
 	defer l.close()
 
@@ -175,20 +176,20 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		default:
 			conn, err := l.lis.Accept()
 			if err != nil {
-				zap.S().Debugf("Could not accept conn: %+v", err)
+				zap.L().Debug("Could not accept conn", zap.String("addr", listenerAddr), zap.Error(err))
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			go func(conn net.Conn) {
-				zap.S().Debugf("Starting serving connection on %s", listenerAddr)
+				zap.L().Debug("Starting serving connection", zap.String("addr", listenerAddr))
 				connBackend, err := l.getConnBackendTCP()
 				if err != nil {
-					zap.S().Errorf("Could not get conn backend: %+v", err)
+					zap.L().Error("Could not get conn backend", zap.Error(err))
 					return
 				}
 				pp.ServeTCP(conn.(*net.TCPConn), connBackend)
-				zap.S().Debugf("Done serving connection on %s", listenerAddr)
+				zap.L().Debug("Done serving connection", zap.String("addr", listenerAddr))
 			}(conn)
 		}
 	}
@@ -203,7 +204,7 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 			return nil, err
 		}
 
-		zap.S().Debugf("Found svc addrs: %+v", addrs)
+		// zap.S().Debugf("Found svc addrs: %+v", addrs)
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(addrs[0], fmt.Sprintf("%d", l.port)))
 		if err != nil {
@@ -221,7 +222,7 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 			return nil, err
 		}
 
-		zap.S().Debugf("Resolve Service: %s to IP: %s", l.svcFQDN, resolvedServiceIP.String())
+		// zap.S().Debugf("Resolve Service: %s to IP: %s", l.svcFQDN, resolvedServiceIP.String())
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(resolvedServiceIP.String(), fmt.Sprintf("%d", l.port)))
 		if err != nil {
