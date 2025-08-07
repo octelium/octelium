@@ -349,7 +349,7 @@ func getService(svcList *userv1.ServiceList, name string) *userv1.Service {
 func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
-	zap.S().Debugf("Listing available Services to publish ports")
+	zap.L().Debug("Listing available Services to publish ports")
 	svcList, err := c.ListService(ctx, &userv1.ListServiceOptions{})
 	if err != nil {
 		return nil, err
@@ -360,7 +360,7 @@ func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domai
 		if err != nil {
 			return nil, err
 		}
-		zap.S().Debugf("Published Service %s added", publishedService.Fqdn)
+		zap.L().Debug("Published Service added", zap.String("fqdn", publishedService.Fqdn))
 		ret = append(ret, publishedService)
 	}
 
@@ -444,7 +444,7 @@ func (c *ctl) start(ctx context.Context) error {
 	ctx, cancelFn := context.WithCancel(ctx)
 	c.cancelFn = cancelFn
 
-	zap.S().Debugf("Starting dev controller...")
+	zap.L().Debug("Starting dev controller...")
 	if err := c.devCtl.Start(ctx); err != nil {
 		zap.L().Warn("Could not start dev controller", zap.Error(err))
 		if err := c.devCtl.Close(); err != nil {
@@ -454,13 +454,13 @@ func (c *ctl) start(ctx context.Context) error {
 	}
 
 	if c.proxyCtl != nil {
-		zap.S().Debugf("Starting proxy controller...")
+		zap.L().Debug("Starting proxy controller...")
 		if err := c.proxyCtl.Start(ctx); err != nil {
 			return err
 		}
 	}
 
-	zap.S().Debugf("Starting state controller...")
+	zap.L().Debug("Starting state controller...")
 	if err := c.stateController.Start(ctx); err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func (c *ctl) close() error {
 }
 
 func connect(ctx context.Context, domain string) error {
-	if ldflags.IsDev() {
+	if ldflags.IsDev() || os.Getenv("OCTELIUM_PPROF") == "true" {
 		srv := pprofsrv.New()
 		if err := srv.Run(ctx); err != nil {
 			return err
@@ -506,17 +506,17 @@ func connect(ctx context.Context, domain string) error {
 
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("Waiting for tryConnect to exit...")
+			zap.L().Debug("Waiting for tryConnect to exit...")
 			select {
 			case <-time.After(2 * time.Second):
-				zap.S().Debugf("tryConnect timeout...")
+				zap.L().Debug("tryConnect timeout...")
 			case <-doneCh:
-				zap.S().Debugf("tryConnect done...")
+				zap.L().Debug("tryConnect done...")
 			}
 			return nil
 		case ret := <-ret:
 			if !ret.needsReconnect {
-				zap.S().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
+				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
 				return nil
 			}
 			time.Sleep(2 * time.Second)
@@ -549,7 +549,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	defer conn.Close()
 
 	c := userv1.NewMainServiceClient(conn)
-	zap.S().Debugf("Connecting to API Server...")
+	zap.L().Debug("Connecting to API Server...")
 	streamC, err := c.Connect(ctx)
 	if err != nil {
 		return tryConnectRet{
