@@ -46,7 +46,7 @@ const defaultESSHPort = 22022
 
 func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 	publishedServices []*cliconfigv1.Connection_Preferences_PublishedService) error {
-	zap.S().Debugf("Sending init request")
+	zap.L().Debug("Sending init request")
 	l3Mode, err := l3mode.GetL3Mode(cmdArgs.L3Mode)
 	if err != nil {
 		return err
@@ -606,12 +606,12 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	cliutils.LineNotify("Connected successfully...\n")
 	select {
 	case <-ctx.Done():
-		zap.L().Debug("Received shutdown signal")
+		cliutils.LineInfo("Received shutdown signal\n")
 	case err := <-ctl.stateController.getConnErrCh:
 		needsReconnect = true
 		retErr = errors.Errorf("Abruptly disconnected by API Server: %s", err)
 	case <-ctl.stateController.apiserverDisconnectCh:
-		zap.L().Debug("Disconnected by API Server")
+		cliutils.LineInfo("Disconnected by API Server\n")
 	}
 
 	ctl.close()
