@@ -54,6 +54,12 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 		return nil
 	}
 
+	if !new.Status.IsConnected && old.Status.IsConnected {
+		if err := c.sendDisconnect(new); err != nil {
+			zap.L().Warn("Could not sendDisconnect", zap.Error(err))
+		}
+	}
+
 	if err := c.checkSessionHostedSvc(ctx, new, old); err != nil {
 		return err
 	}
@@ -181,6 +187,10 @@ func (c *Controller) doDelete(ctx context.Context, sess *corev1.Session) error {
 		return nil
 	}
 
+	return c.sendDisconnect(sess)
+}
+
+func (c *Controller) sendDisconnect(sess *corev1.Session) error {
 	zap.L().Debug("Sending doDisconnect msg to connected Session", zap.String("sessName", sess.Metadata.Name))
 	return c.ctlI.SendMessage(&userv1.ConnectResponse{
 		Event: &userv1.ConnectResponse_Disconnect_{

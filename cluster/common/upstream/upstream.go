@@ -312,7 +312,8 @@ func RemoveAllAddressFromConnection(ctx context.Context, octeliumC octeliumc.Cli
 		return nil
 	}
 
-	zap.S().Debugf("Removing all addresses from the Session %s", sess.Metadata.Name)
+	zap.L().Debug("Removing all addresses from the Session",
+		zap.String("sessName", sess.Metadata.Name), zap.Any("connection", sess.Status.Connection))
 
 	for i := 0; i < len(sess.Status.Connection.Addresses); i++ {
 		if err := removeAddressFromConnection(ctx, octeliumC, sess, i); err != nil {
