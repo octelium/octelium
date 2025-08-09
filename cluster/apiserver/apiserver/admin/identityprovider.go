@@ -283,6 +283,25 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		if err := s.validateCondition(ctx, rule.Condition); err != nil {
 			return err
 		}
+		switch rule.Aal {
+		case corev1.IdentityProvider_Spec_AALRule_AAL_UNSET:
+			return grpcutils.InvalidArg("AAL cannot be unset. It must be set to either AAL1, AAL2 or AAL3")
+		}
+	}
+
+	if len(req.Spec.PostAuthenticationRules) > 128 {
+		return grpcutils.InvalidArg("Too many postAuthenticationRules")
+	}
+
+	for _, rule := range req.Spec.PostAuthenticationRules {
+		if err := s.validateCondition(ctx, rule.Condition); err != nil {
+			return err
+		}
+
+		switch rule.Effect {
+		case corev1.IdentityProvider_Spec_PostAuthenticationRule_EFFECT_UNKNOWN:
+			return grpcutils.InvalidArg("Rule effect must be set to either ALLOW or DENY")
+		}
 	}
 
 	return nil
