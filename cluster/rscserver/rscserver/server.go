@@ -30,12 +30,16 @@ import (
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	_ "github.com/lib/pq"
 	"github.com/octelium/octelium/apis/cluster/csecretmanv1"
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
@@ -103,38 +107,41 @@ func NewServer(ctx context.Context, o *Opts) (*Server, error) {
 		opts:          o,
 		commonMetrics: commonMetrics,
 	}
-	if os.Getenv("OCTELIUM_USE_SECRETMAN") == "true" {
-		ret.hasSecretManager = true
-		addr := os.Getenv("OCTELIUM_SECRETMAN_ADDR")
-		retryCodes := []codes.Code{
-			codes.Unavailable,
-			codes.ResourceExhausted,
-			codes.Unknown,
-			codes.Aborted,
-			codes.DataLoss,
-			codes.Internal,
-			codes.DeadlineExceeded,
+
+	/*
+		if os.Getenv("OCTELIUM_USE_SECRETMAN") == "true" {
+			ret.hasSecretManager = true
+			addr := os.Getenv("OCTELIUM_SECRETMAN_ADDR")
+			retryCodes := []codes.Code{
+				codes.Unavailable,
+				codes.ResourceExhausted,
+				codes.Unknown,
+				codes.Aborted,
+				codes.DataLoss,
+				codes.Internal,
+				codes.DeadlineExceeded,
+			}
+
+			unaryMiddlewares := []grpc.UnaryClientInterceptor{
+				grpc_retry.UnaryClientInterceptor(
+					grpc_retry.WithMax(32),
+					grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
+					grpc_retry.WithCodes(retryCodes...)),
+			}
+
+			zap.L().Info("Using secretManager", zap.String("address", addr))
+
+			grpcConn, err := grpc.NewClient(
+				addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			ret.secretmanC = csecretmanv1.NewMainServiceClient(grpcConn)
 		}
-
-		unaryMiddlewares := []grpc.UnaryClientInterceptor{
-			grpc_retry.UnaryClientInterceptor(
-				grpc_retry.WithMax(32),
-				grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
-				grpc_retry.WithCodes(retryCodes...)),
-		}
-
-		zap.L().Info("Using secretManager", zap.String("address", addr))
-
-		grpcConn, err := grpc.NewClient(
-			addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		ret.secretmanC = csecretmanv1.NewMainServiceClient(grpcConn)
-	}
+	*/
 
 	return ret, nil
 }
@@ -183,6 +190,9 @@ func (s *Server) GetRedisC() *redis.Client {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if err := s.setSecretManager(ctx); err != nil {
+		zap.L().Warn("Could not setSecretManager", zap.Error(err))
+	}
 
 	if err := func() error {
 		for range 100 {
@@ -275,4 +285,72 @@ func waitUntilPortIsAvailable(port int) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.Errorf("port %d is not available", port)
+}
+
+func (s *Server) getClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {
+	ccI, err := s.doGet(ctx, &rmetav1.GetOptions{
+		Name: "default",
+	}, ucorev1.API, ucorev1.Version, ucorev1.KindClusterConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	cc, ok := ccI.(*corev1.ClusterConfig)
+	if !ok {
+		return nil, grpcutils.Internal("Invalid ClusterConfig")
+	}
+
+	return cc, nil
+}
+
+func (s *Server) setSecretManager(ctx context.Context) error {
+
+	cc, err := s.getClusterConfig(ctx)
+	if err != nil {
+		zap.L().Warn("Could not getClusterConfig. Skipping using secretManager...", zap.Error(err))
+		return nil
+	}
+
+	if cc.Status == nil || cc.Status.SecretManager == nil || cc.Status.SecretManager.Address == "" {
+		zap.L().Debug("secretManager config is not set")
+		return nil
+	}
+
+	s.hasSecretManager = true
+	addr := cc.Status.SecretManager.Address
+	retryCodes := []codes.Code{
+		codes.Unavailable,
+		codes.ResourceExhausted,
+		codes.Unknown,
+		codes.Aborted,
+		codes.DataLoss,
+		codes.Internal,
+		codes.DeadlineExceeded,
+	}
+
+	unaryMiddlewares := []grpc.UnaryClientInterceptor{
+		grpc_retry.UnaryClientInterceptor(
+			grpc_retry.WithMax(32),
+			grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
+			grpc_retry.WithCodes(retryCodes...)),
+	}
+
+	zap.L().Info("Using secretManager", zap.String("address", addr))
+
+	opts := []grpc.DialOption{
+		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
+	}
+
+	if cc.Status.SecretManager.Tls == nil {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	grpcConn, err := grpc.NewClient(addr, opts...)
+	if err != nil {
+		return err
+	}
+
+	s.secretmanC = csecretmanv1.NewMainServiceClient(grpcConn)
+
+	return nil
 }
