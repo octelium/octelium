@@ -16,59 +16,60 @@ package connect
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"text/template"
 
+	"github.com/manifoldco/promptui"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
-	"go.uber.org/zap"
 )
 
 func doRunDetached(args []string) error {
+
+	if ldflags.IsProduction() {
+		return errors.Errorf(`Detached mode is not available for MacOS. Use "sudo -E octelium connect" instead.`)
+	}
 
 	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
 
-	cmd := []string{executable}
-	cmd = append(cmd, args...)
+	shellCommand := fmt.Sprintf(
+		"nohup sudo -S %s %s > /dev/null 2>&1 &",
+		executable,
+		strings.Join(args, " "),
+	)
 
-	tmpfile, err := os.CreateTemp("", "octelium-detached")
+	cmd := exec.Command("bash", "-c", shellCommand)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	defer stdin.Close()
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	prompt := promptui.Prompt{
+		Label:       "Enter root password",
+		HideEntered: true,
+		Mask:        '*',
+	}
+
+	res, err := prompt.Run()
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("tmp file = %s", tmpfile.Name())
-
-	tempfPath := tmpfile.Name()
-
-	scriptContent, err := getScript(&tmplArgs{
-		Cmd: strings.Join(cmd, " "),
-	})
-	if err != nil {
+	if _, err := stdin.Write([]byte(res)); err != nil {
 		return err
 	}
-
-	if err := os.WriteFile(tempfPath, scriptContent, 0700); err != nil {
-		return err
-	}
-
-	if out, err := exec.Command("sudo", "chown", "root", tempfPath).CombinedOutput(); err != nil {
-		return errors.Errorf("Could not chown: %+v. %s", err, out)
-	}
-
-	if out, err := exec.Command("sudo", "chmod", "700", tempfPath).CombinedOutput(); err != nil {
-		return errors.Errorf("Could not chmod: %+v. %s", err, out)
-	}
-
-	if out, err := exec.Command("sudo", tempfPath).CombinedOutput(); err != nil {
-		return errors.Errorf("Could not run detached script: %+v. %s", err, out)
-	}
-
-	tmpfile.Close()
-	os.Remove(tempfPath)
 
 	return nil
 }
