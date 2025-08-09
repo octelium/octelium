@@ -1294,11 +1294,11 @@ func TestUserUpstream(t *testing.T) {
 		Spec: &corev1.Service_Spec{
 			IsPublic: true,
 			Port:     uint32(tests.GetPort()),
-			Mode:     corev1.Service_Spec_KUBERNETES,
+			Mode:     corev1.Service_Spec_HTTP,
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "http://example.com",
+						Url: "https://www.google.com",
 					},
 					User: usr.Usr.Metadata.Name,
 				},
@@ -1351,6 +1351,7 @@ func TestUserUpstream(t *testing.T) {
 	assert.Nil(t, err)
 	err = srv.lbManager.Run(ctx)
 	assert.Nil(t, err)
+
 	err = srv.Run(ctx)
 	assert.Nil(t, err, "%+v", err)
 
@@ -1404,8 +1405,8 @@ func TestUserUpstream(t *testing.T) {
 	usrDownstream.Resync()
 
 	tstP := &tstTCPProxy{
-		host:       "example.com",
-		port:       80,
+		host:       "www.google.com",
+		port:       443,
 		listenPort: 23000,
 		ready:      make(chan struct{}),
 	}
@@ -1582,7 +1583,7 @@ func TestAnonymous(t *testing.T) {
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "https://example.com",
+						Url: "https://www.google.com",
 					},
 				},
 			},
@@ -1972,7 +1973,7 @@ func TestHTTPSUpstream(t *testing.T) {
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "https://example.com/",
+						Url: "https://raw.githubusercontent.com",
 					},
 				},
 			},
@@ -2053,12 +2054,12 @@ func TestHTTPSUpstream(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	resp, err := resty.New().SetDebug(true).R().
-		Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+		Get(fmt.Sprintf("http://localhost:%d/octelium/octelium/refs/heads/main/unsorted/latest_release", ucorev1.ToService(svcV).RealPort()))
 	assert.Nil(t, err, "%+v", err)
 	assert.True(t, resp.IsSuccess())
 
 	resp2, err := resty.New().SetDebug(true).R().
-		Get("https://example.com/")
+		Get("https://raw.githubusercontent.com/octelium/octelium/refs/heads/main/unsorted/latest_release")
 	assert.Nil(t, err)
 
 	assert.Equal(t, resp.Body(), resp2.Body())
@@ -2108,7 +2109,7 @@ func TestLua(t *testing.T) {
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "https://example.com/",
+						Url: "https://www.google.com",
 					},
 				},
 
@@ -2258,7 +2259,7 @@ func TestLua2(t *testing.T) {
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "https://example.com/",
+						Url: "https://www.google.com",
 					},
 				},
 
