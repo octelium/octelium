@@ -113,7 +113,7 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 			zap.L().Debug("Could not do Redis flushDB. Trying to manually delete keys", zap.Error(err))
 
 			keys, err := redisC.Keys(ctx, "*").Result()
-			if err == nil {
+			if err == nil && len(keys) > 0 {
 				if err := redisC.Del(ctx, keys...).Err(); err != nil {
 					zap.L().Warn("Could not delete Redis database keys", zap.Error(err))
 				}
