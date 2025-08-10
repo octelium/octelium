@@ -488,7 +488,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 	}
 
 	nullifyCurrAndUpdate := func() error {
-		ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
+		authn.Status.AuthenticationAttempt = nil
 		authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 		if err != nil {
 			return s.errInternalErr(err)
@@ -503,6 +503,10 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 
 	if authn.Status.AuthenticationAttempt.SessionRef.Uid != sess.Metadata.Uid {
 		return nil, s.errPermissionDenied("No valid current authentication attempt")
+	}
+
+	if authn.Status.IsRegistered {
+		return nil, s.errInvalidArg("Authenticator is already registered")
 	}
 
 	if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().
@@ -568,21 +572,22 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 	}
 
 	if err := factor.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
-
-		Resp: req,
-
+		Resp:             req,
 		ChallengeRequest: challengeReq,
 	}); err != nil {
-		authn.Status.FailedAuthentications = authn.Status.FailedAuthentications + 1
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
 		}
 		return nil, err
 	}
 
-	authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
-	if err := nullifyCurrAndUpdate(); err != nil {
-		return nil, err
+	authn.Status.AuthenticationAttempt = nil
+	authn.Status.IsRegistered = true
+	authn.Status.DeviceRef = sess.Status.DeviceRef
+
+	authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+	if err != nil {
+		return nil, s.errInternalErr(err)
 	}
 
 	return &authv1.RegisterAuthenticatorFinishResponse{}, nil
