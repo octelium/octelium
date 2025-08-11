@@ -67,7 +67,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 		Type: &userv1.ConnectRequest_Initialize_{
 			Initialize: &userv1.ConnectRequest_Initialize{
 				ConnectionType: func() userv1.ConnectRequest_Initialize_ConnectionType {
-					if cmdArgs.TunnelMode == "quicv0" {
+					if cmdArgs.TunnelMode == "quicv0" || os.Getenv("OCTELIUM_QUIC") == "true" {
 						return userv1.ConnectRequest_Initialize_QUICV0
 					}
 					return userv1.ConnectRequest_Initialize_UNSET
@@ -182,7 +182,7 @@ func getConnectionConfig(ctx context.Context,
 			DeviceName:  fmt.Sprintf("octelium-%s", utilrand.GetRandomStringLowercase(6)),
 
 			ConnectionType: func() cliconfigv1.Connection_Preferences_ConnectionType {
-				if cmdArgs.TunnelMode == "quicv0" {
+				if cmdArgs.TunnelMode == "quicv0" || os.Getenv("OCTELIUM_QUIC") == "true" {
 					return cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0
 				}
 				return cliconfigv1.Connection_Preferences_CONNECTION_TYPE_UNSET
