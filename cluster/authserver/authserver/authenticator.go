@@ -120,7 +120,8 @@ func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator 
 			DisplayName: i.Spec.DisplayName,
 		},
 		Status: &authv1.Authenticator_Status{
-			Type: authv1.Authenticator_Status_Type(i.Status.Type),
+			Type:         authv1.Authenticator_Status_Type(i.Status.Type),
+			IsRegistered: i.Status.IsRegistered,
 		},
 	}
 }

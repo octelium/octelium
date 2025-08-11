@@ -83,7 +83,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cliutils.LineInfo(`Authenticator "%s" is now created \n`, authn.Metadata.Name)
+	cliutils.LineInfo("Authenticator %s is now created. Registering it... \n", authn.Metadata.Name)
 
 	authenticatorRef := umetav1.GetObjectReference(authn)
 
@@ -114,6 +114,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	cliutils.LineInfo("Authenticator is now registered \n")
 
 	return nil
 }

@@ -19,6 +19,7 @@ package authserver
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -33,6 +34,8 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -117,6 +120,31 @@ func TestHandleBeginAuthenticator(t *testing.T) {
 			err = pbutils.Unmarshal(reqBytes, req)
 			assert.Nil(t, err)
 			assert.True(t, pbutils.IsEqual(req, resp.ChallengeRequest))
+
+			k, err := otp.NewKeyFromURL(req.GetTotp().Url)
+			assert.Nil(t, err)
+
+			passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+			assert.Nil(t, err)
+
+			_, err = srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: passcode,
+						},
+					},
+				},
+			})
+			assert.Nil(t, err)
+
+			authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+				Uid: authn.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+
+			assert.True(t, authn.Status.IsRegistered)
 		}
 	}
 
@@ -265,4 +293,95 @@ func TestHandleBeginAuthenticatorRateLimit(t *testing.T) {
 		*/
 	}
 
+}
+
+func TestAuthenticatorRegistration(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err, "%+v", err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		authnT, err := srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{
+			Type: authv1.Authenticator_Status_TOTP,
+		})
+		assert.Nil(t, err)
+
+		authn, err := srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: authnT.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		assert.Equal(t, usrT.Usr.Metadata.Uid, authn.Status.UserRef.Uid)
+		assert.False(t, authn.Status.IsRegistered)
+
+		resp, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
+			AuthenticatorRef: umetav1.GetObjectReference(authn),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.NotNil(t, resp.ChallengeRequest.GetTotp())
+
+		authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: authn.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		assert.NotNil(t, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
+		reqBytes, err := authenticators.DecryptData(ctx, srv.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
+		assert.Nil(t, err)
+		req := &authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest{}
+		err = pbutils.Unmarshal(reqBytes, req)
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(req, resp.ChallengeRequest))
+
+		k, err := otp.NewKeyFromURL(req.GetTotp().Url)
+		assert.Nil(t, err)
+
+		passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+		assert.Nil(t, err)
+
+		_, err = srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+			AuthenticatorRef: umetav1.GetObjectReference(authn),
+			ChallengeResponse: &authv1.ChallengeResponse{
+				Type: &authv1.ChallengeResponse_Totp{
+					Totp: &authv1.ChallengeResponse_TOTP{
+						Response: passcode,
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: authn.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		assert.True(t, authn.Status.IsRegistered)
+
+		{
+			_, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+			})
+			assert.NotNil(t, err, "%+v", err)
+		}
+	}
 }
