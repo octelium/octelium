@@ -54,6 +54,8 @@ Octelium is designed to be generic enough (check out the main features below for
 
 ## Main Features
 
+
+<!---
 - **A modern, unified, scalable zero trust architecture** Octelium is built from the ground up to control access at the application layer using a scalable architecture that is based on identity-aware proxies (IAPs) rather than at the network level using segmentation as is the case in remote access VPNs (read in detail about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)) with the following main goals:
   - A unified access platform for humans and workloads.
   - A unified architecture to access any kind of private/internal resources behind NAT (e.g. on-prem, one or more private clouds, your own laptop behind NAT, IoT, etc...) as well as protected public resources (e.g. SaaS APIs, databases, protected public SSH servers, etc...).
@@ -61,7 +63,12 @@ Octelium is designed to be generic enough (check out the main features below for
     - Private access using VPN-like zero-config client-based zero trust network access (ZTNA) over WireGuard/QUIC tunnels with automatic private DNS.
     - Public client-less BeyondCorp access for both humans via their browsers and workloads via standard OAuth2 client credential flows and bearer authentication.
   - Built on top of Kubernetes to provide automatic horizontal scalability and availability. An Octelium _Cluster_ can run on top of a single node Kubernetes cluster running over a cheap cloud VM instance/VPS and it can also run over managed, scalable Kubernetes installations.
+-->
 
+- **A Modern, Unified Zero Trust Architecture** Built on a scalable architecture of identity-aware proxies to control access at the application layer (L7), Octelium unifies access for humans and workloads to both private and protected public resources. It supports both zero-config VPN-like client-based access over WireGuard/QUIC and client-less BeyondCorp access, all built on top of Kubernetes for automatic scalability (read in detail about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)).
+
+
+<!---
 - **Dynamic secret-less access** Octelium's layer-7 awareness enables _Users_ to seamlessly access resources that are protected by application-layer credentials eliminating the need to expose, manage and share such typically long-lived and over-privileged secrets required to access such protected resources (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless)). The following protocols are currently supported:
   - HTTP-based resources (e.g. HTTP APIs, gRPC APIs, protected web apps, etc...) without having to share and expose API keys, access tokens, AWS sigv4 auth secret keys or OAuth2 client credentials (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/http#secret-less-access)).
   - SSH without having to share passwords or manage keys and certificates (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/ssh)).
@@ -69,35 +76,69 @@ Octelium is designed to be generic enough (check out the main features below for
   - PostgreSQL and MySQL-based databases without exposing passwords (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/postgres) and [here](https://octelium.com/docs/octelium/latest/management/core/service/mysql), you can also see some examples [here](https://octelium.com/docs/octelium/latest/management/guide/service/databases/cockroachdb), [here](https://octelium.com/docs/octelium/latest/management/guide/service/databases/neon) and [here](https://octelium.com/docs/octelium/latest/management/guide/service/databases/planetscale)).
   - Any application-layer protocol that is protected by mutual TLS (mTLS) without managing PKI/sharing certificates (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless#mutual-tls)).
 
+-->
+
+- **Dynamic Secret-less Access** Octelium's layer-7 awareness enables _Users_ to seamlessly access resources protected by application-layer credentials without exposing, managing and distributing such secrets (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless)). This works for HTTP APIs without sharing API keys and access tokens, SSH servers with sharing passwords and private keys, Kubernetes clusters, PostgreSQL/MySQL databases as well as any L7 protocol protected by mTLS.
 
 
+<!--
 - **Context-aware, identity-based, application-layer aware access control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis using modular and composable _Policies_ that enable you to write your policy-as-code using [CEL](https://cel.dev/) as well as [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). You can read more in detail about _Policies_ and access control [here](https://octelium.com/docs/octelium/latest/management/core/policy).
 
   Octelium intentionally has no notion whatsoever of an "admin" or "superuser" _User_. In other words, zero standing privileges are the default state. Any permissions including those to the API Server can be restricted via _Policies_ and tied to time and context on a per-request basis.
 
+-->
+
+- ***Modern, Dynamic, Fine-grained Access Control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis (read more [here](https://octelium.com/docs/octelium/latest/management/core/policy)) with policy-as-code using [CEL](https://cel.dev/) and [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). Octelium has no notion of an "admin" user, enforcing zero standing privileges by default.
+
 - **Context-aware, identity-based, L-7 aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
 
+
+<!--
 - **Continuous strong authentication** A unified, continuous authentication system for both human and workload _Users_:
   - Any web identity provider (IdP) that supports OpenID Connect or SAML 2.0 (e.g. Okta, Auth0, OneLogin, AWS Cognito, etc...) as well as Github OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)).
   - "Secret-less" authentication for workloads via OIDC-based assertions where workloads can authenticate themselves using OIDC identity tokens issued by the identity provider hosting the workload ( e.g. Azure, CI/CD providers such as GitHub Actions as well as Kubernetes clusters, etc...). You can read in detail [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers).
   - Integrate Your IdP and control access to sensitive resources based on NIST SP 800-63 Authenticator Assurance Levels (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#authenticator-assurance-level)) to force using strong MFA (e.g. WebAuthn/Passkeys) via phishing resistant security keys (e.g. Yubikey).
 
-- **OpenTelemetry-ready, application-layer aware auditing and visibility** Identity and application-layer aware visibility where every request is logged and exported in real-time to your OpenTelemetry OTLP receivers and collectors which can be further exported to log management and SIEM tools and providers. You can see some examples for [HTTP](https://octelium.com/docs/octelium/latest/management/core/service/http#visibility), [Kubernetes](https://octelium.com/docs/octelium/latest/management/core/service/kubernetes#visibility), [PostgreSQL](https://octelium.com/docs/octelium/latest/management/core/service/postgres#visibility) and [SSH](https://octelium.com/docs/octelium/latest/management/core/service/ssh).
+-->
 
+- **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secret-less authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)).
+
+
+<!---
+- **OpenTelemetry-ready, application-layer aware auditing and visibility** Identity and application-layer aware visibility where every request is logged and exported in real-time to your OpenTelemetry OTLP receivers and collectors which can be further exported to log management and SIEM tools and providers. You can see some examples for [HTTP](https://octelium.com/docs/octelium/latest/management/core/service/http#visibility), [Kubernetes](https://octelium.com/docs/octelium/latest/management/core/service/kubernetes#visibility), [PostgreSQL](https://octelium.com/docs/octelium/latest/management/core/service/postgres#visibility) and [SSH](https://octelium.com/docs/octelium/latest/management/core/service/ssh).
+--->
+
+- **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools
+
+
+<!--
 - **Effortless, password-less, serverless SSH access** Octelium clients are capable of serving SSH even when they are not running as root enabling _Users_ to SSH into containers, IoT devices or other hosts that do not have or cannot run SSH servers. You can read more in detail about the embedded SSH mode [here](https://octelium.com/docs/octelium/latest/management/core/service/embedded-ssh).
+-->
+
+
+- **Effortless, Password-less SSH** Octelium clients can serve SSH even without root access, enabling you to SSH into containers, IoT devices, or other hosts that can't run an SSH server (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/embedded-ssh)).
+
 
 - **Effortlessly deploy, scale and secure access to your containerized applications as _Services_** Octelium provides you out-of-the-box PaaS-like capabilities to effortlessly deploy, manage and scale your containerized applications and serve them as _Services_ to provide seamless secure client-based private access, client-less public BeyondCorp access as well as public anonymous access. You can read in detail about managed containers [here](https://octelium.com/docs/octelium/latest/management/core/service/managed-containers).
 
+
+<!---
 - **Centralized, declarative and programmable management** Octelium _Clusters_ are designed to be administered like Kubernetes. They can be administered via declarative management where one command (i.e. `octeliumctl apply`) is enough to (re)produce the state of the Octelium _Cluster_ anywhere (read this quick guide on the _Cluster_ management [here](https://octelium.com/docs/octelium/latest/overview/management)). The _Cluster_'s management is also centralized via its APIs which means you do not have to ever again SSH into your servers to set up configurations/rules. Instead, the `octeliumctl` CLI tool is used to control all the _Cluster_'s resources in a clean, centralized and declarative way that is dev/DevOps/GitOps friendly where you can store your _Cluster_ configurations and resources in a git repo and effortlessly reproduce them at anytime and anywhere. Furthermore, the _Cluster_ is fully programmable using gRPC-based APIs that can be compiled to your favorite programming language.
+--->
+- **Centralized and Declarative Management** Manage your Octelium Clusters like Kubernetes with declarative management using the `octeliumctl` CLI (read this quick management guide [here](https://octelium.com/docs/octelium/latest/overview/management)). You can store your _Cluster_ configurations in Git for easy reproduction and GitOps workflows.
 
 - **No change in your infrastructure is needed** Your upstream resources don't need to be aware of Octelium at all. They can be listening to any behind-NAT private network, even to localhost. No public gateways, no need to open ports behind firewalls to serve your resources wherever they are.
 
+<!---
 - **Avoiding traditional VPN networking problems altogether** Octelium's client-based private networking mode eliminates a whole class of networking and routing problems that traditional VPNs suffer from. In Octelium, each resource is represented by a _Service_ that is implemented by an identity-aware proxy (IaP) and is assigned stable private dual-stack IP address(es) within a single dual-stack private range abstracting the actual upstream resource's dynamic network details. This architecture eliminates classes of decades-old networking problems via:
 
   - Using a single stable route instead of injecting countless routes of the actual different remote private networks into the users' machines which cause routing conflicts.
   - Effortless dual-stack private networking where _Users_ seamlessly access _Services_ at both IPv4/IPv6 regardless of whether the upstream supports them both or not, without having to deal with the pain and inconsistency of NAT64/DNS64.
   - A unified, automatically managed, private DNS using your own domain for all resources scattered across the different remote networks that works consistently and independently of the dynamic network details of the upstreams.
   - Simultaneous support for WireGuard (Kernel, TUN as well as unprivileged implementations via [gVisor](https://gvisor.dev/)) as well as experimentally QUIC (both TUN and unprivileged via gVisor) tunnels via a lightweight zero-config client that can run in any Linux, MacOS, Windows environment as well as container environments (e.g. Kubernetes sidecar containers for your workloads).
+--->
+
+- **Avoids Traditional VPN Networking Problems** Octelium’s client-based networking eliminates a whole class of networking and routing issues that traditional VPNs suffer from. Support for dual-stack private networking regardless of the support at the upstreams and without having to deal with the pain and inconsistency of NAT64/DNS64. Unified private DNS using your own domain. Simultaneous support for WireGuard (Kernel, TUN as well as unprivileged implementations via [gVisor](https://gvisor.dev/)) as well as experimentally QUIC (both TUN and unprivileged via gVisor) tunnels via a lightweight zero-config client that can run in any Linux, MacOS, Windows environment as well as container environments (e.g. Kubernetes sidecar containers for your workloads).
 
 - **Open source and designed for self-hosting** Octelium is fully open source and it is designed for single-tenant self-hosting. There is no proprietary cloud-based control plane, nor is this some crippled demo open source version of a separate fully functional SaaS paid service. You can host it on top of a single-node Kubernetes cluster running on a cheap cloud VM/VPS and you can also host it on scalable production cloud-based or on-prem multi-node Kubernetes installations with no vendor lock-in.
 
