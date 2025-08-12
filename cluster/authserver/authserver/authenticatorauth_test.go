@@ -331,7 +331,34 @@ func TestAuthenticatorRegistration(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.Equal(t, usrT.Usr.Metadata.Uid, authn.Status.UserRef.Uid)
+		assert.Equal(t, corev1.Authenticator_Status_TOTP, authn.Status.Type)
 		assert.False(t, authn.Status.IsRegistered)
+
+		{
+			_, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{})
+			assert.NotNil(t, err, "%+v", err)
+		}
+
+		{
+			_, err := srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+			})
+			assert.NotNil(t, err, "%+v", err)
+		}
+
+		{
+			_, err := srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: "123456",
+						},
+					},
+				},
+			})
+			assert.NotNil(t, err, "%+v", err)
+		}
 
 		resp, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
 			AuthenticatorRef: umetav1.GetObjectReference(authn),
@@ -376,6 +403,22 @@ func TestAuthenticatorRegistration(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.True(t, authn.Status.IsRegistered)
+		{
+			passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+			assert.Nil(t, err)
+
+			_, err = srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: passcode,
+						},
+					},
+				},
+			})
+			assert.NotNil(t, err)
+		}
 
 		{
 			_, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
