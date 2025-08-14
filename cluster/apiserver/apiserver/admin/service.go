@@ -380,7 +380,6 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("Too many environment variable")
 			}
 			for _, itm := range typ.Env {
-
 				if itm.Name == "" || len(itm.Name) > 32 || !govalidator.IsASCII(itm.Name) {
 					return grpcutils.InvalidArg("Invalid key: %s", itm.Name)
 				}
@@ -430,6 +429,43 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				}
 				if uP.Server != "" && !govalidator.IsDNSName(uP.Server) {
 					return grpcutils.InvalidArg("Invalid server: %s", uP.Server)
+				}
+			}
+
+			if len(typ.Volumes) > 32 {
+				return grpcutils.InvalidArg("Too many volumes")
+			}
+
+			for _, vol := range typ.Volumes {
+				if err := apivalidation.ValidateName(vol.Name, 0, 0); err != nil {
+					return err
+				}
+
+				switch vol.Type.(type) {
+				case *corev1.Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim_:
+					if err := apivalidation.ValidateName(vol.GetPersistentVolumeClaim().Name, 0, 0); err != nil {
+						return err
+					}
+				default:
+					return grpcutils.InvalidArg("Volume type must be set")
+				}
+			}
+
+			if len(typ.VolumeMounts) > 32 {
+				return grpcutils.InvalidArg("Too many volumeMounts")
+			}
+
+			for _, mount := range typ.VolumeMounts {
+				if err := apivalidation.ValidateName(mount.Name, 0, 0); err != nil {
+					return err
+				}
+
+				if !govalidator.IsUnixFilePath(mount.MountPath) {
+					return grpcutils.InvalidArg("Invalid mountPath: %s", mount.MountPath)
+				}
+
+				if err := s.validateGenStr(mount.SubPath, false, "subPath"); err != nil {
+					return err
 				}
 			}
 

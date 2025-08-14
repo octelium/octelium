@@ -300,6 +300,34 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 				"octelium.com/node-mode-dataplane": "",
 			}
 		}(),
+		Volumes: func() []k8scorev1.Volume {
+			if len(spec.Volumes) < 1 {
+				return nil
+			}
+
+			var ret []k8scorev1.Volume
+
+			for _, vol := range spec.Volumes {
+				volume := k8scorev1.Volume{
+					Name: vol.Name,
+				}
+
+				switch vol.Type.(type) {
+				case *corev1.Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim_:
+					volume.VolumeSource = k8scorev1.VolumeSource{
+						PersistentVolumeClaim: &k8scorev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: vol.GetPersistentVolumeClaim().Name,
+						},
+					}
+				default:
+					continue
+				}
+
+				ret = append(ret, volume)
+			}
+
+			return ret
+		}(),
 	}
 
 	{
@@ -365,6 +393,24 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 					return utils_types.BoolToPtr(spec.SecurityContext.ReadOnlyRootFilesystem)
 				}(),
 			},
+			VolumeMounts: func() []k8scorev1.VolumeMount {
+				if len(spec.VolumeMounts) < 1 {
+					return nil
+				}
+
+				var ret []k8scorev1.VolumeMount
+
+				for _, mount := range spec.VolumeMounts {
+					ret = append(ret, k8scorev1.VolumeMount{
+						Name:      mount.Name,
+						MountPath: mount.MountPath,
+						SubPath:   mount.SubPath,
+						ReadOnly:  mount.ReadOnly,
+					})
+				}
+
+				return ret
+			}(),
 		}
 		for _, e := range spec.Env {
 			env := k8scorev1.EnvVar{
