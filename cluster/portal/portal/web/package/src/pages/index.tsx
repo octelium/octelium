@@ -58,7 +58,7 @@ export default () => {
             </div>
           </AppShell.Header>
 
-          <AppShell.Navbar p="md" className="!bg-transparent mt-[60px]">
+          <AppShell.Navbar p="md" className="!bg-slate-100" zIndex={-1}>
             <Sidebar />
           </AppShell.Navbar>
 
