@@ -59,14 +59,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Second)
 	defer cancel()
 
-	if err := cliutils.GetDB().Delete(i.Domain); err != nil {
-		zap.L().Debug("Could not delete db state", zap.Error(err))
-	}
-
 	c, err := cliutils.NewAuthClient(ctx, i.Domain, nil)
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		if err := cliutils.GetDB().Delete(i.Domain); err != nil {
+			if !cliutils.GetDB().ErrorIsNotFound(err) {
+				zap.L().Debug("Could not delete db state", zap.Error(err))
+			}
+		}
+	}()
 
 	if _, err := c.C().Logout(ctx, &authv1.LogoutRequest{}); err != nil {
 		zap.L().Warn("Could not call logout", zap.Error(err))

@@ -113,10 +113,8 @@ func GetHeaderValue(ctx context.Context, key string) (string, error) {
 		return "", errors.Errorf("Could not find metadata from context")
 	}
 
-	if hdrVal := md.Get(key); hdrVal != nil {
-		if len(hdrVal) == 1 {
-			return hdrVal[0], nil
-		}
+	if hdrVal := md.Get(key); len(hdrVal) > 0 {
+		return hdrVal[0], nil
 	}
 
 	return "", errors.Errorf("Could not find header: %s", key)

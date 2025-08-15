@@ -375,10 +375,14 @@ func (s *server) getSessionFromGRPCCtx(ctx context.Context) (*corev1.Session, er
 	if val := grpcutils.GetHeaderValueMust(ctx, "x-octelium-refresh-token"); val != "" {
 		refreshToken = val
 	} else if val := grpcutils.GetHeaderValueMust(ctx, "cookie"); val != "" {
-		header := http.Header{}
-		header.Add("Cookie", val)
-		request := http.Request{Header: header}
-		if cookie, err := request.Cookie("octelium_rt"); err == nil {
+		req, err := http.NewRequest("GET", "/", nil)
+		if err != nil {
+			return nil, s.errInternalErr(err)
+		}
+
+		req.Header.Add("Cookie", val)
+
+		if cookie, err := req.Cookie("octelium_rt"); err == nil {
 			refreshToken = cookie.Value
 		}
 	}

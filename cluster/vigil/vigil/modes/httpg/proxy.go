@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -178,13 +179,12 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
 				}
 
-				/*
-					if ldflags.IsDev() {
-						zap.L().Debug("AWS req",
-							zap.Any("headers", outReq.Header),
-							zap.String("url", outReq.URL.String()))
-					}
-				*/
+			}
+
+			if ldflags.IsDev() {
+				zap.L().Debug("Outgoing req",
+					zap.Any("headers", outReq.Header),
+					zap.String("url", outReq.URL.String()))
 			}
 		},
 

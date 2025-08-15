@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -46,6 +47,10 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) doLogout(ctx context.Context, _ *authv1.LogoutRequest) (*authv1.LogoutResponse, error) {
+
+	if ldflags.IsDev() {
+		
+	}
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
