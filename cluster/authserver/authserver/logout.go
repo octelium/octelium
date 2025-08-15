@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -49,8 +50,10 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *server) doLogout(ctx context.Context, _ *authv1.LogoutRequest) (*authv1.LogoutResponse, error) {
 
 	if ldflags.IsDev() {
-		
+		md, _ := metadata.FromIncomingContext(ctx)
+		zap.L().Debug("req metadata", zap.Any("md", md))
 	}
+
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
