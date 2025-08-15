@@ -124,3 +124,13 @@ func GetHeaderValueMust(ctx context.Context, key string) string {
 	ret, _ := GetHeaderValue(ctx, key)
 	return ret
 }
+
+func GetHeaderValueAll(ctx context.Context, key string) []string {
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+
+	return md.Get(key)
+}
