@@ -83,11 +83,14 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			body := direct.Body
 
-			if body != nil && body.ContentType != "" {
-				rw.Header().Set("Content-Type", body.ContentType)
+			for k, v := range direct.Headers {
+				rw.Header().Set(k, v)
 			}
 			rw.Header().Set("Server", "octelium")
-			rw.WriteHeader(int(direct.StatusCode))
+
+			if direct.StatusCode >= 200 && direct.StatusCode < 600 {
+				rw.WriteHeader(int(direct.StatusCode))
+			}
 
 			if body != nil {
 				switch body.Type.(type) {
