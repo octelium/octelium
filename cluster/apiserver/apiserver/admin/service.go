@@ -788,6 +788,40 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						if len(plugin.GetLua().GetInline()) > 20000 {
 							return serr.InvalidArg("Lua script is too large")
 						}
+					case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_:
+						if plugin.GetDirect().StatusCode != 0 {
+							if plugin.GetDirect().StatusCode < 200 || plugin.GetDirect().StatusCode > 599 {
+								return grpcutils.InvalidArg("Invalid statusCode: %d", plugin.GetDirect().StatusCode)
+							}
+						}
+						if len(plugin.GetDirect().Headers) > 100 {
+							return grpcutils.InvalidArg("Too many headers")
+						}
+
+						for k, v := range plugin.GetDirect().Headers {
+							if err := s.validateGenStr(k, true, "key"); err != nil {
+								return err
+							}
+
+							if err := s.validateGenStr(v, true, "value"); err != nil {
+								return err
+							}
+						}
+
+						if plugin.GetDirect().Body != nil {
+							switch plugin.GetDirect().Body.Type.(type) {
+							case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline:
+								if len(plugin.GetDirect().Body.GetInline()) > 50000 {
+									return grpcutils.InvalidArg("inline is too large")
+								}
+							case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes:
+								if len(plugin.GetDirect().Body.GetInlineBytes()) > 35000 {
+									return grpcutils.InvalidArg("inlineBytes is too large")
+								}
+
+							}
+						}
+
 					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
 
 						confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
