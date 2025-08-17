@@ -38,6 +38,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/direct"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua"
@@ -256,6 +257,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return lua.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 	})
 
@@ -277,6 +282,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return compress.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
