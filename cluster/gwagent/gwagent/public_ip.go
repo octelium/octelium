@@ -19,6 +19,7 @@ package gwagent
 import (
 	"context"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -96,17 +97,6 @@ func (s *Server) doAppendPublicIPAddr(addr string) {
 	}
 }
 
-func (s *Server) setExternalIP(ctx context.Context) error {
-	if err := s.setExternalIPFromNode(ctx); err != nil {
-		zap.L().Debug("Could not find the node public IP addr via k8s node", zap.Error(err))
-		if err := s.setExternalIPFromDev(); err != nil {
-			return errors.Errorf("Could not get external node IP from devices: %+v", err)
-		}
-	}
-
-	return nil
-}
-
 func (s *Server) setExternalIPFromNode(ctx context.Context) error {
 	node, err := s.k8sC.CoreV1().Nodes().Get(ctx, s.nodeName, k8smetav1.GetOptions{})
 	if err != nil {
@@ -115,14 +105,12 @@ func (s *Server) setExternalIPFromNode(ctx context.Context) error {
 
 	for _, addr := range node.Status.Addresses {
 		if addr.Type == "ExternalIP" {
-
 			nodeAddr := net.ParseIP(addr.Address)
 			if nodeAddr == nil {
 				continue
 			}
 
 			s.doAppendPublicIPAddr(nodeAddr.String())
-			return nil
 		}
 	}
 
@@ -228,7 +216,19 @@ func (s *Server) setPublicIPAddrsFromPublicAPIs(ctx context.Context) error {
 	}
 
 	for _, publicAPI := range publicAPIs {
-		if err := s.doSetPublicIPAddrFromAPI(ctx, publicAPI); err == nil {
+		if err := s.doSetPublicIPAddrFromAPI(ctx, publicAPI, "tcp4"); err == nil {
+			if len(s.publicIPs) > 0 {
+				return nil
+			}
+		}
+	}
+
+	if len(s.publicIPs) > 0 {
+		return nil
+	}
+
+	for _, publicAPI := range publicAPIs {
+		if err := s.doSetPublicIPAddrFromAPI(ctx, publicAPI, "tcp6"); err == nil {
 			if len(s.publicIPs) > 0 {
 				return nil
 			}
@@ -238,9 +238,19 @@ func (s *Server) setPublicIPAddrsFromPublicAPIs(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) doSetPublicIPAddrFromAPI(ctx context.Context, apiURL string) error {
+func (s *Server) doSetPublicIPAddrFromAPI(ctx context.Context, apiURL string, networkType string) error {
 
-	resp, err := resty.New().SetDebug(ldflags.IsDev()).SetTimeout(5 * time.Second).
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		DualStack: false,
+	}
+
+	resp, err := resty.New().SetDebug(ldflags.IsDev()).SetTimeout(5 * time.Second).SetTransport(&http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, networkType, addr)
+		},
+	}).
 		R().
 		SetContext(ctx).
 		Get(apiURL)
