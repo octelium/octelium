@@ -36,26 +36,29 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	startTime := time.Now()
 	sessionID := fmt.Sprintf("%s-%s", c.id, utilrand.GetRandomStringLowercase(6))
 
-	closerChan := make(chan bool, 2)
-
 	recorder := newRecorder(c, sessionID)
 	recorder.run(ctx)
 
 	stdinWriter := recorder.getStdinWriter()
 	stdoutWriter := recorder.getStdoutWriter()
 
+	upCopyDone := make(chan struct{}, 1)
+	downCopyDone := make(chan struct{}, 1)
+
 	go func() {
 		mult := io.MultiWriter(downstreamCh, stdoutWriter)
 		n, err := io.Copy(mult, upstreamCh)
-		closerChan <- true
 		zap.S().Debugf("Upstream goroutine ended: %d, %+v", n, err)
+		_ = downstreamCh.CloseWrite()
+		upCopyDone <- struct{}{}
 	}()
 
 	go func() {
 		mult := io.MultiWriter(upstreamCh, stdinWriter)
 		n, err := io.Copy(mult, downstreamCh)
-		closerChan <- true
 		zap.S().Debugf("Downstream goroutine ended: %d, %+v", n, err)
+		_ = upstreamCh.CloseWrite()
+		downCopyDone <- struct{}{}
 	}()
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -93,30 +96,57 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 		otelutils.EmitAccessLog(logE)
 	}()
 
+	dsReqs := downstreamReqs
+	usReqs := upstreamReqs
+	var upIODone, downIODone bool
+	var gotExitStatus bool
+
 	for {
 		select {
-		case req, ok := <-downstreamReqs:
+		case req, ok := <-dsReqs:
 			if !ok || req == nil {
-				zap.L().Debug("No more downstream reqs. Exiting doProxy...")
-				return
+				zap.L().Debug("No more downstream reqs.")
+				dsReqs = nil
+				break
 			}
 			zap.S().Debugf("Downstream Req: %s", req.Type)
 			if err := c.handleSessionDownstreamReq(req, upstreamCh, sessionID); err != nil {
 				zap.S().Debugf("Downstream req err: %+v", err)
 			}
 
-		case req, ok := <-upstreamReqs:
+		case req, ok := <-usReqs:
 			if !ok || req == nil {
-				zap.L().Debug("No more upstream reqs. Exiting doProxy...")
-				return
+				zap.L().Debug("No more upstream reqs.")
+				usReqs = nil
+				break
 			}
 			zap.S().Debugf("Upstream Req: %s", req.Type)
-
+			if req.Type == "exit-status" {
+				gotExitStatus = true
+			}
 			if err := c.handleSessionUpstreamReq(req, downstreamCh); err != nil {
 				zap.S().Debugf("Upstream req err: %+v", err)
 			}
 
-		case <-closerChan:
+		case <-upCopyDone:
+			upIODone = true
+
+		case <-downCopyDone:
+			downIODone = true
+
+		case <-ctx.Done():
+			zap.L().Debug("ctx done. Exiting doProxy...")
+			return
+		}
+
+		// For non-interactive exec: exit once upstream finished sending data and exit-status was forwarded.
+		if gotExitStatus && upIODone {
+			zap.S().Debugf("Exiting doProxy for %+v after exit-status and upstream EOF", c.id)
+			return
+		}
+
+		// Fallbacks for interactive or abnormal terminations.
+		if (dsReqs == nil && usReqs == nil && upIODone) || (upIODone && downIODone) {
 			zap.S().Debugf("Exiting doProxy for %+v", c.id)
 			return
 		}
