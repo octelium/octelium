@@ -26,17 +26,16 @@ import (
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
 func (c *dctx) runSessionLoop(ctx context.Context,
 	downstreamReqs, upstreamReqs <-chan *ssh.Request, downstreamCh, upstreamCh ssh.Channel) {
-	zap.L().Debug("Starting session's proxy loop", zap.String("dctxID", c.id))
+	zap.L().Debug("Starting runSessionLoop", zap.String("dctxID", c.id))
 	startTime := time.Now()
 	sessionID := fmt.Sprintf("%s-%s", c.id, utilrand.GetRandomStringLowercase(6))
-
-	closerChan := make(chan bool, 2)
 
 	recorder := newRecorder(c, sessionID)
 	recorder.run(ctx)
@@ -44,17 +43,34 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	stdinWriter := recorder.getStdinWriter()
 	stdoutWriter := recorder.getStdoutWriter()
 
+	upCopyDone := make(chan struct{}, 1)
+	downCopyDone := make(chan struct{}, 1)
+
 	go func() {
 		mult := io.MultiWriter(downstreamCh, stdoutWriter)
 		n, err := io.Copy(mult, upstreamCh)
-		closerChan <- true
+		if err == nil || errors.Is(err, io.EOF) {
+			if err := downstreamCh.CloseWrite(); err != nil {
+				zap.L().Debug("Could not downstream closeWrite", zap.String("dctxID", c.id), zap.Error(err))
+			} else {
+				zap.L().Debug("Sent downstream EOF msg", zap.String("dctxID", c.id))
+			}
+		}
+		upCopyDone <- struct{}{}
 		zap.L().Debug("Upstream goroutine ended", zap.Int64("n", n), zap.String("dctxID", c.id), zap.Error(err))
 	}()
 
 	go func() {
 		mult := io.MultiWriter(upstreamCh, stdinWriter)
 		n, err := io.Copy(mult, downstreamCh)
-		closerChan <- true
+		if err == nil || errors.Is(err, io.EOF) {
+			if err := upstreamCh.CloseWrite(); err != nil {
+				zap.L().Debug("Could not upstream closeWrite", zap.String("dctxID", c.id), zap.Error(err))
+			} else {
+				zap.L().Debug("Sent upstream EOF msg", zap.String("dctxID", c.id))
+			}
+		}
+		downCopyDone <- struct{}{}
 		zap.L().Debug("Downstream goroutine ended", zap.Int64("n", n), zap.String("dctxID", c.id), zap.Error(err))
 	}()
 
@@ -93,13 +109,17 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 		otelutils.EmitAccessLog(logE)
 	}()
 
+	var upIODone, downIODone, exitStatusSent bool
+
 	for {
 		select {
 		case req, ok := <-downstreamReqs:
 			if !ok || req == nil {
-				zap.L().Debug("No more downstream reqs. Exiting doProxy...")
-				return
+				zap.L().Debug("No more downstream reqs.", zap.String("dctxID", c.id))
+				downstreamReqs = nil
+				break
 			}
+
 			zap.L().Debug("Downstream Req", zap.String("dctxID", c.id), zap.String("type", req.Type))
 			if err := c.handleSessionDownstreamReq(req, upstreamCh, sessionID); err != nil {
 				zap.L().Debug("Downstream req error", zap.String("dctxID", c.id), zap.Error(err))
@@ -107,20 +127,41 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 
 		case req, ok := <-upstreamReqs:
 			if !ok || req == nil {
-				zap.L().Debug("No more upstream reqs. Exiting doProxy...")
-				return
+				zap.L().Debug("No more upstream reqs.", zap.String("dctxID", c.id))
+				upstreamReqs = nil
+				break
 			}
 			zap.L().Debug("Upstream Req", zap.String("dctxID", c.id), zap.String("type", req.Type))
 
 			if err := c.handleSessionUpstreamReq(req, downstreamCh); err != nil {
 				zap.L().Debug("Downstream req error", zap.String("dctxID", c.id), zap.Error(err))
 			}
+			if req.Type == "exit-status" {
+				exitStatusSent = true
+				zap.L().Debug("exit-status successfully sent", zap.String("dctxID", c.id))
+			}
 
-		case <-closerChan:
-			zap.L().Debug("Exiting doProxy", zap.String("dctxID", c.id))
-			return
+		case <-upCopyDone:
+			upIODone = true
+		case <-downCopyDone:
+			downIODone = true
 		case <-ctx.Done():
 			zap.L().Debug("ctx done", zap.String("dctxID", c.id))
+			return
+		}
+
+		if exitStatusSent && upIODone {
+			zap.L().Debug("Exiting runSessionLoop after exit-status and upstream EOF", zap.String("dctxID", c.id))
+			return
+		}
+
+		if upIODone && downIODone {
+			zap.L().Debug("Both upstreamCopy and downstreamCopy done. Exiting runSessionLoop", zap.String("dctxID", c.id))
+			return
+		}
+
+		if downstreamReqs == nil && upstreamReqs == nil && upIODone {
+			zap.L().Debug("No more downstreamReqs and upstreamReqs. Exiting runSessionLoop", zap.String("dctxID", c.id))
 			return
 		}
 	}
