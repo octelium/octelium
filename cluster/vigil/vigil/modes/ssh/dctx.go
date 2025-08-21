@@ -47,8 +47,8 @@ type dctx struct {
 	conn      net.Conn
 	sshConn   *ssh.ServerConn
 
-	mu       sync.Mutex
-	sessions uint32
+	mu sync.Mutex
+	// sessions uint32
 
 	remoteConn struct {
 		mu        sync.Mutex
@@ -306,7 +306,7 @@ func (c *dctx) getClientConfig(ctx context.Context,
 		}
 	}
 
-	zap.L().Debug("Successfully got sshClientConfig for dctx: %s",
+	zap.L().Debug("Successfully got sshClientConfig",
 		zap.String("id", c.id), zap.String("user", clientConfig.User))
 
 	return clientConfig, nil
@@ -384,7 +384,7 @@ func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
 		return
 	}
 
-	zap.S().Debugf("New Channel: %s", nch.ChannelType())
+	zap.L().Debug("New Channel", zap.String("dctxID", c.id), zap.String("type", nch.ChannelType()))
 
 	switch nch.ChannelType() {
 	case "direct-tcpip":

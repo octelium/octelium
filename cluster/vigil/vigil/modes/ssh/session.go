@@ -32,7 +32,7 @@ import (
 
 func (c *dctx) runSessionLoop(ctx context.Context,
 	downstreamReqs, upstreamReqs <-chan *ssh.Request, downstreamCh, upstreamCh ssh.Channel) {
-	zap.S().Debugf("Starting session's proxy loop for %+v", c.id)
+	zap.L().Debug("Starting session's proxy loop", zap.String("dctxID", c.id))
 	startTime := time.Now()
 	sessionID := fmt.Sprintf("%s-%s", c.id, utilrand.GetRandomStringLowercase(6))
 
@@ -48,14 +48,14 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 		mult := io.MultiWriter(downstreamCh, stdoutWriter)
 		n, err := io.Copy(mult, upstreamCh)
 		closerChan <- true
-		zap.S().Debugf("Upstream goroutine ended: %d, %+v", n, err)
+		zap.L().Debug("Upstream goroutine ended", zap.Int64("n", n), zap.String("dctxID", c.id), zap.Error(err))
 	}()
 
 	go func() {
 		mult := io.MultiWriter(upstreamCh, stdinWriter)
 		n, err := io.Copy(mult, downstreamCh)
 		closerChan <- true
-		zap.S().Debugf("Downstream goroutine ended: %d, %+v", n, err)
+		zap.L().Debug("Downstream goroutine ended", zap.Int64("n", n), zap.String("dctxID", c.id), zap.Error(err))
 	}()
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -100,9 +100,9 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 				zap.L().Debug("No more downstream reqs. Exiting doProxy...")
 				return
 			}
-			zap.S().Debugf("Downstream Req: %s", req.Type)
+			zap.L().Debug("Downstream Req", zap.String("dctxID", c.id), zap.String("type", req.Type))
 			if err := c.handleSessionDownstreamReq(req, upstreamCh, sessionID); err != nil {
-				zap.S().Debugf("Downstream req err: %+v", err)
+				zap.L().Debug("Downstream req error", zap.String("dctxID", c.id), zap.Error(err))
 			}
 
 		case req, ok := <-upstreamReqs:
@@ -110,14 +110,17 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 				zap.L().Debug("No more upstream reqs. Exiting doProxy...")
 				return
 			}
-			zap.S().Debugf("Upstream Req: %s", req.Type)
+			zap.L().Debug("Upstream Req", zap.String("dctxID", c.id), zap.String("type", req.Type))
 
 			if err := c.handleSessionUpstreamReq(req, downstreamCh); err != nil {
-				zap.S().Debugf("Upstream req err: %+v", err)
+				zap.L().Debug("Downstream req error", zap.String("dctxID", c.id), zap.Error(err))
 			}
 
 		case <-closerChan:
-			zap.S().Debugf("Exiting doProxy for %+v", c.id)
+			zap.L().Debug("Exiting doProxy", zap.String("dctxID", c.id))
+			return
+		case <-ctx.Done():
+			zap.L().Debug("ctx done", zap.String("dctxID", c.id))
 			return
 		}
 	}
@@ -188,21 +191,23 @@ func (c *dctx) handleSessionUpstreamReq(req *ssh.Request, ch ssh.Channel) error 
 }
 
 func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChannel) {
-	zap.S().Debugf("Handling session requests for %+v", c.id)
+	zap.L().Debug("Starting handleSessionRequests", zap.String("dctxID", c.id))
 
-	{
-		c.mu.Lock()
-		if c.sessions >= 10 {
+	/*
+		{
+			c.mu.Lock()
+			if c.sessions >= 10 {
+				c.mu.Unlock()
+				zap.L().Debug("Maximum sessions reached")
+				newChannel.Reject(ssh.ResourceShortage, "Maximum sessions reached")
+				return
+			}
+
 			c.mu.Unlock()
-			zap.L().Debug("Maximum sessions reached")
-			newChannel.Reject(ssh.ResourceShortage, "Maximum sessions reached")
-			return
 		}
 
-		c.mu.Unlock()
-	}
-
-	zap.S().Debugf("Accepting a new session channel")
+		zap.S().Debugf("Accepting a new session channel")
+	*/
 
 	sesschan, reqs, err := newChannel.Accept()
 	if err != nil {
@@ -210,15 +215,17 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 		return
 	}
 
-	c.mu.Lock()
-	c.sessions = c.sessions + 1
-	c.mu.Unlock()
+	/*
+		c.mu.Lock()
+		c.sessions = c.sessions + 1
+		c.mu.Unlock()
+	*/
 
 	defer sesschan.Close()
 
 	stderr := sesschan.Stderr()
 
-	zap.S().Debugf("Opening a new remote session channel")
+	zap.L().Debug("Opening a new remote session channel")
 
 	upstreamCh, upstreamReqs, err := c.remoteConn.sshClient.OpenChannel("session", []byte{})
 	if err != nil {
@@ -230,7 +237,7 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 	defer upstreamCh.Close()
 
 	c.runSessionLoop(ctx, reqs, upstreamReqs, sesschan, upstreamCh)
-	zap.S().Debugf("proxy loop ended for session of dctx: %+v", c.id)
+	zap.L().Debug("proxy loop ended for session", zap.String("dctxID", c.id))
 }
 
 func (c *dctx) setLogSessionDownstreamReq(req *ssh.Request, sessionID string) error {

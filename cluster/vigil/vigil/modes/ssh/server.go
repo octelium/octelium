@@ -463,16 +463,16 @@ func (s *Server) serve(ctx context.Context) {
 	for {
 		conn, err := s.lis.Accept()
 		if err != nil {
-			zap.S().Debugf("Could not accept conn: %+v", err)
+			zap.L().Debug("Could not accept conn", zap.Error(err))
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.S().Debugf("Timeout err")
+				zap.L().Debug("Timeout err")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			select {
 			case <-ctx.Done():
-				zap.S().Debugf("shutting down server")
+				zap.L().Debug("shutting down server")
 				return
 			default:
 				time.Sleep(100 * time.Millisecond)
