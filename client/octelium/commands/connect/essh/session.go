@@ -46,7 +46,7 @@ func (c *dctx) doHandleSessionReqs(ctx context.Context, reqs <-chan *ssh.Request
 		ch: ch,
 	}
 	closeFunc := func() {
-		zap.S().Debugf("Closing sess req channel")
+		zap.L().Debug("Closing sess req channel")
 		ch.Close()
 		if sessCtx.term != nil {
 			if err := sessCtx.term.close(); err != nil {
@@ -60,16 +60,16 @@ func (c *dctx) doHandleSessionReqs(ctx context.Context, reqs <-chan *ssh.Request
 	for {
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("ctx done. Exiting doHandleSessionReqs")
+			zap.L().Debug("ctx done. Exiting doHandleSessionReqs")
 			return
 		case req := <-reqs:
 			if req == nil {
-				zap.S().Debugf("Nil req. Exiting doHandleSessionReqs")
+				zap.L().Debug("Nil req. Exiting doHandleSessionReqs")
 				return
 			}
-			zap.S().Debugf("Downstream Req: %s", req.Type)
+			zap.L().Debug("Downstream Req", zap.String("type", req.Type))
 			if err := c.handleSessionReq(ctx, sessCtx, req); err != nil {
-				zap.S().Debugf("could not handle sess req: %+v", err)
+				zap.L().Debug("could not handle sess req", zap.Error(err))
 			}
 		}
 	}
@@ -83,7 +83,7 @@ type sessCtx struct {
 }
 
 func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
-	zap.S().Debugf("New sess req: %s", req.Type)
+	zap.L().Debug("New sess req", zap.String("type", req.Type))
 
 	term := sessCtx.term
 
@@ -105,7 +105,7 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 		if term == nil {
 			term, err := newTerminal(c, sessCtx)
 			if err != nil {
-				zap.S().Debugf("Could not start a new terminal: %+v", err)
+				zap.L().Debug("Could not start a new terminal", zap.Error(err))
 				return err
 			}
 			sessCtx.term = term
@@ -120,7 +120,7 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 		if term == nil {
 			term, err := newTerminal(c, sessCtx)
 			if err != nil {
-				zap.S().Debugf("Could not start a new terminal: %+v", err)
+				zap.L().Debug("Could not start a new terminal", zap.Error(err))
 				return err
 			}
 			sessCtx.term = term
@@ -156,7 +156,7 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 			val: kv.Value,
 		})
 	default:
-		zap.S().Debugf("Unsupported session req type: %s", req.Type)
+		zap.L().Debug("Unsupported session req type", zap.String("type", req.Type))
 		return req.Reply(false, nil)
 	}
 
@@ -248,7 +248,7 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("ctx done. Exiting exec...")
+			zap.L().Debug("ctx done. Exiting exec...")
 			cmd.Process.Kill()
 
 			sessCtx.sendSessionExitStatus(130)
@@ -282,12 +282,17 @@ func (c *sessCtx) sendSessionExitStatus(statusCode int) error {
 		ssh.Marshal(&req))
 
 	zap.L().Debug("Sending exit-status request done", zap.Error(err))
+
+	if err := c.ch.CloseWrite(); err != nil {
+		zap.L().Debug("closwWrite err", zap.Error(err))
+	}
+
 	return err
 }
 
 func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChannel) {
 
-	zap.S().Debugf("Accepting a new channel")
+	zap.L().Debug("Accepting a new channel")
 
 	/*
 		c.mu.Lock()
@@ -314,7 +319,7 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 	*/
 
 	c.doHandleSessionReqs(ctx, reqs, sesschan)
-	zap.S().Debugf("Handling session requests ended for dctx: %+v", c.id)
+	zap.L().Debug("Handling session requests ended", zap.String("dctxID", c.id))
 }
 
 func parsePTYReq(req *ssh.Request) (*ptyReqParams, error) {
