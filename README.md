@@ -26,9 +26,9 @@
 
 ## What is Octelium?
 
-Octelium is a free and open source, self-hosted, unified platform for zero trust resource access that is primarily meant to be a modern alternative to remote access VPNs and similar tools. It is built to be generic enough to operate as a zero-config remote access VPN, a ZTNA/BeyondCorp platform, ngrok alternative, an API gateway, an AI/LLM gateway, an infrastructure for MCP gateways and A2A architectures/meshes, a PaaS-like platform, a Kubernetes gateway/ingress and even as a homelab infrastructure.
+Octelium is a free and open source, self-hosted, unified platform for zero trust resource access that is built generic and flexible enough to operate as a modern zero-config remote access VPN, a comprehensive Zero Trust Network Access (ZTNA)/BeyondCorp platform, an ngrok/Cloudflare Tunnel alternative, an API gateway, an AI/LLM gateway, a scalable infrastructure for access and deployment to build MCP gateways and A2A architectures/meshes, a PaaS-like platform, a Kubernetes gateway/ingress and even as a homelab infrastructure.
 
-Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secret-less secure access via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access, for both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases, via context-aware access control on a per-request basis.
+Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secretless secure access via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access, for both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases, via context-aware access control on a per-request basis.
 
 
 ![Octelium](https://octelium.com/assets/ztna-CrAF5Ft7.webp)
@@ -44,7 +44,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 * **Self-Hosted PaaS:** A scalable platform to deploy, manage, and host your containerized applications, similar to **Vercel or Netlify**. See an example for [Next.js/Vite apps](https://octelium.com/docs/octelium/latest/management/guide/service/http/nextjs-vite).
 * **API Gateway:** A self-hosted, scalable, and secure API gateway for microservices, providing a robust alternative to **Kong Gateway or Apigee**. You can see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/api-gateway).
 * **AI Gateway:** A scalable AI gateway with identity-based access control, routing, and visibility for any AI LLM provider. See an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/ai/ai-gateway).
-* **Unified Zero Trust Access to SaaS APIs:** Provides secret-less access to SaaS APIs for both teams and workloads, eliminating the need to manage and distribute long-lived and over-privileged API keys. See a generic example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/zero-trust-saas-api), AWS Lambda [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/lambda-zero-trust-secretless-access), and AWS S3 [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/s3-zero-trust-secretless-access).
+* **Unified Zero Trust Access to SaaS APIs:** Provides secretless access to SaaS APIs for both teams and workloads, eliminating the need to manage and distribute long-lived and over-privileged API keys. See a generic example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/zero-trust-saas-api), AWS Lambda [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/lambda-zero-trust-secretless-access), and AWS S3 [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/s3-zero-trust-secretless-access).
 - **MCP Gateways and A2A-based Architectures** A secure infrastructure for Model Context Protocol [(MCP)](https://modelcontextprotocol.io/introduction) gateways and Agent2Agent Protocol [(A2A)](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/)-based architectures that provides identity management, authentication over standard OAuth2 client credentials and bearer authentication, secure remote access and deployment as well as identity-based, L7-aware access control via policy-as-code and visibility (see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/ai/self-hosted-mcp)).
 * **Homelab:** A unified self-hosted Homelab infrastructure to connect and provide secure remote access to all your resources behind NAT from anywhere (e.g. all your devices including your laptop, IoT, cloud providers, Raspberry Pis, routers, etc...) as well as a secure deployment platform to deploy and privately as well as publicly host your websites, blogs, APIs or to remotely test heavy containers (e.g. LLM runtimes such as Ollama, databases such as ClickHouse and Elasticsearch, Pi-hole, etc...). See examples for [remote VSCode](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/remote-vscode-code-server), and [Pi-hole](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/pihole).
 * **Kubernetes Ingress Alternative:** A more advanced alternative to standard Kubernetes ingress controllers and load balancers, allowing you to route to any Kubernetes service via dynamic, L7-aware policy-as-code.
@@ -55,7 +55,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 - **A Modern, Unified Zero Trust Architecture** Built on a scalable architecture of identity-aware proxies to control access at the application layer (L7), Octelium unifies access for humans and workloads to both private and protected public resources. It supports both zero-config VPN-like client-based access over WireGuard/QUIC and client-less BeyondCorp access, all built on top of Kubernetes for automatic scalability (read in detail about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)).
 
 
-- **Dynamic Secret-less Access** Octelium's layer-7 awareness enables _Users_ to seamlessly access resources protected by application-layer credentials without exposing, managing and distributing such secrets (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless)). This works for HTTP APIs without sharing API keys and access tokens, SSH servers with sharing passwords and private keys, Kubernetes clusters, PostgreSQL/MySQL databases as well as any L7 protocol protected by mTLS.
+- **Dynamic Secretless Access** Octelium's layer-7 awareness enables _Users_ to seamlessly access resources protected by application-layer credentials without exposing, managing and distributing such secrets (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless)). This works for HTTP APIs without sharing API keys and access tokens, SSH servers with sharing passwords and private keys, Kubernetes clusters, PostgreSQL/MySQL databases as well as any L7 protocol protected by mTLS.
 
 
 - ***Modern, Dynamic, Fine-grained Access Control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis (read more [here](https://octelium.com/docs/octelium/latest/management/core/policy)) with policy-as-code using [CEL](https://cel.dev/) and [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). Octelium has no notion of an "admin" user, enforcing zero standing privileges by default.
@@ -63,7 +63,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 - **Context-aware, identity-based, L-7 aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
 
 
-- **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secret-less authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)).
+- **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secretless authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)).
 
 
 - **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools
@@ -84,6 +84,20 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 - **Open source and designed for self-hosting** Octelium is fully open source and it is designed for single-tenant self-hosting. There is no proprietary cloud-based control plane, nor is this some crippled demo open source version of a separate fully functional SaaS paid service. You can host it on top of a single-node Kubernetes cluster running on a cheap cloud VM/VPS and you can also host it on scalable production cloud-based or on-prem multi-node Kubernetes installations with no vendor lock-in.
 
 
+## Install your First Cluster
+
+Read this quick guide [here](https://octelium.com/docs/octelium/latest/overview/quick-install) to install a single-node Octelium _Cluster_ on top of any cheap cloud VM/VPS instance (e.g. DigitalOcean Droplet, Hetzner server, AWS EC2, Vultr, etc...) or a local Linux machine/Linux VM inside a MacOS/Windows machine with at least 2GB of RAM and 20GB of disk storage running a recent Linux distribution (Ubuntu 24.04 LTS or later, Debian 12+, etc...), which is good enough for most development, personal or undemanding production use cases that do not require highly available multi-node _Clusters_. Once you SSH into your VPS/VM as root, you can install the _Cluster_ as follows:
+
+```bash
+curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
+chmod +x install-demo-cluster.sh
+
+# Replace <DOMAIN> with your actual domain
+./install-demo-cluster.sh --domain <DOMAIN>
+```
+
+Once the _Cluster_ is installed. You can start managing it as shown in the guide [here](https://octelium.com/docs/octelium/latest/overview/management).
+
 ## Try Octelium in a Codespace
 
 You can install and manage a demo Octelium _Cluster_ inside a GitHub Codespace without having to install it on a real VM/machine/Kubernetes cluster and simply use it as a playground to get familiar with how the _Cluster_ is managed. Visit the playground GitHub repository [here](https://github.com/octelium/playground) and run it in a Codespace then follow the README instructions there to install the _Cluster_ and start interacting with it.
@@ -103,21 +117,6 @@ For Windows in Powershell
 ```powershell
 iwr https://octelium.com/install.ps1 -useb | iex
 ```
-
-## Install your First Cluster
-
-Read this quick guide [here](https://octelium.com/docs/octelium/latest/overview/quick-install) to install a single-node Octelium _Cluster_ on top of any cheap cloud VM/VPS instance (e.g. DigitalOcean Droplet, Hetzner server, AWS EC2, Vultr, etc...) or a local Linux machine/Linux VM inside a MacOS/Windows machine with at least 2GB of RAM and 20GB of disk storage running a recent Linux distribution (Ubuntu 24.04 LTS or later, Debian 12+, etc...), which is good enough for most development, personal or undemanding production use cases that do not require highly available multi-node _Clusters_. Once you SSH into your VPS/VM as root, you can install the _Cluster_ as follows:
-
-```bash
-curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
-chmod +x install-demo-cluster.sh
-
-# Replace <DOMAIN> with your actual domain
-./install-demo-cluster.sh --domain <DOMAIN>
-```
-
-Once the _Cluster_ is installed. You can start managing it as shown in the guide [here](https://octelium.com/docs/octelium/latest/overview/management).
-
 
 ## Useful Links
 
@@ -164,7 +163,7 @@ Octelium is free and open source software:
 
 - **Is Octelium a remote access VPN?**
 
-  Octelium can seamlessly operate as a zero-config remote access/corporate VPN. It is, however, a modern zero trust architecture that's based on identity-aware proxies (read about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)) instead of operating at layer-3 to provide dynamic fine-grained application-layer aware access control, dynamic configuration and routing, secret-less access and visibility. You can read more about the main features [here](#main-features).
+  Octelium can seamlessly operate as a zero-config remote access/corporate VPN. It is, however, a modern zero trust architecture that's based on identity-aware proxies (read about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)) instead of operating at layer-3 to provide dynamic fine-grained application-layer aware access control, dynamic configuration and routing, secretless access and visibility. You can read more about the main features [here](#main-features).
 
 - **Why is Octelium FOSS? What's the catch?**
 
