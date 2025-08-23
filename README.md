@@ -26,7 +26,7 @@
 
 ## What is Octelium?
 
-Octelium is a free and open source, self-hosted, unified platform for zero trust resource access that is built generic and flexible enough to operate as a modern zero-config remote access VPN, a comprehensive Zero Trust Network Access (ZTNA)/BeyondCorp platform, an ngrok/Cloudflare Tunnel alternative, an API gateway, an AI/LLM gateway, a scalable infrastructure for access and deployment to build MCP gateways and A2A architectures/meshes, a PaaS-like platform, a Kubernetes gateway/ingress and even as a homelab infrastructure.
+Octelium is a free and open source, self-hosted, unified zero trust secure access platform that is flexible enough to operate as a modern zero-config remote access VPN, a comprehensive Zero Trust Network Access (ZTNA)/BeyondCorp platform, an ngrok/Cloudflare Tunnel alternative, an API gateway, an AI/LLM gateway, a scalable infrastructure for access and deployment to build MCP gateways and A2A architectures/meshes, a PaaS-like platform, a Kubernetes gateway/ingress and even as a homelab infrastructure.
 
 Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secretless secure access via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access, for both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases, via context-aware access control on a per-request basis.
 
@@ -60,16 +60,16 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 
 - ***Modern, Dynamic, Fine-grained Access Control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis (read more [here](https://octelium.com/docs/octelium/latest/management/core/policy)) with policy-as-code using [CEL](https://cel.dev/) and [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). Octelium has no notion of an "admin" user, enforcing zero standing privileges by default.
 
-- **Context-aware, identity-based, L-7 aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
+- **Context-aware, identity-based, L7-aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
 
 
 - **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secretless authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)).
 
 
-- **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools
+- **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools.
 
 
-- **Effortless, Password-less SSH** Octelium clients can serve SSH even without root access, enabling you to SSH into containers, IoT devices, or other hosts that can't run an SSH server (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/embedded-ssh)).
+- **Effortless, Passwordless SSH** Octelium clients can serve SSH even without root access, enabling you to SSH into containers, IoT devices, or other hosts that can't run an SSH server (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/embedded-ssh)).
 
 
 - **Effortlessly deploy, scale and secure access to your containerized applications as _Services_** Octelium provides you out-of-the-box PaaS-like capabilities to effortlessly deploy, manage and scale your containerized applications and serve them as _Services_ to provide seamless secure client-based private access, client-less public BeyondCorp access as well as public anonymous access. You can read in detail about managed containers [here](https://octelium.com/docs/octelium/latest/management/core/service/managed-containers).
@@ -125,6 +125,8 @@ iwr https://octelium.com/install.ps1 -useb | iex
 - [How Octelium works](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)
 - [First Steps to Managing the Cluster](https://octelium.com/docs/octelium/latest/overview/management)
 - [Policies and Access Control](https://octelium.com/docs/octelium/latest/management/core/policy)
+- [Secretless Access](https://octelium.com/docs/octelium/latest/management/core/service/secretless)
+- [Connecting to Clusters](https://octelium.com/docs/octelium/latest/user/cli/connect)
 
 ## License
 
