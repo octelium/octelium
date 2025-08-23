@@ -136,7 +136,7 @@ func getKey(svc *corev1.Service) string {
 
 func (s *DNSServer) Set(svc *corev1.Service) {
 
-	zap.S().Debugf("Setting Service %s: %+v", svc.Metadata.Name, svc.Status.Addresses)
+	zap.L().Debug("Setting Service", zap.String("name", svc.Metadata.Name), zap.Any("addrs", svc.Status.Addresses))
 
 	s.cache.set(svc)
 
@@ -152,6 +152,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		msg := dns.Msg{}
 		msg.SetRcode(r, dns.RcodeRefused)
 		w.WriteMsg(&msg)
+		zap.L().Debug("Empty list of questions")
 		return
 	}
 
@@ -164,6 +165,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		msg := dns.Msg{}
 		msg.SetRcode(r, dns.RcodeRefused)
 		w.WriteMsg(&msg)
+		zap.L().Debug("Invalid domain req", zap.String("domain", domain))
 		return
 	}
 
@@ -173,7 +175,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			msg.SetRcode(r, dns.RcodeNameError)
 			w.WriteMsg(&msg)
-			zap.S().Debugf("Could not find svcNs for domain: %s", domain)
+			zap.L().Debug("Could not find svcNs for domain", zap.String("domain", domain))
 			return
 		}
 
@@ -209,8 +211,10 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 
 		w.WriteMsg(&msg)
-		zap.S().Debugf("Successfully resolved for domain: %s | hostname: %s to address: %s",
-			domain, hostname, address.String())
+		zap.L().Debug("Successfully resolved for domain",
+			zap.String("domain", domain),
+			zap.String("hostname", hostname),
+			zap.String("addr", address.String()))
 	}
 
 	switch r.Question[0].Qtype {
@@ -235,11 +239,15 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 var rgx = regexp.MustCompile(`^(((?P<svc>[a-z][a-z0-9-]{0,62}[a-z0-9])(\.|_)(?P<ns>[a-z][a-z0-9-]{0,62}[a-z0-9]))|(?P<svc_default>[a-z][a-z0-9-]{0,62}[a-z0-9]))$`)
 */
 func (s *DNSServer) getHostname(arg string) (string, error) {
+	domainLen := len(arg)
+	if domainLen < 1 || domainLen > 256 {
+		return "", errNotFound
+	}
 
 	suffixList := []string{
-		fmt.Sprintf(".%s.local.", s.domain),
 		fmt.Sprintf(".local.%s.", s.domain),
-		fmt.Sprintf(".%s.", s.domain),
+		fmt.Sprintf(".%s.local.", s.domain),
+		// fmt.Sprintf(".%s.", s.domain),
 		".local.",
 	}
 
@@ -247,13 +255,7 @@ func (s *DNSServer) getHostname(arg string) (string, error) {
 		return strings.HasSuffix(arg, suffix)
 	})
 	if idx < 0 {
-		if slices.ContainsFunc(suffixList, func(suffix string) bool {
-			return arg == suffix[1:]
-		}) {
-			return "default.default", nil
-		}
-
-		return "", errors.Errorf("not found")
+		return s.getHostnameFromPossibleHostname(arg)
 	}
 	ret := strings.TrimSuffix(arg, suffixList[idx])
 
@@ -263,6 +265,27 @@ func (s *DNSServer) getHostname(arg string) (string, error) {
 
 	return ret, nil
 }
+
+func (s *DNSServer) getHostnameFromPossibleHostname(arg string) (string, error) {
+	hostname := strings.TrimSuffix(arg, ".")
+
+	parts := strings.Split(hostname, ".")
+	switch len(parts) {
+	case 1:
+		ret := fmt.Sprintf("%s.default", hostname)
+		if s.cache.has(ret) {
+			return ret, nil
+		}
+	case 2:
+		if !slices.Contains(wellKnownTLDs, parts[1]) && s.cache.has(hostname) {
+			return hostname, nil
+		}
+	}
+
+	return "", errNotFound
+}
+
+var errNotFound = errors.Errorf("not found")
 
 /*
 func (s *DNSServer) parseSvcNs(arg string) *svcNs {
@@ -352,7 +375,7 @@ func (s *DNSServer) Run(ctx context.Context) error {
 
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
-				zap.S().Debugf("Failed to set udp listener %s\n", err.Error())
+				zap.L().Debug("Failed to set udp listener", zap.Error(err))
 			}
 		}()
 	}
@@ -363,7 +386,7 @@ func (s *DNSServer) Run(ctx context.Context) error {
 
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
-				zap.S().Debugf("Failed to set udp listener %s\n", err.Error())
+				zap.L().Debug("Failed to set udp listener", zap.Error(err))
 			}
 			zap.L().Debug("DNS server existed...")
 		}()
@@ -477,4 +500,66 @@ func (s *DNSServer) setDefaultUpstreams(cc *corev1.ClusterConfig) {
 		},
 	}
 
+}
+
+var wellKnownTLDs = []string{
+	"com", "net", "org", "info", "biz", "edu", "gov", "mil", "int", "arpa",
+
+	"academy", "accountant", "actor", "agency", "app", "art", "associates",
+	"attorney", "auction", "audio", "auto", "band", "bank", "bargains",
+	"beer", "best", "bike", "bio", "blog", "boats", "broker", "build",
+	"builders", "business", "buzz", "cafe", "camera", "camp", "capital",
+	"cards", "care", "careers", "cash", "casino", "catering", "center",
+	"ceo", "chat", "church", "city", "claims", "cleaning", "click", "clinic",
+	"clothing", "cloud", "club", "coach", "codes", "coffee", "community",
+	"company", "computer", "condos", "construction", "consulting",
+	"contact", "contractors", "cool", "credit", "deals", "dental",
+	"dentist", "design", "dev", "diamonds", "digital", "directory",
+	"discount", "doctor", "dog", "domains", "education", "email",
+	"energy", "engineer", "engineering", "enterprises", "estate", "events",
+	"exchange", "expert", "exposed", "express", "family", "fans", "farm",
+	"fashion", "film", "finance", "financial", "firm", "fish", "fishing",
+	"fit", "fitness", "flights", "florist", "flowers", "food", "football",
+	"forsale", "foundation", "fund", "furniture", "gallery", "games",
+	"garden", "gifts", "gives", "giving", "glass", "global", "gold",
+	"golf", "graphics", "green", "group", "guide", "guitars", "guru",
+	"hair", "haus", "health", "healthcare", "help", "homes", "horse",
+	"hospital", "host", "hosting", "house", "how", "inc", "industries",
+	"insure", "insurance", "international", "investments", "jewelry",
+	"jobs", "land", "law", "lawyer", "lease", "legal", "life",
+	"lighting", "limited", "limo", "link", "live", "loan", "loans",
+	"lol", "love", "ltd", "luxury", "management", "market", "marketing",
+	"markets", "media", "medical", "menu", "money", "mortgage",
+	"motorcycles", "movie", "museum", "name", "network", "news", "ninja",
+	"online", "partners", "parts", "pet", "photography", "photos", "photo",
+	"pictures", "pizza", "place", "plumbing", "plus", "press", "pro",
+	"productions", "properties", "property", "realty", "rentals",
+	"repair", "report", "republican", "restaurant", "reviews", "sale",
+	"school", "science", "services", "shop", "shopping", "site",
+	"ski", "soccer", "social", "software", "solutions", "space", "store",
+	"studio", "style", "systems", "tax", "taxi", "team", "tech", "technology",
+	"theater", "tickets", "tips", "tires", "tools", "tours", "town", "toys",
+	"trade", "training", "travel", "university", "vacations", "video",
+	"villas", "vision", "vote", "voyage", "watch", "website", "wedding",
+	"wiki", "wine", "work", "works", "world", "wtf", "xyz", "zone",
+
+	"ac", "ad", "ae", "af", "ag", "ai", "al", "am", "an", "ao", "aq", "ar", "as",
+	"at", "au", "aw", "ax", "az", "ba", "bb", "bd", "be", "bf", "bg", "bh", "bi",
+	"bj", "bm", "bn", "bo", "br", "bs", "bt", "bw", "by", "bz", "ca", "cc", "cd",
+	"cf", "cg", "ch", "ci", "ck", "cl", "cm", "cn", "co", "cr", "cu", "cv", "cx",
+	"cy", "cz", "de", "dj", "dk", "dm", "do", "dz", "ec", "ee", "eg", "er", "es",
+	"et", "eu", "fi", "fj", "fk", "fm", "fo", "fr", "ga", "gb", "gd", "ge", "gf",
+	"gg", "gh", "gi", "gl", "gm", "gn", "gp", "gq", "gr", "gs", "gt", "gu", "gw",
+	"gy", "hk", "hm", "hn", "hr", "ht", "hu", "id", "ie", "il", "im", "in", "io",
+	"iq", "ir", "is", "it", "je", "jm", "jo", "jp", "ke", "kg", "kh", "ki", "km",
+	"kn", "kp", "kr", "kw", "ky", "kz", "la", "lb", "lc", "li", "lk", "lr", "ls",
+	"lt", "lu", "lv", "ly", "ma", "mc", "md", "me", "mg", "mh", "mk", "ml", "mm",
+	"mn", "mo", "mp", "mq", "mr", "ms", "mt", "mu", "mv", "mw", "mx", "my", "mz",
+	"na", "nc", "ne", "nf", "ng", "ni", "nl", "no", "np", "nr", "nu", "nz", "om",
+	"pa", "pe", "pf", "pg", "ph", "pk", "pl", "pm", "pn", "pr", "ps", "pt", "pw",
+	"py", "qa", "re", "ro", "rs", "ru", "rw", "sa", "sb", "sc", "sd", "se", "sg",
+	"sh", "si", "sk", "sl", "sm", "sn", "so", "sr", "st", "su", "sv", "sy", "sz",
+	"tc", "td", "tf", "tg", "th", "tj", "tk", "tl", "tm", "tn", "to", "tr", "tt",
+	"tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "vc", "ve", "vg",
+	"vi", "vn", "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
 }

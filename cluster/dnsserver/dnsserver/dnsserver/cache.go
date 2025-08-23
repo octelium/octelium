@@ -108,3 +108,14 @@ func (c *cache) get(arg string, typ uint16) net.IP {
 		return net.ParseIP(addr.DualStackIP.Ipv4)
 	}
 }
+
+func (c *cache) has(arg string) bool {
+	if arg == "" {
+		arg = "default.default"
+	}
+	c.RLock()
+	defer c.RUnlock()
+
+	res, ok := c.cMap[arg]
+	return ok && res != nil
+}

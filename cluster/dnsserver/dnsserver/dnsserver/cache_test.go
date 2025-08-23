@@ -29,7 +29,6 @@ import (
 )
 
 func TestCache(t *testing.T) {
-
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
 	t.Cleanup(func() {
@@ -90,6 +89,10 @@ func TestCache(t *testing.T) {
 			assert.True(t, res.Equal(net.ParseIP("::1")))
 		}
 
+		{
+			assert.True(t, cache.has("svc1.default"))
+		}
+
 		cache.delete(svc)
 
 		{
@@ -100,5 +103,6 @@ func TestCache(t *testing.T) {
 			res := cache.get("svc1.default", dns.TypeAAAA)
 			assert.Nil(t, res)
 		}
+
 	}
 }
