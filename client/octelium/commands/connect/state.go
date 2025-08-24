@@ -53,7 +53,7 @@ func newStateController(c *cliconfigv1.Connection,
 }
 
 func (c *stateController) Start(ctx context.Context) error {
-	zap.S().Debugf("Starting state controller")
+	zap.L().Debug("Starting state controller")
 	go c.doStartLoop(ctx)
 	return nil
 }
@@ -62,30 +62,30 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("State controller loop done")
+			zap.L().Debug("State controller loop ctx done")
 			return
 		default:
 			resp, err := c.streamC.Recv()
 			if err != nil {
-				zap.S().Debugf("Error in receiving the stream: %+v", err)
+				zap.L().Debug("Error in receiving the stream", zap.Error(err))
 				c.getConnErrCh <- err
 				return
 			}
 
 			if resp == nil || resp.Event == nil {
-				zap.S().Errorf("Invalid empty event")
+				zap.L().Error("Invalid empty event")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			if c.isDisconnect(resp) {
-				zap.S().Debugf("Connection expired")
+				zap.L().Debug("Got disconnected msg")
 				close(c.apiserverDisconnectCh)
 				return
 			}
 
 			if err := c.handleState(ctx, resp); err != nil {
-				zap.S().Errorf("Could not handle state: %+v", err)
+				zap.L().Error("Could not handle state", zap.Error(err))
 			}
 		}
 	}
@@ -170,7 +170,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	case *userv1.ConnectResponse_DeleteService_:
 		svcName := state.Event.(*userv1.ConnectResponse_DeleteService_).DeleteService.Name
 
-		zap.S().Debugf("Delete Service: %+v", svcName)
+		zap.L().Debug("Delete Service", zap.String("svc", svcName))
 
 		if c.c.Connection.ServiceOptions == nil {
 			return errors.Errorf("Could not delete svc: %s. Service options is nil", svcName)
@@ -187,7 +187,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 		}
 
 	case *userv1.ConnectResponse_State:
-		zap.S().Debugf("Setting the state")
+		zap.L().Debug("Setting the state")
 		connection := state.Event.(*userv1.ConnectResponse_State).State
 		c.c.Connection = connection
 		if err := c.ctl.Reconfigure(); err != nil {
@@ -195,7 +195,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 		}
 
 	default:
-		zap.S().Debugf("Unhandled event: %+v", state)
+		zap.L().Warn("Unhandled event", zap.Any("state", state))
 	}
 
 	return nil

@@ -34,7 +34,7 @@ func doConnect(ctx context.Context, domain string) error {
 	ctx, cancelFn := context.WithCancel(ctx)
 	go func() {
 		<-signalCh
-		zap.S().Debugf("Received shutdown signal")
+		zap.L().Debug("Received shutdown signal")
 		cancelFn()
 	}()
 

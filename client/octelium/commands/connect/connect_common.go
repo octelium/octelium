@@ -27,6 +27,7 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -337,6 +338,7 @@ func getConnectionConfig(ctx context.Context,
 	return connCfg, nil
 }
 
+/*
 func getService(svcList *userv1.ServiceList, name string) *userv1.Service {
 	for _, itm := range svcList.Items {
 		if cliutils.GetServiceFullNameFromName(itm.Metadata.Name) == cliutils.GetServiceFullNameFromName(name) {
@@ -345,50 +347,57 @@ func getService(svcList *userv1.ServiceList, name string) *userv1.Service {
 	}
 	return nil
 }
+*/
 
 func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
-	zap.L().Debug("Listing available Services to publish ports")
-	svcList, err := c.ListService(ctx, &userv1.ListServiceOptions{})
-	if err != nil {
-		return nil, err
-	}
-
 	for _, svc := range cmdArgs.PublishServices {
-		publishedService, err := doGetPublishedService(svcList, svc, domain)
+		publishedService, err := doGetPublishedService(ctx, c, svc, domain)
 		if err != nil {
 			return nil, err
 		}
-		zap.L().Debug("Published Service added", zap.String("fqdn", publishedService.Fqdn))
+		zap.L().Debug("Published Service added", zap.Any("svc", publishedService))
 		ret = append(ret, publishedService)
 	}
 
 	return ret, nil
 }
 
-func doGetPublishedService(svcList *userv1.ServiceList, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
+func doGetPublishedService(ctx context.Context,
+	c userv1.MainServiceClient, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
 
 	argList := strings.Split(arg, ":")
 	if len(argList) != 2 {
-		return nil, errors.Errorf("Invalid published Service `%s`. It must be: `service:hostPort` or `namespace/service:hostPort`", arg)
+		return nil, errors.Errorf("Invalid published Service `%s`. It must be: `service:hostPort` or `service.namespace:hostPort`", arg)
 	}
 
-	svcStrs := argList[0]
+	svcStr := argList[0]
 
-	svcNs, err := cliutils.ParseServiceNamespace(svcStrs)
+	svcNs, err := cliutils.ParseServiceNamespace(svcStr)
 	if err != nil {
 		return nil, err
 	}
 
-	svc := getService(svcList, svcStrs)
-	if svc == nil {
-		return nil, errors.Errorf("The Service %s does not exist", svcNs)
+	svc, err := c.GetService(ctx, &metav1.GetOptions{
+		Name: cliutils.GetServiceFullNameFromName(svcStr),
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	hostPort, err := strconv.ParseInt(argList[1], 10, 32)
 	if err != nil {
 		return nil, err
+	}
+
+	if !govalidator.IsPort(fmt.Sprintf("%d", hostPort)) {
+		return nil, errors.Errorf("Invalid port number: %d", hostPort)
+	}
+
+	switch svc.Spec.Type {
+	case userv1.Service_Spec_DNS, userv1.Service_Spec_UDP:
+		return nil, errors.Errorf("UDP-based published Services are currently unsupported.")
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
@@ -399,7 +408,7 @@ func doGetPublishedService(svcList *userv1.ServiceList, arg, domain string) (*cl
 		HostPort:  int32(hostPort),
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
-			case userv1.Service_Spec_UDP:
+			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
 				return cliconfigv1.Connection_Preferences_PublishedService_UDP
 			default:
 				return cliconfigv1.Connection_Preferences_PublishedService_TCP

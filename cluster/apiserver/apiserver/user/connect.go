@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/cluster/common/userctx"
@@ -196,6 +197,11 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 				}
 				return nil, serr.InternalWithErr(err)
 			}
+
+			if err := apivalidation.CheckIsUserHidden(svc); err != nil {
+				return nil, err
+			}
+
 			ret = append(ret, &corev1.Session_Status_Connection_ServiceOptions_RequestedService{
 				ServiceRef:   umetav1.GetObjectReference(svc),
 				NamespaceRef: svc.Status.NamespaceRef,
@@ -225,6 +231,10 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 				}
 				return nil, serr.InternalWithErr(err)
 			}
+			if err := apivalidation.CheckIsUserHidden(svc); err != nil {
+				return nil, err
+			}
+
 			ret = append(ret, &corev1.Session_Status_Connection_PublishedService{
 				ServiceRef: umetav1.GetObjectReference(svc),
 				Port:       int32(svcReq.Port),

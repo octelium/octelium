@@ -20,12 +20,15 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/userctx"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"google.golang.org/protobuf/proto"
 )
@@ -90,4 +93,27 @@ func (s *Server) ListService(ctx context.Context, req *userv1.ListServiceOptions
 
 	usr := proto.Clone(i.User).(*corev1.User)
 	return s.DoListService(ctx, req, usr)
+}
+
+func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+
+	if err := apivalidation.CheckGetOptions(req, &apivalidation.CheckGetOptionsOpts{
+		ParentsMax: 1,
+	}); err != nil {
+		return nil, err
+	}
+
+	svc, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+		Uid:  req.Uid,
+		Name: vutils.GetServiceFullNameFromName(req.Name),
+	})
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	if err := apivalidation.CheckIsUserHidden(svc); err != nil {
+		return nil, err
+	}
+
+	return ServiceTo(svc), nil
 }

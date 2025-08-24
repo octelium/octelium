@@ -62,6 +62,7 @@ func (s *serviceProxy) Start(ctx context.Context) error {
 		case cliconfigv1.Connection_Preferences_PublishedService_TCP:
 			l.startTCP(ctx)
 		case cliconfigv1.Connection_Preferences_PublishedService_UDP:
+			zap.L().Warn("UDP-based published Services are currently unsupported. Skipping...")
 		}
 	}
 
@@ -224,7 +225,8 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 
 		// zap.S().Debugf("Resolve Service: %s to IP: %s", l.svcFQDN, resolvedServiceIP.String())
 
-		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(resolvedServiceIP.String(), fmt.Sprintf("%d", l.port)))
+		tcpAddr, err := net.ResolveTCPAddr("tcp",
+			net.JoinHostPort(resolvedServiceIP.String(), fmt.Sprintf("%d", l.port)))
 		if err != nil {
 			return nil, err
 		}

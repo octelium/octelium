@@ -22,6 +22,7 @@ package userv1
 
 import (
 	context "context"
+	metav1 "github.com/octelium/octelium/apis/main/metav1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -39,6 +40,7 @@ const (
 	MainService_ListNamespace_FullMethodName     = "/octelium.api.main.user.v1.MainService/ListNamespace"
 	MainService_GetStatus_FullMethodName         = "/octelium.api.main.user.v1.MainService/GetStatus"
 	MainService_SetServiceConfigs_FullMethodName = "/octelium.api.main.user.v1.MainService/SetServiceConfigs"
+	MainService_GetService_FullMethodName        = "/octelium.api.main.user.v1.MainService/GetService"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -58,6 +60,8 @@ type MainServiceClient interface {
 	// SetServiceConfigs sets the Service configs needed to use the Service from
 	// the client host (e.g. setting up kubeconfigs)
 	SetServiceConfigs(ctx context.Context, in *SetServiceConfigsRequest, opts ...grpc.CallOption) (*SetServiceConfigsResponse, error)
+	// GetService retrieves a Service
+	GetService(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Service, error)
 }
 
 type mainServiceClient struct {
@@ -131,6 +135,16 @@ func (c *mainServiceClient) SetServiceConfigs(ctx context.Context, in *SetServic
 	return out, nil
 }
 
+func (c *mainServiceClient) GetService(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Service, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Service)
+	err := c.cc.Invoke(ctx, MainService_GetService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -148,6 +162,8 @@ type MainServiceServer interface {
 	// SetServiceConfigs sets the Service configs needed to use the Service from
 	// the client host (e.g. setting up kubeconfigs)
 	SetServiceConfigs(context.Context, *SetServiceConfigsRequest) (*SetServiceConfigsResponse, error)
+	// GetService retrieves a Service
+	GetService(context.Context, *metav1.GetOptions) (*Service, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -175,6 +191,9 @@ func (UnimplementedMainServiceServer) GetStatus(context.Context, *GetStatusReque
 }
 func (UnimplementedMainServiceServer) SetServiceConfigs(context.Context, *SetServiceConfigsRequest) (*SetServiceConfigsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetServiceConfigs not implemented")
+}
+func (UnimplementedMainServiceServer) GetService(context.Context, *metav1.GetOptions) (*Service, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetService not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -294,6 +313,24 @@ func _MainService_SetServiceConfigs_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_GetService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.GetOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).GetService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_GetService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).GetService(ctx, req.(*metav1.GetOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -320,6 +357,10 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetServiceConfigs",
 			Handler:    _MainService_SetServiceConfigs_Handler,
+		},
+		{
+			MethodName: "GetService",
+			Handler:    _MainService_GetService_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
