@@ -16,24 +16,26 @@ package serviceconfig
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var Cmd = &cobra.Command{
 	Use:   "config",
 	Short: "Set Service Config",
 	Example: `
-octelium set service-config svc1
-octelium set svc-cfg svc1.ns1
+octelium cfg svc1
+octelium config svc1.ns1
 	`,
-	Aliases: []string{"cfg", "service-config", "svc-cfg", "service-cfg"},
+	Aliases: []string{"cfg"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
@@ -46,7 +48,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	ctx := cmd.Context()
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -54,26 +58,28 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := userv1.NewMainServiceClient(conn)
 
-	_, err = cliutils.ParseServiceNamespace(args[0])
+	svc, err := c.GetService(ctx, &metav1.GetOptions{
+		Name: i.FirstArg(),
+	})
 	if err != nil {
 		return err
 	}
 
-	resp, err := c.SetServiceConfigs(cmd.Context(), &userv1.SetServiceConfigsRequest{
-		Name: args[0],
+	resp, err := c.SetServiceConfigs(ctx, &userv1.SetServiceConfigsRequest{
+		Name: svc.Metadata.Name,
 	})
 	if err != nil {
 		return err
 	}
 
 	for _, cfg := range resp.Configs {
-		if err := setConfig(cmd.Context(), cfg); err != nil {
+		if err := setConfig(ctx, cfg, svc, i.Domain); err != nil {
 			return err
 		}
 	}
 
 	if len(resp.Configs) > 0 {
-		cliutils.LineNotify("Service configuration successfully applied\n")
+		cliutils.LineNotify("Configuration successfully applied for Service: %s\n", svc.Status.PrimaryHostname)
 	} else {
 		cliutils.LineNotify("This Service does not need a configuration to be set\n")
 	}
@@ -81,7 +87,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func setConfig(ctx context.Context, cfg *userv1.SetServiceConfigsResponse_Config) error {
+func setConfig(_ context.Context, cfg *userv1.SetServiceConfigsResponse_Config, svc *userv1.Service, domain string) error {
 	switch cfg.Type.(type) {
 	case *userv1.SetServiceConfigsResponse_Config_Kubeconfig_:
 		homeDir, err := os.UserHomeDir()
@@ -94,12 +100,13 @@ func setConfig(ctx context.Context, cfg *userv1.SetServiceConfigsResponse_Config
 			return err
 		}
 
-		if err := os.WriteFile(path.Join(kubeHome, "config"), cfg.GetKubeconfig().Content, 0644); err != nil {
+		if err := os.WriteFile(path.Join(kubeHome,
+			fmt.Sprintf("%s.%s", svc.Status.PrimaryHostname, domain)), cfg.GetKubeconfig().Content, 0644); err != nil {
 			return err
 		}
 
 	default:
-		return errors.Errorf("Unsupported service config: %+v", cfg)
+		zap.L().Warn("Unsupported service config. Skipping...", zap.Any("cfg", cfg))
 	}
 
 	return nil
