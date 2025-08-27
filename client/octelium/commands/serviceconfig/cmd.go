@@ -100,11 +100,15 @@ func setConfig(_ context.Context, cfg *userv1.SetServiceConfigsResponse_Config, 
 			return err
 		}
 
-		if err := os.WriteFile(path.Join(kubeHome,
-			fmt.Sprintf("%s.%s", svc.Status.PrimaryHostname, domain)), cfg.GetKubeconfig().Content, 0644); err != nil {
+		kubeConfigPath := path.Join(kubeHome,
+			fmt.Sprintf("%s.%s", svc.Status.PrimaryHostname, domain))
+		if err := os.WriteFile(kubeConfigPath, cfg.GetKubeconfig().Content, 0644); err != nil {
 			return err
 		}
 
+		cliutils.LineInfo("Set the following environment variable to use kubectl commands for the Service %s:\n",
+			svc.Status.PrimaryHostname)
+		cliutils.LineInfo("export KUBECONFIG=%s\n", kubeConfigPath)
 	default:
 		zap.L().Warn("Unsupported service config. Skipping...", zap.Any("cfg", cfg))
 	}
