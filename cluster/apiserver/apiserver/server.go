@@ -93,7 +93,7 @@ func Run() error {
 
 	zap.S().Debug("starting gRPC server....")
 
-	mdlwr, err := userctx.New(ctx)
+	mdlwr, err := userctx.New(ctx, octeliumC)
 	if err != nil {
 		return err
 	}

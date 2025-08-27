@@ -25,19 +25,18 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/octovigilc"
-	"go.uber.org/zap"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
 type Middleware struct {
 	c octovigilc.ClientInterface
 }
 
-func New(ctx context.Context) (*Middleware, error) {
+func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Middleware, error) {
 
 	c, err := octovigilc.NewClient(ctx)
 	if err != nil {
@@ -71,17 +70,15 @@ func (m *Middleware) getDownstream(ctx context.Context) (*UserCtx, error) {
 	}, nil
 }
 
+type _ctxMiddleware struct{}
+
+var ctxMiddleware = _ctxMiddleware{}
+
 func (m *Middleware) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 
-		i, err := m.getDownstream(ctx)
-		if err != nil {
-			zap.S().Debugf("Could not authenticate User: %+v", err)
-			return nil, status.Errorf(codes.Unauthenticated, "Could not authenticate User")
-		}
-
-		newCtx := context.WithValue(ctx, "octelium-user-ctx", i)
+		newCtx := context.WithValue(ctx, ctxMiddleware, m)
 
 		return handler(newCtx, req)
 	}
@@ -92,13 +89,7 @@ func (m *Middleware) StreamServerInterceptor() grpc.StreamServerInterceptor {
 
 		ctx := stream.Context()
 
-		i, err := m.getDownstream(ctx)
-		if err != nil {
-			zap.S().Debugf("Could not authenticate User: %+v", err)
-			return status.Errorf(codes.Unauthenticated, "Could not authenticate User")
-		}
-
-		newCtx := context.WithValue(ctx, "octelium-user-ctx", i)
+		newCtx := context.WithValue(ctx, ctxMiddleware, m)
 
 		wrapped := grpc_middleware.WrapServerStream(stream)
 		wrapped.WrappedContext = newCtx
@@ -131,9 +122,20 @@ type UserCtx struct {
 }
 
 func GetUserCtx(ctx context.Context) (*UserCtx, error) {
-	usrCtx, ok := ctx.Value("octelium-user-ctx").(*UserCtx)
-	if !ok {
-		return nil, serr.Internal("Could not get user information. Please try again.")
+
+	if ldflags.IsTest() {
+		ret, ok := ctx.Value("octelium-user-ctx").(*UserCtx)
+		if !ok {
+			return nil, serr.Internal("Could not find userCtx")
+		}
+
+		return ret, nil
 	}
-	return usrCtx, nil
+
+	m, ok := ctx.Value(ctxMiddleware).(*Middleware)
+	if !ok {
+		return nil, serr.Internal("Could not get the API server middlewar")
+	}
+
+	return m.getDownstream(ctx)
 }
