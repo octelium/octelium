@@ -17,6 +17,8 @@
 package dnsserver
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -28,13 +30,16 @@ import (
 	"time"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/go-resty/resty/v2"
 	"github.com/miekg/dns"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -47,6 +52,8 @@ type DNSServer struct {
 	ccCtl             *ccctl.Controller
 	mu                sync.RWMutex
 	fallbackZoneCache *zoneCache
+
+	reservedNamespaces []string
 }
 
 func Initialize(ctx context.Context, octeliumC octeliumc.ClientInterface) (*DNSServer, error) {
@@ -54,6 +61,8 @@ func Initialize(ctx context.Context, octeliumC octeliumc.ClientInterface) (*DNSS
 	ret := &DNSServer{
 		cache: newCache(),
 	}
+
+	ret.setReservedNamespaces(ctx)
 
 	getDuration := func(cc *corev1.ClusterConfig) time.Duration {
 		if cc.Spec.Dns == nil || cc.Spec.Dns.FallbackZone == nil || cc.Spec.Dns.FallbackZone.CacheDuration == nil {
@@ -277,7 +286,7 @@ func (s *DNSServer) getHostnameFromPossibleHostname(arg string) (string, error) 
 			return ret, nil
 		}
 	case 2:
-		if !slices.Contains(wellKnownTLDs, parts[1]) && s.cache.has(hostname) {
+		if !slices.Contains(s.reservedNamespaces, parts[1]) && s.cache.has(hostname) {
 			return hostname, nil
 		}
 	}
@@ -500,6 +509,51 @@ func (s *DNSServer) setDefaultUpstreams(cc *corev1.ClusterConfig) {
 		},
 	}
 
+}
+
+func (s *DNSServer) setReservedNamespaces(ctx context.Context) {
+
+	resp, err := resty.New().SetDebug(ldflags.IsDev()).
+		SetTimeout(5 * time.Second).
+		R().
+		SetContext(ctx).
+		Get("https://data.iana.org/TLD/tlds-alpha-by-domain.txt")
+	if err != nil {
+		s.reservedNamespaces = wellKnownTLDs
+		zap.L().Debug("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs")
+		return
+	}
+
+	if !resp.IsSuccess() {
+		s.reservedNamespaces = wellKnownTLDs
+		zap.L().Debug("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs...",
+			zap.Int("statusCode", resp.StatusCode()))
+		return
+	}
+
+	scanner := bufio.NewScanner(bytes.NewBuffer(resp.Body()))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+
+		line = strings.ToLower(line)
+
+		if err := apivalidation.ValidateName(line, 0, 0); err != nil {
+			continue
+		}
+
+		s.reservedNamespaces = append(s.reservedNamespaces, line)
+	}
+
+	if len(s.reservedNamespaces) < len(wellKnownTLDs) {
+		s.reservedNamespaces = wellKnownTLDs
+	} else {
+		zap.L().Debug("Successfully fetched the iana list of TLDs",
+			zap.Int("len", len(s.reservedNamespaces)), zap.Strings("k", s.reservedNamespaces))
+	}
 }
 
 var wellKnownTLDs = []string{
