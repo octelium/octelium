@@ -23,6 +23,7 @@ import (
 	"net/url"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
@@ -44,12 +45,15 @@ func (s *Server) SetServiceConfigs(ctx context.Context, req *userv1.SetServiceCo
 		return nil, serr.InvalidArg("You must be connected first to set a Service config")
 	}
 
-	if req.Name == "" {
-		return nil, serr.InvalidArg("Empty Service name")
+	svcU, err := s.GetService(ctx, &metav1.GetOptions{
+		Name: vutils.GetServiceFullNameFromName(req.Name),
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	svc, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
-		Name: vutils.GetServiceFullNameFromName(req.Name),
+		Name: svcU.Metadata.Name,
 	})
 	if err != nil {
 		return nil, err
