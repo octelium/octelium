@@ -80,7 +80,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListPolicy(cmd.Context(), &corev1.ListPolicyOptions{})
+	itmList, err := c.ListPolicy(cmd.Context(), &corev1.ListPolicyOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

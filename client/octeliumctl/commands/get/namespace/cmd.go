@@ -87,7 +87,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListNamespace(ctx, &corev1.ListNamespaceOptions{})
+	itmList, err := c.ListNamespace(ctx, &corev1.ListNamespaceOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

@@ -83,7 +83,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListGateway(cmd.Context(), &corev1.ListGatewayOptions{})
+	itmList, err := c.ListGateway(cmd.Context(), &corev1.ListGatewayOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return errors.Errorf("Could not list Gateways: %v", err)
 	}

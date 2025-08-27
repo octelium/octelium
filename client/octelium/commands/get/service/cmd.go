@@ -57,7 +57,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	ctx := cmd.Context()
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := userv1.NewMainServiceClient(conn)
 
-	svcList, err := c.ListService(cmd.Context(), &userv1.ListServiceOptions{Namespace: cmdArgs.Namespace})
+	svcList, err := c.ListService(ctx,
+		&userv1.ListServiceOptions{
+			Namespace: cmdArgs.Namespace,
+			Common:    cliutils.GetCommonListOptions(cmd),
+		})
 	if err != nil {
 		return err
 	}

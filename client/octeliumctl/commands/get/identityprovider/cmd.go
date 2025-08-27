@@ -82,7 +82,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListIdentityProvider(cmd.Context(), &corev1.ListIdentityProviderOptions{})
+	itmList, err := c.ListIdentityProvider(cmd.Context(), &corev1.ListIdentityProviderOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return errors.Errorf("Could not list IdentityProviders: %v", err)
 	}

@@ -83,7 +83,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListRegion(cmd.Context(), &corev1.ListRegionOptions{})
+	itmList, err := c.ListRegion(cmd.Context(), &corev1.ListRegionOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return errors.Errorf("Could not list Regions: %v", err)
 	}

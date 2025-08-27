@@ -83,7 +83,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListDevice(cmd.Context(), &corev1.ListDeviceOptions{})
+	itmList, err := c.ListDevice(cmd.Context(), &corev1.ListDeviceOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return errors.Errorf("Could not list Devices: %v", err)
 	}

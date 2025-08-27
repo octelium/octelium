@@ -81,7 +81,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	usrList, err := c.ListUser(cmd.Context(), &corev1.ListUserOptions{})
+	usrList, err := c.ListUser(cmd.Context(), &corev1.ListUserOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

@@ -81,7 +81,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListSecret(cmd.Context(), &corev1.ListSecretOptions{})
+	itmList, err := c.ListSecret(cmd.Context(), &corev1.ListSecretOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

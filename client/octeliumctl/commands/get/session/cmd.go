@@ -86,7 +86,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListSession(ctx, &corev1.ListSessionOptions{})
+	itmList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

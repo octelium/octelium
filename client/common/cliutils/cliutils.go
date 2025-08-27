@@ -20,9 +20,11 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/manifoldco/promptui"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
@@ -157,4 +159,50 @@ func NewAuthClient(ctx context.Context, domain string, o *NewAuthClientOpts) (*a
 		GetRefreshToken: GetRefreshToken,
 		UserAgent:       fmt.Sprintf("octelium-cli/%s", ldflags.SemVer),
 	})
+}
+
+func GetCommonListOptions(cmd *cobra.Command) *metav1.CommonListOptions {
+	if cmd == nil {
+		return nil
+	}
+
+	ret := &metav1.CommonListOptions{
+		Page:         getFlagUint32(cmd, "page"),
+		ItemsPerPage: getFlagUint32(cmd, "items-per-page"),
+	}
+
+	if getFlagBoolean(cmd, "order-by-name") {
+		ret.OrderBy = &metav1.CommonListOptions_OrderBy{
+			Type: metav1.CommonListOptions_OrderBy_NAME,
+		}
+	}
+
+	if getFlagBoolean(cmd, "order-reverse") {
+		if ret.OrderBy == nil {
+			ret.OrderBy = &metav1.CommonListOptions_OrderBy{}
+		}
+		ret.OrderBy.Mode = metav1.CommonListOptions_OrderBy_DESC
+	}
+
+	return ret
+}
+
+func getFlagStr(cmd *cobra.Command, arg string) string {
+	if cmd.Flags() != nil && cmd.Flags().Lookup(arg) != nil && cmd.Flags().Lookup(arg).Value.String() != "" {
+		return cmd.Flags().Lookup(arg).Value.String()
+	}
+	return ""
+}
+
+func getFlagUint32(cmd *cobra.Command, arg string) uint32 {
+	if argStr := getFlagStr(cmd, arg); argStr != "" {
+		ret, _ := strconv.ParseUint(argStr, 10, 32)
+		return uint32(ret)
+	}
+
+	return 0
+}
+
+func getFlagBoolean(cmd *cobra.Command, arg string) bool {
+	return getFlagStr(cmd, arg) == "true"
 }

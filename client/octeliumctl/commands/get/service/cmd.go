@@ -94,6 +94,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	svcList, err := c.ListService(cmd.Context(), &corev1.ListServiceOptions{
 		NamespaceRef: nsRef,
+		Common:       cliutils.GetCommonListOptions(cmd),
 	})
 	if err != nil {
 		return err

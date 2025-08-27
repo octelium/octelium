@@ -82,7 +82,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	itmList, err := c.ListGroup(cmd.Context(), &corev1.ListGroupOptions{})
+	itmList, err := c.ListGroup(cmd.Context(), &corev1.ListGroupOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}

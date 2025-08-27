@@ -51,3 +51,10 @@ func AddSubcommands() {
 	Cmd.AddCommand(region.Cmd)
 	Cmd.AddCommand(gateway.Cmd)
 }
+
+func init() {
+	Cmd.PersistentFlags().Uint32("page", 0, "List page")
+	Cmd.PersistentFlags().Uint32("items-per-page", 0, "Items per page")
+	Cmd.PersistentFlags().Bool("order-by-name", false, "Order the list by name")
+	Cmd.PersistentFlags().Bool("order-reverse", false, "Reverse the order of the list")
+}

@@ -65,7 +65,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := userv1.NewMainServiceClient(conn)
 
-	netList, err := c.ListNamespace(cmd.Context(), &userv1.ListNamespaceOptions{})
+	netList, err := c.ListNamespace(cmd.Context(), &userv1.ListNamespaceOptions{
+		Common: cliutils.GetCommonListOptions(cmd),
+	})
 	if err != nil {
 		return err
 	}
