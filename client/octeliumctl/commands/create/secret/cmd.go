@@ -48,7 +48,6 @@ var Cmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	Aliases: []string{"sec", "secrets"},
 	Example: example,
-
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

@@ -41,7 +41,7 @@ octelium status
 octelium status -o yaml
 octelium status -o json
 	`,
-
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

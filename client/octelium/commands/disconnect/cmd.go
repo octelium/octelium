@@ -27,7 +27,7 @@ var Cmd = &cobra.Command{
 	Example: `
 octelium disconnect
 	`,
-
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

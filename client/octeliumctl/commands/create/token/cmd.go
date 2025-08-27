@@ -52,7 +52,7 @@ octeliumctl create cred --user usr3 --expire-in 30days --auto-approve-device
 	`,
 
 	Aliases: []string{"cred", "creds", "credentials"},
-
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

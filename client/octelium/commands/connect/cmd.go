@@ -68,7 +68,7 @@ var Cmd = &cobra.Command{
 	Use:     "connect",
 	Short:   "Connect to a Cluster",
 	Example: example,
-
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
