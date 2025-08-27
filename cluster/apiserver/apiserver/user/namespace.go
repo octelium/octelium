@@ -19,17 +19,15 @@ package user
 import (
 	"context"
 
-	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
-	"github.com/octelium/octelium/cluster/common/userctx"
 )
 
-func (s *Server) DoListNamespace(ctx context.Context, req *userv1.ListNamespaceOptions, user *corev1.User) (*userv1.NamespaceList, error) {
+func (s *Server) ListNamespace(ctx context.Context, req *userv1.ListNamespaceOptions) (*userv1.NamespaceList, error) {
 
-	networkList, err := s.octeliumC.CoreC().ListNamespace(ctx, urscsrv.GetUserPublicListOptions(req))
+	nsList, err := s.octeliumC.CoreC().ListNamespace(ctx, urscsrv.GetUserPublicListOptions(req))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -37,10 +35,10 @@ func (s *Server) DoListNamespace(ctx context.Context, req *userv1.ListNamespaceO
 	ret := &userv1.NamespaceList{
 		ApiVersion:       "user/v1",
 		Kind:             "NamespaceList",
-		ListResponseMeta: networkList.ListResponseMeta,
+		ListResponseMeta: nsList.ListResponseMeta,
 	}
 
-	for _, net := range networkList.Items {
+	for _, net := range nsList.Items {
 
 		ns := &userv1.Namespace{
 			Metadata: &metav1.Metadata{
@@ -58,14 +56,4 @@ func (s *Server) DoListNamespace(ctx context.Context, req *userv1.ListNamespaceO
 	}
 
 	return ret, nil
-
-}
-
-func (s *Server) ListNamespace(ctx context.Context, req *userv1.ListNamespaceOptions) (*userv1.NamespaceList, error) {
-	i, err := userctx.GetUserCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.DoListNamespace(ctx, req, i.User)
 }

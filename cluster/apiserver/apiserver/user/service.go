@@ -25,15 +25,11 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
-	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
-	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	"github.com/octelium/octelium/pkg/grpcerr"
-	"google.golang.org/protobuf/proto"
 )
 
-func (s *Server) DoListService(ctx context.Context, req *userv1.ListServiceOptions, user *corev1.User) (*userv1.ServiceList, error) {
+func (s *Server) ListService(ctx context.Context, req *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
 
 	var ns *corev1.Namespace
 	var err error
@@ -71,28 +67,6 @@ func (s *Server) DoListService(ctx context.Context, req *userv1.ListServiceOptio
 	}
 
 	return ret, nil
-}
-
-func (s *Server) ListService(ctx context.Context, req *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
-	i, err := userctx.GetUserCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if req.Namespace != "" {
-		_, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
-			Name: req.Namespace,
-		})
-		if err != nil {
-			if grpcerr.IsNotFound(err) {
-				return nil, grpcutils.NotFound("This Namespace does not exist")
-			}
-			return nil, grpcutils.InternalWithErr(err)
-		}
-	}
-
-	usr := proto.Clone(i.User).(*corev1.User)
-	return s.DoListService(ctx, req, usr)
 }
 
 func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
