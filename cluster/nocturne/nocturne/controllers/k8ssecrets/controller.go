@@ -18,12 +18,14 @@ package k8ssecretcontroller
 
 import (
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -110,6 +112,12 @@ func setCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret *k
 		return doSetCert(ctx, octeliumC, secret)
 	}
 
+	if arg, ok := strings.CutPrefix(secret.Name, "cert-ns-"); ok && arg != "" {
+		if err := apivalidation.ValidateName(arg, 0, 0); err == nil {
+			return doSetCertNS(ctx, octeliumC, secret)
+		}
+	}
+
 	return nil
 }
 
@@ -117,20 +125,66 @@ func doSetCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret 
 
 	crt, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
 	if err == nil {
-
 		ucorev1.ToSecret(crt).SetCertificate(string(secret.Data["tls.crt"]), string(secret.Data["tls.key"]))
 
 		_, err := octeliumC.CoreC().UpdateSecret(ctx, crt)
-		return err
+		if err != nil {
+			return err
+		}
+
+		zap.L().Info("Successfully updated Cluster certificate Secret")
+
+		return nil
 	}
 
 	if !grpcerr.IsNotFound(err) {
 		return err
 	}
 
+	if err := doCreateCertSecret(ctx, octeliumC, vutils.ClusterCertSecretName, secret); err != nil {
+		return err
+	}
+
+	zap.L().Info("Successfully created Cluster certificate Secret")
+	return nil
+}
+
+func doSetCertNS(ctx context.Context, octeliumC octeliumc.ClientInterface, secret *k8scorev1.Secret) error {
+
+	secName := strings.Replace(secret.Name, "cert-ns", "crt-ns", 1)
+	crt, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: secName})
+	if err == nil {
+		ucorev1.ToSecret(crt).SetCertificate(string(secret.Data["tls.crt"]), string(secret.Data["tls.key"]))
+		_, err := octeliumC.CoreC().UpdateSecret(ctx, crt)
+		if err != nil {
+			return err
+		}
+
+		zap.L().Info("Successfully updated Namespace certificate Secret",
+			zap.String("ns", strings.TrimPrefix(secName, "crt-ns")))
+
+		return nil
+	}
+
+	if !grpcerr.IsNotFound(err) {
+		return err
+	}
+
+	if err := doCreateCertSecret(ctx, octeliumC, secName, secret); err != nil {
+		return err
+	}
+
+	zap.L().Info("Successfully created Namespace certificate Secret",
+		zap.String("ns", strings.TrimPrefix(secName, "crt-ns")))
+
+	return nil
+}
+
+func doCreateCertSecret(ctx context.Context, octeliumC octeliumc.ClientInterface, secName string, secret *k8scorev1.Secret) error {
+
 	nCrt := &corev1.Secret{
 		Metadata: &metav1.Metadata{
-			Name: vutils.ClusterCertSecretName,
+			Name: secName,
 			SystemLabels: map[string]string{
 				"octelium-cert": "true",
 			},
@@ -144,11 +198,10 @@ func doSetCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret 
 
 	ucorev1.ToSecret(nCrt).SetCertificate(string(secret.Data["tls.crt"]), string(secret.Data["tls.key"]))
 
-	_, err = octeliumC.CoreC().CreateSecret(ctx, nCrt)
+	_, err := octeliumC.CoreC().CreateSecret(ctx, nCrt)
 	if err != nil {
 		return err
 	}
 
-	zap.L().Info("Successfully set cluster cert from k8s secret")
 	return nil
 }
