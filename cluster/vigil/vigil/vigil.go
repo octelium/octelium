@@ -233,7 +233,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	watcher := watchers.NewCoreV1(s.octeliumC)
 
-	secretCtl := secretcontroller.NewController(s.server, s.secretMan)
+	secretCtl := secretcontroller.NewController(s.server, s.secretMan, s.vCache)
 
 	if err := watcher.Service(ctx, nil, s.svcCtl.OnAdd, s.svcCtl.OnUpdate, s.svcCtl.OnDelete); err != nil {
 		return err

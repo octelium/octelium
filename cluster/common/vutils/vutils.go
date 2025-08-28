@@ -297,6 +297,14 @@ func IsClusterCertAndReady(sec *corev1.Secret) bool {
 	return IsCertReady(sec)
 }
 
+func IsClusterCertAndReadyWithNamespace(sec *corev1.Secret, ns string) bool {
+	if sec.Metadata.Name != fmt.Sprintf("crt-ns-%s", ns) {
+		return false
+	}
+
+	return IsCertReady(sec)
+}
+
 func IsOcteliumCert(sec *corev1.Secret) bool {
 	return sec.Metadata.SystemLabels != nil && sec.Metadata.SystemLabels["octelium-cert"] == "true"
 }

@@ -32,18 +32,25 @@ type secretManI interface {
 	Delete(secret *corev1.Secret)
 }
 
+type serviceGetter interface {
+	GetService() *corev1.Service
+}
+
 type Controller struct {
-	srv       serverI
-	secretMan secretManI
+	srv           serverI
+	secretMan     secretManI
+	serviceGetter serviceGetter
 }
 
 func NewController(
 	srv serverI,
 	secretMan secretManI,
+	serviceGetter serviceGetter,
 ) *Controller {
 	return &Controller{
-		srv:       srv,
-		secretMan: secretMan,
+		srv:           srv,
+		secretMan:     secretMan,
+		serviceGetter: serviceGetter,
 	}
 }
 
@@ -80,5 +87,9 @@ func (c *Controller) OnDelete(ctx context.Context, secret *corev1.Secret) error 
 }
 
 func (c *Controller) isReadyClusterCrt(crt *corev1.Secret) bool {
-	return vutils.IsClusterCertAndReady(crt)
+	ns := "default"
+	if c.serviceGetter != nil {
+		ns = c.serviceGetter.GetService().Status.NamespaceRef.Name
+	}
+	return vutils.IsClusterCertAndReadyWithNamespace(crt, ns)
 }
