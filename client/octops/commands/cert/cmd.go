@@ -16,6 +16,7 @@ package cert
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -33,6 +34,7 @@ type args struct {
 	KubeContext        string
 	CertPath           string
 	KeyPath            string
+	Namespace          string
 }
 
 var examples = `
@@ -60,6 +62,7 @@ func init() {
 
 	Cmd.PersistentFlags().StringVar(&cmdArgs.CertPath, "cert", "", "TLS PEM certificate file path")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.KeyPath, "key", "", "TLS cert key file path")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "ns", "", "Set a Cluster TLS certificate for a certain Octelium Namespace")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -92,7 +95,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	secret := &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
-			Name:      "cert-cluster",
+			Name: func() string {
+				if cmdArgs.Namespace != "" {
+					return fmt.Sprintf("cert-ns-%s", cmdArgs.Namespace)
+				}
+				return "cert-cluster"
+			}(),
 			Namespace: "octelium",
 		},
 		Type: k8scorev1.SecretTypeTLS,
