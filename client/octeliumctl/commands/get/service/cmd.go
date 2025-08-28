@@ -35,6 +35,7 @@ type args struct {
 const example = `
 octeliumctl get svc
 octeliumctl get service
+octeliumctl get svc --namespace default
 octeliumctl get services -o json
 octeliumctl get services -o yaml
 `
@@ -53,7 +54,7 @@ var cmdArgs args
 
 func init() {
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "namespace", "", "Namespace")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "namespace", "", "Filter the list by a Namespace")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -114,12 +115,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses")
+	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses", "TLS")
 	for _, svc := range svcList.Items {
 
 		p.AppendRow(svc.Status.PrimaryHostname, svc.Status.NamespaceRef.Name, svc.Spec.Mode.String(),
 			fmt.Sprintf("%d", ucorev1.ToService(svc).RealPort()), cliutils.GetResourceAge(svc),
-			cliutils.PrintBoolean(svc.Spec.IsPublic), cliutils.PrintBoolean(svc.Spec.IsAnonymous), getServiceAddrs(svc))
+			cliutils.PrintBoolean(svc.Spec.IsPublic), cliutils.PrintBoolean(svc.Spec.IsAnonymous),
+			getServiceAddrs(svc), cliutils.PrintBoolean(svc.Spec.IsTLS))
 	}
 
 	p.Render()

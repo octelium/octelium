@@ -62,7 +62,7 @@ func init() {
 
 	Cmd.PersistentFlags().StringVar(&cmdArgs.CertPath, "cert", "", "TLS PEM certificate file path")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.KeyPath, "key", "", "TLS cert key file path")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "ns", "", "Set a Cluster TLS certificate for a certain Octelium Namespace")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "namespace", "", "Set a Cluster TLS certificate for a certain Octelium Namespace")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

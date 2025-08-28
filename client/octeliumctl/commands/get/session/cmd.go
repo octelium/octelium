@@ -28,7 +28,8 @@ import (
 )
 
 type args struct {
-	Out string
+	Out  string
+	User string
 }
 
 const example = `
@@ -36,6 +37,7 @@ octeliumctl get session
 octeliumctl get sess root-cavzne
 octeliumctl get sessions -o json
 octeliumctl get sessions -o yaml
+octelium get sess --user alice
 `
 
 var Cmd = &cobra.Command{
@@ -52,6 +54,7 @@ var cmdArgs args
 
 func init() {
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -86,8 +89,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	var usrRef *metav1.ObjectReference
+	if cmdArgs.User != "" {
+		usrRef = &metav1.ObjectReference{
+			Name: cmdArgs.User,
+		}
+	}
+
 	itmList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
-		Common: cliutils.GetCommonListOptions(cmd),
+		Common:  cliutils.GetCommonListOptions(cmd),
+		UserRef: usrRef,
 	})
 	if err != nil {
 		return err

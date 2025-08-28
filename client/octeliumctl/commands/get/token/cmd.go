@@ -28,7 +28,8 @@ import (
 )
 
 type args struct {
-	Out string
+	Out  string
+	User string
 }
 
 const example = `
@@ -36,6 +37,7 @@ octeliumctl get credential example.com
 octeliumctl get cred example.com
 octeliumctl get cred octelium.example.com -o json
 octeliumctl get cred sub.octelium.example.com -o yaml
+octeliumctl get cred --user alice
 `
 
 var Cmd = &cobra.Command{
@@ -53,6 +55,7 @@ var cmdArgs args
 func init() {
 
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -84,8 +87,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	var usrRef *metav1.ObjectReference
+	if cmdArgs.User != "" {
+		usrRef = &metav1.ObjectReference{
+			Name: cmdArgs.User,
+		}
+	}
+
 	itmList, err := c.ListCredential(cmd.Context(), &corev1.ListCredentialOptions{
-		Common: cliutils.GetCommonListOptions(cmd),
+		Common:  cliutils.GetCommonListOptions(cmd),
+		UserRef: usrRef,
 	})
 	if err != nil {
 		return err

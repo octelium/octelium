@@ -40,6 +40,7 @@ var example = `
 octeliumctl create secret -f /path/to/secret/file secret1
 octeliumctl create secret --value TOP_SECRET secret2
 octeliumctl create secret secret3
+echo $MY_SECRET | octeliumctl create secret my-secret --file -
 `
 
 var Cmd = &cobra.Command{

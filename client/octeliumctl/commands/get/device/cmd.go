@@ -27,7 +27,8 @@ import (
 )
 
 type args struct {
-	Out string
+	Out  string
+	User string
 }
 
 const example = `
@@ -35,6 +36,7 @@ octeliumctl get device
 octeliumctl get dev
 octeliumctl get devices -o json
 octeliumctl get devices -o yaml
+octeliumctl get dev --user alice
 `
 
 var Cmd = &cobra.Command{
@@ -52,6 +54,7 @@ var cmdArgs args
 func init() {
 
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -83,8 +86,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	var usrRef *metav1.ObjectReference
+	if cmdArgs.User != "" {
+		usrRef = &metav1.ObjectReference{
+			Name: cmdArgs.User,
+		}
+	}
+
 	itmList, err := c.ListDevice(cmd.Context(), &corev1.ListDeviceOptions{
-		Common: cliutils.GetCommonListOptions(cmd),
+		Common:  cliutils.GetCommonListOptions(cmd),
+		UserRef: usrRef,
 	})
 	if err != nil {
 		return errors.Errorf("Could not list Devices: %v", err)
