@@ -90,7 +90,7 @@ func (s *Server) ListGroup(ctx context.Context, req *corev1.ListGroupOptions) (*
 
 	itemList, err := s.octeliumC.CoreC().ListGroup(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

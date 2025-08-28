@@ -93,7 +93,7 @@ func (s *Server) ListIdentityProvider(ctx context.Context, req *corev1.ListIdent
 
 	itemList, err := s.octeliumC.CoreC().ListIdentityProvider(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

@@ -52,7 +52,7 @@ func (s *Server) ListSession(ctx context.Context, req *corev1.ListSessionOptions
 
 	itemList, err := s.octeliumC.CoreC().ListSession(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

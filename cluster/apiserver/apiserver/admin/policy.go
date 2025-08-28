@@ -119,7 +119,7 @@ func (s *Server) ListPolicy(ctx context.Context, req *corev1.ListPolicyOptions) 
 
 	itemList, err := s.octeliumC.CoreC().ListPolicy(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

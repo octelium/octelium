@@ -50,7 +50,7 @@ func (s *Server) ListGateway(ctx context.Context, req *corev1.ListGatewayOptions
 
 	lst, err := s.octeliumC.CoreC().ListGateway(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return lst, nil

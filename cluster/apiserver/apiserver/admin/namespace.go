@@ -122,7 +122,7 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 func (s *Server) ListNamespace(ctx context.Context, req *corev1.ListNamespaceOptions) (*corev1.NamespaceList, error) {
 	itemList, err := s.octeliumC.CoreC().ListNamespace(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

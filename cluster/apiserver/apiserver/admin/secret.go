@@ -65,7 +65,7 @@ func (s *Server) ListSecret(ctx context.Context, req *corev1.ListSecretOptions) 
 
 	vSecrets, err := s.octeliumC.CoreC().ListSecret(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	for _, secret := range vSecrets.Items {

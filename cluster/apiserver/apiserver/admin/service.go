@@ -84,7 +84,7 @@ func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions
 	itemList, err := s.octeliumC.CoreC().ListService(ctx,
 		urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

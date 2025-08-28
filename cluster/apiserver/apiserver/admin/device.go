@@ -51,7 +51,7 @@ func (s *Server) ListDevice(ctx context.Context, req *corev1.ListDeviceOptions) 
 
 	vDevices, err := s.octeliumC.CoreC().ListDevice(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return vDevices, nil

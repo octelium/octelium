@@ -116,7 +116,7 @@ func (s *Server) ListCredential(ctx context.Context, req *corev1.ListCredentialO
 
 	itemList, err := s.octeliumC.CoreC().ListCredential(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return itemList, nil

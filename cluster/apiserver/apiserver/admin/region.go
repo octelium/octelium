@@ -32,7 +32,7 @@ func (s *Server) ListRegion(ctx context.Context, req *corev1.ListRegionOptions) 
 
 	vRegions, err := s.octeliumC.CoreC().ListRegion(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return vRegions, nil
