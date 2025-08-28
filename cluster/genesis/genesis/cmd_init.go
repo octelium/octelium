@@ -879,12 +879,13 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 
 	cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
 		Metadata: &metav1.Metadata{
-			Name: "root-init",
+			Name:        "root-init",
+			Description: `This is the initial authentication token used upon the Cluster installation. You might want to delete it once you have added your own Users and other resources`,
 		},
 		Spec: &corev1.Credential_Spec{
 			User:        "root",
 			Type:        corev1.Credential_Spec_AUTH_TOKEN,
-			ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+			ExpiresAt:   pbutils.Timestamp(time.Now().Add(30 * 24 * time.Hour)),
 			SessionType: corev1.Session_Status_CLIENT,
 			Authorization: &corev1.Credential_Spec_Authorization{
 				InlinePolicies: []*corev1.InlinePolicy{
