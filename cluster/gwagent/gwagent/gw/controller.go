@@ -53,12 +53,18 @@ func InitGateway(ctx context.Context,
 	{
 		gw, err := octeliumC.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: k8sutils.GetGatewayName(node)})
 		if err == nil {
-			zap.S().Debugf("Gateway %s already exists. Just updating the WG public key", gw.Metadata.Name)
+			zap.L().Debug("Gateway already exists. Just updating the WG public key and public IP addrs",
+				zap.Any("gw", gw), zap.Strings("publicIPs", publicIPs))
 			if gw.Status.Wireguard == nil {
 				gw.Status.Wireguard = &corev1.Gateway_Status_WireGuard{}
 			}
 			gw.Status.Wireguard.PublicKey = privateKey.PublicKey().String()
 			gw.Status.Wireguard.KeyRotatedAt = pbutils.Now()
+
+			if len(publicIPs) > 0 {
+				gw.Status.PublicIPs = publicIPs
+			}
+
 			if _, err := octeliumC.CoreC().UpdateGateway(ctx, gw); err != nil {
 				return err
 			}
