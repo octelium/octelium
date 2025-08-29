@@ -99,12 +99,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch buffer.Mode {
 			case corev1.Service_Spec_Config_HTTP_Body_JSON:
-				additional.bodyMap = make(map[string]any)
-				if err := json.Unmarshal(additional.Body, &additional.bodyMap); err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					return
+				if len(additional.Body) > 0 {
+					additional.bodyMap = make(map[string]any)
+					if err := json.Unmarshal(additional.Body, &additional.bodyMap); err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					reqCtx.BodyJSONMap = additional.bodyMap
 				}
-				reqCtx.BodyJSONMap = additional.bodyMap
 			}
 		}
 

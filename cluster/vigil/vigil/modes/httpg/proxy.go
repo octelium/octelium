@@ -197,13 +197,13 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 		ErrorHandler: func(w http.ResponseWriter, request *http.Request, err error) {
 			statusCode := http.StatusInternalServerError
-			zap.L().Debug("Handling response error", zap.Error(err))
 			switch {
 			case errors.Is(err, io.EOF):
 				statusCode = http.StatusBadGateway
 			case errors.Is(err, context.Canceled):
 				statusCode = 499
 			default:
+				zap.L().Warn("Could not proxy request to upstream", zap.Error(err))
 				var netErr net.Error
 				if errors.As(err, &netErr) {
 					if netErr.Timeout() {
