@@ -61,7 +61,7 @@ func Run() error {
 		return err
 	}
 
-	octeliumC, err := octeliumc.NewClient(context.Background())
+	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err
 	}
