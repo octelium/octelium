@@ -274,8 +274,6 @@ func (c *diffCtl) setCurrentItems(ctx context.Context) error {
 				zap.String("kind", c.kind))
 		}
 
-		var ret []umetav1.ResourceObjectI
-
 		if retMap["items"] == nil {
 			return nil
 		}
@@ -296,10 +294,8 @@ func (c *diffCtl) setCurrentItems(ctx context.Context) error {
 				continue
 			}
 
-			ret = append(ret, itm)
+			c.currentItems = append(c.currentItems, itm)
 		}
-
-		c.currentItems = ret
 	}
 
 	return nil
