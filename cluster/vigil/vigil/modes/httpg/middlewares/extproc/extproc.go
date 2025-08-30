@@ -17,6 +17,7 @@
 package extproc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -477,4 +478,13 @@ func (rw *responseWriter) WriteHeader(code int) {
 
 func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.body.Write(b)
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
+	}
+
+	return hj.Hijack()
 }

@@ -17,10 +17,12 @@
 package lua
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -185,6 +187,15 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 
 func (w *responseWriter) Write(b []byte) (int, error) {
 	return w.body.Write(b)
+}
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
+	}
+
+	return hj.Hijack()
 }
 
 func (m *middleware) compileLua(luaContent string) (*lua.FunctionProto, error) {

@@ -17,7 +17,10 @@
 package accesslog
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"net"
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -26,6 +29,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type middleware struct {
@@ -40,21 +45,14 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	var crr *captureRequestReader
 	ctx := req.Context()
-	reqClone := req.Clone(ctx)
-	if req.Body != nil {
-		crr = &captureRequestReader{source: req.Body, count: 0}
-		reqClone.Body = crr
-	}
 
-	crw := newCaptureResponseWriter(w)
-	m.next.ServeHTTP(crw, reqClone)
-
-	ctx = reqClone.Context()
+	crw := newResponseWriter(w)
+	m.next.ServeHTTP(crw, req)
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	if reqCtx.DownstreamInfo == nil {
+		zap.L().Debug("No downstreamInfo. Skipping setting the log entry", zap.Any("reqCtx", reqCtx))
 		return
 	}
 
@@ -93,8 +91,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}(),
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
-			Code:      uint32(crw.Status()),
-			BodyBytes: uint64(crw.Size()),
+			Code:      uint32(crw.statusCode),
+			BodyBytes: uint64(crw.body.Len()),
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
 			switch req.Proto {
@@ -151,4 +149,37 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	otelutils.EmitAccessLog(logE)
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	body       *bytes.Buffer
+	statusCode int
+}
+
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		body:           &bytes.Buffer{},
+		statusCode:     http.StatusOK,
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	rw.body.Write(b)
+	return rw.ResponseWriter.Write(b)
+}
+
+func (rw *responseWriter) WriteHeader(statusCode int) {
+	rw.statusCode = statusCode
+	rw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
+	}
+
+	return hj.Hijack()
 }
