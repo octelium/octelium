@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kaptinlin/jsonschema"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	httpm "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/http"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/regexp"
@@ -46,6 +47,8 @@ type newCtxOpts struct {
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
 }
+
+var jsonCompiler = jsonschema.NewCompiler()
 
 func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
@@ -163,6 +166,28 @@ func (c *luaCtx) jsonDecode(L *lua.LState) int {
 	return 1
 }
 
+func (c *luaCtx) jsonIsSchemaValid(L *lua.LState) int {
+
+	jsonSchema := L.CheckString(1)
+
+	var goVal any
+
+	if err := json.Unmarshal([]byte(L.CheckString(2)), &goVal); err != nil {
+		L.Push(lua.LBool(false))
+		return 1
+	}
+
+	schema, err := jsonCompiler.Compile([]byte(jsonSchema))
+	if err != nil {
+		L.Push(lua.LBool(false))
+		return 1
+	}
+
+	res := schema.Validate(goVal)
+	L.Push(lua.LBool(res != nil && res.IsValid()))
+	return 1
+}
+
 func (c *luaCtx) loadModules() {
 	L := c.state
 	startedAt := time.Now()
@@ -215,8 +240,9 @@ func (c *luaCtx) loadModules() {
 func (c *luaCtx) loadModuleJSON(L *lua.LState) int {
 
 	fns := map[string]lua.LGFunction{
-		"encode": c.jsonEncode,
-		"decode": c.jsonDecode,
+		"encode":        c.jsonEncode,
+		"decode":        c.jsonDecode,
+		"isSchemaValid": c.jsonIsSchemaValid,
 	}
 
 	mod := L.RegisterModule("json", fns).(*lua.LTable)
