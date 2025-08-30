@@ -139,9 +139,11 @@ func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
 	for _, itm := range c.createItems {
 		if err := c.doCreateItem(ctx, itm); err != nil {
 			if isUserError(err) {
-				cliutils.LineWarn("Could not create Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
+				cliutils.LineWarn("Could not create %s %s\n", c.kind, itm.GetMetadata())
+				cliutils.LineWarn("Error: %s\n\n", err.Error())
 				continue
 			}
+
 			return nil, err
 		}
 		ret.CountCreated += 1
@@ -151,7 +153,8 @@ func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
 	for _, itm := range c.updateItems {
 		if err := c.doUpdateItem(ctx, itm); err != nil {
 			if isUserError(err) {
-				cliutils.LineWarn("Could not update Resource: %s: %s. Error: %s\n", c.kind, itm.GetMetadata().Name, err.Error())
+				cliutils.LineWarn("Could not update %s %s\n", c.kind, itm.GetMetadata())
+				cliutils.LineWarn("Error: %s\n\n", err.Error())
 				continue
 			}
 			return nil, err
@@ -209,62 +212,95 @@ func hasFieldData(item umetav1.ResourceObjectI) bool {
 
 func (c *diffCtl) setCurrentItems(ctx context.Context) error {
 
-	listOpts, err := c.newObjectListOptionsFn()
-	if err != nil {
-		return err
-	}
+	hasMore := true
+	page := 0
 
-	res := c.client.MethodByName(fmt.Sprintf("List%s", c.kind)).Call(
-		[]reflect.Value{
-			reflect.ValueOf(ctx),
-			reflect.ValueOf(listOpts),
-		},
-	)
-
-	if len(res) != 2 {
-		return errors.Errorf("Invalid reflect ret len")
-	}
-
-	if res[1].Interface() != nil {
-		return res[1].Interface().(error)
-	}
-
-	if res[0].Interface() == nil {
-		return errors.Errorf("Could not run watcher. Client stream is nil")
-	}
-	callRes := res[0].Interface().(umetav1.ObjectI)
-
-	retMap, err := pbutils.ConvertToMap(callRes)
-	if err != nil {
-		return err
-	}
-
-	var ret []umetav1.ResourceObjectI
-
-	if retMap["items"] == nil {
-		return nil
-	}
-
-	retItemsMap := retMap["items"].([]any)
-
-	for _, itmMapAny := range retItemsMap {
-		itmMap := itmMapAny.(map[string]any)
-
-		itm, err := c.getNewObjectFn()
+	for hasMore {
+		listOpts, err := c.newObjectListOptionsFn()
 		if err != nil {
 			return err
 		}
-		if err := pbutils.UnmarshalFromMap(itmMap, itm); err != nil {
+
+		listOptsMap := pbutils.MustConvertToMap(listOpts)
+		listOptsMap["common"] = map[string]any{
+			"page": page,
+		}
+
+		if err := pbutils.UnmarshalFromMap(listOptsMap, listOpts); err != nil {
 			return err
 		}
-		if itm.GetMetadata().IsSystem {
-			continue
+
+		res := c.client.MethodByName(fmt.Sprintf("List%s", c.kind)).Call(
+			[]reflect.Value{
+				reflect.ValueOf(ctx),
+				reflect.ValueOf(listOpts),
+			},
+		)
+
+		if len(res) != 2 {
+			return errors.Errorf("Invalid reflect ret len")
 		}
 
-		ret = append(ret, itm)
-	}
+		if res[1].Interface() != nil {
+			return res[1].Interface().(error)
+		}
 
-	c.currentItems = ret
+		if res[0].Interface() == nil {
+			return errors.Errorf("Could not run watcher. Client stream is nil")
+		}
+		callRes := res[0].Interface().(umetav1.ObjectI)
+
+		retMap, err := pbutils.ConvertToMap(callRes)
+		if err != nil {
+			return err
+		}
+
+		listResponseMetaMap, ok := retMap["listResponseMeta"].(map[string]any)
+		if ok && listResponseMetaMap != nil {
+			hasMore, _ = listResponseMetaMap["hasMore"].(bool)
+			if hasMore {
+				zap.L().Debug("There are more pages",
+					zap.String("kind", c.kind),
+					zap.Any("listResponseMeta", listResponseMetaMap))
+				page += 1
+			} else {
+				zap.L().Debug("No more pages",
+					zap.String("kind", c.kind),
+					zap.Any("listResponseMeta", listResponseMetaMap))
+			}
+		} else {
+			hasMore = false
+			zap.L().Debug("Could not find listResponseMeta in response",
+				zap.String("kind", c.kind))
+		}
+
+		var ret []umetav1.ResourceObjectI
+
+		if retMap["items"] == nil {
+			return nil
+		}
+
+		retItemsMap := retMap["items"].([]any)
+
+		for _, itmMapAny := range retItemsMap {
+			itmMap := itmMapAny.(map[string]any)
+
+			itm, err := c.getNewObjectFn()
+			if err != nil {
+				return err
+			}
+			if err := pbutils.UnmarshalFromMap(itmMap, itm); err != nil {
+				return err
+			}
+			if itm.GetMetadata().IsSystem {
+				continue
+			}
+
+			ret = append(ret, itm)
+		}
+
+		c.currentItems = ret
+	}
 
 	return nil
 }
