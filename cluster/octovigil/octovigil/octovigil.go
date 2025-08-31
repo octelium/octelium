@@ -643,6 +643,10 @@ func (s *Server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.jwkCtl.Run(ctx); err != nil {
+		return err
+	}
+
 	s.grpcSrv = grpc.NewServer()
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,

@@ -27,7 +27,7 @@ import (
 )
 
 func (w *Watcher) runJWKSecret(ctx context.Context) {
-	zap.S().Debugf("starting watching root secrets")
+	zap.L().Debug("starting watching root Secrets")
 
 	tickerCh := time.NewTicker(10 * time.Minute)
 	defer tickerCh.Stop()
@@ -38,7 +38,7 @@ func (w *Watcher) runJWKSecret(ctx context.Context) {
 			return
 		case <-tickerCh.C:
 			if err := w.doRunJWKSecret(ctx); err != nil {
-				zap.L().Error("Could not run Session watcher doFn", zap.Error(err))
+				zap.L().Error("Could not run root Secret watcher doFn", zap.Error(err))
 			}
 		}
 	}
@@ -74,6 +74,9 @@ func (w *Watcher) doRunJWKSecret(ctx context.Context) error {
 
 func (w *Watcher) doProcessJWKSecret(ctx context.Context, secret *corev1.Secret) error {
 	if w.needsRotation(secret) {
+		zap.L().Debug("The root Secret needs rotation",
+			zap.Any("secretMetadata", secret.Metadata))
+
 		if _, err := jwkutils.CreateJWKSecret(ctx, w.octeliumC); err != nil {
 			return err
 		}
@@ -82,14 +85,21 @@ func (w *Watcher) doProcessJWKSecret(ctx context.Context, secret *corev1.Secret)
 		if _, err := w.octeliumC.CoreC().UpdateSecret(ctx, secret); err != nil {
 			return err
 		}
+
+		zap.L().Debug("The root Secret successfully rotated",
+			zap.Any("secretMetadata", secret.Metadata))
 	}
 
 	if w.needsDeletion(secret) {
-		zap.S().Debugf("The key %s is old and is getting deleted", secret.Metadata.Name)
+		zap.L().Debug("The root Secret is old and is getting deleted",
+			zap.Any("secretMetadata", secret.Metadata))
 
 		if _, err := w.octeliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{Uid: secret.Metadata.Uid}); err != nil {
 			return err
 		}
+
+		zap.L().Debug("The root Secret successfully deleted",
+			zap.Any("secretMetadata", secret.Metadata))
 	}
 
 	return nil
