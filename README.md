@@ -58,7 +58,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 - **Dynamic Secretless Access** Octelium's layer-7 awareness enables _Users_ to seamlessly access resources protected by application-layer credentials without exposing, managing and distributing such secrets (read more [here](https://octelium.com/docs/octelium/latest/management/core/service/secretless)). This works for HTTP APIs without sharing API keys and access tokens, SSH servers with sharing passwords and private keys, Kubernetes clusters, PostgreSQL/MySQL databases as well as any L7 protocol protected by mTLS.
 
 
-- ***Modern, Dynamic, Fine-grained Access Control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis (read more [here](https://octelium.com/docs/octelium/latest/management/core/policy)) with policy-as-code using [CEL](https://cel.dev/) and [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). Octelium has no notion of an "admin" user, enforcing zero standing privileges by default.
+- **Modern, Dynamic, Fine-grained Access Control** Octelium provides you a modern, centralized, scalable, fine-grained, dynamic, context-aware, layer-7 aware, attribute-based access control system (ABAC) on a per-request basis (read more [here](https://octelium.com/docs/octelium/latest/management/core/policy)) with policy-as-code using [CEL](https://cel.dev/) and [OPA](https://www.openpolicyagent.org/) (Open Policy Agent). Octelium has no notion of an "admin" user, enforcing zero standing privileges by default.
 
 - **Context-aware, identity-based, L7-aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
 
@@ -165,7 +165,7 @@ Octelium is free and open source software:
 
 - **Is Octelium a remote access VPN?**
 
-  Octelium can seamlessly operate as a zero-config remote access/corporate VPN. It is, however, a modern zero trust architecture that's based on identity-aware proxies (read about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)) instead of operating at layer-3 to provide dynamic fine-grained application-layer aware access control, dynamic configuration and routing, secretless access and visibility. You can read more about the main features [here](#main-features).
+  Octelium can seamlessly operate as a zero-config remote WireGuard/QUIC-based access/corporate VPN from a layer-3 perspective. It is, however, a modern zero trust architecture that's based on identity-aware proxies (read about how Octelium works [here](https://octelium.com/docs/octelium/latest/overview/how-octelium-works)) instead of operating at layer-3 to provide dynamic fine-grained application-layer (L7) aware access control, dynamic configuration and routing, secretless access and visibility. You can read more about the main features [here](#main-features).
 
 - **Why is Octelium FOSS? What's the catch?**
 
