@@ -43,6 +43,7 @@ octelium get ns -o json
 octelium get namespaces --domain octelium.example.com -o yaml
 	`,
 	Aliases: []string{"namespaces", "ns"},
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

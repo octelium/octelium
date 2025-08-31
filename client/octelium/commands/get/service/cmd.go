@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -43,9 +44,10 @@ var Cmd = &cobra.Command{
 	Example: `
 octelium get svc
 octelium get service --namespace ns1 -o json
-octelium get services - n ns2 -o yaml
+octelium get services -n ns2 -o yaml
 	`,
 	Aliases: []string{"svc", "services"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
@@ -66,6 +68,21 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	defer conn.Close()
 
 	c := userv1.NewMainServiceClient(conn)
+
+	if i.FirstArg() != "" {
+		res, err := c.GetService(cmd.Context(), &metav1.GetOptions{
+			Name: i.FirstArg(),
+		})
+		if err != nil {
+			return err
+		}
+		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", string(out))
+		return nil
+	}
 
 	svcList, err := c.ListService(ctx,
 		&userv1.ListServiceOptions{
