@@ -44,6 +44,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Devices",
 	Example: example,
 	Aliases: []string{"dev", "devices"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

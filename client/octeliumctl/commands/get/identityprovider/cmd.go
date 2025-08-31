@@ -41,7 +41,7 @@ var Cmd = &cobra.Command{
 	Aliases: []string{"idp", "identityproviders"},
 	Short:   "List/get IdentityProviders",
 	Example: example,
-
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

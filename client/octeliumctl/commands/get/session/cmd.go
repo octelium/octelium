@@ -45,6 +45,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Sessions",
 	Aliases: []string{"sess", "sessions"},
 	Example: example,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

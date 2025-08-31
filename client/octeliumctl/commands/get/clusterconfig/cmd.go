@@ -42,6 +42,8 @@ octeliumctl get cc
 octeliumctl get clusterconfig -o json
 	`,
 
+	Args: cobra.NoArgs,
+
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

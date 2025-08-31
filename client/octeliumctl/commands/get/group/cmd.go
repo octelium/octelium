@@ -41,6 +41,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Groups",
 	Example: example,
 	Aliases: []string{"grp", "groups"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

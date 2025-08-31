@@ -41,7 +41,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Namespaces",
 	Example: example,
 	Aliases: []string{"ns", "namespaces"},
-
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

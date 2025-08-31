@@ -41,6 +41,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Users",
 	Example: example,
 	Aliases: []string{"usr", "users"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

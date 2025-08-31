@@ -45,6 +45,7 @@ var Cmd = &cobra.Command{
 	Short:   "List/get Credentials",
 	Example: example,
 	Aliases: []string{"cred", "creds", "credentials"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

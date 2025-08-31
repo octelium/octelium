@@ -38,9 +38,10 @@ octeliumctl get secrets -o yaml
 
 var Cmd = &cobra.Command{
 	Use:     "secret",
-	Short:   "List/get core Secrets",
+	Short:   "List/get Secrets",
 	Example: example,
 	Aliases: []string{"sec", "secrets"},
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
