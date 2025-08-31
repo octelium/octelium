@@ -38,6 +38,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Controller struct {
@@ -136,6 +137,8 @@ func (c *ctl) setKey(s *corev1.Secret) error {
 		return nil
 	}
 
+	zap.L().Debug("Setting root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
+
 	key, err := utils_cert.ParsePrivateKeyPEM(ucorev1.ToSecret(s).GetValueBytes())
 	if err != nil {
 		return err
@@ -149,6 +152,8 @@ func (c *ctl) setKey(s *corev1.Secret) error {
 	}
 	c.Unlock()
 
+	zap.L().Debug("Successfully root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
+
 	return nil
 }
 
@@ -160,6 +165,8 @@ func (c *ctl) onDeleteSecret(ctx context.Context, s *corev1.Secret) error {
 	if !c.isJWKSecret(s) {
 		return nil
 	}
+
+	zap.L().Debug("Deleting root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
 
 	c.Lock()
 	delete(c.keyMap, s.Metadata.Uid)
@@ -196,8 +203,9 @@ func (c *Controller) chooseJWK() (*jwtKey, error) {
 
 func (c *Controller) findKeyByUID(uid string) (*jwtKey, error) {
 	if !govalidator.IsUUIDv4(uid) {
-		return nil, errors.Errorf("Invalid uid")
+		return nil, errors.Errorf("Invalid uid: %s", uid)
 	}
+
 	c.ctl.RLock()
 	defer c.ctl.RUnlock()
 
