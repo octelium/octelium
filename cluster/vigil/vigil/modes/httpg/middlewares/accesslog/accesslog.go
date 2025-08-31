@@ -29,8 +29,10 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type middleware struct {
@@ -43,6 +45,8 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 	}, nil
 }
 
+const maxBodyLen = 3 * 1024 * 1024
+
 func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
@@ -54,6 +58,37 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if reqCtx.DownstreamInfo == nil {
 		zap.L().Debug("No downstreamInfo. Skipping setting the log entry", zap.Any("reqCtx", reqCtx))
 		return
+	}
+
+	svcCfg := reqCtx.ServiceConfig
+	var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
+	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Visibility != nil {
+		visibilityCfg = svcCfg.GetHttp().Visibility
+	}
+
+	var reqBody []byte
+	var reqBodyMap *structpb.Struct
+	var respBody []byte
+	var respBodyMap *structpb.Struct
+
+	if visibilityCfg != nil {
+		if len(reqCtx.Body) <= maxBodyLen {
+			if visibilityCfg.EnableRequestBody {
+				reqBody = reqCtx.Body
+			}
+			if visibilityCfg.EnableRequestBodyMap {
+				pbutils.UnmarshalJSON(reqCtx.Body, reqBodyMap)
+			}
+		}
+
+		if crw.body.Len() <= maxBodyLen {
+			if visibilityCfg.EnableResponseBody {
+				respBody = crw.body.Bytes()
+			}
+			if visibilityCfg.EnableResponseBodyMap && crw.body.Len() > 0 {
+				pbutils.UnmarshalJSON(crw.body.Bytes(), respBodyMap)
+			}
+		}
 	}
 
 	opts := &logentry.InitializeLogEntryOpts{
@@ -89,10 +124,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 				return ""
 			}(),
+			Body:    reqBody,
+			BodyMap: reqBodyMap,
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
 			Code:      uint32(crw.statusCode),
 			BodyBytes: uint64(crw.body.Len()),
+			Body:      respBody,
+			BodyMap:   respBodyMap,
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
 			switch req.Proto {
