@@ -103,7 +103,7 @@ func NewServer(ctx context.Context, opts *Opts) (*Server, error) {
 		return nil, err
 	}
 
-	zap.S().Debugf("Creating Server for Service %s", svc.Metadata.Name)
+	zap.L().Debug("Creating a Vigil Server", zap.Any("svc", svc))
 
 	ret.secretMan, err = secretman.New(ctx, octeliumC, ret.vCache)
 	if err != nil {
@@ -113,10 +113,13 @@ func NewServer(ctx context.Context, opts *Opts) (*Server, error) {
 	ret.lbManager = loadbalancer.NewLbManager(octeliumC, ret.vCache)
 
 	ret.svcCtl.FnOnUpdate = func(ctx context.Context, new, old *corev1.Service) error {
-		zap.L().Debug("Starting onServiceUpdate")
+
 		if new.Metadata.Uid != ret.svcUID {
 			return nil
 		}
+
+		zap.L().Debug("Starting onServiceUpdate",
+			zap.Any("new", new), zap.Any("old", old))
 
 		ret.vCache.SetService(new)
 
@@ -126,7 +129,7 @@ func NewServer(ctx context.Context, opts *Opts) (*Server, error) {
 
 		if (new.Spec.Mode != old.Spec.Mode) ||
 			(ucorev1.ToService(new).RealPort() != ucorev1.ToService(old).RealPort()) {
-			zap.S().Debugf("Reloading Service")
+			zap.L().Debug("Mode or Port changed. Reloading Service...")
 			ret.server.Close()
 
 			if err := ret.createServer(ctx); err != nil {
@@ -279,7 +282,7 @@ func Run() error {
 		return err
 	}
 
-	zap.L().Info("Vigil is running...")
+	zap.L().Info("Vigil is running", zap.String("svc", svc.Metadata.Name))
 
 	<-ctx.Done()
 
