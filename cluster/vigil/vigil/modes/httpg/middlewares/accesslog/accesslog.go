@@ -126,12 +126,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}(),
 			Body:    reqBody,
 			BodyMap: reqBodyMap,
+			Origin:  req.Header.Get("Origin"),
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
-			Code:      uint32(crw.statusCode),
-			BodyBytes: uint64(crw.body.Len()),
-			Body:      respBody,
-			BodyMap:   respBodyMap,
+			Code:        uint32(crw.statusCode),
+			BodyBytes:   uint64(crw.body.Len()),
+			Body:        respBody,
+			BodyMap:     respBodyMap,
+			ContentType: crw.Header().Get("Content-Type"),
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
 			switch req.Proto {
