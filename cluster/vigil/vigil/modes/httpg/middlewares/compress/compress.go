@@ -19,7 +19,9 @@ package compress
 import (
 	"compress/gzip"
 	"context"
+	"mime"
 	"net/http"
+	"slices"
 
 	"github.com/klauspost/compress/gzhttp"
 	"go.uber.org/zap"
@@ -42,6 +44,19 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 }
 
 func (c *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+
+	if req.Method == http.MethodHead {
+		c.next.ServeHTTP(rw, req)
+		return
+	}
+
+	mediaType, _, _ := mime.ParseMediaType(req.Header.Get("Content-Type"))
+
+	if slices.Contains(c.excludes, mediaType) {
+		c.next.ServeHTTP(rw, req)
+		return
+	}
+
 	c.gzipHandler().ServeHTTP(rw, req)
 }
 
@@ -51,7 +66,7 @@ func (c *middleware) gzipHandler() http.Handler {
 		gzhttp.CompressionLevel(gzip.DefaultCompression),
 		gzhttp.MinSize(gzhttp.DefaultMinSize))
 	if err != nil {
-		zap.S().Errorf("Could not create a gzhttp wrapper: %+v", err)
+		zap.L().Error("Could not create a gzhttp wrapper", zap.Error(err))
 		return c.next
 	}
 

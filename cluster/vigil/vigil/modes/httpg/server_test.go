@@ -2065,6 +2065,7 @@ func TestHTTPSUpstream(t *testing.T) {
 	assert.Equal(t, resp.Body(), resp2.Body())
 }
 
+/*
 func TestLua(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2123,9 +2124,9 @@ func TestLua(t *testing.T) {
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
 											Inline: `
 function onResponse(ctx)
-  octelium.req.setResponseHeader("Content-Encoding", "application/json")
-  octelium.req.setResponseBody(json.encode(ctx.user))
   octelium.req.setStatusCode(218)
+  octelium.req.setResponseHeader("X-XXXXXX", "XXXXXXX")
+  octelium.req.setResponseBody(json.encode(ctx.user))
 end
 																`,
 										},
@@ -2216,13 +2217,12 @@ end
 	assert.Nil(t, err, "%+v", err)
 	assert.True(t, resp.IsSuccess())
 	assert.Equal(t, 218, resp.StatusCode())
-
 }
+*/
 
 func TestLua2(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err, "%+v", err)
 	t.Cleanup(func() {

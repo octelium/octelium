@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -157,7 +158,7 @@ func TestMiddleware(t *testing.T) {
 			}))
 
 		rw := httptest.NewRecorder()
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 		resp := rw.Result()
 		body, err := io.ReadAll(resp.Body)
 		assert.Nil(t, err)

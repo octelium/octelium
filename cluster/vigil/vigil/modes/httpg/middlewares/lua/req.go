@@ -80,7 +80,7 @@ func (c *luaCtx) setResponseHeader(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.headers.Set(name.String(), value.String())
+	c.rw.Header().Set(name.String(), value.String())
 
 	return 0
 }
@@ -93,7 +93,7 @@ func (c *luaCtx) deleteResponseHeader(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.headers.Del(name.String())
+	c.rw.Header().Del(name.String())
 
 	return 0
 }
@@ -115,9 +115,9 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 
 	bodyBytes := []byte(bodyBytesStr)
 
-	c.rw.body.Reset()
-	c.rw.body.Write(bodyBytes)
-	c.rw.isSet = true
+	rwBody := c.rw.GetBuffer()
+	rwBody.Reset()
+	rwBody.Write(bodyBytes)
 
 	return 0
 }
@@ -138,7 +138,7 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 }
 
 func (c *luaCtx) getResponseBody(L *lua.LState) int {
-	L.Push(lua.LString(c.rw.body.String()))
+	L.Push(lua.LString(c.rw.GetBuffer().String()))
 	return 1
 }
 
@@ -212,7 +212,7 @@ func (c *luaCtx) setStatusCode(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.statusCode = code
+	c.rw.SetStatusCode(code)
 
 	return 0
 }

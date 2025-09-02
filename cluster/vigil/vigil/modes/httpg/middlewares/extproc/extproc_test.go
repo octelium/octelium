@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -239,7 +240,7 @@ func TestMiddleware(t *testing.T) {
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		defer rReq.Body.Close()
 		reqBody, err := io.ReadAll(rReq.Body)
@@ -263,7 +264,7 @@ func TestMiddleware(t *testing.T) {
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		assert.Equal(t, "", rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, "", rw.Header().Get("X-Octelium-Custom-1"))
@@ -353,7 +354,7 @@ func TestMiddlewareTimeout(t *testing.T) {
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		assert.Equal(t, "", rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, "", rw.Header().Get("X-Octelium-Custom-1"))

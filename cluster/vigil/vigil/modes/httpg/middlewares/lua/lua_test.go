@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -101,7 +102,7 @@ func TestMiddleware(t *testing.T) {
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		resp := rw.Result()
 		assert.Equal(t, resp.StatusCode, http.StatusOK)
@@ -150,7 +151,7 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
 
@@ -203,7 +204,7 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
 
@@ -293,7 +294,7 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(rw, req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
 
 		resp := rw.Result()
 		assert.Equal(t, 207, resp.StatusCode)

@@ -17,12 +17,9 @@
 package lua
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -68,31 +65,19 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	var luaContexts []*luaCtx
-	crw := newResponseWriter(rw)
+	crw, ok := rw.(*commonplugin.ResponseWriter)
+	if !ok {
+		zap.L().Warn("rw is not commonplugin.ResponseWriter in Lua middleware")
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	reqCtxVal := m.getRequestContextLValue(reqCtx.DownstreamInfo)
 
 	doAfterResponse := func() {
-		if len(crw.headers) > 0 {
-			for k, v := range crw.headers {
-				if len(v) < 1 {
-					continue
-				}
 
-				crw.ResponseWriter.Header().Set(k, v[0])
-			}
-		}
-
-		{
-			crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
-			crw.ResponseWriter.Header().Del("Content-Encoding")
-
-			if crw.statusCode > 0 {
-				crw.ResponseWriter.WriteHeader(crw.statusCode)
-			}
-
-			if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
-				zap.L().Warn("Could not write to lua crw", zap.Error(err))
-			}
+		if err := crw.Commit(); err != nil {
+			zap.L().Warn("Could not commit", zap.Error(err))
 		}
 
 		for _, luaCtx := range luaContexts {
@@ -164,6 +149,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	doAfterResponse()
 }
 
+/*
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -210,6 +196,7 @@ func (p *responseWriter) Push(target string, opts *http.PushOptions) error {
 	}
 	return http.ErrNotSupported
 }
+*/
 
 func (m *middleware) compileLua(luaContent string) (*lua.FunctionProto, error) {
 	filePath := m.getKey(luaContent)

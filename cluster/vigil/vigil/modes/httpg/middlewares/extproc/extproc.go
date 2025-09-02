@@ -17,7 +17,6 @@
 package extproc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -36,6 +35,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -248,11 +248,17 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	crw := newResponseWriter(rw)
+	crw, ok := rw.(*commonplugin.ResponseWriter)
+	if !ok {
+		zap.L().Warn("rw is not commonplugin.ResponseWriter in extProc middleware")
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	m.next.ServeHTTP(crw, req)
 
 	headers = &envoycore.HeaderMap{}
-	for k, v := range crw.headers {
+	for k, v := range crw.Header() {
 		if len(v) < 1 {
 			continue
 		}
@@ -290,11 +296,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.headers.Del(hdr)
+						crw.Header().Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
+						crw.Header().Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 			}
@@ -307,7 +313,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_ResponseBody{
 					ResponseBody: &extprocsvc.HttpBody{
-						Body:        crw.body.Bytes(),
+						Body:        crw.GetBuffer().Bytes(),
 						EndOfStream: true,
 					},
 				},
@@ -326,11 +332,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.headers.Del(hdr)
+						crw.Header().Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
+						crw.Header().Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 
@@ -338,32 +344,23 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					mut := resp.Response.BodyMutation
 					switch mut.Mutation.(type) {
 					case *extprocsvc.BodyMutation_Body:
-						crw.body.Reset()
-						crw.body.Write(mut.GetBody())
-						crw.isSet = true
+
+						rwBody := crw.GetBuffer()
+						rwBody.Reset()
+						rwBody.Write(mut.GetBody())
+
 					case *extprocsvc.BodyMutation_ClearBody:
-						crw.body.Reset()
-						crw.isSet = true
+						crw.GetBuffer().Reset()
+
 					default:
 					}
 				}
 			}
 		}
-
-	}
-
-	if len(crw.headers) > 0 {
-		for k, v := range crw.headers {
-			if len(v) > 0 {
-				crw.ResponseWriter.Header().Set(k, v[0])
-			}
-		}
 	}
 
 	{
-		crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
-		crw.ResponseWriter.Header().Del("Content-Encoding")
-		crw.ResponseWriter.Write(crw.body.Bytes())
+		crw.Commit()
 	}
 
 	closeGRPC()
@@ -452,6 +449,7 @@ func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessC
 	}
 }
 
+/*
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -501,3 +499,4 @@ func (p *responseWriter) Push(target string, opts *http.PushOptions) error {
 	}
 	return http.ErrNotSupported
 }
+*/

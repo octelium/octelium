@@ -17,10 +17,7 @@
 package accesslog
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"net"
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -28,9 +25,9 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -51,8 +48,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 
-	crw := newResponseWriter(w)
-	m.next.ServeHTTP(crw, req)
+	m.next.ServeHTTP(w, req)
+	crw, ok := w.(*commonplugin.ResponseWriter)
+	if !ok {
+		zap.L().Warn("rw is not commonplugin.ResponseWriter in accessLog middleware")
+		return
+	}
+
+	rwBody := crw.GetBuffer()
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	if reqCtx.DownstreamInfo == nil {
@@ -86,13 +89,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		if crw.body.Len() <= maxBodyLen {
+		if rwBody.Len() <= maxBodyLen {
 			if visibilityCfg.EnableResponseBody {
-				respBody = crw.body.Bytes()
+				respBody = rwBody.Bytes()
 			}
-			if visibilityCfg.EnableResponseBodyMap && crw.body.Len() > 0 {
+			if visibilityCfg.EnableResponseBodyMap && rwBody.Len() > 0 {
 				ret := &structpb.Struct{}
-				if err := pbutils.UnmarshalJSON(crw.body.Bytes(), ret); err != nil {
+				if err := pbutils.UnmarshalJSON(rwBody.Bytes(), ret); err != nil {
 					zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
 				} else {
 					respBodyMap = ret
@@ -139,8 +142,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Origin:  req.Header.Get("Origin"),
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
-			Code:        uint32(crw.statusCode),
-			BodyBytes:   uint64(crw.body.Len()),
+			Code:        uint32(crw.GetStatusCode()),
+			BodyBytes:   uint64(rwBody.Len()),
 			Body:        respBody,
 			BodyMap:     respBodyMap,
 			ContentType: crw.Header().Get("Content-Type"),
@@ -202,6 +205,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	otelutils.EmitAccessLog(logE)
 }
 
+/*
 type responseWriter struct {
 	http.ResponseWriter
 	body       *bytes.Buffer
@@ -247,3 +251,4 @@ func (p *responseWriter) Push(target string, opts *http.PushOptions) error {
 	}
 	return http.ErrNotSupported
 }
+*/

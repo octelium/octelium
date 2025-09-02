@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kaptinlin/jsonschema"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	httpm "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/http"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/regexp"
@@ -34,7 +35,7 @@ import (
 
 type luaCtx struct {
 	req          *http.Request
-	rw           *responseWriter
+	rw           *commonplugin.ResponseWriter
 	state        *lua.LState
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
@@ -43,7 +44,7 @@ type luaCtx struct {
 
 type newCtxOpts struct {
 	req          *http.Request
-	rw           *responseWriter
+	rw           *commonplugin.ResponseWriter
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
 }

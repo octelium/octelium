@@ -37,10 +37,10 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
-	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/direct"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/initm"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
@@ -249,6 +249,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	chain := middlewares.New()
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return initm.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return metrics.New(ctx, next, s.metricsStore.CommonMetrics)
 	})
 
@@ -280,9 +284,11 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 		return validation.New(ctx, next)
 	})
 
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return compress.New(ctx, next)
-	})
+	/*
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return compress.New(ctx, next)
+		})
+	*/
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)

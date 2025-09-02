@@ -16,6 +16,7 @@
 
 package metrics
 
+/*
 import (
 	"bufio"
 	"net"
@@ -70,3 +71,5 @@ func (r *responseRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+*/

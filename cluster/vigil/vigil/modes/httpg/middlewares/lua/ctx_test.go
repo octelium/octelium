@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -94,11 +95,11 @@ end
 		req:          req,
 		fnProto:      fnProto,
 		reqCtxLValue: reqCtxLVal,
-		rw:           newResponseWriter(rw),
+		rw:           commonplugin.NewResponseWriter(rw),
 	})
 	assert.Nil(t, err)
 
-	luaCtx.rw.body.Write([]byte(bodyResp))
+	luaCtx.rw.GetBuffer().Write([]byte(bodyResp))
 
 	{
 		globalTable := luaCtx.state.Get(lua.GlobalsIndex).(*lua.LTable)
@@ -136,11 +137,11 @@ end
 		err = luaCtx.callOnResponse()
 		assert.Nil(t, err)
 
-		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.rw.headers.Get("X-Resp"))
+		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.rw.Header().Get("X-Resp"))
 
 		expectedBody := fmt.Sprintf("octelium:%s", bodyResp)
-		assert.Equal(t, expectedBody, luaCtx.rw.body.String())
-		assert.Equal(t, 205, luaCtx.rw.statusCode)
+		assert.Equal(t, expectedBody, luaCtx.rw.GetBuffer().String())
+		assert.Equal(t, 205, luaCtx.rw.GetStatusCode())
 	}
 
 }
@@ -188,7 +189,7 @@ end
 		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer(reqCtxJSON)),
 		fnProto:      fnProto,
 		reqCtxLValue: reqCtxLVal,
-		rw:           newResponseWriter(rw),
+		rw:           commonplugin.NewResponseWriter(rw),
 	})
 	assert.Nil(t, err)
 
