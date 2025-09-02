@@ -123,9 +123,9 @@ const Page = () => {
         </div>
       </div>
 
-      {(!state.identityProviders || state.identityProviders.length < 0) && (
+      {(!state.identityProviders || state.identityProviders.length < 1) && (
         <div className="container mx-auto mt-2 p-2 md:p-8 w-full max-w-lg">
-          <h2 className="font-bold text-2xl text-slate-700 flex items-center justify-center mb-4">
+          <h2 className="font-bold text-2xl text-slate-700 flex items-center justify-center mb-4 text-center">
             No Available Identity Providers
           </h2>
         </div>
