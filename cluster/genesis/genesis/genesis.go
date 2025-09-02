@@ -48,6 +48,9 @@ func NewGenesis() (*Genesis, error) {
 		return nil, err
 	}
 
+	cfg.QPS = 100
+	cfg.Burst = 200
+
 	k8sClientSet, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, err

@@ -21,10 +21,9 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"go.uber.org/zap"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func Run() error {
@@ -35,12 +34,8 @@ func Run() error {
 
 	nodeName := os.Getenv("OCTELIUM_NODE")
 	ctx := context.Background()
-	cfg, err := clientcmd.BuildConfigFromFlags("", "")
-	if err != nil {
-		return err
-	}
 
-	k8sC, err := kubernetes.NewForConfig(cfg)
+	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return err
 	}

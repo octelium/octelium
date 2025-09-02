@@ -42,7 +42,6 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	k8scorev1 "k8s.io/api/core/v1"
 )
@@ -69,13 +68,6 @@ func NewServer(ctx context.Context) (*Server, error) {
 
 	zap.S().Debugf("node name: %s", nodeName)
 
-	cfg, err := clientcmd.BuildConfigFromFlags("", "")
-	if err != nil {
-		return nil, err
-	}
-
-	zap.S().Debugf("Creating octeliumC")
-
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return nil, err
@@ -83,7 +75,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 
 	zap.S().Debugf("Creating k8sC")
 
-	k8sC, err := kubernetes.NewForConfig(cfg)
+	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

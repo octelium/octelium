@@ -23,12 +23,11 @@ import (
 
 	"go.uber.org/zap"
 	kubeinformers "k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
@@ -51,12 +50,7 @@ func Run() error {
 
 	healthcheck.Run(vutils.HealthCheckPortMain)
 
-	cfg, err := clientcmd.BuildConfigFromFlags("", "")
-	if err != nil {
-		return err
-	}
-
-	k8sC, err := kubernetes.NewForConfig(cfg)
+	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return err
 	}
