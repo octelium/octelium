@@ -69,6 +69,17 @@ func TestMiddleware(t *testing.T) {
 						Url: "https://www.google.com",
 					},
 				},
+
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Visibility: &corev1.Service_Spec_Config_HTTP_Visibility{
+							EnableRequestBody:     true,
+							EnableResponseBody:    true,
+							EnableRequestBodyMap:  true,
+							EnableResponseBodyMap: true,
+						},
+					},
+				},
 			},
 			Mode: corev1.Service_Spec_HTTP,
 			Authorization: &corev1.Service_Spec_Authorization{
@@ -118,7 +129,7 @@ func TestMiddleware(t *testing.T) {
 
 		jsn, err := pbutils.MarshalJSON(usrT.Usr, false)
 		assert.Nil(t, err)
-		req := httptest.NewRequest(http.MethodGet, reqPath, bytes.NewBuffer(jsn))
+		req := httptest.NewRequest(http.MethodPost, reqPath, bytes.NewBuffer(jsn))
 
 		req = req.WithContext(context.WithValue(context.Background(),
 			middlewares.CtxRequestContext,
@@ -130,7 +141,8 @@ func TestMiddleware(t *testing.T) {
 					Session: usrT.Session,
 					Service: svc,
 				},
-
+				ServiceConfig: svc.Spec.Config,
+				Body:          jsn,
 				DownstreamRequest: &coctovigilv1.DownstreamRequest{
 					Source: &coctovigilv1.DownstreamRequest_Source{
 						Address: "127.0.0.1",

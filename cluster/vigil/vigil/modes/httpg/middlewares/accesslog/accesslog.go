@@ -77,7 +77,12 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				reqBody = reqCtx.Body
 			}
 			if visibilityCfg.EnableRequestBodyMap {
-				pbutils.UnmarshalJSON(reqCtx.Body, reqBodyMap)
+				ret := &structpb.Struct{}
+				if err := pbutils.UnmarshalJSON(reqCtx.Body, ret); err != nil {
+					zap.L().Debug("Could not unmarshalJSON reqBody", zap.Error(err))
+				} else {
+					reqBodyMap = ret
+				}
 			}
 		}
 
@@ -86,7 +91,12 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				respBody = crw.body.Bytes()
 			}
 			if visibilityCfg.EnableResponseBodyMap && crw.body.Len() > 0 {
-				pbutils.UnmarshalJSON(crw.body.Bytes(), respBodyMap)
+				ret := &structpb.Struct{}
+				if err := pbutils.UnmarshalJSON(crw.body.Bytes(), ret); err != nil {
+					zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
+				} else {
+					respBodyMap = ret
+				}
 			}
 		}
 	}
