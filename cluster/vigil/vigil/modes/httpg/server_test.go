@@ -2125,7 +2125,6 @@ func TestLua(t *testing.T) {
 											Inline: `
 function onResponse(ctx)
   octelium.req.setStatusCode(218)
-  octelium.req.setResponseHeader("X-XXXXXX", "XXXXXXX")
   octelium.req.setResponseBody(json.encode(ctx.user))
 end
 																`,

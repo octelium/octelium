@@ -76,9 +76,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	doAfterResponse := func() {
 
-		if err := crw.Commit(); err != nil {
-			zap.L().Warn("Could not commit", zap.Error(err))
-		}
+		/*
+			if err := crw.Commit(); err != nil {
+				zap.L().Warn("Could not commit", zap.Error(err))
+			}
+		*/
 
 		for _, luaCtx := range luaContexts {
 			luaCtx.close()

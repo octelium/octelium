@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
+	"go.uber.org/zap"
 )
 
 type middleware struct {
@@ -37,4 +38,7 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 func (c *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	crw := commonplugin.NewResponseWriter(w)
 	c.next.ServeHTTP(crw, req)
+	if err := crw.Commit(); err != nil {
+		zap.L().Debug("Could not commit rw", zap.Error(err))
+	}
 }

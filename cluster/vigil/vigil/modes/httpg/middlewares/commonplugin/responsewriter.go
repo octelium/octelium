@@ -19,39 +19,53 @@ package commonplugin
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/pkg/errors"
 )
 
 type ResponseWriter struct {
-	http.ResponseWriter
+	w          http.ResponseWriter
 	body       *bytes.Buffer
 	statusCode int
+	capturing  bool
 }
 
 func NewResponseWriter(w http.ResponseWriter) *ResponseWriter {
 	return &ResponseWriter{
-		ResponseWriter: w,
-		body:           &bytes.Buffer{},
-		statusCode:     http.StatusOK,
+		w:          w,
+		body:       &bytes.Buffer{},
+		statusCode: http.StatusOK,
+		capturing:  true,
 	}
 }
 
 func (rw *ResponseWriter) Write(b []byte) (int, error) {
-	rw.body.Write(b)
-	return rw.ResponseWriter.Write(b)
+	if rw.capturing {
+		return rw.body.Write(b)
+	}
+	return rw.w.Write(b)
 }
 
 func (rw *ResponseWriter) WriteHeader(statusCode int) {
 	rw.statusCode = statusCode
-	rw.ResponseWriter.WriteHeader(statusCode)
+
+	h := rw.Header()
+	if strings.EqualFold(h.Get("Transfer-Encoding"), "chunked") ||
+		strings.Contains(h.Get("Content-Type"), "text/event-stream") ||
+		strings.HasPrefix(h.Get("Content-Type"), "application/grpc") {
+		rw.capturing = false
+	}
+
+	if !rw.capturing {
+		rw.w.WriteHeader(statusCode)
+	}
 }
 
 func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hj, ok := rw.ResponseWriter.(http.Hijacker)
+	hj, ok := rw.w.(http.Hijacker)
 	if !ok {
 		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
 	}
@@ -60,13 +74,13 @@ func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *ResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+	if f, ok := w.w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
 func (p *ResponseWriter) Push(target string, opts *http.PushOptions) error {
-	if p, ok := p.ResponseWriter.(http.Pusher); ok {
+	if p, ok := p.w.(http.Pusher); ok {
 		return p.Push(target, opts)
 	}
 	return http.ErrNotSupported
@@ -84,18 +98,16 @@ func (w *ResponseWriter) SetStatusCode(n int) {
 	w.statusCode = n
 }
 
-func (w *ResponseWriter) CommitStatusCode() {
-	w.ResponseWriter.WriteHeader(w.statusCode)
-}
-
 func (w *ResponseWriter) Header() http.Header {
-	return w.ResponseWriter.Header()
+	return w.w.Header()
 }
 
 func (w *ResponseWriter) Commit() error {
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(w.body.Bytes())))
 	// w.Header().Del("Content-Encoding")
-	w.ResponseWriter.WriteHeader(w.statusCode)
-	_, err := w.ResponseWriter.Write(w.body.Bytes())
+	if !w.capturing {
+		return nil
+	}
+	w.w.WriteHeader(w.statusCode)
+	_, err := w.w.Write(w.body.Bytes())
 	return err
 }

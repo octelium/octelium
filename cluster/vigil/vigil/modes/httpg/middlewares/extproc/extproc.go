@@ -359,9 +359,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	{
-		crw.Commit()
-	}
+	/*
+		{
+			crw.Commit()
+		}
+	*/
 
 	closeGRPC()
 }

@@ -102,7 +102,9 @@ func TestMiddleware(t *testing.T) {
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		crw := commonplugin.NewResponseWriter(rw)
+		mdlwr.ServeHTTP(crw, req)
+		crw.Commit()
 
 		resp := rw.Result()
 		assert.Equal(t, resp.StatusCode, http.StatusOK)
@@ -151,7 +153,9 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		crw := commonplugin.NewResponseWriter(rw)
+		mdlwr.ServeHTTP(crw, req)
+		crw.Commit()
 
 		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
 
@@ -204,7 +208,9 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		crw := commonplugin.NewResponseWriter(rw)
+		mdlwr.ServeHTTP(crw, req)
+		crw.Commit()
 
 		assert.Equal(t, reqCtx.DownstreamInfo.User.Metadata.Uid, rReq.Header.Get("X-User-Uid"))
 
@@ -294,7 +300,9 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		crw := commonplugin.NewResponseWriter(rw)
+		mdlwr.ServeHTTP(crw, req)
+		crw.Commit()
 
 		resp := rw.Result()
 		assert.Equal(t, 207, resp.StatusCode)
