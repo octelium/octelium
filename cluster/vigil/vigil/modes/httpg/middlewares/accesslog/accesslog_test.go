@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -132,38 +131,41 @@ func TestMiddleware(t *testing.T) {
 		assert.Nil(t, err)
 		req := httptest.NewRequest(http.MethodPost, reqPath, bytes.NewBuffer(jsn))
 
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			Service:   svc,
+			DownstreamInfo: &corev1.RequestContext{
+				User:    usrT.Usr,
+				Session: usrT.Session,
+				Service: svc,
+			},
+			ServiceConfig: svc.Spec.Config,
+			Body:          jsn,
+			DownstreamRequest: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{
+					Address: "127.0.0.1",
+					Port:    12345,
+				},
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{},
+					},
+				},
+			},
+		}
 		req = req.WithContext(context.WithValue(context.Background(),
 			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
-				Service:   svc,
-				DownstreamInfo: &corev1.RequestContext{
-					User:    usrT.Usr,
-					Session: usrT.Session,
-					Service: svc,
-				},
-				ServiceConfig: svc.Spec.Config,
-				Body:          jsn,
-				DownstreamRequest: &coctovigilv1.DownstreamRequest{
-					Source: &coctovigilv1.DownstreamRequest_Source{
-						Address: "127.0.0.1",
-						Port:    12345,
-					},
-					Request: &corev1.RequestContext_Request{
-						Type: &corev1.RequestContext_Request_Http{
-							Http: &corev1.RequestContext_Request_HTTP{},
-						},
-					},
-				},
-			}))
+			reqCtx))
 
 		rw := httptest.NewRecorder()
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
-		resp := rw.Result()
-		body, err := io.ReadAll(resp.Body)
-		assert.Nil(t, err)
-		assert.Equal(t, statusCode, resp.StatusCode)
-		assert.Equal(t, respBody, string(body))
+
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+		})
+		mdlwr.ServeHTTP(crw, req)
+
+		assert.Equal(t, statusCode, crw.GetStatusCode())
+		assert.Equal(t, respBody, string(crw.GetBody()))
 	}
 
 }

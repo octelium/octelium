@@ -55,7 +55,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rwBody := crw.GetBuffer()
+	rwBody := crw.GetBody()
+	lenRespBody := crw.GetBodySize()
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	if reqCtx.DownstreamInfo == nil {
@@ -89,13 +90,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		if rwBody.Len() <= maxBodyLen {
+		if lenRespBody <= maxBodyLen {
 			if visibilityCfg.EnableResponseBody {
-				respBody = rwBody.Bytes()
+				respBody = rwBody
 			}
-			if visibilityCfg.EnableResponseBodyMap && rwBody.Len() > 0 {
+			if visibilityCfg.EnableResponseBodyMap && lenRespBody > 0 {
 				ret := &structpb.Struct{}
-				if err := pbutils.UnmarshalJSON(rwBody.Bytes(), ret); err != nil {
+				if err := pbutils.UnmarshalJSON(rwBody, ret); err != nil {
 					zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
 				} else {
 					respBodyMap = ret
@@ -143,7 +144,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
 			Code:        uint32(crw.GetStatusCode()),
-			BodyBytes:   uint64(rwBody.Len()),
+			BodyBytes:   uint64(lenRespBody),
 			Body:        respBody,
 			BodyMap:     respBodyMap,
 			ContentType: crw.Header().Get("Content-Type"),

@@ -72,25 +72,22 @@ func TestMiddleware(t *testing.T) {
 		assert.Nil(t, err)
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 
-		req = req.WithContext(context.WithValue(context.Background(),
-			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
-				DownstreamInfo: &corev1.RequestContext{
-					User:    usrT.Usr,
-					Session: usrT.Session,
-				},
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			DownstreamInfo: &corev1.RequestContext{
+				User:    usrT.Usr,
+				Session: usrT.Session,
+			},
 
-				ServiceConfig: &corev1.Service_Spec_Config{
-					Type: &corev1.Service_Spec_Config_Http{
-						Http: &corev1.Service_Spec_Config_HTTP{
-							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-								{
-									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
-										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
-											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
-												Inline: ``,
-											},
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+											Inline: ``,
 										},
 									},
 								},
@@ -98,11 +95,18 @@ func TestMiddleware(t *testing.T) {
 						},
 					},
 				},
-			}))
+			},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			reqCtx))
 
 		rw := httptest.NewRecorder()
 
-		crw := commonplugin.NewResponseWriter(rw)
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+		})
 		mdlwr.ServeHTTP(crw, req)
 		crw.Commit()
 
@@ -116,31 +120,28 @@ func TestMiddleware(t *testing.T) {
 		assert.Nil(t, err)
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 
-		req = req.WithContext(context.WithValue(context.Background(),
-			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
-				DownstreamInfo: &corev1.RequestContext{
-					User:    usrT.Usr,
-					Session: usrT.Session,
-				},
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			DownstreamInfo: &corev1.RequestContext{
+				User:    usrT.Usr,
+				Session: usrT.Session,
+			},
 
-				ServiceConfig: &corev1.Service_Spec_Config{
-					Type: &corev1.Service_Spec_Config_Http{
-						Http: &corev1.Service_Spec_Config_HTTP{
-							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-								{
-									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
-										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
-											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
-												Inline: `
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+											Inline: `
 function onRequest(ctx)
   octelium.req.setRequestHeader("X-User-Uid", ctx.user.metadata.uid)
 end
 
 function onResponse(ctx)
 end`,
-											},
 										},
 									},
 								},
@@ -148,12 +149,19 @@ end`,
 						},
 					},
 				},
-			}))
+			},
+		}
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			reqCtx))
 
-		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		reqCtx = middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		crw := commonplugin.NewResponseWriter(rw)
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		})
 		mdlwr.ServeHTTP(crw, req)
 		crw.Commit()
 
@@ -208,7 +216,10 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		crw := commonplugin.NewResponseWriter(rw)
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		})
 		mdlwr.ServeHTTP(crw, req)
 		crw.Commit()
 
@@ -300,7 +311,10 @@ end`,
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		rw := httptest.NewRecorder()
 
-		crw := commonplugin.NewResponseWriter(rw)
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		})
 		mdlwr.ServeHTTP(crw, req)
 		crw.Commit()
 

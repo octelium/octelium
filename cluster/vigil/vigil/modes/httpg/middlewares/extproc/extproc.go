@@ -313,7 +313,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				MetadataContext: metadataContext,
 				Request: &extprocsvc.ProcessingRequest_ResponseBody{
 					ResponseBody: &extprocsvc.HttpBody{
-						Body:        crw.GetBuffer().Bytes(),
+						Body:        crw.GetBody(),
 						EndOfStream: true,
 					},
 				},
@@ -344,14 +344,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					mut := resp.Response.BodyMutation
 					switch mut.Mutation.(type) {
 					case *extprocsvc.BodyMutation_Body:
-
-						rwBody := crw.GetBuffer()
-						rwBody.Reset()
-						rwBody.Write(mut.GetBody())
-
+						crw.SetBody(mut.GetBody())
 					case *extprocsvc.BodyMutation_ClearBody:
-						crw.GetBuffer().Reset()
-
+						crw.ResetBody()
 					default:
 					}
 				}

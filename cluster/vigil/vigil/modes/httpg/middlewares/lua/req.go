@@ -113,11 +113,7 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 		return 1
 	}
 
-	bodyBytes := []byte(bodyBytesStr)
-
-	rwBody := c.rw.GetBuffer()
-	rwBody.Reset()
-	rwBody.Write(bodyBytes)
+	c.rw.SetBody([]byte(bodyBytesStr))
 
 	return 0
 }
@@ -138,7 +134,7 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 }
 
 func (c *luaCtx) getResponseBody(L *lua.LState) int {
-	L.Push(lua.LString(c.rw.GetBuffer().String()))
+	L.Push(lua.LString(string(c.rw.GetBody())))
 	return 1
 }
 

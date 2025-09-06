@@ -21,32 +21,60 @@ import (
 	"bytes"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/pkg/errors"
 )
 
 type ResponseWriter struct {
-	w          http.ResponseWriter
-	body       *bytes.Buffer
-	statusCode int
-	capturing  bool
+	w           http.ResponseWriter
+	body        *bytes.Buffer
+	statusCode  int
+	reqCtx      *middlewares.RequestContext
+	isStreaming bool
+	wBodySize   int
 }
 
-func NewResponseWriter(w http.ResponseWriter) *ResponseWriter {
+type NewResponseWriterOpts struct {
+	ResponseWriter http.ResponseWriter
+	ReqCtx         *middlewares.RequestContext
+}
+
+func NewResponseWriter(o *NewResponseWriterOpts) *ResponseWriter {
+	if o == nil {
+		return &ResponseWriter{
+			body:       &bytes.Buffer{},
+			statusCode: http.StatusOK,
+		}
+	}
+
 	return &ResponseWriter{
-		w:          w,
+		w:          o.ResponseWriter,
 		body:       &bytes.Buffer{},
 		statusCode: http.StatusOK,
-		capturing:  true,
+		reqCtx:     o.ReqCtx,
 	}
 }
 
 func (rw *ResponseWriter) Write(b []byte) (int, error) {
-	if rw.capturing {
-		return rw.body.Write(b)
+
+	if rw.isStreaming {
+		n, err := rw.w.Write(b)
+		rw.wBodySize = n
+		return n, err
 	}
-	return rw.w.Write(b)
+
+	return rw.body.Write(b)
+}
+
+func (rw *ResponseWriter) GetBodySize() int {
+	if rw.isStreaming {
+		return rw.wBodySize
+	}
+
+	return rw.body.Len()
 }
 
 func (rw *ResponseWriter) WriteHeader(statusCode int) {
@@ -56,10 +84,13 @@ func (rw *ResponseWriter) WriteHeader(statusCode int) {
 	if strings.EqualFold(h.Get("Transfer-Encoding"), "chunked") ||
 		strings.Contains(h.Get("Content-Type"), "text/event-stream") ||
 		strings.HasPrefix(h.Get("Content-Type"), "application/grpc") {
-		rw.capturing = false
+		rw.isStreaming = true
+	} else if strings.ToLower(h.Get("Connection")) == "upgrade" &&
+		strings.ToLower(h.Get("Upgrade")) == "websocket" {
+		rw.isStreaming = true
 	}
 
-	if !rw.capturing {
+	if rw.isStreaming {
 		rw.w.WriteHeader(statusCode)
 	}
 }
@@ -70,12 +101,16 @@ func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
 	}
 
+	rw.isStreaming = true
+
 	return hj.Hijack()
 }
 
 func (w *ResponseWriter) Flush() {
-	if f, ok := w.w.(http.Flusher); ok {
-		f.Flush()
+	if w.isStreaming {
+		if f, ok := w.w.(http.Flusher); ok {
+			f.Flush()
+		}
 	}
 }
 
@@ -86,8 +121,8 @@ func (p *ResponseWriter) Push(target string, opts *http.PushOptions) error {
 	return http.ErrNotSupported
 }
 
-func (w *ResponseWriter) GetBuffer() *bytes.Buffer {
-	return w.body
+func (w *ResponseWriter) GetBody() []byte {
+	return w.body.Bytes()
 }
 
 func (w *ResponseWriter) GetStatusCode() int {
@@ -102,12 +137,39 @@ func (w *ResponseWriter) Header() http.Header {
 	return w.w.Header()
 }
 
+func (w *ResponseWriter) SetBody(b []byte) {
+	if w.isStreaming {
+		return
+	}
+
+	rwBody := w.body
+	rwBody.Reset()
+	rwBody.Write(b)
+	w.w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+}
+
+func (w *ResponseWriter) ResetBody() {
+	if w.isStreaming {
+		return
+	}
+
+	rwBody := w.body
+	rwBody.Reset()
+	w.w.Header().Del("Content-Length")
+}
+
 func (w *ResponseWriter) Commit() error {
-	// w.Header().Del("Content-Encoding")
-	if !w.capturing {
+	if w.isStreaming {
 		return nil
 	}
+
+	w.w.Header().Set("Server", "octelium")
 	w.w.WriteHeader(w.statusCode)
-	_, err := w.w.Write(w.body.Bytes())
-	return err
+	if w.body.Len() > 0 {
+		w.w.Header().Set("Content-Length", strconv.Itoa(w.body.Len()))
+		_, err := w.w.Write(w.body.Bytes())
+		return err
+	}
+
+	return nil
 }

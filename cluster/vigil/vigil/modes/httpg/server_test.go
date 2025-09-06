@@ -2065,7 +2065,6 @@ func TestHTTPSUpstream(t *testing.T) {
 	assert.Equal(t, resp.Body(), resp2.Body())
 }
 
-/*
 func TestLua(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2125,6 +2124,7 @@ func TestLua(t *testing.T) {
 											Inline: `
 function onResponse(ctx)
   octelium.req.setStatusCode(218)
+  octelium.req.deleteResponseHeader("Content-Encoding")
   octelium.req.setResponseBody(json.encode(ctx.user))
 end
 																`,
@@ -2211,13 +2211,12 @@ end
 	usr.Resync()
 
 	time.Sleep(1 * time.Second)
-	resp, err := resty.New().SetDebug(true).R().
+	resp, err := resty.New().SetDebug(false).R().
 		Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
 	assert.Nil(t, err, "%+v", err)
 	assert.True(t, resp.IsSuccess())
 	assert.Equal(t, 218, resp.StatusCode())
 }
-*/
 
 func TestLua2(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

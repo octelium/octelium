@@ -210,25 +210,22 @@ func TestMiddleware(t *testing.T) {
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 
-		req = req.WithContext(context.WithValue(context.Background(),
-			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
 
-				ServiceConfig: &corev1.Service_Spec_Config{
-					Type: &corev1.Service_Spec_Config_Http{
-						Http: &corev1.Service_Spec_Config_HTTP{
-							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-								{
-									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
-										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
-											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
-												Address: fmt.Sprintf("localhost:%d", port),
-											},
-											ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
-												ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
-												RequestBodyMode:  corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
-											},
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+									ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
+											Address: fmt.Sprintf("localhost:%d", port),
+										},
+										ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
+											ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
+											RequestBodyMode:  corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
 										},
 									},
 								},
@@ -236,11 +233,20 @@ func TestMiddleware(t *testing.T) {
 						},
 					},
 				},
-			}))
+			},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			reqCtx))
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		crw := commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		})
+		mdlwr.ServeHTTP(crw, req)
 
 		defer rReq.Body.Close()
 		reqBody, err := io.ReadAll(rReq.Body)
@@ -249,22 +255,26 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, tstSrv.reqHeader, rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, tstSrv.rspHeader, rw.Header().Get("X-Octelium-Custom-1"))
 
-		assert.Equal(t, tstSrv.rspBody, rw.Body.String())
+		assert.Equal(t, tstSrv.rspBody, string(crw.GetBody()))
 		assert.Equal(t, tstSrv.reqBody, string(reqBody))
 	}
 
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+		}
 		req = req.WithContext(context.WithValue(context.Background(),
 			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
-			}))
+			reqCtx))
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		}), req)
 
 		assert.Equal(t, "", rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, "", rw.Header().Get("X-Octelium-Custom-1"))
@@ -325,24 +335,21 @@ func TestMiddlewareTimeout(t *testing.T) {
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
 
-		req = req.WithContext(context.WithValue(context.Background(),
-			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt: time.Now(),
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
 
-				ServiceConfig: &corev1.Service_Spec_Config{
-					Type: &corev1.Service_Spec_Config_Http{
-						Http: &corev1.Service_Spec_Config_HTTP{
-							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-								{
-									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
-										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
-											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
-												Address: fmt.Sprintf("localhost:%d", port),
-											},
-											ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
-												ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
-											},
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+									ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
+											Address: fmt.Sprintf("localhost:%d", port),
+										},
+										ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
+											ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_BUFFERED,
 										},
 									},
 								},
@@ -350,11 +357,18 @@ func TestMiddlewareTimeout(t *testing.T) {
 						},
 					},
 				},
-			}))
+			},
+		}
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			reqCtx))
 
 		rw := httptest.NewRecorder()
 
-		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(rw), req)
+		mdlwr.ServeHTTP(commonplugin.NewResponseWriter(&commonplugin.NewResponseWriterOpts{
+			ResponseWriter: rw,
+			ReqCtx:         reqCtx,
+		}), req)
 
 		assert.Equal(t, "", rReq.Header.Get("X-Octelium-Custom-1"))
 		assert.Equal(t, "", rw.Header().Get("X-Octelium-Custom-1"))
