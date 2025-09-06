@@ -79,19 +79,55 @@ func (rw *ResponseWriter) GetBodySize() int {
 
 func (rw *ResponseWriter) WriteHeader(statusCode int) {
 	rw.statusCode = statusCode
-
-	h := rw.Header()
-	if strings.EqualFold(h.Get("Transfer-Encoding"), "chunked") ||
-		strings.Contains(h.Get("Content-Type"), "text/event-stream") ||
-		strings.HasPrefix(h.Get("Content-Type"), "application/grpc") {
-		rw.isStreaming = true
-	} else if strings.ToLower(h.Get("Connection")) == "upgrade" &&
-		strings.ToLower(h.Get("Upgrade")) == "websocket" {
-		rw.isStreaming = true
-	}
+	rw.setIsStreaming()
 
 	if rw.isStreaming {
 		rw.w.WriteHeader(statusCode)
+	}
+}
+
+func (w *ResponseWriter) setIsStreaming() {
+
+	h := w.Header()
+	contentType := h.Get("Content-Type")
+	connection := h.Get("Connection")
+	upgrade := h.Get("Upgrade")
+
+	if strings.ToLower(connection) == "upgrade" && strings.ToLower(upgrade) == "websocket" {
+		w.isStreaming = true
+		return
+	}
+
+	if strings.Contains(strings.ToLower(contentType), "text/event-stream") {
+		w.isStreaming = true
+		return
+	}
+
+	if strings.Contains(strings.ToLower(contentType), "application/grpc") {
+		w.isStreaming = true
+		return
+	}
+
+	if h.Get("Transfer-Encoding") == "chunked" {
+		w.isStreaming = true
+		return
+	}
+
+	if h.Get("Content-Length") == "" && contentType != "" {
+		lowerContentType := strings.ToLower(contentType)
+		streamingTypes := []string{
+			"text/plain",
+			"application/json",
+			"application/x-ndjson",
+			"text/html",
+		}
+
+		for _, streamingType := range streamingTypes {
+			if strings.Contains(lowerContentType, streamingType) {
+				w.isStreaming = true
+				return
+			}
+		}
 	}
 }
 
