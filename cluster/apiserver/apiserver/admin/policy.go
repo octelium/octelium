@@ -52,7 +52,7 @@ func (s *Server) CreatePolicy(ctx context.Context, req *corev1.Policy) (*corev1.
 
 	policyNames, err := apivalidation.GetNameAndParents(req.Metadata.Name)
 	if err != nil {
-		return nil, serr.InvalidArg(err.Error())
+		return nil, serr.InvalidArgWithErr(err)
 	}
 
 	item := &corev1.Policy{

@@ -16,7 +16,6 @@ package install
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -104,7 +103,7 @@ func setInitialAuthToken(ctx context.Context, o *Opts) error {
 
 		cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
 		cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
-		cliutils.LineInfo(fmt.Sprintf("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken))
+		cliutils.LineInfo("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken)
 	}
 
 	if o.AuthTokenSavePath != "" {

@@ -68,7 +68,7 @@ func (s *server) getLoginStateFromCallback(r *http.Request, doDelete bool) (*log
 	switch r.Method {
 	case http.MethodGet:
 		if errMsg := r.FormValue("error"); errMsg != "" {
-			return nil, errors.Errorf(r.FormValue("error_description"))
+			return nil, errors.Errorf("%s", r.FormValue("error_description"))
 		}
 
 		if stateID = r.FormValue("state"); stateID == "" {

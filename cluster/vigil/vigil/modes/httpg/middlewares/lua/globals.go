@@ -27,7 +27,7 @@ import (
 
 func doGlobalFnAssert(L *lua.LState) int {
 	if !L.ToBool(1) {
-		L.RaiseError(L.OptString(2, "assertion failed"))
+		L.RaiseError("assertion failed")
 		return 0
 	}
 	return L.GetTop()

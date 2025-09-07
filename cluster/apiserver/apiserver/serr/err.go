@@ -39,7 +39,7 @@ func InvalidArg(format string, a ...any) error {
 
 func InvalidArgWithErr(err error) error {
 	zap.S().Debugf("invalid user arg.: %+v", err)
-	return status.Errorf(codes.InvalidArgument, err.Error())
+	return status.Errorf(codes.InvalidArgument, "%s", err.Error())
 }
 
 func NotFound(format string, a ...any) error {
