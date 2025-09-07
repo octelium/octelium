@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/nocturne
 
-go 1.23.8
+go 1.24.7
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5 // indirect

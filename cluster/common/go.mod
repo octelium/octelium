@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/common
 
-go 1.23.8
+go 1.24.7
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2

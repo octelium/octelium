@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/gwagent
 
-go 1.23.8
+go 1.24.7
 
 require (
 	github.com/go-resty/resty/v2 v2.16.5

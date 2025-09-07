@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/portal
 
-go 1.23.8
+go 1.24.7
 
 require (
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000

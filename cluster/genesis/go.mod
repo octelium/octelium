@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/genesis
 
-go 1.23.8
+go 1.24.7
 
 require (
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.5
