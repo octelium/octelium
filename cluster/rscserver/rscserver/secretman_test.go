@@ -103,9 +103,9 @@ func (t *tstSecretMan) run(ctx context.Context) error {
 	t.lis = lis
 
 	go func() {
-		zap.S().Debug("running gRPC server.")
+		zap.L().Debug("running gRPC server.")
 		if err := srv.Serve(lis); err != nil {
-			zap.S().Infof("gRPC server closed: %+v", err)
+			zap.L().Info("gRPC server closed", zap.Error(err))
 		}
 	}()
 

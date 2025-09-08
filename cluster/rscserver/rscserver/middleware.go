@@ -214,7 +214,7 @@ func (s *Server) doProcessMsg(msg []byte, stream grpc.ServerStream, api, version
 	}
 
 	if err := stream.SendMsg(resp); err != nil {
-		zap.S().Errorf("Could not send msg: %+v", err)
+		zap.L().Error("Could not send msg", zap.Error(err))
 		return err
 	}
 

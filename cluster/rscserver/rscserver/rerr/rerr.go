@@ -28,26 +28,26 @@ func NotFound(format string, a ...any) error {
 }
 
 func Internal(format string, a ...any) error {
-	zap.S().Errorf("internal error.: %v", errors.Errorf(format, a...))
+	zap.L().Warn("internal error", zap.Error(errors.Errorf(format, a...)))
 	return status.Errorf(codes.Internal, format, a...)
 }
 
 func InternalWithErr(err error) error {
-	zap.S().Errorf("internal error.: %+v", err)
+	zap.L().Warn("internal error", zap.Error(err))
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
 func InvalidWithErr(err error) error {
-	zap.S().Errorf("Invalid error.: %+v", err)
+	zap.L().Debug("Invalid arg", zap.Error(err))
 	return status.Errorf(codes.InvalidArgument, "%s", err.Error())
 }
 
 func AlreadyExistsWithErr(err error) error {
-	zap.S().Errorf("already exists error.: %+v", err)
+	zap.L().Debug("Already exists", zap.Error(err))
 	return status.Errorf(codes.AlreadyExists, "%s", err.Error())
 }
 
 func ResourceChanged(err error) error {
-	zap.S().Warn("Resource changed: %+v", err)
+	zap.L().Debug("Resource changed", zap.Error(err))
 	return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 }

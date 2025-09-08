@@ -30,7 +30,7 @@ func Run() error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
 
-	zap.S().Debug("Starting Resource server")
+	zap.L().Debug("Starting Resource server")
 
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
@@ -41,12 +41,12 @@ func Run() error {
 		return err
 	}
 
-	zap.S().Debug("starting gRPC server...")
+	zap.L().Debug("starting gRPC server...")
 
 	if err := srv.Run(ctx); err != nil {
 		return err
 	}
-	zap.S().Infof("Resource Server is now running...")
+	zap.L().Info("Resource Server is now running...")
 
 	<-ctx.Done()
 
