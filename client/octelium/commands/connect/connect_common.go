@@ -47,7 +47,7 @@ const defaultESSHPort = 22022
 
 func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 	publishedServices []*cliconfigv1.Connection_Preferences_PublishedService) error {
-	zap.L().Debug("Sending init request")
+
 	l3Mode, err := l3mode.GetL3Mode(cmdArgs.L3Mode)
 	if err != nil {
 		return err
@@ -59,12 +59,13 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 		if err != nil {
 			return err
 		}
+
 		servedServices = append(servedServices, &userv1.ConnectRequest_Initialize_ServiceOptions_Service{
 			Name: cliutils.GetServiceFullNameFromName(svcStr),
 		})
 	}
 
-	err = streamC.Send(&userv1.ConnectRequest{
+	req := &userv1.ConnectRequest{
 		Type: &userv1.ConnectRequest_Initialize_{
 			Initialize: &userv1.ConnectRequest_Initialize{
 				ConnectionType: func() userv1.ConnectRequest_Initialize_ConnectionType {
@@ -114,10 +115,11 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 				}(),
 			},
 		},
-	})
+	}
 
-	return err
+	zap.L().Debug("Sending init request", zap.Any("req", req))
 
+	return streamC.Send(req)
 }
 
 func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) (*userv1.ConnectionState, error) {
@@ -526,8 +528,9 @@ func connect(ctx context.Context, domain string) error {
 		case ret := <-ret:
 			if !ret.needsReconnect {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
-				return nil
+				return ret.err
 			}
+
 			time.Sleep(2 * time.Second)
 			if ret.err != nil {
 				err := ret.err
@@ -536,7 +539,7 @@ func connect(ctx context.Context, domain string) error {
 				case grpcerr.IsInvalidArg(err):
 					return err
 				}
-				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err)
+				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err.Error())
 			}
 		}
 	}
@@ -548,24 +551,26 @@ type tryConnectRet struct {
 }
 
 func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryConnectRet {
+
+	doNeedReconnect := func(err error) bool {
+		if grpcerr.IsInvalidArg(err) ||
+			grpcerr.IsUnauthorized(err) ||
+			grpcerr.IsNotFound(err) {
+			return false
+		}
+
+		return true
+	}
 	conn, err := client.GetGRPCClientConn(ctx, domain)
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
-			needsReconnect: true,
+			needsReconnect: doNeedReconnect(err),
 		}
 	}
 	defer conn.Close()
 
 	c := userv1.NewMainServiceClient(conn)
-	zap.L().Debug("Connecting to API Server...")
-	streamC, err := c.Connect(ctx)
-	if err != nil {
-		return tryConnectRet{
-			err:            errors.Errorf("Could not connect to API Server: %s", err),
-			needsReconnect: true,
-		}
-	}
 
 	var publishedServices []*cliconfigv1.Connection_Preferences_PublishedService
 
@@ -579,10 +584,19 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		}
 	}
 
+	zap.L().Debug("Connecting to API Server...")
+	streamC, err := c.Connect(ctx)
+	if err != nil {
+		return tryConnectRet{
+			err:            errors.Errorf("Could not connect to API Server: %s", err),
+			needsReconnect: doNeedReconnect(err),
+		}
+	}
+
 	if err := sendInitializeRequest(streamC, publishedServices); err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not send init request to API Server: %s", err),
-			needsReconnect: true,
+			needsReconnect: doNeedReconnect(err),
 		}
 	}
 
@@ -590,14 +604,14 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
-			needsReconnect: true,
+			needsReconnect: doNeedReconnect(err),
 		}
 	}
 
 	ctl, err := newCtl(ctx, streamC, connCfg)
 	if err != nil {
 		return tryConnectRet{
-			err:            errors.Errorf("Could not initialize controller: %s", err),
+			err:            errors.Errorf("Could not initialize controller: %s", err.Error()),
 			needsReconnect: false,
 		}
 	}
@@ -605,7 +619,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	if err := ctl.start(ctx); err != nil {
 		zap.L().Warn("Could not start controller", zap.Error(err))
 		return tryConnectRet{
-			err:            errors.Errorf("Could not start controller: %s", err),
+			err:            errors.Errorf("Could not start controller: %s", err.Error()),
 			needsReconnect: false,
 		}
 	}
