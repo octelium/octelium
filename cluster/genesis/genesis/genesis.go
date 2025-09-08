@@ -31,7 +31,7 @@ import (
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 )
 
 type Genesis struct {
@@ -43,7 +43,7 @@ type Genesis struct {
 func NewGenesis() (*Genesis, error) {
 	ret := &Genesis{}
 
-	cfg, err := clientcmd.BuildConfigFromFlags("", "")
+	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
 	}

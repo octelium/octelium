@@ -20,14 +20,14 @@ import (
 	"context"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 )
 
 type K8sClientOpts struct {
 }
 
 func NewClient(ctx context.Context, o *K8sClientOpts) (*kubernetes.Clientset, error) {
-	cfg, err := clientcmd.BuildConfigFromFlags("", "")
+	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
 	}
