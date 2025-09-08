@@ -18,6 +18,7 @@ package components
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -82,12 +83,8 @@ func InitComponent(ctx context.Context, opts *InitComponentOpts) error {
 	}
 
 	stdoutLogger = stdoutLogger.With(zap.String("uid", MyComponentUID()))
-	// otelLogger := otelzap.New(stdoutLogger, otelzap.WithMinLevel(level))
-
-	// logger := zap.New(zapcore.NewTee(stdoutLogger.Core(), otelLogger.Core()))
 
 	zap.ReplaceGlobals(stdoutLogger)
-	// otelzap.ReplaceGlobals(otelLogger)
 
 	zap.L().Info("labels",
 		zap.String("componentType", myComponentType),
@@ -100,6 +97,7 @@ func InitComponent(ctx context.Context, opts *InitComponentOpts) error {
 		zap.Bool("devMode", ldflags.IsDev()),
 		zap.String("region", ldflags.GetRegion()),
 		zap.String("startedAt", startedAt.Format(time.RFC3339Nano)),
+		zap.String("goVersion", runtime.Version()),
 	)
 
 	return nil
