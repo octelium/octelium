@@ -412,6 +412,50 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 				return ret
 			}(),
 		}
+
+		getProbe := func(probe *corev1.Service_Spec_Config_Upstream_Container_Probe) *k8scorev1.Probe {
+			ret := &k8scorev1.Probe{
+				InitialDelaySeconds: probe.InitialDelaySeconds,
+				TimeoutSeconds:      probe.TimeoutSeconds,
+				PeriodSeconds:       probe.PeriodSeconds,
+				SuccessThreshold:    probe.SuccessThreshold,
+				FailureThreshold:    probe.FailureThreshold,
+			}
+			switch spec.LivenessProbe.Type.(type) {
+			case *corev1.Service_Spec_Config_Upstream_Container_Probe_Grpc:
+				ret.ProbeHandler = k8scorev1.ProbeHandler{
+					GRPC: &k8scorev1.GRPCAction{
+						Port: int32(spec.LivenessProbe.GetGrpc().Port),
+					},
+				}
+			case *corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet:
+				ret.ProbeHandler = k8scorev1.ProbeHandler{
+					HTTPGet: &k8scorev1.HTTPGetAction{
+						Path: spec.LivenessProbe.GetHttpGet().Path,
+						Port: intstr.FromInt32(int32(spec.LivenessProbe.GetHttpGet().Port)),
+					},
+				}
+			case *corev1.Service_Spec_Config_Upstream_Container_Probe_TcpSocket:
+				ret.ProbeHandler = k8scorev1.ProbeHandler{
+					TCPSocket: &k8scorev1.TCPSocketAction{
+						Port: intstr.FromInt32(int32(spec.LivenessProbe.GetTcpSocket().Port)),
+					},
+				}
+			default:
+				zap.L().Debug("Unsupported probe type. Skipping the probe...")
+				ret = nil
+			}
+
+			return ret
+		}
+
+		if spec.LivenessProbe != nil {
+			container.LivenessProbe = getProbe(spec.LivenessProbe)
+		}
+		if spec.ReadinessProbe != nil {
+			container.ReadinessProbe = getProbe(spec.ReadinessProbe)
+		}
+
 		for _, e := range spec.Env {
 			env := k8scorev1.EnvVar{
 				Name: e.Name,
