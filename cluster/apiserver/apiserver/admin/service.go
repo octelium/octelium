@@ -393,8 +393,21 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					if err := s.validateSecretOwner(ctx, itm); err != nil {
 						return err
 					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_:
+					if itm.GetKubernetesSecretRef().Name == "" {
+						return grpcutils.InvalidArg("KubernetesSecretRef name is empty")
+					}
+					if itm.GetKubernetesSecretRef().Key == "" {
+						return grpcutils.InvalidArg("KubernetesSecretRef key is empty")
+					}
+					if err := apivalidation.ValidateGenASCII(itm.GetKubernetesSecretRef().Name); err != nil {
+						return err
+					}
+					if err := apivalidation.ValidateGenASCII(itm.GetKubernetesSecretRef().Key); err != nil {
+						return err
+					}
 				default:
-					return grpcutils.InvalidArg("either value or fromSecret must be set")
+					return grpcutils.InvalidArg("either value, fromSecret or kubernetesSecretRef must be set")
 				}
 
 			}

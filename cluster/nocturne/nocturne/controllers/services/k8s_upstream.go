@@ -502,7 +502,17 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 						}
 					}
 				}
+			case *corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_:
+				secretRef := e.GetKubernetesSecretRef()
 
+				env.ValueFrom = &k8scorev1.EnvVarSource{
+					SecretKeyRef: &k8scorev1.SecretKeySelector{
+						LocalObjectReference: k8scorev1.LocalObjectReference{
+							Name: secretRef.Name,
+						},
+						Key: secretRef.Key,
+					},
+				}
 			}
 
 			if !govalidator.IsASCII(env.Name) {
