@@ -43,6 +43,7 @@ import (
 
 type dctx struct {
 	id        string
+	svc       *corev1.Service
 	createdAt time.Time
 	conn      net.Conn
 	sshConn   *ssh.ServerConn
@@ -64,7 +65,7 @@ type dctx struct {
 
 	upstreamSession *corev1.Session
 
-	recordOpts *recordOpts
+	recordOpts recordOpts
 
 	svcConfig  *corev1.Service_Spec_Config
 	reasonInit *corev1.AccessLog_Entry_Common_Reason
@@ -72,12 +73,13 @@ type dctx struct {
 	opts       *modes.Opts
 }
 
-func newDctx(ctx context.Context, opts *modes.Opts, conn net.Conn, sshConn *ssh.ServerConn, i *corev1.RequestContext,
+func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn net.Conn, sshConn *ssh.ServerConn, i *corev1.RequestContext,
 	upstreamSession *corev1.Session,
-	recrecordOpts *recordOpts,
+
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse, reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	ret := &dctx{
 		id:              vutils.GenerateLogID(),
+		svc:             svc,
 		conn:            conn,
 		sshConn:         sshConn,
 		createdAt:       time.Now(),
@@ -85,14 +87,22 @@ func newDctx(ctx context.Context, opts *modes.Opts, conn net.Conn, sshConn *ssh.
 		i:               i,
 		svcRef:          umetav1.GetObjectReference(i.Service),
 		upstreamSession: upstreamSession,
-		recordOpts:      recrecordOpts,
 		authResp:        authResp,
 		svcConfig:       vigilutils.GetServiceConfig(ctx, authResp),
 		reasonInit:      reasonInit,
 		opts:            opts,
 	}
 
-	zap.S().Debugf("new dctx %s created for session: %s", ret.id, i.Session.Metadata.Uid)
+	svcCfg := ret.svcConfig
+
+	if svcCfg != nil && svcCfg.GetSsh() != nil &&
+		svcCfg.GetSsh().Visibility != nil {
+		ret.recordOpts.skipRecording = svcCfg.GetSsh().Visibility.DisableSessionRecording
+		ret.recordOpts.recordStdin = svcCfg.GetSsh().Visibility.EnableSessionStdinRecording
+	}
+
+	zap.L().Debug("new dctx created",
+		zap.String("id", ret.id), zap.String("sessionName", i.Session.Metadata.Name))
 
 	return ret
 }
@@ -105,7 +115,7 @@ func (c *dctx) close() error {
 	}
 	c.isClosed = true
 
-	zap.S().Debugf("Closing downstream context: %s", c.id)
+	zap.L().Debug("Closing dctx", zap.String("id", c.id))
 
 	if c.sshConn != nil {
 		c.sshConn.Close()
@@ -123,6 +133,8 @@ func (c *dctx) close() error {
 		c.remoteConn.netConn.Close()
 	}
 
+	zap.L().Debug("dctx is now closed", zap.String("id", c.id))
+
 	return nil
 }
 
@@ -130,7 +142,7 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	svc *corev1.Service, lbMan *loadbalancer.LBManager,
 	userSginer ssh.Signer, secretMan *secretman.SecretManager) error {
 
-	zap.S().Debugf("Connecting to upstream")
+	zap.L().Debug("Connecting to upstream", zap.String("id", c.id))
 	var err error
 	var upstream *loadbalancer.Upstream
 
@@ -141,7 +153,7 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 		}
 
 	} else if ucorev1.ToService(svc).IsESSH() {
-		zap.L().Debug("Getting upstream for eSSH mode")
+		zap.L().Debug("Getting upstream for eSSH mode", zap.String("id", c.id))
 		if c.upstreamSession == nil || !ucorev1.ToSession(c.upstreamSession).IsClientConnectedESSH() {
 			return errors.Errorf("Upstream Session is not connected or not eSSH")
 		}
@@ -175,32 +187,34 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 		}
 	}
 
-	zap.L().Debug("Got upstream", zap.Any("upstream", upstream))
+	zap.L().Debug("Got upstream", zap.String("id", c.id), zap.Any("upstream", upstream))
 
 	clientConfig, err := c.getClientConfig(ctx, octeliumC, svc, userSginer, secretMan, upstream)
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Dialing remote addr: %s", upstream.HostPort)
+	zap.L().Debug("Dialing remote addr", zap.String("id", c.id), zap.String("addr", upstream.HostPort))
 
 	conn, err := net.DialTimeout("tcp", upstream.HostPort, 20*time.Second)
 	if err != nil {
-		zap.S().Warn("Error dialing remote addr: %s: %+v", upstream.HostPort, err)
+		zap.L().Warn("Error dialing remote addr",
+			zap.String("id", c.id), zap.Error(err), zap.String("addr", upstream.HostPort))
 		return err
 	}
 
-	zap.L().Debug("Creating sshClientConn")
+	zap.L().Debug("Creating sshClientConn", zap.String("id", c.id))
 	clientConn, clientChans, clientReqs, err := ssh.NewClientConn(conn, upstream.HostPort, clientConfig)
 	if err != nil {
-		zap.S().Debugf("Could not create new client conn: %+v", err)
+		zap.L().Debug("Could not create new client conn", zap.String("id", c.id), zap.Error(err))
 		return err
 	}
 
 	c.remoteConn.sshClient = ssh.NewClient(clientConn, clientChans, clientReqs)
 	c.remoteConn.netConn = conn
 
-	zap.L().Debug("ssh client now connected", zap.String("upstream", upstream.HostPort))
+	zap.L().Debug("ssh client now connected",
+		zap.String("id", c.id), zap.String("upstream", upstream.HostPort))
 
 	return nil
 }
@@ -244,7 +258,7 @@ func (c *dctx) getClientConfig(ctx context.Context,
 	}
 
 	if c.svcConfig == nil || c.svcConfig.GetSsh() == nil {
-		zap.L().Debug("No SSH config found. Returning default client config.")
+		zap.L().Debug("No SSH config found. Returning default client config.", zap.String("id", c.id))
 		return clientConfig, nil
 	}
 
@@ -275,10 +289,14 @@ func (c *dctx) getClientConfig(ctx context.Context,
 			case *corev1.Service_Spec_Config_SSH_Auth_Password_FromSecret:
 				clientConfig.Auth = []ssh.AuthMethod{
 					ssh.PasswordCallback(func() (string, error) {
+						zap.L().Debug("Getting password from Secret",
+							zap.String("name", spec.Auth.GetPassword().GetFromSecret()))
 						secret, err := secretMan.GetByName(ctx, spec.Auth.GetPassword().GetFromSecret())
 						if err != nil {
 							return "", err
 						}
+						zap.L().Debug("Found password from Secret",
+							zap.String("name", spec.Auth.GetPassword().GetFromSecret()))
 						return ucorev1.ToSecret(secret).GetValueStr(), nil
 					}),
 				}
@@ -288,17 +306,21 @@ func (c *dctx) getClientConfig(ctx context.Context,
 			case *corev1.Service_Spec_Config_SSH_Auth_PrivateKey_FromSecret:
 				clientConfig.Auth = []ssh.AuthMethod{
 					ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-						zap.S().Debugf("Getting private key from Secret with name: %s",
-							spec.Auth.GetPrivateKey().GetFromSecret())
+						zap.L().Debug("Getting private key from Secret",
+							zap.String("name", spec.Auth.GetPrivateKey().GetFromSecret()))
 						secret, err := secretMan.GetByName(ctx, spec.Auth.GetPrivateKey().GetFromSecret())
 						if err != nil {
 							return nil, err
 						}
+						zap.L().Debug("Found private key from Secret",
+							zap.String("name", spec.Auth.GetPrivateKey().GetFromSecret()))
 
 						key, err := ssh.ParsePrivateKey(ucorev1.ToSecret(secret).GetValueBytes())
 						if err != nil {
 							return nil, err
 						}
+						zap.L().Debug("Successfully parsed private key from Secret",
+							zap.String("name", spec.Auth.GetPrivateKey().GetFromSecret()))
 						return []ssh.Signer{key}, nil
 					}),
 				}
@@ -321,12 +343,12 @@ func (c *dctx) startKeepAliveUpstreamLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			zap.S().Debugf("keepalive loop ctx done for dctx: %s", c.id)
+			zap.L().Debug("keepalive loop ctx done", zap.String("id", c.id))
 			return
 		case <-tickerCh.C:
 			err := c.sendKeepAliveUpstream()
 			if err == nil {
-				zap.S().Debugf("Upstream responded successfully to keepalive for dctx :%s", c.id)
+				zap.L().Debug("Upstream responded successfully to keepalive", zap.String("id", c.id))
 				n = 0
 				tickerCh.Reset(30 * time.Second)
 				continue
@@ -335,11 +357,11 @@ func (c *dctx) startKeepAliveUpstreamLoop(ctx context.Context) {
 			n = n + 1
 			tickerCh.Reset(8 * time.Second)
 			if n < 5 {
-				zap.S().Debugf("Keepalive failed for dctx :%s. %+v", c.id, err)
+				zap.L().Debug("Keepalive failed for", zap.String("id", c.id), zap.Error(err))
 				continue
 			}
 
-			zap.S().Debugf("Upstream is not responding to keepalives. Removing dctx: %s", c.id)
+			zap.L().Debug("Upstream is not responding to keepalives. Closing dctx", zap.String("id", c.id))
 
 			close(c.keepAliveCh)
 			return
@@ -366,7 +388,7 @@ func (c *dctx) handleGlobalReq(req *ssh.Request) {
 		zap.L().Debug("Nil req. No need to handleGlobalReq")
 		return
 	}
-	zap.S().Debugf("New global req: %s", req.Type)
+	zap.L().Debug("New global req", zap.String("id", c.id), zap.String("type", req.Type))
 
 	switch req.Type {
 	case "keepalive@openssh.com":
@@ -384,7 +406,7 @@ func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
 		return
 	}
 
-	zap.L().Debug("New Channel", zap.String("dctxID", c.id), zap.String("type", nch.ChannelType()))
+	zap.L().Debug("New Channel", zap.String("id", c.id), zap.String("type", nch.ChannelType()))
 
 	switch nch.ChannelType() {
 	case "direct-tcpip":

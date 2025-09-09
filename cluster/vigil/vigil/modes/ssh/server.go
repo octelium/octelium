@@ -60,7 +60,6 @@ type Server struct {
 
 	octeliumC octeliumc.ClientInterface
 
-	// logManager *logmanager.LogManager
 	secretMan *secretman.SecretManager
 
 	dctxMap struct {
@@ -74,9 +73,6 @@ type Server struct {
 	sessionCtl *controllers.SessionController
 
 	userSigner ssh.Signer
-	// metricsStore *metricsstore.MetricsStore
-
-	recordOpts *recordOpts
 
 	opts         *modes.Opts
 	metricsStore *metricsStore
@@ -99,7 +95,6 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		sessionCtl:   &controllers.SessionController{},
 		lbManager:    opts.LBManager,
 		secretMan:    opts.SecretMan,
-		recordOpts:   &recordOpts{},
 		opts:         opts,
 		metricsStore: &metricsStore{},
 	}
@@ -146,24 +141,22 @@ func (s *Server) Close() error {
 	}
 
 	s.isClosed = true
-	zap.S().Debugf("Starting closing the SSH server")
+	zap.L().Debug("Starting closing the SSH server")
 	s.cancelFn()
 
-	zap.S().Debugf("Closing active dctxs")
+	zap.L().Debug("Closing active dctxs")
 	s.dctxMap.mu.Lock()
 	for _, dctx := range s.dctxMap.dctxMap {
 		dctx.close()
 	}
 	s.dctxMap.mu.Unlock()
-	zap.S().Debugf("Closing the SSH server listener")
+	zap.L().Debug("Closing the SSH server listener")
 	if s.lis != nil {
 		s.lis.Close()
 		s.lis = nil
 	}
 
-	// s.logManager.Close()
-
-	zap.S().Debugf("SSH server is now closed")
+	zap.L().Debug("SSH server is now closed")
 
 	return nil
 }
@@ -176,11 +169,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	ctx, cancelFn := context.WithCancel(ctx)
 	defer cancelFn()
 
-	zap.S().Debugf("Started handling a new conn for: %s", c.RemoteAddr().String())
+	zap.L().Debug("Started handling a new conn", zap.String("remoteAddr", c.RemoteAddr().String()))
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
 	if err != nil {
-		zap.S().Debugf("Could not establish a new ssh conn")
+		zap.L().Debug("Could not establish a newServerConn")
 		c.Close()
 		return
 	}
@@ -191,7 +184,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		Request: request,
 	})
 	if err != nil {
-		zap.S().Debugf("Could not auth conn: %+v", err)
+		zap.L().Debug("Could not auth conn. Closing...", zap.Error(err))
 		c.Close()
 		return
 	}
@@ -268,9 +261,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	}
 
 	dctx := newDctx(ctx,
+		svc,
 		s.opts,
 		c, sshConn, i,
-		upstreamSession, s.recordOpts,
+		upstreamSession,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.octeliumC, svc, s.lbManager, s.userSigner, s.secretMan); err != nil {
 		zap.L().Warn("Could not connect to upstream", zap.Error(err))
@@ -458,7 +452,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) serve(ctx context.Context) {
-	zap.S().Debugf("Starting serving connections")
+	zap.L().Debug("Starting serving connections")
 
 	for {
 		conn, err := s.lis.Accept()

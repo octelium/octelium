@@ -64,6 +64,7 @@ func newRecorder(dctx *dctx, sessionID string) *recorder {
 
 func (t *recorder) run(ctx context.Context) {
 	if t.dctx.recordOpts.skipRecording {
+		zap.L().Debug("SSH Recoding is disabled", zap.String("id", t.dctx.id))
 		return
 	}
 	go t.doRun(ctx)
@@ -72,7 +73,7 @@ func (t *recorder) run(ctx context.Context) {
 func (t *recorder) doRun(ctx context.Context) {
 
 	defer func() {
-		zap.L().Debug("Exiting recorder loop", zap.String("dctxID", t.dctx.id))
+		zap.L().Debug("Exiting recorder loop", zap.String("id", t.dctx.id))
 	}()
 
 	for {
