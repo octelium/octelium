@@ -167,7 +167,13 @@ func GetCommonListOptions(cmd *cobra.Command) *metav1.CommonListOptions {
 	}
 
 	ret := &metav1.CommonListOptions{
-		Page:         getFlagUint32(cmd, "page"),
+		Page: func() uint32 {
+			ret := getFlagUint32(cmd, "page")
+			if ret < 1 {
+				return 0
+			}
+			return ret - 1
+		}(),
 		ItemsPerPage: getFlagUint32(cmd, "items-per-page"),
 	}
 
