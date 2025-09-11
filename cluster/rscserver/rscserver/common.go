@@ -122,7 +122,7 @@ func (s *Server) doGet(ctx context.Context, req *rmetav1.GetOptions, api, versio
 	} else if req.Uid != "" {
 		filters = append(filters, goqu.L(`resource->'metadata'->>'uid'`).Eq(req.Uid))
 	} else {
-		return nil, rerr.NotFound("GetOptions have no args")
+		return nil, rerr.InvalidWithErr(errors.Errorf("GetOptions have no args"))
 	}
 
 	ds := goqu.From(tableName).Where(filters...).Select("resource")
@@ -217,7 +217,8 @@ func (s *Server) doCreate(ctx context.Context, req umetav1.ResourceObjectI, api,
 
 		_, err := s.doGet(ctx, getOpts, api, version, kind)
 		if err == nil {
-			return nil, rerr.AlreadyExistsWithErr(errors.Errorf("The %s: %s already exists.", kind, md.Name))
+			return nil, rerr.AlreadyExistsWithErr(
+				errors.Errorf("%s.%s%s: %s already exists", api, version, kind, md.Name))
 		}
 		if !grpcerr.IsNotFound(err) {
 			return nil, err
