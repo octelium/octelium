@@ -79,7 +79,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 					var ret []*userv1.ConnectRequest_Initialize_PublishedService
 					for _, svc := range publishedServices {
 						ret = append(ret, &userv1.ConnectRequest_Initialize_PublishedService{
-							Name:    cliutils.GetServiceFullNameFromName(svc.Name),
+							Name:    svc.Name,
 							Port:    uint32(svc.HostPort),
 							Address: svc.HostAddress,
 						})
@@ -403,7 +403,7 @@ func doGetPublishedService(ctx context.Context,
 
 	svcStr := argList[0]
 
-	svcNs, err := cliutils.ParseServiceNamespace(svcStr)
+	_, err := cliutils.ParseServiceNamespace(svcStr)
 	if err != nil {
 		return nil, err
 	}
@@ -430,9 +430,9 @@ func doGetPublishedService(ctx context.Context,
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:        fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
-		Name:        svcNs.Service,
-		Namespace:   svcNs.Namespace,
+		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
+		Name:        svc.Metadata.Name,
+		Namespace:   svc.Status.Namespace,
 		Port:        int32(svc.Spec.Port),
 		HostPort:    int32(hostPort),
 		HostAddress: addr,
@@ -748,8 +748,8 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:        fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
-		Name:        svcNs.Service,
+		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
+		Name:        svc.Metadata.Name,
 		Namespace:   svcNs.Namespace,
 		Port:        int32(svc.Spec.Port),
 		HostPort:    int32(hostPort),
