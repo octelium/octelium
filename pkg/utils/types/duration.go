@@ -20,14 +20,18 @@ import (
 )
 
 func HumanDuration(d time.Duration) string {
+	if d == 0 {
+		return ""
+	}
 
 	if seconds := int(d.Seconds()); seconds < -1 {
-		return fmt.Sprintf("<invalid>")
+		return "<invalid>"
 	} else if seconds < 0 {
-		return fmt.Sprintf("0s")
+		return "0s"
 	} else if seconds < 60*2 {
 		return fmt.Sprintf("%ds", seconds)
 	}
+
 	minutes := int(d / time.Minute)
 	if minutes < 10 {
 		s := int(d/time.Second) % 60
