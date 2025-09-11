@@ -16,14 +16,12 @@ package session
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/printer"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"github.com/spf13/cobra"
 )
 
@@ -136,7 +134,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 				return ret
 			}(),
-			utils_types.HumanDuration(itm.Spec.ExpiresAt.AsTime().Sub(time.Now())),
+			cliutils.PrintExpiresAt(itm.Spec.ExpiresAt),
 			cliutils.GetResourceAge(itm), itm.Spec.State.String(),
 			cliutils.PrintBoolean(itm.Status.IsConnected))
 	}

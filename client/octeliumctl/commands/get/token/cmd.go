@@ -16,14 +16,12 @@ package token
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/printer"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +120,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	for _, itm := range itmList.Items {
 		p.AppendRow(itm.Metadata.Name,
 			itm.Status.UserRef.Name, cliutils.GetResourceAge(itm), itm.Spec.Type.String(),
-			utils_types.HumanDuration(itm.Spec.ExpiresAt.AsTime().Sub(time.Now())),
+			cliutils.PrintExpiresAt(itm.Spec.ExpiresAt),
 		)
 	}
 

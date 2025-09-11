@@ -19,6 +19,7 @@ import (
 
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func GetAgeFromTimestamp(arg string) (string, error) {
@@ -47,4 +48,12 @@ func GetResourceAge(arg umetav1.ResourceObjectI) string {
 	}
 
 	return utils_types.HumanDuration(time.Since(arg.GetMetadata().CreatedAt.AsTime()))
+}
+
+func PrintExpiresAt(arg *timestamppb.Timestamp) string {
+	if arg == nil {
+		return ""
+	}
+
+	return utils_types.HumanDuration(arg.AsTime().Sub(time.Now()))
 }
