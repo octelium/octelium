@@ -3,7 +3,7 @@ RUN mkdir /build
 ADD . /build/
 WORKDIR /build
 RUN make build-genesis
-FROM alpine
+FROM alpine:3.22
 RUN apk --no-cache add ca-certificates bash curl openssl
 # RUN apk del bash curl openssl
 RUN adduser -S -D -h /app octelium
