@@ -39,10 +39,11 @@ type args struct {
 	IsOneTime bool
 	Rotate    bool
 
-	Type        string
-	SessionType string
-	Policies    []string
-	Scopes      []string
+	Type               string
+	SessionType        string
+	Policies           []string
+	Scopes             []string
+	MaxAuthentications uint32
 }
 
 var Cmd = &cobra.Command{
@@ -68,7 +69,9 @@ func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Rotate, "rotate", false, "Generate new token for an already created Credential (i.e. rotate the Credential)")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "User name")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.ExpiresIn, "expire-in", "", "Set the duration after which the Credential expires (e.g. `2hours`, `30days`, `6hours`, `1week`)")
-	Cmd.PersistentFlags().BoolVar(&cmdArgs.IsOneTime, "one-time", false, "One time credential")
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.IsOneTime, "one-time", false, "Use this Credential only once for authentication and then delete it")
+
+	Cmd.PersistentFlags().Uint32Var(&cmdArgs.MaxAuthentications, "max-authn", 0, "Maximum number of authentications. Overrides one-time if set")
 
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Credential type (Can take the values: "auth-token", "oauth2" or "access-token"). By default it is an Authentication Token`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless")`)
@@ -148,6 +151,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Spec: &corev1.Credential_Spec{
 			User: cmdArgs.User,
 			MaxAuthentications: func() uint32 {
+				if cmdArgs.MaxAuthentications > 0 {
+					return cmdArgs.MaxAuthentications
+				}
+
 				if cmdArgs.IsOneTime {
 					return 1
 				}
