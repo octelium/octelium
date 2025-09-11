@@ -15,6 +15,8 @@
 package token
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/karrick/tparse/v2"
@@ -24,6 +26,7 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -46,13 +49,14 @@ var Cmd = &cobra.Command{
 	Use:   "credential",
 	Short: "Create a Credential",
 	Example: `
-octeliumctl create cred --user usr1 --expire-in 3months
+octeliumctl create credential --user usr1 my-cred
+octeliumctl create cred --user usr1 --expire-in 3months my-cred
 octeliumctl create credential --user usr2 --expire-in 15minutes --one-time
-octeliumctl create cred --user usr3 --expire-in 30days --auto-approve-device
+octeliumctl create cred --user usr3 --expire-in 30days
 	`,
 
 	Aliases: []string{"cred", "creds", "credentials"},
-	Args:    cobra.ExactArgs(1),
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
@@ -119,6 +123,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmdArgs.Rotate {
+		if i.FirstArg() == "" {
+			return errors.Errorf("Credential name must be set")
+		}
+
 		return doGenerateToken(&metav1.ObjectReference{
 			Name: i.FirstArg(),
 		})
@@ -169,6 +177,26 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		},
 	}
 
+	if req.Metadata.Name == "" {
+
+		typ := func() string {
+			switch req.Spec.Type {
+			case corev1.Credential_Spec_ACCESS_TOKEN:
+				return "access-token"
+			case corev1.Credential_Spec_AUTH_TOKEN:
+				return "auth-token"
+			case corev1.Credential_Spec_OAUTH2:
+				return "oauth2"
+			default:
+				return strings.ToLower(req.Spec.Type.String())
+			}
+		}()
+		req.Metadata.Name = fmt.Sprintf("%s-%s-%s",
+			req.Spec.User,
+			typ,
+			utilrand.GetRandomStringLowercase(4))
+	}
+
 	switch req.Spec.Type {
 	case corev1.Credential_Spec_AUTH_TOKEN, corev1.Credential_Spec_ACCESS_TOKEN:
 		req.Spec.SessionType = func() corev1.Session_Status_Type {
@@ -188,6 +216,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Errorf("Could not create Credential: %+v", err)
 	}
+
+	cliutils.LineInfo("Credential %s successfully created\n", req.Metadata.Name)
 
 	return doGenerateToken(umetav1.GetObjectReference(cred))
 }
