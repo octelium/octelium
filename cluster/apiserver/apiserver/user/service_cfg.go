@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -108,11 +109,17 @@ func getKubeConfig(svc *corev1.Service, sess *corev1.Session, cc *corev1.Cluster
 		Host: func() string {
 			var host string
 			if publishedService != nil {
-				return fmt.Sprintf("localhost:%d", publishedService.Port)
+				return net.JoinHostPort(func() string {
+					if publishedService.Address != "" {
+						return publishedService.Address
+					}
+					return "localhost"
+				}(), strconv.Itoa(int(publishedService.Port)))
 			}
 
 			if !sess.Status.Connection.IgnoreDNS {
-				return fmt.Sprintf("%s:%d", vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort())
+				return fmt.Sprintf("%s:%d",
+					vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort())
 			}
 
 			if ucorev1.ToSession(sess).HasV6() {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -223,8 +224,10 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 
 		var ret []*corev1.Session_Status_Connection_PublishedService
 		for _, svcReq := range req.PublishedServices {
-
-			svc, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: vutils.GetServiceFullNameFromName(svcReq.Name)})
+			svc, err := s.octeliumC.CoreC().GetService(ctx,
+				&rmetav1.GetOptions{
+					Name: vutils.GetServiceFullNameFromName(svcReq.Name),
+				})
 			if err != nil {
 				if grpcerr.IsNotFound(err) {
 					return nil, serr.InvalidArg("The Service %s does not exist", svcReq.Name)
@@ -235,9 +238,27 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 				return nil, err
 			}
 
+			if !govalidator.IsPort(fmt.Sprintf("%d", svcReq.Port)) {
+				return nil, serr.InvalidArg("Invalid port: %d", svcReq.Port)
+			}
+
+			switch svcReq.Address {
+			case "", "localhost":
+			default:
+				if !govalidator.IsIP(svcReq.Address) {
+					return nil, serr.InvalidArg("Invalid address: %s", svcReq.Address)
+				}
+			}
+
 			ret = append(ret, &corev1.Session_Status_Connection_PublishedService{
 				ServiceRef: umetav1.GetObjectReference(svc),
 				Port:       int32(svcReq.Port),
+				Address: func() string {
+					if svcReq.Address != "" {
+						return svcReq.Address
+					}
+					return "localhost"
+				}(),
 			})
 		}
 		return ret, nil

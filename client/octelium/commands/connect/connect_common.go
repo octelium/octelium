@@ -79,8 +79,9 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 					var ret []*userv1.ConnectRequest_Initialize_PublishedService
 					for _, svc := range publishedServices {
 						ret = append(ret, &userv1.ConnectRequest_Initialize_PublishedService{
-							Name: cliutils.GetServiceFullNameFromName(svc.Name),
-							Port: uint32(svc.HostPort),
+							Name:    cliutils.GetServiceFullNameFromName(svc.Name),
+							Port:    uint32(svc.HostPort),
+							Address: svc.HostAddress,
 						})
 					}
 					return ret
