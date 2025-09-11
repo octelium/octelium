@@ -101,7 +101,7 @@ func (s *Server) UpdateDevice(ctx context.Context, req *corev1.Device) (*corev1.
 
 	item, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Device `%s` does not exist", req.Metadata.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if !ldflags.IsTest() {

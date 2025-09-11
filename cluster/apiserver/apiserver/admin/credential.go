@@ -318,7 +318,7 @@ func (s *Server) validateCredential(ctx context.Context, req *corev1.Credential)
 
 	switch req.Spec.Type {
 	case corev1.Credential_Spec_TYPE_UNKNOWN:
-		return grpcutils.InvalidArg("Type must be set to either AUTH_TOKEN or OAUTH2")
+		return grpcutils.InvalidArg("Credential type must be set")
 	}
 
 	req.Status = &corev1.Credential_Status{}

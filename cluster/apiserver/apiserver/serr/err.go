@@ -26,19 +26,20 @@ import (
 )
 
 func K8sInternal(err error) error {
-	zap.S().Errorf("internal kubernetes error.: %v", err)
+	zap.L().Warn("Internal error", zap.Error(err))
 	if ldflags.IsDev() {
-		return status.Errorf(codes.Internal, "internal error.: %+v", err)
+		return status.Error(codes.Internal, err.Error())
 	}
 	return status.Errorf(codes.Internal, "Internal error")
 }
 
 func InvalidArg(format string, a ...any) error {
+	zap.L().Debug("invalidArg error", zap.Error(errors.Errorf(format, a...)))
 	return status.Errorf(codes.InvalidArgument, format, a...)
 }
 
 func InvalidArgWithErr(err error) error {
-	zap.S().Debugf("invalid user arg.: %+v", err)
+	zap.L().Debug("invalidArg error", zap.Error(err))
 	return status.Errorf(codes.InvalidArgument, "%s", err.Error())
 }
 
@@ -47,12 +48,12 @@ func NotFound(format string, a ...any) error {
 }
 
 func Internal(format string, a ...any) error {
-	zap.S().Errorf("internal error.: %v", errors.Errorf(format, a...))
+	zap.L().Warn("Internal error", zap.Error(errors.Errorf(format, a...)))
 	return status.Errorf(codes.Internal, "Internal error")
 }
 
 func InternalWithErr(err error) error {
-	zap.S().Errorf("internal error.: %+v", err)
+	zap.L().Warn("Internal error", zap.Error(err))
 	return status.Errorf(codes.Internal, "Internal error")
 }
 
@@ -60,24 +61,25 @@ func K8sNotFoundOrInternal(err error, format string, a ...any) error {
 	if grpcerr.IsNotFound(err) {
 		return status.Errorf(codes.NotFound, format, a...)
 	}
-	zap.S().Errorf("internal error.: %+v", err)
+	zap.L().Warn("Internal error", zap.Error(err))
 	return K8sInternal(err)
 }
 
 func K8sNotFoundOrInternalWithErr(err error) error {
 	if grpcerr.IsNotFound(err) {
-		return status.Errorf(codes.NotFound, "Not Found")
+		return err
 	}
 
-	zap.S().Errorf("internal error.: %+v", err)
+	zap.L().Warn("Internal error", zap.Error(err))
 	return K8sInternal(err)
 }
 
 func Unauthorized(format string, a ...any) error {
+	zap.L().Debug("Unauthorized error", zap.Error(errors.Errorf(format, a...)))
 	return status.Errorf(codes.PermissionDenied, format, a...)
 }
 
 func UnauthenticatedWithErr(err error) error {
-	zap.S().Debugf("unauthenticated error.: %+v", err)
+	zap.L().Debug("Unauthenticated error", zap.Error(err))
 	return status.Errorf(codes.Unauthenticated, "Unauthenticated User")
 }

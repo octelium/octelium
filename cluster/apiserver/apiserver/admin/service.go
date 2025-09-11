@@ -103,14 +103,14 @@ func (s *Server) UpdateService(ctx context.Context, req *corev1.Service) (*corev
 
 	_, err = s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: nsName})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Namespace `%s` does not exist", nsName)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	item, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
 		Name: vutils.GetServiceFullNameFromName(req.Metadata.Name),
 	})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Service `%s` does not exist", req.Metadata.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(item); err != nil {
@@ -238,12 +238,13 @@ func (s *Server) DeleteService(ctx context.Context, req *metav1.DeleteOptions) (
 	}
 
 	svc, err := s.octeliumC.CoreC().GetService(ctx,
-		&rmetav1.GetOptions{Name: vutils.GetServiceFullNameFromName(req.Name),
-			Uid: req.Uid,
+		&rmetav1.GetOptions{
+			Name: vutils.GetServiceFullNameFromName(req.Name),
+			Uid:  req.Uid,
 		},
 	)
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Service  does not exist")
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(svc); err != nil {

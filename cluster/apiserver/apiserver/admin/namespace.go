@@ -40,7 +40,7 @@ func (s *Server) UpdateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 
 	item, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Namespace `%s` does not exist", req.Metadata.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(item); err != nil {
@@ -105,7 +105,7 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 
 	ns, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The Namespace `%s` does not exist", req.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(ns); err != nil {

@@ -76,7 +76,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *corev1.User) (*corev1.User
 
 	item, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The User `%s` does not exist", req.Metadata.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(item); err != nil {
@@ -128,7 +128,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 
 	usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
 	if err != nil {
-		return nil, serr.K8sNotFoundOrInternal(err, "The User `%s` does not exist", req.Name)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(usr); err != nil {
@@ -146,8 +146,6 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 func (s *Server) CheckAndSetUser(ctx context.Context, octeliumC octeliumc.ClientInterface, req *corev1.User, isSystem bool) error {
 
 	specLabels := make(map[string]string)
-
-	
 
 	if req.Spec.Authorization != nil {
 
