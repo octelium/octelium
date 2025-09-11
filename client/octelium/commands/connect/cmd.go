@@ -47,8 +47,6 @@ type args struct {
 
 	UseLocalDNS        bool
 	LocalDNSListenAddr string
-	// UseLocalDNSFallback     bool
-	// LocalDNSFallbackServers []string
 
 	TunnelMode string
 }
@@ -87,9 +85,11 @@ func init() {
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.ServeServices, "serve", nil,
 		"Select the service names assigned to this user to be served")
 	Cmd.PersistentFlags().StringSliceVarP(&cmdArgs.PublishServices, "publish", "p", nil,
-		`Publish a Service to a local port. For example you can map the Service "svc1"
-in the Namespace "ns1" to the local port "8080" as "svc1.ns1:8080".
-For Services in the "default" Namespace you can simply use the format "service:port"`)
+		`Publish a Service to a host port. For example you can map the Service "svc1"
+in the Namespace "ns1" to the host port "8080" as "svc1.ns1:8080".
+For Services in the "default" Namespace you can simply use the format "service:port".
+By default the listener host address is set to localhost. But you can explicitly set a specific listener address
+in the format "service:host:port" (e.g. "svc1:0.0.0.0:8000", "svc1.ns1:0.0.0.0:8001")`)
 	Cmd.PersistentFlags().BoolVarP(&cmdArgs.Detached, "detach", "d", false,
 		"Run in the background")
 

@@ -374,8 +374,30 @@ func doGetPublishedService(ctx context.Context,
 	c userv1.MainServiceClient, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
 
 	argList := strings.Split(arg, ":")
-	if len(argList) != 2 {
-		return nil, errors.Errorf("Invalid published Service `%s`. It must be: `service:hostPort` or `service.namespace:hostPort`", arg)
+
+	var portStr string
+	var addr string
+	switch len(argList) {
+	case 2:
+		addr = "localhost"
+		portStr = argList[1]
+	case 3:
+		addr = argList[1]
+		portStr = argList[2]
+
+		switch addr {
+		case "localhost":
+		default:
+			if !govalidator.IsIP(addr) {
+				return nil, errors.Errorf("Invalid address: %s", addr)
+			}
+		}
+
+	default:
+		if len(argList) != 2 {
+			return nil, errors.Errorf(
+				"Invalid published Service %s. It must be: `service:hostPort` or `service.namespace:hostPort`", arg)
+		}
 	}
 
 	svcStr := argList[0]
@@ -392,7 +414,7 @@ func doGetPublishedService(ctx context.Context,
 		return nil, err
 	}
 
-	hostPort, err := strconv.ParseInt(argList[1], 10, 32)
+	hostPort, err := strconv.ParseInt(portStr, 10, 32)
 	if err != nil {
 		return nil, err
 	}
@@ -407,11 +429,12 @@ func doGetPublishedService(ctx context.Context,
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:      fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
-		Name:      svcNs.Service,
-		Namespace: svcNs.Namespace,
-		Port:      int32(svc.Spec.Port),
-		HostPort:  int32(hostPort),
+		Fqdn:        fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
+		Name:        svcNs.Service,
+		Namespace:   svcNs.Namespace,
+		Port:        int32(svc.Spec.Port),
+		HostPort:    int32(hostPort),
+		HostAddress: addr,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
 			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
@@ -683,8 +706,27 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 	}
 
 	argList := strings.Split(arg, ":")
-	if len(argList) != 2 {
-		return nil, errors.Errorf("Invalid published Service `%s`. It must be: `service:hostPort` or `namespace/service:hostPort`", arg)
+	var portStr string
+	var addr string
+	switch len(argList) {
+	case 2:
+		addr = "localhost"
+		portStr = argList[1]
+	case 3:
+		addr = argList[1]
+		portStr = argList[2]
+		switch addr {
+		case "localhost":
+		default:
+			if !govalidator.IsIP(addr) {
+				return nil, errors.Errorf("Invalid address: %s", addr)
+			}
+		}
+	default:
+		if len(argList) != 2 {
+			return nil, errors.Errorf(
+				"Invalid published Service %s. It must be: `service:hostPort`, `service.namespace:hostPort` or `service:hostAddress:hostPort`", arg)
+		}
 	}
 
 	svcStrs := argList[0]
@@ -699,17 +741,18 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 		return nil, errors.Errorf("The Service %s does not exist", svcNs)
 	}
 
-	hostPort, err := strconv.ParseInt(argList[1], 10, 32)
+	hostPort, err := strconv.ParseInt(portStr, 10, 32)
 	if err != nil {
 		return nil, err
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:      fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
-		Name:      svcNs.Service,
-		Namespace: svcNs.Namespace,
-		Port:      int32(svc.Spec.Port),
-		HostPort:  int32(hostPort),
+		Fqdn:        fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
+		Name:        svcNs.Service,
+		Namespace:   svcNs.Namespace,
+		Port:        int32(svc.Spec.Port),
+		HostPort:    int32(hostPort),
+		HostAddress: addr,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
 			case userv1.Service_Spec_UDP:

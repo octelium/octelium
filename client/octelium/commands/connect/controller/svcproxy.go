@@ -20,6 +20,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/miekg/dns"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy/userspace/tcp"
@@ -91,9 +92,10 @@ func (s *serviceProxy) Close() error {
 }
 
 type listener struct {
-	port     int
-	hostPort int
-	svcFQDN  string
+	port        int
+	hostPort    int
+	hostAddress string
+	svcFQDN     string
 
 	ctl   *Controller
 	gonet *Net
@@ -127,6 +129,13 @@ func newListener(svc *cliconfigv1.Connection_Preferences_PublishedService, ctl *
 		port:     int(svc.Port),
 		hostPort: int(svc.HostPort),
 		typ:      svc.L4Type,
+		hostAddress: func() string {
+			if govalidator.IsIP(svc.HostAddress) {
+				return svc.HostAddress
+			}
+
+			return "localhost"
+		}(),
 	}
 }
 
@@ -143,7 +152,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		return err
 	}
 
-	listenerAddr := net.JoinHostPort("localhost", fmt.Sprintf("%d", l.hostPort))
+	listenerAddr := net.JoinHostPort(l.hostAddress, fmt.Sprintf("%d", l.hostPort))
 
 	l.lis, err = func() (net.Listener, error) {
 
