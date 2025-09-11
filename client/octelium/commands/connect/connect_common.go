@@ -357,8 +357,12 @@ func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domai
 	for _, svc := range cmdArgs.PublishServices {
 		publishedService, err := doGetPublishedService(ctx, c, svc, domain)
 		if err != nil {
+			if grpcerr.IsUnimplemented(err) {
+				return getPublishedServicesWithList(ctx, c, domain)
+			}
 			return nil, err
 		}
+
 		zap.L().Debug("Published Service added", zap.Any("svc", publishedService))
 		ret = append(ret, publishedService)
 	}
@@ -644,4 +648,75 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		err:            retErr,
 		needsReconnect: needsReconnect,
 	}
+}
+
+func getPublishedServicesWithList(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+	var ret []*cliconfigv1.Connection_Preferences_PublishedService
+
+	zap.S().Debugf("Listing available Services to publish ports")
+	svcList, err := c.ListService(ctx, &userv1.ListServiceOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, svc := range cmdArgs.PublishServices {
+		publishedService, err := doGetPublishedServiceWithList(svcList, svc, domain)
+		if err != nil {
+			return nil, err
+		}
+		zap.S().Debugf("Published Service %s added", publishedService.Fqdn)
+		ret = append(ret, publishedService)
+	}
+
+	return ret, nil
+}
+
+func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
+
+	getService := func(svcList *userv1.ServiceList, name string) *userv1.Service {
+		for _, itm := range svcList.Items {
+			if cliutils.GetServiceFullNameFromName(itm.Metadata.Name) == cliutils.GetServiceFullNameFromName(name) {
+				return itm
+			}
+		}
+		return nil
+	}
+
+	argList := strings.Split(arg, ":")
+	if len(argList) != 2 {
+		return nil, errors.Errorf("Invalid published Service `%s`. It must be: `service:hostPort` or `namespace/service:hostPort`", arg)
+	}
+
+	svcStrs := argList[0]
+
+	svcNs, err := cliutils.ParseServiceNamespace(svcStrs)
+	if err != nil {
+		return nil, err
+	}
+
+	svc := getService(svcList, svcStrs)
+	if svc == nil {
+		return nil, errors.Errorf("The Service %s does not exist", svcNs)
+	}
+
+	hostPort, err := strconv.ParseInt(argList[1], 10, 32)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cliconfigv1.Connection_Preferences_PublishedService{
+		Fqdn:      fmt.Sprintf("%s.%s.local.%s", svcNs.Service, svcNs.Namespace, domain),
+		Name:      svcNs.Service,
+		Namespace: svcNs.Namespace,
+		Port:      int32(svc.Spec.Port),
+		HostPort:  int32(hostPort),
+		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
+			switch svc.Spec.Type {
+			case userv1.Service_Spec_UDP:
+				return cliconfigv1.Connection_Preferences_PublishedService_UDP
+			default:
+				return cliconfigv1.Connection_Preferences_PublishedService_TCP
+			}
+		}(),
+	}, nil
 }

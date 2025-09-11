@@ -66,3 +66,7 @@ func IsResourceChanged(err error) bool {
 func IsUnavailable(err error) bool {
 	return status.Code(err) == codes.Unavailable
 }
+
+func IsUnimplemented(err error) bool {
+	return status.Code(err) == codes.Unimplemented
+}
