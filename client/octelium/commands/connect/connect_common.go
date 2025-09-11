@@ -332,7 +332,6 @@ func getConnectionConfig(ctx context.Context,
 		connCfg.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
 	}
 
-	// zap.S().Debugf("Connection config: %+v", connCfg)
 	if connCfg.Preferences.ESSH.IsEnabled && runtime.GOOS == "windows" {
 		cliutils.LineWarn("eSSH is not current supported on Windows. Ignoring using eSSH\n")
 		connCfg.Preferences.ESSH.IsEnabled = false
@@ -508,7 +507,7 @@ func (c *ctl) start(ctx context.Context) error {
 }
 
 func (c *ctl) close() error {
-	zap.S().Debugf("Closing controller...")
+	zap.L().Debug("Closing controller...")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isClosed {
@@ -677,7 +676,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 func getPublishedServicesWithList(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
-	zap.S().Debugf("Listing available Services to publish ports")
+	zap.L().Debug("Listing available Services to publish ports")
 	svcList, err := c.ListService(ctx, &userv1.ListServiceOptions{})
 	if err != nil {
 		return nil, err
@@ -688,7 +687,7 @@ func getPublishedServicesWithList(ctx context.Context, c userv1.MainServiceClien
 		if err != nil {
 			return nil, err
 		}
-		zap.S().Debugf("Published Service %s added", publishedService.Fqdn)
+		zap.L().Debug("Published Service added", zap.Any("publisheSerice", publishedService))
 		ret = append(ret, publishedService)
 	}
 
@@ -732,14 +731,14 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 
 	svcStrs := argList[0]
 
-	svcNs, err := cliutils.ParseServiceNamespace(svcStrs)
+	_, err := cliutils.ParseServiceNamespace(svcStrs)
 	if err != nil {
 		return nil, err
 	}
 
 	svc := getService(svcList, svcStrs)
 	if svc == nil {
-		return nil, errors.Errorf("The Service %s does not exist", svcNs)
+		return nil, errors.Errorf("The Service %s does not exist", svcStrs)
 	}
 
 	hostPort, err := strconv.ParseInt(portStr, 10, 32)
@@ -750,7 +749,7 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 	return &cliconfigv1.Connection_Preferences_PublishedService{
 		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
 		Name:        svc.Metadata.Name,
-		Namespace:   svcNs.Namespace,
+		Namespace:   svc.Status.Namespace,
 		Port:        int32(svc.Spec.Port),
 		HostPort:    int32(hostPort),
 		HostAddress: addr,
