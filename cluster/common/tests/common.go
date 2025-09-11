@@ -183,7 +183,7 @@ func Initialize(o *Opts) (*T, error) {
 		}
 	}
 
-	zap.S().Debugf("Starting new rsc server")
+	zap.L().Debug("Starting new rsc server")
 
 	os.Setenv("OCTELIUM_POSTGRES_DATABASE", dbName)
 
@@ -545,7 +545,7 @@ func Initialize(o *Opts) (*T, error) {
 
 func (t *T) Destroy() error {
 
-	zap.S().Debugf("Destroying test DB %s", t.dbName)
+	zap.L().Debug("Destroying test DB", zap.String("db", t.dbName))
 
 	t.rscSrv.Stop()
 

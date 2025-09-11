@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func TestSetServiceUpstreams(t *testing.T) {
@@ -96,8 +95,6 @@ func TestSetServiceUpstreams(t *testing.T) {
 
 			svcK8s, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svcK8s)
 			assert.Nil(t, err)
-
-			zap.S().Debugf("SVCCC = %+v", svcK8s)
 
 			conns, err := upstream.SetServiceUpstreams(ctx, fakeC.OcteliumC, svcK8s)
 			assert.Nil(t, err)
@@ -234,8 +231,6 @@ func TestSetServiceUpstreams(t *testing.T) {
 
 		svcK8s, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svcK8s)
 		assert.Nil(t, err)
-
-		zap.S().Debugf("SVCCC = %+v", svcK8s)
 
 		/*
 

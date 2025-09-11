@@ -32,7 +32,7 @@ import (
 func SetServiceUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	svc *corev1.Service) ([]*corev1.Session, error) {
 
-	zap.S().Debug("starting checking service listeners to update user connection IPs")
+	zap.L().Debug("starting checking service listeners to update user connection IPs", zap.Any("svc", svc))
 
 	var svcConns []*corev1.Session
 
@@ -68,14 +68,15 @@ func SetServiceUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterfac
 				return err
 			}
 
-			zap.S().Debugf("======= FOUND %d candidate conns", len(conns))
+			zap.L().Debug("Found candidate conns", zap.Int("len", len(conns)))
 
 			for _, conn := range conns {
-				zap.S().Debugf("Found svc conn: %+v", conn)
 
 				if conn == nil {
 					continue
 				}
+
+				zap.L().Debug("doing setConnectionUpstreamsListener", zap.Any("conn", conn))
 
 				if err := setConnectionUpstreamsListener(ctx, octeliumC, conn, svc); err != nil {
 					return err
@@ -102,7 +103,7 @@ func SetServiceUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterfac
 
 	}
 
-	zap.S().Debugf("Done setting Service upstreams for %s", svc.Metadata.Name)
+	zap.L().Debug("Done setting Service upstreams", zap.Any("svc", svc))
 
 	return svcConns, nil
 }
@@ -111,12 +112,6 @@ func getCandidateConnections(ctx context.Context, ep *corev1.Service_Spec_Config
 	svc *corev1.Service, octeliumC octeliumc.ClientInterface) ([]*corev1.Session, error) {
 
 	conns, err := octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{
-		/*
-			SpecLabels: map[string]string{
-				fmt.Sprintf("user-%s", ep.User): umetav1.ToMetadata(svc.Metadata).GetCoreUserUID(ep.User),
-				"type":                          strings.ToLower(corev1.Session_Status_CLIENT.String()),
-			},
-		*/
 		Filters: []*rmetav1.ListOptions_Filter{
 			urscsrv.FilterFieldEQValStr("status.userRef.name", ep.User),
 			urscsrv.FilterFieldEQValStr("status.type", corev1.Session_Status_CLIENT.String()),
@@ -140,38 +135,6 @@ func getCandidateConnections(ctx context.Context, ep *corev1.Service_Spec_Config
 	}
 
 	return candidateConns, nil
-
-	/*
-		zap.S().Debugf("Found %d candidate connections", len(candidateConns))
-
-		if len(candidateConns) == 0 {
-			zap.S().Debugf("Could not find any candidate conn listener %s/%s", svc.Metadata.Name, lSpec.Id)
-			return nil, nil
-		}
-		if len(candidateConns) == 1 {
-			// zap.S().Debugf("Found the only active candidate %s/%s", candidateConns[0].Namespace, candidateConns[0].Name)
-			return candidateConns[0], nil
-		}
-
-		var curTime time.Time
-		var curConn *corev1.Connection
-
-		for _, conn := range candidateConns {
-			zap.S().Debugf("Checking candidate svc conn: %s. %s", conn.Metadata.Uid, conn.Metadata.CreatedAt)
-			createdAt, err := time.Parse(time.RFC3339, conn.Metadata.CreatedAt)
-			if err != nil {
-				return nil, err
-			}
-			if createdAt.After(curTime) {
-				curTime = createdAt
-				curConn = conn
-				zap.S().Debugf("chosen candidate conn now set to %s", conn.Metadata.Name)
-			}
-		}
-
-		zap.S().Debugf("Chose connection %s to serve listener %s/%s", curConn.Metadata.Name, svc.Metadata.Name, lSpec.Id)
-		return curConn, nil
-	*/
 }
 
 func ServeService(svc *corev1.Service, sess *corev1.Session) bool {

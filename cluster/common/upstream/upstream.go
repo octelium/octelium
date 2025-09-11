@@ -97,29 +97,11 @@ func setConnectionUpstreamsListener(ctx context.Context,
 			}
 			return corev1.Session_Status_Connection_Upstream_DEFAULT
 		}(),
-
-		/*
-			DnsLookupFamily: func() corev1.Session_Status_Connection_Upstream_DNSLookupFamily {
-				if l.GetUpstream() == nil || l.GetUpstream().Config == nil {
-					return corev1.Session_Status_Connection_Upstream_V4_ONLY
-				}
-				switch l.GetUpstream().Config.DnsLookupFamily {
-				case corev1.Service_Spec_Config_Upstream_Config_PREFER_V6:
-					return corev1.Session_Status_Connection_Upstream_PREFER_V6
-				case corev1.Service_Spec_Config_Upstream_Config_V4_ONLY:
-					return corev1.Session_Status_Connection_Upstream_V4_ONLY
-				case corev1.Service_Spec_Config_Upstream_Config_V6_ONLY:
-					return corev1.Session_Status_Connection_Upstream_V6_ONLY
-				default:
-					return corev1.Session_Status_Connection_Upstream_V4_ONLY
-				}
-			}(),
-		*/
 	}
 
 	for _, upstream := range conn.Upstreams {
 		if upstream.ServiceRef.Uid == svc.Metadata.Uid {
-			zap.S().Debugf("Upstream for Listener %s already exists", svc.Metadata.Uid)
+			zap.L().Debug("Upstream for Service already exists", zap.Any("svc", svc), zap.Any("sess", sess))
 			upstream.Backend = &corev1.Session_Status_Connection_Upstream_Backend{
 				Host: upstreamBackend.Hostname(),
 				Port: port,
@@ -128,7 +110,7 @@ func setConnectionUpstreamsListener(ctx context.Context,
 		}
 	}
 
-	zap.S().Debugf("Adding upstream listener %s to the first upstream addr", svc.Metadata.Uid)
+	zap.L().Debug("Adding upstream Service", zap.Any("svc", svc), zap.Any("sess", sess))
 
 	lisPort, err := getListenerPort(sess)
 	if err != nil {
@@ -272,7 +254,7 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 		return nil
 	}
 
-	zap.S().Debugf("Removing an address with index %d from the Session %s", idx, sess.Metadata.Name)
+	zap.L().Debug("Removing an address from Session", zap.Int("idx", idx), zap.Any("sess", sess))
 
 	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
 	if err != nil {
