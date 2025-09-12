@@ -286,11 +286,6 @@ func getConnectionConfig(ctx context.Context,
 					}
 					return "127.0.0.100:53"
 				}(),
-
-				/*
-					UseFallback:     cmdArgs.UseLocalDNSFallback,
-					FallbackServers: cmdArgs.LocalDNSFallbackServers,
-				*/
 			},
 		},
 	}
@@ -340,17 +335,6 @@ func getConnectionConfig(ctx context.Context,
 	return connCfg, nil
 }
 
-/*
-func getService(svcList *userv1.ServiceList, name string) *userv1.Service {
-	for _, itm := range svcList.Items {
-		if cliutils.GetServiceFullNameFromName(itm.Metadata.Name) == cliutils.GetServiceFullNameFromName(name) {
-			return itm
-		}
-	}
-	return nil
-}
-*/
-
 func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
@@ -373,54 +357,16 @@ func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domai
 func doGetPublishedService(ctx context.Context,
 	c userv1.MainServiceClient, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
 
-	argList := strings.Split(arg, ":")
-
-	var portStr string
-	var addr string
-	switch len(argList) {
-	case 2:
-		addr = "localhost"
-		portStr = argList[1]
-	case 3:
-		addr = argList[1]
-		portStr = argList[2]
-
-		switch addr {
-		case "localhost":
-		default:
-			if !govalidator.IsIP(addr) {
-				return nil, errors.Errorf("Invalid address: %s", addr)
-			}
-		}
-
-	default:
-		if len(argList) != 2 {
-			return nil, errors.Errorf(
-				"Invalid published Service %s. It must be: `service:hostPort` or `service.namespace:hostPort`", arg)
-		}
-	}
-
-	svcStr := argList[0]
-
-	_, err := cliutils.ParseServiceNamespace(svcStr)
+	res, err := parsePublishedService(arg)
 	if err != nil {
 		return nil, err
 	}
 
 	svc, err := c.GetService(ctx, &metav1.GetOptions{
-		Name: cliutils.GetServiceFullNameFromName(svcStr),
+		Name: cliutils.GetServiceFullNameFromName(res.svc),
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	hostPort, err := strconv.ParseInt(portStr, 10, 32)
-	if err != nil {
-		return nil, err
-	}
-
-	if !govalidator.IsPort(fmt.Sprintf("%d", hostPort)) {
-		return nil, errors.Errorf("Invalid port number: %d", hostPort)
 	}
 
 	switch svc.Spec.Type {
@@ -433,8 +379,8 @@ func doGetPublishedService(ctx context.Context,
 		Name:        svc.Metadata.Name,
 		Namespace:   svc.Status.Namespace,
 		Port:        int32(svc.Spec.Port),
-		HostPort:    int32(hostPort),
-		HostAddress: addr,
+		HostPort:    int32(res.port),
+		HostAddress: res.addr,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
 			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
@@ -705,45 +651,14 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 		return nil
 	}
 
-	argList := strings.Split(arg, ":")
-	var portStr string
-	var addr string
-	switch len(argList) {
-	case 2:
-		addr = "localhost"
-		portStr = argList[1]
-	case 3:
-		addr = argList[1]
-		portStr = argList[2]
-		switch addr {
-		case "localhost":
-		default:
-			if !govalidator.IsIP(addr) {
-				return nil, errors.Errorf("Invalid address: %s", addr)
-			}
-		}
-	default:
-		if len(argList) != 2 {
-			return nil, errors.Errorf(
-				"Invalid published Service %s. It must be: `service:hostPort`, `service.namespace:hostPort` or `service:hostAddress:hostPort`", arg)
-		}
-	}
-
-	svcStrs := argList[0]
-
-	_, err := cliutils.ParseServiceNamespace(svcStrs)
+	res, err := parsePublishedService(arg)
 	if err != nil {
 		return nil, err
 	}
 
-	svc := getService(svcList, svcStrs)
+	svc := getService(svcList, res.svc)
 	if svc == nil {
-		return nil, errors.Errorf("The Service %s does not exist", svcStrs)
-	}
-
-	hostPort, err := strconv.ParseInt(portStr, 10, 32)
-	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("The Service %s does not exist", res.svc)
 	}
 
 	return &cliconfigv1.Connection_Preferences_PublishedService{
@@ -751,8 +666,8 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 		Name:        svc.Metadata.Name,
 		Namespace:   svc.Status.Namespace,
 		Port:        int32(svc.Spec.Port),
-		HostPort:    int32(hostPort),
-		HostAddress: addr,
+		HostPort:    int32(res.port),
+		HostAddress: res.addr,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
 			case userv1.Service_Spec_UDP:
@@ -762,4 +677,70 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 			}
 		}(),
 	}, nil
+}
+
+type parsePublishedServiceResult struct {
+	svc  string
+	addr string
+	port int
+}
+
+func parsePublishedService(arg string) (*parsePublishedServiceResult, error) {
+	parts := strings.SplitN(arg, ":", 2)
+	if len(parts) != 2 {
+		return nil, errors.Errorf(
+			"Invalid published Service %s. It must be: `service:hostPort`, `service.namespace:hostPort` or `service:hostAddress:hostPort`", arg)
+	}
+
+	ret := &parsePublishedServiceResult{
+		svc: parts[0],
+	}
+
+	_, err := cliutils.ParseServiceNamespace(ret.svc)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.Contains(parts[1], ":") {
+		addr, port, err := net.SplitHostPort(parts[1])
+		if err != nil {
+			return nil, err
+		}
+
+		switch addr {
+		case "localhost":
+		default:
+			if !govalidator.IsIP(addr) {
+				return nil, errors.Errorf("Invalid IP address: %s", addr)
+			}
+		}
+
+		ret.addr = addr
+
+		hostPort, err := strconv.ParseInt(port, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+
+		if !govalidator.IsPort(fmt.Sprintf("%d", hostPort)) {
+			return nil, errors.Errorf("Invalid port: %d", hostPort)
+		}
+
+		ret.port = int(hostPort)
+	} else {
+		ret.addr = "localhost"
+
+		hostPort, err := strconv.ParseInt(parts[1], 10, 32)
+		if err != nil {
+			return nil, err
+		}
+
+		if !govalidator.IsPort(fmt.Sprintf("%d", hostPort)) {
+			return nil, errors.Errorf("Invalid port: %d", hostPort)
+		}
+
+		ret.port = int(hostPort)
+	}
+
+	return ret, nil
 }
