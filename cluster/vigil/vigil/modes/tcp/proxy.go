@@ -57,12 +57,13 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 
 	upstreamConn, err := p.getUpstreamConn(ctx, svc, secretMan)
 	if err != nil {
-		zap.S().Warnf("Could not get upstream conn: %+v", err)
+		zap.L().Warn("Could not get upstream conn", zap.Error(err))
 		return
 	}
 
 	p.doServe(conn, upstreamConn)
-	zap.S().Debugf("Done serving dctx: %s, recv: %d - sent: %d", p.dctx.id, p.recvBytes, p.sentBytes)
+	zap.L().Debug("Done serving",
+		zap.String("id", p.dctx.id), zap.Int64("received", p.recvBytes), zap.Int64("sent", p.sentBytes))
 }
 
 func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) (connCloser, error) {
@@ -109,12 +110,12 @@ func (p *proxy) connCopy(dst, src connCloser, isRecv bool) {
 	}
 
 	if err := dst.CloseWrite(); err != nil {
-		zap.S().Debugf("Could not closeWrite dst: %+v", err)
+		zap.L().Debug("Could not closeWrite dst", zap.String("id", p.dctx.id), zap.Error(err))
 		return
 	}
 
 	if err := dst.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-		zap.S().Debugf("Could not set read deadline: %+v", err)
+		zap.L().Debug("Could not set read deadline", zap.String("id", p.dctx.id), zap.Error(err))
 	}
 
 }

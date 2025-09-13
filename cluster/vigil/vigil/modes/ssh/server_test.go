@@ -113,21 +113,17 @@ func (s *tstSrv) run(addr string) error {
 }
 
 func (s *tstSrv) serve(ctx context.Context) {
-	zap.S().Debugf("Starting serving connections")
 
 	for {
 		conn, err := s.lis.Accept()
 		if err != nil {
-			zap.S().Debugf("Could not accept conn: %+v", err)
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.S().Debugf("Timeout err")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			select {
 			case <-ctx.Done():
-				zap.S().Debugf("shutting down server")
 				return
 			default:
 				time.Sleep(100 * time.Millisecond)
@@ -147,7 +143,6 @@ func (s *tstSrv) close() error {
 		s.lis = nil
 	}
 
-	zap.S().Debugf("SSH server closed")
 	return nil
 }
 
@@ -155,7 +150,6 @@ func (s *tstSrv) handleConn(c net.Conn) {
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
 	if err != nil {
-		zap.S().Debugf("Could not establish a new ssh conn")
 		c.Close()
 		return
 	}
@@ -182,7 +176,6 @@ func (s *tstSrv) handleGlobalReq(req *ssh.Request) {
 	if req == nil {
 		return
 	}
-	zap.S().Debugf("New global req: %s", req.Type)
 
 	switch req.Type {
 	case "keepalive@openssh.com":
@@ -205,8 +198,6 @@ func (s *tstSrv) handleNewChannel(nch ssh.NewChannel) {
 
 func (s *tstSrv) handleSessionRequests(newChannel ssh.NewChannel) {
 
-	zap.S().Debugf("Accepting a new channel")
-
 	sesschan, reqs, err := newChannel.Accept()
 	if err != nil {
 		return
@@ -218,7 +209,6 @@ func (s *tstSrv) handleSessionRequests(newChannel ssh.NewChannel) {
 func (s *tstSrv) doHandleSessionReqs(reqs <-chan *ssh.Request, ch ssh.Channel) {
 	var closer sync.Once
 	closeFunc := func() {
-		zap.S().Debugf("Closing sess req channel")
 		ch.Close()
 	}
 
@@ -228,12 +218,10 @@ func (s *tstSrv) doHandleSessionReqs(reqs <-chan *ssh.Request, ch ssh.Channel) {
 		select {
 		case req := <-reqs:
 			if req == nil {
-				zap.S().Debugf("Exiting doHandleSessionReqs")
 				return
 			}
-			zap.S().Debugf("Downstream Req: %s", req.Type)
 			if err := s.handleSessionReq(req, ch); err != nil {
-				zap.S().Debugf("could not handle sess req: %+v", err)
+				zap.L().Debug("could not handle sess req", zap.Error(err))
 			}
 		}
 	}
@@ -258,25 +246,16 @@ func parsePTYReq(req *ssh.Request) (*ptyReqParams, error) {
 }
 
 func (s *tstSrv) handleSessionReq(req *ssh.Request, ch ssh.Channel) error {
-	zap.S().Debugf("New sess req: %s", req.Type)
 	switch req.Type {
 	case "pty-req":
-		ptyParams, err := parsePTYReq(req)
-		if err != nil {
-			return err
-		}
-
-		zap.S().Debugf("pty params set to: %+v", ptyParams)
 	case "shell":
 		var err error
 		term, err := newTerminal(ch)
 		if err != nil {
-			zap.S().Debugf("Could not start a new terminal: %+v", err)
 			return err
 		}
 
 		if err := term.run(); err != nil {
-			zap.S().Debugf("Could not run terminal: %+v", err)
 			return err
 		}
 	case "keepalive@openssh.com":
@@ -287,7 +266,6 @@ func (s *tstSrv) handleSessionReq(req *ssh.Request, ch ssh.Channel) error {
 
 		return nil
 	default:
-		zap.S().Debugf("Unsupported session req type: %s", req.Type)
 		return req.Reply(false, nil)
 	}
 
@@ -324,13 +302,10 @@ func newTerminal(ch ssh.Channel) (*tstTerminal, error) {
 
 	shellPath := "/bin/bash"
 
-	zap.S().Debugf("Opening pty and tty")
 	ret.pty, ret.tty, err = pty.Open()
 	if err != nil {
 		return nil, err
 	}
-
-	zap.S().Debugf("Setting default win size")
 
 	if err := ret.resetWinSize(); err != nil {
 		return nil, err
@@ -360,8 +335,6 @@ func newTerminal(ch ssh.Channel) (*tstTerminal, error) {
 
 	ret.cmd = cmd
 
-	zap.S().Debugf("terminal successfully created")
-
 	return ret, nil
 }
 
@@ -382,10 +355,8 @@ func (t *tstTerminal) setWinSize(w, h uint16) error {
 func (t *tstTerminal) run() error {
 	var once sync.Once
 	closeFn := func() {
-		zap.S().Debugf("closing terminal closeCh")
 		close(t.closeCh)
 	}
-	zap.S().Debugf("Starting cmd")
 	err := t.cmd.Start()
 	if err != nil {
 		return err
@@ -405,10 +376,8 @@ func (t *tstTerminal) run() error {
 	t.tty = nil
 
 	go func() {
-		err := t.waitAndClose()
-		if err != nil {
-			zap.S().Debugf("terminal wait err: %+v", err)
-		}
+		t.waitAndClose()
+
 	}()
 
 	return nil
@@ -419,21 +388,14 @@ func (t *tstTerminal) waitAndClose() error {
 	waitCh := make(chan error)
 	go func() {
 		err := t.cmd.Wait()
-		if err != nil {
-			zap.S().Debugf("cmd wait err: %+v", err)
-		}
+
 		waitCh <- err
 	}()
 
-	zap.S().Debugf("waiting for cmd to close")
 	select {
 	case <-waitCh:
-		zap.S().Debugf("cmd wait returned")
 	case <-t.closeCh:
-		zap.S().Debugf("terminal closed. Killing cmd")
-		if err := t.cmd.Process.Kill(); err != nil {
-			zap.S().Debugf("cmd kill err: %+v", err)
-		}
+		t.cmd.Process.Kill()
 	}
 
 	return t.close()

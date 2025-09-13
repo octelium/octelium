@@ -273,9 +273,7 @@ func (s *tstSrvGRPC) run(t *testing.T) {
 
 	corev1.RegisterMainServiceServer(s.grpcSrv, s)
 	go func() {
-		zap.S().Debugf("Starting gRPC server")
 		s.grpcSrv.Serve(lis)
-		zap.S().Debugf("gRPC server exited...")
 	}()
 	time.Sleep(1 * time.Second)
 }
@@ -1475,7 +1473,6 @@ func (p *tstTCPProxy) doRun(ctx context.Context) error {
 
 			zap.L().Debug("new conn")
 			if err != nil {
-				zap.S().Debugf("Could not accept conn: %+v", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -1519,15 +1516,11 @@ func (p tstTCPProxy) connCopy(dst, src WriteCloser, errCh chan error) {
 
 	errClose := dst.CloseWrite()
 	if errClose != nil {
-		zap.S().Debugf("conn copy err: %+v", errClose)
 		return
 	}
 
 	{
-		err := dst.SetReadDeadline(time.Now().Add(2 * time.Second))
-		if err != nil {
-			zap.S().Debugf("Could not set read deadline: %+v", err)
-		}
+		dst.SetReadDeadline(time.Now().Add(2 * time.Second))
 	}
 }
 

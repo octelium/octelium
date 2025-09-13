@@ -112,7 +112,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Port: ucorev1.ToService(svc).RealPort(),
 	}
 
-	zap.S().Debugf("Listening to addr: %s", addr.String())
+	zap.L().Debug("Listening to addr", zap.String("addr", addr.String()))
 
 	ctx, cancelFn := context.WithCancel(ctx)
 	s.cancelFn = cancelFn
@@ -122,7 +122,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go func() {
 		if err := s.srv.ListenAndServe(); err != nil {
-			zap.S().Debugf("Failed to listen DNS server %s\n", err.Error())
+			zap.L().Debug("Failed to listen DNS server", zap.Error(err))
 		}
 	}()
 

@@ -46,10 +46,12 @@ func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {
 }
 
 func (c *dctx) close() error {
-	zap.S().Debugf("Closing dctx: %s", c.addr.String())
+	zap.L().Debug("Closing dctx", zap.String("id", c.id))
 	if c.connUpstream != nil {
 		c.connUpstream.Close()
 	}
+
+	zap.L().Debug("dctx closed", zap.String("id", c.id))
 
 	return nil
 }

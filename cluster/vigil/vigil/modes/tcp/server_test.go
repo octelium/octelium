@@ -42,7 +42,6 @@ import (
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -93,7 +92,6 @@ func (s *tstSrv) run(t *testing.T) {
 					if err != nil {
 						return
 					}
-					zap.S().Debugf("Got: %s", string(buf[:n]))
 					conn.Write(buf[:n])
 				}
 			}(conn)

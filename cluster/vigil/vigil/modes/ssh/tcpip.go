@@ -52,37 +52,41 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 	svcCfg := c.svcConfig
 
 	if svcCfg == nil || svcCfg.GetSsh() == nil || !svcCfg.GetSsh().EnableLocalPortForwarding {
-		zap.L().Debug("Handling TCPIP rejected since local port forwarding is not enabled")
+		zap.L().Debug("Handling TCPIP rejected since local port forwarding is not enabled", zap.String("id", c.id))
 		nch.Reject(ssh.UnknownChannelType,
 			fmt.Sprintf("Channel type: %s is unsupported", nch.ChannelType()))
 
 		return
 	}
 
-	zap.L().Debug("Starting handling TCPIP")
+	zap.L().Debug("Starting handleDirectTCPIP", zap.String("id", c.id))
 
 	startTime := time.Now()
 
 	tcpIPReq := &reqDirectTCPIP{}
 	if err := ssh.Unmarshal(nch.ExtraData(), tcpIPReq); err != nil {
-		zap.S().Debugf("Could not parse Direct TCP_IP request: %+v", err)
+		zap.L().Debug("Could not parse Direct TCP_IP request",
+			zap.String("id", c.id), zap.Error(err))
 		return
 	}
 
 	ch, _, err := nch.Accept()
 	if err != nil {
-		zap.S().Debugf("Could not accept the new channel %+v", err)
+		zap.L().Debug("Could not accept the new channel",
+			zap.String("id", c.id), zap.Error(err))
 		return
 	}
 	defer ch.Close()
 
 	remoteAddr := net.JoinHostPort(tcpIPReq.Host, fmt.Sprintf("%d", tcpIPReq.Port))
 
-	zap.S().Debugf("Connecting to remote addr: %s", remoteAddr)
+	zap.L().Debug("Connecting to remote addr",
+		zap.String("id", c.id), zap.String("addr", remoteAddr))
 
 	conn, err := c.remoteConn.sshClient.Dial("tcp", remoteAddr)
 	if err != nil {
-		zap.S().Debugf("Could not connect to remote addr: %s", remoteAddr)
+		zap.L().Debug("Could not connect to remote addr",
+			zap.String("id", c.id), zap.String("addr", remoteAddr))
 		return
 	}
 	defer conn.Close()
@@ -124,7 +128,7 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 		otelutils.EmitAccessLog(logE)
 	}
 
-	zap.S().Debugf("Waiting for port forwarding to close for dctx: %s", c.id)
+	zap.L().Debug("Waiting for port forwarding to close", zap.String("id", c.id))
 	wg.Wait()
 
 	{
@@ -144,5 +148,5 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 		otelutils.EmitAccessLog(logE)
 	}
 
-	zap.S().Debugf("Port forwarding ended for dctx: %s", c.id)
+	zap.L().Debug("handleDirectTCPIP ended", zap.String("id", c.id))
 }
