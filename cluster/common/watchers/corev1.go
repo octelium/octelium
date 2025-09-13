@@ -207,21 +207,18 @@ func runWatcherCoreV1[T ucorev1.ResourceObjectRefG](
 	var doOnDelete func(ctx context.Context, itm umetav1.ResourceObjectI) error
 
 	if onCreate != nil {
-		// zap.L().Debug("setting onCreate")
 		doOnCreate = func(ctx context.Context, itm umetav1.ResourceObjectI) error {
 			return onCreate(ctx, itm.(T))
 		}
 	}
 
 	if onUpdate != nil {
-		// zap.L().Debug("setting onUpdate")
 		doOnUpdate = func(ctx context.Context, new, old umetav1.ResourceObjectI) error {
 			return onUpdate(ctx, new.(T), old.(T))
 		}
 	}
 
 	if onDelete != nil {
-		// zap.L().Debug("setting onDelete")
 		doOnDelete = func(ctx context.Context, itm umetav1.ResourceObjectI) error {
 			return onDelete(ctx, itm.(T))
 		}

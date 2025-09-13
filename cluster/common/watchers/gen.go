@@ -105,7 +105,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 					return
 				}
 
-				zap.L().Warn("Could not run watcher. Trying again...", zap.Error(err))
+				zap.L().Warn("Could not run watcher. Trying again...",
+					zap.String("api", w.api),
+					zap.String("kind", w.kind),
+					zap.String("version", w.version),
+					zap.Error(err))
 				time.Sleep(1 * time.Second)
 			}
 		}
@@ -169,12 +173,20 @@ func (w *Watcher) startRecvLoop(ctx context.Context) {
 		default:
 			watchObj := &rmetav1.WatchEvent{}
 			if err := w.grpcClientStream.RecvMsg(watchObj); err != nil {
-				zap.L().Warn("Could not recv watch object.", zap.Error(err))
+				zap.L().Warn("Could not recv watch object",
+					zap.String("api", w.api),
+					zap.String("kind", w.kind),
+					zap.String("version", w.version),
+					zap.Error(err), zap.Int("attempt", failN+1))
 				failN = failN + 1
 
 				time.Sleep(100 * time.Millisecond)
 				if failN > 15 {
-					zap.L().Warn("Could not recv watch object. Exiting watcher recv loop", zap.Error(err))
+					zap.L().Warn("Could not recv watch object. Exiting watcher recv loop",
+						zap.String("api", w.api),
+						zap.String("kind", w.kind),
+						zap.String("version", w.version),
+						zap.Error(err))
 					return
 				}
 				continue
@@ -194,7 +206,10 @@ func (w *Watcher) startProcessLoop(ctx context.Context) {
 			return
 		case obj := <-w.processCh:
 			if err := w.doProcess(ctx, obj); err != nil {
-				zap.L().Debug("Could not process watcher event", zap.Error(err))
+				zap.L().Warn("Could not process watcher event",
+					zap.String("api", w.api),
+					zap.String("kind", w.kind),
+					zap.String("version", w.version), zap.Error(err))
 			}
 		}
 	}
@@ -260,7 +275,7 @@ func (w *Watcher) runFn(ctx context.Context, fn func(ctx context.Context) error)
 		return nil
 	}
 	go func(ctx context.Context) {
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			nctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 			err := fn(nctx)
 			if err == nil {
@@ -269,7 +284,11 @@ func (w *Watcher) runFn(ctx context.Context, fn func(ctx context.Context) error)
 			}
 
 			cancel()
-			zap.L().Debug("Could not run watcher fn. Trying again...", zap.Error(err))
+			zap.L().Warn("Could not run watcher fn. Trying again...",
+				zap.String("api", w.api),
+				zap.String("kind", w.kind),
+				zap.String("version", w.version),
+				zap.Error(err), zap.Int("attempt", i+1))
 		}
 	}(ctx)
 	return nil
