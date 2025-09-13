@@ -340,7 +340,6 @@ func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Confi
 func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
 	zap.L().Debug("Installing Octelium resources")
 
-	zap.L().Debug("Waiting for Nocturne readiness")
 	if err := k8sutils.WaitReadinessDeployment(ctx, g.k8sC, "octelium-nocturne"); err != nil {
 		return err
 	}
