@@ -64,8 +64,13 @@ func NewController(
 		Handler: func(pod *k8scorev1.Pod) error {
 			err := doHandlePodUpdate(context.Background(), pod, k8sC, octeliumC, regionRef)
 			if err != nil {
-				zap.L().Error("Could not handle update for pod", zap.String("pod", pod.Name), zap.Error(err))
+				zap.L().Warn("Could not handlePodUpdate",
+					zap.String("podName", pod.Name), zap.Error(err))
+			} else {
+				zap.L().Debug("handlePodUpdate successfully done",
+					zap.String("podName", pod.Name))
 			}
+
 			return err
 		},
 	})
@@ -82,8 +87,13 @@ func NewController(
 		Handler: func(pod *k8scorev1.Pod) error {
 			err := doHandlePodDelete(context.Background(), pod, k8sC, octeliumC, regionRef)
 			if err != nil {
-				zap.L().Error("Could not handle delete for pod", zap.String("pod", pod.Name), zap.Error(err))
+				zap.L().Warn("Could not doHandlePodDelete",
+					zap.String("podName", pod.Name), zap.Error(err))
+			} else {
+				zap.L().Debug("doHandlePodDelete successfully done",
+					zap.String("podName", pod.Name))
 			}
+
 			return err
 		},
 	})
@@ -118,9 +128,8 @@ func NewController(
 				return
 			}
 
-			zap.S().Debugf("updating pod %s", newPod.Name)
 			if err := updateQueue.Add(updateTask.WithArgs(context.Background(), newPod)); err != nil {
-				zap.S().Errorf("Could not add to queue: %+v", err)
+				zap.L().Warn("Could not add to update queue", zap.Error(err))
 			}
 		},
 		DeleteFunc: func(obj any) {
@@ -143,30 +152,11 @@ func NewController(
 				return
 			}
 
-			zap.S().Debugf("deleting pod %s", pod.Name)
-
 			if err := deleteQueue.Add(deleteTask.WithArgs(context.Background(), pod)); err != nil {
-				zap.S().Errorf("Could not add to queue: %+v", err)
+				zap.L().Warn("Could not add to delete queue", zap.Error(err))
 			}
 		},
 	})
-}
-
-func handlePodUpdate(ctx context.Context, pod *k8scorev1.Pod,
-	k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface,
-	regionRef *metav1.ObjectReference) {
-
-	go func(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, regionRef *metav1.ObjectReference) {
-		for i := 0; i < 5; i++ {
-			err := doHandlePodUpdate(ctx, pod, k8sC, octeliumC, regionRef)
-			if err == nil {
-				return
-			}
-			zap.S().Errorf("Could not handle pod update for %s: %+v. Trying again...", pod.Name, err)
-			time.Sleep(1 * time.Second)
-		}
-	}(ctx, pod, k8sC, octeliumC, regionRef)
-
 }
 
 func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface,
@@ -176,6 +166,8 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	if !ok {
 		return nil
 	}
+
+	zap.L().Debug("Stating doHandlePodUpdate", zap.String("podName", pod.Name))
 
 	if err := json.Unmarshal([]byte(netStatusStr), &netStatuses); err != nil {
 		return err
@@ -191,8 +183,6 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 		return errors.Errorf("Could not find `octelium.com/svc` label")
 	}
 
-	zap.S().Debugf("getting pod IP for %s/%s", nsName, svcName)
-
 	wgIP, err := getPodIP(&netStatuses, svcName, nsName)
 	if err != nil {
 		return err
@@ -201,7 +191,8 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	svc, err := octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: svcName})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			zap.S().Debugf("The Service of pod %s no longer exists. Nothing to be done.", pod.Name)
+			zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
+				zap.String("svcName", svcName))
 			return nil
 		}
 
@@ -232,20 +223,20 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	svc, err = octeliumC.CoreC().UpdateService(ctx, svc)
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			zap.S().Debugf("The Service of pod %s no longer exists. Nothing to be done.", pod.Name)
+			zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
+				zap.String("podName", pod.Name), zap.String("svcName", svc.Metadata.Name))
 			return nil
 		}
 
 		return err
 	}
 
-	zap.S().Debugf("svc %s/%s has updated its wg IP to %+v", nsName, svcName, wgIP)
+	zap.L().Debug("Service IP addr is now updated", zap.Any("svc", svc))
 
 	go func() {
-
 		time.Sleep(time.Duration(utilrand.GetRandomRangeMath(4, 9)) * time.Second)
 		if err := cleanupServicePods(ctx, pod, k8sC, octeliumC, svc, regionRef); err != nil {
-			zap.S().Errorf("Could not cleanup svc pods for for Service %s: %+v", svc.Metadata.Name, err)
+			zap.L().Warn("Could not cleanupServicePods", zap.Error(err))
 		}
 	}()
 
@@ -254,7 +245,7 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 
 func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, svc *corev1.Service, regionRef *metav1.ObjectReference) error {
 
-	zap.S().Debugf("Starting cleaning up pod addrs for Service %s", svc.Metadata.Name)
+	zap.L().Debug("Starting cleaning up pod addrs for Service", zap.Any("svc", svc))
 	podList, err := k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
 		LabelSelector: fmt.Sprintf("octelium.com/svc-uid=%s", svc.Metadata.Uid),
 	})
@@ -284,7 +275,7 @@ func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes
 		addr := svc.Status.Addresses[i]
 		if needsDelete(addr) {
 			doUpdate = true
-			zap.S().Debugf("Cleaning up addr of pod: %s as it no longer exists", string(pod.UID))
+			zap.L().Debug("Cleaning up addr of Service pod as it no longer exists", zap.String("podName", pod.Name))
 			svc.Status.Addresses = append(svc.Status.Addresses[:i], svc.Status.Addresses[i+1:]...)
 		}
 	}
@@ -293,47 +284,27 @@ func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes
 		if _, err := octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
 			return err
 		}
-	} else {
-		zap.S().Debugf("No pod cleanup needed for Service %s", svc.Metadata.Name)
+
+		zap.L().Debug("No updated Service after pod IP addr cleanup", zap.Any("svc", svc))
 	}
 
 	return nil
 }
 
-/*
-func handlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, regionRef *metav1.ObjectReference) {
-
-	go func(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, regionRef *metav1.ObjectReference) {
-		for i := 0; i < 5; i++ {
-			err := doHandlePodDelete(ctx, pod, k8sC, octeliumC, regionRef)
-			if err == nil {
-				return
-			}
-			zap.S().Errorf("Could not handle pod delete for %s: %+v. Trying again...", pod.Name, err)
-			time.Sleep(1 * time.Second)
-		}
-	}(ctx, pod, k8sC, octeliumC, regionRef)
-}
-*/
-
 func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface,
 	octeliumC octeliumc.ClientInterface, regionRef *metav1.ObjectReference) error {
-	nsName, ok := pod.Labels["octelium.com/namespace"]
-	if !ok {
-		return errors.Errorf("Could not found `octelium.com/namespace` label")
-	}
 
+	zap.L().Debug("Stating doHandlePodDelete", zap.String("podName", pod.Name))
 	svcName, ok := pod.Labels["octelium.com/svc"]
 	if !ok {
 		return errors.Errorf("Could not found `octelium.com/svc` label")
 	}
 
-	zap.S().Debugf("getting info for deleted pod IP for %s/%s", nsName, svcName)
-
 	svc, err := octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: svcName})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			zap.S().Debugf("The Service of pod %s no longer exists. Nothing to be done.", pod.Name)
+			zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
+				zap.String("podName", pod.Name))
 			return nil
 		}
 
@@ -343,7 +314,6 @@ func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	for i := len(svc.Status.Addresses) - 1; i >= 0; i-- {
 		addr := svc.Status.Addresses[i]
 		if addr.PodRef.Uid == string(pod.UID) {
-			zap.S().Debugf("Removing pod: %s from svc addrs", string(pod.UID))
 			svc.Status.Addresses = append(svc.Status.Addresses[:i], svc.Status.Addresses[i+1:]...)
 		}
 	}
@@ -351,14 +321,16 @@ func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	_, err = octeliumC.CoreC().UpdateService(ctx, svc)
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			zap.S().Debugf("The Service of pod %s no longer exists. Nothing to be done.", pod.Name)
+			zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
+				zap.String("podName", pod.Name))
 			return nil
 		}
 
 		return err
 	}
 
-	zap.S().Debugf("svc %s/%s has been updated after deleting pod %s", nsName, svcName, pod.Name)
+	zap.L().Debug("Service has been updated after deleting pod",
+		zap.Any("svc", svc), zap.String("podName", pod.Name))
 
 	return nil
 }
@@ -368,7 +340,6 @@ func getPodIP(netStatuses *[]networkStatus, svc, vpn string) (*metav1.DualStackI
 
 	for _, itm := range *netStatuses {
 		if itm.Name == "octelium/octelium" {
-			zap.S().Debugf("Found nad of  svc %s: %+v", svc, itm)
 			for _, ipStr := range itm.IPs {
 				ip := net.ParseIP(ipStr)
 				if utilnet.IsIPv6(ip) {
