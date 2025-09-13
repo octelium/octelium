@@ -159,8 +159,12 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 	var ret []*corev1.Service
 
 	hasMore := true
+	page := 0
 	for hasMore {
 		svcList, err := g.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+			Paginate:     true,
+			Page:         uint32(page),
+			ItemsPerPage: 500,
 			Filters: []*rmetav1.ListOptions_Filter{
 				urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid),
 			},
@@ -175,6 +179,10 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 			hasMore = false
 		} else {
 			hasMore = svcList.ListResponseMeta.HasMore
+		}
+
+		if hasMore {
+			page += 1
 		}
 	}
 

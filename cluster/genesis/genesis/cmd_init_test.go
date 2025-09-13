@@ -192,5 +192,4 @@ func TestRunInit(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 
 	}
-
 }
