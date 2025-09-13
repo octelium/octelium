@@ -140,7 +140,7 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 		iCtx.Region = regionI.(*corev1.Region)
 	}
 
-	zap.S().Debugf("creating rsc server")
+	zap.L().Debug("creating rscServer")
 
 	if ldflags.IsTest() {
 		os.Setenv("OCTELIUM_TEST_RSCSERVER_PORT", "25432")
@@ -150,7 +150,7 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 			return err
 		}
 
-		zap.S().Debugf("Running rsc server")
+		zap.L().Debug("Running rscServer")
 		err = rscSrv.Run(ctx)
 		if err != nil {
 			return err
@@ -160,12 +160,14 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 			return err
 		}
 
-		zap.S().Debugf("checking readiness of rsc server")
+		zap.L().Debug("Waiting for readiness of rscServer")
 
 		if err := checkRscServer(ctx, g.k8sC); err != nil {
 			return err
 		}
 	}
+
+	zap.L().Debug("rscServer is now running")
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
@@ -239,7 +241,6 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 
 func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
 
-	zap.S().Debugf("Setting initial Cluster Certificate")
 	domain := clusterCfg.Status.Domain
 	sans := []string{
 		domain,
@@ -255,6 +256,10 @@ func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *cor
 		fmt.Sprintf("*.octelium.local.%s", domain),
 		fmt.Sprintf("*.octelium-api.local.%s", domain),
 	}
+
+	zap.L().Debug("Setting initial Cluster Certificate",
+		zap.String("domain", domain),
+		zap.Strings("sans", sans))
 
 	initCrt, err := utils_cert.GenerateSelfSignedCert(domain, sans, 4*12*30*24*time.Hour)
 	if err != nil {
@@ -299,7 +304,7 @@ func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *cor
 
 func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Config) error {
 
-	zap.S().Debugf("Setting Bootstrap Secret")
+	zap.L().Debug("Setting Bootstrap Secret")
 
 	bootstrapPB, err := pbutils.Marshal(bs)
 	if err != nil {
@@ -333,14 +338,14 @@ func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Confi
 }
 
 func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
-	zap.S().Debugf("Installing Octelium resources")
+	zap.L().Debug("Installing Octelium resources")
 
-	zap.S().Debugf("Waiting for Nocturne readiness")
+	zap.L().Debug("Waiting for Nocturne readiness")
 	if err := k8sutils.WaitReadinessDeployment(ctx, g.k8sC, "octelium-nocturne"); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Creating system Namespaces and Services")
+	zap.L().Debug("Creating system Namespaces and Services")
 
 	if err := genesisutils.CreateOrUpdateNamespace(ctx, g.octeliumC, &corev1.Namespace{
 		Metadata: &metav1.Metadata{
@@ -384,6 +389,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 				Name:         "dns.octelium",
 				IsSystem:     true,
 				IsUserHidden: true,
+				DisplayName:  "The Cluster DNS Server",
 			},
 			Spec: &corev1.Service_Spec{
 				Port: 53,
@@ -655,7 +661,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 }
 
 func (g *Genesis) setConnInfoConfig(ctx context.Context) error {
-	zap.S().Debugf("Initializing Connection info Config")
+	zap.L().Debug("Initializing Connection info Config")
 
 	attrs, err := pbutils.MessageToStruct(&cclusterv1.ClusterConnInfo{})
 	if err != nil {
@@ -685,7 +691,6 @@ func (g *Genesis) setConnInfoConfig(ctx context.Context) error {
 }
 
 func (g *Genesis) setNadConfig(ctx context.Context) error {
-	zap.S().Debugf("Setting NAD configuration")
 
 	nad := &netv1.NetworkAttachmentDefinition{
 		ObjectMeta: k8smetav1.ObjectMeta{
@@ -694,7 +699,10 @@ func (g *Genesis) setNadConfig(ctx context.Context) error {
 		},
 	}
 
-	_, err := g.nadC.K8sCniCncfIoV1().NetworkAttachmentDefinitions(vutils.K8sNS).Create(ctx, nad, k8smetav1.CreateOptions{})
+	zap.L().Debug("Setting k8s NAD configuration", zap.Any("nad", nad))
+
+	_, err := g.nadC.K8sCniCncfIoV1().NetworkAttachmentDefinitions(vutils.K8sNS).
+		Create(ctx, nad, k8smetav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -703,7 +711,7 @@ func (g *Genesis) setNadConfig(ctx context.Context) error {
 }
 
 func (g *Genesis) initClusterConfig(ctx context.Context, bootstrap *cbootstrapv1.Config, domain string) (*corev1.ClusterConfig, error) {
-	zap.S().Debugf("Initializing Cluster configuration")
+	zap.L().Debug("Initializing Cluster configuration")
 
 	v6Prefix, err := utilrand.GetRandomBytes(2)
 	if err != nil {
@@ -756,7 +764,7 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 	if i.Bootstrap.Spec.SecondaryStorage == nil || i.Bootstrap.Spec.SecondaryStorage.GetRedis() == nil {
 		return errors.Errorf("No Redis info")
 	}
-	zap.S().Debugf("Initializing storage secrets")
+	zap.L().Debug("Initializing storage secrets")
 
 	{
 
@@ -799,7 +807,7 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 }
 
 func (g *Genesis) createSSHCA(ctx context.Context) error {
-	zap.S().Debugf("Creating the SSH CA secret")
+	zap.L().Debug("Creating the SSH CA secret")
 
 	ecdsaKey, err := utils_cert.GenerateECDSA()
 	if err != nil {
@@ -830,7 +838,7 @@ func (g *Genesis) createSSHCA(ctx context.Context) error {
 		return err
 	}
 
-	zap.S().Debugf("Successfully created the root User initial Token")
+	zap.L().Debug("Successfully created SSH CA Secret")
 
 	return nil
 }
@@ -870,7 +878,7 @@ func (g *Genesis) createAESKey(ctx context.Context) error {
 }
 
 func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
-	zap.S().Debugf("Creating the initial root authentication token")
+	zap.L().Debug("Creating the initial root authentication token")
 
 	adminSrv := admin.NewServer(&admin.Opts{
 		OcteliumC:  g.octeliumC,
@@ -932,16 +940,16 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 		return err
 	}
 
-	zap.S().Debugf("Successfully created the root User initial authentication token")
+	zap.L().Debug("Successfully created the root User initial authentication token")
 
 	return nil
 }
 
 func (g *Genesis) setNamespace(ctx context.Context) error {
-	zap.S().Debugf("Initializing the octelium k8s namespace")
+	zap.L().Debug("Initializing the octelium k8s namespace")
 
 	if _, err := g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{}); err == nil {
-		zap.S().Debugf("Deleting existent octelium namespace")
+		zap.L().Debug("Deleting existent octelium namespace")
 		if err := g.k8sC.CoreV1().Namespaces().Delete(ctx, vutils.K8sNS, k8smetav1.DeleteOptions{}); err != nil {
 			return err
 		}
@@ -952,7 +960,7 @@ func (g *Genesis) setNamespace(ctx context.Context) error {
 				if err != nil && k8serr.IsNotFound(err) {
 					return nil
 				}
-				zap.S().Debugf("octelium namespace is still deleting. Trying again...")
+				zap.L().Debug("octelium namespace is still deleting. Trying again...")
 				time.Sleep(3 * time.Second)
 			}
 			return errors.Errorf("Could not delete octelium namespace")
@@ -963,7 +971,7 @@ func (g *Genesis) setNamespace(ctx context.Context) error {
 		return err
 	}
 
-	zap.S().Debugf("Creating octelium namespace")
+	zap.L().Debug("Creating octelium namespace")
 	_, err := g.k8sC.CoreV1().Namespaces().Create(ctx, &k8scorev1.Namespace{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name: vutils.K8sNS,
@@ -975,22 +983,6 @@ func (g *Genesis) setNamespace(ctx context.Context) error {
 	}, k8smetav1.CreateOptions{})
 	return err
 }
-
-/*
-func (g *Genesis) moveRegcred(ctx context.Context) error {
-	if !ldflags.IsPrivateRegistry() {
-		return nil
-	}
-	zap.S().Debugf("Copying regcred")
-
-	regcred, err := g.k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-regcred", k8smetav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	return g.moveK8SSecret(ctx, regcred)
-}
-*/
 
 func (g *Genesis) moveK8SSecret(ctx context.Context, secFrom *k8scorev1.Secret) error {
 	var err error
@@ -1055,7 +1047,7 @@ func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.Clus
 }
 
 func (g *Genesis) setDBEnvVars(i *genesisutils.InstallCtx) {
-	zap.S().Debugf("Setting postgres and redis env vars")
+	zap.L().Debug("Setting postgres and redis env vars")
 
 	if ldflags.IsTest() {
 		os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")

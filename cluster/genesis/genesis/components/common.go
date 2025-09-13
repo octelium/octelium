@@ -235,104 +235,6 @@ const componentAuthServer = "authserver"
 const componentRscServer = "rscserver"
 const componentOctovigil = "octovigil"
 
-/*
-func getPostgresNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPolicy {
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "postgres",
-			Namespace: ns,
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app.kubernetes.io/instance": "octelium-deps",
-					"app.kubernetes.io/name":     "postgresql",
-				},
-			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: &tcpProtocol,
-							Port: &intstr.IntOrString{
-								IntVal: 5432,
-							},
-						},
-					},
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"app":                         "octelium",
-									"octelium.com/component-type": "cluster",
-									"octelium.com/component":      componentRscServer,
-								},
-							},
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": ns,
-								},
-							},
-						},
-					},
-				},
-			},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-			},
-		},
-	}
-}
-
-func getRedisNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPolicy {
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "redis",
-			Namespace: ns,
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app.kubernetes.io/instance": "octelium-deps",
-					"app.kubernetes.io/name":     "redis",
-				},
-			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: &tcpProtocol,
-							Port: &intstr.IntOrString{
-								IntVal: 6379,
-							},
-						},
-					},
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"app":                         "octelium",
-									"octelium.com/component-type": "cluster",
-								},
-							},
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"kubernetes.io/metadata.name": ns,
-								},
-							},
-						},
-					},
-				},
-			},
-
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-			},
-		},
-	}
-}
-*/
-
 func getServiceUpstreamNetworkPolicy() *networkingv1.NetworkPolicy {
 
 	return &networkingv1.NetworkPolicy{
@@ -419,16 +321,6 @@ func getServiceUpstreamNetworkPolicy() *networkingv1.NetworkPolicy {
 
 func InstallCommon(ctx context.Context, c kubernetes.Interface,
 	clusterCfg *corev1.ClusterConfig, r *corev1.Region) error {
-
-	/*
-		if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getPostgresNetworkPolicy(clusterCfg)); err != nil {
-			return err
-		}
-
-		if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getRedisNetworkPolicy(clusterCfg)); err != nil {
-			return err
-		}
-	*/
 
 	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getServiceUpstreamNetworkPolicy()); err != nil {
 		return err

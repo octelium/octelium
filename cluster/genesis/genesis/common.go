@@ -23,25 +23,20 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
-	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 )
 
 func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) error {
 	regionName := region.Metadata.Name
-	zap.S().Debugf("Installing components...")
 	clusterCfg, err := g.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Got cluster Config")
 	region, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: regionName})
 	if err != nil {
 		return err
 	}
-
-	zap.S().Debugf("Got region: %s", region.Metadata.Name)
 
 	{
 		err = components.CreateGatewayAgent(ctx, g.k8sC, clusterCfg, region)

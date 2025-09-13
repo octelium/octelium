@@ -62,19 +62,19 @@ func (g *Genesis) RunUpgrade(ctx context.Context) error {
 		return err
 	}
 
-	zap.S().Debugf("upgrading rsc server")
+	zap.L().Debug("upgrading rscServer")
 
 	if err := components.CreateRscServer(ctx, g.k8sC, clusterCfg); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("checking readiness of rsc server")
+	zap.L().Debug("waiting for readiness of rscServer")
 
 	if err := checkRscServer(ctx, g.k8sC); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Installing components")
+	zap.L().Debug("Installing components")
 
 	if err := g.installComponents(ctx, regionV); err != nil {
 		return err

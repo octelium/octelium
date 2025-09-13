@@ -144,7 +144,7 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 }
 
 func (g *Genesis) createPostgresSecret(ctx context.Context, dataMap map[string][]byte) error {
-	zap.S().Debugf("Creating postgres secret")
+	zap.L().Debug("Creating postgres k8s secret")
 	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:      "octelium-postgres",
@@ -156,7 +156,7 @@ func (g *Genesis) createPostgresSecret(ctx context.Context, dataMap map[string][
 }
 
 func (g *Genesis) createRedisSecret(ctx context.Context, dataMap map[string][]byte) error {
-	zap.S().Debugf("Creating redis secret")
+	zap.L().Debug("Creating redis k8s secret")
 	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:      "octelium-redis",
