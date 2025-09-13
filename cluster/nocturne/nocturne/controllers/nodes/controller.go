@@ -47,7 +47,8 @@ func NewController(
 			}
 
 			if err := untaintNode(ctx, k8sC, node); err != nil {
-				zap.S().Errorf("Could not untaint gateway node: %+v", err)
+				zap.L().Warn("Could not untaint Gateway node",
+					zap.String("node", node.Name), zap.Error(err))
 			}
 		},
 
@@ -69,7 +70,8 @@ func NewController(
 			}
 
 			if err := untaintNode(ctx, k8sC, newNode); err != nil {
-				zap.S().Errorf("Could not untaint gateway node: %+v", err)
+				zap.L().Warn("Could not untaint Gateway node",
+					zap.String("node", newNode.Name), zap.Error(err))
 			}
 
 		},
@@ -83,14 +85,8 @@ func NewController(
 			}
 
 			if err := deleteGWs(ctx, octeliumC, node); err != nil {
-				zap.S().Errorf("Could not delete gws of node: %s: %+v", node.Name, err)
+				zap.L().Warn("Could not deleteGWs", zap.String("node", node.Name), zap.Error(err))
 			}
-
-			/*
-				if err := unregisterNodeIndex(ctx, octeliumC, node); err != nil {
-					zap.S().Errorf("Could not unregister node: %+v", err)
-				}
-			*/
 		},
 	})
 }
@@ -103,7 +99,8 @@ func deleteGWs(ctx context.Context, octeliumC octeliumc.ClientInterface, node *c
 
 	for _, gw := range gwList.Items {
 		if gw.Status.NodeRef != nil && gw.Status.NodeRef.Uid == string(node.UID) {
-			zap.S().Debugf("Deleting Gateway %s after node %s deletion", gw.Metadata.Name, node.Name)
+			zap.L().Debug("Deleting Gateway after node deletion",
+				zap.String("gw", gw.Metadata.Name), zap.String("node", node.Name))
 			if _, err := octeliumC.CoreC().DeleteGateway(ctx, &rmetav1.DeleteOptions{Uid: gw.Metadata.Uid}); err != nil {
 				if grpcerr.IsNotFound(err) {
 					continue
@@ -117,37 +114,6 @@ func deleteGWs(ctx context.Context, octeliumC octeliumc.ClientInterface, node *c
 	return nil
 }
 
-/*
-func unregisterNodeIndex(ctx context.Context, octeliumC octeliumc.ClientInterface, node *corev1.Node) error {
-	i := 0
-runFn:
-	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-	if err != nil {
-		return err
-	}
-
-	for i, ni := range cc.Status.NodeIndexes {
-		if ni.Uid == string(node.UID) {
-			cc.Status.NodeIndexes = append(cc.Status.NodeIndexes[:i], cc.Status.NodeIndexes[i+1:]...)
-			break
-		}
-	}
-
-	if _, err := octeliumC.CoreC().UpdateClusterConfig(ctx, cc); err != nil {
-		time.Sleep(1 * time.Second)
-		i = i + 1
-		if i > 10 {
-			return err
-		}
-		goto runFn
-	}
-
-	zap.S().Debugf("Successfully unregistered node index of node: %s", node.Name)
-
-	return nil
-}
-*/
-
 func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *corev1.Node) error {
 
 	if n.Labels["octelium.com/gateway-registered"] != "true" {
@@ -156,7 +122,8 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *corev1.Node)
 
 	for i, taint := range n.Spec.Taints {
 		if taint.Key == "octelium.com/gateway-init" {
-			zap.S().Debugf("Removing the gateway-init, most probably added by the cloud provider")
+			zap.L().Info("Removing the gateway-init, most probably added by the cloud provider",
+				zap.String("node", n.Name))
 			n.Spec.Taints = append(n.Spec.Taints[:i], n.Spec.Taints[i+1:]...)
 			_, err := k8sC.CoreV1().Nodes().Update(ctx, n, k8smetav1.UpdateOptions{})
 			if err != nil {

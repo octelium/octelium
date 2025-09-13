@@ -231,7 +231,7 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 		return err
 	}
 
-	zap.L().Debug("Service IP addr is now updated", zap.Any("svc", svc))
+	zap.L().Debug("Service IP addr is now updated", zap.String("svc", svc.Metadata.Name))
 
 	go func() {
 		time.Sleep(time.Duration(utilrand.GetRandomRangeMath(4, 9)) * time.Second)
@@ -245,7 +245,8 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 
 func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, svc *corev1.Service, regionRef *metav1.ObjectReference) error {
 
-	zap.L().Debug("Starting cleaning up pod addrs for Service", zap.Any("svc", svc))
+	zap.L().Debug("Starting cleaning up pod addrs for Service",
+		zap.String("svc", svc.Metadata.Name))
 	podList, err := k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
 		LabelSelector: fmt.Sprintf("octelium.com/svc-uid=%s", svc.Metadata.Uid),
 	})
@@ -285,7 +286,7 @@ func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes
 			return err
 		}
 
-		zap.L().Debug("No updated Service after pod IP addr cleanup", zap.Any("svc", svc))
+		zap.L().Debug("Updated Service after pod IP addr cleanup", zap.Any("svc", svc.Metadata.Name))
 	}
 
 	return nil
@@ -330,7 +331,7 @@ func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 	}
 
 	zap.L().Debug("Service has been updated after deleting pod",
-		zap.Any("svc", svc), zap.String("podName", pod.Name))
+		zap.String("svc", svc.Metadata.Name), zap.String("podName", pod.Name))
 
 	return nil
 }
