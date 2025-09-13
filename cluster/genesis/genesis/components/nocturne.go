@@ -43,6 +43,9 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 			Selector: &metav1.LabelSelector{
 				MatchLabels: getComponentLabels(componentNocturne),
 			},
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RecreateDeploymentStrategyType,
+			},
 			Template: k8scorev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      getComponentLabels(componentNocturne),
