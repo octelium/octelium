@@ -60,7 +60,7 @@ func IsDeadlineExceeded(err error) bool {
 }
 
 func IsResourceChanged(err error) bool {
-	return status.Code(err) == codes.FailedPrecondition
+	return status.Code(err) == codes.OutOfRange
 }
 
 func IsUnavailable(err error) bool {

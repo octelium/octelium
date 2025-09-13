@@ -298,7 +298,9 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 	}
 
 	if old.GetMetadata().ResourceVersion != mdNew.ResourceVersion {
-		return nil, nil, rerr.InvalidWithErr(errors.Errorf("Resource has already changed."))
+		return nil, nil, rerr.ResourceChanged(
+			errors.Errorf("Cannot Update. Resource %s.%s.%s %s has already changed",
+				api, version, kind, old.GetMetadata().Name))
 	}
 
 	if pbutils.IsEqual(req, old) {

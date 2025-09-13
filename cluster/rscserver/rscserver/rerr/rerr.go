@@ -49,5 +49,5 @@ func AlreadyExistsWithErr(err error) error {
 
 func ResourceChanged(err error) error {
 	zap.L().Debug("Resource changed", zap.Error(err))
-	return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
+	return status.Error(codes.OutOfRange, err.Error())
 }
