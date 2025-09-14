@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
+	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,7 @@ import (
 
 func TestRunUpgrade(t *testing.T) {
 
+	tests.InitLog()
 	ldflags.TestMode = "true"
 	ldflags.PrivateRegistry = "false"
 
@@ -72,7 +74,6 @@ func TestRunUpgrade(t *testing.T) {
 		Spec:   &corev1.Region_Spec{},
 		Status: &corev1.Region_Status{},
 	}
-
 	{
 		c := newFakeClient()
 		g := &Genesis{

@@ -128,6 +128,8 @@ func (g *Genesis) updateServicesUpgradeUID(ctx context.Context, rgn *corev1.Regi
 
 		svc.Metadata.SystemLabels[vutils.UpgradeIDKey] = idKey
 
+		zap.L().Debug("Upgrading the Service idKey", zap.String("svc", svc.Metadata.Name))
+
 		if _, err := g.octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
 			switch {
 			case grpcerr.IsResourceChanged(err):
@@ -175,14 +177,15 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 
 		ret = append(ret, svcList.Items...)
 
-		if svcList.ListResponseMeta == nil {
-			hasMore = false
-		} else {
+		if svcList.ListResponseMeta != nil {
 			hasMore = svcList.ListResponseMeta.HasMore
-		}
 
-		if hasMore {
-			page += 1
+			if hasMore {
+				page += 1
+				zap.L().Debug("The list of Services has more pages", zap.Any("meta", svcList.ListResponseMeta))
+			}
+		} else {
+			hasMore = false
 		}
 	}
 

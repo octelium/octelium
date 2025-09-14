@@ -115,12 +115,7 @@ type Opts struct {
 	PreCreatedResources []umetav1.ResourceObjectI
 }
 
-func Initialize(o *Opts) (*T, error) {
-
-	if o == nil {
-		o = &Opts{}
-	}
-
+func InitLog() error {
 	zapCfg := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
 		Development:      true,
@@ -132,10 +127,23 @@ func Initialize(o *Opts) (*T, error) {
 
 	logger, err := zapCfg.Build()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	zap.ReplaceGlobals(logger)
+
+	return nil
+}
+
+func Initialize(o *Opts) (*T, error) {
+
+	if o == nil {
+		o = &Opts{}
+	}
+
+	if err := InitLog(); err != nil {
+		return nil, err
+	}
 
 	/*
 		zlgr := otelzap.New(logger, otelzap.WithMinLevel(zapcore.DebugLevel))
