@@ -177,30 +177,18 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 				return err
 			}
 
-		} else {
-			zap.L().Debug("No need to redeploy the Service", zap.String("name", newSvc.Metadata.Name))
 		}
 
 		if c.shouldRedeployUpstream(newSvc, oldSvc) {
 			if err := c.setK8sUpstream(ctx, newSvc, ownerCM); err != nil {
 				return err
 			}
-		} else {
-			zap.L().Debug("No need to redeploy the Service upstream", zap.String("name", newSvc.Metadata.Name))
 		}
 
 		if err := c.updateK8sService(ctx, newSvc); err != nil {
 			return err
 		}
 	}
-
-	/*
-		if !ucorev1.ToService(newSvc).IsManagedContainer() && ucorev1.ToService(oldSvc).IsManagedContainer() {
-			if err := c.deleteK8sUpstream(ctx, newSvc); err != nil {
-				return err
-			}
-		}
-	*/
 
 	if err := c.handleUpdate(ctx, newSvc, oldSvc); err != nil {
 		return err
