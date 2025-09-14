@@ -36,7 +36,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -180,8 +179,8 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 			return nil, nil
 		}
 
-		if err := checkPort(int64(req.ServiceOptions.PortStart)); err != nil {
-			return nil, serr.InternalWithErr(err)
+		if err := apivalidation.ValidatePort(int(req.ServiceOptions.PortStart)); err != nil {
+			return nil, err
 		}
 
 		if len(req.ServiceOptions.Services) > 128 {
@@ -268,8 +267,8 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 	}
 
 	if req.ESSHPort != 0 {
-		if err := checkPort(int64(req.ESSHPort)); err != nil {
-			return nil, serr.InternalWithErr(err)
+		if err := apivalidation.ValidatePort(int(req.ESSHPort)); err != nil {
+			return nil, err
 		}
 	}
 
@@ -392,14 +391,6 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 	}
 
 	return connState, nil
-}
-
-func checkPort(arg int64) error {
-	if arg <= 0 || arg > 65535 {
-		return errors.Errorf("Invalid port: %d", arg)
-	}
-
-	return nil
 }
 
 func (s *Server) Disconnect(ctx context.Context, req *userv1.DisconnectRequest) (*userv1.DisconnectResponse, error) {

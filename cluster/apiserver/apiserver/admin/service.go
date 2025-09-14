@@ -349,8 +349,8 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("Image address is too long: %s", typ.Image)
 			}
 
-			if typ.Port < 1 || typ.Port > 65535 {
-				return grpcutils.InvalidArg("Invalid port: %d", typ.Port)
+			if err := apivalidation.ValidatePort(int(typ.Port)); err != nil {
+				return err
 			}
 
 			if len(typ.Args) > 64 {
@@ -481,6 +481,46 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				if err := s.validateGenStr(mount.SubPath, false, "subPath"); err != nil {
 					return err
 				}
+			}
+
+			validateProbe := func(p *corev1.Service_Spec_Config_Upstream_Container_Probe) error {
+				if p == nil {
+					return nil
+				}
+
+				switch p.Type.(type) {
+				case *corev1.Service_Spec_Config_Upstream_Container_Probe_Grpc:
+					if err := apivalidation.ValidatePort(int(p.GetGrpc().Port)); err != nil {
+						return err
+					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet:
+					if len(p.GetHttpGet().Path) > 512 {
+						return grpcutils.InvalidArg("Path is too long: %s", p.GetHttpGet().Path)
+					}
+					if !govalidator.IsRequestURI(p.GetHttpGet().Path) {
+						return grpcutils.InvalidArg("Invalid path: %s", p.GetHttpGet().Path)
+					}
+
+					if err := apivalidation.ValidatePort(int(p.GetHttpGet().Port)); err != nil {
+						return err
+					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Probe_TcpSocket:
+					if err := apivalidation.ValidatePort(int(p.GetTcpSocket().Port)); err != nil {
+						return err
+					}
+				default:
+					return grpcutils.InvalidArg("Invalid Probe type")
+				}
+
+				return nil
+			}
+
+			if err := validateProbe(typ.ReadinessProbe); err != nil {
+				return err
+			}
+
+			if err := validateProbe(typ.LivenessProbe); err != nil {
+				return err
 			}
 
 		default:
@@ -1238,8 +1278,8 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 			if err != nil {
 				return errors.Errorf("Invalid port %+v", err)
 			}
-			if portnum < 1 || portnum > 65535 {
-				return errors.Errorf("Invalid port number: %d", spec.Port)
+			if err := apivalidation.ValidatePort(portnum); err != nil {
+				return err
 			}
 			backendPorts = append(backendPorts, portnum)
 
@@ -1270,22 +1310,16 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 				}
 			}
 		case *corev1.Service_Spec_Config_Upstream_Container_:
-
-			port := spec.Config.GetUpstream().GetContainer().Port
-			if port == 0 {
-				return errors.Errorf("Container exposed port number must be explicitly set")
-			}
-
-			if port < 1 || port > 65535 {
-				return errors.Errorf("Invalid port number: %d", port)
+			if err := apivalidation.ValidatePort(int(spec.Config.GetUpstream().GetContainer().Port)); err != nil {
+				return err
 			}
 
 		}
 	}
 
 	if spec.Port != 0 {
-		if spec.Port < 1 || spec.Port > 65535 {
-			return errors.Errorf("Invalid port number: %d", spec.Port)
+		if err := apivalidation.ValidatePort(int(spec.Port)); err != nil {
+			return err
 		}
 	}
 

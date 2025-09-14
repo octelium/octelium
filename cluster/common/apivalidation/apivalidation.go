@@ -21,6 +21,7 @@ import (
 	"net"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -561,5 +562,12 @@ func ValidateHostPort(hostPort string) error {
 		return grpcutils.InvalidArg("Invalid port: %s", port)
 	}
 
+	return nil
+}
+
+func ValidatePort(d int) error {
+	if !govalidator.IsPort(strconv.Itoa(int(d))) {
+		return grpcutils.InvalidArg("Invalid port: %d", d)
+	}
 	return nil
 }

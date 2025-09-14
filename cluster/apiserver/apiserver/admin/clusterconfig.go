@@ -100,14 +100,6 @@ func (s *Server) validateClusterConfigSpec(ctx context.Context, c *corev1.Cluste
 	return nil
 }
 
-func checkPort(arg int64) error {
-	if arg <= 0 || arg > 65535 {
-		return errors.Errorf("Invalid port: %d", arg)
-	}
-
-	return nil
-}
-
 func validateSession(c *corev1.ClusterConfig) error {
 	if c.Spec.Session == nil {
 		return nil
