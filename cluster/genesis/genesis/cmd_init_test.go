@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -191,5 +192,25 @@ func TestRunInit(t *testing.T) {
 		err = g.RunInit(ctx)
 		assert.Nil(t, err, "%+v", err)
 
+		region, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+			Name: region.Metadata.Name,
+		})
+		assert.Nil(t, err)
+
+		{
+			svcList, err := g.getAllServices(ctx, region)
+			assert.Nil(t, err)
+			assert.True(t, len(svcList) > 0)
+		}
+
+		{
+			err = g.RunUpgrade(ctx)
+			assert.Nil(t, err, "%+v", err)
+		}
+
+		{
+			err = g.RunUpgrade(ctx)
+			assert.Nil(t, err, "%+v", err)
+		}
 	}
 }

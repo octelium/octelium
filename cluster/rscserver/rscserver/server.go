@@ -245,7 +245,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	if err := waitUntilPortIsAvailable(port); err != nil {
+	if err := vutils.WaitUntilPortIsAvailable(port); err != nil {
 		return err
 	}
 
@@ -264,27 +264,6 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Stop() {
 	s.grpcSrv.Stop()
 	s.redisC.Close()
-}
-
-func isPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-
-	ln.Close()
-	time.Sleep(100 * time.Millisecond)
-	return true
-}
-
-func waitUntilPortIsAvailable(port int) error {
-	for i := 0; i < 10000; i++ {
-		if isPortAvailable(port) {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return errors.Errorf("port %d is not available", port)
 }
 
 func (s *Server) getClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {

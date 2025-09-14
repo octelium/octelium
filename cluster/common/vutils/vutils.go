@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 	k8snet "k8s.io/utils/net"
 )
@@ -124,21 +125,6 @@ func NewResourceObjectList(api, version, kind string) (proto.Message, error) {
 		return nil, errors.Errorf("Invalid API: %s", api)
 	}
 }
-
-/*
-func SetResourceReference(itm, ref umetav1.ResourceObjectI) {
-	if itm == nil || itm.GetMetadata() == nil || ref == nil || ref.GetMetadata() == nil {
-		return
-	}
-
-	md := itm.GetMetadata()
-	if md.ObjectReferences == nil {
-		md.ObjectReferences = make(map[string]*metav1.ObjectReference)
-	}
-
-	md.ObjectReferences[ref.GetMetadata().Uid] = umetav1.GetObjectReference(ref)
-}
-*/
 
 func GetResourceName(itm umetav1.ResourceObjectI) string {
 	if itm == nil || itm.GetMetadata() == nil {
@@ -347,10 +333,11 @@ func isPortAvailable(port int) bool {
 }
 
 func WaitUntilPortIsAvailable(port int) error {
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		if isPortAvailable(port) {
 			return nil
 		}
+		zap.L().Warn("Port is not available. Trying again...", zap.Int("attempt", i+1))
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.Errorf("port %d is not available", port)
