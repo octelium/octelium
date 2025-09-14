@@ -32,7 +32,8 @@ import (
 func SetServiceUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	svc *corev1.Service) ([]*corev1.Session, error) {
 
-	zap.L().Debug("starting checking service listeners to update user connection IPs", zap.Any("svc", svc))
+	zap.L().Debug("starting checking service listeners to update user connection IPs",
+		zap.String("svc", svc.Metadata.Name))
 
 	var svcConns []*corev1.Session
 
@@ -103,7 +104,7 @@ func SetServiceUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterfac
 
 	}
 
-	zap.L().Debug("Done setting Service upstreams", zap.Any("svc", svc))
+	zap.L().Debug("Done setting Service upstreams", zap.String("svc", svc.Metadata.Name))
 
 	return svcConns, nil
 }

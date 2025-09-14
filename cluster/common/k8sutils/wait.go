@@ -35,7 +35,8 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 		return nil
 	}
 
-	zap.S().Debugf("Checking readiness for deployment: %s, namespace: %s", name, ns)
+	zap.L().Debug("Checking readiness for deployment",
+		zap.String("deployment", name), zap.String("namespace", ns))
 
 	deploymentReady := func(rs *appsv1.ReplicaSet, dep *appsv1.Deployment) bool {
 		expectedReady := *dep.Spec.Replicas - MaxUnavailable(*dep)
@@ -69,7 +70,8 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 			return nil
 		}
 
-		zap.S().Debugf("deployment: %s is still not ready, trying again...", name)
+		zap.L().Debug("Deployment is not ready",
+			zap.String("deployment", name), zap.String("namespace", ns), zap.Int("attempt", i+1))
 
 		time.Sleep(2 * time.Second)
 	}
@@ -131,7 +133,7 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 		return nil
 	}
 
-	zap.S().Debugf("Checking for nodes to become ready...")
+	zap.L().Debug("Checking for nodes to become ready...")
 
 	doCheck := func() (bool, error) {
 		nodes, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{})
@@ -139,19 +141,19 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 			return false, err
 		}
 		if len(nodes.Items) == 0 {
-			zap.S().Warnf("No nodes available! Trying again...")
+			zap.L().Warn("No nodes available! Trying again...")
 			return false, nil
 		}
 		for _, node := range nodes.Items {
 			for _, condition := range node.Status.Conditions {
 				if condition.Type == "Ready" && condition.Status != "True" {
-					zap.S().Debugf("Node %s is not ready yet...", node.Name)
+					zap.L().Info("Node is not ready yet...", zap.String("node", node.Name))
 					return false, nil
 				}
 			}
 		}
 
-		zap.S().Debugf("All nodes are ready...")
+		zap.L().Debug("All nodes are ready...")
 		return true, nil
 	}
 
@@ -167,5 +169,5 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 		time.Sleep(3 * time.Second)
 	}
 
-	return nil
+	return errors.Errorf("Could not check of all Kubernetes node readiness")
 }
