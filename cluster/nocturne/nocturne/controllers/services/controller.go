@@ -18,6 +18,7 @@ package svccontroller
 
 import (
 	"context"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -27,6 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
+/*
 func (c *Controller) handleAdd(ctx context.Context, svc *corev1.Service) error {
 
 	svc, err := c.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
@@ -39,12 +41,7 @@ func (c *Controller) handleAdd(ctx context.Context, svc *corev1.Service) error {
 		return errors.Errorf("Could not set service upstreams: %+v", err)
 	}
 
-	/*
-		_, err = c.octeliumC.CoreC().UpdateService(ctx, svc)
-		if err != nil {
-			return errors.Errorf("Could not update service: %+v", err)
-		}
-	*/
+
 
 	for _, conn := range conns {
 		_, err := c.octeliumC.CoreC().UpdateSession(ctx, conn)
@@ -56,7 +53,9 @@ func (c *Controller) handleAdd(ctx context.Context, svc *corev1.Service) error {
 	return nil
 }
 
-func (c *Controller) handleUpdateSession(ctx context.Context, svc *corev1.Service) error {
+*/
+
+func (c *Controller) handleUpdateSessionUpstream(ctx context.Context, svc *corev1.Service) error {
 
 	svc, err := c.octeliumC.CoreC().GetService(ctx,
 		&rmetav1.GetOptions{Uid: svc.Metadata.Uid})
@@ -90,29 +89,41 @@ func (c *Controller) handleUpdateSession(ctx context.Context, svc *corev1.Servic
 	return nil
 }
 
-func (c *Controller) handleDelete(ctx context.Context, n *corev1.Service) error {
+func (c *Controller) handleDeleteSessionUpstream(ctx context.Context, svc *corev1.Service) error {
 
-	hostConns, err := upstream.GetServiceHostConns(ctx, c.octeliumC, n)
+	hostConns, err := upstream.GetServiceHostConns(ctx, c.octeliumC, svc)
 	if err != nil {
 		return err
 	}
 
 	for _, uConn := range hostConns {
-
+	doDelUpstream:
 		sess, err := c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uConn.Metadata.Uid})
 		if err != nil {
-			zap.S().Errorf("Could not get Session %s upstreams after svc %s delete", sess.Metadata.Name, n.Metadata.Name)
+			if grpcerr.IsNotFound(err) {
+				continue
+			}
+			zap.L().Warn("Could not get Session to update upstreams after Service deletion",
+				zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
 			return err
 		}
 
-		if err := upstream.RemoveConnectionUpstreams(ctx, c.octeliumC, sess, n); err != nil {
-			zap.S().Errorf("Could not remove upstreams for Session %s after svc %s delete", sess.Metadata.Name, n.Metadata.Name)
+		if err := upstream.RemoveConnectionUpstreams(ctx, c.octeliumC, sess, svc); err != nil {
+			zap.L().Warn("Could not remove Session upstreams after Service deletion",
+				zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
 			return err
 		}
 
 		if _, err := c.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-			zap.S().Errorf("Could not update Session %s upstreams after svc %s delete", sess.Metadata.Name, n.Metadata.Name)
-			return err
+			switch {
+			case grpcerr.IsNotFound(err):
+			case grpcerr.IsResourceChanged(err):
+				time.Sleep(100 * time.Millisecond)
+				goto doDelUpstream
+			default:
+				zap.L().Warn("Could not update Session after removing upstreams on Service deletion",
+					zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
+			}
 		}
 
 	}

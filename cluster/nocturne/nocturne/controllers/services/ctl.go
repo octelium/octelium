@@ -33,6 +33,7 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -144,43 +145,46 @@ func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
 		return err
 	}
 
-	if err := c.handleAdd(ctx, svc); err != nil {
+	if err := c.handleUpdateSessionUpstream(ctx, svc); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func getReplicas(svc *corev1.Service) int32 {
-	if svc.Spec.Deployment == nil {
-		return 1
-	}
-	if svc.Spec.Deployment.Replicas < 1 {
-		return 1
-	}
-	return int32(svc.Spec.Deployment.Replicas)
-}
-
 func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Service) error {
-	if !ucorev1.ToService(newSvc).IsInMyRegion() && !ucorev1.ToService(oldSvc).IsInMyRegion() {
-		zap.S().Debugf("Service %s does not belong to this Region. Nothing to update", newSvc.Metadata.Uid)
-		return nil
-	} else if !ucorev1.ToService(newSvc).IsInMyRegion() && ucorev1.ToService(oldSvc).IsInMyRegion() {
 
-		if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx, k8sutils.GetSvcHostname(oldSvc), k8smetav1.DeleteOptions{}); err != nil {
-			return err
+	newSvcInMyRegion := ucorev1.ToService(newSvc).IsInMyRegion()
+	oldSvcInMyRegion := ucorev1.ToService(oldSvc).IsInMyRegion()
+	switch {
+	case !newSvcInMyRegion && !oldSvcInMyRegion:
+		zap.L().Debug("Service does not belong to this Region. Nothing to update",
+			zap.String("svc", newSvc.Metadata.Name))
+		return nil
+	case !newSvcInMyRegion && oldSvcInMyRegion:
+		if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
+			k8sutils.GetSvcHostname(oldSvc), k8smetav1.DeleteOptions{}); err != nil {
+			if !k8serr.IsNotFound(err) {
+				return err
+			}
 		}
 		return nil
-	} else if ucorev1.ToService(newSvc).IsInMyRegion() && !ucorev1.ToService(oldSvc).IsInMyRegion() {
+	case newSvcInMyRegion && !oldSvcInMyRegion:
 		if err := c.doOnAdd(ctx, newSvc); err != nil {
 			return err
 		}
-	} else {
-
+	default:
 		ownerCM, err := c.k8sC.CoreV1().ConfigMaps(ns).
 			Get(ctx, k8sutils.GetSvcHostname(newSvc), k8smetav1.GetOptions{})
 		if err != nil {
-			return err
+			if !k8serr.IsNotFound(err) {
+				return err
+			}
+
+			ownerCM, err = k8sutils.CreateOrUpdateConfigMap(ctx, c.k8sC, c.getOwnerConfigMap(newSvc))
+			if err != nil {
+				return err
+			}
 		}
 
 		if c.shouldRedeploy(newSvc, oldSvc) {
@@ -218,7 +222,7 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 		}
 	}
 
-	if err := c.handleUpdateSession(ctx, newSvc); err != nil {
+	if err := c.handleUpdateSessionUpstream(ctx, newSvc); err != nil {
 		return err
 	}
 
@@ -226,6 +230,16 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 }
 
 func (c *Controller) shouldRedeploy(newSvc, oldSvc *corev1.Service) bool {
+
+	getReplicas := func(svc *corev1.Service) int32 {
+		if svc.Spec.Deployment == nil {
+			return 1
+		}
+		if svc.Spec.Deployment.Replicas < 1 {
+			return 1
+		}
+		return int32(svc.Spec.Deployment.Replicas)
+	}
 
 	if getReplicas(newSvc) != getReplicas(oldSvc) {
 		return true
@@ -620,11 +634,13 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 
 	if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
 		k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
-		zap.L().Warn("Could not delete svc configMap",
-			zap.String("svc", svc.Metadata.Name), zap.Error(err))
+		if !k8serr.IsNotFound(err) {
+			zap.L().Warn("Could not delete svc configMap",
+				zap.String("svc", svc.Metadata.Name), zap.Error(err))
+		}
 	}
 
-	if err := c.handleDelete(ctx, svc); err != nil {
+	if err := c.handleDeleteSessionUpstream(ctx, svc); err != nil {
 		return err
 	}
 
