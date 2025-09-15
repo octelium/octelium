@@ -57,6 +57,9 @@ func TestController(t *testing.T) {
 	err = c.OnAdd(ctx, svcV)
 	assert.Nil(t, err)
 
+	err = c.OnAdd(ctx, svcV)
+	assert.Nil(t, err)
+
 	err = c.OnDelete(ctx, svcV)
 	assert.Nil(t, err)
 }

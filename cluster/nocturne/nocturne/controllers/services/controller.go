@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/upstream"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -38,10 +39,12 @@ func (c *Controller) handleAdd(ctx context.Context, svc *corev1.Service) error {
 		return errors.Errorf("Could not set service upstreams: %+v", err)
 	}
 
-	_, err = c.octeliumC.CoreC().UpdateService(ctx, svc)
-	if err != nil {
-		return errors.Errorf("Could not update service: %+v", err)
-	}
+	/*
+		_, err = c.octeliumC.CoreC().UpdateService(ctx, svc)
+		if err != nil {
+			return errors.Errorf("Could not update service: %+v", err)
+		}
+	*/
 
 	for _, conn := range conns {
 		_, err := c.octeliumC.CoreC().UpdateSession(ctx, conn)
@@ -53,12 +56,14 @@ func (c *Controller) handleAdd(ctx context.Context, svc *corev1.Service) error {
 	return nil
 }
 
-func (c *Controller) handleUpdate(ctx context.Context, svc *corev1.Service, oldSvc *corev1.Service) error {
+func (c *Controller) handleUpdateSession(ctx context.Context, svc *corev1.Service) error {
 
 	svc, err := c.octeliumC.CoreC().GetService(ctx,
 		&rmetav1.GetOptions{Uid: svc.Metadata.Uid})
 	if err != nil {
-		zap.S().Errorf("Could not get Service: %+v", err)
+		if grpcerr.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -74,11 +79,13 @@ func (c *Controller) handleUpdate(ctx context.Context, svc *corev1.Service, oldS
 		}
 	}
 
-	_, err = c.octeliumC.CoreC().UpdateService(ctx, svc)
-	if err != nil {
-		zap.S().Errorf("Could not update service: %+v", err)
-		return err
-	}
+	/*
+		_, err = c.octeliumC.CoreC().UpdateService(ctx, svc)
+		if err != nil {
+			zap.S().Errorf("Could not update service: %+v", err)
+			return err
+		}
+	*/
 
 	return nil
 }

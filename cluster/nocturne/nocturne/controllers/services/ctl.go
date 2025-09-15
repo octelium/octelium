@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
@@ -56,7 +55,14 @@ func NewController(octeliumC octeliumc.ClientInterface, k8sC kubernetes.Interfac
 
 func (c *Controller) doOnAdd(ctx context.Context, svc *corev1.Service) error {
 
-	ownerCM, err := c.k8sC.CoreV1().ConfigMaps(ns).Create(ctx, c.getOwnerConfigMap(svc), k8smetav1.CreateOptions{})
+	/*
+		ownerCM, err := c.k8sC.CoreV1().ConfigMaps(ns).Create(ctx, c.getOwnerConfigMap(svc), k8smetav1.CreateOptions{})
+		if err != nil {
+			return err
+		}
+	*/
+
+	ownerCM, err := k8sutils.CreateOrUpdateConfigMap(ctx, c.k8sC, c.getOwnerConfigMap(svc))
 	if err != nil {
 		return err
 	}
@@ -65,25 +71,39 @@ func (c *Controller) doOnAdd(ctx context.Context, svc *corev1.Service) error {
 		return err
 	}
 
-	hasNodePoolGateway := true
+	// hasNodePoolGateway := true
 
-	_, err = c.k8sC.AppsV1().
-		Deployments(ns).
-		Create(ctx,
-			c.newDeployment(svc, hasNodePoolGateway, ownerCM),
-			k8smetav1.CreateOptions{})
+	/*
+		_, err = c.k8sC.AppsV1().
+			Deployments(ns).
+			Create(ctx,
+				c.newDeployment(svc, hasNodePoolGateway, ownerCM),
+				k8smetav1.CreateOptions{})
 
-	if err != nil {
+		if err != nil {
+			return err
+		}
+	*/
+
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c.k8sC,
+		c.newDeployment(svc, ownerCM)); err != nil {
 		return err
 	}
 
-	if err := c.createK8sService(ctx, svc, ownerCM); err != nil {
+	/*
+		if err := c.createK8sService(ctx, svc, ownerCM); err != nil {
+			return err
+		}
+	*/
+
+	if _, err := k8sutils.CreateOrUpdateService(ctx, c.k8sC, c.getK8sService(svc, ownerCM)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
+/*
 func (c *Controller) redeploy(ctx context.Context, svc *corev1.Service) error {
 
 	dep, err := c.k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(svc), k8smetav1.GetOptions{})
@@ -100,19 +120,23 @@ func (c *Controller) redeploy(ctx context.Context, svc *corev1.Service) error {
 
 	return nil
 }
+*/
 
 func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
-	zap.S().Debugf("Adding Service %s", svc.Metadata.Name)
+	// zap.S().Debugf("Adding Service %s", svc.Metadata.Name)
 
-	{
-		if time.Now().After(svc.Metadata.CreatedAt.AsTime().Add(1 * time.Minute)) {
-			zap.S().Debugf("Service %s is probably already created. Re-deploying...", svc.Metadata.Name)
-			return c.redeploy(ctx, svc)
+	/*
+		{
+			if time.Now().After(svc.Metadata.CreatedAt.AsTime().Add(1 * time.Minute)) {
+				zap.S().Debugf("Service %s is probably already created. Re-deploying...", svc.Metadata.Name)
+				return c.redeploy(ctx, svc)
+			}
 		}
-	}
+	*/
 
 	if !ucorev1.ToService(svc).IsInMyRegion() {
-		zap.S().Debugf("Service %s is not deployed to this Region. Nothing to be done.", svc.Metadata.Name)
+		zap.L().Debug("Service is not deployed to this Region. Nothing to be done.",
+			zap.String("svc", svc.Metadata.Name))
 		return nil
 	}
 
@@ -159,24 +183,28 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 			return err
 		}
 
-		hasNodePoolGateway := true
-
 		if c.shouldRedeploy(newSvc, oldSvc) {
 			zap.L().Debug("Redeploying Service k8s resources", zap.Any("svc", newSvc))
 
-			dep, err := c.k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(newSvc), k8smetav1.GetOptions{})
-			if err != nil {
+			if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c.k8sC,
+				c.newDeployment(newSvc, ownerCM)); err != nil {
 				return err
 			}
 
-			newDep := c.newDeployment(newSvc, hasNodePoolGateway, ownerCM)
+			/*
+				dep, err := c.k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(newSvc), k8smetav1.GetOptions{})
+				if err != nil {
+					return err
+				}
 
-			dep.Spec = newDep.Spec
-			_, err = c.k8sC.AppsV1().Deployments(ns).Update(ctx, dep, k8smetav1.UpdateOptions{})
-			if err != nil {
-				return err
-			}
+				newDep := c.newDeployment(newSvc, hasNodePoolGateway, ownerCM)
 
+				dep.Spec = newDep.Spec
+				_, err = c.k8sC.AppsV1().Deployments(ns).Update(ctx, dep, k8smetav1.UpdateOptions{})
+				if err != nil {
+					return err
+				}
+			*/
 		}
 
 		if c.shouldRedeployUpstream(newSvc, oldSvc) {
@@ -185,12 +213,12 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 			}
 		}
 
-		if err := c.updateK8sService(ctx, newSvc); err != nil {
+		if _, err := k8sutils.CreateOrUpdateService(ctx, c.k8sC, c.getK8sService(newSvc, ownerCM)); err != nil {
 			return err
 		}
 	}
 
-	if err := c.handleUpdate(ctx, newSvc, oldSvc); err != nil {
+	if err := c.handleUpdateSession(ctx, newSvc); err != nil {
 		return err
 	}
 
@@ -274,16 +302,13 @@ func (c *Controller) shouldRedeployUpstream(newSvc, oldSvc *corev1.Service) bool
 	return false
 }
 
-func (c *Controller) newPodSpec(svc *corev1.Service, hasNodePoolGateway bool) k8scorev1.PodSpec {
-	return c.newPodSpecVigil(svc, hasNodePoolGateway)
+func (c *Controller) newPodSpec(svc *corev1.Service) k8scorev1.PodSpec {
+	return c.newPodSpecVigil(svc)
 }
 
-func (c *Controller) newPodSpecVigil(svc *corev1.Service, hasNodePoolGateway bool) k8scorev1.PodSpec {
+func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 	ret := k8scorev1.PodSpec{
 		NodeSelector: func() map[string]string {
-			if !hasNodePoolGateway {
-				return nil
-			}
 			return map[string]string{
 				"octelium.com/node-mode-dataplane": "",
 			}
@@ -505,7 +530,7 @@ func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 	return ret
 }
 
-func (c *Controller) newDeployment(svc *corev1.Service, hasNodePoolGateway bool, ownerCM *k8scorev1.ConfigMap) *appsv1.Deployment {
+func (c *Controller) newDeployment(svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) *appsv1.Deployment {
 
 	labels := c.getPodLabels(svc)
 	podAnnotations := c.getPodAnnotations(svc)
@@ -534,7 +559,7 @@ func (c *Controller) newDeployment(svc *corev1.Service, hasNodePoolGateway bool,
 					Labels:      labels,
 					Annotations: podAnnotations,
 				},
-				Spec: c.newPodSpec(svc, hasNodePoolGateway),
+				Spec: c.newPodSpec(svc),
 			},
 		},
 	}
@@ -558,6 +583,7 @@ func (c *Controller) getPodLabels(svc *corev1.Service) map[string]string {
 	return labels
 }
 
+/*
 func (c *Controller) newDaemonSet(svc *corev1.Service, hasNodePoolGateway bool, ownerCM *k8scorev1.ConfigMap) *appsv1.DaemonSet {
 
 	labels := c.getPodLabels(svc)
@@ -585,14 +611,17 @@ func (c *Controller) newDaemonSet(svc *corev1.Service, hasNodePoolGateway bool, 
 		},
 	}
 }
+*/
 
 func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 	if !ucorev1.ToService(svc).IsInMyRegion() {
 		return nil
 	}
 
-	if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx, k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
-		return err
+	if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
+		k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
+		zap.L().Warn("Could not delete svc configMap",
+			zap.String("svc", svc.Metadata.Name), zap.Error(err))
 	}
 
 	if err := c.handleDelete(ctx, svc); err != nil {
@@ -602,6 +631,47 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 	return nil
 }
 
+func (c *Controller) getK8sService(svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) *k8scorev1.Service {
+
+	svcK8s := &k8scorev1.Service{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name:      k8sutils.GetSvcHostname(svc),
+			Namespace: ns,
+			OwnerReferences: []k8smetav1.OwnerReference{
+				*k8smetav1.NewControllerRef(ownerCM, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap")),
+			},
+		},
+		Spec: k8scorev1.ServiceSpec{
+			Type:     k8scorev1.ServiceTypeClusterIP,
+			Selector: c.getPodLabels(svc),
+			Ports: func() []k8scorev1.ServicePort {
+
+				ret := []k8scorev1.ServicePort{
+					{
+						Protocol: func() k8scorev1.Protocol {
+							if ucorev1.ToService(svc).L4Type() == corev1.Service_Spec_UDP {
+								return k8scorev1.ProtocolUDP
+							} else {
+								return k8scorev1.ProtocolTCP
+							}
+						}(),
+						Port: int32(ucorev1.ToService(svc).RealPort()),
+						TargetPort: intstr.IntOrString{
+							Type:   intstr.Int,
+							IntVal: int32(ucorev1.ToService(svc).RealPort()),
+						},
+					},
+				}
+
+				return ret
+			}(),
+		},
+	}
+
+	return svcK8s
+}
+
+/*
 func (c *Controller) createK8sService(ctx context.Context, svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) error {
 
 	labels := c.getPodLabels(svc)
@@ -647,9 +717,10 @@ func (c *Controller) createK8sService(ctx context.Context, svc *corev1.Service, 
 
 	return nil
 }
+*/
 
+/*
 func (c *Controller) updateK8sService(ctx context.Context, svc *corev1.Service) error {
-
 	svcK8s, err := c.k8sC.CoreV1().Services(ns).Get(ctx, k8sutils.GetSvcHostname(svc), k8smetav1.GetOptions{})
 	if err != nil {
 		return err
@@ -682,6 +753,8 @@ func (c *Controller) updateK8sService(ctx context.Context, svc *corev1.Service) 
 
 	return nil
 }
+
+*/
 
 func (c *Controller) getOwnerConfigMap(svc *corev1.Service) *k8scorev1.ConfigMap {
 	return &k8scorev1.ConfigMap{
