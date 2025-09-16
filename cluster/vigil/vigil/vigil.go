@@ -119,23 +119,23 @@ func NewServer(ctx context.Context, opts *Opts) (*Server, error) {
 		}
 
 		zap.L().Debug("Starting onServiceUpdate",
-			zap.Any("new", new), zap.Any("old", old))
+			zap.Any("svc", new))
 
 		ret.vCache.SetService(new)
 
 		if err := ret.secretMan.ApplyService(ctx); err != nil {
-			return err
+			zap.L().Warn("Could not applyService for secretMan", zap.Error(err))
 		}
 
 		if (new.Spec.Mode != old.Spec.Mode) ||
 			(ucorev1.ToService(new).RealPort() != ucorev1.ToService(old).RealPort()) {
-			zap.L().Debug("Mode or Port changed. Reloading Service...")
+			zap.L().Info("Mode or Port changed. Reloading Service...")
 			ret.server.Close()
-
+			zap.L().Debug("Server is now closed")
 			if err := ret.createServer(ctx); err != nil {
 				return err
 			}
-
+			zap.L().Debug("Server recreated")
 			return ret.server.Run(ctx)
 		} else {
 
@@ -218,13 +218,6 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.secretMan.ApplyService(ctx); err != nil {
 		return err
 	}
-
-	/*
-		if err := s.metricsStore.Run(ctx); err != nil {
-			return err
-		}
-		defer s.metricsStore.Close()
-	*/
 
 	if err := s.lbManager.Run(ctx); err != nil {
 		return err
