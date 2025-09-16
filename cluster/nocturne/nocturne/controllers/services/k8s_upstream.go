@@ -38,26 +38,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-/*
-func (c *Controller) deleteK8sUpstream(ctx context.Context, svc *corev1.Service) error {
-	if err := c.k8sC.CoreV1().Services(ns).
-		Delete(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
-		if !k8serr.IsNotFound(err) {
-			return err
-		}
-	}
-
-	if err := c.k8sC.AppsV1().Deployments(ns).
-		Delete(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
-		if !k8serr.IsNotFound(err) {
-			return err
-		}
-	}
-
-	return nil
-}
-*/
-
 func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) error {
 
 	if svc.Spec.Config != nil && svc.Spec.Config.Upstream != nil && svc.Spec.Config.Upstream.GetContainer() != nil {
