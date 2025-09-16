@@ -537,6 +537,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 	ret := map[string]string{
 		// "octelium.com/install-uid":    utilrand.GetRandomStringLowercase(8),
+		"octelium.com/svc-port":       fmt.Sprintf("%d", svc.Status.Port),
 		"k8s.v1.cni.cncf.io/networks": "octelium/octelium",
 	}
 
