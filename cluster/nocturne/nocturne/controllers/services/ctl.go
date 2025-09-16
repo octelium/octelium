@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
-	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -537,7 +536,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 
 func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 	ret := map[string]string{
-		"octelium.com/install-uid":    utilrand.GetRandomStringLowercase(8),
+		// "octelium.com/install-uid":    utilrand.GetRandomStringLowercase(8),
 		"k8s.v1.cni.cncf.io/networks": "octelium/octelium",
 	}
 

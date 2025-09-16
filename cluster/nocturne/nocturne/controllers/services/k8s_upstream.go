@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
-	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
@@ -251,9 +250,12 @@ func (c *Controller) getK8sUpstreamDeployment(ctx context.Context, svc *corev1.S
 			Template: k8scorev1.PodTemplateSpec{
 				ObjectMeta: k8smetav1.ObjectMeta{
 					Labels: labels,
-					Annotations: map[string]string{
-						"octelium.com/install-uid": utilrand.GetRandomStringLowercase(8),
-					},
+
+					/*
+						Annotations: map[string]string{
+							"octelium.com/install-uid": utilrand.GetRandomStringLowercase(8),
+						},
+					*/
 				},
 				Spec: *podSpec,
 			},
