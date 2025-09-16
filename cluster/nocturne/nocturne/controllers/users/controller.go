@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
-	"go.uber.org/zap"
 )
 
 type Controller struct {
@@ -44,22 +43,7 @@ func (c *Controller) OnAdd(ctx context.Context, crt *corev1.User) error {
 }
 
 func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.User) error {
-	if !(new.Spec.IsDisabled && !old.Spec.IsDisabled) {
-		return nil
-	}
 
-	zap.S().Debugf("User %s has been deactivated. Removing all Sessions", new.Metadata.Name)
-
-	sessList, err := c.octeliumC.CoreC().ListSession(ctx, urscsrv.FilterByUser(new))
-	if err != nil {
-		return err
-	}
-
-	zap.S().Debugf("Found %d Sessions. Removing them", len(sessList.Items))
-
-	for _, sess := range sessList.Items {
-		c.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{Uid: sess.Metadata.Uid})
-	}
 	return nil
 }
 
