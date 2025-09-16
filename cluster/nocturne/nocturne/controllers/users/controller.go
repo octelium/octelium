@@ -50,6 +50,28 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.User) error 
 func (c *Controller) OnDelete(ctx context.Context, usr *corev1.User) error {
 
 	{
+		authnList, err := c.octeliumC.CoreC().ListAuthenticator(ctx, urscsrv.FilterByUser(usr))
+		if err != nil {
+			return err
+		}
+
+		for _, authn := range authnList.Items {
+			c.octeliumC.CoreC().DeleteAuthenticator(ctx, &rmetav1.DeleteOptions{Uid: authn.Metadata.Uid})
+		}
+	}
+
+	{
+		devList, err := c.octeliumC.CoreC().ListDevice(ctx, urscsrv.FilterByUser(usr))
+		if err != nil {
+			return err
+		}
+
+		for _, dev := range devList.Items {
+			c.octeliumC.CoreC().DeleteDevice(ctx, &rmetav1.DeleteOptions{Uid: dev.Metadata.Uid})
+		}
+	}
+
+	{
 		sessList, err := c.octeliumC.CoreC().ListSession(ctx, urscsrv.FilterByUser(usr))
 		if err != nil {
 			return err

@@ -231,7 +231,7 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 		return err
 	}
 
-	zap.L().Debug("Service IP addr is now updated", zap.String("svc", svc.Metadata.Name))
+	// zap.L().Debug("Service IP addr is now updated", zap.String("svc", svc.Metadata.Name))
 
 	go func() {
 		time.Sleep(time.Duration(utilrand.GetRandomRangeMath(4, 9)) * time.Second)
