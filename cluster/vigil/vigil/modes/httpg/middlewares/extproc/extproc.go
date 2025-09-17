@@ -362,7 +362,6 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	{
 		crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
-		crw.ResponseWriter.Header().Del("Content-Encoding")
 		crw.ResponseWriter.Write(crw.body.Bytes())
 	}
 

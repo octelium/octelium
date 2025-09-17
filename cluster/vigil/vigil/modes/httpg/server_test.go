@@ -2380,3 +2380,171 @@ end
 	}
 
 }
+
+func TestLuaMultiple(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic: true,
+			Port:     uint32(tests.GetPort()),
+			Mode:     corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://www.google.com",
+					},
+				},
+
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Name: "lua-1",
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+											Inline: `
+function onResponse(ctx)
+  octelium.req.setResponseHeader("X-Custom-Resp", "lua-1")
+  octelium.req.setStatusCode(206)
+end
+																`,
+										},
+									},
+								},
+							},
+							{
+								Name: "lua-2",
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+											Inline: `
+function onResponse(ctx)
+  octelium.req.setResponseHeader("X-Custom-Resp", "lua-2")
+  octelium.req.setStatusCode(207)
+end
+																`,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.lbManager.Run(ctx)
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	srv.octovigilC.GetCache().SetSession(usr.Session)
+	usr.Resync()
+
+	time.Sleep(1 * time.Second)
+
+	{
+		resp, err := resty.New().SetDebug(true).R().
+			Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+
+		assert.Equal(t, 207, resp.StatusCode())
+		assert.Equal(t, "lua-2", resp.Header().Get("X-Custom-Resp"))
+	}
+
+}
