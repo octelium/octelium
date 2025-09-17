@@ -245,8 +245,6 @@ func doHandlePodUpdate(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 
 func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface, octeliumC octeliumc.ClientInterface, svc *corev1.Service, regionRef *metav1.ObjectReference) error {
 
-	zap.L().Debug("Starting cleaning up pod addrs for Service",
-		zap.String("svc", svc.Metadata.Name))
 	podList, err := k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
 		LabelSelector: fmt.Sprintf("octelium.com/svc-uid=%s", svc.Metadata.Uid),
 	})
@@ -295,7 +293,6 @@ func cleanupServicePods(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes
 func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.Interface,
 	octeliumC octeliumc.ClientInterface, regionRef *metav1.ObjectReference) error {
 
-	zap.L().Debug("Stating doHandlePodDelete", zap.String("podName", pod.Name))
 	svcName, ok := pod.Labels["octelium.com/svc"]
 	if !ok {
 		return errors.Errorf("Could not found `octelium.com/svc` label")
@@ -312,26 +309,34 @@ func doHandlePodDelete(ctx context.Context, pod *k8scorev1.Pod, k8sC kubernetes.
 		return err
 	}
 
+	doUpdate := false
 	for i := len(svc.Status.Addresses) - 1; i >= 0; i-- {
 		addr := svc.Status.Addresses[i]
 		if addr.PodRef.Uid == string(pod.UID) {
+			doUpdate = true
+			zap.L().Debug("Removing Service addr",
+				zap.Any("addr", addr),
+				zap.String("sv", svc.Metadata.Name),
+				zap.String("podName", pod.Name))
 			svc.Status.Addresses = append(svc.Status.Addresses[:i], svc.Status.Addresses[i+1:]...)
 		}
 	}
 
-	_, err = octeliumC.CoreC().UpdateService(ctx, svc)
-	if err != nil {
-		if grpcerr.IsNotFound(err) {
-			zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
-				zap.String("podName", pod.Name))
-			return nil
+	if doUpdate {
+		_, err = octeliumC.CoreC().UpdateService(ctx, svc)
+		if err != nil {
+			if grpcerr.IsNotFound(err) {
+				zap.L().Debug("The Service of pod no longer exists. Nothing to be done.",
+					zap.String("podName", pod.Name))
+				return nil
+			}
+
+			return err
 		}
 
-		return err
+		zap.L().Debug("Service has been updated after deleting pod",
+			zap.String("svc", svc.Metadata.Name), zap.String("podName", pod.Name))
 	}
-
-	zap.L().Debug("Service has been updated after deleting pod",
-		zap.String("svc", svc.Metadata.Name), zap.String("podName", pod.Name))
 
 	return nil
 }
