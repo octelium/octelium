@@ -16,6 +16,7 @@
 
 package conncontroller
 
+/*
 import (
 	"context"
 	"testing"
@@ -27,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func TestController(t *testing.T) {
@@ -87,9 +87,9 @@ func TestController(t *testing.T) {
 	err = c.OnUpdate(ctx, usr.Session, oldSess)
 	assert.Nil(t, err)
 
-	zap.L().Debug("======== Session", zap.Any("==== Session", usr.Session))
-
 	assert.NotNil(t, usr.Session.Status.Connection)
 	assert.NotNil(t, usr.Session.Status.Connection.Upstreams)
 	assert.Equal(t, svc.Metadata.Uid, usr.Session.Status.Connection.Upstreams[0].ServiceRef.Uid)
 }
+
+*/

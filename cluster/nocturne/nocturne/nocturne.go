@@ -38,7 +38,6 @@ import (
 	nodecontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/nodes"
 	podcontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/pods"
 	svccontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/services"
-	sesscontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/sessions"
 	usrcontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/users"
 	"github.com/octelium/octelium/cluster/nocturne/nocturne/watcher"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -82,7 +81,7 @@ func Run() error {
 
 	usrCtl := usrcontroller.NewController(octeliumC)
 	svcCtl := svccontroller.NewController(octeliumC, k8sC)
-	sessCtl := sesscontroller.NewController(octeliumC)
+	// sessCtl := sesscontroller.NewController(octeliumC)
 	devCtl := devcontroller.NewController(octeliumC)
 
 	{
@@ -100,9 +99,11 @@ func Run() error {
 			return err
 		}
 
-		if err := watcher.Session(ctx, nil, sessCtl.OnAdd, sessCtl.OnUpdate, sessCtl.OnDelete); err != nil {
-			return err
-		}
+		/*
+			if err := watcher.Session(ctx, nil, sessCtl.OnAdd, sessCtl.OnUpdate, sessCtl.OnDelete); err != nil {
+				return err
+			}
+		*/
 
 		if err := watcher.ClusterConfig(ctx, nil, cccontroller.NewController(octeliumC, k8sC).OnUpdate); err != nil {
 			return err

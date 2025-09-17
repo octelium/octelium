@@ -16,6 +16,7 @@
 
 package conncontroller
 
+/*
 import (
 	"context"
 	"fmt"
@@ -103,3 +104,4 @@ func (c *Controller) onConnect(ctx context.Context, conn *corev1.Session) error 
 	}
 	return nil
 }
+*/
