@@ -257,6 +257,14 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return compress.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return accesslog.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 	})
 
@@ -269,19 +277,11 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return accesslog.New(ctx, next)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return auth.New(ctx, next, s.octeliumC, s.octovigilC, domain)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return validation.New(ctx, next)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return compress.New(ctx, next)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
