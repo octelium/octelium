@@ -58,7 +58,7 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 		}, &corev1.Service_Status{
 			Addresses: oldSvc.Status.Addresses,
 		}) {
-			zap.S().Debugf("Broadcasting DNS Service addresses after change...")
+			zap.L().Debug("Broadcasting DNS Service addresses after change...")
 			if err := c.setDNSState(newSvc); err != nil {
 				return err
 			}

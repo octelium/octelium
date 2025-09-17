@@ -254,7 +254,8 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 		return nil
 	}
 
-	zap.L().Debug("Removing an address from Session", zap.Int("idx", idx), zap.Any("sess", sess))
+	zap.L().Debug("Removing an address from Session",
+		zap.Any("addr", sess.Status.Connection.Addresses[idx]), zap.Any("sess", sess))
 
 	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
 	if err != nil {

@@ -54,11 +54,12 @@ func NewController(
 func (c *Controller) OnAdd(ctx context.Context, gw *corev1.Gateway) error {
 
 	if time.Now().Add(-1 * time.Minute).After(gw.Metadata.CreatedAt.AsTime()) {
-		zap.S().Debugf("Looks like the Gateway: %s is already created. Nothing to be done", gw.Metadata.Uid)
+		zap.L().Debug("Looks like the Gateway is already created. Nothing to be done",
+			zap.String("gw", gw.Metadata.Name))
 		return nil
 	}
 
-	zap.S().Debugf("Sending add gw for %s", gw.Metadata.Name)
+	zap.L().Debug("Broadcasting Gateway add msg", zap.String("gw", gw.Metadata.Name))
 
 	return c.broadcaster.BroadcastMessage(&userv1.ConnectResponse{
 		Event: &userv1.ConnectResponse_AddGateway_{
@@ -71,20 +72,12 @@ func (c *Controller) OnAdd(ctx context.Context, gw *corev1.Gateway) error {
 
 func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Gateway) error {
 
-	/*
-		if new.Status.Wireguard.PublicKey == old.Status.Wireguard.PublicKey {
-			zap.S().Debugf("gw %s public key is the same, no need to send update gw event", new.Metadata.Uid)
-			return nil
-		}
-
-	*/
-
 	if pbutils.IsEqual(setGW(new), setGW(old)) {
 		zap.L().Debug("No need to broadcast Gateway update", zap.String("gw", new.Metadata.Name))
 		return nil
 	}
 
-	zap.S().Debugf("Sending gw update for %s", new.Metadata.Name)
+	zap.L().Debug("Broadcasting Gateway update msg", zap.String("gw", new.Metadata.Name))
 
 	return c.broadcaster.BroadcastMessage(&userv1.ConnectResponse{
 		Event: &userv1.ConnectResponse_UpdateGateway_{
@@ -97,7 +90,7 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Gateway) err
 
 func (c *Controller) OnDelete(ctx context.Context, gw *corev1.Gateway) error {
 
-	zap.S().Debugf("Broadcasting delete gw for %s", gw.Metadata.Name)
+	zap.L().Debug("Broadcasting Gateway delete msg", zap.String("gw", gw.Metadata.Name))
 
 	return c.broadcaster.BroadcastMessage(&userv1.ConnectResponse{
 		Event: &userv1.ConnectResponse_DeleteGateway_{

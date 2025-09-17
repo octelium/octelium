@@ -43,7 +43,7 @@ import (
 
 func Run() error {
 
-	zap.S().Debug("Starting octelium API server...")
+	zap.L().Debug("Starting octelium API server...")
 
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
@@ -91,7 +91,7 @@ func Run() error {
 		}
 	}
 
-	zap.S().Debug("starting gRPC server....")
+	zap.L().Debug("starting gRPC server....")
 
 	mdlwr, err := userctx.New(ctx, octeliumC)
 	if err != nil {
@@ -108,9 +108,9 @@ func Run() error {
 	userv1.RegisterMainServiceServer(s, usrSrv)
 
 	go func() {
-		zap.S().Debug("running gRPC server.")
+		zap.L().Debug("running gRPC server.")
 		if err := s.Serve(lis); err != nil {
-			zap.S().Infof("gRPC server closed: %+v", err)
+			zap.L().Info("gRPC server closed", zap.Error(err))
 		}
 	}()
 

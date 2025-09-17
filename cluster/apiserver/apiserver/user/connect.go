@@ -113,8 +113,8 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 							return nil
 						}
 
-						zap.L().Error("Could not update Session after updating lastSeen",
-							zap.String("uid", i.Session.Metadata.Uid), zap.Error(err))
+						zap.L().Warn("Could not update Session after updating lastSeen",
+							zap.String("name", i.Session.Metadata.Name), zap.Error(err))
 					}
 				} else {
 					zap.L().Debug("Session's Connection is nil. Exiting the loop")
@@ -126,7 +126,7 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 					return nil
 				}
 
-				zap.L().Error("Could not get Session to update lastSeen",
+				zap.L().Warn("Could not get Session to update lastSeen",
 					zap.String("name", i.Session.Metadata.Name), zap.Error(err))
 			}
 
@@ -167,13 +167,6 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 		return nil, serr.InternalWithErr(err)
 	}
 
-	/*
-		if req.ConnectionType == userv1.ConnectRequest_Initialize_QUICV0 && hasV6 {
-			return nil,
-				serr.InvalidArg("Cannot use QUICv0 connections with IPv6 enabled currently. Please use a IPv4 only connection")
-		}
-	*/
-
 	reqServices, err := func() ([]*corev1.Session_Status_Connection_ServiceOptions_RequestedService, error) {
 		if req.ServiceOptions == nil || len(req.ServiceOptions.Services) == 0 {
 			return nil, nil
@@ -192,10 +185,13 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 
 			svc, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: vutils.GetServiceFullNameFromName(svcReq.Name)})
 			if err != nil {
-				if grpcerr.IsNotFound(err) {
-					return nil, serr.InvalidArg("The Service %s does not exist", svcReq.Name)
+				switch {
+				case grpcerr.IsNotFound(err):
+					zap.L().Debug("The served Service does not exist. Skipping....", zap.String("svc", svcReq.Name))
+					continue
+				default:
+					return nil, serr.InternalWithErr(err)
 				}
-				return nil, serr.InternalWithErr(err)
 			}
 
 			if err := apivalidation.CheckIsUserHidden(svc); err != nil {
@@ -228,10 +224,13 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 					Name: vutils.GetServiceFullNameFromName(svcReq.Name),
 				})
 			if err != nil {
-				if grpcerr.IsNotFound(err) {
-					return nil, serr.InvalidArg("The Service %s does not exist", svcReq.Name)
+				switch {
+				case grpcerr.IsNotFound(err):
+					zap.L().Debug("The published Service does not exist. Skipping....", zap.String("svc", svcReq.Name))
+					continue
+				default:
+					return nil, serr.InternalWithErr(err)
 				}
-				return nil, serr.InternalWithErr(err)
 			}
 			if err := apivalidation.CheckIsUserHidden(svc); err != nil {
 				return nil, err
@@ -367,7 +366,8 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 			if err != nil {
 				return nil, serr.InternalWithErr(err)
 			}
-			zap.S().Debugf("Found %d candidate Services to serve for user %s", len(svcs.Items), i.User.Metadata.Name)
+			zap.L().Debug("Found candidate Services to serve by User",
+				zap.Int("len", len(svcs.Items)), zap.String("user", i.User.Metadata.Name))
 
 			for _, svc := range svcs.Items {
 				if upstream.ServeService(svc, sess) {
@@ -422,13 +422,18 @@ func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.
 		return nil, serr.InternalWithErr(err)
 	}
 
+	switch sess.Status.Type {
+	case corev1.Session_Status_CLIENT:
+	default:
+		return nil, serr.InvalidArg("Session type must be CLIENT")
+	}
+
 	if !sess.Status.IsConnected || sess.Status.Connection == nil {
 		return &userv1.DisconnectResponse{}, nil
 	}
 
 	if err := upstream.RemoveAllAddressFromConnection(ctx, s.octeliumC, sess); err != nil {
 		zap.L().Warn("Could not remove addresses from connection", zap.Error(err))
-		return nil, serr.InternalWithErr(err)
 	}
 
 	{
@@ -453,7 +458,7 @@ func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.
 		return nil, serr.InternalWithErr(err)
 	}
 
-	zap.L().Debug("Successfully disconnected Session", zap.String("uid", i.Session.Metadata.Uid))
+	zap.L().Debug("Successfully disconnected Session", zap.String("sess", i.Session.Metadata.Name))
 
 	return &userv1.DisconnectResponse{}, nil
 }
