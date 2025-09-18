@@ -67,18 +67,18 @@ func TestGetClusters(t *testing.T) {
 
 	svcList = append(svcList, apiSrvSvc)
 
-	_, err = GetClusters("example.com", nil, false)
+	_, err = GetClusters("example.com", nil)
 	assert.Nil(t, err)
 	//os.Setenv("OCTELIUM_REHION_NAME", "default")
-	_, err = GetClusters("example.com", svcList, true)
+	_, err = GetClusters("example.com", svcList)
 	assert.Nil(t, err)
 
 	for i := 0; i < 100; i++ {
 		svcList = append(svcList, doCreateSvc())
 	}
 
-	_, err = GetClusters("example.com", svcList, false)
+	_, err = GetClusters("example.com", svcList)
 	assert.Nil(t, err)
-	_, err = GetClusters("example.com", svcList, true)
+	_, err = GetClusters("example.com", svcList)
 	assert.Nil(t, err)
 }

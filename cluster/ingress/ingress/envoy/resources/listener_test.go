@@ -61,9 +61,9 @@ func TestGetListeners(t *testing.T) {
 	usr, err = adminSrv.CreateUser(ctx, usr)
 	assert.Nil(t, err)
 
-	_, err = GetListeners("example.com", nil, nil, false)
+	_, err = GetListeners("example.com", nil, nil)
 	assert.Nil(t, err)
-	_, err = GetListeners("example.com", nil, nil, true)
+	_, err = GetListeners("example.com", nil, nil)
 	assert.Nil(t, err)
 
 	var svcList []*corev1.Service
@@ -71,9 +71,9 @@ func TestGetListeners(t *testing.T) {
 		svcList = append(svcList, doCreateSvc())
 	}
 
-	_, err = GetListeners("example.com", svcList, nil, false)
+	_, err = GetListeners("example.com", svcList, nil)
 	assert.Nil(t, err)
-	_, err = GetListeners("example.com", svcList, nil, true)
+	_, err = GetListeners("example.com", svcList, nil)
 	assert.Nil(t, err)
 
 	doCreateCrt := func(name string) *corev1.Secret {
@@ -98,10 +98,10 @@ func TestGetListeners(t *testing.T) {
 		return ret
 	}
 
-	_, err = GetListeners("example.com", svcList, nil, false)
+	_, err = GetListeners("example.com", svcList, nil)
 	assert.Nil(t, err)
 	_, err = GetListeners("example.com", svcList, []*corev1.Secret{
 		doCreateCrt("cluster"),
-	}, true)
+	})
 	assert.Nil(t, err)
 }

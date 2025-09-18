@@ -33,7 +33,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-func getRouteConfigMain(domain string, svcList []*corev1.Service, isDefaultRegion bool) (*routev3.RouteConfiguration, error) {
+func getRouteConfigMain(domain string, svcList []*corev1.Service) (*routev3.RouteConfiguration, error) {
 
 	routeConfig := &routev3.RouteConfiguration{}
 

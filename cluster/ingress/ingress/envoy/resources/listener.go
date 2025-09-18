@@ -42,11 +42,10 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
 
-func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Secret,
-	isDefaultRegion bool) ([]types.Resource, error) {
+func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Secret) ([]types.Resource, error) {
 	ret := []types.Resource{}
 
-	mainListener, err := getListener(domain, svcList, crtList, isDefaultRegion)
+	mainListener, err := getListener(domain, svcList, crtList)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +56,7 @@ func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Se
 }
 
 func getListener(domain string, svcList []*corev1.Service,
-	crtList []*corev1.Secret, isDefaultRegion bool) (*listenerv3.Listener, error) {
+	crtList []*corev1.Secret) (*listenerv3.Listener, error) {
 
 	ret := &listenerv3.Listener{
 		Name: "https-listener",
@@ -80,7 +79,7 @@ func getListener(domain string, svcList []*corev1.Service,
 		},
 	}}
 
-	filterChain, err := getFilterChainsMain(domain, crtList, svcList, isDefaultRegion)
+	filterChain, err := getFilterChainsMain(domain, crtList, svcList)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +104,7 @@ func getTLSInspector() (*listenerv3.ListenerFilter, error) {
 	}, nil
 }
 
-func getFilterChainsMain(domain string, crtList []*corev1.Secret, svcList []*corev1.Service, isDefaultRegion bool) (*listenerv3.FilterChain, error) {
+func getFilterChainsMain(domain string, crtList []*corev1.Secret, svcList []*corev1.Service) (*listenerv3.FilterChain, error) {
 
 	ret := &listenerv3.FilterChain{
 		FilterChainMatch: &listenerv3.FilterChainMatch{
@@ -123,7 +122,7 @@ func getFilterChainsMain(domain string, crtList []*corev1.Secret, svcList []*cor
 	}
 	ret.TransportSocket = ts
 
-	httpConnMan, err := getHttpConnManagerFilterMain(domain, svcList, isDefaultRegion)
+	httpConnMan, err := getHttpConnManagerFilterMain(domain, svcList)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +202,9 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 	}, nil
 }
 
-func getHttpConnManagerFilterMain(domain string, svcList []*corev1.Service, isDefaultRegion bool) (*listenerv3.Filter, error) {
+func getHttpConnManagerFilterMain(domain string, svcList []*corev1.Service) (*listenerv3.Filter, error) {
 
-	routeConfig, err := getRouteConfigMain(domain, svcList, isDefaultRegion)
+	routeConfig, err := getRouteConfigMain(domain, svcList)
 	if err != nil {
 		return nil, err
 	}

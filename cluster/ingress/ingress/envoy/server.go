@@ -20,19 +20,17 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"go.uber.org/zap"
 
-	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/ingress/ingress/envoy/resources"
 	"github.com/octelium/octelium/cluster/ingress/ingress/xdscb"
-	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
@@ -118,7 +116,7 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface) (*Server, err
 }
 
 func (s *Server) Run() error {
-	zap.S().Debugf("Starting the Envoy server")
+	zap.L().Debug("Starting the Envoy server")
 	if err := s.DoSnapshot(context.Background()); err != nil {
 		return err
 	}
@@ -131,18 +129,19 @@ func (s *Server) Close() error {
 
 func (s *Server) DoSnapshot(ctx context.Context) error {
 
-	zap.S().Debugf("Starting a new Envoy snapshot")
+	zap.L().Info("Starting a new Envoy snapshot")
 
-	isDefaultRegion := os.Getenv("OCTELIUM_REGION_NAME") == "default"
+	rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+		Name: vutils.GetMyRegionName(),
+	})
+	if err != nil {
+		return err
+	}
 
 	svcList, err := s.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
-		/*
-			SpecLabels: map[string]string{
-				"enable-public": "true",
-			},
-		*/
 		Filters: []*rmetav1.ListOptions_Filter{
 			urscsrv.FilterFieldBooleanTrue("spec.isPublic"),
+			urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid),
 		},
 	})
 	if err != nil {
@@ -158,20 +157,12 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 		return err
 	}
 
-	var regionSvcs []*corev1.Service
-
-	for _, svc := range svcList.Items {
-		if ucorev1.ToService(svc).IsInMyRegion() {
-			regionSvcs = append(regionSvcs, svc)
-		}
-	}
-
-	rscListeners, err := resources.GetListeners(s.domain, regionSvcs, crtList.Items, isDefaultRegion)
+	rscListeners, err := resources.GetListeners(s.domain, svcList.Items, crtList.Items)
 	if err != nil {
 		return err
 	}
 
-	rscClusters, err := resources.GetClusters(s.domain, svcList.Items, isDefaultRegion)
+	rscClusters, err := resources.GetClusters(s.domain, svcList.Items)
 	if err != nil {
 		return err
 	}

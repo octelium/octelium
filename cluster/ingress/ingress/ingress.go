@@ -66,7 +66,7 @@ func Run() error {
 		return err
 	}
 
-	zap.S().Debug("Ingress controller is now running")
+	zap.L().Info("Ingress controller is now running")
 
 	<-ctx.Done()
 

@@ -71,24 +71,8 @@ func getSvcFQDNs(svc *corev1.Service, domain string) []string {
 	return ret
 }
 
-func GetClusters(domain string, svcList []*corev1.Service, isDefault bool) ([]types.Resource, error) {
+func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, error) {
 	ret := []types.Resource{}
-
-	/*
-		if isDefault {
-			portalCluster, err := getCluster("authserver", false, "octelium-authserver.octelium.svc", 8080, false, "")
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, portalCluster)
-
-			portalGRPCCluster, err := getCluster("authserver-grpc", true, "octelium-authserver.octelium.svc", 9090, false, "")
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, portalGRPCCluster)
-		}
-	*/
 
 	for _, svc := range svcList {
 		isTLS := svc.Spec.IsTLS
