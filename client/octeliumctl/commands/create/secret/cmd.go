@@ -37,10 +37,12 @@ type args struct {
 }
 
 var example = `
+octeliumctl create secret my-api-token
 octeliumctl create secret -f /path/to/secret/file secret1
+octeliumctl create secret --file ~/.ssh/id_ed25519
 octeliumctl create secret --value TOP_SECRET secret2
-octeliumctl create secret secret3
 echo $MY_SECRET | octeliumctl create secret my-secret --file -
+octeliumctl create secret mtls-k8s-01 --cert /PATH/TO/CERTIFICATE_CHAIN.PEM --cert-key /PATH/TO/CERTIFICATE_PRIVATE_KEY.PEM
 `
 
 var Cmd = &cobra.Command{
