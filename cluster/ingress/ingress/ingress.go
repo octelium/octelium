@@ -22,7 +22,9 @@ import (
 	"os/signal"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	certcontroller "github.com/octelium/octelium/cluster/ingress/ingress/controllers/certificates"
 	svccontroller "github.com/octelium/octelium/cluster/ingress/ingress/controllers/services"
@@ -66,6 +68,7 @@ func Run() error {
 		return err
 	}
 
+	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Ingress controller is now running")
 
 	<-ctx.Done()

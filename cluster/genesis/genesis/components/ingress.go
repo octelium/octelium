@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	appsv1 "k8s.io/api/apps/v1"
@@ -185,6 +186,17 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 							Resources:       getDefaultResourceRequirements(),
 							Image:           components.GetImage(components.Ingress, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
+							LivenessProbe: &k8scorev1.Probe{
+								InitialDelaySeconds: 60,
+								TimeoutSeconds:      4,
+								PeriodSeconds:       30,
+								FailureThreshold:    3,
+								ProbeHandler: k8scorev1.ProbeHandler{
+									GRPC: &k8scorev1.GRPCAction{
+										Port: int32(vutils.HealthCheckPortMain),
+									},
+								},
+							},
 							Env: []k8scorev1.EnvVar{
 								{
 									Name:  "OCTELIUM_REGION_NAME",
