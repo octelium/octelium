@@ -80,7 +80,7 @@ func (c *luaCtx) setResponseHeader(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.headers.Set(name.String(), value.String())
+	c.rw.Header().Set(name.String(), value.String())
 
 	return 0
 }
@@ -93,7 +93,7 @@ func (c *luaCtx) deleteResponseHeader(L *lua.LState) int {
 		return 1
 	}
 
-	c.rw.headers.Del(name.String())
+	c.rw.Header().Del(name.String())
 
 	return 0
 }

@@ -252,7 +252,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(crw, req)
 
 	headers = &envoycore.HeaderMap{}
-	for k, v := range crw.headers {
+	for k, v := range crw.Header() {
 		if len(v) < 1 {
 			continue
 		}
@@ -290,11 +290,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.headers.Del(hdr)
+						crw.Header().Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
+						crw.Header().Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 			}
@@ -326,11 +326,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if resp != nil && resp.Response != nil && resp.Response.HeaderMutation != nil {
 					mut := resp.Response.HeaderMutation
 					for _, hdr := range mut.RemoveHeaders {
-						crw.headers.Del(hdr)
+						crw.Header().Del(hdr)
 					}
 
 					for _, hdr := range mut.SetHeaders {
-						crw.headers.Set(hdr.Header.Key, hdr.Header.Value)
+						crw.Header().Set(hdr.Header.Key, hdr.Header.Value)
 					}
 				}
 
@@ -352,13 +352,15 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	if len(crw.headers) > 0 {
-		for k, v := range crw.headers {
-			if len(v) > 0 {
-				crw.ResponseWriter.Header().Set(k, v[0])
+	/*
+		if len(crw.headers) > 0 {
+			for k, v := range crw.headers {
+				if len(v) > 0 {
+					crw.ResponseWriter.Header().Set(k, v[0])
+				}
 			}
 		}
-	}
+	*/
 
 	{
 		crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
@@ -454,22 +456,24 @@ func doReadResponse(ctx context.Context, c extprocsvc.ExternalProcessor_ProcessC
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
-	headers    http.Header
-	body       *bytes.Buffer
-	isSet      bool
+	// headers    http.Header
+	body  *bytes.Buffer
+	isSet bool
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
-		headers:        make(http.Header),
-		body:           new(bytes.Buffer),
+		// headers:        make(http.Header),
+		body: new(bytes.Buffer),
 	}
 }
 
+/*
 func (rw *responseWriter) Header() http.Header {
 	return rw.headers
 }
+*/
 
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code

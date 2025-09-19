@@ -136,7 +136,7 @@ end
 		err = luaCtx.callOnResponse()
 		assert.Nil(t, err)
 
-		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.rw.headers.Get("X-Resp"))
+		assert.Equal(t, reqCtx.User.Metadata.Uid, luaCtx.rw.Header().Get("X-Resp"))
 
 		expectedBody := fmt.Sprintf("octelium:%s", bodyResp)
 		assert.Equal(t, expectedBody, luaCtx.rw.body.String())
