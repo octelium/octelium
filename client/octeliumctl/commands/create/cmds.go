@@ -15,9 +15,9 @@
 package create
 
 import (
+	"github.com/octelium/octelium/client/octeliumctl/commands/create/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/create/namespace"
 	"github.com/octelium/octelium/client/octeliumctl/commands/create/secret"
-	"github.com/octelium/octelium/client/octeliumctl/commands/create/token"
 	"github.com/spf13/cobra"
 )
 
@@ -27,10 +27,7 @@ var Cmd = &cobra.Command{
 }
 
 func AddSubcommands() {
-	// Cmd.AddCommand(service.Cmd)
-	// Cmd.AddCommand(user.Cmd)
 	Cmd.AddCommand(namespace.Cmd)
 	Cmd.AddCommand(secret.Cmd)
-	// Cmd.AddCommand(group.Cmd)
-	Cmd.AddCommand(token.Cmd)
+	Cmd.AddCommand(credential.Cmd)
 }

@@ -16,9 +16,10 @@ package get
 
 import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/clusterconfig"
+	"github.com/octelium/octelium/client/octeliumctl/commands/get/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/device"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/gateway"
-	user "github.com/octelium/octelium/client/octeliumctl/commands/get/group"
+	"github.com/octelium/octelium/client/octeliumctl/commands/get/group"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/identityprovider"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/namespace"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/policy"
@@ -26,8 +27,7 @@ import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/secret"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/service"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/session"
-	"github.com/octelium/octelium/client/octeliumctl/commands/get/token"
-	group "github.com/octelium/octelium/client/octeliumctl/commands/get/user"
+	"github.com/octelium/octelium/client/octeliumctl/commands/get/user"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +44,7 @@ func AddSubcommands() {
 	Cmd.AddCommand(secret.Cmd)
 	Cmd.AddCommand(device.Cmd)
 	Cmd.AddCommand(group.Cmd)
-	Cmd.AddCommand(token.Cmd)
+	Cmd.AddCommand(credential.Cmd)
 	Cmd.AddCommand(policy.Cmd)
 	Cmd.AddCommand(identityprovider.Cmd)
 	Cmd.AddCommand(clusterconfig.Cmd)
