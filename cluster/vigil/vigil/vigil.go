@@ -247,8 +247,6 @@ func Run() error {
 
 	pprofsrv.New().Run(ctx)
 
-	healthcheck.Run(vutils.HealthCheckPortVigil)
-
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err
@@ -275,6 +273,7 @@ func Run() error {
 		return err
 	}
 
+	healthcheck.Run(vutils.HealthCheckPortVigil)
 	zap.L().Info("Vigil is running", zap.String("svc", svc.Metadata.Name))
 
 	<-ctx.Done()

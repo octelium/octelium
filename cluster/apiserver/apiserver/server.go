@@ -28,7 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
 	"github.com/octelium/octelium/cluster/common/commoninit"
-	hc "github.com/octelium/octelium/cluster/common/healthcheck"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -52,8 +52,6 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-
-	hc.Run(vutils.HealthCheckPortManagedService)
 
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
@@ -114,6 +112,7 @@ func Run() error {
 		}
 	}()
 
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
 	zap.L().Info("API Server is now running")
 	<-ctx.Done()
 	zap.L().Debug("Shutting down gRPC server")

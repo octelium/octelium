@@ -357,8 +357,6 @@ func Run(grpcMode bool) error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
 
-	healthcheck.Run(vutils.HealthCheckPortManagedService)
-
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err
@@ -382,6 +380,8 @@ func Run(grpcMode bool) error {
 		return err
 	}
 
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
+	zap.L().Info("AuthServer is now running...")
 	<-ctx.Done()
 
 	return nil

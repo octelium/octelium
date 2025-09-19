@@ -589,7 +589,6 @@ func Run() error {
 	groupCtl := groupcontroller.NewController(s.GetCache())
 	deviceCtl := devicecontroller.NewController(s.GetCache())
 	sessCtl := sesscontroller.NewController(s.GetCache())
-	// wsCtl := wscontroller.NewController(s.GetCache())
 	svcCtl := svccontroller.NewController(s.GetCache())
 	policyCtl := policycontroller.NewController(s.GetCache())
 
@@ -628,7 +627,7 @@ func Run() error {
 		return err
 	}
 
-	zap.L().Debug("Octovigil server is now running")
+	zap.L().Info("Octovigil is now running")
 
 	<-ctx.Done()
 
@@ -659,9 +658,9 @@ func (s *Server) run(ctx context.Context) error {
 	}
 
 	go func() {
-		zap.S().Debug("running gRPC server.")
+		zap.L().Debug("running gRPC server.")
 		if err := s.grpcSrv.Serve(lis); err != nil {
-			zap.S().Infof("gRPC server closed: %+v", err)
+			zap.L().Info("gRPC server closed", zap.Error(err))
 		}
 	}()
 

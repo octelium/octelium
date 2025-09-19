@@ -35,8 +35,6 @@ func Run() error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
 
-	healthcheck.Run(vutils.HealthCheckPortManagedService)
-
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
 	}
@@ -61,7 +59,8 @@ func Run() error {
 		return err
 	}
 
-	zap.S().Debug("DNS server is running")
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
+	zap.S().Info("DNS server is running")
 
 	<-ctx.Done()
 

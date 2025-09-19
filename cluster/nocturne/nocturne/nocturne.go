@@ -47,8 +47,6 @@ func Run() error {
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()
 
-	healthcheck.Run(vutils.HealthCheckPortMain)
-
 	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return err
@@ -114,6 +112,7 @@ func Run() error {
 
 	kubeInformerFactory.Start(stopCh)
 
+	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Nocturne is now running...")
 
 	<-ctx.Done()
