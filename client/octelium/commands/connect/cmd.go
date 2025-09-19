@@ -54,6 +54,28 @@ type args struct {
 var example = `
 # Connect to a Cluster
 octelium connect
+# OR via the detached mode in background
+octelium connect -d
+
+# Publish/map the Service svc1 to localhost:8080
+octelium connect -p svc1:8080
+
+# Publish multiple Services
+octelium connect -p svc1:8080 -p svc2:3000 -p svc3:ns1:9090
+
+# Publish the Service svc1 to 0.0.0.0:8080 of the host
+octelium connect -p svc1:0.0.0.0:8080
+
+
+# Serve the Service svc1
+octelium connect --serve svc1
+# Serve multiple Services
+octelium connect --serve svc1 --serve svc2 --serve svc3.ns1
+# Serve all available Services for the User
+octelium connect --serve-all
+
+# Serve embedded SSH Services
+octelium connect --essh
 
 # Connect with an Authentication Token
 octelium connect --detach --auth-token <AUTHENTICATION_TOKEN>
@@ -101,10 +123,6 @@ in the format "service:host:port" (e.g. "svc1:0.0.0.0:8000", "svc1.ns1:0.0.0.0:8
 to find the best mode performance-wise and only resorts to the gvisor implementation if it does not have enough OS permissions.`)
 
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Assertion, "assertion", "", "Authenticate using assertion. Refer to the docs for more details.")
-	/*
-		Cmd.PersistentFlags().StringVar(&cmdArgs.AssertionProvider, "assertion-provider", "",
-			"The name of the IdentityProvider used to authenticate the assertion")
-	*/
 
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
 		`
@@ -119,10 +137,6 @@ You can also use multiple scopes in the same command as follows "--scope service
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseLocalDNS, "localdns", false, "Enable local DNS server")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.LocalDNSListenAddr, "localdns-addr", "",
 		`Local DNS server listen address. By default it is set to "127.0.0.100:53"`)
-	/*
-		Cmd.PersistentFlags().BoolVar(&cmdArgs.UseLocalDNSFallback, "localdns-fallback", true, "Enable local DNS fallback to any requests outsize the Cluster domain zone")
-		Cmd.PersistentFlags().StringSliceVar(&cmdArgs.LocalDNSFallbackServers, "localdns-fallback-addr", nil, `Add a fallback DNS server (e.g. "8.8.8.8", "1.1.1.1:53")`)
-	*/
 	Cmd.PersistentFlags().StringVar(&cmdArgs.TunnelMode, "tunnel-mode", "",
 		`
 	The tunneling mode for the  connection. The current available values are "wg", "wireguard" which use WireGuard (i.e. the default tunneling mode)
