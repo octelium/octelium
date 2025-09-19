@@ -112,7 +112,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 		c := corev1.NewMainServiceClient(conn)
 
-		versionInit, err := getCurrentClusterVersion(ctx, c)
+		versionInit, err := getDefaultRegionVersion(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -121,17 +121,17 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		s.SetSuffix("Waiting for the Cluster upgrade to finish")
 		s.Start()
 		for range 1000 {
-			versionCurrent, err := getCurrentClusterVersion(ctx, c)
-			if err == nil && !versionCurrent.Equal(versionInit) {
+			versionCurrent, err := getDefaultRegionVersion(ctx, c)
+			if err == nil && versionInit != versionCurrent {
 				s.Stop()
 				cliutils.LineNotify("Cluster has been upgraded.\n")
 				return nil
 			} else if err != nil {
-				zap.L().Debug("Could not getCurrentClusterVersion", zap.Error(err))
+				zap.L().Debug("Could not getDefaultRegionVersion", zap.Error(err))
 			} else {
 				zap.L().Debug("Versions still match",
-					zap.String("current", versionCurrent.String()),
-					zap.String("init", versionInit.String()))
+					zap.String("current", versionCurrent),
+					zap.String("init", versionInit))
 			}
 			time.Sleep(1 * time.Second)
 		}
@@ -198,12 +198,22 @@ func getLatestVersion(ctx context.Context) (*version.Version, error) {
 }
 
 func getCurrentClusterVersion(ctx context.Context, c corev1.MainServiceClient) (*version.Version, error) {
-	rgn, err := c.GetRegion(ctx, &metav1.GetOptions{
-		Name: "default",
-	})
+
+	ver, err := getDefaultRegionVersion(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 
-	return version.NewSemver(rgn.Status.Version)
+	return version.NewSemver(ver)
+}
+
+func getDefaultRegionVersion(ctx context.Context, c corev1.MainServiceClient) (string, error) {
+	rgn, err := c.GetRegion(ctx, &metav1.GetOptions{
+		Name: "default",
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return rgn.Status.Version, nil
 }
