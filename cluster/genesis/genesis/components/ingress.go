@@ -64,10 +64,11 @@ static_resources:
           type: STRICT_DNS
           connect_timeout: 3s
           lb_policy: round_robin
-          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-              explicit_http_config:
-                  http2_protocol_options: {}
+          typed_extension_protocol_options:
+              envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                  "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                  explicit_http_config:
+                      http2_protocol_options: {}
           load_assignment:
               cluster_name: xds_cluster
               endpoints:
