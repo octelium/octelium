@@ -17,6 +17,7 @@
 package vutils
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
@@ -341,6 +342,10 @@ func WaitUntilPortIsAvailable(port int) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.Errorf("port %d is not available", port)
+}
+
+func Sha256SumHex(arg []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(arg)))
 }
 
 const UpgradeIDKey = "upgrade-id"

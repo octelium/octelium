@@ -37,7 +37,9 @@ import (
 const envoyGatewayConfigTemplate = `
 admin:
     address:
-        pipe: { path: /tmp/envoy-admin.sock }
+        socket_address:
+            address: 127.0.0.1
+            port_value: 11011
 dynamic_resources:
     lds_config:
         resource_api_version: V3
@@ -217,6 +219,14 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 
 func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 
+	annotation := getAnnotations()
+	if annotation == nil {
+		annotation = make(map[string]string)
+	}
+
+	annotation["octelium.com/envoy-config-hash"] = vutils.Sha256SumHex(
+		[]byte(getEnvoyIngressDataPlaneConfigMap().Data["config"]))
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        getComponentName(componentIngressDataPlane),
@@ -232,7 +242,7 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 			Template: k8scorev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      getComponentLabels(componentIngressDataPlane),
-					Annotations: getAnnotations(),
+					Annotations: annotation,
 				},
 
 				Spec: k8scorev1.PodSpec{
@@ -274,10 +284,43 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 								MountPath: "/etc/envoy/envoy.yaml",
 								SubPath:   "config",
 							}},
-							SecurityContext: &k8scorev1.SecurityContext{
-								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(false),
-								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+
+							LivenessProbe: &k8scorev1.Probe{
+								InitialDelaySeconds: 60,
+								TimeoutSeconds:      4,
+								PeriodSeconds:       30,
+								FailureThreshold:    3,
+								ProbeHandler: k8scorev1.ProbeHandler{
+									HTTPGet: &k8scorev1.HTTPGetAction{
+										Path: "/ready",
+										Port: intstr.FromInt32(11011),
+									},
+								},
 							},
+
+							SecurityContext: &k8scorev1.SecurityContext{
+								Privileged:               utils_types.BoolToPtr(false),
+								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
+								RunAsNonRoot:             utils_types.BoolToPtr(true),
+								RunAsUser:                utils_types.Int64ToPtr(34567),
+								RunAsGroup:               utils_types.Int64ToPtr(34567),
+								Capabilities: &k8scorev1.Capabilities{
+									Drop: []k8scorev1.Capability{
+										"all",
+									},
+									Add: []k8scorev1.Capability{
+										"NET_BIND_SERVICE",
+									},
+								},
+							},
+
+							/*
+								SecurityContext: &k8scorev1.SecurityContext{
+									ReadOnlyRootFilesystem:   utils_types.BoolToPtr(false),
+									AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+								},
+							*/
 						},
 					},
 				},
