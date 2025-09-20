@@ -71,6 +71,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var respBody []byte
 	var respBodyMap *structpb.Struct
 
+	var reqHeaders map[string]string
+	var respHeaders map[string]string
+
 	if visibilityCfg != nil {
 		if len(reqCtx.Body) <= maxBodyLen {
 			if visibilityCfg.EnableRequestBody {
@@ -99,6 +102,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
+
+		reqHeaders = getRequestHeaderMap(req, visibilityCfg)
+		respHeaders = getResponseHeaderMap(crw, visibilityCfg)
 	}
 
 	opts := &logentry.InitializeLogEntryOpts{
@@ -137,6 +143,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Body:    reqBody,
 			BodyMap: reqBodyMap,
 			Origin:  req.Header.Get("Origin"),
+			Headers: reqHeaders,
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
 			Code:        uint32(crw.statusCode),
@@ -144,6 +151,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Body:        respBody,
 			BodyMap:     respBodyMap,
 			ContentType: crw.Header().Get("Content-Type"),
+			Headers:     respHeaders,
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
 			switch req.Proto {
@@ -200,6 +208,62 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	otelutils.EmitAccessLog(logE)
+}
+
+func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP_Visibility) map[string]string {
+	if cfg == nil {
+		return nil
+	}
+
+	var ret map[string]string
+
+	if cfg.IncludeAllRequestHeaders {
+		ret = httputils.GetHeaders(req.Header)
+	} else if len(cfg.IncludeRequestHeaders) > 0 {
+		for _, hdr := range cfg.IncludeRequestHeaders {
+			ret = make(map[string]string)
+			hdr = http.CanonicalHeaderKey(hdr)
+			if val := req.Header.Get(hdr); val != "" {
+				ret[hdr] = val
+			}
+		}
+	}
+
+	if len(cfg.ExcludeRequestHeaders) > 0 && len(ret) > 0 {
+		for _, hdr := range cfg.ExcludeRequestHeaders {
+			delete(ret, http.CanonicalHeaderKey(hdr))
+		}
+	}
+
+	return ret
+}
+
+func getResponseHeaderMap(rw http.ResponseWriter, cfg *corev1.Service_Spec_Config_HTTP_Visibility) map[string]string {
+	if cfg == nil {
+		return nil
+	}
+
+	var ret map[string]string
+
+	if cfg.IncludeAllResponseHeaders {
+		ret = httputils.GetHeaders(rw.Header())
+	} else if len(cfg.IncludeResponseHeaders) > 0 {
+		for _, hdr := range cfg.IncludeResponseHeaders {
+			ret = make(map[string]string)
+			hdr = http.CanonicalHeaderKey(hdr)
+			if val := rw.Header().Get(hdr); val != "" {
+				ret[hdr] = val
+			}
+		}
+	}
+
+	if len(cfg.ExcludeResponseHeaders) > 0 && len(ret) > 0 {
+		for _, hdr := range cfg.ExcludeResponseHeaders {
+			delete(ret, http.CanonicalHeaderKey(hdr))
+		}
+	}
+
+	return ret
 }
 
 type responseWriter struct {
