@@ -158,7 +158,7 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 	}
 
 	if conf.UseUserInfoEndpoint {
-		zap.S().Debugf("Getting userInfo endpoint")
+		zap.L().Debug("Getting userInfo endpoint")
 		userInfo, err := c.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
 			return nil, errors.Errorf("Could not get userInfo endpoint: %v", err)

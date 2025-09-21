@@ -176,7 +176,7 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.validatePostAuthReq(&req); err != nil {
-		zap.S().Debugf("Invalid auth req: %+v", err)
+		zap.L().Debug("Could not validatePostAuthReq", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -457,7 +457,7 @@ func (s *server) authenticateUser(ctx context.Context,
 			}
 		}
 	default:
-		zap.S().Warn("Multiple Users are assigned to the same identifier",
+		zap.L().Warn("Multiple Users are assigned to the same identifier",
 			zap.Any("usrList", (usrs)), zap.Any("idp", idp))
 		return nil, errors.Errorf("This User does not exist")
 	}

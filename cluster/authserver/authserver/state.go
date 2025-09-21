@@ -115,25 +115,6 @@ func getStateIDFromCookie(r *http.Request) (string, error) {
 
 func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string, doDelete bool) (*loginState, error) {
 
-	/*
-		redisCmd := func() *redis.StringCmd {
-			if doDelete {
-				return s.redisC.GetDel(ctx, getAuthKey(stateID))
-			} else {
-				return s.redisC.Get(ctx, getAuthKey(stateID))
-			}
-		}()
-
-		stateStr, err := redisCmd.Result()
-		if err != nil {
-			if err == redis.Nil {
-				return nil, errors.Errorf("Invalid or expired state. Please try again.")
-			}
-			zap.S().Errorf("Could not get key %s: %+v", getAuthKey(stateID), err)
-			return nil, errors.Errorf("Invalid or expired state. Please try again.")
-		}
-	*/
-
 	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
 		Key:    []byte(getAuthKey(stateID)),
 		Delete: doDelete,
@@ -144,7 +125,7 @@ func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string, d
 
 	var userState loginState
 	if err := json.Unmarshal(res.Data, &userState); err != nil {
-		zap.S().Errorf("Could not unmarshal json: %+v", err)
+		zap.L().Warn("Could not unmarshal json of loginState from cache", zap.Error(err))
 		return nil, errors.Errorf("Invalid or expired state. Please try again.")
 	}
 

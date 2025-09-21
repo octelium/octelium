@@ -81,18 +81,21 @@ func GetUserFromIdentifier(ctx context.Context, opts *GetUserFromIdentifierOpts)
 		return nil, errors.Errorf("Internal error")
 	}
 
-	zap.S().Debugf("Found %d authenticated users that match list options: %+v", len(usrs.Items), listOptions)
-
-	if len(usrs.Items) != 1 {
+	switch len(usrs.Items) {
+	case 1:
+	default:
 		if len(usrs.Items) > 1 {
-			zap.S().Warnf("Multiple Users are assigned to the same identifier: %+v", listOptions.SpecLabels)
+			zap.L().Warn("Multiple Users are assigned to the same identifier",
+				zap.Any("specLeabels", listOptions.SpecLabels))
 		}
 		return nil, errors.Errorf("This User does not exist")
 	}
 
 	usr := usrs.Items[0]
 
-	zap.S().Debugf("Matched authenticated User: %+v", usr)
+	zap.L().Debug("Matched authenticated User with identifier",
+		zap.Any("user", usr), zap.String("identifier", opts.Identifier),
+		zap.String("idp", opts.IdentityProviderName))
 
 	if usr.Spec.IsDisabled {
 		return nil, errors.Errorf("Deactivated User")

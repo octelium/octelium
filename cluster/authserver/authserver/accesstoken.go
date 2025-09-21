@@ -31,23 +31,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// var rgxAuthToken = regexp.MustCompile(`^[a-z0-9]{10,14}\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$`)
-
-/*
-func (s *server) setHTTPResponse(resp pbutils.Message, w http.ResponseWriter) error {
-	respBytes, err := pbutils.MarshalJSON(resp, false)
-	if err != nil {
-		zap.S().Warnf("Error marshalling access token resp: %+v", err)
-		return err
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_, err = w.Write(respBytes)
-
-	return err
-}
-*/
-
 func (s *server) setInternalError(w http.ResponseWriter, err error) {
 	zap.L().Debug("Internal error", zap.Error(err))
 	w.WriteHeader(http.StatusInternalServerError)
@@ -143,24 +126,6 @@ func (s *server) getSessionFromRefreshToken(ctx context.Context, refreshToken st
 
 	return sess, nil
 }
-
-/*
-func (s *server) parseAuthenticationToken(arg string) (string, string, error) {
-	errRet := s.errUnauthenticated("Invalid Authentication Token")
-
-	if !rgxAuthToken.MatchString(arg) {
-		return "", "", errRet
-	}
-
-	parts := strings.SplitN(arg, ".", 2)
-
-	if len(parts) != 2 {
-		return "", "", errRet
-	}
-
-	return parts[0], parts[1], nil
-}
-*/
 
 const maxAuthenticationsPerHour = 5
 

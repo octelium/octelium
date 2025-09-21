@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 )
@@ -62,7 +63,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ucorev1.ToSession(sess).ShouldRefresh() {
-		zap.S().Debugf("No need to re-authenticate Session: %s", sess.Metadata.Name)
+		zap.L().Debug("No need to re-authenticate Session in handleLogin", zap.String("sess", sess.Metadata.Name))
 		if vReq := r.URL.Query().Get("octelium_req"); vReq == "" {
 			if redirect := r.URL.Query().Get("redirect"); redirect != "" && s.isURLSameClusterOrigin(redirect) {
 				http.Redirect(w, r, redirect, http.StatusSeeOther)
@@ -81,7 +82,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// We still go for a login to create a token for the client
 	}
 
-	zap.S().Debugf("Session: %s needs a login", sess.Metadata.Name)
+	zap.L().Debug("Session:needs an authentication in handleLogin", zap.String("sess", sess.Metadata.Name))
 
 	if sess.Status.InitialAuthentication == nil || sess.Status.InitialAuthentication.Info == nil ||
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider() == nil {
@@ -103,8 +104,12 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	provider, err := s.getWebProviderFromUID(
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Uid)
 	if err != nil {
-		zap.S().Debugf("Could not get provider with name: %s. Probably removed by Cluster admins",
-			sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Uid)
+		zap.L().Debug("Could not get IdentityProvider. Probably removed by Cluster admins. Removing the Session too",
+			zap.String("sess", sess.Metadata.Name),
+			zap.String("idp", sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Name))
+		s.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
+			Uid: sess.Metadata.Uid,
+		})
 		s.setLogoutCookies(w)
 		s.renderIndex(w)
 		return
