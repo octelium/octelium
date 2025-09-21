@@ -95,7 +95,8 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			if err == nil {
 				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ucorev1.ToSecret(secret).GetValueStr()))
 			} else {
-				zap.S().Warnf("Could not get Bearer Secret: %s: %+v", svc.Spec.Config.GetHttp().GetAuth().GetBearer().GetFromSecret(), err)
+				zap.L().Warn("Could not get Bearer Secret",
+					zap.String("secretName", authS.GetBearer().GetFromSecret()), zap.Error(err))
 			}
 		} else if authS.GetBasic() != nil &&
 			authS.GetBasic().GetPassword() != nil && authS.GetBasic().GetPassword().GetFromSecret() != "" {
@@ -106,7 +107,8 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 						authS.GetBasic().Username, ucorev1.ToSecret(secret).GetValueStr())))
 				req.Header.Set("Authorization", fmt.Sprintf("Basic %s", authVal))
 			} else {
-				zap.S().Warnf("Could not get Basic Secret: %s: %+v", svc.Spec.Config.GetHttp().GetAuth().GetBearer().GetFromSecret(), err)
+				zap.L().Warn("Could not get Basic Secret",
+					zap.String("secretName", authS.GetBasic().GetPassword().GetFromSecret()), zap.Error(err))
 			}
 		} else if authS.GetCustom() != nil &&
 			authS.GetCustom().GetValue() != nil && authS.GetCustom().GetValue().GetFromSecret() != "" {
@@ -114,7 +116,8 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			if err == nil {
 				req.Header.Set(authS.GetCustom().Header, ucorev1.ToSecret(secret).GetValueStr())
 			} else {
-				zap.S().Warnf("Could not get Basic Secret: %s: %+v", svc.Spec.Config.GetHttp().GetAuth().GetBearer().GetFromSecret(), err)
+				zap.L().Warn("Could not get Custom Auth Secret",
+					zap.String("secretName", authS.GetCustom().GetValue().GetFromSecret()), zap.Error(err))
 			}
 		} else if authS.GetOauth2ClientCredentials() != nil &&
 			authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
