@@ -235,6 +235,8 @@ func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP
 		}
 	}
 
+	delete(ret, "Authorization")
+
 	return ret
 }
 
