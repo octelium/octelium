@@ -45,20 +45,47 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Server", "octelium")
 	resp := h.direct
-	switch resp.Type.(type) {
-	case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
-		w.Write([]byte(resp.GetInline()))
-	case *corev1.Service_Spec_Config_HTTP_Response_Direct_InlineBytes:
-		w.Write(resp.GetInlineBytes())
-	default:
-		w.WriteHeader(http.StatusInternalServerError)
+	if resp == nil {
 		return
 	}
+
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode <= 599 {
-		w.WriteHeader(int(resp.StatusCode))
+
+	switch resp.Type.(type) {
+	case *corev1.Service_Spec_Config_HTTP_Response_Direct_Inline:
+		body := []byte(resp.GetInline())
+
+		if len(body) > 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode <= 599 {
+			w.WriteHeader(int(resp.StatusCode))
+		}
+
+		if len(body) > 0 {
+			w.Write(body)
+		}
+
+	case *corev1.Service_Spec_Config_HTTP_Response_Direct_InlineBytes:
+		body := resp.GetInlineBytes()
+
+		if len(body) > 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode <= 599 {
+			w.WriteHeader(int(resp.StatusCode))
+		}
+
+		if len(body) > 0 {
+			w.Write(body)
+		}
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 }
 
