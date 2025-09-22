@@ -662,8 +662,9 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				}
 
 				if authSpec.GetCustom() != nil {
-					if authSpec.GetCustom().Header == "" {
-						return serr.InvalidArg("Auth custom header name must be set")
+
+					if err := s.validateGenStr(authSpec.GetCustom().Header, true, "header"); err != nil {
+						return err
 					}
 
 					if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {
@@ -901,6 +902,30 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						}
 					default:
 						return grpcutils.InvalidArg("plugin type must be set")
+					}
+				}
+			}
+
+			if cfg.GetHttp().Visibility != nil {
+				visibility := cfg.GetHttp().Visibility
+				maxHeaders := 128
+				if len(visibility.IncludeRequestHeaders) > maxHeaders {
+					return grpcutils.InvalidArg("Too many includeRequestHeader")
+				}
+
+				for _, hdr := range visibility.IncludeRequestHeaders {
+					if err := s.validateGenStr(hdr, true, "key"); err != nil {
+						return err
+					}
+				}
+
+				if len(visibility.IncludeResponseHeaders) > maxHeaders {
+					return grpcutils.InvalidArg("Too many includeResponseHeaders")
+				}
+
+				for _, hdr := range visibility.IncludeResponseHeaders {
+					if err := s.validateGenStr(hdr, true, "includeResponseHeader"); err != nil {
+						return err
 					}
 				}
 			}

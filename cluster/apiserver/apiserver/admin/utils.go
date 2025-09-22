@@ -121,10 +121,10 @@ func (s *Server) validateGenStr(arg string, required bool, name string) error {
 	}
 
 	if len(arg) > 256 {
-		return grpcutils.InvalidArg("%s is too long", name)
+		return grpcutils.InvalidArg("%s is too long", arg)
 	}
 	if !govalidator.IsASCII(arg) {
-		return grpcutils.InvalidArg("%s is invalid", name)
+		return grpcutils.InvalidArg("%s is invalid", arg)
 	}
 
 	return nil
