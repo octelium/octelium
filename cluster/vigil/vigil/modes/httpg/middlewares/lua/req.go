@@ -18,9 +18,11 @@ package lua
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"strconv"
 
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -62,6 +64,13 @@ func (c *luaCtx) setRequestBody(L *lua.LState) int {
 
 	c.req.Body = io.NopCloser(bytes.NewBuffer([]byte(bodyBytes)))
 	c.req.ContentLength = int64(len(bodyBytes))
+
+	if reqCtx := middlewares.GetCtxRequestContext(c.req.Context()); reqCtx != nil {
+		reqCtx.Body = bodyBytes
+		if reqCtx.BodyJSONMap != nil {
+			json.Unmarshal(bodyBytes, &reqCtx.BodyJSONMap)
+		}
+	}
 
 	return 0
 }

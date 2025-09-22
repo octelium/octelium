@@ -18,16 +18,19 @@ package lua
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -90,6 +93,11 @@ end
 	req := httptest.NewRequest(http.MethodPost,
 		"http://localhost/prefix/v1?type=octelium", bytes.NewBuffer([]byte(bodyReq)))
 	req.Header.Set("X-Delete", "octelium")
+
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, &middlewares.RequestContext{
+			CreatedAt: time.Now()}))
+
 	luaCtx, err := newCtx(&newCtxOpts{
 		req:          req,
 		fnProto:      fnProto,
@@ -184,8 +192,13 @@ end
 
 	rw := httptest.NewRecorder()
 
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer(reqCtxJSON))
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, &middlewares.RequestContext{
+			CreatedAt: time.Now()}))
+
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:          httptest.NewRequest(http.MethodPost, "http://localhost/prefix/v1", bytes.NewBuffer(reqCtxJSON)),
+		req:          req,
 		fnProto:      fnProto,
 		reqCtxLValue: reqCtxLVal,
 		rw:           newResponseWriter(rw),
