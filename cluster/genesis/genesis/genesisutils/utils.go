@@ -21,6 +21,7 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -55,11 +56,7 @@ func CreateOrUpdateService(ctx context.Context, octeliumC octeliumc.ClientInterf
 
 		itm.Spec = svc.Spec
 		itm.Status.ManagedService = svc.Status.ManagedService
-		itm.Metadata.Labels = svc.Metadata.Labels
-		itm.Metadata.SystemLabels = svc.Metadata.SystemLabels
-		itm.Metadata.DisplayName = svc.Metadata.DisplayName
-		itm.Metadata.Annotations = svc.Metadata.Annotations
-		itm.Metadata.PicURL = svc.Metadata.PicURL
+		setMetadata(itm.Metadata, svc.Metadata)
 
 		zap.L().Debug("Updating Service",
 			zap.String("name", svc.Metadata.Name))
@@ -76,7 +73,7 @@ func CreateOrUpdateService(ctx context.Context, octeliumC octeliumc.ClientInterf
 	zap.L().Debug("Creating Service",
 		zap.String("name", svc.Metadata.Name))
 
-	if _, err := adminSrv.DoCreateService(ctx, svc, true); err != nil {
+	if _, err := adminSrv.DoCreateService(ctx, svc, svc.Metadata.IsSystem); err != nil {
 		return err
 	}
 
@@ -96,14 +93,7 @@ func CreateOrUpdateNamespace(ctx context.Context, octeliumC octeliumc.ClientInte
 		Name: ns.Metadata.Name,
 	}); err == nil {
 		itm.Spec = ns.Spec
-		itm.Metadata.Labels = ns.Metadata.Labels
-		itm.Metadata.SystemLabels = ns.Metadata.SystemLabels
-		itm.Metadata.IsSystemHidden = ns.Metadata.IsSystemHidden
-		itm.Metadata.IsUserHidden = ns.Metadata.IsUserHidden
-		itm.Metadata.IsSystem = ns.Metadata.IsSystem
-		itm.Metadata.DisplayName = ns.Metadata.DisplayName
-		itm.Metadata.Annotations = ns.Metadata.Annotations
-		itm.Metadata.PicURL = ns.Metadata.PicURL
+		setMetadata(itm.Metadata, ns.Metadata)
 
 		_, err = octeliumC.CoreC().UpdateNamespace(ctx, itm)
 		if err != nil {
@@ -121,4 +111,16 @@ func CreateOrUpdateNamespace(ctx context.Context, octeliumC octeliumc.ClientInte
 	}
 
 	return nil
+}
+
+func setMetadata(to, from *metav1.Metadata) {
+	to.Labels = from.Labels
+	to.SystemLabels = from.SystemLabels
+	to.IsSystemHidden = from.IsSystemHidden
+	to.IsUserHidden = from.IsUserHidden
+	to.Tags = from.Tags
+	to.IsSystem = from.IsSystem
+	to.DisplayName = from.DisplayName
+	to.Annotations = from.Annotations
+	to.PicURL = from.PicURL
 }
