@@ -31,8 +31,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -95,9 +97,14 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	isManagedSvc := ucorev1.ToService(reqCtx.Service).IsManagedService()
 
 	cfg := reqCtx.ServiceConfig
-	if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Response != nil && cfg.GetHttp().Response.GetDirect() != nil {
+	var httpCfg *corev1.Service_Spec_Config_HTTP
+	if cfg != nil && cfg.GetHttp() != nil {
+		httpCfg = cfg.GetHttp()
+	}
+
+	if httpCfg != nil && httpCfg.Response != nil && httpCfg.Response.GetDirect() != nil {
 		return &directResponseHandler{
-			direct: cfg.GetHttp().Response.GetDirect(),
+			direct: httpCfg.Response.GetDirect(),
 		}, nil
 	}
 
@@ -117,7 +124,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		ErrorLog:   s.reverseProxyErrLogger,
 		Director: func(outReq *http.Request) {
 			svc := reqCtx.Service
-
+			scheme := outReq.URL.Scheme
 			switch upstream.URL.Scheme {
 			case "https", "http":
 				outReq.URL.Scheme = upstream.URL.Scheme
@@ -151,7 +158,6 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Header.Set("User-Agent", "octelium")
 			}
 
-			// removeOcteliumCookie(outReq)
 			fixWebSocketHeaders(outReq)
 
 			if isHTTP2RequestUpstream(outReq, svc) {
@@ -165,10 +171,28 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 			}
 
 			if !isManagedSvc {
-				outReq.Header.Del("Forwarded")
+
 				outReq.Header.Del("X-Forwarded-For")
 				outReq.Header.Del("X-Forwarded-Host")
 				outReq.Header.Del("X-Forwarded-Proto")
+
+				if httpCfg != nil && httpCfg.Header != nil {
+					switch httpCfg.Header.ForwardedMode {
+					case corev1.Service_Spec_Config_HTTP_Header_DROP,
+						corev1.Service_Spec_Config_HTTP_Header_UNSET:
+						outReq.Header.Del("Forwarded")
+					case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
+					case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
+						forwardedVal := fmt.Sprintf("for=_octelium-%s;by=%s;proto=%s;host=%s",
+							utilrand.GetRandomStringLowercase(8),
+							s.forwardedObfuscatedID,
+							scheme,
+							vutils.GetServicePublicFQDN(svc, s.domain))
+						outReq.Header.Set("Forwarded", forwardedVal)
+					}
+				} else {
+					outReq.Header.Del("Forwarded")
+				}
 			}
 
 			/*
@@ -177,11 +201,10 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				}
 			*/
 
-			if cfg != nil &&
-				cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil &&
-				cfg.GetHttp().GetAuth().GetSigv4() != nil {
+			if httpCfg != nil && httpCfg.GetAuth() != nil &&
+				httpCfg.GetAuth().GetSigv4() != nil {
 
-				sigv4Opts := cfg.GetHttp().GetAuth().GetSigv4()
+				sigv4Opts := httpCfg.GetAuth().GetSigv4()
 				secret, err := s.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
 				if err == nil {
 					signer := sigv4.NewSigner()
@@ -249,29 +272,6 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	}
 	return ret, nil
 }
-
-/*
-func removeOcteliumCookie(req *http.Request) {
-
-
-
-
-	var cookieHdr string
-	for _, cookie := range req.Cookies() {
-		switch cookie.Name {
-		case "octelium_auth", "octelium_rt":
-			continue
-		}
-		if cookieHdr == "" {
-			cookieHdr = fmt.Sprintf("%s=%s", cookie.Name, cookie.Value)
-		} else {
-			cookieHdr = fmt.Sprintf("%s; %s=%s", cookieHdr, cookie.Name, cookie.Value)
-		}
-	}
-
-	req.Header.Set("Cookie", cookieHdr)
-}
-*/
 
 func isWebSocketUpgrade(req *http.Request) bool {
 	if !httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {

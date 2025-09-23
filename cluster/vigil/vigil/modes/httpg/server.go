@@ -52,6 +52,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"golang.org/x/net/http2"
@@ -86,6 +87,8 @@ type Server struct {
 	celEngine *celengine.CELEngine
 
 	reverseProxyErrLogger *log.Logger
+	domain                string
+	forwardedObfuscatedID string
 }
 
 type metricsStore struct {
@@ -116,6 +119,7 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		reverseProxyErrLogger: log.New(&zapWriter{
 			log: zap.L(),
 		}, "", 0),
+		forwardedObfuscatedID: fmt.Sprintf("_octelium-%s", utilrand.GetRandomStringLowercase(6)),
 	}
 
 	var err error
@@ -128,6 +132,13 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	cc, err := server.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	server.domain = cc.Status.Domain
 
 	return server, nil
 }
@@ -245,7 +256,7 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain string) (http.Handler, error) {
+func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.Handler, error) {
 	chain := middlewares.New()
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -253,7 +264,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return preauth.New(ctx, next, s.octeliumC, domain)
+		return preauth.New(ctx, next, s.octeliumC, s.domain)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -277,7 +288,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return auth.New(ctx, next, s.octeliumC, s.octovigilC, domain)
+		return auth.New(ctx, next, s.octeliumC, s.octovigilC, s.domain)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -324,12 +335,7 @@ func (s *Server) serve(ctx context.Context) error {
 
 	svc := s.svc()
 
-	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-	if err != nil {
-		return err
-	}
-
-	handler, err := s.getHTTPHandler(ctx, svc, cc.Status.Domain)
+	handler, err := s.getHTTPHandler(ctx, svc)
 	if err != nil {
 		return err
 	}
