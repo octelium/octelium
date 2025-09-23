@@ -22,6 +22,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
@@ -117,6 +118,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	logE := logentry.InitializeLogEntry(opts)
 
+	crwHeader := crw.Header()
+
 	httpC := &corev1.AccessLog_Entry_Info_HTTP{
 		Request: &corev1.AccessLog_Entry_Info_HTTP_Request{
 			Uri:       req.URL.RequestURI(),
@@ -150,7 +153,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			BodyBytes:   uint64(crw.body.Len()),
 			Body:        respBody,
 			BodyMap:     respBodyMap,
-			ContentType: crw.Header().Get("Content-Type"),
+			ContentType: crwHeader.Get("Content-Type"),
 			Headers:     respHeaders,
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
@@ -200,6 +203,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			grpcC.Package = grpcI.Package
 			grpcC.Service = grpcI.Service
 			grpcC.ServiceFullName = grpcI.ServiceFullName
+			grpcC.Message = crwHeader.Get("Grpc-Message")
+
+			status, _ := strconv.ParseInt(crwHeader.Get("Grpc-Status"), 10, 32)
+			grpcC.Status = int32(status)
 		}
 	default:
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Http{
