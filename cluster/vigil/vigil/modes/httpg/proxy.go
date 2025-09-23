@@ -114,6 +114,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	ret := &httputil.ReverseProxy{
 		BufferPool: newBufferPool(),
 		Transport:  roundTripper,
+		ErrorLog:   s.reverseProxyErrLogger,
 		Director: func(outReq *http.Request) {
 			svc := reqCtx.Service
 
@@ -295,4 +296,13 @@ func fixWebSocketHeaders(outReq *http.Request) {
 	delete(outReq.Header, "Sec-Websocket-Accept")
 	delete(outReq.Header, "Sec-Websocket-Protocol")
 	delete(outReq.Header, "Sec-Websocket-Version")
+}
+
+type zapWriter struct {
+	log *zap.Logger
+}
+
+func (w zapWriter) Write(p []byte) (n int, err error) {
+	w.log.Warn("httputil reverseProxy err", zap.String("msg", string(p)))
+	return len(p), nil
 }

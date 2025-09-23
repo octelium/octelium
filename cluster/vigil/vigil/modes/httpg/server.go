@@ -19,6 +19,7 @@ package httpg
 import (
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -73,8 +74,6 @@ type Server struct {
 	mu       sync.Mutex
 	isClosed bool
 
-	// svcCtl     *controllers.ServiceController
-	// sessionCtl *controllers.SessionController
 	lbManager *loadbalancer.LBManager
 	secretMan *secretman.SecretManager
 
@@ -85,6 +84,8 @@ type Server struct {
 	metricsStore *metricsStore
 
 	celEngine *celengine.CELEngine
+
+	reverseProxyErrLogger *log.Logger
 }
 
 type metricsStore struct {
@@ -98,7 +99,7 @@ func (s *Server) svc() *corev1.Service {
 func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
 	s.crtMan.mu.Lock()
 	defer s.crtMan.mu.Unlock()
-	zap.S().Debugf("Setting Cluster Certificate")
+	zap.L().Debug("Setting TLS Certificate")
 	s.crtMan.crt = crt
 	return nil
 }
@@ -110,14 +111,13 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		octovigilC:   opts.OctovigilC,
 		octeliumC:    opts.OcteliumC,
 		lbManager:    opts.LBManager,
-		// svcCtl:       &controllers.ServiceController{},
-		// sessionCtl:   &controllers.SessionController{},
 		secretMan:    opts.SecretMan,
 		metricsStore: &metricsStore{},
+		reverseProxyErrLogger: log.New(&zapWriter{
+			log: zap.L(),
+		}, "", 0),
 	}
 
-	// server.svcCtl.FnOnUpdate = server.onServiceUpdate
-	// server.sessionCtl.FnOnUpdate = server.onSessionUpdate
 	var err error
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Server) Close() error {
 		return nil
 	}
 
-	zap.S().Debugf("Starting closing HTTP server")
+	zap.L().Debug("Starting closing HTTP server")
 
 	s.isClosed = true
 	s.cancelFn()
@@ -151,7 +151,7 @@ func (s *Server) Close() error {
 
 	close(s.doneComplete)
 
-	zap.S().Debugf("HTTP server is now closed")
+	zap.L().Debug("HTTP server is now closed")
 
 	return nil
 }
@@ -160,7 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	proxy, err := s.getProxy(ctx)
 	if err != nil {
-		zap.S().Debugf("Could not get proxy: %+v", err)
+		zap.L().Warn("Could not getProxy", zap.Error(err))
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
@@ -169,7 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getTLSConfig(ctx context.Context, svc *corev1.Service) (*tls.Config, error) {
-	zap.S().Debugf("Getting TLS config....")
+	zap.L().Debug("Getting TLS config")
 
 	crt, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
 	if err != nil && !grpcerr.IsNotFound(err) {
@@ -312,7 +312,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 	handler = http.AllowQuerySemicolons(handler)
 
 	if ucorev1.ToService(svc).IsListenerHTTP2() {
-		zap.S().Debug("Using HTTP2 on listener")
+		zap.L().Debug("Using HTTP2 on listener")
 		handler = h2c.NewHandler(handler, &http2.Server{})
 	}
 
@@ -320,7 +320,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service, domain
 }
 
 func (s *Server) serve(ctx context.Context) error {
-	zap.S().Debugf("Starting serving connections")
+	zap.L().Debug("Starting serving connections")
 
 	svc := s.svc()
 
@@ -362,7 +362,7 @@ func (s *Server) serve(ctx context.Context) error {
 
 	go func() {
 		s.srv.Serve(s.lis)
-		zap.S().Debugf("srv done serving")
+		zap.L().Debug("srv done serving")
 	}()
 
 	return nil
