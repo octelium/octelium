@@ -89,7 +89,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Name: i.FirstArg(),
 	})
 	if err != nil {
-		return err
+		return cliutils.GrpcErr(err)
 	}
 
 	if cmdArgs.Type == "cert" {
@@ -122,7 +122,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := c.UpdateSecret(cmd.Context(), req); err != nil {
-		return err
+		return cliutils.GrpcErr(err)
 	}
 
 	cliutils.LineInfo("Secret `%s` successfully updated\n", i.FirstArg())

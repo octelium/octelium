@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/status"
 )
 
 type CLIInfo struct {
@@ -211,4 +212,13 @@ func getFlagUint32(cmd *cobra.Command, arg string) uint32 {
 
 func getFlagBoolean(cmd *cobra.Command, arg string) bool {
 	return getFlagStr(cmd, arg) == "true"
+}
+
+func GrpcErr(err error) error {
+	st, ok := status.FromError(err)
+	if !ok {
+		return err
+	}
+
+	return errors.Errorf("gRPC error %s: %s", st.Code(), st.Message())
 }

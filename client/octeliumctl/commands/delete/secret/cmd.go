@@ -66,7 +66,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if _, err := c.DeleteSecret(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
-		return err
+		return cliutils.GrpcErr(err)
 	}
 
 	cliutils.LineInfo("Secret `%s` successfully deleted\n", i.FirstArg())

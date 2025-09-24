@@ -77,7 +77,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			Name: i.FirstArg(),
 		})
 		if err != nil {
-			return err
+			return cliutils.GrpcErr(err)
 		}
 		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
 		if err != nil {
@@ -99,7 +99,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Common:       cliutils.GetCommonListOptions(cmd),
 	})
 	if err != nil {
-		return err
+		return cliutils.GrpcErr(err)
 	}
 
 	if len(svcList.Items) == 0 {

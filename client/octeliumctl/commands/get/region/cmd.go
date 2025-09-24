@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/printer"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -73,7 +72,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			Name: i.FirstArg(),
 		})
 		if err != nil {
-			return err
+			return cliutils.GrpcErr(err)
 		}
 		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
 		if err != nil {
@@ -87,7 +86,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Common: cliutils.GetCommonListOptions(cmd),
 	})
 	if err != nil {
-		return errors.Errorf("Could not list Regions: %v", err)
+		return cliutils.GrpcErr(err)
 	}
 
 	if len(itmList.Items) == 0 {
