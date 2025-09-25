@@ -139,28 +139,28 @@ func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
 	for _, itm := range c.createItems {
 		if err := c.doCreateItem(ctx, itm); err != nil {
 			if isUserError(err) {
-				cliutils.LineWarn("Could not create %s %s\n", c.kind, itm.GetMetadata())
-				cliutils.LineWarn("Error: %s\n\n", err.Error())
+				cliutils.LineWarn("Could not create %s %s. %s\n",
+					c.kind, itm.GetMetadata().Name, cliutils.GrpcErr(err))
 				continue
 			}
 
 			return nil, err
 		}
 		ret.CountCreated += 1
-		cliutils.LineNotify("%s %s created\n", c.kind, itm.GetMetadata().Name)
+		cliutils.LineNotify("%s: %s Created\n", c.kind, itm.GetMetadata().Name)
 	}
 
 	for _, itm := range c.updateItems {
 		if err := c.doUpdateItem(ctx, itm); err != nil {
 			if isUserError(err) {
-				cliutils.LineWarn("Could not update %s %s\n", c.kind, itm.GetMetadata())
-				cliutils.LineWarn("Error: %s\n\n", err.Error())
+				cliutils.LineWarn("Could not update %s %s. %s\n",
+					c.kind, itm.GetMetadata().Name, cliutils.GrpcErr(err))
 				continue
 			}
 			return nil, err
 		}
 		ret.CountUpdated += 1
-		cliutils.LineNotify("%s %s updated\n", c.kind, itm.GetMetadata().Name)
+		cliutils.LineNotify("%s: %s Updated\n", c.kind, itm.GetMetadata().Name)
 	}
 
 	if c.doDelete {
@@ -172,7 +172,7 @@ func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
 				return nil, err
 			}
 			ret.CountDeleted += 1
-			cliutils.LineNotify("%s %s deleted\n", c.kind, itm.GetMetadata().Name)
+			cliutils.LineNotify("%s: %s Deleted\n", c.kind, itm.GetMetadata().Name)
 		}
 	}
 
