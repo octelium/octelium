@@ -218,7 +218,7 @@ func (s *Server) doCreate(ctx context.Context, req umetav1.ResourceObjectI, api,
 		_, err := s.doGet(ctx, getOpts, api, version, kind)
 		if err == nil {
 			return nil, rerr.AlreadyExistsWithErr(
-				errors.Errorf("%s.%s%s: %s already exists", api, version, kind, md.Name))
+				errors.Errorf("%s.%s.%s %s already exists", api, version, kind, md.Name))
 		}
 		if !grpcerr.IsNotFound(err) {
 			return nil, err
@@ -299,7 +299,7 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 
 	if old.GetMetadata().ResourceVersion != mdNew.ResourceVersion {
 		return nil, nil, rerr.ResourceChanged(
-			errors.Errorf("Cannot Update. Resource %s.%s.%s %s has already changed",
+			errors.Errorf("Cannot Update. %s.%s.%s %s has already changed",
 				api, version, kind, old.GetMetadata().Name))
 	}
 
@@ -490,7 +490,7 @@ func (s *Server) doList(ctx context.Context,
 
 		obj, err := s.opts.NewResourceObject(api, version, kind)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, rerr.InternalWithErr(err)
 		}
 
 		if err := pbutils.UnmarshalJSON(data, obj); err != nil {
@@ -687,16 +687,16 @@ func (s *Server) doGetCache(ctx context.Context, req *rmetav1.GetOptions, api, v
 		if err == redis.Nil {
 			return nil, false, nil
 		}
-		return nil, false, err
+		return nil, false, rerr.InternalWithErr(err)
 	}
 
 	ret, err := s.opts.NewResourceObject(api, version, kind)
 	if err != nil {
-		return nil, false, err
+		return nil, false, rerr.InternalWithErr(err)
 	}
 
 	if err := pbutils.Unmarshal([]byte(rscBytes), ret); err != nil {
-		return nil, false, err
+		return nil, false, rerr.InternalWithErr(err)
 	}
 
 	return ret, true, nil
@@ -719,7 +719,11 @@ func (s *Server) doSetCache(ctx context.Context, itm umetav1.ResourceObjectI, ap
 func (s *Server) doDeleteCache(ctx context.Context, itm umetav1.ResourceObjectI, api, version, kind string) {
 	md := itm.GetMetadata()
 
-	s.redisC.Del(ctx, getObjectKeyByName(api, version, kind, md.Name), getObjectKeyByUID(md.Uid)).Result()
+	if _, err := s.redisC.Del(ctx,
+		getObjectKeyByName(api, version, kind, md.Name),
+		getObjectKeyByUID(md.Uid)).Result(); err != nil {
+		zap.L().Warn("Could not do redis delete in doDeleteCache", zap.Error(err))
+	}
 }
 
 func getObjectKeyByUID(uid string) string {
