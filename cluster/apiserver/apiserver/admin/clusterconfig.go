@@ -54,7 +54,7 @@ func (s *Server) UpdateClusterConfig(ctx context.Context, req *corev1.ClusterCon
 
 	ccOut, err := s.octeliumC.CoreC().UpdateClusterConfig(ctx, cfg)
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return ccOut, nil

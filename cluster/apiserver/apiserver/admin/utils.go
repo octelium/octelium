@@ -28,42 +28,6 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 )
 
-/*
-func checkGetOptions(req *metav1.GetOptions) error {
-
-	if req.Name != "" && !rgxName.MatchString(req.Name) {
-		return serr.InvalidArg("Invalid name: %s", req.Name)
-	}
-
-	if req.Uid != "" && !govalidator.IsUUIDv4(req.Uid) {
-		return serr.InvalidArg("Invalid UID")
-	}
-
-	return nil
-}
-
-func checkDeleteOptions(req *metav1.DeleteOptions) error {
-
-	if req.Name != "" && !rgxName.MatchString(req.Name) {
-		return serr.InvalidArg("Invalid name: %s", req.Name)
-	}
-
-	if req.Uid != "" && !govalidator.IsUUIDv4(req.Uid) {
-		return serr.InvalidArg("Invalid UID: %s", req.Uid)
-	}
-
-	if req.Uid != "" && req.Name != "" {
-		return serr.InvalidArg("Either the UID or the name must be used")
-	}
-
-	if req.Uid == "" && req.Name == "" {
-		return serr.InvalidArg("Both the UID and the name are empty")
-	}
-
-	return nil
-}
-*/
-
 func checkCELExpression(ctx context.Context, arg string) error {
 	engine, err := celengine.New(ctx, &celengine.Opts{})
 	if err != nil {

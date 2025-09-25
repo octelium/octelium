@@ -44,7 +44,6 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions) (*corev1.ServiceList, error) {
@@ -1270,7 +1269,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("You must provide spec")
+		return grpcutils.InvalidArg("You must provide spec")
 	}
 
 	spec := itm.Spec
@@ -1284,16 +1283,16 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 
 	checkURL := func(u string) error {
 		if u == "" {
-			return errors.Errorf("You must provide backend URL")
+			return grpcutils.InvalidArg("You must provide backend URL")
 		}
 
 		backendURL, err := url.Parse(u)
 		if err != nil {
-			return errors.Errorf("Invalid upstream URL: %s", u)
+			return grpcutils.InvalidArg("Invalid upstream URL: %s", u)
 		}
 
 		if backendURL.Scheme == "" {
-			return errors.Errorf("No scheme set in the upstream URL")
+			return grpcutils.InvalidArg("No scheme set in the upstream URL")
 		}
 
 		backendSchemes = append(backendSchemes, backendURL.Scheme)
@@ -1301,7 +1300,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 		if backendURL.Port() != "" {
 			portnum, err := strconv.Atoi(backendURL.Port())
 			if err != nil {
-				return errors.Errorf("Invalid port %+v", err)
+				return grpcutils.InvalidArg("Invalid port %+v", err)
 			}
 			if err := apivalidation.ValidatePort(portnum); err != nil {
 				return err
@@ -1311,7 +1310,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 		} else {
 			portnum, err := utilnet.GetPortFromScheme(backendURL.Scheme)
 			if err != nil {
-				return errors.Errorf("Provide the port number in the backend URL: %s", u)
+				return grpcutils.InvalidArg("Provide the port number in the backend URL: %s", u)
 			}
 			backendPorts = append(backendPorts, portnum)
 		}
@@ -1326,7 +1325,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 			}
 		case *corev1.Service_Spec_Config_Upstream_Loadbalance_:
 			if len(spec.Config.GetUpstream().GetLoadbalance().Endpoints) == 0 {
-				return errors.Errorf("There must be at least one endpoint in the upstream")
+				return grpcutils.InvalidArg("There must be at least one endpoint in the upstream")
 			}
 
 			for _, b := range spec.Config.GetUpstream().GetLoadbalance().Endpoints {
@@ -1351,7 +1350,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 	if len(backendSchemes) > 1 {
 		for _, itm := range backendSchemes[1:] {
 			if itm != backendSchemes[0] {
-				return errors.Errorf("All backend URL schemes must be identical")
+				return grpcutils.InvalidArg("All backend URL schemes must be identical")
 			}
 		}
 	}
@@ -1359,7 +1358,7 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 	if spec.Port == 0 && len(backendPorts) > 1 {
 		for _, itm := range backendPorts[1:] {
 			if itm != backendPorts[0] {
-				return errors.Errorf("If you do not explicitly provide a listener port then all backend URL ports must be identical")
+				return grpcutils.InvalidArg("If you do not explicitly provide a listener port then all backend URL ports must be identical")
 			}
 		}
 	}
@@ -1370,15 +1369,15 @@ func (s *Server) validateService(ctx context.Context, itm *corev1.Service) error
 
 	if itm.Spec.IsAnonymous {
 		if !itm.Spec.IsPublic {
-			return errors.Errorf("Anonymous access mode requires isPublic to be enabled")
+			return grpcutils.InvalidArg("Anonymous access mode requires isPublic to be enabled")
 		}
 		switch itm.Spec.Mode {
 		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC:
 		default:
-			return errors.Errorf("Anonymous access mode requires HTTP or WEB modes")
+			return grpcutils.InvalidArg("Anonymous access mode requires HTTP or WEB modes")
 		}
 		if itm.Spec.Authorization != nil {
-			return errors.Errorf("Anonymous access mode requires no authorization configuration")
+			return grpcutils.InvalidArg("Anonymous access mode requires no authorization configuration")
 		}
 	}
 

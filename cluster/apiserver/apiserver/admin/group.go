@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) CreateGroup(ctx context.Context, req *corev1.Group) (*corev1.Group, error) {
@@ -158,7 +157,7 @@ func (s *Server) validateGroup(ctx context.Context, itm *corev1.Group) error {
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("Nil spec")
+		return grpcutils.InvalidArg("Nil spec")
 	}
 
 	if err := apivalidation.ValidateAttrs(itm.Spec.Attrs); err != nil {

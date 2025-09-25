@@ -30,7 +30,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) UpdateNamespace(ctx context.Context, req *corev1.Namespace) (*corev1.Namespace, error) {
@@ -158,7 +157,7 @@ func (s *Server) validateNamespace(ctx context.Context, itm *corev1.Namespace) e
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("Nil spec")
+		return grpcutils.InvalidArg("Nil spec")
 	}
 
 	if err := apivalidation.ValidateAttrs(itm.Spec.Attrs); err != nil {

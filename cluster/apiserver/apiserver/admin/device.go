@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) ListDevice(ctx context.Context, req *corev1.ListDeviceOptions) (*corev1.DeviceList, error) {
@@ -138,12 +137,12 @@ func (s *Server) validateDevice(ctx context.Context, itm *corev1.Device) error {
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("You must provide spec")
+		return grpcutils.InvalidArg("You must provide spec")
 	}
 
 	switch itm.Spec.State {
 	case corev1.Device_Spec_STATE_UNKNOWN:
-		return errors.Errorf("State cannot be UNKNOWN")
+		return grpcutils.InvalidArg("State cannot be UNKNOWN")
 	}
 
 	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {

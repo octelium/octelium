@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) CreateSecret(ctx context.Context, req *corev1.Secret) (*corev1.Secret, error) {
@@ -157,11 +156,11 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("Null spec")
+		return grpcutils.InvalidArg("Nil spec")
 	}
 
 	if itm.Data == nil || itm.Data.Type == nil {
-		return errors.Errorf("Empty Secret data")
+		return grpcutils.InvalidArg("Empty Secret data")
 	}
 
 	if itm.Spec.Data != nil {
@@ -169,15 +168,15 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 		case *corev1.Secret_Spec_Data_Value:
 			lenVal := len(itm.Spec.Data.GetValue())
 			if lenVal == 0 || lenVal > 512*1024 {
-				return errors.Errorf("Invalid Secret size")
+				return grpcutils.InvalidArg("Invalid Secret size")
 			}
 		case *corev1.Secret_Spec_Data_ValueBytes:
 			lenVal := len(itm.Spec.Data.GetValueBytes())
 			if lenVal == 0 || lenVal > 512*1024 {
-				return errors.Errorf("Invalid Secret size")
+				return grpcutils.InvalidArg("Invalid Secret size")
 			}
 		default:
-			return errors.Errorf("Invalid Secret data type")
+			return grpcutils.InvalidArg("Invalid Secret data type")
 		}
 
 	}
@@ -186,30 +185,30 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 	case *corev1.Secret_Data_Value:
 		lenVal := len(itm.Data.GetValue())
 		if lenVal == 0 || lenVal > 512*1024 {
-			return errors.Errorf("Invalid Secret size")
+			return grpcutils.InvalidArg("Invalid Secret size")
 		}
 	case *corev1.Secret_Data_ValueBytes:
 		lenVal := len(itm.Data.GetValueBytes())
 		if lenVal == 0 || lenVal > 512*1024 {
-			return errors.Errorf("Invalid Secret size")
+			return grpcutils.InvalidArg("Invalid Secret size")
 		}
 	default:
-		return errors.Errorf("Invalid Secret data type")
+		return grpcutils.InvalidArg("Invalid Secret data type")
 		/*
 			case *corev1.Secret_Data_DataMap_:
 				lenMap := len(itm.Data.GetDataMap().Map)
 				if lenMap == 0 || lenMap > 1000 {
-					return errors.Errorf("Invalid data map length")
+					return grpcutils.InvalidArg("Invalid data map length")
 				}
 				for key, val := range itm.Data.GetDataMap().Map {
 					if !rgx.NameMain.MatchString(key) {
-						return errors.Errorf("Invalid Secret data map key: %s", key)
+						return grpcutils.InvalidArg("Invalid Secret data map key: %s", key)
 					}
 
 					lenVal := len(val)
 
 					if lenVal == 0 || lenVal > 512*1024 {
-						return errors.Errorf("Invalid Secret size")
+						return grpcutils.InvalidArg("Invalid Secret size")
 					}
 				}
 		*/

@@ -23,10 +23,7 @@ import (
 
 type Server struct {
 	octeliumC octeliumc.ClientInterface
-	// redisC    *redis.Client
-
 	corev1.UnimplementedMainServiceServer
-
 	isEmbedded bool
 }
 

@@ -31,7 +31,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 )
 
 const priorityMaxVal = 4
@@ -64,7 +63,6 @@ func (s *Server) CreatePolicy(ctx context.Context, req *corev1.Policy) (*corev1.
 	if len(policyNames) > 1 {
 		parentPolicy, err := s.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{Name: policyNames[1]})
 		if err != nil {
-
 			if !grpcerr.IsNotFound(err) {
 				return nil, grpcutils.InternalWithErr(err)
 			}
@@ -80,7 +78,7 @@ func (s *Server) CreatePolicy(ctx context.Context, req *corev1.Policy) (*corev1.
 
 	item, err = s.octeliumC.CoreC().CreatePolicy(ctx, item)
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, err
 	}
 
 	return item, nil
@@ -109,7 +107,7 @@ func (s *Server) UpdatePolicy(ctx context.Context, req *corev1.Policy) (*corev1.
 
 	item, err = s.octeliumC.CoreC().UpdatePolicy(ctx, item)
 	if err != nil {
-		return nil, serr.K8sInternal(err)
+		return nil, err
 	}
 
 	return item, nil
@@ -191,7 +189,7 @@ func (s *Server) validatePolicy(ctx context.Context, p *corev1.Policy) error {
 	}
 
 	if err := s.validatePolicySpec(ctx, p.Spec); err != nil {
-		return err
+		return grpcutils.InvalidArgWithErr(err)
 	}
 
 	return nil
@@ -199,7 +197,7 @@ func (s *Server) validatePolicy(ctx context.Context, p *corev1.Policy) error {
 
 func (s *Server) validatePolicySpec(ctx context.Context, p *corev1.Policy_Spec) error {
 	if p == nil {
-		return errors.Errorf("Nil spec")
+		return grpcutils.InvalidArg("Nil spec")
 	}
 
 	if err := apivalidation.ValidateAttrs(p.Attrs); err != nil {
@@ -209,19 +207,19 @@ func (s *Server) validatePolicySpec(ctx context.Context, p *corev1.Policy_Spec) 
 	{
 		specBytes, err := pbutils.Marshal(p)
 		if err != nil {
-			return errors.Errorf("Could not marshal Policy spec")
+			return grpcutils.InvalidArg("Could not marshal Policy spec")
 		}
 		if len(specBytes) > 100000 {
-			return errors.Errorf("Policy is too large")
+			return grpcutils.InvalidArg("Policy is too large")
 		}
 	}
 
 	if len(p.Rules) > 100 {
-		return errors.Errorf("Too many rules")
+		return grpcutils.InvalidArg("Too many rules")
 	}
 
 	if len(p.EnforcementRules) > 100 {
-		return errors.Errorf("Too many enforcement rules")
+		return grpcutils.InvalidArg("Too many enforcement rules")
 	}
 
 	for _, rule := range p.Rules {
@@ -232,15 +230,15 @@ func (s *Server) validatePolicySpec(ctx context.Context, p *corev1.Policy_Spec) 
 		}
 
 		if rule.Effect == corev1.Policy_Spec_Rule_EFFECT_UNKNOWN {
-			return errors.Errorf("Rule's effect must be set")
+			return grpcutils.InvalidArg("Rule's effect must be set")
 		}
 
 		if rule.Priority > priorityMaxVal {
-			return errors.Errorf("Rule's priority cannot be higher than %d", priorityMaxVal)
+			return grpcutils.InvalidArg("Rule's priority cannot be higher than %d", priorityMaxVal)
 		}
 
 		if rule.Priority < -1*priorityMaxVal {
-			return errors.Errorf("Rule's priority cannot be lower than -%d", priorityMaxVal)
+			return grpcutils.InvalidArg("Rule's priority cannot be lower than -%d", priorityMaxVal)
 		}
 
 		if err := s.validateCondition(ctx, rule.Condition); err != nil {
@@ -251,7 +249,7 @@ func (s *Server) validatePolicySpec(ctx context.Context, p *corev1.Policy_Spec) 
 	for _, rule := range p.EnforcementRules {
 
 		if rule.Effect == corev1.Policy_Spec_EnforcementRule_EFFECT_UNKNOWN {
-			return errors.Errorf("Unknown effect. It must be either `ENFORCE` or `IGNORE`")
+			return grpcutils.InvalidArg("Unknown effect. It must be either `ENFORCE` or `IGNORE`")
 		}
 
 		if err := s.validateCondition(ctx, rule.Condition); err != nil {
@@ -265,17 +263,17 @@ func (s *Server) validatePolicySpec(ctx context.Context, p *corev1.Policy_Spec) 
 
 func (s *Server) validateCondition(ctx context.Context, c *corev1.Condition) error {
 	if c == nil {
-		return errors.Errorf("Condition is not set")
+		return grpcutils.InvalidArg("Condition is not set")
 	}
 
 	switch c.Type.(type) {
 	case *corev1.Condition_All_:
 		arg := c.GetAll()
 		if len(arg.Of) == 0 {
-			return errors.Errorf("Empty allOf array")
+			return grpcutils.InvalidArg("Empty allOf array")
 		}
 		if len(arg.Of) > 100 {
-			return errors.Errorf("allOf array is too long")
+			return grpcutils.InvalidArg("allOf array is too long")
 		}
 		for _, cond := range arg.Of {
 			if err := s.validateCondition(ctx, cond); err != nil {
@@ -286,10 +284,10 @@ func (s *Server) validateCondition(ctx context.Context, c *corev1.Condition) err
 	case *corev1.Condition_Any_:
 		arg := c.GetAny()
 		if len(arg.Of) == 0 {
-			return errors.Errorf("Empty anyOf array")
+			return grpcutils.InvalidArg("Empty anyOf array")
 		}
 		if len(arg.Of) > 100 {
-			return errors.Errorf("anyOf array is too long")
+			return grpcutils.InvalidArg("anyOf array is too long")
 		}
 		for _, cond := range arg.Of {
 			if err := s.validateCondition(ctx, cond); err != nil {
@@ -304,10 +302,10 @@ func (s *Server) validateCondition(ctx context.Context, c *corev1.Condition) err
 	case *corev1.Condition_None_:
 		arg := c.GetNone()
 		if len(arg.Of) == 0 {
-			return errors.Errorf("Empty noneOf array")
+			return grpcutils.InvalidArg("Empty noneOf array")
 		}
 		if len(arg.Of) > 100 {
-			return errors.Errorf("noneOf array is too long")
+			return grpcutils.InvalidArg("noneOf array is too long")
 		}
 		for _, cond := range arg.Of {
 			if err := s.validateCondition(ctx, cond); err != nil {
@@ -320,7 +318,7 @@ func (s *Server) validateCondition(ctx context.Context, c *corev1.Condition) err
 		}
 	case *corev1.Condition_Opa:
 	default:
-		return errors.Errorf("Invalid Condition type")
+		return grpcutils.InvalidArg("Invalid Condition type")
 	}
 
 	return nil

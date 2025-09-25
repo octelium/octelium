@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) ListSession(ctx context.Context, req *corev1.ListSessionOptions) (*corev1.SessionList, error) {
@@ -159,22 +158,22 @@ func (s *Server) UpdateSession(ctx context.Context, req *corev1.Session) (*corev
 func (s *Server) validateSession(itm *corev1.Session) error {
 
 	if itm.Spec == nil {
-		return errors.Errorf("You must provide spec")
+		return grpcutils.InvalidArg("You must provide spec")
 	}
 
 	spec := itm.Spec
 
 	switch spec.State {
 	case corev1.Session_Spec_STATE_UNKNOWN:
-		return errors.Errorf("State cannot be UNKNOWN")
+		return grpcutils.InvalidArg("State cannot be UNKNOWN")
 	}
 
 	if !spec.ExpiresAt.IsValid() {
-		return errors.Errorf("ExpiresAt must be set")
+		return grpcutils.InvalidArg("ExpiresAt must be set")
 	}
 
 	if time.Now().After(spec.ExpiresAt.AsTime()) {
-		return errors.Errorf("expiresAt already exceeded")
+		return grpcutils.InvalidArg("expiresAt already exceeded")
 	}
 
 	return nil

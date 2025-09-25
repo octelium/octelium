@@ -36,7 +36,6 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) CreateCredential(ctx context.Context, req *corev1.Credential) (*corev1.Credential, error) {
@@ -78,10 +77,7 @@ func (s *Server) DeleteCredential(ctx context.Context, req *metav1.DeleteOptions
 
 	tkn, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
 	if err != nil {
-		if grpcerr.IsNotFound(err) {
-			return nil, serr.NotFound("The Credential %s does not exist", req.Name)
-		}
-		return nil, serr.InternalWithErr(err)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(tkn); err != nil {
@@ -313,7 +309,7 @@ func (s *Server) validateCredential(ctx context.Context, req *corev1.Credential)
 	}
 
 	if req.Spec == nil {
-		return errors.Errorf("Nil spec")
+		return grpcutils.InvalidArg("Nil spec")
 	}
 
 	switch req.Spec.Type {
@@ -366,7 +362,10 @@ func (s *Server) UpdateCredential(ctx context.Context, req *corev1.Credential) (
 		return nil, err
 	}
 
-	item, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
+		Name: req.Metadata.Name,
+		Uid:  req.Metadata.Uid,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +380,7 @@ func (s *Server) UpdateCredential(ctx context.Context, req *corev1.Credential) (
 
 	item, err = s.octeliumC.CoreC().UpdateCredential(ctx, item)
 	if err != nil {
-		return nil, serr.K8sInternal(err)
+		return nil, err
 	}
 
 	return item, nil

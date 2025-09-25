@@ -35,7 +35,6 @@ import (
 	"github.com/octelium/octelium/pkg/common/rgx"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) CreateUser(ctx context.Context, req *corev1.User) (*corev1.User, error) {
@@ -259,7 +258,7 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 	}
 
 	if itm.Spec == nil {
-		return errors.Errorf("Nil Spec")
+		return grpcutils.InvalidArg("Nil Spec")
 	}
 
 	if err := apivalidation.ValidateAttrs(itm.Spec.Attrs); err != nil {
@@ -267,47 +266,47 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 	}
 
 	if itm.Spec.Type == corev1.User_Spec_TYPE_UNKNOWN {
-		return errors.Errorf("You must set the User type (i.e. either `HUMAN` or `WORKLOAD`)")
+		return grpcutils.InvalidArg("You must set the User type (i.e. either `HUMAN` or `WORKLOAD`)")
 	}
 
 	if itm.Spec.Email != "" {
 		if itm.Spec.Type != corev1.User_Spec_HUMAN {
-			return errors.Errorf("Email is only allowed for HUMAN Users")
+			return grpcutils.InvalidArg("Email is only allowed for HUMAN Users")
 		}
 
 		if !govalidator.IsEmail(itm.Spec.Email) {
-			return errors.Errorf("Invalid email: %s", itm.Spec.Email)
+			return grpcutils.InvalidArg("Invalid email: %s", itm.Spec.Email)
 		}
 		if !govalidator.IsASCII(itm.Spec.Email) {
-			return errors.Errorf("Invalid email. Must be ascii: %s", itm.Spec.Email)
+			return grpcutils.InvalidArg("Invalid email. Must be ascii: %s", itm.Spec.Email)
 		}
 		if !govalidator.IsLowerCase(itm.Spec.Email) {
-			return errors.Errorf("Email must be lowercase: %s", itm.Spec.Email)
+			return grpcutils.InvalidArg("Email must be lowercase: %s", itm.Spec.Email)
 		}
 		if len(itm.Spec.Email) > 150 {
-			return errors.Errorf("Email is too long: %s", itm.Spec.Email)
+			return grpcutils.InvalidArg("Email is too long: %s", itm.Spec.Email)
 		}
 	}
 
 	if itm.Spec.Authentication != nil {
 		if len(itm.Spec.Authentication.Identities) > 100 {
-			return errors.Errorf("Too many identities")
+			return grpcutils.InvalidArg("Too many identities")
 		}
 
 		for _, acc := range itm.Spec.Authentication.Identities {
 			if acc.Identifier == "" {
-				return errors.Errorf("Empty identifier")
+				return grpcutils.InvalidArg("Empty identifier")
 			}
 
 			if acc.IdentityProvider == "" {
-				return errors.Errorf("Empty Identity Provider")
+				return grpcutils.InvalidArg("Empty Identity Provider")
 			}
 		}
 	}
 
 	for _, g := range itm.Spec.Groups {
 		if !rgx.NameMain.MatchString(g) {
-			return errors.Errorf("Invalid Group name: %s", g)
+			return grpcutils.InvalidArg("Invalid Group name: %s", g)
 		}
 	}
 
