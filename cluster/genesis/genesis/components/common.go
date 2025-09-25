@@ -224,14 +224,10 @@ func getAnnotations() map[string]string {
 	}
 }
 
-const componentAPIServer = "apiserver"
-
-const componentDNSServer = "dnsserver"
 const componentGWAgent = "gwagent"
 const componentIngress = "ingress"
 const componentIngressDataPlane = "ingress-dataplane"
 const componentNocturne = "nocturne"
-const componentAuthServer = "authserver"
 const componentRscServer = "rscserver"
 const componentOctovigil = "octovigil"
 

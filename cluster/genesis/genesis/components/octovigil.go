@@ -140,23 +140,6 @@ func getOctovigilNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPol
 								},
 							},
 						},
-
-						/*
-							{
-								PodSelector: &metav1.LabelSelector{
-									MatchLabels: map[string]string{
-										"app":                         "octelium",
-										"octelium.com/component":      componentAPIServer,
-										"octelium.com/component-type": "cluster",
-									},
-								},
-								NamespaceSelector: &metav1.LabelSelector{
-									MatchLabels: map[string]string{
-										"kubernetes.io/metadata.name": ns,
-									},
-								},
-							},
-						*/
 					},
 				},
 			},
