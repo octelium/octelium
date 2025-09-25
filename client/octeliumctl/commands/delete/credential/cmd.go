@@ -54,7 +54,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if _, err := c.DeleteCredential(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("Credential `%s` successfully deleted\n", i.FirstArg())

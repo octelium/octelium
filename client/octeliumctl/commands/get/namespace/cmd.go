@@ -81,7 +81,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
 		if err != nil {
-			return cliutils.GrpcErr(err)
+			return err
 		}
 		fmt.Printf("%s\n", string(out))
 		return nil
@@ -91,7 +91,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Common: cliutils.GetCommonListOptions(cmd),
 	})
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	if len(itmList.Items) == 0 {

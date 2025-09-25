@@ -67,7 +67,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if _, err := c.DeleteUser(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("User `%s` successfully deleted\n", i.FirstArg())

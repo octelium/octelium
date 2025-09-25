@@ -114,7 +114,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	for _, kindRsc := range allKinds {
 		if resp, err := rscdiff.DiffCoreResource(ctx, kindRsc, conn, resources, doDelete); err != nil {
-			return cliutils.GrpcErr(err)
+			return err
 		} else {
 			totalDiffResp.CountCreated += resp.CountCreated
 			totalDiffResp.CountUpdated += resp.CountUpdated
@@ -149,11 +149,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if cc != nil {
 		curCC, err := client.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
 		if err != nil {
-			return cliutils.GrpcErr(err)
+			return err
 		}
 		if !pbutils.IsEqual(cc.Spec, curCC.Spec) {
 			if _, err := client.UpdateClusterConfig(ctx, cc); err != nil {
-				return cliutils.GrpcErr(err)
+				return err
 			}
 			cliutils.LineNotify("\n ClusterConfig updated\n")
 		}

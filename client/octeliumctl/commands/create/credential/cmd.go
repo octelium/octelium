@@ -104,7 +104,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			CredentialRef: credRef,
 		})
 		if err != nil {
-			return cliutils.GrpcErr(err)
+			return err
 		}
 
 		switch tokenResp.Type.(type) {
@@ -221,7 +221,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 	cred, err := c.CreateCredential(ctx, req)
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("Credential %s successfully created\n", req.Metadata.Name)

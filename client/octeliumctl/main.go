@@ -18,8 +18,9 @@ import (
 	"os"
 
 	"github.com/fatih/color"
-	"github.com/spf13/cobra"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octeliumctl/commands"
+	"github.com/spf13/cobra"
 )
 
 func init() {
@@ -31,7 +32,7 @@ func init() {
 
 func main() {
 	if err := commands.Cmd.Execute(); err != nil {
-		color.New(color.FgRed, color.Bold).Printf("%s\n", err.Error())
+		color.New(color.FgRed, color.Bold).Printf("%s\n", cliutils.GrpcErr(err))
 		os.Exit(1)
 	}
 }

@@ -66,7 +66,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	c := corev1.NewMainServiceClient(conn)
 
 	if _, err := c.DeleteDevice(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("Device `%s` successfully deleted\n", i.FirstArg())

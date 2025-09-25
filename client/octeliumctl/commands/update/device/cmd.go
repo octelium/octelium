@@ -69,7 +69,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Name: i.FirstArg(),
 	})
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	switch {
@@ -83,7 +83,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	_, err = c.UpdateDevice(ctx, dev)
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineNotify("Device %s successfully update\n", i.FirstArg())

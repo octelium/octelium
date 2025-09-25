@@ -59,9 +59,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err != nil {
-		return err
-	}
 	defer conn.Close()
 
 	c := userv1.NewMainServiceClient(conn)

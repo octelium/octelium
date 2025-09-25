@@ -66,7 +66,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	cfg, err := c.GetClusterConfig(cmd.Context(), &corev1.GetClusterConfigRequest{})
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	out, err := cliutils.OutFormatPrint(cmdArgs.Out, cfg)

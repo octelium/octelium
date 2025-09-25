@@ -64,7 +64,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := c.DeleteService(cmd.Context(), &metav1.DeleteOptions{Name: fqdn}); err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("Service %s successfully deleted\n", fqdn)

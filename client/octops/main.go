@@ -18,21 +18,19 @@ import (
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-
 	cobra.OnInitialize()
-
 	commands.InitCmds()
-
 }
 
 func main() {
 	if err := commands.Cmd.Execute(); err != nil {
-		color.New(color.FgRed, color.Bold).Printf("%s\n", err)
+		color.New(color.FgRed, color.Bold).Printf("%s\n", cliutils.GrpcErr(err))
 		os.Exit(1)
 	}
 }

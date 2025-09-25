@@ -120,7 +120,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := c.CreateSecret(cmd.Context(), req); err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	cliutils.LineInfo("Secret `%s` successfully created\n", i.FirstArg())

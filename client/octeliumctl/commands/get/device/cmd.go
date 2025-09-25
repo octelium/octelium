@@ -76,7 +76,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			Name: i.FirstArg(),
 		})
 		if err != nil {
-			return cliutils.GrpcErr(err)
+			return err
 		}
 		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
 		if err != nil {
@@ -98,7 +98,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		UserRef: usrRef,
 	})
 	if err != nil {
-		return cliutils.GrpcErr(err)
+		return err
 	}
 
 	if len(itmList.Items) == 0 {
