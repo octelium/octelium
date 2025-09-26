@@ -67,6 +67,115 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 		},
 	})
 
+	ret.Items = append(ret.Items, &corev1.Policy{
+		Metadata: &metav1.Metadata{
+			Name:        "octelium-api-full-access",
+			Description: "Full access to all Octelium APIs",
+		},
+		Spec: &corev1.Policy_Spec{
+			Rules: []*corev1.Policy_Spec_Rule{
+				{
+					Effect:   corev1.Policy_Spec_Rule_ALLOW,
+					Priority: -1,
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.namespace.metadata.name == "octelium-api" && ctx.service.spec.mode == "GRPC"`,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	ret.Items = append(ret.Items, &corev1.Policy{
+		Metadata: &metav1.Metadata{
+			Name:        "octelium-api-read-only",
+			Description: "Allow access to read-only methods, namely methods that start with Get or List",
+		},
+		Spec: &corev1.Policy_Spec{
+			EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_All_{
+							All: &corev1.Condition_All{
+								Of: []*corev1.Condition{
+									{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.namespace.metadata.name == "octelium-api" && ctx.service.spec.mode == "GRPC"`,
+										},
+									},
+
+									{
+										Type: &corev1.Condition_Not{
+											Not: `ctx.request.grpc.serviceFullName in ["octelium.api.main.auth.v1.MainService", "octelium.api.main.user.v1.MainService"]`,
+										},
+									},
+								},
+							},
+						},
+					},
+					Effect: corev1.Policy_Spec_EnforcementRule_ENFORCE,
+				},
+			},
+			Rules: []*corev1.Policy_Spec_Rule{
+				{
+					Effect:   corev1.Policy_Spec_Rule_ALLOW,
+					Priority: -1,
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `["Get", "List"].exists(x, ctx.request.grpc.method.startsWith(x))`,
+						},
+					},
+				},
+				{
+					Effect: corev1.Policy_Spec_Rule_DENY,
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{
+							MatchAny: true,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	ret.Items = append(ret.Items, &corev1.Policy{
+		Metadata: &metav1.Metadata{
+			Name:        "http-read-only",
+			Description: `Allow access to read HTTP methods, namely GET, HEAD an OPTIONS`,
+		},
+		Spec: &corev1.Policy_Spec{
+			EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.service.spec.mode in ["HTTP", "WEB"]`,
+						},
+					},
+				},
+			},
+			Rules: []*corev1.Policy_Spec_Rule{
+				{
+					Effect:   corev1.Policy_Spec_Rule_ALLOW,
+					Priority: -1,
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.request.http.method in ["GET", "HEAD", "OPTIONS"]`,
+						},
+					},
+				},
+				{
+					Effect: corev1.Policy_Spec_Rule_DENY,
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{
+							MatchAny: true,
+						},
+					},
+				},
+			},
+		},
+	})
+
 	return ret, nil
 }
 
