@@ -35,6 +35,7 @@ import (
 
 func (g *Genesis) RunUpgrade(ctx context.Context) error {
 
+	zap.L().Info("Starting upgrade...")
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err
@@ -93,6 +94,10 @@ func (g *Genesis) RunUpgrade(ctx context.Context) error {
 		zap.L().Warn("Could not updateServicesUpgradeUID", zap.Error(err))
 	}
 
+	if err := g.installBuiltinPolicies(ctx); err != nil {
+		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
+	}
+
 	region, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Uid: regionV.Metadata.Uid})
 	if err != nil {
 		return err
@@ -104,6 +109,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	zap.L().Info("Upgrade successfully completed...")
 
 	return nil
 }
