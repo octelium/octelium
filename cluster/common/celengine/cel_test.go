@@ -112,6 +112,23 @@ func TestCondition(t *testing.T) {
 						},
 					},
 					{
+						Type: &corev1.Condition_Not{
+							Not: "2 > 3",
+						},
+					},
+				},
+			}, reqCtxMap)
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, res)
+
+			res, err = srv.isConditionMatchedAll(ctx, &corev1.Condition_All{
+				Of: []*corev1.Condition{
+					{
+						Type: &corev1.Condition_Match{
+							Match: "2 > 1",
+						},
+					},
+					{
 						Type: &corev1.Condition_Match{
 							Match: "3 > 2",
 						},
@@ -173,6 +190,41 @@ func TestCondition(t *testing.T) {
 			}, reqCtxMap)
 			assert.Nil(t, err, "%+v", err)
 			assert.False(t, res)
+
+			res, err = srv.isConditionMatchedAll(ctx, &corev1.Condition_All{
+				Of: []*corev1.Condition{
+					{
+						Type: &corev1.Condition_Match{
+							Match: "2 > 1",
+						},
+					},
+					{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					{
+						Type: &corev1.Condition_All_{
+							All: &corev1.Condition_All{
+								Of: []*corev1.Condition{
+									{
+										Type: &corev1.Condition_Match{
+											Match: "2 > 1",
+										},
+									},
+									{
+										Type: &corev1.Condition_Match{
+											Match: "3 > 2",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}, reqCtxMap)
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, res)
 
 			res, err = srv.isConditionMatchedAll(ctx, &corev1.Condition_All{
 				Of: []*corev1.Condition{
@@ -334,6 +386,38 @@ func TestCondition(t *testing.T) {
 					{
 						Type: &corev1.Condition_Match{
 							Match: "3 < 2",
+						},
+					},
+				},
+			}, reqCtxMap)
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, res)
+		}
+
+		{
+			res, err = srv.isConditionMatchedNone(ctx, &corev1.Condition_None{
+				Of: []*corev1.Condition{
+					{
+						Type: &corev1.Condition_Match{
+							Match: "2 < 1",
+						},
+					},
+					{
+						Type: &corev1.Condition_All_{
+							All: &corev1.Condition_All{
+								Of: []*corev1.Condition{
+									{
+										Type: &corev1.Condition_Match{
+											Match: "2 < 1",
+										},
+									},
+									{
+										Type: &corev1.Condition_Match{
+											Match: "2 > 1",
+										},
+									},
+								},
+							},
 						},
 					},
 				},
