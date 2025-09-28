@@ -65,6 +65,8 @@ func (d *Duration) ToGo() time.Duration {
 	}
 
 	switch d.Type.(type) {
+	case *metav1.Duration_Milliseconds:
+		return time.Duration(int64(d.GetMilliseconds()) * int64(time.Millisecond))
 	case *metav1.Duration_Seconds:
 		return time.Duration(int64(d.GetSeconds()) * int64(time.Second))
 	case *metav1.Duration_Minutes:
