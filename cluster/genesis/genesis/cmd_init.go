@@ -600,6 +600,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Status: &corev1.Service_Status{
 				ManagedService: &corev1.Service_Status_ManagedService{
 					Image: oc.GetImage(oc.Portal, ""),
+					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+								Port: vutils.HealthCheckPortManagedService,
+							},
+						},
+					},
 				},
 			},
 		}

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/patrickmn/go-cache"
@@ -134,6 +135,8 @@ func Run() error {
 		return err
 	}
 
+	healthcheck.Run(vutils.HealthCheckPortManagedService)
+	zap.S().Info("Portal is running")
 	<-ctx.Done()
 
 	return nil
