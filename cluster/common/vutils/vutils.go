@@ -348,6 +348,11 @@ func Sha256SumHex(arg []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(arg)))
 }
 
+func Sha256Sum(arg []byte) []byte {
+	ret := sha256.Sum256(arg)
+	return ret[:]
+}
+
 const UpgradeIDKey = "upgrade-id"
 const ManagedServiceAddr = "localhost:49999"
 const MaxPolicyParents = 5

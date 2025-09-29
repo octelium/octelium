@@ -80,6 +80,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	ret := &Client{
 		coreC:           rcorev1.NewResourceServiceClient(grpcConn),
 		cacheC:          rcachev1.NewMainServiceClient(grpcConn),
+		rateLimitC:      rratelimitv1.NewMainServiceClient(grpcConn),
 		clusterV1UtilsC: &clusterV1UtilsC{},
 	}
 
