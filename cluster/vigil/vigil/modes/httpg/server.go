@@ -46,6 +46,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/preauth"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/ratelimit"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/retry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/validation"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -259,6 +261,24 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.Handler, error) {
 	chain := middlewares.New()
 
+	appendPlugins := func(phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) {
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return ratelimit.New(ctx, next, s.celEngine, s.octeliumC, phase)
+		})
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return direct.New(ctx, next, s.celEngine, phase)
+		})
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return lua.New(ctx, next, s.celEngine, phase)
+		})
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return extproc.New(ctx, next, s.celEngine, phase)
+		})
+	}
+
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return metrics.New(ctx, next, s.metricsStore.CommonMetrics)
 	})
@@ -275,17 +295,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		return accesslog.New(ctx, next)
 	})
 
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return lua.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return extproc.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
-	})
+	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return auth.New(ctx, next, s.octeliumC, s.octovigilC, s.domain)
@@ -295,17 +305,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		return validation.New(ctx, next)
 	})
 
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return direct.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return lua.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
-	})
-
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return extproc.New(ctx, next, s.celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
-	})
+	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return headers.New(ctx, next, s.secretMan)
@@ -313,6 +313,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return paths.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return retry.New(ctx, next)
 	})
 
 	handler, err := chain.Then(s)
