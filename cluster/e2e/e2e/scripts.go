@@ -36,18 +36,18 @@ REDIS_PASSWORD=$(openssl rand -base64 12)
 export OCTELIUM_INSECURE_TLS=true
 export OCTELIUM_QUIC=true
 export OCTELIUM_DOMAIN="localhost"
-export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+# export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
 echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.bashrc
 echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.bashrc
 echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.bashrc
-echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
+# echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
 
 if [ -f ~/.zshrc ]; then
   echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.zshrc
   echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.zshrc
   echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.zshrc
-  echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.zshrc
+  # echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.zshrc
 fi
 
 
@@ -73,22 +73,6 @@ sudo cp kubectl /usr/local/bin
 sudo chmod 755 /usr/local/bin/kubectl
 
 curl -fsSL https://octelium.com/install.sh | bash
-
-
-export INSTALL_K3S_SKIP_START=true
-export INSTALL_K3S_SKIP_ENABLE=true
-export INSTALL_K3S_EXEC="--disable traefik"
-curl -sfL https://get.k3s.io | sh -
-
-curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-chmod 700 get_helm.sh
-sudo ./get_helm.sh
-
-sudo k3s server --disable traefik --docker --write-kubeconfig-mode 644 &>/dev/null &
-
-echo "Installing k3s"
-
-sleep 30
 
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 
