@@ -26,7 +26,7 @@ const scriptInstall = `
 #!/usr/bin/env bash
 
 DOMAIN="localhost"
-VERSION="latest"
+VERSION="main"
 DEBIAN_FRONTEND=noninteractive
 K8S_VERSION=1.32
 PG_PASSWORD=$(openssl rand -base64 12)

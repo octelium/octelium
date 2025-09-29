@@ -23,9 +23,11 @@ import (
 	"os/signal"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -80,6 +82,28 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	assert.True(t, len(itmList.Items) > 0)
+
+	{
+		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+			Name: "default.octelium-api",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+			Name: "auth.octelium-api",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+			Name: "dns.octelium",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+			Name: "portal.default",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+	}
 
 	return nil
 }

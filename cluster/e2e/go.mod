@@ -6,6 +6,7 @@ require (
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/client/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/zap v1.27.0
 )
@@ -23,7 +24,6 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/octelium/octelium/octelium-go v0.0.0-00010101000000-000000000000 // indirect
-	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/spf13/cobra v1.8.1 // indirect
