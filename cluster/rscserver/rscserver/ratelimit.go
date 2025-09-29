@@ -42,9 +42,9 @@ func (s *srvRateLimit) CheckSlidingWindow(ctx context.Context,
 	}
 
 	key := fmt.Sprintf("octelium:rlsw:%s", vutils.Sha256SumHex(req.Key))
-	now := time.Now().UnixMilli()
+	now := time.Now().UnixMicro()
 	window := umetav1.ToDuration(req.Window).ToGo()
-	windowStart := now - window.Milliseconds()
+	windowStart := now - window.Microseconds()
 	pipe := s.redisC.TxPipeline()
 
 	pipe.ZRemRangeByScore(ctx, key, "0", fmt.Sprint(windowStart))
@@ -53,7 +53,7 @@ func (s *srvRateLimit) CheckSlidingWindow(ctx context.Context,
 
 	countCmd := pipe.ZCard(ctx, key)
 
-	pipe.Expire(ctx, key, window*2)
+	pipe.Expire(ctx, key, window+1*time.Second)
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {

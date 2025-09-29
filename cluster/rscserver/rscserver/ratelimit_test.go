@@ -108,6 +108,21 @@ func TestRatLimit(t *testing.T) {
 			assert.Nil(t, err, "%+v", err)
 			assert.True(t, resp.IsAllowed)
 		}
+
+		time.Sleep(5 * time.Millisecond)
+		{
+			resp, err := srvCache.CheckSlidingWindow(ctx, &rratelimitv1.CheckSlidingWindowRequest{
+				Key: key,
+				Window: &metav1.Duration{
+					Type: &metav1.Duration_Seconds{
+						Seconds: 4,
+					},
+				},
+				Limit: 2,
+			})
+			assert.Nil(t, err, "%+v", err)
+			assert.False(t, resp.IsAllowed)
+		}
 	}
 
 }
