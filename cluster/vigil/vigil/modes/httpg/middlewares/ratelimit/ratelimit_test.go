@@ -69,17 +69,10 @@ func TestMiddleware(t *testing.T) {
 
 		mdlwr.ServeHTTP(rw, req)
 
-		assert.Equal(t, "", rw.Body.String())
 		assert.Equal(t, http.StatusOK, rw.Code)
 	}
 
 	{
-		req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
-
-		usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil,
-			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
-		assert.Nil(t, err)
-
 		svcCfg := &corev1.Service_Spec_Config{
 			Type: &corev1.Service_Spec_Config_Http{
 				Http: &corev1.Service_Spec_Config_HTTP{
@@ -105,35 +98,181 @@ func TestMiddleware(t *testing.T) {
 				},
 			},
 		}
-		req = req.WithContext(context.WithValue(context.Background(),
-			middlewares.CtxRequestContext,
-			&middlewares.RequestContext{
-				CreatedAt:     time.Now(),
-				ServiceConfig: svcCfg,
-				DownstreamInfo: &corev1.RequestContext{
-					Session: usrT.Session,
-					User:    usrT.Usr,
+
+		{
+			// user-1
+			usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil,
+				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			assert.Nil(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+			req = req.WithContext(context.WithValue(context.Background(),
+				middlewares.CtxRequestContext,
+				&middlewares.RequestContext{
+					CreatedAt:     time.Now(),
+					ServiceConfig: svcCfg,
+					DownstreamInfo: &corev1.RequestContext{
+						Session: usrT.Session,
+						User:    usrT.Usr,
+					},
+				}))
+
+			{
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusTooManyRequests, rw.Result().StatusCode)
+			}
+		}
+
+		{
+			// user-2
+			usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil,
+				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			assert.Nil(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+			req = req.WithContext(context.WithValue(context.Background(),
+				middlewares.CtxRequestContext,
+				&middlewares.RequestContext{
+					CreatedAt:     time.Now(),
+					ServiceConfig: svcCfg,
+					DownstreamInfo: &corev1.RequestContext{
+						Session: usrT.Session,
+						User:    usrT.Usr,
+					},
+				}))
+			{
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusTooManyRequests, rw.Result().StatusCode)
+			}
+		}
+	}
+
+	{
+		svcCfg := &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+						{
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_{
+								RateLimit: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+									Limit:      2,
+									StatusCode: 407,
+									Key: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval{
+											Eval: `"some-global-key"`,
+										},
+									},
+									Window: &metav1.Duration{
+										Type: &metav1.Duration_Seconds{
+											Seconds: 3,
+										},
+									},
+								},
+							},
+						},
+					},
 				},
-			}))
-
-		{
-			rw := httptest.NewRecorder()
-			mdlwr.ServeHTTP(rw, req)
-			assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			},
 		}
 
 		{
-			time.Sleep(1 * time.Millisecond)
-			rw := httptest.NewRecorder()
-			mdlwr.ServeHTTP(rw, req)
-			assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			// user-1
+			usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil,
+				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			assert.Nil(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+			req = req.WithContext(context.WithValue(context.Background(),
+				middlewares.CtxRequestContext,
+				&middlewares.RequestContext{
+					CreatedAt:     time.Now(),
+					ServiceConfig: svcCfg,
+					DownstreamInfo: &corev1.RequestContext{
+						Session: usrT.Session,
+						User:    usrT.Usr,
+					},
+				}))
+
+			{
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+			}
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, 407, rw.Result().StatusCode)
+			}
 		}
 
 		{
-			time.Sleep(1 * time.Millisecond)
-			rw := httptest.NewRecorder()
-			mdlwr.ServeHTTP(rw, req)
-			assert.Equal(t, http.StatusTooManyRequests, rw.Result().StatusCode)
+			// user-2
+			usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil,
+				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			assert.Nil(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+			req = req.WithContext(context.WithValue(context.Background(),
+				middlewares.CtxRequestContext,
+				&middlewares.RequestContext{
+					CreatedAt:     time.Now(),
+					ServiceConfig: svcCfg,
+					DownstreamInfo: &corev1.RequestContext{
+						Session: usrT.Session,
+						User:    usrT.Usr,
+					},
+				}))
+
+			{
+				time.Sleep(1 * time.Millisecond)
+				rw := httptest.NewRecorder()
+				mdlwr.ServeHTTP(rw, req)
+				assert.Equal(t, 407, rw.Result().StatusCode)
+			}
 		}
 
 	}

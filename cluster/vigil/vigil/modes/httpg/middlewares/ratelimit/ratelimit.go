@@ -110,11 +110,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 
 			if resp.IsAllowed {
-				zap.L().Debug("Rate limit allowed", zap.String("key", key))
 				continue
 			}
-
-			zap.L().Debug("Rate limit exceeded", zap.String("key", key))
 
 			for k, v := range rateLimit.Headers {
 				rw.Header().Set(k, v)
