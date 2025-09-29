@@ -1,7 +1,10 @@
 name: tests-e2e
 permissions:
   contents: read
-on: workflow_dispatch
+on:
+  push:
+    branches:
+      - e2e
 jobs:
   test:
     runs-on: ubuntu-24.04
