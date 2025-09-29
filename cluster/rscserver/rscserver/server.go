@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
@@ -219,10 +220,19 @@ func (s *Server) Run(ctx context.Context) error {
 
 	grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
 
-	cacheSrv := &srvCache{
-		redisC: s.redisC,
+	{
+		cacheSrv := &srvCache{
+			redisC: s.redisC,
+		}
+		rcachev1.RegisterMainServiceServer(s.grpcSrv, cacheSrv)
 	}
-	rcachev1.RegisterMainServiceServer(s.grpcSrv, cacheSrv)
+
+	{
+		rateLimitSrv := &srvRateLimit{
+			redisC: s.redisC,
+		}
+		rratelimitv1.RegisterMainServiceServer(s.grpcSrv, rateLimitSrv)
+	}
 
 	if s.opts.RegisterResourceFn != nil {
 		zap.L().Debug("Running RegisterResourceFn")

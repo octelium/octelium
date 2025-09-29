@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/octeliumc/middlewares"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -36,6 +37,7 @@ import (
 type Client struct {
 	coreC           rcorev1.ResourceServiceClient
 	cacheC          rcachev1.MainServiceClient
+	rateLimitC      rratelimitv1.MainServiceClient
 	clusterV1UtilsC *clusterV1UtilsC
 }
 
@@ -94,6 +96,10 @@ func (c *Client) CacheC() rcachev1.MainServiceClient {
 	return c.cacheC
 }
 
+func (c *Client) RateLimitC() rratelimitv1.MainServiceClient {
+	return c.rateLimitC
+}
+
 func (c *Client) CoreV1Utils() CoreV1Utils {
 	return c.clusterV1UtilsC
 }
@@ -102,6 +108,7 @@ type ClientInterface interface {
 	CoreC() rcorev1.ResourceServiceClient
 	CoreV1Utils() CoreV1Utils
 	CacheC() rcachev1.MainServiceClient
+	RateLimitC() rratelimitv1.MainServiceClient
 }
 
 type clusterV1UtilsC struct {
