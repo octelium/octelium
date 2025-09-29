@@ -18,11 +18,13 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/client/common/client"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -54,14 +56,19 @@ func (s *server) run(ctx context.Context) error {
 		os.Setenv("OCTELIUM_QUIC", "true")
 	}
 
-	if err := s.runOcteliumctlCmds(ctx); err != nil {
+	if err := s.runOcteliumctlEmbedded(ctx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *server) runOcteliumctlCmds(ctx context.Context) error {
+func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
+	if err := cliutils.OpenDB(""); err != nil {
+		return err
+	}
+	defer cliutils.CloseDB()
+
 	t := s.t
 	conn, err := client.GetGRPCClientConn(ctx, s.domain)
 	assert.Nil(t, err)
@@ -92,7 +99,7 @@ func Run() error {
 	}
 
 	if s.t.errs > 0 {
-		panic("e2e err")
+		panic(fmt.Sprintf("e2e err: %d", s.t.errs))
 	}
 
 	return nil
