@@ -1,0 +1,25 @@
+name: tests-e2e
+permissions:
+  contents: read
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev postgresql-client
+      - name: Set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{env.GO_VERSION}}"
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+      - name: Run
+        run: |
+          go version
+          which go
+          whoami
+          make build-e2e
+          ./bin/octelium-e2e

@@ -72,6 +72,8 @@ build-octovigil:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-octovigil github.com/octelium/octelium/cluster/octovigil
 build-portal:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-portal github.com/octelium/octelium/cluster/portal
+build-e2e:
+	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-e2e github.com/octelium/octelium/cluster/e2e
 
 build-cli-octelium:
 	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/ github.com/octelium/octelium/client/octelium
@@ -169,5 +171,6 @@ tidy:
 	cd cluster/vigil; $(CMD_TIDY)
 	cd cluster/nodeinit; $(CMD_TIDY)
 	cd cluster/gwagent; $(CMD_TIDY)
+	cd cluster/e2e; $(CMD_TIDY)
 set-license:
 	go run unsorted/licenser/main.go

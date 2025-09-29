@@ -19,6 +19,7 @@ use (
 	./cluster/portal
 	./cluster/rscserver
 	./cluster/vigil
+	./cluster/e2e
 	./octelium-go
 	./pkg
 )
