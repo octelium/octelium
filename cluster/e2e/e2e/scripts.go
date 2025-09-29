@@ -110,7 +110,8 @@ kubectl create secret generic octelium-pg --from-literal=postgres-password=${PG_
 kubectl create secret generic octelium-redis --from-literal=password=${REDIS_PASSWORD}
 
 helm install --namespace kube-system octelium-multus oci://registry-1.docker.io/bitnamicharts/multus-cni --version 2.2.7 \
-    --set hostCNIBinDir=/var/lib/rancher/k3s/data/cni/ --set hostCNINetDir=/var/lib/rancher/k3s/agent/etc/cni/net.d
+    --set hostCNIBinDir=/var/lib/rancher/k3s/data/cni/ --set hostCNINetDir=/var/lib/rancher/k3s/agent/etc/cni/net.d \
+	--set image.repository=bitnamilegacy/multus-cni --set global.security.allowInsecureImages=true &>/dev/null
 
 helm install octelium-redis oci://registry-1.docker.io/bitnamicharts/redis \
 	--set auth.existingSecret=octelium-redis \
@@ -118,15 +119,16 @@ helm install octelium-redis oci://registry-1.docker.io/bitnamicharts/redis \
 	--set architecture=standalone \
 	--set master.persistence.enabled=false \
 	--set standalone.persistence.enabled=false \
-  --set networkPolicy.enabled=false --version 20.8.0
+	--set networkPolicy.enabled=false --version 20.8.0 \
+	--set image.repository=bitnamilegacy/redis --set global.security.allowInsecureImages=true &>/dev/null
 
 helm install --wait --timeout 30m0s octelium-pg oci://registry-1.docker.io/bitnamicharts/postgresql \
 	--set primary.persistence.existingClaim=octelium-db-pvc \
 	--set global.postgresql.auth.existingSecret=octelium-pg \
 	--set global.postgresql.auth.database=octelium \
 	--set global.postgresql.auth.username=octelium \
-  --set primary.networkPolicy.enabled=false --version 16.4.14
-
+	--set primary.networkPolicy.enabled=false --version 16.4.14 \
+	--set image.repository=bitnamilegacy/postgresql --set global.security.allowInsecureImages=true &>/dev/null
 
 export OCTELIUM_REGION_EXTERNAL_IP=${EXTERNAL_IP}
 export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
