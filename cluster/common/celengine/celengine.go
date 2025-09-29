@@ -23,6 +23,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/google/cel-go/common/types"
+
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker/decls"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -67,34 +69,44 @@ func New(ctx context.Context, opts *Opts) (*CELEngine, error) {
 }
 
 func (e *CELEngine) EvalPolicy(ctx context.Context, exp string, input map[string]any) (bool, error) {
-	prg, err := e.getOrSetProg(ctx, exp)
+	prg, err := e.getOrSetProg(ctx, exp, cel.BoolType)
 	if err != nil {
 		return false, err
 	}
 
-	// startedAt := time.Now()
 	out, _, err := prg.ContextEval(ctx, input)
 	if err != nil {
 		return false, err
 	}
 
-	/*
-		zap.L().Debug("CEL evaluation done",
-			zap.Float32("time microsec", float32(time.Since(startedAt).Nanoseconds())/1000),
-			zap.String("expression", exp),
-		)
-	*/
-
 	return out.Value().(bool), nil
 }
 
-func (e *CELEngine) AddPolicy(ctx context.Context, exp string) error {
+func (e *CELEngine) EvalPolicyString(ctx context.Context, exp string, input map[string]any) (string, error) {
+	prg, err := e.getOrSetProg(ctx, exp, cel.StringType)
+	if err != nil {
+		return "", err
+	}
 
-	_, err := e.getOrSetProg(ctx, exp)
+	out, _, err := prg.ContextEval(ctx, input)
+	if err != nil {
+		return "", err
+	}
+
+	return out.Value().(string), nil
+}
+
+func (e *CELEngine) AddPolicy(ctx context.Context, exp string) error {
+	_, err := e.getOrSetProg(ctx, exp, cel.BoolType)
 	return err
 }
 
-func (e *CELEngine) getOrSetProg(ctx context.Context, exp string) (cel.Program, error) {
+func (e *CELEngine) AddPolicyString(ctx context.Context, exp string) error {
+	_, err := e.getOrSetProg(ctx, exp, cel.StringType)
+	return err
+}
+
+func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type) (cel.Program, error) {
 	if len(exp) > 10000 {
 		return nil, errors.Errorf("Expression is too long")
 	}
@@ -108,11 +120,11 @@ func (e *CELEngine) getOrSetProg(ctx context.Context, exp string) (cel.Program, 
 	// startedAt := time.Now()
 	ast, iss := e.env.Compile(exp)
 	if iss.Err() != nil {
-		return nil, errors.Errorf("Could not compile CEL expression: %s: %+v", exp, iss.Err())
+		return nil, errors.Errorf("Could not compile CEL expression: %s: %s", exp, iss.Err())
 	}
 
-	if !reflect.DeepEqual(ast.OutputType(), cel.BoolType) {
-		return nil, errors.Errorf("Invalid result type of CEL expression: %s. Must be boolean", exp)
+	if !reflect.DeepEqual(ast.OutputType(), typ) {
+		return nil, errors.Errorf("Invalid result type of CEL expression: %s.", exp)
 	}
 
 	prg, err := e.env.Program(ast, cel.EvalOptions(cel.OptOptimize))
