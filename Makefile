@@ -106,7 +106,7 @@ gen-go-main:
 		--go_out=apis/main/quicv0 --go-grpc_out=apis/main/quicv0 $(PROTO_GO_OPT)
 
 gen-go-cluster:
-	mkdir -p apis/cluster/cclusterv1 apis/cluster/coctovigilv1
+	mkdir -p apis/cluster/cclusterv1 apis/cluster/coctovigilv1 apis/cluster/cvigilv1
 	mkdir -p apis/cluster/cbootstrapv1
 	mkdir -p apis/cluster/csecretmanv1
 	protoc -I . -I $(PROTO_IN_CLUSTER)/clusterv1 cclusterv1.proto \
@@ -117,6 +117,8 @@ gen-go-cluster:
 		--go_out=apis/cluster/cbootstrapv1 --go-grpc_out=apis/cluster/cbootstrapv1 $(PROTO_GO_OPT)
 	protoc -I . -I $(PROTO_IN_CLUSTER)/secretmanv1 csecretmanv1.proto \
 		--go_out=apis/cluster/csecretmanv1 --go-grpc_out=apis/cluster/csecretmanv1 $(PROTO_GO_OPT_GRPC)
+	protoc -I . -I $(PROTO_IN_CLUSTER)/vigilv1 cvigilv1.proto \
+		--go_out=apis/cluster/cvigilv1 --go-grpc_out=apis/cluster/cvigilv1 $(PROTO_GO_OPT_GRPC)
 
 gen-go-rsc:
 	mkdir -p apis/rsc/rmetav1 apis/rsc/rcorev1 apis/rsc/rcachev1 apis/rsc/rratelimitv1

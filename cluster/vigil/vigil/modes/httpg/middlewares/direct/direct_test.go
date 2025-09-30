@@ -76,13 +76,14 @@ func TestMiddleware(t *testing.T) {
 				Http: &corev1.Service_Spec_Config_HTTP{
 					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
-										},
-									},
+
 									StatusCode: 407,
 									Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{
@@ -127,13 +128,15 @@ func TestMiddleware(t *testing.T) {
 				Http: &corev1.Service_Spec_Config_HTTP{
 					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: "2 < 1",
+								},
+							},
+
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: "2 < 1",
-										},
-									},
+
 									StatusCode: 407,
 									Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{
@@ -145,13 +148,15 @@ func TestMiddleware(t *testing.T) {
 						},
 
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: "2 > 1",
+								},
+							},
+
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: "2 > 1",
-										},
-									},
+
 									StatusCode: 417,
 									Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{
@@ -192,13 +197,14 @@ func TestMiddleware(t *testing.T) {
 				Http: &corev1.Service_Spec_Config_HTTP{
 					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: "2 < 1",
+								},
+							},
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: "2 < 1",
-										},
-									},
+
 									StatusCode: 407,
 									Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{
@@ -210,13 +216,14 @@ func TestMiddleware(t *testing.T) {
 						},
 
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: "4 < 3",
+								},
+							},
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: "4 < 3",
-										},
-									},
+
 									StatusCode: 417,
 									Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{

@@ -29,13 +29,26 @@ import (
 type ShouldEnforcePluginOpts struct {
 	Plugin    *corev1.Service_Spec_Config_HTTP_Plugin
 	CELEngine *celengine.CELEngine
+	Phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
 }
 
 func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
-	rules := o.Plugin.Rules
+	plugin := o.Plugin
+	if plugin == nil {
+		return false
+	}
 
-	if len(rules) == 0 {
-		return true
+	if plugin.IsDisabled {
+		return false
+	}
+
+	if !matchesPhase(plugin, o.Phase) {
+		return false
+	}
+
+	cond := o.Plugin.Condition
+	if cond == nil {
+		return false
 	}
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
@@ -51,26 +64,12 @@ func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
 		"ctx": reqCtxMap,
 	}
 
-	for _, rule := range rules {
-		isMatched, err := o.CELEngine.EvalCondition(ctx, rule.Condition, inputMap)
-		if err != nil {
-			continue
-		}
+	isMatched, _ := o.CELEngine.EvalCondition(ctx, cond, inputMap)
 
-		if isMatched {
-			switch rule.Effect {
-			case corev1.Service_Spec_Config_HTTP_Plugin_Rule_IGNORE:
-				return false
-			case corev1.Service_Spec_Config_HTTP_Plugin_Rule_ENFORCE:
-				return true
-			}
-		}
-	}
-
-	return true
+	return isMatched
 }
 
-func MatchesPhase(plugin *corev1.Service_Spec_Config_HTTP_Plugin, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) bool {
+func matchesPhase(plugin *corev1.Service_Spec_Config_HTTP_Plugin, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) bool {
 	switch phase {
 	case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
 		return plugin.Phase == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
@@ -82,7 +81,7 @@ func MatchesPhase(plugin *corev1.Service_Spec_Config_HTTP_Plugin, phase corev1.S
 			return false
 		}
 	default:
-		zap.L().Debug("Middleware Phase is unset. This should not happen in production")
+		zap.L().Warn("Middleware Phase is unset. This should not happen in production")
 		return false
 	}
 }

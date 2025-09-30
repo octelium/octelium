@@ -78,13 +78,14 @@ func TestMiddleware(t *testing.T) {
 				Http: &corev1.Service_Spec_Config_HTTP{
 					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_{
 								RateLimit: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
-										},
-									},
+
 									Limit: 2,
 									Window: &metav1.Duration{
 										Type: &metav1.Duration_Seconds{
@@ -183,13 +184,14 @@ func TestMiddleware(t *testing.T) {
 				Http: &corev1.Service_Spec_Config_HTTP{
 					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_{
 								RateLimit: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
-										},
-									},
+
 									Limit:      2,
 									StatusCode: 407,
 									Key: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{

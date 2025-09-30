@@ -103,18 +103,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 		switch plugin.Type.(type) {
 		case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
-
-			if plugin.IsDisabled {
-				continue
-			}
-
-			if !commonplugin.MatchesPhase(plugin, m.phase) {
-				continue
-			}
-
 			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,
 				CELEngine: m.celEngine,
+				Phase:     m.phase,
 			}) {
 				continue
 			}

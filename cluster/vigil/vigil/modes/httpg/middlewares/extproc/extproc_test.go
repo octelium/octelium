@@ -219,6 +219,11 @@ func TestMiddleware(t *testing.T) {
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
 										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
@@ -334,6 +339,11 @@ func TestMiddlewareTimeout(t *testing.T) {
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
 										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{

@@ -85,6 +85,11 @@ func TestMiddleware(t *testing.T) {
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
@@ -127,6 +132,11 @@ func TestMiddleware(t *testing.T) {
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
@@ -178,6 +188,11 @@ end`,
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
@@ -266,6 +281,11 @@ func TestWithExit(t *testing.T) {
 						Http: &corev1.Service_Spec_Config_HTTP{
 							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
 									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 										Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 											Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{

@@ -816,21 +816,8 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					}
 					names = append(names, plugin.Name)
 
-					if len(plugin.Rules) > 0 {
-						if len(plugin.Rules) > 100 {
-							return serr.InvalidArg("Too many plugin rules")
-						}
-
-						for _, rule := range plugin.Rules {
-							if err := s.validateCondition(ctx, rule.Condition); err != nil {
-								return err
-							}
-
-							switch rule.Effect {
-							case corev1.Service_Spec_Config_HTTP_Plugin_Rule_EFFECT_UNKNOWN:
-								return serr.InvalidArg("Plugin rule effect must be set to either ENFORCE or IGNORE")
-							}
-						}
+					if err := s.validateCondition(ctx, plugin.Condition); err != nil {
+						return err
 					}
 
 					switch plugin.Type.(type) {
