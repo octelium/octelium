@@ -1,0 +1,23 @@
+name: demo-cluster-install
+on:
+  push:
+    branches:
+      - e2e
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+      - name: Run
+        run: |
+          curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
+          sudo chmod +x install-demo-cluster.sh
+          sudo ./install-demo-cluster.sh --domain example.com
+          export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+          kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
