@@ -248,7 +248,10 @@ func (s *Server) getHTTPHeadersFromReq(req *coctovigilv1.DownstreamRequest) map[
 }
 
 func (s *Server) isAddressFromClient(addrStr string) bool {
-	addr, _ := netip.ParseAddr(addrStr)
+	addr, err := netip.ParseAddr(addrStr)
+	if err != nil {
+		return false
+	}
 
 	if s.v6Prefix != nil && s.v6Prefix.Contains(addr) {
 		return true
