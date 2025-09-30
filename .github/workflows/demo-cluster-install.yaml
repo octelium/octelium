@@ -1,8 +1,5 @@
 name: demo-cluster-install
-on:
-  push:
-    branches:
-      - e2e
+on: workflow_dispatch
 jobs:
   test:
     runs-on: ubuntu-24.04
