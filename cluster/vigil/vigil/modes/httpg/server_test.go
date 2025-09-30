@@ -2111,6 +2111,11 @@ func TestLua(t *testing.T) {
 						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 							{
 								Name: "lua-1",
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
 								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
@@ -2261,6 +2266,11 @@ func TestLua2(t *testing.T) {
 						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 							{
 								Name: "lua-1",
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
 								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
@@ -2429,6 +2439,11 @@ func TestLuaMultiple(t *testing.T) {
 						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
 							{
 								Name: "lua-1",
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
 								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
