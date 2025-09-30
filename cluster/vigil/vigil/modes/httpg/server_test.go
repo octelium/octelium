@@ -2459,6 +2459,11 @@ end
 							},
 							{
 								Name: "lua-2",
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
 								Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
 									Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
 										Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
