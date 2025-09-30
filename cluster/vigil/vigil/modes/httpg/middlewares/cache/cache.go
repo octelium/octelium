@@ -84,6 +84,14 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			cacheC := plugin.GetCache()
 
+			if !cacheC.AllowUnsafeMethods {
+				switch req.Method {
+				case http.MethodGet, http.MethodHead:
+				default:
+					continue
+				}
+			}
+
 			key := m.getKey(ctx, cacheC, reqCtx, req)
 			if len(key) == 0 {
 				continue
@@ -108,7 +116,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					rwHdr[hdr.Key] = hdr.Values
 				}
 
-				rwHdr.Set("X-Cache", "HIT")
+				if cacheC.UseXCacheHeader {
+					rwHdr.Set("X-Cache", "HIT")
+				}
 
 				rw.WriteHeader(int(res.Code))
 				rw.Write(res.Body)
@@ -117,6 +127,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			crw := newResponseWriter(rw)
 			m.next.ServeHTTP(crw, req)
+
 			go m.doCache(crw, key, cacheC)
 			return
 		default:
@@ -131,19 +142,17 @@ func (m *middleware) getKey(ctx context.Context,
 	cacheC *corev1.Service_Spec_Config_HTTP_Plugin_Cache,
 	reqCtx *middlewares.RequestContext, req *http.Request) []byte {
 
-	if cacheC.Key == nil {
-		return m.doGetKey(req.URL.RequestURI())
-	}
-
-	switch cacheC.Key.Type.(type) {
-	case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
-		if key, err := m.celEngine.EvalPolicyString(ctx,
-			cacheC.Key.GetEval(), reqCtx.ReqCtxMap); err == nil && key != "" {
-			return m.doGetKey(key)
+	if cacheC.Key != nil {
+		switch cacheC.Key.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
+			if key, err := m.celEngine.EvalPolicyString(ctx,
+				cacheC.Key.GetEval(), reqCtx.ReqCtxMap); err == nil && key != "" {
+				return m.doGetKey(key)
+			}
 		}
 	}
 
-	return m.doGetKey(req.URL.RequestURI())
+	return m.doGetKey(fmt.Sprintf("%s:%s", req.Method, req.URL.RequestURI()))
 }
 
 func (m *middleware) doGetKey(arg string) []byte {
@@ -152,6 +161,15 @@ func (m *middleware) doGetKey(arg string) []byte {
 }
 
 func (m *middleware) doCache(rw *responseWriter, key []byte, cacheC *corev1.Service_Spec_Config_HTTP_Plugin_Cache) {
+	maxBody := cacheC.MaxSize
+	if maxBody == 0 {
+		maxBody = 4_000_000
+	}
+
+	if uint64(rw.body.Len()) > maxBody {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

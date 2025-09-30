@@ -97,6 +97,7 @@ func TestMiddleware(t *testing.T) {
 
 							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{
 								Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{
+									UseXCacheHeader: true,
 									Ttl: &metav1.Duration{
 										Type: &metav1.Duration_Seconds{
 											Seconds: 2,
