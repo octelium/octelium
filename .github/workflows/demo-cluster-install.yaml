@@ -12,9 +12,11 @@ jobs:
         run: |
           curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
           sudo chmod +x install-demo-cluster.sh
-          sudo ./install-demo-cluster.sh --domain example.com
+          sudo ./install-demo-cluster.sh --domain localhost
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
+          curl -k --fail https://localhost
