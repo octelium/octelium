@@ -99,7 +99,7 @@ EXTERNAL_IP=${DEFAULT_LINK_ADDR}
 
 NODE_NAME=$(kubectl get nodes --no-headers -o jsonpath='{.items[0].metadata.name}')
 
-kubectl annotate node ${NODE_NAME} octelium.com/public-ip=${EXTERNAL_IP}
+kubectl annotate node ${NODE_NAME} octelium.com/public-ip-test=${EXTERNAL_IP}
 
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
