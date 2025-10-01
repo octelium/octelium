@@ -44,6 +44,7 @@ type args struct {
 	Policies           []string
 	Scopes             []string
 	MaxAuthentications uint32
+	Out                string
 }
 
 var Cmd = &cobra.Command{
@@ -80,6 +81,7 @@ func init() {
 		`Scope applied to Sessions created by this Credential. Use the flag multiple times to add more Scopes.`)
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Policies, "policy", nil,
 		`Policy attached to Sessions created by this Credential. Use the flag multiple times to add more Policies.`)
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -105,6 +107,15 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		})
 		if err != nil {
 			return err
+		}
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, tokenResp)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
 
 		switch tokenResp.Type.(type) {
@@ -224,7 +235,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cliutils.LineInfo("Credential %s successfully created\n", req.Metadata.Name)
+	if cmdArgs.Out == "" {
+		cliutils.LineInfo("Credential %s successfully created\n", req.Metadata.Name)
+	}
 
 	return doGenerateToken(umetav1.GetObjectReference(cred))
 }
