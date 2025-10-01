@@ -57,6 +57,7 @@ func (s *server) run(ctx context.Context) error {
 		os.Setenv("OCTELIUM_DOMAIN", s.domain)
 		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
 		os.Setenv("OCTELIUM_QUIC", "true")
+		os.Setenv("OCTELIUM_PRODUCTION", "true")
 	}
 	{
 		out, err := s.getCmd(ctx, "octeliumctl version -o json").CombinedOutput()
