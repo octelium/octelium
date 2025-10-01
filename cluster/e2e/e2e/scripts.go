@@ -20,10 +20,13 @@ import (
 	"context"
 	"os"
 	"os/exec"
+
+	"go.uber.org/zap"
 )
 
 const scriptInstall = `
 #!/usr/bin/env bash
+set -e
 
 DOMAIN="localhost"
 VERSION="main"
@@ -160,6 +163,7 @@ kubectl wait --for=condition=available deployment/octelium-ingress --namespace o
 
 AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
 
+curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
 sleep 3
 
 octelium login --domain localhost --auth-token $AUTH_TOKEN
@@ -204,8 +208,14 @@ func (s *server) runScript(ctx context.Context, script string) error {
 func (s *server) getCmd(ctx context.Context, cmdStr string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
 
+	return cmd
+}
+
+func (s *server) runCmd(ctx context.Context, cmdStr string) error {
+	cmd := s.getCmd(ctx, cmdStr)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd
+	zap.L().Debug("Running cmd", zap.String("cmd", cmdStr))
+	return cmd.Run()
 }
