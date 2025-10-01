@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -121,10 +122,22 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 
 	c := corev1.NewMainServiceClient(conn)
 
-	itmList, err := c.ListService(ctx, &corev1.ListServiceOptions{})
-	assert.Nil(t, err)
+	{
+		_, err = c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+		assert.Nil(t, err)
 
-	assert.True(t, len(itmList.Items) > 0)
+		_, err = c.GetService(ctx, &metav1.GetOptions{
+			Name: "demo-nginx.default",
+		})
+		assert.Nil(t, err)
+
+		{
+			itmList, err := c.ListService(ctx, &corev1.ListServiceOptions{})
+			assert.Nil(t, err)
+
+			assert.True(t, len(itmList.Items) > 0)
+		}
+	}
 
 	{
 		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
@@ -173,7 +186,7 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 	t := s.t
 
 	out, err := s.getCmd(ctx,
-		"octeliumctl create cred --user root --policy allow-all --type access-token").CombinedOutput()
+		"octeliumctl create cred --user root --policy allow-all --type access-token -o json").CombinedOutput()
 	assert.Nil(t, err)
 
 	res := &corev1.CredentialToken{}
@@ -202,6 +215,9 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 
 func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	t := s.t
+
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 
 	connCmd, err := s.startOcteliumConnectRootless(ctx, "-p demo-nginx:14041")
 	assert.Nil(t, err)
