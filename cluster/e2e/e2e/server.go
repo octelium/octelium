@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -63,11 +64,19 @@ func (s *server) run(ctx context.Context) error {
 		zap.L().Info("octeliumctl version", zap.String("out", string(out)))
 	}
 
+	{
+		assert.Nil(t, s.runCmd(ctx, "octelium status"))
+	}
+
 	if err := s.runOcteliumctlEmbedded(ctx); err != nil {
 		return err
 	}
 
 	if err := s.runOcteliumctlCommands(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runOcteliumConnectCommands(ctx); err != nil {
 		return err
 	}
 
@@ -131,6 +140,26 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	assert.True(t, len(res.Items) > 0)
+
+	return nil
+}
+
+func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
+	t := s.t
+
+	cmd := s.getCmd(ctx, "octeliumctl connect -p nginx:14041")
+
+	assert.Nil(t, cmd.Start())
+
+	time.Sleep(2 * time.Second)
+
+	assert.Nil(t, s.runCmd(ctx, "curl --fail localhost:14041"))
+
+	{
+		assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+	}
+
+	cmd.Wait()
 
 	return nil
 }

@@ -79,7 +79,7 @@ curl -fsSL https://octelium.com/install.sh | bash
 
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 
-kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true
 
 kubectl label nodes --all octelium.com/node=
 kubectl label nodes --all octelium.com/node-mode-controlplane=
