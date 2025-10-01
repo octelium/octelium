@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -100,6 +101,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runOcteliumctlAccessToken(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -160,6 +165,37 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	assert.True(t, len(res.Items) > 0)
+
+	return nil
+}
+
+func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx,
+		"octeliumctl create cred --user root --policy allow-all --type access-token").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.CredentialToken{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	{
+
+		res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+			InsecureSkipVerify: true,
+		}).
+			SetRetryCount(10).
+			R().SetAuthScheme("Bearer").
+			SetAuthToken(res.GetAccessToken().AccessToken).
+			Get("https://demo-nginx.localhost")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+
+	}
 
 	return nil
 }
