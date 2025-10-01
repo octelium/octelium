@@ -1,4 +1,4 @@
-FROM node:20 as builder-web
+FROM node:22 as builder-web
 
 COPY cluster/authserver/authserver/web/package /build
 RUN cd /build && npm install && npm run build
