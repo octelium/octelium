@@ -26,16 +26,15 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
 type server struct {
-	domain    string
-	octeliumC octeliumc.ClientInterface
-	t         *CustomT
+	domain string
+	t      *CustomT
 }
 
 func initServer(ctx context.Context) (*server, error) {
@@ -49,6 +48,7 @@ func initServer(ctx context.Context) (*server, error) {
 }
 
 func (s *server) run(ctx context.Context) error {
+	t := s.t
 	if err := s.installCluster(ctx); err != nil {
 		return err
 	}
@@ -57,8 +57,17 @@ func (s *server) run(ctx context.Context) error {
 		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
 		os.Setenv("OCTELIUM_QUIC", "true")
 	}
+	{
+		out, err := s.getCmd(ctx, "octeliumctl version -o json").CombinedOutput()
+		assert.Nil(t, err)
+		zap.L().Info("octeliumctl version", zap.String("out", string(out)))
+	}
 
 	if err := s.runOcteliumctlEmbedded(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runOcteliumctlCommands(ctx); err != nil {
 		return err
 	}
 
@@ -108,7 +117,30 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 	return nil
 }
 
+func (s *server) runOcteliumctlCommands(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx, "octeliumctl get svc -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.ServiceList{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	assert.True(t, len(res.Items) > 0)
+
+	return nil
+}
+
 func Run() error {
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		return err
+	}
+	zap.ReplaceGlobals(logger)
 
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelFn()

@@ -27,4 +27,5 @@ jobs:
           which go
           whoami
           make build-e2e
+          make install-cli
           ./bin/octelium-e2e

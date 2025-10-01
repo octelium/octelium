@@ -200,3 +200,12 @@ func (s *server) runScript(ctx context.Context, script string) error {
 
 	return nil
 }
+
+func (s *server) getCmd(ctx context.Context, cmdStr string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd
+}
