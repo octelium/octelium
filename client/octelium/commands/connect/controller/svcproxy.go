@@ -214,8 +214,6 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 			return nil, err
 		}
 
-		// zap.S().Debugf("Found svc addrs: %+v", addrs)
-
 		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(addrs[0], fmt.Sprintf("%d", l.port)))
 		if err != nil {
 			return nil, err
@@ -231,8 +229,6 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		// zap.S().Debugf("Resolve Service: %s to IP: %s", l.svcFQDN, resolvedServiceIP.String())
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp",
 			net.JoinHostPort(resolvedServiceIP.String(), fmt.Sprintf("%d", l.port)))

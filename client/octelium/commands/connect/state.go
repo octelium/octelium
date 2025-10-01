@@ -105,35 +105,35 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	switch state.Event.(type) {
 	case *userv1.ConnectResponse_AddGateway_:
 		gw := state.Event.(*userv1.ConnectResponse_AddGateway_).AddGateway.Gateway
-		zap.S().Debugf("Adding gw: %+v", gw)
+		zap.L().Debug("Adding Gateway", zap.Any("gw", gw))
 		if err := c.ctl.AddGateway(ctx, gw); err != nil {
 			return errors.Errorf("Could not add gw: %+v", err)
 		}
 
 	case *userv1.ConnectResponse_UpdateGateway_:
 		gw := state.Event.(*userv1.ConnectResponse_UpdateGateway_).UpdateGateway.Gateway
-		zap.S().Debugf("Updating gw: %+v", gw)
+		zap.L().Debug("Updating Gateway", zap.Any("gw", gw))
 		if err := c.ctl.UpdateGateway(ctx, gw); err != nil {
 			return errors.Errorf("Could not update gw: %+v", err)
 		}
 
 	case *userv1.ConnectResponse_DeleteGateway_:
 		gwID := state.Event.(*userv1.ConnectResponse_DeleteGateway_).DeleteGateway.Id
-		zap.S().Debugf("Deleting gw: %s", gwID)
+		zap.L().Debug("Deleting Gateway", zap.String("id", gwID))
 		if err := c.ctl.DeleteGateway(ctx, gwID); err != nil {
 			return errors.Errorf("Could not add gw: %+v", err)
 		}
 
 	case *userv1.ConnectResponse_UpdateDNS_:
 		dns := state.Event.(*userv1.ConnectResponse_UpdateDNS_).UpdateDNS.Dns
-		zap.S().Debugf("Update DNS: %+v", dns)
+		zap.L().Debug("Updating DNS", zap.Any("dns", dns))
 		c.c.Connection.Dns = dns
 		if err := c.ctl.SetDNS(); err != nil {
 			return errors.Errorf("Could not set DNS: %+v", err)
 		}
 	case *userv1.ConnectResponse_AddService_:
 		svc := state.Event.(*userv1.ConnectResponse_AddService_).AddService.Service
-		zap.S().Debugf("Add Service: %+v", svc)
+		zap.L().Debug("Adding Service", zap.Any("svc", svc))
 
 		if c.c.Connection.ServiceOptions == nil {
 			c.c.Connection.ServiceOptions = &userv1.ConnectionState_ServiceOptions{}
@@ -151,7 +151,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 
 	case *userv1.ConnectResponse_UpdateService_:
 		svc := state.Event.(*userv1.ConnectResponse_UpdateService_).UpdateService.Service
-		zap.S().Debugf("Update Service: %+v", svc)
+		zap.L().Debug("Updating Service", zap.Any("svc", svc))
 
 		if c.c.Connection.ServiceOptions == nil {
 			c.c.Connection.ServiceOptions = &userv1.ConnectionState_ServiceOptions{}
@@ -170,7 +170,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	case *userv1.ConnectResponse_DeleteService_:
 		svcName := state.Event.(*userv1.ConnectResponse_DeleteService_).DeleteService.Name
 
-		zap.L().Debug("Delete Service", zap.String("svc", svcName))
+		zap.L().Debug("Deleting Service", zap.String("svc", svcName))
 
 		if c.c.Connection.ServiceOptions == nil {
 			return errors.Errorf("Could not delete svc: %s. Service options is nil", svcName)

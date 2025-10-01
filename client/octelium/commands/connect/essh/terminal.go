@@ -228,7 +228,6 @@ func (t *terminal) run(ctx context.Context) error {
 }
 
 func (t *terminal) waitAndClose(ctx context.Context) error {
-	// zap.S().Debugf("Starting waiting for shell to exit: %s", t.id)
 
 	waitCh := make(chan error)
 	go func() {
@@ -239,21 +238,16 @@ func (t *terminal) waitAndClose(ctx context.Context) error {
 		waitCh <- err
 	}()
 
-	// zap.S().Debugf("waiting for cmd to close")
-
 	statusCode := 0
 	select {
 	case <-ctx.Done():
-		// zap.S().Debugf("ctx done")
 		statusCode = 130
 	case err := <-waitCh:
-		// zap.S().Debugf("cmd wait returned")
 		if exiterr, ok := err.(*exec.ExitError); ok {
 			zap.S().Debugf("exit code....", zap.Int("code", exiterr.ExitCode()))
 			statusCode = exiterr.ExitCode()
 		}
 	case <-t.closeCh:
-		// zap.S().Debugf("terminal closed. Killing cmd")
 		if err := t.cmd.Process.Kill(); err != nil {
 			zap.S().Debugf("cmd kill err: %+v", err)
 		}
