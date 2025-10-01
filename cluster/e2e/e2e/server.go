@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -43,10 +44,18 @@ type server struct {
 func initServer(ctx context.Context) (*server, error) {
 
 	ret := &server{
-		domain:  "localhost",
-		homedir: "/tmp/octelium",
-		t:       &CustomT{},
+		domain: "localhost",
+		t:      &CustomT{},
 	}
+
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+
+	zap.L().Info("Current user", zap.Any("info", u))
+
+	ret.homedir = fmt.Sprintf("/home/%s", u.Username)
 
 	return ret, nil
 }
@@ -158,7 +167,7 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	t := s.t
 
-	connCmd, err := s.startOcteliumConnectRootless(ctx, "-p nginx:14041")
+	connCmd, err := s.startOcteliumConnectRootless(ctx, "-p demo-nginx:14041")
 	assert.Nil(t, err)
 
 	{
