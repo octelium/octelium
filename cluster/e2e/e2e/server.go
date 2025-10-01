@@ -19,10 +19,11 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
@@ -148,19 +149,22 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	t := s.t
 
-	cmd := s.getCmd(ctx, "octeliumctl connect -p nginx:14041")
+	connCmd, err := s.startOcteliumConnectRootless(ctx, "-p nginx:14041")
+	assert.Nil(t, err)
 
-	assert.Nil(t, cmd.Start())
-
-	time.Sleep(2 * time.Second)
-
-	assert.Nil(t, s.runCmd(ctx, "curl --fail localhost:14041"))
+	{
+		res, err := resty.New().SetDebug(true).
+			SetRetryCount(10).
+			R().Get("http://localhost:14041")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
 
 	{
 		assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
 	}
 
-	cmd.Wait()
+	connCmd.Wait()
 
 	return nil
 }

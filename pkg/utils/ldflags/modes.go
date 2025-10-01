@@ -17,12 +17,12 @@ package ldflags
 import "os"
 
 func IsDev() bool {
-	if os.Getenv("OCTELIUM_PRODUCTION") == "true" {
-		return false
-	}
-
 	if os.Getenv("OCTELIUM_DEV") == "true" {
 		return true
+	}
+
+	if os.Getenv("OCTELIUM_PRODUCTION") == "true" {
+		return false
 	}
 
 	if Mode != "" && Mode != "dev" {

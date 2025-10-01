@@ -18,8 +18,10 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -221,4 +223,21 @@ func (s *server) runCmd(ctx context.Context, cmdStr string) error {
 
 	zap.L().Debug("Running cmd", zap.String("cmd", cmdStr))
 	return cmd.Run()
+}
+
+func (s *server) startOcteliumConnectRootless(ctx context.Context, args string) (*exec.Cmd, error) {
+	cmdStr := fmt.Sprintf("octelium connect %s", args)
+	cmd := s.getCmd(ctx, cmdStr)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(cmd.Env, "OCTELIUM_DEV=true")
+
+	zap.L().Debug("Running cmd", zap.String("cmd", cmdStr))
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	time.Sleep(2 * time.Second)
+
+	return cmd, nil
 }
