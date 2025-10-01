@@ -228,9 +228,9 @@ func (s *server) runCmd(ctx context.Context, cmdStr string) error {
 func (s *server) startOcteliumConnectRootless(ctx context.Context, args string) (*exec.Cmd, error) {
 	cmdStr := fmt.Sprintf("octelium connect %s", args)
 	cmd := s.getCmd(ctx, cmdStr)
+	cmd.Env = append(os.Environ(), "OCTELIUM_DEV=true")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(cmd.Env, "OCTELIUM_DEV=true")
 
 	zap.L().Debug("Running cmd", zap.String("cmd", cmdStr))
 	if err := cmd.Start(); err != nil {

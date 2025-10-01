@@ -35,15 +35,17 @@ import (
 )
 
 type server struct {
-	domain string
-	t      *CustomT
+	domain  string
+	homedir string
+	t       *CustomT
 }
 
 func initServer(ctx context.Context) (*server, error) {
 
 	ret := &server{
-		domain: "localhost",
-		t:      &CustomT{},
+		domain:  "localhost",
+		homedir: "/tmp/octelium",
+		t:       &CustomT{},
 	}
 
 	return ret, nil
@@ -59,6 +61,13 @@ func (s *server) run(ctx context.Context) error {
 		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
 		os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
+		os.Setenv("HOME", s.homedir)
+	}
+	{
+		s.runCmd(ctx, "id")
+	}
+	{
+		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
 	}
 	{
 		out, err := s.getCmd(ctx, "octeliumctl version -o json").CombinedOutput()
