@@ -211,7 +211,7 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 	if l.gonet != nil {
 		addrs, err := l.gonet.LookupHost(l.svcFQDN)
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("Could not lookupHost via gVisor: %s", err)
 		}
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(addrs[0], fmt.Sprintf("%d", l.port)))
@@ -220,7 +220,7 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 		}
 		connBackend, err = l.gonet.DialTCP(tcpAddr)
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("Could not dialTCP via gVisor: %s", err)
 		}
 
 	} else {
