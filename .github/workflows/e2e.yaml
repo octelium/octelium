@@ -9,7 +9,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev postgresql-client
+          sudo apt-get install --yes libssl-dev postgresql-client iputils-ping ssh
       - name: Set up go
         uses: actions/setup-go@v5
         with:

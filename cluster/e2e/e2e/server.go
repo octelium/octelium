@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -266,24 +267,67 @@ func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	connCmd, err := s.startOcteliumConnectRootless(ctx, "-p demo-nginx:14041")
-	assert.Nil(t, err)
+	{
+		cmd, err := s.startOcteliumConnectRootless(ctx, []string{
+			fmt.Sprintf("-p %s:14041", utilrand.GetRandomStringCanonical(8)),
+		})
+		assert.NotNil(t, err)
+
+		cmd.Wait()
+	}
+
+	/*
+		{
+			connCmd, err := s.startOcteliumConnect(ctx, []string{
+				"--no-dns",
+			})
+			assert.Nil(t, err)
+
+			out, err := s.getCmd(ctx,
+				"octeliumctl get svc demo-nginx -o json").CombinedOutput()
+			assert.Nil(t, err)
+
+			svc := &corev1.Service{}
+			assert.Nil(t, pbutils.UnmarshalJSON(out, svc))
+
+			{
+				res, err := resty.New().SetDebug(true).
+					SetRetryCount(10).
+					R().Get(fmt.Sprintf("http://%s",
+					net.JoinHostPort(svc.Status.Addresses[0].DualStackIP.Ipv6,
+						fmt.Sprintf("%d", svc.Status.Port))))
+				assert.Nil(t, err)
+				assert.Equal(t, http.StatusOK, res.StatusCode())
+			}
+
+			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+
+			connCmd.Wait()
+
+			zap.L().Debug("octelium connect exited")
+		}
+	*/
 
 	{
-		res, err := resty.New().SetDebug(true).
-			SetRetryCount(10).
-			R().Get("http://localhost:14041")
+		connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
+			"-p demo-nginx:15001",
+		})
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode())
-	}
 
-	{
+		{
+			res, err := resty.New().SetDebug(true).
+				SetRetryCount(10).
+				R().Get("http://localhost:15001")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode())
+		}
+
 		assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+
+		connCmd.Wait()
+
+		zap.L().Debug("octelium connect exited")
 	}
-
-	connCmd.Wait()
-
-	zap.L().Debug("octelium connect exited")
 
 	return nil
 }

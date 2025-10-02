@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -224,8 +225,13 @@ func (s *server) runCmd(ctx context.Context, cmdStr string) error {
 	return cmd.Run()
 }
 
-func (s *server) startOcteliumConnectRootless(ctx context.Context, args string) (*exec.Cmd, error) {
-	cmdStr := fmt.Sprintf("octelium connect %s", args)
+func (s *server) startOcteliumConnectRootless(ctx context.Context, args []string) (*exec.Cmd, error) {
+	cmdStr := "octelium connect"
+
+	if len(args) > 0 {
+		cmdStr = fmt.Sprintf("octelium connect %s", strings.Join(args, " "))
+	}
+
 	cmd := s.getCmd(ctx, cmdStr)
 	cmd.Env = append(os.Environ(), "OCTELIUM_DEV=true")
 	cmd.Stdout = os.Stdout
@@ -236,7 +242,34 @@ func (s *server) startOcteliumConnectRootless(ctx context.Context, args string) 
 		return nil, err
 	}
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(5 * time.Second)
+	zap.L().Debug("Ended waiting for connect")
 
 	return cmd, nil
+}
+
+func (s *server) startOcteliumConnect(ctx context.Context, args []string) (*exec.Cmd, error) {
+	cmdStr := "sudo -E octelium connect"
+
+	if len(args) > 0 {
+		cmdStr = fmt.Sprintf("octelium connect %s", strings.Join(args, " "))
+	}
+	cmd := s.getCmd(ctx, cmdStr)
+	cmd.Env = append(os.Environ(), "OCTELIUM_DEV=true")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	zap.L().Debug("Running cmd", zap.String("cmd", cmdStr))
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	time.Sleep(5 * time.Second)
+	zap.L().Debug("Ended waiting for connect")
+
+	return cmd, nil
+}
+
+func (s *server) ping(ctx context.Context, arg string) error {
+	return s.runCmd(ctx, fmt.Sprintf("sudo ping -c 1 %s", arg))
 }
