@@ -343,10 +343,12 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 }
 
 func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
+	// Redeploy the Service pod if such fields change
 	ret := map[string]string{
-		"octelium.com/svc-port": fmt.Sprintf("%d", svc.Status.Port),
-		"octelium.com/svc-mode": svc.Spec.Mode.String(),
-		"octelium.com/svc-tls":  fmt.Sprintf("%t", svc.Spec.IsTLS),
+		"octelium.com/svc-port":  fmt.Sprintf("%d", svc.Status.Port),
+		"octelium.com/svc-mode":  svc.Spec.Mode.String(),
+		"octelium.com/svc-tls":   fmt.Sprintf("%t", svc.Spec.IsTLS),
+		"octelium.com/svc-http2": fmt.Sprintf("%t", ucorev1.ToService(svc).IsListenerHTTP2()),
 		"octelium.com/svc-upgrade-uid": func() string {
 			if svc.Metadata.SystemLabels == nil {
 				return ""
