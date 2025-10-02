@@ -168,7 +168,6 @@ kubectl wait --for=condition=available deployment/octelium-ingress --namespace o
 
 AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
 
-curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
 sleep 3
 
 octelium login --domain localhost --auth-token $AUTH_TOKEN

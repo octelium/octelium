@@ -89,6 +89,16 @@ func (s *server) run(ctx context.Context) error {
 	{
 		assert.Nil(t, s.runCmd(ctx, "octelium status"))
 	}
+	{
+		res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+			InsecureSkipVerify: true,
+		}).
+			SetRetryCount(10).
+			R().
+			Get("https://localhost")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
 
 	if err := s.runOcteliumctlEmbedded(ctx); err != nil {
 		return err
@@ -103,6 +113,10 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlAccessToken(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runOcteliumctlAuthToken(ctx); err != nil {
 		return err
 	}
 
@@ -213,6 +227,39 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 	return nil
 }
 
+func (s *server) runOcteliumctlAuthToken(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx,
+		"octeliumctl create cred --user root --policy allow-all -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.CredentialToken{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	{
+
+		tmpDir, err := os.MkdirTemp("/tmp", "octelium-*")
+		if err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		cmd := s.getCmd(ctx, fmt.Sprintf("octelium login --auth-token %s",
+			res.GetAuthenticationToken().AuthenticationToken))
+		cmd.Env = append(os.Environ(), fmt.Sprintf("OCTELIUM_HOME=%s", tmpDir))
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		assert.Nil(t, cmd.Run())
+	}
+
+	return nil
+}
+
 func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	t := s.t
 
@@ -235,6 +282,8 @@ func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	}
 
 	connCmd.Wait()
+
+	zap.L().Debug("octelium connect exited")
 
 	return nil
 }
