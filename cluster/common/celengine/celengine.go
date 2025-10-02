@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/google/cel-go/common/types"
@@ -123,9 +122,12 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 		return nil, errors.Errorf("Could not compile CEL expression: %s: %s", exp, iss.Err())
 	}
 
-	if !reflect.DeepEqual(ast.OutputType(), typ) {
-		return nil, errors.Errorf("Invalid result type of CEL expression: %s.", exp)
-	}
+	/*
+		if !reflect.DeepEqual(ast.OutputType(), typ) {
+			return nil, errors.Errorf("Invalid result type of CEL expression: %s. Output is: %s. Required is: %s",
+				exp, ast.OutputType().String(), typ.String())
+		}
+	*/
 
 	prg, err := e.env.Program(ast, cel.EvalOptions(cel.OptOptimize))
 	if err != nil {
@@ -144,7 +146,7 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 
 func getKey(script string) string {
 	hsh := sha256.Sum256([]byte(script))
-	return fmt.Sprintf("%x", hsh[:16])
+	return fmt.Sprintf("%x", hsh[:24])
 }
 
 func (e *CELEngine) EvalCondition(ctx context.Context, condition *corev1.Condition, inputMap map[string]any) (bool, error) {

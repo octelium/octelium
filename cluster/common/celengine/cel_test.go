@@ -23,7 +23,9 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -494,4 +496,71 @@ func TestCondition(t *testing.T) {
 
 	}
 
+}
+
+func TestEvalPolicyString(t *testing.T) {
+
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	srv, err := New(ctx, &Opts{})
+	assert.Nil(t, err)
+
+	userUID := vutils.UUIDv4()
+	userName := utilrand.GetRandomString(12)
+	res, err := srv.EvalPolicyString(ctx, `ctx.userUID + ctx.userName`, map[string]any{
+		"ctx": map[string]any{
+			"userUID":  userUID,
+			"userName": userName,
+		},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, res, userUID+userName)
+}
+
+func TestEvalPolicy(t *testing.T) {
+
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	srv, err := New(ctx, &Opts{})
+	assert.Nil(t, err)
+
+	userUID := vutils.UUIDv4()
+	userName := utilrand.GetRandomString(12)
+	{
+		res, err := srv.EvalPolicy(ctx,
+			fmt.Sprintf(`ctx.userUID + ctx.userName == "%s%s"`, userUID, userName),
+			map[string]any{
+				"ctx": map[string]any{
+					"userUID":  userUID,
+					"userName": userName,
+				},
+			})
+		assert.Nil(t, err)
+		assert.True(t, res)
+	}
+
+	{
+		res, err := srv.EvalPolicy(ctx,
+			fmt.Sprintf(`ctx.userUID + ctx.userName + "invalid" == "%s%s"`, userUID, userName),
+			map[string]any{
+				"ctx": map[string]any{
+					"userUID":  userUID,
+					"userName": userName,
+				},
+			})
+		assert.Nil(t, err)
+		assert.False(t, res)
+	}
 }
