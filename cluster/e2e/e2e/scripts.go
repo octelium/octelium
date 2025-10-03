@@ -73,7 +73,7 @@ echo insecure >> ~/.curlrc
 sudo mount --make-rshared /
 sudo mkdir -p /usr/local/bin
 sudo apt-get update
-sudo apt-get install -y iputils-ping postgresql
+sudo apt-get install -y iputils-ping postgresql jq curl
 
 if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
   export PATH="/usr/local/bin:$PATH"
@@ -169,10 +169,16 @@ spec:
       enable: true
 EOF
 
-kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
-kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
+
 kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
 kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
+
+kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
+kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
+kubectl wait --for=condition=available deployment/svc-dns-octelium --namespace octelium --timeout=600s
+kubectl wait --for=condition=available deployment/svc-demo-nginx-default --namespace octelium --timeout=600s
+kubectl wait --for=condition=available deployment/svc-portal-default --namespace octelium --timeout=600s
+kubectl wait --for=condition=available deployment/svc-default-default --namespace octelium --timeout=600s
 
 
 AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
@@ -280,4 +286,12 @@ func (s *server) startOcteliumConnect(ctx context.Context, args []string) (*exec
 
 func (s *server) ping(ctx context.Context, arg string) error {
 	return s.runCmd(ctx, fmt.Sprintf("sudo ping -c 1 %s", arg))
+}
+
+func (s *server) startKubectlLog(ctx context.Context, arg string) error {
+	cmd := s.getCmd(ctx, fmt.Sprintf("kubectl logs -f -n octelium %s", arg))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Start()
 }
