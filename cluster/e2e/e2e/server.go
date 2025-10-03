@@ -91,6 +91,7 @@ func (s *server) run(ctx context.Context) error {
 		s.startKubectlLog(ctx, "-l octelium.com/svc=dns.octelium -c managed")
 		s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
 		s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
+		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
 	}
 
 	{

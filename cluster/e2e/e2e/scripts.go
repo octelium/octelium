@@ -73,7 +73,7 @@ echo insecure >> ~/.curlrc
 sudo mount --make-rshared /
 sudo mkdir -p /usr/local/bin
 sudo apt-get update
-sudo apt-get install -y iputils-ping postgresql jq curl
+sudo apt-get install -y iputils-ping postgresql jq curl ssh
 
 if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
   export PATH="/usr/local/bin:$PATH"
@@ -90,6 +90,22 @@ sudo cp kubectl /usr/local/bin
 sudo chmod 755 /usr/local/bin/kubectl
 
 curl -fsSL https://octelium.com/install.sh | bash
+
+
+export INSTALL_K3S_SKIP_START=true
+export INSTALL_K3S_SKIP_ENABLE=true
+export INSTALL_K3S_EXEC="--disable traefik"
+curl -sfL https://get.k3s.io | sh -
+
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+sudo ./get_helm.sh
+
+sudo k3s server --disable traefik --docker --write-kubeconfig-mode 644 &>/dev/null &
+
+echo "Installing k3s"
+
+sleep 30
 
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 

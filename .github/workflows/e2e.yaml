@@ -9,18 +9,13 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev postgresql-client iputils-ping ssh
+          sudo apt-get install --yes libssl-dev
       - name: Set up go
         uses: actions/setup-go@v5
         with:
           go-version: "${{env.GO_VERSION}}"
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
-      - name: Start a local k8s cluster
-        uses: jupyterhub/action-k3s-helm@v4
-        with:
-          k3s-channel: latest
-          traefik-enabled: false
       - name: Run
         run: |
           go version
