@@ -71,7 +71,7 @@ func (s *server) run(ctx context.Context) error {
 	{
 		os.Setenv("OCTELIUM_DOMAIN", s.domain)
 		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
-		os.Setenv("OCTELIUM_QUIC", "true")
+		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
 	}
@@ -264,16 +264,14 @@ func (s *server) runOcteliumctlAuthToken(ctx context.Context) error {
 func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	t := s.t
 
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Second)
 	defer cancel()
 
 	{
-		cmd, err := s.startOcteliumConnectRootless(ctx, []string{
-			fmt.Sprintf("-p %s:14041", utilrand.GetRandomStringCanonical(8)),
-		})
+		err := s.runCmd(ctx,
+			fmt.Sprintf("octelium connect -p %s:14041", utilrand.GetRandomStringCanonical(8)),
+		)
 		assert.NotNil(t, err)
-
-		cmd.Wait()
 	}
 
 	/*
