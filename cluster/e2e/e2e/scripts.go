@@ -40,25 +40,33 @@ REDIS_PASSWORD=$(openssl rand -base64 12)
 
 
 export OCTELIUM_INSECURE_TLS=true
-export OCTELIUM_QUIC=true
+# export OCTELIUM_QUIC=true
 export OCTELIUM_DOMAIN="localhost"
 export OCTELIUM_PRODUCTION=true
 # export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
 echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.bashrc
-echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.bashrc
+# echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.bashrc
 echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.bashrc
 echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.bashrc
 # echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
 
 if [ -f ~/.zshrc ]; then
   echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.zshrc
-  echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.zshrc
+  # echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.zshrc
   echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.zshrc
   echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.zshrc
   # echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.zshrc
 fi
 
+
+sudo sysctl -w kernel.pid_max=4194303
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo sysctl -w net.ipv6.conf.all.forwarding=1
+sudo sysctl -w net.core.rmem_max=7500000
+sudo sysctl -w net.core.wmem_max=7500000
+sudo sysctl -w fs.inotify.max_user_watches=1000000
+sudo sysctl -w fs.inotify.max_user_instances=1000000
 
 echo insecure >> ~/.curlrc
 
