@@ -19,7 +19,6 @@ package wg
 import (
 	"context"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -37,9 +36,7 @@ import (
 )
 
 type Wg struct {
-	sync.Mutex
-	client *wgctrl.Client
-
+	client    *wgctrl.Client
 	octeliumC octeliumc.ClientInterface
 	gwName    string
 }
@@ -76,8 +73,6 @@ func (wg *Wg) initWG(ctx context.Context,
 	gw *corev1.Gateway,
 	cc *corev1.ClusterConfig,
 	privateKey wgtypes.Key) error {
-	wg.Lock()
-	defer wg.Unlock()
 
 	zap.L().Debug("initializing new wg dev")
 
@@ -116,9 +111,6 @@ func (wg *Wg) AddConnection(sess *corev1.Session) error {
 	if !isConnWG(sess.Status.Connection) {
 		return nil
 	}
-
-	wg.Lock()
-	defer wg.Unlock()
 
 	zap.L().Debug("Adding wg for Session", zap.String("sess", sess.Metadata.Name))
 
@@ -172,8 +164,6 @@ func (wg *Wg) UpdateConnection(sess *corev1.Session) error {
 		return nil
 	}
 
-	wg.Lock()
-	defer wg.Unlock()
 	zap.L().Debug("Updating wg for Session", zap.String("sess", sess.Metadata.Name))
 	dev, err := wg.client.Device(devName)
 	if err != nil {
@@ -229,9 +219,6 @@ func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
 	if !isConnWG(sess.Status.Connection) {
 		return nil
 	}
-
-	wg.Lock()
-	defer wg.Unlock()
 
 	zap.L().Debug("Deleting wg for Session", zap.String("sess", sess.Metadata.Name))
 
