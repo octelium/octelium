@@ -43,20 +43,20 @@ export OCTELIUM_INSECURE_TLS=true
 # export OCTELIUM_QUIC=true
 export OCTELIUM_DOMAIN="localhost"
 export OCTELIUM_PRODUCTION=true
-# export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
 echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.bashrc
 # echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.bashrc
 echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.bashrc
 echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.bashrc
-# echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
+echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
 
 if [ -f ~/.zshrc ]; then
   echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.zshrc
   # echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.zshrc
   echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.zshrc
   echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.zshrc
-  # echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.zshrc
+  echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.zshrc
 fi
 
 
@@ -106,7 +106,7 @@ sudo k3s server --disable traefik --docker --write-kubeconfig-mode 644 &>/dev/nu
 echo "Installing k3s"
 
 sleep 30
-
+sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 
 kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true
