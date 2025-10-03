@@ -55,7 +55,8 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 			"type":    "host-local",
 			"dataDir": "/run/cni-ipam-state",
 			"routes": func() []map[string]any {
-				if mode == corev1.ClusterConfig_Status_NetworkConfig_DUAL_STACK {
+				switch mode {
+				case corev1.ClusterConfig_Status_NetworkConfig_DUAL_STACK:
 					return []map[string]any{
 						{
 							"dst": v4Net,
@@ -65,25 +66,26 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 							"dst": v6Net,
 						},
 					}
-				} else if mode == corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY {
+				case corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY:
 					return []map[string]any{
 						{
 							"dst": v4Net,
 						},
 					}
-				} else if mode == corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY {
+				case corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY:
 					return []map[string]any{
 						{
 							"dst": v6Net,
 						},
 					}
-				} else {
+				default:
 					return nil
 				}
 
 			}(),
 			"ranges": func() [][]map[string]any {
-				if mode == corev1.ClusterConfig_Status_NetworkConfig_DUAL_STACK {
+				switch mode {
+				case corev1.ClusterConfig_Status_NetworkConfig_DUAL_STACK:
 					return [][]map[string]any{
 						{
 							{
@@ -99,7 +101,7 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 							},
 						},
 					}
-				} else if mode == corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY {
+				case corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY:
 					return [][]map[string]any{
 						{
 							{
@@ -108,7 +110,7 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 							},
 						},
 					}
-				} else if mode == corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY {
+				case corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY:
 					return [][]map[string]any{
 						{
 							{
@@ -117,7 +119,7 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 							},
 						},
 					}
-				} else {
+				default:
 					return nil
 				}
 			}(),

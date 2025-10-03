@@ -46,14 +46,12 @@ import (
 )
 
 type Server struct {
-	octeliumC       octeliumc.ClientInterface
-	k8sC            *kubernetes.Clientset
-	wgC             *wg.Wg
-	nodeName        string
-	publicIPs       []string
-	node            *k8scorev1.Node
-	isUserspaceMode bool
-	// nodeIndex       int
+	octeliumC   octeliumc.ClientInterface
+	k8sC        *kubernetes.Clientset
+	wgC         *wg.Wg
+	nodeName    string
+	publicIPs   []string
+	node        *k8scorev1.Node
 	regionIndex int
 	regionRef   *metav1.ObjectReference
 
@@ -65,14 +63,12 @@ func NewServer(ctx context.Context) (*Server, error) {
 
 	nodeName := os.Getenv("OCTELIUM_NODE")
 
-	zap.S().Debugf("node name: %s", nodeName)
+	zap.L().Debug("Gateway node name", zap.String("node", nodeName))
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	zap.S().Debugf("Creating k8sC")
 
 	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
@@ -88,17 +84,9 @@ func NewServer(ctx context.Context) (*Server, error) {
 	return ret, nil
 }
 
-var devNetTunScript = `
-#!/bin/sh
-
-mkdir -p /dev/net
-mknod /dev/net/tun c 10 200
-chmod 600 /dev/net/tun
-`
-
 func (s *Server) Run(ctx context.Context) error {
 
-	zap.S().Debugf("Starting running Gateway agent")
+	zap.L().Debug("Starting running Gateway agent", zap.String("node", s.nodeName))
 
 	region, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: vutils.GetMyRegionName()})
 	if err != nil {
@@ -119,8 +107,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.node = node
 
-	zap.S().Debugf("My node is: %s", node.Name)
-
 	/*
 		if err := s.setNodeIndex(ctx); err != nil {
 			return err
@@ -128,23 +114,41 @@ func (s *Server) Run(ctx context.Context) error {
 	*/
 
 	if err := untaintNode(ctx, s.k8sC, node); err != nil {
-		return err
+		zap.L().Warn("Could not untaint node", zap.Error(err))
 	}
 
 	if _, err := os.Stat("/dev/net/tun"); err != nil && os.IsNotExist(err) {
-		zap.L().Debug("Mknoding tun dev")
-		if err := os.WriteFile("/tmp/install_dev_net_tun.sh", []byte(devNetTunScript), 0755); err != nil {
-			return err
+		cmds := []string{
+			"mkdir -p /dev/net",
+			"mknod /dev/net/tun c 10 200",
+			"chmod 600 /dev/net/tun",
 		}
-		if err := exec.Command("/bin/sh", "-c", "/tmp/install_dev_net_tun.sh").Run(); err != nil {
-			return errors.Errorf("Could not install /dev/net/tun device: %+v", err)
-		}
-	}
 
-	if _, ok := node.Labels["octelium.com/wireguard-installed"]; !ok {
-		zap.L().Debug("WireGuard kernel module is not installed. Going for the user implementation instead...")
-		s.isUserspaceMode = true
+		for _, cmd := range cmds {
+			if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
+				zap.L().Warn("Could not execute command",
+					zap.String("cmd", cmd), zap.Error(err))
+			}
+		}
 	}
+	/*
+		if _, err := os.Stat("/dev/net/tun"); err != nil && os.IsNotExist(err) {
+			zap.L().Debug("Mknoding tun dev")
+			if err := os.WriteFile("/tmp/install_dev_net_tun.sh", []byte(devNetTunScript), 0755); err != nil {
+				return err
+			}
+			if err := exec.Command("/bin/sh", "-c", "/tmp/install_dev_net_tun.sh").Run(); err != nil {
+				return errors.Errorf("Could not install /dev/net/tun device: %+v", err)
+			}
+		}
+	*/
+
+	/*
+		if _, ok := node.Labels["octelium.com/wireguard-installed"]; !ok {
+			zap.L().Debug("WireGuard kernel module is not installed. Going for the user implementation instead...")
+			s.isUserspaceMode = true
+		}
+	*/
 
 	if err := s.setNodePublicIPs(ctx); err != nil {
 		return err
@@ -159,7 +163,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return errors.Errorf("Could not init Gateway: %+v", err)
 	}
 
-	wgC, err := wg.NewWg(ctx, s.regionRef, node, s.octeliumC, s.isUserspaceMode, initWGPrivateKey)
+	wgC, err := wg.NewWg(ctx, s.regionRef, node, s.octeliumC, initWGPrivateKey)
 	if err != nil {
 		return err
 	}
@@ -169,7 +173,9 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 
-	if cc.Status.NetworkConfig != nil && cc.Status.NetworkConfig.Quicv0 != nil && cc.Status.NetworkConfig.Quicv0.Enable {
+	if cc.Status.NetworkConfig != nil &&
+		cc.Status.NetworkConfig.Quicv0 != nil &&
+		cc.Status.NetworkConfig.Quicv0.Enable {
 		zap.L().Debug("QUICv0 controller is enabled")
 		s.hasQUICV0 = true
 		s.quicCtl, err = quicv0.New(ctx, s.octeliumC, k8sutils.GetGatewayName(s.node))
@@ -217,7 +223,7 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.No
 
 	for i, taint := range n.Spec.Taints {
 		if taint.Key == "octelium.com/gateway-init" {
-			zap.S().Debugf("Found gateway-init taint. Removing it")
+			zap.L().Info("Found gateway-init taint. Removing it")
 			if err := waitForMultusPod(ctx, k8sC, n); err != nil {
 				return err
 			}
@@ -241,80 +247,6 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.No
 	return nil
 }
 
-/*
-func (s *Server) setNodeIndex(ctx context.Context) error {
-
-	zap.L().Debug("Setting node index")
-
-	doFn := func() error {
-		cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-		if err != nil {
-			return err
-		}
-
-		for _, ni := range cc.Status.NodeIndexes {
-			if ni.Uid == string(s.node.UID) {
-				zap.S().Debugf("Node previously registered with the index: %d. No need to add node index", ni.Index)
-				s.nodeIndex = int(ni.Index)
-				return nil
-			}
-		}
-
-		idx, err := func() (int, error) {
-
-			lstNodes := func() []int {
-				ret := []int{}
-				for _, ni := range cc.Status.NodeIndexes {
-					ret = append(ret, int(ni.Index))
-				}
-				return ret
-			}()
-
-			inList := func(lst []int, i int) bool {
-				for _, itm := range lst {
-					if i == itm {
-						return true
-					}
-				}
-				return false
-			}
-
-			for i := 0; i < 100000; i++ {
-				if !inList(lstNodes, i) {
-					return i, nil
-				}
-			}
-			return 0, errors.Errorf("Could not get node index")
-		}()
-		if err != nil {
-			return err
-		}
-		s.nodeIndex = idx
-		cc.Status.NodeIndexes = append(cc.Status.NodeIndexes, &corev1.ClusterConfig_Status_NodeIndex{
-			Name:  s.node.Name,
-			Uid:   string(s.node.UID),
-			Index: int32(s.nodeIndex),
-		})
-
-		if _, err := s.octeliumC.CoreC().UpdateClusterConfig(ctx, cc); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	for i := 0; i < 100; i++ {
-		err := doFn()
-		if err == nil {
-			zap.S().Debugf("Registered node index %d for node: %s", s.nodeIndex, s.node.Name)
-			return nil
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	return errors.Errorf("Could not register node index")
-}
-*/
-
 func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.Node) error {
 	doFn := func() error {
 		pods, err := k8sC.CoreV1().Pods("kube-system").List(ctx, k8smetav1.ListOptions{
@@ -337,7 +269,7 @@ func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8score
 			return errors.Errorf("Could not find the multus pod on the Node: %s", n.Name)
 		}
 
-		zap.S().Debugf("Found multus pod %s on the node %s. Checking its readiness...", pod.Name, n.Name)
+		zap.L().Debug("Found multus pod. Checking its readiness...", zap.String("pod", pod.Name))
 
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == "Ready" && condition.Status == "True" {
@@ -350,13 +282,14 @@ func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8score
 
 	zap.L().Debug("Waiting for Multus pod to be ready")
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err := doFn()
 		if err == nil {
 			zap.L().Debug("Multus is ready")
 			return nil
 		}
-		zap.L().Debug("Multus pod is not ready yet. Trying again...", zap.Error(err))
+		zap.L().Info("Multus pod is not ready yet. Trying again...",
+			zap.Int("attempt", i+1), zap.Error(err))
 		time.Sleep(2 * time.Second)
 	}
 
@@ -385,7 +318,7 @@ func Run(ctx context.Context) error {
 		return errors.Errorf("Could not run node agent: %s server: %+v", srv.nodeName, err)
 	}
 
-	zap.L().Info("Gateway agent is now running...")
+	zap.L().Info("Gateway agent is now running...", zap.String("node", srv.nodeName))
 
 	<-ctx.Done()
 
@@ -399,50 +332,10 @@ func Run(ctx context.Context) error {
 }
 
 func (s *Server) cleanup() {
-	zap.S().Debugf("Starting cleaning up for node: %s", s.nodeName)
-	zap.S().Debugf("Cleaning up wg devices")
-
 	if s.wgC != nil {
+		zap.L().Debug("Cleaning up wg devices")
 		if err := s.wgC.Cleanup(); err != nil {
-			zap.S().Errorf("Could not cleanup wg devices: %+v", err)
+			zap.L().Warn("Could not cleanup wg dev", zap.Error(err))
 		}
 	}
-
-	/*
-		zap.S().Debugf("Cleaning up node gws")
-
-		gwList, err := s.octeliumC.CoreC().ListGateway(ctx, &rmetav1.ListOptions{})
-		if err != nil {
-			zap.S().Errorf("Could not list gws for cleanup: %+v", err)
-			return
-		}
-
-		for _, gw := range gwList.Items {
-			if gw.Metadata.Name == s.nodeName {
-				_, err = s.octeliumC.CoreC().DeleteGateway(ctx, &rmetav1.DeleteOptions{Uid: gw.Metadata.Uid})
-				if err != nil && !grpcerr.IsNotFound(err) {
-					zap.S().Errorf("Could not delete gw:%s for cleanup: %+v", gw.Metadata.Uid, err)
-				}
-			}
-		}
-	*/
-
-	/*
-		cniPath := "/etc/cni/multus/net.d"
-
-		zap.S().Debugf("Cleaning up the CNI directory")
-		cniFiles, err := ioutil.ReadDir(cniPath)
-		if err != nil {
-			zap.S().Errorf("Could not list files in the CNI directory: %+v", err)
-		}
-
-		for _, f := range cniFiles {
-			zap.S().Debugf("removing cni file: %s", f.Name())
-			if err := os.Remove(path.Join(cniPath, f.Name())); err != nil {
-				zap.S().Errorf("Could not remove cni file %s: %+v", f.Name(), err)
-			}
-		}
-
-	*/
-
 }

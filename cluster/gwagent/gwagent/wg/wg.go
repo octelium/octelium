@@ -40,22 +40,19 @@ type Wg struct {
 	sync.Mutex
 	client *wgctrl.Client
 
-	octeliumC     octeliumc.ClientInterface
-	gwName        string
-	userspaceMode bool
+	octeliumC octeliumc.ClientInterface
+	gwName    string
 }
 
-func NewWg(ctx context.Context, regionRef *metav1.ObjectReference, node *k8scorev1.Node, octeliumC octeliumc.ClientInterface, userspaceMode bool, initPrivateKey wgtypes.Key) (*Wg, error) {
+func NewWg(ctx context.Context, regionRef *metav1.ObjectReference, node *k8scorev1.Node, octeliumC octeliumc.ClientInterface, initPrivateKey wgtypes.Key) (*Wg, error) {
 	client, err := wgctrl.New()
 	if err != nil {
 		return nil, err
 	}
 	ret := &Wg{
-
-		client:        client,
-		octeliumC:     octeliumC,
-		userspaceMode: userspaceMode,
-		gwName:        k8sutils.GetGatewayName(node),
+		client:    client,
+		octeliumC: octeliumC,
+		gwName:    k8sutils.GetGatewayName(node),
 	}
 
 	gw, err := octeliumC.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ret.gwName})
@@ -82,7 +79,7 @@ func (wg *Wg) initWG(ctx context.Context,
 	wg.Lock()
 	defer wg.Unlock()
 
-	zap.S().Debugf("initializing new wg dev")
+	zap.L().Debug("initializing new wg dev")
 
 	if err := wg.initializeDev(gw, cc); err != nil {
 		return err
@@ -123,7 +120,7 @@ func (wg *Wg) AddConnection(sess *corev1.Session) error {
 	wg.Lock()
 	defer wg.Unlock()
 
-	zap.S().Debugf("Adding Connection for Session %s", sess.Metadata.Uid)
+	zap.L().Debug("Adding wg for Session", zap.String("sess", sess.Metadata.Name))
 
 	dev, err := wg.client.Device(devName)
 	if err != nil {
@@ -177,7 +174,7 @@ func (wg *Wg) UpdateConnection(sess *corev1.Session) error {
 
 	wg.Lock()
 	defer wg.Unlock()
-
+	zap.L().Debug("Updating wg for Session", zap.String("sess", sess.Metadata.Name))
 	dev, err := wg.client.Device(devName)
 	if err != nil {
 		return err
@@ -236,7 +233,7 @@ func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
 	wg.Lock()
 	defer wg.Unlock()
 
-	zap.S().Debugf("Removing WireGuard connection for Session %s", sess.Metadata.Uid)
+	zap.L().Debug("Deleting wg for Session", zap.String("sess", sess.Metadata.Name))
 
 	connPubKey, err := wgtypes.NewKey(sess.Status.Connection.X25519PublicKey)
 	if err != nil {
@@ -283,7 +280,7 @@ func (wg *Wg) runKeyRotation(ctx context.Context) {
 			return
 		case <-tickerCh.C:
 			if err := wg.doUpdateGatewayKey(ctx); err != nil {
-				zap.S().Errorf("Could not update gw key: %+v", err)
+				zap.L().Warn("Could not doUpdateGatewayKey", zap.Error(err))
 			}
 		}
 	}
@@ -311,7 +308,7 @@ func (wg *Wg) doUpdateGatewayKey(ctx context.Context) error {
 	}
 
 	if time.Now().After(gw.Status.Wireguard.KeyRotatedAt.AsTime().Add(rotationDuration)) {
-		zap.S().Debugf("Rotating wg key for Gateway %s", gw.Metadata.Name)
+		zap.L().Debug("Rotating wg key for Gateway", zap.String("gw", gw.Metadata.Name))
 
 		_, err := wg.octeliumC.CoreC().UpdateGateway(ctx, gw)
 		if err != nil {
@@ -324,6 +321,5 @@ func (wg *Wg) doUpdateGatewayKey(ctx context.Context) error {
 
 func (wg *Wg) Run(ctx context.Context) error {
 	go wg.runKeyRotation(ctx)
-	// go wg.runGatewayState(ctx)
 	return nil
 }

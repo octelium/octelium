@@ -58,12 +58,12 @@ func (w wgLink) Type() string {
 
 func doCleanupDev() error {
 
-	zap.S().Debugf("Cleaning up dev iptables rules")
+	zap.L().Debug("Cleaning up dev iptables rules")
 	if ipt, err := newIPTables(); err == nil {
 		ipt.OnDelete(true, true)
 	}
 
-	zap.S().Debugf("Removing wg dev if exists")
+	zap.L().Debug("Removing wg dev if exists")
 	l, err := netlink.LinkByName(devName)
 	if err != nil {
 		_, ok := err.(netlink.LinkNotFoundError)
@@ -77,17 +77,17 @@ func doCleanupDev() error {
 	if err := netlink.LinkDel(l); err != nil {
 		return err
 	}
-
+	zap.L().Debug("Successfully cleaned up existing WireGuard dev")
 	return nil
 }
 
 func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 	name := devName
 
-	zap.S().Debugf("Initializing dev with gw: %+v", gw)
+	zap.L().Debug("Initializing dev with gw", zap.String("gw", gw.Metadata.Name))
 
 	if err := doCleanupDev(); err != nil {
-		zap.S().Debugf("Could not cleanup wg dev. Continuing anyway...: %+v", err)
+		zap.L().Debug("Could not doCleanupDev. Continuing anyway...", zap.Error(err))
 	}
 
 	hasV4 := gw.Status.Cidr.V4 != ""
@@ -100,18 +100,29 @@ func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 		return err
 	}
 
-	if wg.userspaceMode {
-		if err := wg.createDevUserspace(name, ucorev1.ToClusterConfig(cc).GetDevMTUWireGuard()); err != nil {
-			return err
+	/*
+		if wg.userspaceMode {
+			if err := wg.createDevUserspace(name, ucorev1.ToClusterConfig(cc).GetDevMTUWireGuard()); err != nil {
+				return err
+			}
 		}
-	} else {
+
+	*/
+
+	{
 
 		link := wgLink{attr: netlink.NewLinkAttrs(), linkType: "wireguard"}
 		link.attr.Name = name
 		link.attr.MTU = ucorev1.ToClusterConfig(cc).GetDevMTUWireGuard()
 
 		if err := netlink.LinkAdd(link); err != nil {
-			return err
+			zap.L().Warn("Could not add wireguard link. Fallbacking to TUN mode", zap.Error(err))
+			if err := wg.createDevUserspace(name, ucorev1.ToClusterConfig(cc).GetDevMTUWireGuard()); err != nil {
+				return err
+			}
+			zap.L().Info("Started a WireGuard TUN dev")
+		} else {
+			zap.L().Info("WireGuard kernel dev successfully added")
 		}
 	}
 
@@ -238,7 +249,7 @@ func (wg *Wg) createDevUserspace(interfaceName string, mtu int) error {
 		case <-device.Wait():
 		}
 
-		zap.S().Debugf("Closing the userspace wg dev")
+		zap.L().Debug("Closing the userspace wg dev")
 
 		uapi.Close()
 		device.Close()

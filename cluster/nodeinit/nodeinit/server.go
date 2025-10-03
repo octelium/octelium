@@ -18,53 +18,22 @@ package nodeinit
 
 import (
 	"context"
-	"os"
 	"os/exec"
 
-	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"go.uber.org/zap"
-	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func Run(ctx context.Context) error {
 
-	if err := exec.Command("modprobe", "ip6table_filter").Run(); err != nil {
-		zap.L().Warn("Could not modprobe ip6table_filter", zap.Error(err))
+	modules := []string{
+		"ip6table_filter",
+		"wireguard",
 	}
 
-	nodeName := os.Getenv("OCTELIUM_NODE")
-
-	k8sC, err := k8sutils.NewClient(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	node, err := k8sC.CoreV1().Nodes().Get(ctx, nodeName, k8smetav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, ok := node.Labels["octelium.com/wireguard-installed"]
-	if ok {
-		return nil
-	}
-
-	err = exec.Command("modprobe", "wireguard").Run()
-	if err == nil {
-		node, err := k8sC.CoreV1().Nodes().Get(ctx, nodeName, k8smetav1.GetOptions{})
-		if err != nil {
-			return err
+	for _, module := range modules {
+		if err := exec.Command("modprobe", module).Run(); err != nil {
+			zap.L().Warn("Could not modprobe", zap.String("module", module), zap.Error(err))
 		}
-		node.Labels["octelium.com/wireguard-installed"] = ""
-		_, err = k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
-		if err != nil {
-			return err
-		}
-
-		zap.L().Debug("WireGuard is installed! Exiting successfully...")
-		return nil
-	} else {
-		zap.L().Warn("Could not modprobe wireguard", zap.Error(err))
 	}
 
 	return nil

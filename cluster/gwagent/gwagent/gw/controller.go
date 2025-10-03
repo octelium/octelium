@@ -176,7 +176,7 @@ func getGateway(nodeIdx int, publicIPs []string, node *k8scorev1.Node, privateKe
 		},
 	}
 
-	zap.S().Debugf("Created gw: %+v", ret)
+	zap.L().Debug("Created Gateway", zap.Any("gw", ret))
 
 	return ret, nil
 }

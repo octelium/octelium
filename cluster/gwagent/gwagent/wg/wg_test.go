@@ -82,13 +82,13 @@ func TestWg(t *testing.T) {
 
 	privateKey, err := wgtypes.GeneratePrivateKey()
 	assert.Nil(t, err)
-	err = gw.InitGateway(context.Background(), []string{"1.2.3.4"}, node, fakeC.OcteliumC, 0, &metav1.ObjectReference{
+	err = gw.InitGateway(ctx, []string{"1.2.3.4"}, node, fakeC.OcteliumC, 0, &metav1.ObjectReference{
 		Name: "default",
 		Uid:  vutils.UUIDv4(),
 	}, privateKey)
 	assert.NotNil(t, err, "%+v", err)
 
-	wgC, err := NewWg(context.Background(), &metav1.ObjectReference{Name: "default", Uid: vutils.UUIDv4()}, node, fakeC.OcteliumC, true, privateKey)
+	wgC, err := NewWg(ctx, &metav1.ObjectReference{Name: "default", Uid: vutils.UUIDv4()}, node, fakeC.OcteliumC, privateKey)
 	assert.Nil(t, err, "%+v", err)
 
 	t.Run("basic", func(t *testing.T) {
