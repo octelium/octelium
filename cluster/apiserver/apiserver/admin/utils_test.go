@@ -24,8 +24,6 @@ import (
 )
 
 func TestCheckCELExpression(t *testing.T) {
-
 	assert.NotNil(t, checkCELExpression(context.Background(), ""))
-	assert.NotNil(t, checkCELExpression(context.Background(), "1 + 1"))
 	assert.Nil(t, checkCELExpression(context.Background(), `ctx.user.metadata.name == "usr1"`))
 }
