@@ -28,6 +28,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -115,6 +116,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runOcteliumCommands(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runOcteliumConnectCommands(ctx); err != nil {
 		return err
 	}
@@ -180,6 +185,11 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 			Name: "portal.default",
 		})
 		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteCredential(ctx, &metav1.DeleteOptions{
+			Name: "root-init",
+		})
+		assert.Nil(t, err)
 	}
 
 	return nil
@@ -188,10 +198,62 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 	t := s.t
 
+	{
+		args := []string{
+			"service", "svc",
+			"policy", "pol",
+			"user", "usr",
+			"session", "sess",
+			"gateway", "gw",
+			"secret", "sec",
+			"credential", "cred",
+			"group", "grp",
+			"namespace", "ns",
+			"device", "dev",
+			"identityprovider", "idp",
+			"region", "rgn",
+		}
+
+		for _, arg := range args {
+			assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl get %s", arg)))
+		}
+
+	}
+
 	out, err := s.getCmd(ctx, "octeliumctl get svc -o json").CombinedOutput()
 	assert.Nil(t, err)
 
 	res := &corev1.ServiceList{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	assert.True(t, len(res.Items) > 0)
+
+	return nil
+}
+func (s *server) runOcteliumCommands(ctx context.Context) error {
+	t := s.t
+
+	{
+		args := []string{
+			"service", "svc",
+			"namespace", "ns",
+		}
+
+		for _, arg := range args {
+			assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octelium get %s", arg)))
+		}
+
+		assert.Nil(t, s.runCmd(ctx, "octelium status"))
+	}
+
+	out, err := s.getCmd(ctx, "octelium get svc -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &userv1.ServiceList{}
 
 	zap.L().Debug("Command out", zap.String("out", string(out)))
 
