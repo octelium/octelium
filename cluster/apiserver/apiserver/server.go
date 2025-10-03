@@ -19,8 +19,6 @@ package apiserver
 import (
 	"context"
 	"net"
-	"os"
-	"os/signal"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -41,12 +39,9 @@ import (
 	sesscontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/sessions"
 )
 
-func Run() error {
+func Run(ctx context.Context) error {
 
 	zap.L().Debug("Starting octelium API server...")
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {

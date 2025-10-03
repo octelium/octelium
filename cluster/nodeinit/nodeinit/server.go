@@ -26,14 +26,13 @@ import (
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func Run() error {
+func Run(ctx context.Context) error {
 
 	if err := exec.Command("modprobe", "ip6table_filter").Run(); err != nil {
-		zap.S().Warnf("Could not modprobe ip6table_filter: %+v", err)
+		zap.L().Warn("Could not modprobe ip6table_filter", zap.Error(err))
 	}
 
 	nodeName := os.Getenv("OCTELIUM_NODE")
-	ctx := context.Background()
 
 	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
@@ -62,10 +61,10 @@ func Run() error {
 			return err
 		}
 
-		zap.S().Debugf("WireGuard is installed! Exiting successfully...")
+		zap.L().Debug("WireGuard is installed! Exiting successfully...")
 		return nil
 	} else {
-		zap.S().Warnf("Could not modprobe wireguard: %+v", err)
+		zap.L().Warn("Could not modprobe wireguard", zap.Error(err))
 	}
 
 	return nil

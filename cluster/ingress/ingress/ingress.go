@@ -18,8 +18,6 @@ package ingress
 
 import (
 	"context"
-	"os"
-	"os/signal"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
@@ -32,10 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Run() error {
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
-
+func Run(ctx context.Context) error {
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err

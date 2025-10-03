@@ -19,7 +19,6 @@ package vigil
 import (
 	"context"
 	"os"
-	"os/signal"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -241,9 +240,7 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func Run() error {
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
+func Run(ctx context.Context) error {
 
 	pprofsrv.New().Run(ctx)
 

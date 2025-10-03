@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"os/signal"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -364,10 +363,7 @@ func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8score
 	return errors.Errorf("Could not check for multus pod readiness on the Node: %s", n.Name)
 }
 
-func Run() error {
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
+func Run(ctx context.Context) error {
 
 	healthcheck.RunWithAddr("localhost:10101")
 

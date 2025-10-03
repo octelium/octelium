@@ -18,8 +18,6 @@ package dnsserver
 
 import (
 	"context"
-	"os"
-	"os/signal"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
@@ -31,9 +29,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Run() error {
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
+func Run(ctx context.Context) error {
 
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err

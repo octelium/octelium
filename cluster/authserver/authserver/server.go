@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
 	"time"
 
@@ -352,11 +350,7 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 	return nil
 }
 
-func Run(grpcMode bool) error {
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
-
+func Run(ctx context.Context, grpcMode bool) error {
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err

@@ -17,11 +17,8 @@
 package main
 
 import (
-	"context"
-
-	api "github.com/octelium/octelium/cluster/apiserver/apiserver"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver"
 	"github.com/octelium/octelium/cluster/common/components"
-	"go.uber.org/zap"
 )
 
 func init() {
@@ -30,13 +27,5 @@ func init() {
 }
 
 func main() {
-
-	if err := components.InitComponent(context.Background(), nil); err != nil {
-		zap.L().Fatal("init component err", zap.Error(err))
-	}
-
-	err := api.Run()
-	if err != nil {
-		zap.L().Fatal("main err", zap.Error(err))
-	}
+	components.RunComponent(apiserver.Run, nil)
 }

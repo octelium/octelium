@@ -22,14 +22,12 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 var grpcCmd = &cobra.Command{
 	Use: "grpc",
 	RunE: func(cmd *cobra.Command, args []string) error {
-
-		return authserver.Run(true)
+		return authserver.Run(cmd.Context(), true)
 
 	},
 }
@@ -37,8 +35,7 @@ var grpcCmd = &cobra.Command{
 var httpCmd = &cobra.Command{
 	Use: "http",
 	RunE: func(cmd *cobra.Command, args []string) error {
-
-		return authserver.Run(false)
+		return authserver.Run(cmd.Context(), false)
 
 	},
 }
@@ -54,14 +51,11 @@ func init() {
 }
 
 func main() {
-	if err := components.InitComponent(context.Background(), nil); err != nil {
-		zap.L().Fatal("init component err", zap.Error(err))
-	}
+	components.RunComponent(func(ctx context.Context) error {
+		rootCmd.SetContext(ctx)
 
-	rootCmd.AddCommand(grpcCmd)
-	rootCmd.AddCommand(httpCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		zap.L().Fatal("main err", zap.Error(err))
-	}
+		rootCmd.AddCommand(grpcCmd)
+		rootCmd.AddCommand(httpCmd)
+		return rootCmd.Execute()
+	}, nil)
 }

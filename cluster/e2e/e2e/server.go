@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"os/user"
 	"time"
 
@@ -337,15 +336,12 @@ func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 	return nil
 }
 
-func Run() error {
+func Run(ctx context.Context) error {
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		return err
 	}
 	zap.ReplaceGlobals(logger)
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
 
 	s, err := initServer(ctx)
 	if err != nil {

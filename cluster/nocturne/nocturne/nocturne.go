@@ -18,8 +18,6 @@ package nocturne
 
 import (
 	"context"
-	"os"
-	"os/signal"
 
 	"go.uber.org/zap"
 	kubeinformers "k8s.io/client-go/informers"
@@ -43,10 +41,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 )
 
-func Run() error {
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
-
+func Run(ctx context.Context) error {
 	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return err

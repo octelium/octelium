@@ -18,6 +18,8 @@ package components
 
 import (
 	"context"
+	"os"
+	"os/signal"
 	"runtime"
 	"time"
 
@@ -32,10 +34,10 @@ func init() {
 	runtimeID = utilrand.GetRandomStringCanonical(6)
 }
 
-type InitComponentOpts struct {
+type initComponentOpts struct {
 }
 
-func InitComponent(ctx context.Context, opts *InitComponentOpts) error {
+func initComponent(ctx context.Context, opts *initComponentOpts) error {
 
 	if myComponentNS == "" {
 		myComponentNS = ComponentNamespaceOctelium
@@ -101,4 +103,25 @@ func InitComponent(ctx context.Context, opts *InitComponentOpts) error {
 	)
 
 	return nil
+}
+
+type RunComponentOpts struct {
+}
+
+func RunComponent(runFn func(ctx context.Context) error, o *RunComponentOpts) {
+	if runFn == nil {
+		zap.L().Fatal("No runFunc")
+	}
+
+	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancelFn()
+
+	if err := initComponent(context.Background(), nil); err != nil {
+		zap.L().Fatal("init component err", zap.Error(err))
+	}
+
+	err := runFn(ctx)
+	if err != nil {
+		zap.L().Fatal("main err", zap.Error(err))
+	}
 }

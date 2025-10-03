@@ -19,8 +19,6 @@ package portal
 import (
 	"context"
 	"net/http"
-	"os"
-	"os/signal"
 	"strings"
 	"time"
 
@@ -111,10 +109,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func Run() error {
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
+func Run(ctx context.Context) error {
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {

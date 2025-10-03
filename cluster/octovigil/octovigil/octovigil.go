@@ -22,8 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -563,11 +561,9 @@ func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (
 
 }
 
-func Run() error {
+func Run(ctx context.Context) error {
 
 	zap.L().Debug("Starting running Octovigil")
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {

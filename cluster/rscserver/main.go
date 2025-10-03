@@ -17,11 +17,8 @@
 package main
 
 import (
-	"context"
-
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver"
-	"go.uber.org/zap"
 )
 
 func init() {
@@ -30,11 +27,5 @@ func init() {
 }
 
 func main() {
-	if err := components.InitComponent(context.Background(), nil); err != nil {
-		zap.L().Fatal("init component err", zap.Error(err))
-	}
-	err := rscserver.Run()
-	if err != nil {
-		zap.L().Fatal("main err", zap.Error(err))
-	}
+	components.RunComponent(rscserver.Run, nil)
 }

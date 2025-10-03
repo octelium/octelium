@@ -18,17 +18,12 @@ package rscserver
 
 import (
 	"context"
-	"os"
-	"os/signal"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"go.uber.org/zap"
 )
 
-func Run() error {
-
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancelFn()
+func Run(ctx context.Context) error {
 
 	zap.L().Debug("Starting Resource server")
 

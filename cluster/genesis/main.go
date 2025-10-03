@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/genesis/genesis"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 var rootCmd = &cobra.Command{
@@ -70,20 +69,19 @@ func init() {
 }
 
 func main() {
+	components.RunComponent(func(ctx context.Context) error {
+		rootCmd.AddCommand(initCmd)
+		rootCmd.AddCommand(upgradeCmd)
 
-	if err := components.InitComponent(context.Background(), nil); err != nil {
-		zap.L().Fatal("init component err", zap.Error(err))
-	}
+		if err := commoninit.Run(ctx, nil); err != nil {
+			return err
+		}
 
-	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(upgradeCmd)
+		if err := rootCmd.Execute(); err != nil {
+			return err
+		}
 
-	if err := commoninit.Run(context.Background(), nil); err != nil {
-		zap.L().Fatal("commonInit err", zap.Error(err))
-	}
-
-	if err := rootCmd.Execute(); err != nil {
-		zap.L().Fatal("main err", zap.Error(err))
-	}
+		return nil
+	}, nil)
 
 }
