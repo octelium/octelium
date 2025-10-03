@@ -38,12 +38,15 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/cache"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/direct"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
+	jsonschema "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/jsonchema"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/path"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/preauth"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/ratelimit"
@@ -91,6 +94,8 @@ type Server struct {
 	reverseProxyErrLogger *log.Logger
 	domain                string
 	forwardedObfuscatedID string
+
+	svcUID string
 }
 
 type metricsStore struct {
@@ -122,6 +127,7 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 			log: zap.L(),
 		}, "", 0),
 		forwardedObfuscatedID: fmt.Sprintf("_octelium-%s", utilrand.GetRandomStringLowercase(6)),
+		svcUID:                opts.VCache.GetService().Metadata.Uid,
 	}
 
 	var err error
@@ -262,12 +268,25 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	chain := middlewares.New()
 
 	appendPlugins := func(phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) {
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return path.New(ctx, next, s.celEngine, phase)
+		})
+
 		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 			return ratelimit.New(ctx, next, s.celEngine, s.octeliumC, phase)
 		})
 
 		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return jsonschema.New(ctx, next, s.celEngine, phase)
+		})
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 			return direct.New(ctx, next, s.celEngine, phase)
+		})
+
+		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+			return cache.New(ctx, next, s.celEngine, s.octeliumC, s.svcUID, phase)
 		})
 
 		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
