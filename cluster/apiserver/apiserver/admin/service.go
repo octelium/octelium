@@ -831,8 +831,9 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						}
 					case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_:
 						if plugin.GetDirect().StatusCode != 0 {
-							if plugin.GetDirect().StatusCode < 200 || plugin.GetDirect().StatusCode > 599 {
-								return grpcutils.InvalidArg("Invalid statusCode: %d", plugin.GetDirect().StatusCode)
+							if err := apivalidation.ValidateHTTPStatusCode(
+								int64(plugin.GetDirect().StatusCode)); err != nil {
+								return err
 							}
 						}
 						if len(plugin.GetDirect().Headers) > 100 {
@@ -886,6 +887,138 @@ func (s *Server) checkAndSetService(ctx context.Context,
 									plugin.GetExtProc().GetContainer().Image)
 							}
 						}
+					case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
+						conf := plugin.GetCache()
+						if conf.Ttl != nil {
+							if err := apivalidation.ValidateDuration(conf.Ttl); err != nil {
+								return err
+							}
+						}
+						if conf.Key != nil {
+							switch conf.Key.Type.(type) {
+							case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
+								if err := checkCELExpression(ctx, conf.Key.GetEval()); err != nil {
+									return err
+								}
+							default:
+								return grpcutils.InvalidArg("Invalid key type")
+							}
+						}
+
+						if conf.MaxSize > 256_000_000 {
+							return grpcutils.InvalidArg("Invalid maxSize value: %d", conf.MaxSize)
+						}
+
+					case *corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema:
+						conf := plugin.GetJsonSchema()
+						switch conf.Type.(type) {
+						case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline:
+							val := conf.GetInline()
+							if len(val) == 0 {
+								return grpcutils.InvalidArg("jsonSchema is empty")
+							}
+							if len(val) > 30000 {
+								return grpcutils.InvalidArg("jsonSchema is too large")
+							}
+							if _, err := jsonschema.NewCompiler().Compile([]byte(val)); err != nil {
+								return grpcutils.InvalidArg("invalid jsonSchema")
+							}
+
+						default:
+							return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
+						}
+
+						for k, v := range plugin.GetRateLimit().Headers {
+							if err := s.validateGenStr(k, true, "key"); err != nil {
+								return err
+							}
+
+							if err := s.validateGenStr(v, true, "value"); err != nil {
+								return err
+							}
+						}
+
+						if conf.Body != nil {
+							switch conf.Body.Type.(type) {
+							case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
+								if len(conf.GetInline()) > 50000 {
+									return grpcutils.InvalidArg("inline is too large")
+								}
+							case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
+								if len(conf.Body.GetInlineBytes()) > 35000 {
+									return grpcutils.InvalidArg("inlineBytes is too large")
+								}
+
+							}
+						}
+
+					case *corev1.Service_Spec_Config_HTTP_Plugin_Path_:
+
+						pth := plugin.GetPath()
+						if pth.AddPrefix != "" {
+							if len(pth.AddPrefix) > 512 {
+								return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
+							}
+							if !govalidator.IsRequestURI(pth.AddPrefix) {
+								return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
+							}
+						}
+
+						if pth.RemovePrefix != "" {
+							if len(pth.RemovePrefix) > 512 {
+								return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
+							}
+							if !govalidator.IsRequestURI(pth.RemovePrefix) {
+								return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
+							}
+						}
+
+					case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_:
+
+						conf := plugin.GetRateLimit()
+						if conf.Limit == 0 {
+							return grpcutils.InvalidArg("Limit must be set")
+						} else if conf.Limit < 0 {
+							return grpcutils.InvalidArg("Limit cannot be negative: %d", conf.Limit)
+						}
+
+						if conf.StatusCode != 0 {
+							if err := apivalidation.ValidateHTTPStatusCode(int64(conf.StatusCode)); err != nil {
+								return err
+							}
+						}
+						if conf.Window == nil {
+							return grpcutils.InvalidArg("Window duration must be set")
+						}
+
+						if err := apivalidation.ValidateDuration(conf.Window); err != nil {
+							return err
+						}
+
+						for k, v := range plugin.GetRateLimit().Headers {
+							if err := s.validateGenStr(k, true, "key"); err != nil {
+								return err
+							}
+
+							if err := s.validateGenStr(v, true, "value"); err != nil {
+								return err
+							}
+						}
+
+						if conf.Body != nil {
+							switch conf.Body.Type.(type) {
+							case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline:
+								if len(conf.Body.GetInline()) > 50000 {
+									return grpcutils.InvalidArg("inline is too large")
+								}
+							case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes:
+								if len(conf.Body.GetInlineBytes()) > 35000 {
+									return grpcutils.InvalidArg("inlineBytes is too large")
+								}
+
+							}
+						}
+
 					default:
 						return grpcutils.InvalidArg("plugin type must be set")
 					}

@@ -311,11 +311,11 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 	}
 
 	if itm.Spec.Session != nil {
-		if err := validateDuration(itm.Spec.Session.ClientDuration); err != nil {
+		if err := apivalidation.ValidateDuration(itm.Spec.Session.ClientDuration); err != nil {
 			return err
 		}
 
-		if err := validateDuration(itm.Spec.Session.ClientlessDuration); err != nil {
+		if err := apivalidation.ValidateDuration(itm.Spec.Session.ClientlessDuration); err != nil {
 			return err
 		}
 	}

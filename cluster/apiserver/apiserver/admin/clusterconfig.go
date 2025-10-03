@@ -21,12 +21,10 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/main/metav1"
 	apisrvcommon "github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
-	"github.com/pkg/errors"
 )
 
 func (s *Server) GetClusterConfig(ctx context.Context, req *corev1.GetClusterConfigRequest) (*corev1.ClusterConfig, error) {
@@ -106,35 +104,35 @@ func validateSession(c *corev1.ClusterConfig) error {
 	}
 
 	if c.Spec.Session.Human != nil {
-		if err := validateDuration(c.Spec.Session.Human.ClientDuration); err != nil {
-			return errors.Errorf("Invalid HUMAN client session duration")
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Human.ClientDuration); err != nil {
+			return err
 		}
-		if err := validateDuration(c.Spec.Session.Human.ClientlessDuration); err != nil {
-			return errors.Errorf("Invalid HUMAN clientless session duration")
-		}
-
-		if err := validateDuration(c.Spec.Session.Human.RefreshTokenDuration); err != nil {
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Human.ClientlessDuration); err != nil {
 			return err
 		}
 
-		if err := validateDuration(c.Spec.Session.Human.AccessTokenDuration); err != nil {
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Human.RefreshTokenDuration); err != nil {
+			return err
+		}
+
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Human.AccessTokenDuration); err != nil {
 			return err
 		}
 	}
 
 	if c.Spec.Session.Workload != nil {
-		if err := validateDuration(c.Spec.Session.Workload.ClientDuration); err != nil {
-			return errors.Errorf("Invalid WORKLOAD client session duration")
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Workload.ClientDuration); err != nil {
+			return err
 		}
-		if err := validateDuration(c.Spec.Session.Workload.ClientlessDuration); err != nil {
-			return errors.Errorf("Invalid WORKLOAD clientless session duration")
-		}
-
-		if err := validateDuration(c.Spec.Session.Workload.RefreshTokenDuration); err != nil {
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Workload.ClientlessDuration); err != nil {
 			return err
 		}
 
-		if err := validateDuration(c.Spec.Session.Workload.AccessTokenDuration); err != nil {
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Workload.RefreshTokenDuration); err != nil {
+			return err
+		}
+
+		if err := apivalidation.ValidateDuration(c.Spec.Session.Workload.AccessTokenDuration); err != nil {
 			return err
 		}
 	}
@@ -142,16 +140,12 @@ func validateSession(c *corev1.ClusterConfig) error {
 	return nil
 }
 
-func validateDuration(d *metav1.Duration) error {
-	return apisrvcommon.ValidateDuration(d)
-}
-
 func validateGateway(c *corev1.ClusterConfig) error {
 	if c.Spec.Gateway == nil {
 		return nil
 	}
-	if err := validateDuration(c.Spec.Gateway.WireguardKeyRotationDuration); err != nil {
-		return errors.Errorf("Invalid WireGuard key rotation duration")
+	if err := apivalidation.ValidateDuration(c.Spec.Gateway.WireguardKeyRotationDuration); err != nil {
+		return err
 	}
 
 	return nil
@@ -176,8 +170,8 @@ func validateDNS(c *corev1.ClusterConfig) error {
 
 	if c.Spec.Dns.FallbackZone != nil {
 		if c.Spec.Dns.FallbackZone.Servers != nil {
-			if err := validateDuration(c.Spec.Dns.FallbackZone.CacheDuration); err != nil {
-				return errors.Errorf("Invalid WORKLOAD client session duration")
+			if err := apivalidation.ValidateDuration(c.Spec.Dns.FallbackZone.CacheDuration); err != nil {
+				return err
 			}
 
 			if len(c.Spec.Dns.FallbackZone.Servers) > 32 {

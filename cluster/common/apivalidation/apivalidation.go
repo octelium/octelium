@@ -571,3 +571,28 @@ func ValidatePort(d int) error {
 	}
 	return nil
 }
+
+func ValidateHTTPStatusCode(arg int64) error {
+	if arg < 200 || arg > 599 {
+		return grpcutils.InvalidArg("Invalid statusCode: %d", arg)
+	}
+
+	return nil
+}
+
+func ValidateDuration(d *metav1.Duration) error {
+	if d == nil {
+		return nil
+	}
+
+	seconds := umetav1.ToDuration(d).ToSeconds()
+
+	if seconds < 1 {
+		return grpcutils.InvalidArg("duration cannot be shorter than 1 second")
+	}
+	if seconds > 60*60*24*30*12*100 {
+		return grpcutils.InvalidArg("Duration is too big")
+	}
+
+	return nil
+}
