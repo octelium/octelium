@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -41,7 +40,7 @@ type Wg struct {
 	gwName    string
 }
 
-func NewWg(ctx context.Context, regionRef *metav1.ObjectReference, node *k8scorev1.Node, octeliumC octeliumc.ClientInterface, initPrivateKey wgtypes.Key) (*Wg, error) {
+func New(ctx context.Context, node *k8scorev1.Node, octeliumC octeliumc.ClientInterface, initPrivateKey wgtypes.Key) (*Wg, error) {
 	client, err := wgctrl.New()
 	if err != nil {
 		return nil, err

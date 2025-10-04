@@ -88,7 +88,7 @@ func TestWg(t *testing.T) {
 	}, privateKey)
 	assert.NotNil(t, err, "%+v", err)
 
-	wgC, err := NewWg(ctx, &metav1.ObjectReference{Name: "default", Uid: vutils.UUIDv4()}, node, fakeC.OcteliumC, privateKey)
+	wgC, err := New(ctx, node, fakeC.OcteliumC, privateKey)
 	assert.Nil(t, err, "%+v", err)
 
 	t.Run("basic", func(t *testing.T) {

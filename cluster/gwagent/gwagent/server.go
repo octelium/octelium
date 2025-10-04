@@ -159,11 +159,12 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := gw.InitGateway(ctx, s.publicIPs, node, s.octeliumC, s.regionIndex, s.regionRef, initWGPrivateKey); err != nil {
+	if err := gw.InitGateway(ctx,
+		s.publicIPs, node, s.octeliumC, s.regionIndex, s.regionRef, initWGPrivateKey); err != nil {
 		return errors.Errorf("Could not init Gateway: %+v", err)
 	}
 
-	wgC, err := wg.NewWg(ctx, s.regionRef, node, s.octeliumC, initWGPrivateKey)
+	wgC, err := wg.New(ctx, node, s.octeliumC, initWGPrivateKey)
 	if err != nil {
 		return err
 	}
