@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -41,6 +42,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"golang.org/x/net/html"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -321,7 +323,7 @@ func (s *server) httpCPublicAccessTokenCheck(svc, accessToken string) {
 }
 
 func (s *server) httpC() *resty.Client {
-	return resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+	return resty.New().SetTLSClientConfig(&tls.Config{
 		InsecureSkipVerify: true,
 	}).SetRetryCount(20).SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
 		AddRetryCondition(func(r *resty.Response, err error) bool {
@@ -364,6 +366,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p google:15002",
 				"-p postgres-main:15003",
 				"-p essh:15004",
+				"-p pg.production:15005",
 				"--essh",
 			})
 			assert.Nil(t, err)
@@ -379,12 +382,18 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				res, err := s.httpC().R().Get("http://localhost:15001")
 				assert.Nil(t, err)
 				assert.Equal(t, http.StatusOK, res.StatusCode())
+
+				_, err = html.Parse(strings.NewReader(string(res.Body())))
+				assert.Nil(t, err)
 			}
 
 			{
 				res, err := s.httpC().R().Get("http://localhost:15002")
 				assert.Nil(t, err)
 				assert.Equal(t, http.StatusOK, res.StatusCode())
+
+				_, err = html.Parse(strings.NewReader(string(res.Body())))
+				assert.Nil(t, err)
 			}
 
 			{
@@ -397,8 +406,43 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					}))
 				assert.Nil(t, err)
 
+				defer db.Close()
+
 				_, err = db.Exec("SELECT current_database();")
 				assert.Nil(t, err)
+			}
+
+			{
+
+				_, err := postgresutils.NewDBWithURL(
+					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
+						Host:     "localhost",
+						NoSSL:    true,
+						Username: "postgres",
+						Password: "wrong-password",
+						Port:     15005,
+					}))
+				assert.NotNil(t, err)
+			}
+
+			{
+
+				db, err := postgresutils.NewDBWithURL(
+					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
+						Host:     "localhost",
+						NoSSL:    true,
+						Username: "postgres",
+						Password: "password",
+						Port:     15005,
+					}))
+				assert.Nil(t, err)
+
+				defer db.Close()
+
+				_, err = db.Exec("SELECT current_database();")
+				assert.Nil(t, err)
+
+				assert.Nil(t, postgresutils.Migrate(ctx, db))
 			}
 
 			{
@@ -413,7 +457,9 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost -tt 'ls -la'`, res.Session.Metadata.Name)))
+					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost 'ls -la'`, res.Session.Metadata.Name)))
+				assert.Nil(t, s.runCmd(ctx,
+					fmt.Sprintf(`ssh -p 15004 %s@localhost 'ls -la /etc'`, res.Session.Metadata.Name)))
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
