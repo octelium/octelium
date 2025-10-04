@@ -32,17 +32,22 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type server struct {
 	domain  string
 	homedir string
 	t       *CustomT
+	k8sC    kubernetes.Interface
 }
 
 func initServer(ctx context.Context) (*server, error) {
@@ -60,6 +65,12 @@ func initServer(ctx context.Context) (*server, error) {
 	zap.L().Info("Current user", zap.Any("info", u))
 
 	ret.homedir = fmt.Sprintf("/home/%s", u.Username)
+	k8sC, err := getK8sC()
+	if err != nil {
+		return nil, err
+	}
+
+	ret.k8sC = k8sC
 
 	return ret, nil
 }
@@ -75,6 +86,7 @@ func (s *server) run(ctx context.Context) error {
 		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
+		os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
 	}
 	{
 		s.runCmd(ctx, "id")
@@ -82,10 +94,9 @@ func (s *server) run(ctx context.Context) error {
 	{
 		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
 	}
+
 	{
-		out, err := s.getCmd(ctx, "octeliumctl version -o json").CombinedOutput()
-		assert.Nil(t, err)
-		zap.L().Info("octeliumctl version", zap.String("out", string(out)))
+		assert.Nil(t, s.runK8sInitChecks(ctx))
 	}
 
 	{
@@ -93,18 +104,20 @@ func (s *server) run(ctx context.Context) error {
 		s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
 		s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
 		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
+
+		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 	}
 
 	{
+		assert.Nil(t, s.runCmd(ctx, "octelium version"))
+		assert.Nil(t, s.runCmd(ctx, "octelium version -o json"))
+		assert.Nil(t, s.runCmd(ctx, "octeliumctl version"))
 		assert.Nil(t, s.runCmd(ctx, "octelium status"))
+
+		assert.Nil(t, s.runCmd(ctx, "octeliumctl get rgn default"))
 	}
 	{
-		res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true,
-		}).
-			SetRetryCount(10).
-			R().
-			Get("https://localhost")
+		res, err := s.httpC().R().Get("https://localhost")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
 	}
@@ -307,7 +320,20 @@ func (s *server) httpCPublicAccessTokenCheck(svc, accessToken string) {
 func (s *server) httpC() *resty.Client {
 	return resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
 		InsecureSkipVerify: true,
-	}).SetRetryCount(20).SetRetryWaitTime(1 * time.Second).SetTimeout(40 * time.Second).SetLogger(zap.S())
+	}).SetRetryCount(20).SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
+		AddRetryAfterErrorCondition().
+		AddRetryCondition(func(r *resty.Response, err error) bool {
+			if r.IsError() {
+				return true
+			}
+			if r.StatusCode() >= 500 && r.StatusCode() < 600 {
+				return true
+			}
+			return false
+		}).
+		AddRetryHook(func(r *resty.Response, err error) {
+			zap.L().Debug("Retrying....", zap.Error(err))
+		}).SetTimeout(40 * time.Second).SetLogger(zap.S())
 }
 
 func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
@@ -341,6 +367,12 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			})
 			assert.Nil(t, err)
 
+			{
+				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-postgres-main-default"))
+				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-nginx-default"))
+				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-google-default"))
+				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "upstream-nginx-default-default"))
+			}
 			{
 				res, err := s.httpC().R().Get("http://localhost:15001")
 				assert.Nil(t, err)
@@ -523,4 +555,35 @@ func (t *CustomT) Errorf(format string, args ...interface{}) {
 
 func (t *CustomT) FailNow() {
 	panic("")
+}
+
+func getK8sC() (kubernetes.Interface, error) {
+	cfg, err := clientcmd.BuildConfigFromFlags("", "/etc/rancher/k3s/k3s.yaml")
+	if err != nil {
+		return nil, err
+	}
+
+	k8sC, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return k8sC, nil
+}
+
+func (s *server) runK8sInitChecks(ctx context.Context) error {
+	t := s.t
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-nocturne"))
+	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-octovigil"))
+	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-ingress"))
+	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-rscserver"))
+	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-ingress-dataplane"))
+
+	assert.Nil(t, k8sutils.WaitReadinessDaemonsetWithNS(ctx, s.k8sC, "octelium-gwagent", vutils.K8sNS))
+
+	return nil
 }
