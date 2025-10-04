@@ -34,6 +34,7 @@ import (
 func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *appsv1.DaemonSet {
 
 	envVars := getGatewayAgentEnvVars(region)
+	hostPathDirectoryOrCreate := k8scorev1.HostPathDirectoryOrCreate
 
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -71,6 +72,7 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 							VolumeSource: k8scorev1.VolumeSource{
 								HostPath: &k8scorev1.HostPathVolumeSource{
 									Path: "/lib/modules",
+									Type: &hostPathDirectoryOrCreate,
 								},
 							},
 						},
@@ -79,6 +81,7 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 							VolumeSource: k8scorev1.VolumeSource{
 								HostPath: &k8scorev1.HostPathVolumeSource{
 									Path: "/etc/cni",
+									Type: &hostPathDirectoryOrCreate,
 								},
 							},
 						},
