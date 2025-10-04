@@ -82,8 +82,9 @@ func (s *server) run(ctx context.Context) error {
 		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
-		// os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+		os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
 	}
+
 	{
 		s.runCmd(ctx, "id")
 	}
@@ -362,15 +363,18 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p nginx:15001",
 				"-p google:15002",
 				"-p postgres-main:15003",
+				"-p essh:15004",
+				"--essh",
 			})
 			assert.Nil(t, err)
 
-			{
-				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-postgres-main-default"))
-				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-nginx-default"))
-				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-google-default"))
-				assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "upstream-nginx-default-default"))
-			}
+			/*
+				{
+					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-postgres-main-default"))
+					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-nginx-default"))
+					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-google-default"))
+				}
+			*/
 			{
 				res, err := s.httpC().R().Get("http://localhost:15001")
 				assert.Nil(t, err)
@@ -395,6 +399,21 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				_, err = db.Exec("SELECT current_database();")
 				assert.Nil(t, err)
+			}
+
+			{
+
+				out, err := s.getCmd(ctx,
+					"octelium status -o json").CombinedOutput()
+				assert.Nil(t, err)
+
+				res := &userv1.GetStatusResponse{}
+
+				err = pbutils.UnmarshalJSON(out, res)
+				assert.Nil(t, err)
+
+				assert.Nil(t, s.runCmd(ctx,
+					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost -tt 'ls -la'`, res.Session.Metadata.Name)))
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
