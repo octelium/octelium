@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -124,6 +125,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runOcteliumctlApplyCommands(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runOcteliumctlAccessToken(ctx); err != nil {
 		return err
 	}
@@ -186,6 +191,21 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 		})
 		assert.True(t, grpcerr.IsUnauthorized(err))
 
+		_, err = c.DeleteNamespace(ctx, &metav1.DeleteOptions{
+			Name: "default",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteNamespace(ctx, &metav1.DeleteOptions{
+			Name: "octelium",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteNamespace(ctx, &metav1.DeleteOptions{
+			Name: "octelium-api",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
 		_, err = c.DeleteCredential(ctx, &metav1.DeleteOptions{
 			Name: "root-init",
 		})
@@ -234,6 +254,7 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 
 	return nil
 }
+
 func (s *server) runOcteliumCommands(ctx context.Context) error {
 	t := s.t
 
@@ -261,6 +282,37 @@ func (s *server) runOcteliumCommands(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	assert.True(t, len(res.Items) > 0)
+
+	return nil
+}
+
+func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
+	t := s.t
+
+	{
+		rootDir, err := os.MkdirTemp("", "octelium-cfg-*")
+		assert.Nil(t, err)
+
+		assert.Nil(t, os.WriteFile(path.Join(rootDir, "cfg.yaml"), []byte(cfg1), 0644))
+
+		assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl apply %s", rootDir)))
+		assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl apply %s/cfg.yaml", rootDir)))
+
+		{
+			res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+				InsecureSkipVerify: true,
+			}).R().Get("https://nginx-anonymous.localhost")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode())
+		}
+		{
+			res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+				InsecureSkipVerify: true,
+			}).R().Get("https://google.localhost")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
+		}
+	}
 
 	return nil
 }
