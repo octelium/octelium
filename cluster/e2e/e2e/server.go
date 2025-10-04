@@ -65,12 +65,6 @@ func initServer(ctx context.Context) (*server, error) {
 	zap.L().Info("Current user", zap.Any("info", u))
 
 	ret.homedir = fmt.Sprintf("/home/%s", u.Username)
-	k8sC, err := getK8sC()
-	if err != nil {
-		return nil, err
-	}
-
-	ret.k8sC = k8sC
 
 	return ret, nil
 }
@@ -86,7 +80,7 @@ func (s *server) run(ctx context.Context) error {
 		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
-		os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+		// os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
 	}
 	{
 		s.runCmd(ctx, "id")
@@ -96,6 +90,12 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	{
+		k8sC, err := getK8sC()
+		if err != nil {
+			return err
+		}
+		s.k8sC = k8sC
+
 		assert.Nil(t, s.runK8sInitChecks(ctx))
 	}
 
