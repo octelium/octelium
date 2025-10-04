@@ -286,6 +286,30 @@ func (s *server) runOcteliumCommands(ctx context.Context) error {
 	return nil
 }
 
+func (s *server) httpCPublic(svc string) *resty.Client {
+	return s.httpC().SetBaseURL(fmt.Sprintf("https://%s.localhost", svc))
+}
+
+func (s *server) httpCPublicAccessToken(svc, accessToken string) *resty.Client {
+	return s.httpC().SetBaseURL(fmt.Sprintf("https://%s.localhost", svc)).SetAuthScheme("Bearer").
+		SetAuthToken(accessToken)
+}
+
+func (s *server) httpCPublicAccessTokenCheck(svc, accessToken string) {
+	t := s.t
+
+	res, err := s.httpCPublicAccessToken(svc, accessToken).R().Get("/")
+	assert.Nil(t, err)
+
+	assert.Equal(t, http.StatusOK, res.StatusCode())
+}
+
+func (s *server) httpC() *resty.Client {
+	return resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
+		InsecureSkipVerify: true,
+	}).SetRetryCount(20).SetRetryWaitTime(1 * time.Second).SetTimeout(40 * time.Second).SetLogger(zap.S())
+}
+
 func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	t := s.t
 
@@ -299,16 +323,12 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl apply %s/cfg.yaml", rootDir)))
 
 		{
-			res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
-				InsecureSkipVerify: true,
-			}).R().Get("https://nginx-anonymous.localhost")
+			res, err := s.httpCPublic("nginx-anonymous").R().Get("/")
 			assert.Nil(t, err)
 			assert.Equal(t, http.StatusOK, res.StatusCode())
 		}
 		{
-			res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
-				InsecureSkipVerify: true,
-			}).R().Get("https://google.localhost")
+			res, err := s.httpCPublic("nginx").R().Get("/")
 			assert.Nil(t, err)
 			assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
 		}
@@ -332,17 +352,7 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	{
-
-		res, err := resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true,
-		}).
-			SetRetryCount(10).
-			R().SetAuthScheme("Bearer").
-			SetAuthToken(res.GetAccessToken().AccessToken).
-			Get("https://demo-nginx.localhost")
-		assert.Nil(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode())
-
+		s.httpCPublicAccessTokenCheck("demo-nginx", res.GetAccessToken().AccessToken)
 	}
 
 	return nil
