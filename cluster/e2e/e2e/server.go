@@ -332,6 +332,37 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			assert.Nil(t, err)
 			assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
 		}
+
+		{
+			connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
+				"-p nginx:15001",
+				"-p google:15002",
+				"-p postgres-main:15003",
+			})
+			assert.Nil(t, err)
+
+			{
+				res, err := s.httpC().R().Get("http://localhost:15001")
+				assert.Nil(t, err)
+				assert.Equal(t, http.StatusOK, res.StatusCode())
+			}
+
+			{
+				res, err := s.httpC().R().Get("http://localhost:15002")
+				assert.Nil(t, err)
+				assert.Equal(t, http.StatusOK, res.StatusCode())
+			}
+
+			{
+				assert.Nil(t, s.runCmd(ctx, `psql -h localhost -p 15003 -c "\l"`))
+			}
+
+			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+
+			connCmd.Wait()
+
+			zap.L().Debug("octelium connect exited")
+		}
 	}
 
 	return nil
@@ -443,9 +474,7 @@ func (s *server) runOcteliumConnectCommands(ctx context.Context) error {
 		assert.Nil(t, err)
 
 		{
-			res, err := resty.New().SetDebug(true).
-				SetRetryCount(10).
-				R().Get("http://localhost:15001")
+			res, err := s.httpC().R().Get("http://localhost:15001")
 			assert.Nil(t, err)
 			assert.Equal(t, http.StatusOK, res.StatusCode())
 		}
