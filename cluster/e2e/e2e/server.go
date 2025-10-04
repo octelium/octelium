@@ -27,12 +27,14 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	_ "github.com/lib/pq"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -321,11 +323,7 @@ func (s *server) httpC() *resty.Client {
 	return resty.New().SetDebug(true).SetTLSClientConfig(&tls.Config{
 		InsecureSkipVerify: true,
 	}).SetRetryCount(20).SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
-		AddRetryAfterErrorCondition().
 		AddRetryCondition(func(r *resty.Response, err error) bool {
-			if r.IsError() {
-				return true
-			}
 			if r.StatusCode() >= 500 && r.StatusCode() < 600 {
 				return true
 			}
@@ -386,7 +384,17 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-				assert.Nil(t, s.runCmd(ctx, `psql -h localhost -p 15003 -c "\l"`))
+
+				db, err := postgresutils.NewDBWithURL(
+					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
+						Host:  "localhost",
+						NoSSL: true,
+						Port:  15003,
+					}))
+				assert.Nil(t, err)
+
+				_, err = db.Exec("SELECT current_database();")
+				assert.Nil(t, err)
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
