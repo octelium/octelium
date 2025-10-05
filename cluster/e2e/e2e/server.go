@@ -18,8 +18,12 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"database/sql"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/user"
@@ -29,8 +33,11 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/go-resty/resty/v2"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	_ "github.com/lib/pq"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/nats-io/nats.go"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -228,6 +235,11 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 		})
 		assert.True(t, grpcerr.IsUnauthorized(err))
 
+		_, err = c.DeleteUser(ctx, &metav1.DeleteOptions{
+			Name: "octelium",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
 		_, err = c.DeleteNamespace(ctx, &metav1.DeleteOptions{
 			Name: "octelium-api",
 		})
@@ -247,6 +259,7 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 
 	{
 		args := []string{
+			"cc", "clusterconfig",
 			"service", "svc",
 			"policy", "pol",
 			"user", "usr",
@@ -388,6 +401,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p redis:15006",
 				"-p ws-echo:15007",
 				"-p nats:15008",
+				"-p mariadb:15009",
+				"-p minio:15010",
 				"--essh",
 				"--serve-all",
 			})
@@ -457,6 +472,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				defer db.Close()
 
+				assert.Nil(t, db.Ping())
 				_, err = db.Exec("SELECT current_database();")
 				assert.Nil(t, err)
 
@@ -551,6 +567,80 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					time.Sleep(500 * time.Millisecond)
 				}
 
+			}
+
+			{
+				dsn := "root:password@tcp(localhost:15009)/"
+				db, err := sql.Open("mysql", dsn)
+				assert.Nil(t, err)
+
+				defer db.Close()
+
+				assert.Nil(t, db.Ping())
+
+				_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
+				assert.Nil(t, err)
+
+				rows, err := db.Query("SHOW DATABASES")
+				assert.Nil(t, err)
+				defer rows.Close()
+
+				for rows.Next() {
+					var name string
+					if err := rows.Scan(&name); err != nil {
+						log.Fatal(err)
+					}
+					fmt.Println(" -", name)
+				}
+
+				assert.Nil(t, rows.Err())
+			}
+
+			{
+				c, err := minio.New("localhost:15010", &minio.Options{
+					Creds:      credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+					MaxRetries: 20,
+				})
+				assert.Nil(t, err)
+
+				bucketName := "my-bucket"
+
+				err = c.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: ""})
+				assert.Nil(t, err)
+
+				_, err = c.FPutObject(ctx,
+					bucketName, "octelium", "~/go/bin/octelium", minio.PutObjectOptions{})
+				assert.Nil(t, err)
+
+				_, err = c.FPutObject(ctx,
+					bucketName, "octops", "~/go/bin/octops", minio.PutObjectOptions{})
+				assert.Nil(t, err)
+
+				err = c.FGetObject(ctx, bucketName, "octelium", "/tmp/octelium", minio.GetObjectOptions{})
+				assert.Nil(t, err)
+
+				err = c.FGetObject(ctx, bucketName, "octops", "/tmp/octops", minio.GetObjectOptions{})
+				assert.Nil(t, err)
+
+				{
+					f1, err := getFileSha256("~/go/bin/octelium")
+					assert.Nil(t, err)
+
+					f2, err := getFileSha256("/tmp/octelium")
+					assert.Nil(t, err)
+
+					assert.True(t, utils.SecureBytesEqual(f1, f2))
+				}
+
+				{
+					f1, err := getFileSha256("~/go/bin/octops")
+					assert.Nil(t, err)
+
+					f2, err := getFileSha256("/tmp/octops")
+					assert.Nil(t, err)
+
+					assert.True(t, utils.SecureBytesEqual(f1, f2))
+				}
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
@@ -750,4 +840,19 @@ func (s *server) runK8sInitChecks(ctx context.Context) error {
 	assert.Nil(t, k8sutils.WaitReadinessDaemonsetWithNS(ctx, s.k8sC, "octelium-gwagent", vutils.K8sNS))
 
 	return nil
+}
+
+func getFileSha256(pth string) ([]byte, error) {
+	f, err := os.Open(pth)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, err
+	}
+
+	return h.Sum(nil), nil
 }

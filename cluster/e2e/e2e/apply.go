@@ -175,4 +175,35 @@ spec:
       container:
         image: nats
         port: 4222
+---
+kind: Service
+metadata:
+  name: mariadb
+spec:
+  mode: MYSQL
+  config:
+    upstream:
+      container:
+        image: mariadb
+        port: 3306
+        env:
+          - name: MARIADB_ROOT_PASSWORD
+            value: password
+---
+kind: Service
+metadata:
+  name: minio
+spec:
+  mode: HTTP
+  config:
+    upstream:
+      container:
+        image: minio/minio
+        port: 9000
+        args: ["server", "/data"]
+        env:
+          - name: MINIO_ROOT_USER
+            value: minioadmin
+          - name: MINIO_ROOT_PASSWORD
+            value: minioadmin
 `
