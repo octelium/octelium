@@ -29,7 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
-	"github.com/pingcap/errors"
+	"github.com/pkg/errors"
 )
 
 type middleware struct {
