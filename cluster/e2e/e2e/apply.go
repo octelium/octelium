@@ -140,4 +140,16 @@ spec:
   config:
     ssh:
       eSSHMode: true
+---
+kind: Service
+metadata:
+  name: redis
+spec:
+  mode: TCP
+  port: 6379
+  config:
+    upstream:
+      container:
+        image: redis
+        port: 6379
 `

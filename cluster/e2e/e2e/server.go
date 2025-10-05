@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/go-resty/resty/v2"
 	_ "github.com/lib/pq"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -89,6 +90,8 @@ func (s *server) run(ctx context.Context) error {
 
 	{
 		s.runCmd(ctx, "id")
+		s.runCmd(ctx, "mkdir -p ~/.ssh")
+		s.runCmd(ctx, "chmod 700 ~/.ssh")
 	}
 	{
 		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
@@ -367,6 +370,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p postgres-main:15003",
 				"-p essh:15004",
 				"-p pg.production:15005",
+				"-p redis:15006",
 				"--essh",
 			})
 			assert.Nil(t, err)
@@ -460,6 +464,28 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost 'ls -la'`, res.Session.Metadata.Name)))
 				assert.Nil(t, s.runCmd(ctx,
 					fmt.Sprintf(`ssh -p 15004 %s@localhost 'ls -la /etc'`, res.Session.Metadata.Name)))
+			}
+
+			{
+				redisC := redis.NewClient(&redis.Options{
+					Addr: "localhost:15006",
+				})
+
+				key := utilrand.GetRandomStringCanonical(32)
+				val := utilrand.GetRandomStringCanonical(32)
+
+				assert.Nil(t, redisC.Set(ctx, key, val, 3*time.Second).Err())
+				time.Sleep(1 * time.Second)
+
+				ret, err := redisC.Get(ctx, key).Result()
+				assert.Nil(t, err)
+				assert.Equal(t, val, ret)
+
+				time.Sleep(3 * time.Second)
+
+				_, err = redisC.Get(ctx, key).Result()
+				assert.NotNil(t, err)
+				assert.Equal(t, redis.Nil, err)
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
