@@ -228,4 +228,16 @@ spec:
             value: single-node
           - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
             value: Password_123456
+---
+kind: Service
+metadata:
+  name: mcp-echo
+spec:
+  mode: HTTP
+  isPublic: true
+  port: 80
+  config:
+    upstream:
+      url: http://localhost:16001
+      user: root
 `

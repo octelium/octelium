@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nats-io/nats.go"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -391,6 +393,15 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	}
 
 	{
+		mcpSrv := &mcpServer{
+			port: 16001,
+		}
+
+		assert.Nil(t, mcpSrv.run(ctx))
+		defer mcpSrv.close()
+	}
+
+	{
 		assert.Nil(t, s.runCmd(ctx, "octeliumctl create secret password --value password"))
 		assert.Nil(t, s.runCmd(ctx, "octeliumctl create secret kubeconfig -f /etc/rancher/k3s/k3s.yaml"))
 	}
@@ -428,6 +439,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p mariadb:15009",
 				"-p minio:15010",
 				"-p opensearch:15011",
+				"-p mcp-echo:15012",
 				"--essh",
 				"--serve-all",
 			})
@@ -619,6 +631,39 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				}
 
 				assert.Nil(t, rows.Err())
+			}
+
+			{
+				client := mcp.NewClient(&mcp.Implementation{
+					Name:    "echo-client",
+					Version: "1.0.0",
+				}, nil)
+
+				session, err := client.Connect(ctx,
+					&mcp.StreamableClientTransport{Endpoint: "http://localhost:15012"}, nil)
+				assert.Nil(t, err)
+				defer session.Close()
+
+				toolsResult, err := session.ListTools(ctx, nil)
+				assert.Nil(t, err)
+
+				assert.True(t, slices.ContainsFunc(toolsResult.Tools, func(r *mcp.Tool) bool {
+					return r.Name == "echo"
+				}))
+
+				input := utilrand.GetRandomString(32)
+
+				result, err := session.CallTool(ctx, &mcp.CallToolParams{
+					Name: "echo",
+					Arguments: map[string]any{
+						"input": input,
+					},
+				})
+				assert.Nil(t, err)
+
+				textContent, ok := result.Content[0].(*mcp.TextContent)
+				assert.True(t, ok)
+				assert.Equal(t, input, textContent)
 			}
 
 			{
