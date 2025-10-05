@@ -189,6 +189,12 @@ spec:
         env:
           - name: MARIADB_ROOT_PASSWORD
             value: password
+    mysql:
+      user: root
+      database: octelium
+      auth:
+        password:
+          fromSecret: password
 ---
 kind: Service
 metadata:
@@ -206,4 +212,20 @@ spec:
             value: minioadmin
           - name: MINIO_ROOT_PASSWORD
             value: minioadmin
+---
+kind: Service
+metadata:
+  name: opensearch
+spec:
+  mode: HTTP
+  config:
+    upstream:
+      container:
+        image: opensearchproject/opensearch:latest
+        port: 9200
+        env:
+          - name: discovery.type
+            value: single-node
+          - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+            value: Password_123456
 `

@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elastic/go-elasticsearch/v9"
 	"github.com/go-redis/redis/v8"
 	"github.com/go-resty/resty/v2"
 	_ "github.com/go-sql-driver/mysql"
@@ -102,6 +103,7 @@ func (s *server) run(ctx context.Context) error {
 		s.runCmd(ctx, "id")
 		s.runCmd(ctx, "mkdir -p ~/.ssh")
 		s.runCmd(ctx, "chmod 700 ~/.ssh")
+		s.runCmd(ctx, "cat /etc/rancher/k3s/k3s.yaml")
 	}
 	{
 		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
@@ -141,6 +143,18 @@ func (s *server) run(ctx context.Context) error {
 		res, err := s.httpC().R().Get("https://localhost")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+	{
+
+		res, err := s.httpCPublic("demo-nginx").R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
+	}
+	{
+
+		res, err := s.httpCPublic("portal").R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
 	}
 
 	if err := s.runOcteliumctlEmbedded(ctx); err != nil {
@@ -212,6 +226,11 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 
 		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
 			Name: "auth.octelium-api",
+		})
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+			Name: "default.default",
 		})
 		assert.True(t, grpcerr.IsUnauthorized(err))
 
@@ -372,6 +391,11 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	}
 
 	{
+		assert.Nil(t, s.runCmd(ctx, "octeliumctl create secret password --value password"))
+		assert.Nil(t, s.runCmd(ctx, "octeliumctl create secret kubeconfig -f /etc/rancher/k3s/k3s.yaml"))
+	}
+
+	{
 		rootDir, err := os.MkdirTemp("", "octelium-cfg-*")
 		assert.Nil(t, err)
 
@@ -403,6 +427,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p nats:15008",
 				"-p mariadb:15009",
 				"-p minio:15010",
+				"-p opensearch:15011",
 				"--essh",
 				"--serve-all",
 			})
@@ -641,6 +666,31 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					assert.True(t, utils.SecureBytesEqual(f1, f2))
 				}
+			}
+
+			{
+				cfg := elasticsearch.Config{
+					Addresses: []string{
+						"http://localhost:15011",
+					},
+					Username:   "admin",
+					Password:   "Password_123456",
+					MaxRetries: 20,
+				}
+
+				c, err := elasticsearch.NewClient(cfg)
+				assert.Nil(t, err)
+
+				resI, err := c.Info()
+				assert.Nil(t, err)
+				defer resI.Body.Close()
+
+				res, err := io.ReadAll(resI.Body)
+				assert.Nil(t, err)
+				zap.L().Debug("OpenSearch info", zap.String("info", string(res)))
+
+				_, err = c.Indices.Create("octelium-index")
+				assert.Nil(t, err)
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
