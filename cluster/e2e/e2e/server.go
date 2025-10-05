@@ -29,6 +29,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/go-resty/resty/v2"
+	"github.com/gorilla/websocket"
 	_ "github.com/lib/pq"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -40,6 +41,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -371,6 +373,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p essh:15004",
 				"-p pg.production:15005",
 				"-p redis:15006",
+				"-p echo:15007",
 				"--essh",
 			})
 			assert.Nil(t, err)
@@ -401,7 +404,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-
 				db, err := postgresutils.NewDBWithURL(
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:  "localhost",
@@ -417,8 +419,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-
-				_, err := postgresutils.NewDBWithURL(
+				db, err := postgresutils.NewDBWithURL(
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:     "localhost",
 						NoSSL:    true,
@@ -426,6 +427,11 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 						Password: "wrong-password",
 						Port:     15005,
 					}))
+				assert.Nil(t, err)
+
+				defer db.Close()
+
+				_, err = db.Exec("SELECT current_database();")
 				assert.NotNil(t, err)
 			}
 
@@ -486,6 +492,38 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				_, err = redisC.Get(ctx, key).Result()
 				assert.NotNil(t, err)
 				assert.Equal(t, redis.Nil, err)
+			}
+
+			{
+				wsClient := websocket.Dialer{
+					ReadBufferSize:  1024,
+					WriteBufferSize: 1024,
+				}
+
+				wsC, _, err := wsClient.DialContext(ctx, "ws://localhost:15007/", http.Header{})
+				assert.Nil(t, err)
+
+				for range 5 {
+					msg := utilrand.GetRandomBytesMust(32)
+					err = wsC.WriteMessage(websocket.BinaryMessage, msg)
+					assert.Nil(t, err)
+					_, read, err := wsC.ReadMessage()
+					assert.Nil(t, err)
+					assert.True(t, utils.SecureBytesEqual(msg, read))
+					time.Sleep(1 * time.Second)
+				}
+
+				for range 5 {
+					msg := utilrand.GetRandomBytesMust(32)
+					err = wsC.WriteMessage(websocket.TextMessage, msg)
+					assert.Nil(t, err)
+					_, read, err := wsC.ReadMessage()
+					assert.Nil(t, err)
+					assert.True(t, utils.SecureBytesEqual(msg, read))
+					time.Sleep(1 * time.Second)
+				}
+
+				wsC.Close()
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))

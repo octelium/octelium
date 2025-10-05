@@ -152,4 +152,17 @@ spec:
       container:
         image: redis
         port: 6379
+---
+kind: Service
+metadata:
+  name: echo
+spec:
+  mode: WEB
+  isPublic: true
+  port: 80
+  config:
+    upstream:
+      container:
+        image: jmalloc/echo-server
+        port: 8080
 `
