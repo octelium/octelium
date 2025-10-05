@@ -165,4 +165,15 @@ spec:
       container:
         image: jmalloc/echo-server
         port: 8080
+---
+kind: Service
+metadata:
+  name: nats
+spec:
+  mode: TCP
+  config:
+    upstream:
+      container:
+        image: nats
+        port: 4222
 `

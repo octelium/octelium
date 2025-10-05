@@ -31,6 +31,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/gorilla/websocket"
 	_ "github.com/lib/pq"
+	"github.com/nats-io/nats.go"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -374,6 +375,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p pg.production:15005",
 				"-p redis:15006",
 				"-p echo:15007",
+				"-p nats:15008",
 				"--essh",
 			})
 			assert.Nil(t, err)
@@ -513,17 +515,36 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					time.Sleep(1 * time.Second)
 				}
 
-				for range 5 {
-					msg := utilrand.GetRandomBytesMust(32)
-					err = wsC.WriteMessage(websocket.TextMessage, msg)
-					assert.Nil(t, err)
-					_, read, err := wsC.ReadMessage()
-					assert.Nil(t, err)
-					assert.True(t, utils.SecureBytesEqual(msg, read))
-					time.Sleep(1 * time.Second)
+				wsC.Close()
+			}
+
+			{
+				nc, err := nats.Connect("nats://localhost:15008",
+					nats.RetryOnFailedConnect(true),
+					nats.ReconnectWait(3*time.Second))
+				assert.Nil(t, err)
+
+				defer nc.Drain()
+
+				subj := utilrand.GetRandomStringCanonical(32)
+
+				dataList := [][]byte{}
+				for range 12 {
+					dataList = append(dataList, utilrand.GetRandomBytesMust(32))
 				}
 
-				wsC.Close()
+				curIdx := 0
+				nc.Subscribe(subj, func(m *nats.Msg) {
+					assert.True(t, utils.SecureBytesEqual(dataList[curIdx], m.Data))
+					curIdx++
+					zap.L().Debug("Cur nats idx", zap.Int("idx", curIdx))
+				})
+
+				for i := range len(dataList) {
+					assert.Nil(t, nc.Publish(subj, dataList[i]))
+					time.Sleep(500 * time.Millisecond)
+				}
+
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
