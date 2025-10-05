@@ -380,14 +380,14 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("Too many environment variable")
 			}
 			for _, itm := range typ.Env {
-				if itm.Name == "" || len(itm.Name) > 32 || !govalidator.IsASCII(itm.Name) {
-					return grpcutils.InvalidArg("Invalid key: %s", itm.Name)
+				if err := apivalidation.ValidateEnvVarKey(itm.Name); err != nil {
+					return err
 				}
 
 				switch itm.Type.(type) {
 				case *corev1.Service_Spec_Config_Upstream_Container_Env_Value:
-					if itm.GetValue() == "" || len(itm.GetValue()) > 1024 {
-						return grpcutils.InvalidArg("Invalid name: %s", itm.Name)
+					if err := apivalidation.ValidateEnvVarKey(itm.GetValue()); err != nil {
+						return err
 					}
 				case *corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret:
 					if err := s.validateSecretOwner(ctx, itm); err != nil {

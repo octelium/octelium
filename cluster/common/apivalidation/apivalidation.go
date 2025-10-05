@@ -596,3 +596,35 @@ func ValidateDuration(d *metav1.Duration) error {
 
 	return nil
 }
+
+func ValidateEnvVar(key, val string) error {
+	if err := ValidateEnvVarKey(key); err != nil {
+		return err
+	}
+
+	if err := ValidateEnvVarValue(val); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ValidateEnvVarValue(val string) error {
+	if len(val) > 8129 {
+		return grpcutils.InvalidArg("Value is too long: %s", val)
+	}
+
+	return nil
+}
+
+func ValidateEnvVarKey(key string) error {
+	if key == "" {
+		return grpcutils.InvalidArg("Key is empty")
+	}
+
+	if len(key) > 1024 {
+		return grpcutils.InvalidArg("Key is too long: %s", key)
+	}
+
+	return nil
+}
