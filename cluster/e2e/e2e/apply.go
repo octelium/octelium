@@ -155,16 +155,15 @@ spec:
 ---
 kind: Service
 metadata:
-  name: echo
+  name: ws-echo
 spec:
   mode: WEB
   isPublic: true
   port: 80
   config:
     upstream:
-      container:
-        image: jmalloc/echo-server
-        port: 8080
+      url: http://localhost:16000
+      user: root
 ---
 kind: Service
 metadata:

@@ -117,6 +117,9 @@ func (s *server) run(ctx context.Context) error {
 		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
+		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
+		assert.Nil(t, s.runCmd(ctx, "kubectl get svc -A"))
+		assert.Nil(t, s.runCmd(ctx, "kubectl get daemonset -A"))
 	}
 
 	{
@@ -345,6 +348,15 @@ func (s *server) httpC() *resty.Client {
 
 func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	t := s.t
+	{
+		wsSrv := &tstSrvHTTP{
+			port: 16000,
+			isWS: true,
+		}
+
+		assert.Nil(t, wsSrv.run(ctx))
+		defer wsSrv.close()
+	}
 
 	{
 		rootDir, err := os.MkdirTemp("", "octelium-cfg-*")
@@ -374,19 +386,13 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p essh:15004",
 				"-p pg.production:15005",
 				"-p redis:15006",
-				"-p echo:15007",
+				"-p ws-echo:15007",
 				"-p nats:15008",
 				"--essh",
+				"--serve-all",
 			})
 			assert.Nil(t, err)
 
-			/*
-				{
-					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-postgres-main-default"))
-					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-nginx-default"))
-					assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "svc-google-default"))
-				}
-			*/
 			{
 				res, err := s.httpC().R().Get("http://localhost:15001")
 				assert.Nil(t, err)
