@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/elastic/go-elasticsearch/v9"
 	"github.com/go-redis/redis/v8"
 	"github.com/go-resty/resty/v2"
@@ -440,6 +441,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p minio:15010",
 				"-p opensearch:15011",
 				"-p mcp-echo:15012",
+				"-p clickhouse:15013",
 				"--essh",
 				"--serve-all",
 			})
@@ -736,6 +738,32 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				_, err = c.Indices.Create("octelium-index")
 				assert.Nil(t, err)
+			}
+			{
+				conn := clickhouse.OpenDB(&clickhouse.Options{
+					Addr: []string{"localhost:15013"},
+					Auth: clickhouse.Auth{
+						Username: "octelium",
+						Password: "password",
+					},
+				})
+
+				assert.Nil(t, conn.Ping())
+
+				conn.Exec(`DROP TABLE IF EXISTS example`)
+				_, err = conn.Exec(`CREATE TABLE IF NOT EXISTS example (Col1 UInt8, Col2 String) engine=Memory`)
+				assert.Nil(t, err)
+
+				arg := utilrand.GetRandomString(32)
+				_, err = conn.Exec(fmt.Sprintf("INSERT INTO example VALUES (1, '%s')", arg))
+				assert.Nil(t, err)
+
+				row := conn.QueryRow("SELECT * FROM example")
+				var col1 uint8
+				var col2 string
+				assert.Nil(t, row.Scan(&col1, &col2))
+				assert.Equal(t, col1, 1)
+				assert.Equal(t, arg, col2)
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))

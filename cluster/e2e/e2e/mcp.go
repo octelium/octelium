@@ -28,7 +28,7 @@ import (
 )
 
 type params struct {
-	Input string `json:"input" jsonschema:""`
+	Input string `json:"input"`
 }
 
 func (s *mcpServer) doEcho(ctx context.Context, req *mcp.CallToolRequest, params *params) (*mcp.CallToolResult, any, error) {

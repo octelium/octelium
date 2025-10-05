@@ -240,4 +240,20 @@ spec:
     upstream:
       url: http://localhost:16001
       user: root
+---
+kind: Service
+metadata:
+  name: clickhouse
+spec:
+  mode: TCP
+  config:
+    upstream:
+      container:
+        image: clickhouse/clickhouse-server
+        port: 9000
+        env:
+          - name: CLICKHOUSE_USER
+            value: octelium
+          - name: CLICKHOUSE_PASSWORD
+            value: password
 `
