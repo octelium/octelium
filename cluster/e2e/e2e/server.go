@@ -609,8 +609,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-				dsn := "root:password@tcp(localhost:15009)/"
-				db, err := sql.Open("mysql", dsn)
+				db, err := sql.Open("mysql", "root:@tcp(localhost:15009)/")
 				assert.Nil(t, err)
 
 				defer db.Close()
