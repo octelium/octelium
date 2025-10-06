@@ -23,7 +23,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/user"
@@ -107,6 +106,7 @@ func (s *server) run(ctx context.Context) error {
 		s.runCmd(ctx, "mkdir -p ~/.ssh")
 		s.runCmd(ctx, "chmod 700 ~/.ssh")
 		s.runCmd(ctx, "cat /etc/rancher/k3s/k3s.yaml")
+		s.runCmd(ctx, "docker run alpine ls")
 	}
 	{
 		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
@@ -141,6 +141,7 @@ func (s *server) run(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, "octelium status"))
 
 		assert.Nil(t, s.runCmd(ctx, "octeliumctl get rgn default"))
+		assert.Nil(t, s.runCmd(ctx, "octeliumctl get gw -o yaml"))
 	}
 	{
 		res, err := s.httpC().R().Get("https://localhost")
@@ -448,6 +449,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			assert.Nil(t, err)
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "nginx"))
 				res, err := s.httpC().R().Get("http://localhost:15001")
 				assert.Nil(t, err)
 				assert.Equal(t, http.StatusOK, res.StatusCode())
@@ -536,6 +538,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "redis"))
 				redisC := redis.NewClient(&redis.Options{
 					Addr: "localhost:15006",
 				})
@@ -580,6 +583,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "nats"))
 				nc, err := nats.Connect("nats://localhost:15008",
 					nats.RetryOnFailedConnect(true),
 					nats.ReconnectWait(3*time.Second))
@@ -609,6 +613,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
 				db, err := sql.Open("mysql", "root:@tcp(localhost:15009)/")
 				assert.Nil(t, err)
 
@@ -625,10 +630,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				for rows.Next() {
 					var name string
-					if err := rows.Scan(&name); err != nil {
-						log.Fatal(err)
-					}
-					fmt.Println(" -", name)
+					assert.Nil(t, rows.Scan(&name))
 				}
 
 				assert.Nil(t, rows.Err())
@@ -668,6 +670,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:      credentials.NewStaticV4("minioadmin", "minioadmin", ""),
 					MaxRetries: 20,
@@ -715,6 +718,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "opensearch"))
 				cfg := elasticsearch.Config{
 					Addresses: []string{
 						"http://localhost:15011",
@@ -739,6 +743,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 			}
 			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "clickhouse"))
 				conn := clickhouse.OpenDB(&clickhouse.Options{
 					Addr: []string{"localhost:15013"},
 					Auth: clickhouse.Auth{
@@ -962,6 +967,18 @@ func (s *server) runK8sInitChecks(ctx context.Context) error {
 	assert.Nil(t, k8sutils.WaitReadinessDaemonsetWithNS(ctx, s.k8sC, "octelium-gwagent", vutils.K8sNS))
 
 	return nil
+}
+
+func (s *server) waitDeploymentComponent(ctx context.Context, name string) error {
+	return k8sutils.WaitReadinessDeployment(ctx, s.k8sC, fmt.Sprintf("octelium-%s", name))
+}
+
+func (s *server) waitDeploymentSvcUpstream(ctx context.Context, name string) error {
+	return k8sutils.WaitReadinessDeployment(ctx, s.k8sC, k8sutils.GetSvcK8sUpstreamHostname(&corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: vutils.GetServiceFullNameFromName(name),
+		},
+	}, ""))
 }
 
 func getFileSha256(pth string) ([]byte, error) {
