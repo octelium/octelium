@@ -742,13 +742,12 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				c, err := minio.New("localhost:15010", &minio.Options{
-					Creds:      credentials.NewStaticV4("minioadmin", "minioadmin", ""),
-					Secure:     false,
-					MaxRetries: 20,
+					Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+					Secure: false,
 				})
 				assert.Nil(t, err)
 
-				bucketName := "my-bucket"
+				bucketName := utilrand.GetRandomStringCanonical(6)
 
 				err = c.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: ""})
 				assert.Nil(t, err)
@@ -870,7 +869,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 	{
 		cmd := s.getCmd(ctx,
 			fmt.Sprintf(
-				"docker run ghcr.io/octelium/octelium:main --add-host localhost:%s --domain %s --auth-token %s",
+				"docker run --add-host -p 9090:17000 localhost:%s ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
 				s.externalIP,
 				s.domain,
 				res.GetAuthenticationToken().AuthenticationToken))
@@ -880,6 +879,10 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 		assert.Nil(t, cmd.Start())
 
 		time.Sleep(5 * time.Second)
+
+		res, err := s.httpC().R().Get("http://localhost:7000")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
 		cmd.Process.Kill()
 		time.Sleep(2 * time.Second)
 	}
