@@ -869,7 +869,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 	{
 		cmd := s.getCmd(ctx,
 			fmt.Sprintf(
-				"docker run --add-host -p 9090:17000 localhost:%s ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
+				"docker run --add-host -p 17000:9090 localhost:%s ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
 				s.externalIP,
 				s.domain,
 				res.GetAuthenticationToken().AuthenticationToken))
@@ -880,7 +880,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 
 		time.Sleep(5 * time.Second)
 
-		res, err := s.httpC().R().Get("http://localhost:7000")
+		res, err := s.httpC().R().Get("http://localhost:17000")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
 		cmd.Process.Kill()
