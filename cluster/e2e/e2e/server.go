@@ -62,10 +62,11 @@ import (
 )
 
 type server struct {
-	domain  string
-	homedir string
-	t       *CustomT
-	k8sC    kubernetes.Interface
+	domain     string
+	homedir    string
+	t          *CustomT
+	k8sC       kubernetes.Interface
+	externalIP string
 }
 
 func initServer(ctx context.Context) (*server, error) {
@@ -92,6 +93,15 @@ func (s *server) run(ctx context.Context) error {
 	if err := s.installCluster(ctx); err != nil {
 		return err
 	}
+	{
+		cmd := s.getCmd(ctx,
+			`ip addr show $(ip route show default | ip route show default | awk '/default/ {print $5}') | grep "inet " | awk '{print $2}' | cut -d'/' -f1`)
+		out, err := cmd.CombinedOutput()
+		assert.Nil(t, err)
+		s.externalIP = strings.TrimSpace(string(out))
+		zap.L().Debug("The VM IP addr", zap.String("addr", s.externalIP))
+	}
+
 	{
 		os.Setenv("OCTELIUM_DOMAIN", s.domain)
 		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
@@ -186,6 +196,10 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlAuthToken(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runOcteliumContainer(ctx); err != nil {
 		return err
 	}
 
@@ -483,7 +497,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-				db, err := connectWithRetry("postgres",
+				db, err := sql.Open("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:     "localhost",
 						NoSSL:    true,
@@ -825,6 +839,40 @@ func (s *server) runOcteliumctlAuthToken(ctx context.Context) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		assert.Nil(t, cmd.Run())
+	}
+
+	return nil
+}
+
+func (s *server) runOcteliumContainer(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx,
+		"octeliumctl create cred --user root --policy allow-all -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.CredentialToken{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	{
+		cmd := s.getCmd(ctx,
+			fmt.Sprintf(
+				"docker run ghcr.io/octelium/octelium:main --add-host localhost:%s --domain %s --auth-token %s",
+				s.externalIP,
+				s.domain,
+				res.GetAuthenticationToken().AuthenticationToken))
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		assert.Nil(t, cmd.Start())
+
+		time.Sleep(5 * time.Second)
+		cmd.Process.Kill()
+		time.Sleep(2 * time.Second)
 	}
 
 	return nil
