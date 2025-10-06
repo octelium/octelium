@@ -191,7 +191,7 @@ spec:
             value: password
     mysql:
       user: root
-      database: octelium
+      database: mysql
       auth:
         password:
           fromSecret: password

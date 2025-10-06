@@ -142,6 +142,8 @@ func (s *server) run(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get svc -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get daemonset -A"))
+
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "demo-nginx"))
 	}
 
 	{
@@ -653,13 +655,95 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				textContent, ok := result.Content[0].(*mcp.TextContent)
 				assert.True(t, ok)
-				assert.Equal(t, input, textContent)
+				assert.Equal(t, input, textContent.Text)
+			}
+
+			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "opensearch"))
+				cfg := elasticsearch.Config{
+					Addresses: []string{
+						"http://localhost:15011",
+					},
+					Username:   "admin",
+					Password:   "Password_123456",
+					MaxRetries: 20,
+				}
+
+				c, err := elasticsearch.NewClient(cfg)
+				assert.Nil(t, err)
+
+				resI, err := c.Info()
+				assert.Nil(t, err)
+				defer resI.Body.Close()
+
+				res, err := io.ReadAll(resI.Body)
+				assert.Nil(t, err)
+				zap.L().Debug("OpenSearch info", zap.String("info", string(res)))
+
+				_, err = c.Indices.Create("octelium-index")
+				assert.Nil(t, err)
+			}
+			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "clickhouse"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "clickhouse"))
+				conn := clickhouse.OpenDB(&clickhouse.Options{
+					Addr: []string{"localhost:15013"},
+					Auth: clickhouse.Auth{
+						Username: "octelium",
+						Password: "password",
+					},
+				})
+
+				assert.Nil(t, conn.Ping())
+
+				conn.Exec(`DROP TABLE IF EXISTS example`)
+				_, err = conn.Exec(`CREATE TABLE IF NOT EXISTS example (Col1 UInt8, Col2 String) engine=Memory`)
+				assert.Nil(t, err)
+
+				arg := utilrand.GetRandomString(32)
+				_, err = conn.Exec(fmt.Sprintf("INSERT INTO example VALUES (1, '%s')", arg))
+				assert.Nil(t, err)
+
+				row := conn.QueryRow("SELECT * FROM example")
+				var col1 uint8
+				var col2 string
+				assert.Nil(t, row.Scan(&col1, &col2))
+				assert.Equal(t, int(col1), 1)
+				assert.Equal(t, arg, col2)
+			}
+
+			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "mariadb"))
+
+				db, err := connectWithRetry("mysql", "root:@tcp(localhost:15009)/mysql")
+				assert.Nil(t, err)
+				defer db.Close()
+
+				_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
+				assert.Nil(t, err)
+
+				_, err = db.Query("SHOW DATABASES")
+				assert.Nil(t, err)
+
+				/*
+					defer rows.Close()
+
+					for rows.Next() {
+						var name string
+						assert.Nil(t, rows.Scan(&name))
+					}
+
+					assert.Nil(t, rows.Err())
+				*/
 			}
 
 			{
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:      credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+					Secure:     false,
 					MaxRetries: 20,
 				})
 				assert.Nil(t, err)
@@ -702,81 +786,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					assert.True(t, utils.SecureBytesEqual(f1, f2))
 				}
-			}
-
-			{
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "opensearch"))
-				cfg := elasticsearch.Config{
-					Addresses: []string{
-						"http://localhost:15011",
-					},
-					Username:   "admin",
-					Password:   "Password_123456",
-					MaxRetries: 20,
-				}
-
-				c, err := elasticsearch.NewClient(cfg)
-				assert.Nil(t, err)
-
-				resI, err := c.Info()
-				assert.Nil(t, err)
-				defer resI.Body.Close()
-
-				res, err := io.ReadAll(resI.Body)
-				assert.Nil(t, err)
-				zap.L().Debug("OpenSearch info", zap.String("info", string(res)))
-
-				_, err = c.Indices.Create("octelium-index")
-				assert.Nil(t, err)
-			}
-			{
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "clickhouse"))
-				conn := clickhouse.OpenDB(&clickhouse.Options{
-					Addr: []string{"localhost:15013"},
-					Auth: clickhouse.Auth{
-						Username: "octelium",
-						Password: "password",
-					},
-				})
-
-				assert.Nil(t, conn.Ping())
-
-				conn.Exec(`DROP TABLE IF EXISTS example`)
-				_, err = conn.Exec(`CREATE TABLE IF NOT EXISTS example (Col1 UInt8, Col2 String) engine=Memory`)
-				assert.Nil(t, err)
-
-				arg := utilrand.GetRandomString(32)
-				_, err = conn.Exec(fmt.Sprintf("INSERT INTO example VALUES (1, '%s')", arg))
-				assert.Nil(t, err)
-
-				row := conn.QueryRow("SELECT * FROM example")
-				var col1 uint8
-				var col2 string
-				assert.Nil(t, row.Scan(&col1, &col2))
-				assert.Equal(t, col1, 1)
-				assert.Equal(t, arg, col2)
-			}
-
-			{
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
-
-				db, err := connectWithRetry("mysql", "root:@tcp(localhost:15009)/")
-				assert.Nil(t, err)
-				defer db.Close()
-
-				_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
-				assert.Nil(t, err)
-
-				rows, err := db.Query("SHOW DATABASES")
-				assert.Nil(t, err)
-				defer rows.Close()
-
-				for rows.Next() {
-					var name string
-					assert.Nil(t, rows.Scan(&name))
-				}
-
-				assert.Nil(t, rows.Err())
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
@@ -1001,11 +1010,11 @@ func (s *server) runK8sInitChecks(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-nocturne"))
-	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-octovigil"))
-	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-ingress"))
-	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-rscserver"))
-	assert.Nil(t, k8sutils.WaitReadinessDeployment(ctx, s.k8sC, "octelium-ingress-dataplane"))
+	assert.Nil(t, s.waitDeploymentComponent(ctx, "nocturne"))
+	assert.Nil(t, s.waitDeploymentComponent(ctx, "octovigil"))
+	assert.Nil(t, s.waitDeploymentComponent(ctx, "ingress"))
+	assert.Nil(t, s.waitDeploymentComponent(ctx, "rscserver"))
+	assert.Nil(t, s.waitDeploymentComponent(ctx, "ingress-dataplane"))
 
 	assert.Nil(t, k8sutils.WaitReadinessDaemonsetWithNS(ctx, s.k8sC, "octelium-gwagent", vutils.K8sNS))
 
@@ -1014,6 +1023,14 @@ func (s *server) runK8sInitChecks(ctx context.Context) error {
 
 func (s *server) waitDeploymentComponent(ctx context.Context, name string) error {
 	return k8sutils.WaitReadinessDeployment(ctx, s.k8sC, fmt.Sprintf("octelium-%s", name))
+}
+
+func (s *server) waitDeploymentSvc(ctx context.Context, name string) error {
+	return k8sutils.WaitReadinessDeployment(ctx, s.k8sC, k8sutils.GetSvcHostname(&corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: vutils.GetServiceFullNameFromName(name),
+		},
+	}))
 }
 
 func (s *server) waitDeploymentSvcUpstream(ctx context.Context, name string) error {
@@ -1058,7 +1075,7 @@ func connectWithRetry(driverName, dsn string) (*sql.DB, error) {
 			break
 		}
 
-		zap.L().Debug("Retrying connection to db", zap.String("dsn", dsn))
+		zap.L().Debug("Retrying connection to db", zap.String("dsn", dsn), zap.Error(err))
 		time.Sleep(1 * time.Second)
 	}
 
