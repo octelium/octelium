@@ -202,11 +202,9 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
-	/*
-		if err := s.runOcteliumContainer(ctx); err != nil {
-			return err
-		}
-	*/
+	if err := s.runOcteliumContainer(ctx); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -754,22 +752,23 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:  credentials.NewStaticV4("wrong", "identity", ""),
 					Secure: false,
+					Region: "us-east-1",
 				})
 				assert.Nil(t, err)
 
 				bucketName := utilrand.GetRandomStringCanonical(6)
 
-				err = c.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: ""})
+				err = c.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: "us-east-1"})
 				assert.Nil(t, err)
 
 				_, err = c.FPutObject(ctx,
-					bucketName, "octelium", "~/go/bin/octelium", minio.PutObjectOptions{
+					bucketName, "octelium", path.Join(s.homedir, "/go/bin/octelium"), minio.PutObjectOptions{
 						ContentType: "application/octet-stream",
 					})
 				assert.Nil(t, err)
 
 				_, err = c.FPutObject(ctx,
-					bucketName, "octops", "~/go/bin/octops", minio.PutObjectOptions{})
+					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{})
 				assert.Nil(t, err)
 
 				err = c.FGetObject(ctx, bucketName, "octelium", "/tmp/octelium", minio.GetObjectOptions{})
@@ -779,7 +778,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				{
-					f1, err := getFileSha256("~/go/bin/octelium")
+					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octelium"))
 					assert.Nil(t, err)
 
 					f2, err := getFileSha256("/tmp/octelium")
@@ -789,7 +788,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				}
 
 				{
-					f1, err := getFileSha256("~/go/bin/octops")
+					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octops"))
 					assert.Nil(t, err)
 
 					f2, err := getFileSha256("/tmp/octops")
@@ -881,8 +880,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 	{
 		cmd := s.getCmd(ctx,
 			fmt.Sprintf(
-				"docker run --add-host localhost:%s -p 17000:9090 ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
-				s.externalIP,
+				"docker run --net host ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:17001",
 				s.domain,
 				res.GetAuthenticationToken().AuthenticationToken))
 		cmd.Stdout = os.Stdout
@@ -892,7 +890,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 
 		time.Sleep(5 * time.Second)
 
-		res, err := s.httpC().R().Get("http://localhost:17000")
+		res, err := s.httpC().R().Get("http://localhost:17001")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
 		cmd.Process.Kill()
