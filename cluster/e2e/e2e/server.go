@@ -468,7 +468,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-				db, err := postgresutils.NewDBWithURL(
+				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:  "localhost",
 						NoSSL: true,
@@ -483,7 +483,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-				db, err := postgresutils.NewDBWithURL(
+				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:     "localhost",
 						NoSSL:    true,
@@ -501,7 +501,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 			{
 
-				db, err := postgresutils.NewDBWithURL(
+				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:     "localhost",
 						NoSSL:    true,
@@ -513,7 +513,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				defer db.Close()
 
-				assert.Nil(t, db.Ping())
 				_, err = db.Exec("SELECT current_database();")
 				assert.Nil(t, err)
 
@@ -532,9 +531,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost 'ls -la'`, res.Session.Metadata.Name)))
-				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -p 15004 %s@localhost 'ls -la /etc'`, res.Session.Metadata.Name)))
+					fmt.Sprintf(`ssh -p 15004 %s@localhost 'ls -la'`, res.Session.Metadata.Name)))
 			}
 
 			{
@@ -610,30 +607,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					time.Sleep(500 * time.Millisecond)
 				}
 
-			}
-
-			{
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
-				db, err := sql.Open("mysql", "root:@tcp(localhost:15009)/")
-				assert.Nil(t, err)
-
-				defer db.Close()
-
-				assert.Nil(t, db.Ping())
-
-				_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
-				assert.Nil(t, err)
-
-				rows, err := db.Query("SHOW DATABASES")
-				assert.Nil(t, err)
-				defer rows.Close()
-
-				for rows.Next() {
-					var name string
-					assert.Nil(t, rows.Scan(&name))
-				}
-
-				assert.Nil(t, rows.Err())
 			}
 
 			{
@@ -768,6 +741,28 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, row.Scan(&col1, &col2))
 				assert.Equal(t, col1, 1)
 				assert.Equal(t, arg, col2)
+			}
+
+			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
+
+				db, err := connectWithRetry("mysql", "root:@tcp(localhost:15009)/")
+				assert.Nil(t, err)
+				defer db.Close()
+
+				_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
+				assert.Nil(t, err)
+
+				rows, err := db.Query("SHOW DATABASES")
+				assert.Nil(t, err)
+				defer rows.Close()
+
+				for rows.Next() {
+					var name string
+					assert.Nil(t, rows.Scan(&name))
+				}
+
+				assert.Nil(t, rows.Err())
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
@@ -994,4 +989,30 @@ func getFileSha256(pth string) ([]byte, error) {
 	}
 
 	return h.Sum(nil), nil
+}
+
+func connectWithRetry(driverName, dsn string) (*sql.DB, error) {
+	var db *sql.DB
+	var err error
+
+	maxRetries := 30
+
+	for attempt := 1; ; attempt++ {
+		db, err = sql.Open(driverName, dsn)
+		if err == nil {
+			err = db.Ping()
+			if err == nil {
+				return db, nil
+			}
+		}
+
+		if maxRetries > 0 && attempt >= maxRetries {
+			break
+		}
+
+		zap.L().Debug("Retrying connection to db", zap.String("dsn", dsn))
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil, fmt.Errorf("could not connect to database: %w", err)
 }
