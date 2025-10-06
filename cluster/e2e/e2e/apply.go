@@ -209,9 +209,9 @@ spec:
         args: ["server", "/data"]
         env:
           - name: MINIO_ROOT_USER
-            value: minioadmin
+            value: octelium_minio
           - name: MINIO_ROOT_PASSWORD
-            value: minioadmin
+            value: octelium_minio
 ---
 kind: Service
 metadata:

@@ -742,7 +742,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				c, err := minio.New("localhost:15010", &minio.Options{
-					Creds:  credentials.NewStaticV4("minioadmin", "minioadmin", ""),
+					Creds:  credentials.NewStaticV4("octelium_minio", "octelium_minio", ""),
 					Secure: false,
 				})
 				assert.Nil(t, err)
@@ -753,7 +753,9 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				_, err = c.FPutObject(ctx,
-					bucketName, "octelium", "~/go/bin/octelium", minio.PutObjectOptions{})
+					bucketName, "octelium", "~/go/bin/octelium", minio.PutObjectOptions{
+						ContentType: "application/octet-stream",
+					})
 				assert.Nil(t, err)
 
 				_, err = c.FPutObject(ctx,
@@ -869,7 +871,7 @@ func (s *server) runOcteliumContainer(ctx context.Context) error {
 	{
 		cmd := s.getCmd(ctx,
 			fmt.Sprintf(
-				"docker run --add-host -p 17000:9090 localhost:%s ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
+				"docker run --add-host localhost:%s -p 17000:9090 ghcr.io/octelium/octelium:main connect --domain %s --auth-token %s -p nginx:0.0.0.0:9090",
 				s.externalIP,
 				s.domain,
 				res.GetAuthenticationToken().AuthenticationToken))
