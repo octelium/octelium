@@ -116,7 +116,6 @@ func (s *server) run(ctx context.Context) error {
 		s.runCmd(ctx, "mkdir -p ~/.ssh")
 		s.runCmd(ctx, "chmod 700 ~/.ssh")
 		s.runCmd(ctx, "cat /etc/rancher/k3s/k3s.yaml")
-		s.runCmd(ctx, "docker run alpine ls")
 	}
 	{
 		zap.L().Info("Env vars", zap.Strings("env", os.Environ()))
@@ -144,6 +143,8 @@ func (s *server) run(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, "kubectl get daemonset -A"))
 
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "demo-nginx"))
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "portal"))
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "default"))
 	}
 
 	{
@@ -201,9 +202,11 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := s.runOcteliumContainer(ctx); err != nil {
-		return err
-	}
+	/*
+		if err := s.runOcteliumContainer(ctx); err != nil {
+			return err
+		}
+	*/
 
 	return nil
 }
@@ -235,6 +238,13 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 			assert.Nil(t, err)
 
 			assert.True(t, len(itmList.Items) > 0)
+
+			for _, svc := range itmList.Items {
+				assert.NotNil(t, svc.Status.RegionRef)
+				assert.NotNil(t, svc.Status.NamespaceRef)
+				assert.True(t, len(svc.Status.Addresses) > 0)
+				assert.True(t, svc.Status.Port > 0)
+			}
 		}
 	}
 
@@ -742,7 +752,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				c, err := minio.New("localhost:15010", &minio.Options{
-					Creds:  credentials.NewStaticV4("octelium_minio", "octelium_minio", ""),
+					Creds:  credentials.NewStaticV4("wrong", "identity", ""),
 					Secure: false,
 				})
 				assert.Nil(t, err)

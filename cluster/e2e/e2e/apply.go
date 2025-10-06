@@ -211,7 +211,15 @@ spec:
           - name: MINIO_ROOT_USER
             value: octelium_minio
           - name: MINIO_ROOT_PASSWORD
-            value: octelium_minio
+            value: password
+    http:
+      auth:
+        sigv4:
+          accessKeyID: octelium_minio
+          secretAccessKey:
+            fromSecret: password
+          service: s3
+          region: us-east-1
 ---
 kind: Service
 metadata:
