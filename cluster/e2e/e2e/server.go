@@ -756,10 +756,22 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				})
 				assert.Nil(t, err)
 
+				c.TraceOn(os.Stderr)
+
 				bucketName := utilrand.GetRandomStringCanonical(6)
 
 				err = c.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{Region: "us-east-1"})
 				assert.Nil(t, err)
+
+				zap.L().Debug("Successfully created bucket", zap.String("bucket", bucketName))
+
+				_, err = c.FPutObject(ctx,
+					bucketName, "octelium", "/etc/rancher/k3s/k3s.yaml", minio.PutObjectOptions{
+						ContentType: "application/octet-stream",
+					})
+				assert.Nil(t, err)
+
+				zap.L().Debug("successfully uploaded kubeconfig")
 
 				_, err = c.FPutObject(ctx,
 					bucketName, "octelium", path.Join(s.homedir, "/go/bin/octelium"), minio.PutObjectOptions{
@@ -767,12 +779,18 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					})
 				assert.Nil(t, err)
 
+				zap.L().Debug("Successfully uploaded octelium")
+
 				_, err = c.FPutObject(ctx,
 					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{})
 				assert.Nil(t, err)
 
+				zap.L().Debug("successfully uploaded octops")
+
 				err = c.FGetObject(ctx, bucketName, "octelium", "/tmp/octelium", minio.GetObjectOptions{})
 				assert.Nil(t, err)
+
+				zap.L().Debug("successfully downloaded octelium")
 
 				err = c.FGetObject(ctx, bucketName, "octops", "/tmp/octops", minio.GetObjectOptions{})
 				assert.Nil(t, err)
