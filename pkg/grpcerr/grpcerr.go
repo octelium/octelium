@@ -67,6 +67,10 @@ func IsUnavailable(err error) bool {
 	return status.Code(err) == codes.Unavailable
 }
 
+func IsResourceExhausted(err error) bool {
+	return status.Code(err) == codes.ResourceExhausted
+}
+
 func IsUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }

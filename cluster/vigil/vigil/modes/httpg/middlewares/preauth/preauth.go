@@ -166,6 +166,8 @@ type additionalInfo struct {
 	bodyMap    map[string]any
 }
 
+const maxReqCtxBodySize = 2 * 1024 * 1024
+
 func (m *middleware) getDownstreamReq(req *http.Request,
 	reqCtx *middlewares.RequestContext,
 	additional *additionalInfo) (*coctovigilv1.DownstreamRequest, error) {
@@ -184,7 +186,11 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		Body:    additional.Body,
 	}
 
-	if additional.bodyMap != nil {
+	if len(httpC.Body) > maxReqCtxBodySize {
+		httpC.Body = nil
+	}
+
+	if httpC.Body != nil {
 		httpC.BodyMap, _ = pbutils.MapToStruct(additional.bodyMap)
 	}
 
