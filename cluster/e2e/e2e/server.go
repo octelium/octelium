@@ -57,6 +57,8 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
 	"k8s.io/client-go/kubernetes"
@@ -473,6 +475,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p mcp-echo:15012",
 				"-p clickhouse:15013",
 				"-p ollama:15014",
+				"-p mongo:15015",
 				"--essh",
 				"--serve-all",
 			})
@@ -840,6 +843,32 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				}
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
+			}
+
+			{
+				uri := "mongodb://octelium:password@localhost:15015"
+
+				client, err := mongo.Connect(options.Client().ApplyURI(uri))
+				assert.Nil(t, err)
+
+				assert.Nil(t, client.Ping(ctx, nil))
+
+				db := client.Database("testdb")
+				coll := db.Collection("users")
+
+				_, err = coll.InsertOne(ctx, map[string]any{
+					"name": "Alice",
+					"age":  25,
+				})
+				assert.Nil(t, err)
+
+				var result map[string]interface{}
+				err = coll.FindOne(ctx, map[string]any{"name": "Alice"}).Decode(&result)
+				assert.Nil(t, err)
+
+				assert.Equal(t, 25, result["age"].(int))
+
+				assert.Nil(t, client.Disconnect(ctx))
 			}
 			{
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))

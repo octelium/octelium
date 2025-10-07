@@ -282,4 +282,20 @@ spec:
             millicores: 6000
           memory:
             megabytes: 12000
+---
+kind: Service
+metadata:
+  name: mongo
+spec:
+  mode: TCP
+  config:
+    upstream:
+      container:
+        image: mongo
+        port: 27017
+        env:
+          - name: MONGO_INITDB_ROOT_USERNAME
+            value: octelium
+          - name: MONGO_INITDB_ROOT_PASSWORD
+            value: password
 `

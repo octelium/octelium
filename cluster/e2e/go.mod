@@ -20,6 +20,7 @@ require (
 	github.com/openai/openai-go/v3 v3.2.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
+	go.mongodb.org/mongo-driver/v2 v2.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.44.0
 	k8s.io/client-go v0.32.0
@@ -52,6 +53,7 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
@@ -90,7 +92,11 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/scram v1.1.2 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
@@ -99,6 +105,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/oauth2 v0.28.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/term v0.35.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
