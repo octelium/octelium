@@ -277,4 +277,9 @@ spec:
       container:
         port: 11434
         image: ollama/ollama
+        resourceLimit:
+          cpu:
+            millicores: 6000
+          memory:
+            megabytes: 12000
 `
