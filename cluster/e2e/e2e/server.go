@@ -54,6 +54,8 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
@@ -202,9 +204,11 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
-	if err := s.runOcteliumContainer(ctx); err != nil {
-		return err
-	}
+	/*
+		if err := s.runOcteliumContainer(ctx); err != nil {
+			return err
+		}
+	*/
 
 	return nil
 }
@@ -467,6 +471,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p opensearch:15011",
 				"-p mcp-echo:15012",
 				"-p clickhouse:15013",
+				"-p ollama:15014",
 				"--essh",
 				"--serve-all",
 			})
@@ -690,6 +695,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				_, err = c.Indices.Create("octelium-index")
 				assert.Nil(t, err)
+
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc opensearch"))
 			}
 			{
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "clickhouse"))
@@ -718,6 +725,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, row.Scan(&col1, &col2))
 				assert.Equal(t, int(col1), 1)
 				assert.Equal(t, arg, col2)
+
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc clickhouse"))
 			}
 
 			{
@@ -744,11 +753,15 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					assert.Nil(t, rows.Err())
 				*/
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc mariadb"))
 			}
 
 			{
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
+				s.logServiceUpstream(ctx, "minio")
+				s.logVigil(ctx, "minio")
+
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:  credentials.NewStaticV4("wrong", "identity", ""),
 					Secure: false,
@@ -814,6 +827,27 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					assert.True(t, utils.SecureBytesEqual(f1, f2))
 				}
+
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
+			}
+			{
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
+				s.execServiceUpstream(ctx, "ollama", "ollama run gemma3:1b")
+
+				c := openai.NewClient(
+					option.WithBaseURL("http://localhost:15014"),
+				)
+
+				chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+					Messages: []openai.ChatCompletionMessageParamUnion{
+						openai.UserMessage("What is zero trust?"),
+					},
+					Model: "gemma3:1b",
+				})
+				assert.Nil(t, err)
+
+				zap.L().Debug("Chat completion output", zap.Any("out", chatCompletion))
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
@@ -1070,6 +1104,37 @@ func (s *server) waitDeploymentSvcUpstream(ctx context.Context, name string) err
 			Name: vutils.GetServiceFullNameFromName(name),
 		},
 	}, ""))
+}
+
+func (s *server) execServiceUpstream(ctx context.Context, svc string, cmd string) error {
+	return s.runCmd(ctx,
+		fmt.Sprintf(
+			`kubectl exec -n octelium -it $(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}') -- %s`,
+			vutils.GetServiceFullNameFromName(svc), cmd))
+}
+
+func (s *server) logServiceUpstream(ctx context.Context, svc string) error {
+	cmdStr := fmt.Sprintf(
+		`kubectl logs -f -n octelium -l octelium.com/component=svc-k8s-upstream,octelium.com/svc=%s`,
+		vutils.GetServiceFullNameFromName(svc))
+
+	cmd := s.getCmd(ctx, cmdStr)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Start()
+}
+
+func (s *server) logVigil(ctx context.Context, svc string) error {
+	cmdStr := fmt.Sprintf(
+		`kubectl logs -f -n octelium -l octelium.com/component=svc,octelium.com/svc=%s`,
+		vutils.GetServiceFullNameFromName(svc))
+
+	cmd := s.getCmd(ctx, cmdStr)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Start()
 }
 
 func getFileSha256(pth string) ([]byte, error) {

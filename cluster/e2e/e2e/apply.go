@@ -264,4 +264,17 @@ spec:
             value: octelium
           - name: CLICKHOUSE_PASSWORD
             value: password
+---
+kind: Service
+metadata:
+  name: ollama
+spec:
+  port: 11434
+  mode: HTTP
+  isPublic: true
+  config:
+    upstream:
+      container:
+        port: 11434
+        image: ollama/ollama
 `
