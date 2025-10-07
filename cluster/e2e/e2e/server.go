@@ -898,15 +898,46 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					option.WithMaxRetries(20),
 				)
 
-				chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-					Messages: []openai.ChatCompletionMessageParamUnion{
-						openai.UserMessage("What is zero trust?"),
-					},
-					Model: "qwen3:0.6b",
-				})
-				assert.Nil(t, err)
+				{
+					chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+						Messages: []openai.ChatCompletionMessageParamUnion{
+							openai.UserMessage("What is zero trust?"),
+						},
+						Model: "qwen3:0.6b",
+					})
+					assert.Nil(t, err)
 
-				zap.L().Debug("Chat completion output", zap.Any("out", chatCompletion))
+					zap.L().Debug("Chat completion output", zap.Any("out", chatCompletion))
+				}
+
+				{
+					stream := c.Chat.Completions.NewStreaming(ctx, openai.ChatCompletionNewParams{
+						Messages: []openai.ChatCompletionMessageParamUnion{
+							openai.UserMessage("What are the largest cities in the world?"),
+						},
+						Model: "qwen3:0.6b",
+					})
+
+					acc := openai.ChatCompletionAccumulator{}
+
+					count := 0
+					for stream.Next() {
+						chunk := stream.Current()
+						acc.AddChunk(chunk)
+
+						if len(chunk.Choices) > 0 {
+							count++
+							zap.L().Debug("Content chunk",
+								zap.String("value", chunk.Choices[0].Delta.Content))
+						}
+					}
+
+					zap.L().Debug("Total chunks", zap.Int("count", count))
+					assert.Nil(t, stream.Err())
+					assert.True(t, count > 0)
+
+					zap.L().Debug("Complete answer", zap.String("val", acc.Choices[0].Message.Content))
+				}
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc ollama"))
 			}
