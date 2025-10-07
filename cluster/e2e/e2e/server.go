@@ -57,6 +57,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
@@ -777,7 +778,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				})
 				assert.Nil(t, err)
 
-				c.TraceOn(os.Stderr)
+				// c.TraceOn(os.Stderr)
 
 				bucketName := utilrand.GetRandomStringCanonical(6)
 
@@ -804,7 +805,9 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					zap.Int64("size", getFileSize(path.Join(s.homedir, "/go/bin/octelium"))))
 
 				_, err = c.FPutObject(ctx,
-					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{})
+					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{
+						ContentType: "application/octet-stream",
+					})
 				assert.Nil(t, err)
 
 				zap.L().Debug("successfully uploaded octops",
@@ -848,25 +851,38 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			{
 				uri := "mongodb://octelium:password@localhost:15015"
 
+				type mongoUser struct {
+					Name      string    `bson:"name"`
+					Email     string    `bson:"email"`
+					Age       int       `bson:"age"`
+					CreatedAt time.Time `bson:"created_at"`
+				}
+
 				client, err := mongo.Connect(options.Client().ApplyURI(uri))
 				assert.Nil(t, err)
 
 				assert.Nil(t, client.Ping(ctx, nil))
 
-				db := client.Database("testdb")
-				coll := db.Collection("users")
+				collection := client.Database("testdb").Collection("users")
 
-				_, err = coll.InsertOne(ctx, map[string]any{
-					"name": "Alice",
-					"age":  25,
-				})
+				usr := &mongoUser{
+					Name:      utilrand.GetRandomStringCanonical(8),
+					Email:     fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+					CreatedAt: time.Now(),
+					Age:       21,
+				}
+				_, err = collection.InsertOne(ctx, usr)
 				assert.Nil(t, err)
 
-				var result map[string]interface{}
-				err = coll.FindOne(ctx, map[string]any{"name": "Alice"}).Decode(&result)
+				var foundUser mongoUser
+				err = collection.FindOne(ctx, bson.M{
+					"email": usr.Email,
+				}).Decode(&foundUser)
 				assert.Nil(t, err)
 
-				assert.Equal(t, 25, result["age"].(int))
+				assert.Equal(t, usr.Name, foundUser.Name)
+				assert.Equal(t, usr.Email, foundUser.Email)
+				assert.Equal(t, usr.Age, foundUser.Age)
 
 				assert.Nil(t, client.Disconnect(ctx))
 			}
