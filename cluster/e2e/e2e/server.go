@@ -833,7 +833,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			{
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
-				s.execServiceUpstream(ctx, "ollama", "ollama run gemma3:1b")
+				s.execServiceUpstream(ctx, "ollama", "ollama run qwen3:0.6b")
 
 				c := openai.NewClient(
 					option.WithBaseURL("http://localhost:15014"),
@@ -843,7 +843,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					Messages: []openai.ChatCompletionMessageParamUnion{
 						openai.UserMessage("What is zero trust?"),
 					},
-					Model: "gemma3:1b",
+					Model: "qwen3:0.6b",
 				})
 				assert.Nil(t, err)
 
