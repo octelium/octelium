@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/cache"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/direct"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
@@ -305,11 +306,9 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		return preauth.New(ctx, next, s.octeliumC, s.domain)
 	})
 
-	/*
-		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-			return compress.New(ctx, next)
-		})
-	*/
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return compress.New(ctx, next)
+	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return accesslog.New(ctx, next)
@@ -394,18 +393,6 @@ func (s *Server) serve(ctx context.Context) error {
 		s.srv.Serve(s.lis)
 		zap.L().Debug("srv done serving")
 	}()
-
-	return nil
-}
-
-func setKeepAlive(conn net.Conn) error {
-	tcpConn := conn.(*net.TCPConn)
-	if err := tcpConn.SetKeepAlive(true); err != nil {
-		return err
-	}
-	if err := tcpConn.SetKeepAlivePeriod(40 * time.Second); err != nil {
-		return err
-	}
 
 	return nil
 }
