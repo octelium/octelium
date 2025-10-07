@@ -138,6 +138,7 @@ func (s *server) run(ctx context.Context) error {
 		s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
 		s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
 		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
+		s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
@@ -757,6 +758,10 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				tmpDir, err := os.MkdirTemp("/tmp", "octelium-*")
+				assert.Nil(t, err)
+				defer os.RemoveAll(tmpDir)
+
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				s.logServiceUpstream(ctx, "minio")
@@ -792,40 +797,46 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					})
 				assert.Nil(t, err)
 
-				zap.L().Debug("Successfully uploaded octelium")
+				zap.L().Debug("Successfully uploaded octelium",
+					zap.Int64("size", getFileSize(path.Join(s.homedir, "/go/bin/octelium"))))
 
 				_, err = c.FPutObject(ctx,
 					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{})
 				assert.Nil(t, err)
 
-				zap.L().Debug("successfully uploaded octops")
+				zap.L().Debug("successfully uploaded octops",
+					zap.Int64("size", getFileSize(path.Join(s.homedir, "/go/bin/octops"))))
 
-				err = c.FGetObject(ctx, bucketName, "octelium", "/tmp/octelium", minio.GetObjectOptions{})
+				err = c.FGetObject(ctx, bucketName, "octelium", path.Join(tmpDir, "octelium"), minio.GetObjectOptions{})
 				assert.Nil(t, err)
 
-				zap.L().Debug("successfully downloaded octelium")
+				zap.L().Debug("successfully downloaded octelium",
+					zap.Int64("size", getFileSize(path.Join(tmpDir, "octelium"))))
 
-				err = c.FGetObject(ctx, bucketName, "octops", "/tmp/octops", minio.GetObjectOptions{})
+				err = c.FGetObject(ctx, bucketName, "octops", path.Join(tmpDir, "octops"), minio.GetObjectOptions{})
 				assert.Nil(t, err)
+
+				zap.L().Debug("successfully downloaded octops",
+					zap.Int64("size", getFileSize(path.Join(tmpDir, "octops"))))
 
 				{
 					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octelium"))
 					assert.Nil(t, err)
 
-					f2, err := getFileSha256("/tmp/octelium")
+					f2, err := getFileSha256(path.Join(tmpDir, "octelium"))
 					assert.Nil(t, err)
 
-					assert.True(t, utils.SecureBytesEqual(f1, f2))
+					assert.Equal(t, fmt.Sprintf("%x", f1), fmt.Sprintf("%x", f2))
 				}
 
 				{
 					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octops"))
 					assert.Nil(t, err)
 
-					f2, err := getFileSha256("/tmp/octops")
+					f2, err := getFileSha256(path.Join(tmpDir, "octops"))
 					assert.Nil(t, err)
 
-					assert.True(t, utils.SecureBytesEqual(f1, f2))
+					assert.Equal(t, fmt.Sprintf("%x", f1), fmt.Sprintf("%x", f2))
 				}
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
@@ -835,8 +846,11 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
 				s.execServiceUpstream(ctx, "ollama", "ollama run qwen3:0.6b")
 
+				time.Sleep(5 * time.Second)
+
 				c := openai.NewClient(
-					option.WithBaseURL("http://localhost:15014"),
+					option.WithBaseURL("http://localhost:15014/v1"),
+					option.WithMaxRetries(20),
 				)
 
 				chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
@@ -848,6 +862,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				zap.L().Debug("Chat completion output", zap.Any("out", chatCompletion))
+
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc ollama"))
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
@@ -899,9 +915,7 @@ func (s *server) runOcteliumctlAuthToken(ctx context.Context) error {
 	{
 
 		tmpDir, err := os.MkdirTemp("/tmp", "octelium-*")
-		if err != nil {
-			panic(err)
-		}
+		assert.Nil(t, err)
 		defer os.RemoveAll(tmpDir)
 
 		cmd := s.getCmd(ctx, fmt.Sprintf("octelium login --auth-token %s",
@@ -1176,4 +1190,14 @@ func connectWithRetry(driverName, dsn string) (*sql.DB, error) {
 	}
 
 	return nil, fmt.Errorf("could not connect to database: %w", err)
+}
+
+func getFileSize(pth string) int64 {
+
+	fileInfo, err := os.Stat(pth)
+	if err != nil {
+		return 0
+	}
+	return fileInfo.Size()
+
 }
