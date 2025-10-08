@@ -1826,6 +1826,7 @@ func TestDirectResponse(t *testing.T) {
 							Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
 								Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
 									ContentType: fmt.Sprintf("application/%s", utilrand.GetRandomStringCanonical(8)),
+									StatusCode:  209,
 									Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
 										Inline: utilrand.GetRandomString(400),
 									},
@@ -1919,6 +1920,231 @@ func TestDirectResponse(t *testing.T) {
 	assert.Equal(t, svc.Spec.Config.GetHttp().Response.GetDirect().GetInline(), string(resp.Body()))
 	assert.Equal(t, svc.Spec.Config.GetHttp().Response.GetDirect().ContentType,
 		string(resp.Header().Get("Content-Type")))
+	assert.Equal(t, svc.Spec.Config.GetHttp().Response.GetDirect().StatusCode, int32(resp.StatusCode()))
+}
+
+func TestJSONSchemaPlugin(t *testing.T) {
+
+	const schema = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "User",
+  "description": "A user in the system",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The unique identifier for the user",
+      "type": "integer"
+    },
+    "username": {
+      "description": "The user's username",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 20,
+      "pattern": "^[a-zA-Z0-9_]+$"
+    },
+    "email": {
+      "description": "The user's email address",
+      "type": "string",
+      "format": "email"
+    },
+    "age": {
+      "description": "Age in years",
+      "type": "integer",
+      "minimum": 13,
+      "maximum": 120
+    },
+    "isActive": {
+      "description": "Whether the user account is active",
+      "type": "boolean",
+      "default": true
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["admin", "editor", "viewer"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "address": {
+      "type": "object",
+      "properties": {
+        "street": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "zip": { "type": "string", "pattern": "^\\d{5}(-\\d{4})?$" }
+      },
+      "required": ["street", "city", "zip"]
+    }
+  },
+  "required": ["id", "username", "email"],
+  "additionalProperties": false
+}`
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	upstreamPort := tests.GetPort()
+
+	upstreamSrv := newSrvHTTP(t, upstreamPort, true, nil)
+	upstreamSrv.run(t)
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic: true,
+			Port:     uint32(tests.GetPort()),
+			Mode:     corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("http://localhost:%d", upstreamSrv.port),
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						EnableRequestBuffering: true,
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Name: "validation-1",
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema{
+									JsonSchema: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline{
+											Inline: schema,
+										},
+										StatusCode: 417,
+										Body: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline{
+												Inline: utilrand.GetRandomString(32),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.lbManager.Run(ctx)
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	srv.octovigilC.GetCache().SetSession(usr.Session)
+	usr.Resync()
+
+	time.Sleep(1 * time.Second)
+
+	resp, err := resty.New().SetDebug(true).R().SetBody(map[string]any{
+		"id":       utilrand.GetRandomStringCanonical(8),
+		"username": utilrand.GetRandomStringCanonical(8),
+		"email":    fmt.Sprintf("%s@example.com", utilrand.GetRandomStringCanonical(8)),
+	}).
+		Post(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsError())
+
+	assert.Equal(t, svc.Spec.Config.GetHttp().Plugins[0].GetJsonSchema().Body.GetInline(), string(resp.Body()))
+	assert.Equal(t, svc.Spec.Config.GetHttp().Plugins[0].GetJsonSchema().StatusCode, int32(resp.StatusCode()))
 }
 
 func TestHTTPSUpstream(t *testing.T) {

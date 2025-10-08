@@ -928,7 +928,7 @@ func (s *Server) checkAndSetService(ctx context.Context,
 							return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
 						}
 
-						for k, v := range plugin.GetRateLimit().Headers {
+						for k, v := range conf.Headers {
 							if err := s.validateGenStr(k, true, "key"); err != nil {
 								return err
 							}
@@ -995,7 +995,7 @@ func (s *Server) checkAndSetService(ctx context.Context,
 							return err
 						}
 
-						for k, v := range plugin.GetRateLimit().Headers {
+						for k, v := range conf.Headers {
 							if err := s.validateGenStr(k, true, "key"); err != nil {
 								return err
 							}
