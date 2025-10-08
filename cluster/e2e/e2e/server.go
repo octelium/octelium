@@ -17,12 +17,15 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/user"
@@ -56,29 +59,35 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
+	k8scorev1 "k8s.io/api/core/v1"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 type server struct {
-	domain     string
-	homedir    string
-	t          *CustomT
-	k8sC       kubernetes.Interface
-	externalIP string
+	domain      string
+	homedir     string
+	t           *CustomT
+	k8sC        kubernetes.Interface
+	externalIP  string
+	createdAt   time.Time
+	installedAt time.Time
 }
 
 func initServer(ctx context.Context) (*server, error) {
 
 	ret := &server{
-		domain: "localhost",
-		t:      &CustomT{},
+		domain:    "localhost",
+		t:         &CustomT{},
+		createdAt: time.Now(),
 	}
 
 	u, err := user.Current()
@@ -98,6 +107,8 @@ func (s *server) run(ctx context.Context) error {
 	if err := s.installCluster(ctx); err != nil {
 		return err
 	}
+	s.installedAt = time.Now()
+
 	{
 		cmd := s.getCmd(ctx,
 			`ip addr show $(ip route show default | ip route show default | awk '/default/ {print $5}') | grep "inet " | awk '{print $2}' | cut -d'/' -f1`)
@@ -208,11 +219,17 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.checkComponents(ctx); err != nil {
+		return err
+	}
+
 	/*
 		if err := s.runOcteliumContainer(ctx); err != nil {
 			return err
 		}
 	*/
+
+	zap.L().Debug("Test done", zap.Duration("duration", time.Since(s.createdAt)))
 
 	return nil
 }
@@ -416,6 +433,17 @@ func (s *server) httpC() *resty.Client {
 
 func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	t := s.t
+	if err := cliutils.OpenDB(""); err != nil {
+		return err
+	}
+	defer cliutils.CloseDB()
+
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	coreC := corev1.NewMainServiceClient(conn)
+
 	{
 		wsSrv := &tstSrvHTTP{
 			port: 16000,
@@ -490,6 +518,33 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				_, err = html.Parse(strings.NewReader(string(res.Body())))
 				assert.Nil(t, err)
+			}
+			{
+				svc, err := coreC.GetService(ctx, &metav1.GetOptions{
+					Name: "nginx.default",
+				})
+				assert.Nil(t, err)
+
+				assert.Equal(t, 80, svc.Status.Port)
+
+				svc.Spec.Port = 9999
+
+				svc, err = coreC.UpdateService(ctx, svc)
+				assert.Nil(t, err)
+
+				assert.Equal(t, 9999, svc.Status.Port)
+
+				time.Sleep(1 * time.Second)
+
+				for range 10 {
+					res, err := s.httpC().R().Get("http://localhost:15001")
+					assert.Nil(t, err)
+					assert.Equal(t, http.StatusOK, res.StatusCode())
+
+					_, err = html.Parse(strings.NewReader(string(res.Body())))
+					assert.Nil(t, err)
+					time.Sleep(1 * time.Second)
+				}
 			}
 
 			{
@@ -589,6 +644,12 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				_, err = redisC.Get(ctx, key).Result()
 				assert.NotNil(t, err)
 				assert.Equal(t, redis.Nil, err)
+
+				{
+					assert.Nil(t, redisC.Set(ctx,
+						utilrand.GetRandomStringCanonical(32),
+						utilrand.GetRandomStringCanonical(12*1024*1024), 3*time.Second).Err())
+				}
 			}
 
 			{
@@ -698,8 +759,32 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 				zap.L().Debug("OpenSearch info", zap.String("info", string(res)))
 
-				_, err = c.Indices.Create("octelium-index")
+				idx := "octelium-index"
+				_, err = c.Indices.Create(idx)
 				assert.Nil(t, err)
+
+				type myDoc struct {
+					ID    int    `json:"id"`
+					Name  string `json:"name"`
+					Price int    `json:"price"`
+				}
+
+				for range 50 {
+					doc := &myDoc{
+						ID:    utilrand.GetRandomRangeMath(1, math.MaxInt32),
+						Name:  utilrand.GetRandomString(10 * 1000),
+						Price: utilrand.GetRandomRangeMath(1, 4000),
+					}
+
+					docJSON, _ := json.Marshal(doc)
+
+					_, err = c.Index(
+						idx,
+						bytes.NewReader(docJSON),
+						c.Index.WithContext(ctx),
+					)
+					assert.Nil(t, err)
+				}
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc opensearch"))
 			}
@@ -787,65 +872,53 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				zap.L().Debug("Successfully created bucket", zap.String("bucket", bucketName))
 
-				_, err = c.FPutObject(ctx,
-					bucketName, "octelium", "/etc/rancher/k3s/k3s.yaml", minio.PutObjectOptions{
-						ContentType: "application/octet-stream",
-					})
-				assert.Nil(t, err)
+				doFn := func(pth string) {
 
-				zap.L().Debug("successfully uploaded kubeconfig")
-
-				_, err = c.FPutObject(ctx,
-					bucketName, "octelium", path.Join(s.homedir, "/go/bin/octelium"), minio.PutObjectOptions{
-						ContentType: "application/octet-stream",
-					})
-				assert.Nil(t, err)
-
-				zap.L().Debug("Successfully uploaded octelium",
-					zap.Int64("size", getFileSize(path.Join(s.homedir, "/go/bin/octelium"))))
-
-				_, err = c.FPutObject(ctx,
-					bucketName, "octops", path.Join(s.homedir, "/go/bin/octops"), minio.PutObjectOptions{
-						ContentType: "application/octet-stream",
-					})
-				assert.Nil(t, err)
-
-				zap.L().Debug("successfully uploaded octops",
-					zap.Int64("size", getFileSize(path.Join(s.homedir, "/go/bin/octops"))))
-
-				err = c.FGetObject(ctx, bucketName, "octelium", path.Join(tmpDir, "octelium"), minio.GetObjectOptions{})
-				assert.Nil(t, err)
-
-				zap.L().Debug("successfully downloaded octelium",
-					zap.Int64("size", getFileSize(path.Join(tmpDir, "octelium"))))
-
-				err = c.FGetObject(ctx, bucketName, "octops", path.Join(tmpDir, "octops"), minio.GetObjectOptions{})
-				assert.Nil(t, err)
-
-				zap.L().Debug("successfully downloaded octops",
-					zap.Int64("size", getFileSize(path.Join(tmpDir, "octops"))))
-
-				{
-					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octelium"))
+					name := utilrand.GetRandomStringCanonical(8)
+					downloadPath := path.Join(tmpDir, name)
+					info, err := c.FPutObject(ctx,
+						bucketName, name, pth, minio.PutObjectOptions{
+							Progress:    os.Stdout,
+							ContentType: "application/octet-stream",
+						})
 					assert.Nil(t, err)
 
-					f2, err := getFileSha256(path.Join(tmpDir, "octelium"))
+					zap.L().Debug("fputObject", zap.String("path", pth), zap.Any("info", info))
+
+					stat, err := c.StatObject(ctx, bucketName, name, minio.StatObjectOptions{})
 					assert.Nil(t, err)
 
-					assert.Equal(t, fmt.Sprintf("%x", f1), fmt.Sprintf("%x", f2))
+					zap.L().Debug("object stat", zap.String("path", pth), zap.Any("info", stat))
+
+					err = c.FGetObject(ctx,
+						bucketName, name, downloadPath, minio.GetObjectOptions{})
+					assert.Nil(t, err)
+
+					zap.L().Debug("fgetObject done", zap.String("path", pth))
+
+					f1, s1, err := calculateSHA256(pth)
+					assert.Nil(t, err)
+
+					f2, s2, err := calculateSHA256(downloadPath)
+					assert.Nil(t, err)
+
+					assert.Equal(t, f1, f2)
+					assert.Equal(t, s1, s2)
+
 				}
 
-				{
-					f1, err := getFileSha256(path.Join(s.homedir, "/go/bin/octops"))
-					assert.Nil(t, err)
+				files := []string{
+					"/etc/rancher/k3s/k3s.yaml",
+					"/usr/local/bin/octeliumctl",
+					"/usr/local/bin/octops",
+				}
 
-					f2, err := getFileSha256(path.Join(tmpDir, "octops"))
-					assert.Nil(t, err)
-
-					assert.Equal(t, fmt.Sprintf("%x", f1), fmt.Sprintf("%x", f2))
+				for _, f := range files {
+					doFn(f)
 				}
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
+				assert.NotNil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
 			}
 
 			{
@@ -934,7 +1007,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					zap.L().Debug("Total chunks", zap.Int("count", count))
 					assert.Nil(t, stream.Err())
-					assert.True(t, count > 0)
+					assert.True(t, count > 10)
 
 					zap.L().Debug("Complete answer", zap.String("val", acc.Choices[0].Message.Content))
 				}
@@ -1227,19 +1300,20 @@ func (s *server) logVigil(ctx context.Context, svc string) error {
 	return cmd.Start()
 }
 
-func getFileSha256(pth string) ([]byte, error) {
-	f, err := os.Open(pth)
+func calculateSHA256(filePath string) (string, int64, error) {
+	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
 	defer f.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return nil, err
+	written, err := io.Copy(h, f)
+	if err != nil {
+		return "", 0, err
 	}
 
-	return h.Sum(nil), nil
+	return fmt.Sprintf("%x", h.Sum(nil)), written, nil
 }
 
 func connectWithRetry(driverName, dsn string) (*sql.DB, error) {
@@ -1276,4 +1350,63 @@ func getFileSize(pth string) int64 {
 	}
 	return fileInfo.Size()
 
+}
+
+func (s *server) listComponentPods(ctx context.Context, name string) (*k8scorev1.PodList, error) {
+	return s.k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
+		LabelSelector: fmt.Sprintf("octelium.com/component=%s", name),
+	})
+}
+
+func (s *server) getComponentPod(ctx context.Context, name string) (*k8scorev1.Pod, error) {
+	podList, err := s.listComponentPods(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(podList.Items) < 1 {
+		return nil, errors.Errorf("No pods")
+	}
+
+	return &podList.Items[0], nil
+}
+
+func (s *server) checkComponentRestarts(ctx context.Context, name string) error {
+
+	pod, err := s.getComponentPod(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	totalRestarts := 0
+	for _, cs := range pod.Status.ContainerStatuses {
+		totalRestarts += int(cs.RestartCount)
+	}
+
+	assert.Zero(s.t, totalRestarts)
+
+	return nil
+}
+
+func (s *server) checkComponents(ctx context.Context) error {
+
+	t := s.t
+
+	components := []string{
+		"ingress",
+		"ingress-dataplane",
+		"nocturne",
+		"rscserver",
+		"octovigil",
+		"gwagent",
+	}
+
+	zap.L().Debug("Starting checking components",
+		zap.Duration("installedSince", time.Since(s.installedAt)))
+
+	for _, comp := range components {
+		assert.Nil(t, s.checkComponentRestarts(ctx, comp))
+	}
+
+	return nil
 }
