@@ -192,6 +192,8 @@ cat <<EOF > /tmp/octelium-otel.yaml
 mode: deployment
 image:
   repository: "otel/opentelemetry-collector-contrib"
+podLabels:
+  octelium.com/component: "collector"
 ports:
   otlp:
     enabled: true
@@ -209,27 +211,6 @@ ports:
     protocol: TCP
 
 fullnameOverride: octelium-collector
-
-config:
-  receivers:
-    otlp:
-      protocols:
-        grpc:
-        http:
-
-  processors:
-    batch: {}
-
-  exporters:
-    logging:
-      loglevel: debug
-
-  service:
-    pipelines:
-      traces:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [logging]
 EOF
 
 helm install my-otel open-telemetry/opentelemetry-collector \

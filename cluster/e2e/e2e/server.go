@@ -159,6 +159,7 @@ func (s *server) run(ctx context.Context) error {
 		s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
 		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
 		s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
+		s.startKubectlLog(ctx, "-l octelium.com/component=collector")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
@@ -631,7 +632,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -p 15004 %s@localhost 'ls -la'`, res.Session.Metadata.Name)))
+					fmt.Sprintf(`ssh -p 15004 %s@localhost 'echo hello world'`, res.Session.Metadata.Name)))
 			}
 
 			{
@@ -986,7 +987,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				{
 					started := time.Now()
-					chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+					_, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 						Messages: []openai.ChatCompletionMessageParamUnion{
 							openai.UserMessage("What is zero trust?"),
 						},
@@ -995,7 +996,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					assert.Nil(t, err)
 
 					zap.L().Debug("Chat completion output",
-						zap.Any("out", chatCompletion),
 						zap.Duration("duration", time.Since(started)))
 				}
 
