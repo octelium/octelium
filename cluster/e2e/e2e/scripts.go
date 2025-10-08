@@ -215,7 +215,7 @@ fullnameOverride: octelium-collector
 config:
   exporters:
     debug:
-	  verbosity: normal
+      verbosity: normal
   processors:
     batch: {}
     memory_limiter:
