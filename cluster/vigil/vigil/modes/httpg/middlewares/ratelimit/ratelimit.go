@@ -18,6 +18,7 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -76,7 +77,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			rateLimit := plugin.GetRateLimit()
 
-			key := m.getKey(ctx, rateLimit, reqCtx)
+			key := m.getKey(ctx, plugin.Name, rateLimit, reqCtx)
 			if key == "" {
 				continue
 			}
@@ -128,7 +129,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(rw, req)
 }
 
-func (m *middleware) getKey(ctx context.Context,
+func (m *middleware) getKey(ctx context.Context, name string,
 	rateLimit *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit,
 	reqCtx *middlewares.RequestContext) string {
 	var sessionUID string
@@ -140,20 +141,20 @@ func (m *middleware) getKey(ctx context.Context,
 		return sessionUID
 	}
 
+	defaultKey := fmt.Sprintf("%s:%s", name, sessionUID)
+
 	switch rateLimit.Key.Type.(type) {
 	case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval:
 		key, err := m.celEngine.EvalPolicyString(ctx, rateLimit.Key.GetEval(), reqCtx.ReqCtxMap)
-		if err != nil || key == "" {
-			return sessionUID
+		if err == nil && key != "" {
+			return key
 		}
-		return key
 	case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerSession:
-		return sessionUID
 	case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerUser:
 		if reqCtx.DownstreamInfo != nil && reqCtx.DownstreamInfo.User != nil {
 			return reqCtx.DownstreamInfo.User.Metadata.Uid
 		}
 	}
 
-	return sessionUID
+	return defaultKey
 }
