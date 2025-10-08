@@ -125,7 +125,9 @@ func (s *server) run(ctx context.Context) error {
 
 	{
 		os.Setenv("OCTELIUM_DOMAIN", s.domain)
-		os.Setenv("OCTELIUM_INSECURE_TLS", "true")
+
+		os.Unsetenv("OCTELIUM_INSECURE_TLS")
+		os.Setenv("OCTELIUM_INSECURE_TLS", "false")
 		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
@@ -422,9 +424,7 @@ func (s *server) httpCPublicAccessTokenCheck(svc, accessToken string) {
 }
 
 func (s *server) httpC() *resty.Client {
-	return resty.New().SetTLSClientConfig(&tls.Config{
-		InsecureSkipVerify: true,
-	}).SetRetryCount(20).SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
+	return resty.New().SetRetryCount(20).SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
 		AddRetryCondition(func(r *resty.Response, err error) bool {
 			if r.StatusCode() >= 500 && r.StatusCode() < 600 {
 				return true
@@ -1471,7 +1471,8 @@ func (s *server) installClusterCert(ctx context.Context) error {
 	assert.Nil(t, os.WriteFile(keyPath, []byte(privPEM), 0644))
 	assert.Nil(t, os.WriteFile(certPath, []byte(crtPEM), 0644))
 
-	if err := s.runCmd(ctx, fmt.Sprintf("sudo cp octelium-ca.pem %s", certPath)); err != nil {
+	if err := s.runCmd(ctx,
+		fmt.Sprintf("sudo cp %s /usr/local/share/ca-certificates/octelium-cluster.crt", certPath)); err != nil {
 		return err
 	}
 
