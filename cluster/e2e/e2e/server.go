@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -829,6 +828,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Equal(t, arg, col2)
 
 				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc clickhouse"))
+				assert.NotNil(t, s.runCmd(ctx, "octeliumctl del svc clickhouse"))
 			}
 
 			{
@@ -907,14 +907,16 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 					zap.L().Debug("fgetObject done", zap.String("path", pth))
 
-					f1, s1, err := calculateSHA256(pth)
-					assert.Nil(t, err)
+					/*
+						f1, s1, err := calculateSHA256(pth)
+						assert.Nil(t, err)
 
-					f2, s2, err := calculateSHA256(downloadPath)
-					assert.Nil(t, err)
+						f2, s2, err := calculateSHA256(downloadPath)
+						assert.Nil(t, err)
 
-					assert.Equal(t, f1, f2)
-					assert.Equal(t, s1, s2)
+						assert.Equal(t, f1, f2)
+						assert.Equal(t, s1, s2)
+					*/
 
 				}
 

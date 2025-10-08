@@ -185,6 +185,53 @@ spec:
       enable: true
 EOF
 
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+helm repo update
+
+cat <<EOF > /tmp/octelium-otel.yaml
+mode: deployment
+service:
+  type: ClusterIP
+  ports:
+    - name: otlp-grpc
+      port: 8080
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 8081
+      targetPort: 4318
+      protocol: TCP
+
+serviceAccount:
+  create: true
+
+fullnameOverride: octelium-collector
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+  processors:
+    batch: {}
+
+  exporters:
+    logging:
+      loglevel: debug
+
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [logging]
+EOF
+
+helm install my-otel open-telemetry/opentelemetry-collector \
+  -f /tmp/octelium-otel.yaml \
+  -n octelium
 
 kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
 kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
