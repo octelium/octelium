@@ -39,20 +39,20 @@ PG_PASSWORD=$(openssl rand -base64 12)
 REDIS_PASSWORD=$(openssl rand -base64 12)
 
 
-export OCTELIUM_INSECURE_TLS=true
+# export OCTELIUM_INSECURE_TLS=true
 # export OCTELIUM_QUIC=true
 export OCTELIUM_DOMAIN="localhost"
 export OCTELIUM_PRODUCTION=true
 export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
-echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.bashrc
+# echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.bashrc
 # echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.bashrc
 echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.bashrc
 echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.bashrc
 echo "export KUBECONFIG=\"$KUBECONFIG\"" >> ~/.bashrc
 
 if [ -f ~/.zshrc ]; then
-  echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.zshrc
+  # echo "export OCTELIUM_INSECURE_TLS=\"$OCTELIUM_INSECURE_TLS\"" >> ~/.zshrc
   # echo "export OCTELIUM_QUIC=\"$OCTELIUM_QUIC\"" >> ~/.zshrc
   echo "export OCTELIUM_DOMAIN=\"$OCTELIUM_DOMAIN\"" >> ~/.zshrc
   echo "export OCTELIUM_PRODUCTION=\"$OCTELIUM_PRODUCTION\"" >> ~/.zshrc
@@ -211,6 +211,50 @@ ports:
     protocol: TCP
 
 fullnameOverride: octelium-collector
+
+config:
+  exporters:
+    debug:
+	  verbosity: normal
+  processors:
+    batch: {}
+    memory_limiter:
+      check_interval: 2s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  service:
+    pipelines:
+      logs:
+        exporters:
+          - debug
+        processors:
+          - memory_limiter
+          - batch
+        receivers:
+          - otlp
+      metrics:
+        exporters:
+          - debug
+        processors:
+          - memory_limiter
+          - batch
+        receivers:
+          - otlp
+      traces:
+        exporters:
+          - debug
+        processors:
+          - memory_limiter
+          - batch
+        receivers:
+          - otlp
 EOF
 
 helm install my-otel open-telemetry/opentelemetry-collector \
@@ -232,9 +276,9 @@ AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
 
 sleep 3
 
-octelium login --domain localhost --auth-token $AUTH_TOKEN
+OCTELIUM_INSECURE_TLS=true octelium login --domain localhost --auth-token $AUTH_TOKEN
 
-octeliumctl create secret pg --value ${PG_PASSWORD}
+OCTELIUM_INSECURE_TLS=true octeliumctl create secret pg --value ${PG_PASSWORD}
 
 source ~/.bashrc
 echo -e "\e[1mThe Cluster has been successfully installed. Open a new tab to start using octelium and octeliumctl commands.\e[0m"

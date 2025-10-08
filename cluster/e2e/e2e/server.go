@@ -127,7 +127,6 @@ func (s *server) run(ctx context.Context) error {
 
 		os.Unsetenv("OCTELIUM_INSECURE_TLS")
 		os.Setenv("OCTELIUM_INSECURE_TLS", "false")
-		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
 		os.Setenv("KUBECONFIG", s.kubeConfigPath)
@@ -154,11 +153,14 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	{
-		s.startKubectlLog(ctx, "-l octelium.com/svc=dns.octelium -c managed")
-		s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
-		s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
-		s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
-		s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
+
+		/*
+			s.startKubectlLog(ctx, "-l octelium.com/svc=dns.octelium -c managed")
+			s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
+			s.startKubectlLog(ctx, "-l octelium.com/component=gwagent")
+			s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
+			s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
+		*/
 		s.startKubectlLog(ctx, "-l octelium.com/component=collector")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
@@ -867,7 +869,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
 				s.logServiceUpstream(ctx, "minio")
-				s.logVigil(ctx, "minio")
+				// s.logVigil(ctx, "minio")
 
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:  credentials.NewStaticV4("wrong", "identity", ""),
