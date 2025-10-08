@@ -68,8 +68,13 @@ func NewClient(ctx context.Context) (*Client, error) {
 			grpc_retry.WithCodes(retryCodes...)),
 	}
 
-	grpcConn, err := grpc.Dial(
-		host, grpc.WithTransportCredentials(insecure.NewCredentials()),
+	grpcConn, err := grpc.NewClient(
+		host,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(16*1024*1024),
+			grpc.MaxCallSendMsgSize(16*1024*1024),
+		),
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
 	)
