@@ -645,7 +645,11 @@ func (s *Server) run(ctx context.Context) error {
 		return err
 	}
 
-	s.grpcSrv = grpc.NewServer()
+	s.grpcSrv = grpc.NewServer(
+		grpc.MaxConcurrentStreams(100*1000),
+		grpc.MaxRecvMsgSize(33*1024*1024),
+		grpc.MaxSendMsgSize(33*1024*1024),
+	)
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,
 	})
