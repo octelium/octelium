@@ -190,20 +190,22 @@ helm repo update
 
 cat <<EOF > /tmp/octelium-otel.yaml
 mode: deployment
-service:
-  type: ClusterIP
-  ports:
-    - name: otlp-grpc
-      port: 8080
-      targetPort: 4317
-      protocol: TCP
-    - name: otlp-http
-      port: 8081
-      targetPort: 4318
-      protocol: TCP
 
-serviceAccount:
-  create: true
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 8080
+    hostPort: 4317
+    protocol: TCP
+    # nodePort: 30317
+    appProtocol: grpc
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 8081
+    hostPort: 4318
+    protocol: TCP
 
 fullnameOverride: octelium-collector
 
