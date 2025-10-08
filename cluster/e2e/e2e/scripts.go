@@ -190,7 +190,8 @@ helm repo update
 
 cat <<EOF > /tmp/octelium-otel.yaml
 mode: deployment
-
+image:
+  repository: "otel/opentelemetry-collector-contrib"
 ports:
   otlp:
     enabled: true
