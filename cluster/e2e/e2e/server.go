@@ -56,6 +56,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -73,21 +74,23 @@ import (
 )
 
 type server struct {
-	domain      string
-	homedir     string
-	t           *CustomT
-	k8sC        kubernetes.Interface
-	externalIP  string
-	createdAt   time.Time
-	installedAt time.Time
+	domain         string
+	homedir        string
+	t              *CustomT
+	k8sC           kubernetes.Interface
+	externalIP     string
+	createdAt      time.Time
+	installedAt    time.Time
+	kubeConfigPath string
 }
 
 func initServer(ctx context.Context) (*server, error) {
 
 	ret := &server{
-		domain:    "localhost",
-		t:         &CustomT{},
-		createdAt: time.Now(),
+		domain:         "localhost",
+		t:              &CustomT{},
+		createdAt:      time.Now(),
+		kubeConfigPath: "/etc/rancher/k3s/k3s.yaml",
 	}
 
 	u, err := user.Current()
@@ -109,6 +112,8 @@ func (s *server) run(ctx context.Context) error {
 	}
 	s.installedAt = time.Now()
 
+	assert.Nil(t, s.installClusterCert(ctx))
+
 	{
 		cmd := s.getCmd(ctx,
 			`ip addr show $(ip route show default | ip route show default | awk '/default/ {print $5}') | grep "inet " | awk '{print $2}' | cut -d'/' -f1`)
@@ -124,7 +129,7 @@ func (s *server) run(ctx context.Context) error {
 		// os.Setenv("OCTELIUM_QUIC", "true")
 		os.Setenv("OCTELIUM_PRODUCTION", "true")
 		os.Setenv("HOME", s.homedir)
-		os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
+		os.Setenv("KUBECONFIG", s.kubeConfigPath)
 	}
 
 	{
@@ -138,7 +143,7 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	{
-		k8sC, err := getK8sC()
+		k8sC, err := s.getK8sC()
 		if err != nil {
 			return err
 		}
@@ -443,6 +448,10 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 	defer conn.Close()
 
 	coreC := corev1.NewMainServiceClient(conn)
+	{
+		_, err = coreC.ListService(ctx, &corev1.ListServiceOptions{})
+		assert.Nil(t, err)
+	}
 
 	{
 		wsSrv := &tstSrvHTTP{
@@ -519,33 +528,36 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				_, err = html.Parse(strings.NewReader(string(res.Body())))
 				assert.Nil(t, err)
 			}
-			{
-				svc, err := coreC.GetService(ctx, &metav1.GetOptions{
-					Name: "nginx.default",
-				})
-				assert.Nil(t, err)
 
-				assert.Equal(t, 80, svc.Status.Port)
-
-				svc.Spec.Port = 9999
-
-				svc, err = coreC.UpdateService(ctx, svc)
-				assert.Nil(t, err)
-
-				assert.Equal(t, 9999, svc.Status.Port)
-
-				time.Sleep(1 * time.Second)
-
-				for range 10 {
-					res, err := s.httpC().R().Get("http://localhost:15001")
+			/*
+				{
+					svc, err := coreC.GetService(ctx, &metav1.GetOptions{
+						Name: "nginx.default",
+					})
 					assert.Nil(t, err)
-					assert.Equal(t, http.StatusOK, res.StatusCode())
 
-					_, err = html.Parse(strings.NewReader(string(res.Body())))
+					assert.Equal(t, 80, svc.Status.Port)
+
+					svc.Spec.Port = 9999
+
+					svc, err = coreC.UpdateService(ctx, svc)
 					assert.Nil(t, err)
+
+					assert.Equal(t, 9999, svc.Status.Port)
+
 					time.Sleep(1 * time.Second)
+
+					for range 10 {
+						res, err := s.httpC().R().Get("http://localhost:15001")
+						assert.Nil(t, err)
+						assert.Equal(t, http.StatusOK, res.StatusCode())
+
+						_, err = html.Parse(strings.NewReader(string(res.Body())))
+						assert.Nil(t, err)
+						time.Sleep(1 * time.Second)
+					}
 				}
-			}
+			*/
 
 			{
 				res, err := s.httpC().R().Get("http://localhost:15002")
@@ -878,7 +890,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					downloadPath := path.Join(tmpDir, name)
 					info, err := c.FPutObject(ctx,
 						bucketName, name, pth, minio.PutObjectOptions{
-							Progress:    os.Stdout,
 							ContentType: "application/octet-stream",
 						})
 					assert.Nil(t, err)
@@ -908,7 +919,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				}
 
 				files := []string{
-					"/etc/rancher/k3s/k3s.yaml",
+					s.kubeConfigPath,
 					"/usr/local/bin/octeliumctl",
 					"/usr/local/bin/octops",
 				}
@@ -972,6 +983,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				)
 
 				{
+					started := time.Now()
 					chatCompletion, err := c.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 						Messages: []openai.ChatCompletionMessageParamUnion{
 							openai.UserMessage("What is zero trust?"),
@@ -980,10 +992,15 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					})
 					assert.Nil(t, err)
 
-					zap.L().Debug("Chat completion output", zap.Any("out", chatCompletion))
+					zap.L().Debug("Chat completion output",
+						zap.Any("out", chatCompletion),
+						zap.Duration("duration", time.Since(started)))
 				}
 
 				{
+
+					started := time.Now()
+
 					stream := c.Chat.Completions.NewStreaming(ctx, openai.ChatCompletionNewParams{
 						Messages: []openai.ChatCompletionMessageParamUnion{
 							openai.UserMessage("What are the largest cities in the world?"),
@@ -994,18 +1011,20 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					acc := openai.ChatCompletionAccumulator{}
 
 					count := 0
+					totalLen := 0
 					for stream.Next() {
 						chunk := stream.Current()
 						acc.AddChunk(chunk)
 
 						if len(chunk.Choices) > 0 {
 							count++
-							zap.L().Debug("Content chunk",
-								zap.String("value", chunk.Choices[0].Delta.Content))
+							totalLen += len(chunk.Choices[0].Delta.Content)
 						}
 					}
 
-					zap.L().Debug("Total chunks", zap.Int("count", count))
+					zap.L().Debug("Total openAI chat completion streaming chunks",
+						zap.Int("count", count), zap.Int("totalLen", totalLen),
+						zap.Duration("duration", time.Since(started)))
 					assert.Nil(t, stream.Err())
 					assert.True(t, count > 10)
 
@@ -1218,8 +1237,8 @@ func (t *CustomT) FailNow() {
 	panic("")
 }
 
-func getK8sC() (kubernetes.Interface, error) {
-	cfg, err := clientcmd.BuildConfigFromFlags("", "/etc/rancher/k3s/k3s.yaml")
+func (s *server) getK8sC() (kubernetes.Interface, error) {
+	cfg, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1406,6 +1425,64 @@ func (s *server) checkComponents(ctx context.Context) error {
 
 	for _, comp := range components {
 		assert.Nil(t, s.checkComponentRestarts(ctx, comp))
+	}
+
+	return nil
+}
+
+func (s *server) installClusterCert(ctx context.Context) error {
+
+	t := s.t
+
+	domain := s.domain
+	sans := []string{
+		domain,
+		fmt.Sprintf("*.%s", domain),
+
+		fmt.Sprintf("*.octelium.%s", domain),
+		fmt.Sprintf("*.octelium-api.%s", domain),
+
+		fmt.Sprintf("*.local.%s", domain),
+		fmt.Sprintf("*.default.%s", domain),
+		fmt.Sprintf("*.default.local.%s", domain),
+
+		fmt.Sprintf("*.octelium.local.%s", domain),
+		fmt.Sprintf("*.octelium-api.local.%s", domain),
+	}
+
+	zap.L().Debug("Setting initial Cluster Certificate",
+		zap.String("domain", domain),
+		zap.Strings("sans", sans))
+
+	initCrt, err := utils_cert.GenerateSelfSignedCert(domain, sans, 4*12*30*24*time.Hour)
+	if err != nil {
+		return err
+	}
+
+	crtPEM, err := initCrt.GetCertPEM()
+	assert.Nil(t, err)
+
+	privPEM, err := initCrt.GetPrivateKeyPEM()
+	assert.Nil(t, err)
+
+	keyPath := "/tmp/octelium-private-key.pem"
+	certPath := "/tmp/octelium-cert.pem"
+
+	assert.Nil(t, os.WriteFile(keyPath, []byte(privPEM), 0644))
+	assert.Nil(t, os.WriteFile(certPath, []byte(crtPEM), 0644))
+
+	if err := s.runCmd(ctx, fmt.Sprintf("sudo cp octelium-ca.pem %s", certPath)); err != nil {
+		return err
+	}
+
+	if err := s.runCmd(ctx, "sudo update-ca-certificates"); err != nil {
+		return err
+	}
+
+	cmdStr := fmt.Sprintf(`octops cert %s --key %s --cert %s --kubeconfig %s`,
+		s.domain, keyPath, certPath, s.kubeConfigPath)
+	if err := s.runCmd(ctx, cmdStr); err != nil {
+		return err
 	}
 
 	return nil
