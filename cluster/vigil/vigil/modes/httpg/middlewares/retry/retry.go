@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type middleware struct {
@@ -108,7 +109,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if !crw.isRetry {
 			return
 		}
-
+		zap.L().Debug("Retrying request",
+			zap.Int("attempt", attempts),
+			zap.Duration("duration", crw.nextDuration))
 		timer.Start(crw.nextDuration)
 		select {
 		case <-timer.C():
