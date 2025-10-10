@@ -38,6 +38,7 @@ func (*celLib) CompileOptions() []cel.EnvOption {
 	ret = append(ret, ext.Strings())
 	ret = append(ret, ext.Encoders())
 	ret = append(ret, ext.Math())
+	ret = append(ret, ext.Bindings())
 
 	return ret
 }
