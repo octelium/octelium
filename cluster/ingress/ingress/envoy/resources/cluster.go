@@ -36,6 +36,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+const healthCheckCluster = "octelium-health-check"
+
 func getSvcFQDNs(svc *corev1.Service, domain string) []string {
 	name := ucorev1.ToService(svc).Name()
 	ns := ucorev1.ToService(svc).Namespace()
@@ -86,6 +88,15 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 		}
 		zap.L().Debug("Adding Envoy cluster for Service", zap.String("name", svc.Metadata.Name))
 		ret = append(ret, clstr)
+	}
+
+	{
+		healthCheckCluster, err := getCluster(healthCheckCluster, false, "127.0.0.1", 11011, false, "")
+		if err != nil {
+			return nil, err
+		}
+
+		ret = append(ret, healthCheckCluster)
 	}
 
 	return ret, nil

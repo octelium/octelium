@@ -285,23 +285,18 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 								SubPath:   "config",
 							}},
 
-							/*
-								LivenessProbe: &k8scorev1.Probe{
-									InitialDelaySeconds: 60,
-									TimeoutSeconds:      4,
-									PeriodSeconds:       30,
-									FailureThreshold:    3,
-									ProbeHandler: k8scorev1.ProbeHandler{
-										Exec: &k8scorev1.ExecAction{
-											Command: []string{
-												"sh",
-												"-c",
-												"echo -e 'GET /ready HTTP/1.0\r\n' | cat - >/dev/tcp/127.0.0.1/11011",
-											},
-										},
+							LivenessProbe: &k8scorev1.Probe{
+								InitialDelaySeconds: 60,
+								TimeoutSeconds:      4,
+								PeriodSeconds:       30,
+								FailureThreshold:    3,
+								ProbeHandler: k8scorev1.ProbeHandler{
+									HTTPGet: &k8scorev1.HTTPGetAction{
+										Path: "/ready",
+										Port: intstr.FromInt32(11012),
 									},
 								},
-							*/
+							},
 
 							SecurityContext: &k8scorev1.SecurityContext{
 								Privileged:               utils_types.BoolToPtr(false),

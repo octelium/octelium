@@ -52,6 +52,13 @@ func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Se
 
 	ret = append(ret, mainListener)
 
+	healthCheckListener, err := getListenerHealthCheck()
+	if err != nil {
+		return nil, err
+	}
+
+	ret = append(ret, healthCheckListener)
+
 	return ret, nil
 }
 
