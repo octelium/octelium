@@ -36,7 +36,8 @@ import (
 
 const maxAuthenticatorPerUser = 32
 
-func (s *server) doCreateAuthenticator(ctx context.Context, req *authv1.CreateAuthenticatorRequest) (*authv1.Authenticator, error) {
+func (s *server) doCreateAuthenticator(ctx context.Context,
+	req *authv1.CreateAuthenticatorRequest) (*authv1.Authenticator, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -126,7 +127,8 @@ func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator 
 	}
 }
 
-func (s *server) doListAuthenticator(ctx context.Context, req *authv1.ListAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+func (s *server) doListAuthenticator(ctx context.Context,
+	req *authv1.ListAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -162,7 +164,8 @@ func (s *server) doListAuthenticator(ctx context.Context, req *authv1.ListAuthen
 	return ret, nil
 }
 
-func (s *server) doDeleteAuthenticator(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+func (s *server) doDeleteAuthenticator(ctx context.Context,
+	req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err

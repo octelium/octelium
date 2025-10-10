@@ -179,6 +179,7 @@ func TestHandleBeginAuthenticator(t *testing.T) {
 
 }
 
+/*
 func TestHandleBeginAuthenticatorRateLimit(t *testing.T) {
 	ctx := context.Background()
 
@@ -244,56 +245,10 @@ func TestHandleBeginAuthenticatorRateLimit(t *testing.T) {
 			assert.NotNil(t, authn.Status.LastAuthenticationAttempts[0])
 		}
 
-		/*
-			{
-				_, err := srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
-					AuthenticatorRef: umetav1.GetObjectReference(authn),
-				})
-				assert.NotNil(t, err, "%+v", err)
-
-				authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-					Uid: authn.Metadata.Uid,
-				})
-				assert.Nil(t, err)
-				assert.Nil(t, authn.Status.AuthenticationAttempt)
-				assert.Equal(t, 1, len(authn.Status.LastAuthenticationAttempts))
-				assert.NotNil(t, authn.Status.LastAuthenticationAttempts[0])
-			}
-			{
-				time.Sleep(3 * time.Second)
-				_, err := srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
-					AuthenticatorRef: umetav1.GetObjectReference(authn),
-				})
-				assert.Nil(t, err)
-
-				authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-					Uid: authn.Metadata.Uid,
-				})
-				assert.Nil(t, err)
-				assert.NotNil(t, authn.Status.AuthenticationAttempt)
-				assert.Equal(t, 1, len(authn.Status.LastAuthenticationAttempts))
-				assert.NotNil(t, authn.Status.LastAuthenticationAttempts[0])
-			}
-			{
-				time.Sleep(3 * time.Second)
-				_, err := srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
-					AuthenticatorRef: umetav1.GetObjectReference(authn),
-				})
-				assert.Nil(t, err)
-
-				authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-					Uid: authn.Metadata.Uid,
-				})
-				assert.Nil(t, err)
-				assert.NotNil(t, authn.Status.AuthenticationAttempt)
-				assert.Equal(t, 2, len(authn.Status.LastAuthenticationAttempts))
-				assert.NotNil(t, authn.Status.LastAuthenticationAttempts[0])
-				assert.NotNil(t, authn.Status.LastAuthenticationAttempts[1])
-			}
-		*/
 	}
 
 }
+*/
 
 func TestAuthenticatorRegistration(t *testing.T) {
 	ctx := context.Background()

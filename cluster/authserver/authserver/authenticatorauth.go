@@ -70,7 +70,9 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 
 	if authn.Status.AuthenticationAttempt == nil ||
 		authn.Status.AuthenticationAttempt.SessionRef == nil ||
-		authn.Status.AuthenticationAttempt.CreatedAt == nil {
+		authn.Status.AuthenticationAttempt.CreatedAt == nil ||
+		!authn.Status.AuthenticationAttempt.CreatedAt.IsValid() ||
+		authn.Status.AuthenticationAttempt.EncryptedChallengeRequest == nil {
 		return nil, s.errPermissionDenied("No valid current authentication attempt...")
 	}
 
@@ -86,12 +88,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		}
 
 		return nil, s.errPermissionDenied("No valid current authentication attempt")
-	}
-
-	if authn.Status.AuthenticationAttempt == nil ||
-		!authn.Status.AuthenticationAttempt.CreatedAt.IsValid() ||
-		authn.Status.AuthenticationAttempt.EncryptedChallengeRequest == nil {
-		return nil, s.errInternal("Nil AuthenticationAttempt")
 	}
 
 	challengeReqBytes, err := authenticators.DecryptData(ctx,
@@ -222,6 +218,31 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 
 	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {
 		return nil, err
+	}
+
+	if sess.Status.DeviceRef != nil && authn.Status.DeviceRef != nil {
+		if sess.Status.DeviceRef.Uid != authn.Status.DeviceRef.Uid {
+			return nil, s.errPermissionDenied("Invalid Authenticator Device")
+		}
+	}
+
+	switch sess.Status.Type {
+	case corev1.Session_Status_CLIENT:
+		switch authn.Status.Type {
+		case corev1.Authenticator_Status_TPM, corev1.Authenticator_Status_TOTP:
+		default:
+			return nil, s.errPermissionDenied("Invalid Session type")
+		}
+	case corev1.Session_Status_CLIENTLESS:
+		if sess.Status.IsBrowser {
+			switch authn.Status.Type {
+			case corev1.Authenticator_Status_FIDO, corev1.Authenticator_Status_TOTP:
+			default:
+				return nil, s.errPermissionDenied("Invalid Session type")
+			}
+		} else {
+			return nil, s.errPermissionDenied("Invalid Session type")
+		}
 	}
 
 	ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
@@ -373,7 +394,6 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 	}
 
 	ret, err := fac.BeginRegistration(ctx, &authenticators.BeginRegistrationReq{
-
 		Req: req,
 	})
 	if err != nil {
