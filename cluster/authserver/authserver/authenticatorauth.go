@@ -18,6 +18,7 @@ package authserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/totp"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/tpm"
@@ -35,7 +37,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -54,6 +55,10 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
+	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {
+		return nil, err
+	}
+
 	nullifyCurrAndUpdate := func() error {
 		ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
 		authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
@@ -64,7 +69,8 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	}
 
 	if authn.Status.AuthenticationAttempt == nil ||
-		authn.Status.AuthenticationAttempt.SessionRef == nil {
+		authn.Status.AuthenticationAttempt.SessionRef == nil ||
+		authn.Status.AuthenticationAttempt.CreatedAt == nil {
 		return nil, s.errPermissionDenied("No valid current authentication attempt...")
 	}
 
@@ -88,7 +94,8 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, s.errInternal("Nil AuthenticationAttempt")
 	}
 
-	challengeReqBytes, err := authenticators.DecryptData(ctx, s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
+	challengeReqBytes, err := authenticators.DecryptData(ctx,
+		s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +167,8 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	}, nil
 }
 
-func (s *server) getAuthenticator(ctx context.Context, authnRef *metav1.ObjectReference, sess *corev1.Session) (*corev1.Authenticator, error) {
+func (s *server) getAuthenticator(ctx context.Context,
+	authnRef *metav1.ObjectReference, sess *corev1.Session) (*corev1.Authenticator, error) {
 
 	if err := apivalidation.CheckObjectRef(authnRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 		return nil, s.errInvalidArgErr(err)
@@ -186,7 +194,8 @@ func (s *server) getAuthenticator(ctx context.Context, authnRef *metav1.ObjectRe
 	return authn, nil
 }
 
-func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context, req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
+func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
+	req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -207,20 +216,15 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context, req *auth
 		return nil, err
 	}
 
-	if authn.Status.AuthenticationAttempt != nil {
-
-		if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().Add(2 * time.Second).After(time.Now()) {
-			ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
-			_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
-			if err != nil {
-				return nil, err
-			}
-
-			return nil, errors.Errorf("Authenticator rate limit exceeded")
-		}
-
-		ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
+	if !authn.Status.IsRegistered {
+		return nil, s.errInvalidArg("Authenticator is not registered")
 	}
+
+	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {
+		return nil, err
+	}
+
+	ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
 
 	fac, err := s.getAuthenticatorCtl(ctx, authn, usr, cc)
 	if err != nil {
@@ -320,7 +324,8 @@ func (s *server) validatePreChallenge(req *authv1.RegisterAuthenticatorBeginRequ
 	return nil
 }
 
-func (s *server) doRegisterAuthenticatorBegin(ctx context.Context, req *authv1.RegisterAuthenticatorBeginRequest) (*authv1.RegisterAuthenticatorBeginResponse, error) {
+func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
+	req *authv1.RegisterAuthenticatorBeginRequest) (*authv1.RegisterAuthenticatorBeginResponse, error) {
 
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
@@ -349,42 +354,11 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context, req *authv1.R
 	var fac authenticators.Factor
 
 	if authn.Status.IsRegistered {
-		return nil, errors.Errorf("Authenticator already registered")
+		return nil, s.errInvalidArg("Authenticator already registered")
 	}
 
 	authn.Status.AuthenticationAttempt = nil
 	authn.Status.LastAuthenticationAttempts = nil
-	/*
-		if authn.Status.AuthenticationAttempt != nil {
-
-			if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().Add(2 * time.Second).After(time.Now()) {
-				ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
-				_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
-				if err != nil {
-					return nil, err
-				}
-
-				return nil, errors.Errorf("Authenticator rate limit exceeded")
-			}
-
-			ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
-		}
-
-		if len(authn.Status.LastAuthenticationAttempts) > 0 {
-			if authn.Status.LastAuthenticationAttempts[0].CreatedAt.AsTime().Add(2 * time.Second).After(time.Now()) {
-				return nil, errors.Errorf("Authenticator rate limit exceeded..")
-			}
-		}
-	*/
-
-	/*
-		authFactor, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-			Uid: authn.Status.IdentityProviderRef.Uid,
-		})
-		if err != nil {
-			return nil, err
-		}
-	*/
 
 	fac, err = s.getAuthenticatorCtl(ctx, authn, usr, cc)
 	if err != nil {
@@ -405,8 +379,6 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context, req *authv1.R
 	if err != nil {
 		return nil, err
 	}
-
-	// authn.Status.TotalAuthenticationAttempts = authn.Status.TotalAuthenticationAttempts + 1
 
 	challengeReqBytes, err := pbutils.Marshal(ret.Response.ChallengeRequest)
 	if err != nil {
@@ -438,19 +410,77 @@ func (s *server) getAuthenticatorCtl(ctx context.Context,
 		OcteliumC:     s.octeliumC,
 		ClusterConfig: cc,
 	}
+
+	var ret authenticators.Factor
+	var err error
 	switch authn.Status.Type {
 	case corev1.Authenticator_Status_FIDO:
-		return vwebauthn.NewFactor(ctx, opts, s.mdsProvider)
+		ret, err = vwebauthn.NewFactor(ctx, opts, s.mdsProvider)
 	case corev1.Authenticator_Status_TOTP:
-		return totp.NewFactor(ctx, opts)
+		ret, err = totp.NewFactor(ctx, opts)
 	case corev1.Authenticator_Status_TPM:
-		return tpm.NewFactor(ctx, opts)
+		ret, err = tpm.NewFactor(ctx, opts)
 	default:
-		return nil, errors.Errorf("Unknown factor type")
+		return nil, s.errInvalidArg("Unknown factor type")
 	}
+
+	if err != nil {
+		return nil, s.errInvalidArg("Could not create authenticator ctl")
+	}
+
+	return ret, nil
 }
 
-func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.RegisterAuthenticatorFinishRequest) (*authv1.RegisterAuthenticatorFinishResponse, error) {
+func (s *server) checkAuthenticatorRateLimit(ctx context.Context, authn *corev1.Authenticator) error {
+
+	type rateLimit struct {
+		window *metav1.Duration
+		limit  int64
+		key    string
+	}
+
+	rateLimits := []*rateLimit{
+		{
+			key: fmt.Sprintf("octelium:authn:1:%s", authn.Metadata.Uid),
+			window: &metav1.Duration{
+				Type: &metav1.Duration_Minutes{
+					Minutes: 3,
+				},
+			},
+			limit: 20,
+		},
+		{
+			key: fmt.Sprintf("octelium:authn:2:%s", authn.Metadata.Uid),
+			window: &metav1.Duration{
+				Type: &metav1.Duration_Minutes{
+					Minutes: 60,
+				},
+			},
+			limit: 100,
+		},
+	}
+
+	for _, rl := range rateLimits {
+		res, err := s.octeliumC.RateLimitC().CheckSlidingWindow(ctx,
+			&rratelimitv1.CheckSlidingWindowRequest{
+				Key:    []byte(rl.key),
+				Window: rl.window,
+				Limit:  rl.limit,
+			})
+		if err != nil {
+			return s.errInternalErr(err)
+		}
+
+		if !res.IsAllowed {
+			return s.errInvalidArg("Authenticator rate limit exceeded")
+		}
+	}
+
+	return nil
+}
+
+func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
+	req *authv1.RegisterAuthenticatorFinishRequest) (*authv1.RegisterAuthenticatorFinishResponse, error) {
 	var err error
 
 	if req.ChallengeResponse == nil {
@@ -525,7 +555,8 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context, req *authv1.
 		return nil, s.errInternal("Nil AuthenticationAttempt")
 	}
 
-	challengeReqBytes, err := authenticators.DecryptData(ctx, s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
+	challengeReqBytes, err := authenticators.DecryptData(ctx,
+		s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -610,7 +641,7 @@ func (s *server) validateChallengeResponse(req *authv1.ChallengeResponse) error 
 		}
 	case *authv1.ChallengeResponse_Fido:
 		if req.GetFido().Response == "" {
-			return s.errInvalidArg("Empty WebAuthN response")
+			return s.errInvalidArg("Empty FIDO response")
 		}
 
 		if len(req.GetFido().Response) > 30000 {
