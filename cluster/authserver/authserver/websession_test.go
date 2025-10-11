@@ -103,9 +103,9 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		assert.Nil(t, err)
 		resp, err := srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
 		assert.Nil(t, err)
-		assert.NotEqual(t, usrT.Session.Status.Authentication.TokenID, resp.sess.Status.Authentication.TokenID)
+		assert.NotEqual(t, usrT.Session.Status.Authentication.TokenID, resp.Status.Authentication.TokenID)
 		// assert.Equal(t, usrT.Session.Status.Authentication.TokenID, resp.sess.Status.LastAuthentications[0].TokenID)
-		assert.True(t, resp.sess.Status.Authentication.SetAt.AsTime().
+		assert.True(t, resp.Status.Authentication.SetAt.AsTime().
 			After(usrT.Session.Status.Authentication.SetAt.AsTime()))
 	}
 

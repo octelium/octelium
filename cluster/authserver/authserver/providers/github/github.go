@@ -139,7 +139,7 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		Details: &corev1.Session_Status_Authentication_Info_IdentityProvider_{
 			IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
 				IdentityProviderRef: umetav1.GetObjectReference(c.c),
-				Type:                corev1.Session_Status_Authentication_Info_IdentityProvider_GITHUB,
+				Type:                corev1.IdentityProvider_Status_GITHUB,
 			},
 		},
 		Aal: utils.GetAAL(ctx, &utils.GetAALReq{

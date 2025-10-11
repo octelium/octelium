@@ -128,7 +128,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			Details: &corev1.Session_Status_Authentication_Info_Credential_{
 				Credential: &corev1.Session_Status_Authentication_Info_Credential{
 					CredentialRef: umetav1.GetObjectReference(tkn),
-					Type:          corev1.Session_Status_Authentication_Info_Credential_OAUTH2,
+					Type:          tkn.Spec.Type,
 					TokenID:       tkn.Status.TokenID,
 				},
 			},
@@ -165,7 +165,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 				Details: &corev1.Session_Status_Authentication_Info_Credential_{
 					Credential: &corev1.Session_Status_Authentication_Info_Credential{
 						CredentialRef: umetav1.GetObjectReference(tkn),
-						Type:          corev1.Session_Status_Authentication_Info_Credential_OAUTH2,
+						Type:          tkn.Spec.Type,
 						TokenID:       tkn.Status.TokenID,
 					},
 				},

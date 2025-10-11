@@ -92,9 +92,9 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch sess.Status.InitialAuthentication.Info.GetIdentityProvider().Type {
-	case corev1.Session_Status_Authentication_Info_IdentityProvider_GITHUB,
-		corev1.Session_Status_Authentication_Info_IdentityProvider_OIDC,
-		corev1.Session_Status_Authentication_Info_IdentityProvider_SAML:
+	case corev1.IdentityProvider_Status_GITHUB,
+		corev1.IdentityProvider_Status_OIDC,
+		corev1.IdentityProvider_Status_SAML:
 	default:
 		s.setLogoutCookies(w)
 		s.renderIndex(w)
@@ -168,6 +168,12 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	murl, _ := url.Parse(fmt.Sprintf("%s/login", s.rootURL))
+	murl.RawQuery = r.URL.RawQuery
+	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
+}
+
+func (s *server) redirectToAuthenticatorAuthenticate(w http.ResponseWriter, r *http.Request) {
+	murl, _ := url.Parse(fmt.Sprintf("%s/authenticator/authenticate", s.rootURL))
 	murl.RawQuery = r.URL.RawQuery
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
 }

@@ -27,13 +27,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type webDevSessResp struct {
-	sess *corev1.Session
-}
-
 func (s *server) createOrUpdateSessWeb(r *http.Request,
 	usr *corev1.User, authResp *corev1.Session_Status_Authentication_Info,
-	cc *corev1.ClusterConfig) (*webDevSessResp, error) {
+	cc *corev1.ClusterConfig) (*corev1.Session, error) {
 	ctx := r.Context()
 	cookie, err := r.Cookie("octelium_rt")
 	if err != nil {
@@ -41,20 +37,6 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 		return s.createWebDevSess(r, usr, authResp, nil, cc)
 	}
 
-	/*
-		claims, err := s.jwkCtl.VerifyRefreshToken(cookie.Value)
-		if err != nil {
-			return s.createWebDevSess(r, usr, authResp, nil, cc)
-		}
-
-		sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: claims.SessionUID})
-		if err != nil {
-			if !grpcerr.IsNotFound(err) {
-				return nil, err
-			}
-			return s.createWebDevSess(r, usr, authResp, nil, cc)
-		}
-	*/
 	sess, err := s.getSessionFromRefreshToken(ctx, cookie.Value)
 	if err != nil {
 		zap.L().Debug("Could not get Session from refresh token. Creating a new webSession", zap.Error(err))
@@ -96,14 +78,12 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 		return nil, err
 	}
 
-	return &webDevSessResp{
-		sess: sess,
-	}, nil
+	return sess, nil
 }
 
 func (s *server) createWebDevSess(r *http.Request, usr *corev1.User,
 	authRespInfo *corev1.Session_Status_Authentication_Info, dev *corev1.Device,
-	cc *corev1.ClusterConfig) (*webDevSessResp, error) {
+	cc *corev1.ClusterConfig) (*corev1.Session, error) {
 	ctx := r.Context()
 
 	var err error
@@ -126,9 +106,7 @@ func (s *server) createWebDevSess(r *http.Request, usr *corev1.User,
 		return nil, err
 	}
 
-	return &webDevSessResp{
-		sess: sess,
-	}, nil
+	return sess, nil
 }
 
 func (s *server) setCurrAuthenticationGRPC(ctx context.Context, sess *corev1.Session, cc *corev1.ClusterConfig, authInfo *corev1.Session_Status_Authentication_Info) {

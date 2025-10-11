@@ -218,7 +218,7 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 					Details: &corev1.Session_Status_Authentication_Info_Credential_{
 						Credential: &corev1.Session_Status_Authentication_Info_Credential{
 							CredentialRef: umetav1.GetObjectReference(cred),
-							Type:          corev1.Session_Status_Authentication_Info_Credential_TYPE_UNKNOWN,
+							Type:          cred.Spec.Type,
 							TokenID:       cred.Status.TokenID,
 						},
 					},
@@ -269,7 +269,7 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 					Details: &corev1.Session_Status_Authentication_Info_Credential_{
 						Credential: &corev1.Session_Status_Authentication_Info_Credential{
 							CredentialRef: umetav1.GetObjectReference(cred),
-							Type:          corev1.Session_Status_Authentication_Info_Credential_TYPE_UNKNOWN,
+							Type:          cred.Spec.Type,
 							TokenID:       cred.Status.TokenID,
 						},
 					},

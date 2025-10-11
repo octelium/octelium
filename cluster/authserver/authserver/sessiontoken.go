@@ -168,7 +168,7 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 			Details: &corev1.Session_Status_Authentication_Info_Credential_{
 				Credential: &corev1.Session_Status_Authentication_Info_Credential{
 					CredentialRef: umetav1.GetObjectReference(tkn),
-					Type:          corev1.Session_Status_Authentication_Info_Credential_AUTH_TOKEN,
+					Type:          tkn.Spec.Type,
 					TokenID:       tkn.Status.TokenID,
 				},
 			},

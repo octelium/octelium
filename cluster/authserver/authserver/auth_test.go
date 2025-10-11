@@ -356,7 +356,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "github-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_GITHUB,
+					Type: corev1.IdentityProvider_Status_GITHUB,
 				},
 			},
 		}, gh)
@@ -390,7 +390,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "github-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_GITHUB,
+					Type: corev1.IdentityProvider_Status_GITHUB,
 				},
 			},
 		}, gh)
@@ -426,7 +426,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "oidc-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_OIDC,
+					Type: corev1.IdentityProvider_Status_OIDC,
 				},
 			},
 		}, oidcp)
@@ -439,7 +439,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "oidc-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_OIDC,
+					Type: corev1.IdentityProvider_Status_OIDC,
 				},
 			},
 		}, oidcp)
@@ -474,7 +474,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "saml-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_SAML,
+					Type: corev1.IdentityProvider_Status_SAML,
 				},
 			},
 		}, samlp)
@@ -489,7 +489,7 @@ func TestAuthenticateUser(t *testing.T) {
 					IdentityProviderRef: &metav1.ObjectReference{
 						Name: "saml-1",
 					},
-					Type: corev1.Session_Status_Authentication_Info_IdentityProvider_SAML,
+					Type: corev1.IdentityProvider_Status_SAML,
 				},
 			},
 		}, samlp)
@@ -516,7 +516,7 @@ func TestAuthenticateUser(t *testing.T) {
 					Identifier:          "id",
 					Email:               "geo2@example.com",
 					IdentityProviderRef: umetav1.GetObjectReference(samlpAllowEmail),
-					Type:                corev1.Session_Status_Authentication_Info_IdentityProvider_SAML,
+					Type:                corev1.IdentityProvider_Status_SAML,
 				},
 			},
 		}, samlpAllowEmail)
@@ -546,7 +546,7 @@ func TestAuthenticateUser(t *testing.T) {
 					Identifier:          "id",
 					Email:               "geo3@example.com",
 					IdentityProviderRef: umetav1.GetObjectReference(samlp),
-					Type:                corev1.Session_Status_Authentication_Info_IdentityProvider_SAML,
+					Type:                corev1.IdentityProvider_Status_SAML,
 				},
 			},
 		}, samlp)

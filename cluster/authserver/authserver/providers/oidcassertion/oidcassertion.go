@@ -192,7 +192,7 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 			IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
 				IdentityProviderRef: umetav1.GetObjectReference(c.c),
 				Identifier:          idTkn.Subject,
-				Type:                corev1.Session_Status_Authentication_Info_IdentityProvider_OIDC_IDENTITY_TOKEN,
+				Type:                corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
 			},
 		},
 		Aal: utils.GetAAL(ctx, &utils.GetAALReq{
