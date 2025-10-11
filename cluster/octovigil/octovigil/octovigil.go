@@ -497,6 +497,11 @@ func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (
 		return false, reason, nil
 	}
 
+	if req.Session.Status.IsAuthenticatorRequired {
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_AUTH_REQUIRED
+		return false, reason, nil
+	}
+
 	if req.Device != nil &&
 		req.Device.Spec.State != corev1.Device_Spec_ACTIVE {
 		reason.Type = corev1.AccessLog_Entry_Common_Reason_DEVICE_NOT_ACTIVE
