@@ -179,10 +179,8 @@ func TestHandleBeginAuthenticator(t *testing.T) {
 
 }
 
-/*
-func TestHandleBeginAuthenticatorRateLimit(t *testing.T) {
+func TestCheckAuthenticatorRateLimit(t *testing.T) {
 	ctx := context.Background()
-
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
 	t.Cleanup(func() {
@@ -217,38 +215,19 @@ func TestHandleBeginAuthenticatorRateLimit(t *testing.T) {
 		})
 		assert.Nil(t, err)
 
-		{
-			_, err := srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
-				AuthenticatorRef: umetav1.GetObjectReference(authn),
-			})
-			assert.Nil(t, err, "%+v", err)
-
-			authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-				Uid: authn.Metadata.Uid,
-			})
-			assert.Nil(t, err)
-			assert.NotNil(t, authn.Status.AuthenticationAttempt)
-			assert.Equal(t, 0, len(authn.Status.LastAuthenticationAttempts))
-		}
-		{
-			_, err := srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
-				AuthenticatorRef: umetav1.GetObjectReference(authn),
-			})
-			assert.NotNil(t, err)
-
-			authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-				Uid: authn.Metadata.Uid,
-			})
-			assert.Nil(t, err)
-			assert.Nil(t, authn.Status.AuthenticationAttempt)
-			assert.Equal(t, 1, len(authn.Status.LastAuthenticationAttempts))
-			assert.NotNil(t, authn.Status.LastAuthenticationAttempts[0])
+		for i := range 32 {
+			err := srv.checkAuthenticatorRateLimit(ctx, authn)
+			time.Sleep(100 * time.Millisecond)
+			if i < 20 {
+				assert.Nil(t, err)
+			} else {
+				assert.NotNil(t, err)
+			}
 		}
 
 	}
 
 }
-*/
 
 func TestAuthenticatorRegistration(t *testing.T) {
 	ctx := context.Background()
