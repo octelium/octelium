@@ -705,3 +705,36 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 
 	return nil
 }
+
+func (s *server) handleAuthenticator(w http.ResponseWriter, r *http.Request) {
+
+	cookie, err := r.Cookie("octelium_rt")
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	refreshToken := cookie.Value
+
+	if refreshToken == "" {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	/*
+		ctx := r.Context()
+
+
+		sess, err := s.getSessionFromRefreshToken(ctx, refreshToken)
+		if err != nil {
+			s.redirectToLogin(w, r)
+			return
+		}
+
+		if !sess.Status.IsLocked {
+
+		}
+	*/
+
+	s.renderLoggedIn(w)
+}

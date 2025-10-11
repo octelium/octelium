@@ -139,3 +139,16 @@ type templateGlobalsCluster struct {
 	Domain      string `json:"domain,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
 }
+
+func (s *server) renderLoggedIn(w http.ResponseWriter) {
+
+	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "/index.html"))
+	if err != nil {
+		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	w.Write(blob)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+}

@@ -43,6 +43,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -325,6 +326,11 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		r.HandleFunc("/.well-known/oauth-authorization-server", s.handleOAuth2Metadata).Methods("GET")
 
 		r.HandleFunc("/assets/{file}", s.handleStatic).Methods("GET")
+
+		if ldflags.IsDev() {
+			r.HandleFunc("/authenticator/authenticate", s.handleAuthenticator).Methods("GET")
+			r.HandleFunc("/authenticator/register", s.handleAuthenticator).Methods("GET")
+		}
 
 		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			zap.L().Debug("404 req", zap.Any("path", r.URL.Path), zap.String("method", r.Method))
