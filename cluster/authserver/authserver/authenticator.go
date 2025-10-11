@@ -244,3 +244,34 @@ func (s *server) doGetAuthenticator(ctx context.Context, req *metav1.GetOptions)
 
 	return s.toAuthenticator(authn), nil
 }
+
+func (s *server) doListAvailableAuthenticator(ctx context.Context,
+	req *authv1.ListAvailableAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+	sess, err := s.getSessionFromGRPCCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	usr, err := s.getUserFromSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &authv1.AuthenticatorList{
+		ApiVersion: "auth/v1",
+		Kind:       "AuthenticatorList",
+	}
+
+	itmList, err := s.listAvailableAuthenticators(ctx, sess, usr)
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	for _, itm := range itmList.Items {
+		ret.Items = append(ret.Items, s.toAuthenticator(itm))
+	}
+
+	ret.ListResponseMeta = itmList.ListResponseMeta
+
+	return ret, nil
+}

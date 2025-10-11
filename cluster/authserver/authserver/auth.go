@@ -377,6 +377,63 @@ func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.
 	return ret, nil
 }
 
+func (s *server) listAvailableAuthenticators(ctx context.Context,
+	sess *corev1.Session, usr *corev1.User) (*corev1.AuthenticatorList, error) {
+
+	itmList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterStatusUserUID(usr.Metadata.Uid),
+			urscsrv.FilterFieldBooleanTrue("status.isRegistered"),
+		},
+	})
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	ret := &corev1.AuthenticatorList{
+		ApiVersion: itmList.ApiVersion,
+		Kind:       itmList.Kind,
+	}
+
+itemLoop:
+	for _, itm := range itmList.Items {
+		if !itm.Status.IsRegistered {
+			continue
+		}
+
+		switch sess.Status.Type {
+		case corev1.Session_Status_CLIENT:
+			switch itm.Status.Type {
+			case corev1.Authenticator_Status_TPM, corev1.Authenticator_Status_TOTP:
+			default:
+				continue
+			}
+			if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
+				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
+				ret.Items = []*corev1.Authenticator{itm}
+				break itemLoop
+			}
+		case corev1.Session_Status_CLIENTLESS:
+			if !sess.Status.IsBrowser {
+				continue
+			}
+			switch itm.Status.Type {
+			case corev1.Authenticator_Status_FIDO, corev1.Authenticator_Status_TOTP:
+			default:
+				continue
+			}
+		}
+
+		ret.Items = append(ret.Items, itm)
+	}
+
+	ret.ListResponseMeta = &metav1.ListResponseMeta{
+		TotalCount: uint32(len(ret.Items)),
+	}
+
+	return ret, nil
+}
+
 func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 	state *loginState, sess *corev1.Session) error {
 

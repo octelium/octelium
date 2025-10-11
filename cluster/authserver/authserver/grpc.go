@@ -117,6 +117,14 @@ func (s *authMainSvc) RegisterAuthenticatorFinish(ctx context.Context, req *auth
 	return s.s.doRegisterAuthenticatorFinish(ctx, req)
 }
 
+func (s *authMainSvc) ListAvailableAuthenticator(ctx context.Context, req *authv1.ListAvailableAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doListAvailableAuthenticator(ctx, req)
+}
+
 func (s *authMainSvc) doCheckProduction() error {
 	if !ldflags.IsDev() {
 		return s.s.errNotFound("")
