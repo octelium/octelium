@@ -761,26 +761,38 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 
 func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 
-	{
+	ctx := r.Context()
 
-		cookie, err := r.Cookie("octelium_rt")
-		if err != nil {
-			s.redirectToLogin(w, r)
-			return
-		}
-
-		refreshToken := cookie.Value
-
-		if refreshToken == "" {
-			s.redirectToLogin(w, r)
-			return
-		}
-
-		if _, err := s.jwkCtl.VerifyRefreshToken(refreshToken); err != nil {
-			s.redirectToLogin(w, r)
-			return
-		}
+	cookie, err := r.Cookie("octelium_rt")
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
 	}
+
+	refreshToken := cookie.Value
+
+	if refreshToken == "" {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	sess, err := s.getSessionFromRefreshToken(ctx, refreshToken)
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	if !sess.Status.IsBrowser {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	/*
+		if sess.Status.Authentication != nil && sess.Status.Authentication.Info != nil &&
+			sess.Status.Authentication.Info.GetAuthenticator() != nil {
+
+		}
+	*/
 
 	redirectURL := r.FormValue("redirect")
 	if redirectURL == "" {
