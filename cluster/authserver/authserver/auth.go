@@ -290,32 +290,30 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.createOrUpdateSessWeb(r, usr, authInfo, cc)
-	if err != nil {
-		doRedirect(err)
-		return
-	}
-
+	var sess *corev1.Session
 	if ok, err := s.isAuthenticatorAuthenticationRequired(ctx, cc, idp, usr); err != nil {
 		doRedirect(err)
 		return
 	} else if ok {
-		idpInfo := sess.Status.Authentication.Info.GetIdentityProvider()
-		idpInfo.CallbackInfo = &corev1.Session_Status_Authentication_Info_IdentityProvider_CallbackInfo{
+		authInfo.GetIdentityProvider().CallbackInfo = &corev1.Session_Status_Authentication_Info_IdentityProvider_CallbackInfo{
 			IsClient: userState.IsApp,
 			Url:      userState.CallbackURL,
 		}
 
-		sess.Status.IsAuthenticatorRequired = true
-
-		_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
+		sess, err = s.createOrUpdateSessWeb(r, usr, authInfo, cc)
 		if err != nil {
 			doRedirect(err)
 			return
 		}
-
-		s.redirectToAuthenticatorAuthenticate(w, r)
+	} else if ok, err := s.isAuthenticatorRegistrationRequired(ctx, cc, idp, usr); err != nil {
+		doRedirect(err)
 		return
+	} else if ok {
+		sess, err = s.createOrUpdateSessWeb(r, usr, authInfo, cc)
+		if err != nil {
+			doRedirect(err)
+			return
+		}
 	}
 
 	if err := s.setAuthCallbackResponse(r, w, userState, sess); err != nil {
@@ -327,7 +325,6 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) isAuthenticatorAuthenticationRequired(ctx context.Context,
 	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (bool, error) {
-
 	if cc.Spec.Authenticator == nil {
 		return false, nil
 	}
@@ -338,6 +335,16 @@ func (s *server) isAuthenticatorAuthenticationRequired(ctx context.Context,
 	}
 
 	return len(authnList) > 0, nil
+}
+
+func (s *server) isAuthenticatorRegistrationRequired(ctx context.Context,
+	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (bool, error) {
+
+	if cc.Spec.Authenticator == nil {
+		return false, nil
+	}
+
+	return false, nil
 }
 
 func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.User) ([]*corev1.Authenticator, error) {
@@ -361,16 +368,6 @@ func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.
 		switch itm.Status.Type {
 		case corev1.Authenticator_Status_TOTP, corev1.Authenticator_Status_FIDO:
 			ret = append(ret, itm)
-
-			/*
-				case corev1.Authenticator_Status_FIDO:
-					if itm.Status.Info != nil && itm.Status.Info.GetFido() != nil {
-						fido := itm.Status.Info.GetFido()
-						if fido.Type == corev1.Authenticator_Status_Info_FIDO_ROAMING {
-							ret = append(ret, itm)
-						}
-					}
-			*/
 		}
 	}
 
@@ -445,6 +442,12 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 	refreshToken, err := s.generateRefreshToken(sess)
 	if err != nil {
 		return err
+	}
+
+	if sess.Status.IsAuthenticatorRequired {
+		s.setLoginCookies(w, accessToken, refreshToken, sess)
+		s.redirectToAuthenticatorAuthenticate(w, r)
+		return nil
 	}
 
 	if state != nil && !state.IsApp {

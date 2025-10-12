@@ -178,6 +178,12 @@ func (s *server) redirectToAuthenticatorAuthenticate(w http.ResponseWriter, r *h
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
 }
 
+func (s *server) redirectToAuthenticatorRegister(w http.ResponseWriter, r *http.Request) {
+	murl, _ := url.Parse(fmt.Sprintf("%s/authenticator/register", s.rootURL))
+	murl.RawQuery = r.URL.RawQuery
+	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
+}
+
 func (s *server) redirectToCallbackSuccess(w http.ResponseWriter, r *http.Request, redirectURL string) {
 	murl, _ := url.Parse(fmt.Sprintf("%s/callback/success", s.rootURL))
 	q := murl.Query()

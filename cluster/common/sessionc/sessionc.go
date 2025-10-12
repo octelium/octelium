@@ -58,7 +58,8 @@ type CreateSessionOpts struct {
 
 	Ext map[string]*structpb.Struct
 
-	CheckPerUserLimit bool
+	CheckPerUserLimit       bool
+	IsAuthenticatorRequired bool
 }
 
 func NewSession(ctx context.Context,
@@ -218,6 +219,7 @@ func NewSession(ctx context.Context,
 				TokenID: vutils.UUIDv4(),
 				Info:    o.AuthenticationInfo,
 			},
+			IsAuthenticatorRequired: o.IsAuthenticatorRequired,
 		},
 	}
 
