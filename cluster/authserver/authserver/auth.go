@@ -410,6 +410,7 @@ itemLoop:
 func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 	state *loginState, sess *corev1.Session) error {
 
+	ctx := r.Context()
 	accessToken, err := s.generateAccessToken(sess)
 	if err != nil {
 		return err
@@ -444,12 +445,24 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		return nil
 	}
 
+	u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
+	if err != nil {
+		return err
+	}
+
+	s.setLoginCookies(w, accessToken, refreshToken, sess)
+	s.redirectToCallbackSuccess(w, r, u.String())
+	return nil
+}
+
+func (s *server) generateClientCallbackURL(ctx context.Context,
+	sess *corev1.Session, callbackURL string) (*url.URL, error) {
 	srv := admin.NewServer(&admin.Opts{
 		OcteliumC:  s.octeliumC,
 		IsEmbedded: true,
 	})
 
-	cred, err := srv.CreateCredential(r.Context(), &corev1.Credential{
+	cred, err := srv.CreateCredential(ctx, &corev1.Credential{
 		Metadata: &metav1.Metadata{
 			Name:           fmt.Sprintf("auth-token-%s", utilrand.GetRandomStringLowercase(8)),
 			IsSystem:       true,
@@ -466,19 +479,19 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	tokenResp, err := srv.GenerateCredentialToken(r.Context(), &corev1.GenerateCredentialTokenRequest{
+	tokenResp, err := srv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
 		CredentialRef: umetav1.GetObjectReference(cred),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	u, err := url.Parse(state.CallbackURL)
+	u, err := url.Parse(callbackURL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	q := u.Query()
@@ -488,16 +501,13 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 	}
 	respBytes, err := pbutils.Marshal(loginResp)
 	if err != nil {
-		return errors.Errorf("Could not generate JWT cookie %+v", err)
+		return nil, errors.Errorf("Could not generate JWT cookie %+v", err)
 	}
 
 	q.Set("octelium_response", base64.RawURLEncoding.EncodeToString(respBytes))
 	u.RawQuery = q.Encode()
 
-	s.setLoginCookies(w, accessToken, refreshToken, sess)
-	// http.Redirect(w, r, u.String(), http.StatusSeeOther)
-	s.redirectToCallbackSuccess(w, r, u.String())
-	return nil
+	return u, nil
 }
 
 func (s *server) authenticateUser(ctx context.Context,
@@ -766,16 +776,33 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !sess.Status.IsBrowser {
-		s.redirectToLogin(w, r)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	/*
-		if sess.Status.Authentication != nil && sess.Status.Authentication.Info != nil &&
-			sess.Status.Authentication.Info.GetAuthenticator() != nil {
+	if sess.Status.Authentication != nil &&
+		sess.Status.Authentication.Info != nil &&
+		sess.Status.Authentication.Info.GetAuthenticator() != nil {
+		if state, err := s.loadAuthenticatorCallbackState(ctx, sess); err == nil {
+			if !state.IsApp {
+				if state.CallbackURL != "" {
+					s.redirectToCallbackSuccess(w, r, state.CallbackURL)
+				} else {
+					s.redirectToCallbackSuccess(w, r, s.getPortalURL())
+				}
+				return
+			}
 
+			u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
+			if err != nil {
+				s.redirectToCallbackSuccess(w, r, s.getPortalURL())
+				return
+			}
+
+			s.redirectToCallbackSuccess(w, r, u.String())
+			return
 		}
-	*/
+	}
 
 	redirectURL := r.FormValue("redirect")
 	if redirectURL == "" {
