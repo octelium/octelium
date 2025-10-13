@@ -636,6 +636,21 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	authn.Status.IsRegistered = true
 	authn.Status.DeviceRef = sess.Status.DeviceRef
 
+	if sess.Status.AuthenticatorAction == corev1.Session_Status_REGISTRATION_REQUIRED {
+		sess, err = s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: sess.Metadata.Uid,
+		})
+		if err != nil {
+			return nil, s.errInternalErr(err)
+		}
+
+		sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET
+		_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
+		if err != nil {
+			return nil, s.errInternalErr(err)
+		}
+	}
+
 	authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 	if err != nil {
 		return nil, s.errInternalErr(err)
