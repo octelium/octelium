@@ -497,9 +497,14 @@ func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (
 		return false, reason, nil
 	}
 
-	if req.Session.Status.IsAuthenticatorRequired {
+	switch req.Session.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET:
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED,
+		corev1.Session_Status_REGISTRATION_REQUIRED:
 		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_AUTH_REQUIRED
 		return false, reason, nil
+	default:
+		return false, reason, errors.Errorf("Unhandled authenticatorAction")
 	}
 
 	if req.Device != nil &&

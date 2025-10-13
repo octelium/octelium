@@ -19,9 +19,11 @@ package authserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/pkg/utils"
@@ -39,6 +41,13 @@ type loginState struct {
 	UID       string
 	RequestID string
 	LoginURL  string
+}
+
+type authenticatorCallbackState struct {
+	CallbackURL string
+	IsApp       bool
+
+	UID string
 }
 
 func (s *server) saveLoginState(ctx context.Context, state *loginState) error {
@@ -62,7 +71,7 @@ func (s *server) saveLoginState(ctx context.Context, state *loginState) error {
 	return nil
 }
 
-func (s *server) getLoginStateFromCallback(r *http.Request, doDelete bool) (*loginState, error) {
+func (s *server) getLoginStateFromCallback(r *http.Request) (*loginState, error) {
 	var stateID string
 
 	switch r.Method {
@@ -97,7 +106,7 @@ func (s *server) getLoginStateFromCallback(r *http.Request, doDelete bool) (*log
 		return nil, errors.Errorf("state ID and cookie don't match")
 	}
 
-	return s.getLoginStateFromStateID(r.Context(), stateID, doDelete)
+	return s.getLoginStateFromStateID(r.Context(), stateID)
 }
 
 func getStateIDFromCookie(r *http.Request) (string, error) {
@@ -113,11 +122,11 @@ func getStateIDFromCookie(r *http.Request) (string, error) {
 	return cookie.Value, nil
 }
 
-func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string, doDelete bool) (*loginState, error) {
+func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string) (*loginState, error) {
 
 	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
 		Key:    []byte(getAuthKey(stateID)),
-		Delete: doDelete,
+		Delete: true,
 	})
 	if err != nil {
 		return nil, err
@@ -130,4 +139,55 @@ func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string, d
 	}
 
 	return &userState, nil
+}
+
+func (s *server) saveAuthenticatorCallbackState(ctx context.Context, sess *corev1.Session, loginState *loginState) error {
+	stateBytes, err := json.Marshal(&authenticatorCallbackState{
+		IsApp:       loginState.IsApp,
+		CallbackURL: loginState.CallbackURL,
+	})
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.octeliumC.CacheC().SetCache(ctx, &rcachev1.SetCacheRequest{
+		Key:  []byte(getAuthenticatorCallbackKey(sess)),
+		Data: stateBytes,
+		Duration: &metav1.Duration{
+			Type: &metav1.Duration_Minutes{
+				Minutes: 12,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) loadAuthenticatorCallbackState(ctx context.Context, sess *corev1.Session) (*authenticatorCallbackState, error) {
+
+	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
+		Key:    []byte(getAuthenticatorCallbackKey(sess)),
+		Delete: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &authenticatorCallbackState{}
+	if err := json.Unmarshal(res.Data, ret); err != nil {
+		zap.L().Warn("Could not unmarshal json of loginState from cache", zap.Error(err))
+		return nil, errors.Errorf("Invalid or expired state. Please try again.")
+	}
+
+	return ret, nil
+}
+
+func getAuthKey(state string) string {
+	return fmt.Sprintf("authserver.ls.%s", state)
+}
+
+func getAuthenticatorCallbackKey(sess *corev1.Session) string {
+	return fmt.Sprintf("authserver.ls.authn.%s", sess.Metadata.Uid)
 }

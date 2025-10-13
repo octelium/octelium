@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -59,6 +60,41 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		return tkn
 	}
 
+	sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	idp, err := fakeC.OcteliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+		Metadata: &metav1.Metadata{
+			Name:        "github-1",
+			DisplayName: "Github 1",
+		},
+
+		Spec: &corev1.IdentityProvider_Spec{
+
+			Type: &corev1.IdentityProvider_Spec_Github_{
+				Github: &corev1.IdentityProvider_Spec_Github{
+					ClientID: "xxx",
+					ClientSecret: &corev1.IdentityProvider_Spec_Github_ClientSecret{
+						Type: &corev1.IdentityProvider_Spec_Github_ClientSecret_FromSecret{
+							FromSecret: sec.Metadata.Name,
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
 	{
 		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
 		req := httptest.NewRequest("POST", "/", nil)
@@ -66,7 +102,7 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		assert.Nil(t, err)
 		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 		assert.Nil(t, err)
-		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
+		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
 	}
 
@@ -82,11 +118,11 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.Nil(t, err)
-		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
+		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
 
 		req.Header.Add("user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 12_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.0 Mobile/15E148 Safari/604.1")
-		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
+		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
 	}
 
@@ -101,7 +137,7 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		assert.Nil(t, err)
 		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 		assert.Nil(t, err)
-		resp, err := srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
+		resp, err := srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
 		assert.NotEqual(t, usrT.Session.Status.Authentication.TokenID, resp.Status.Authentication.TokenID)
 		// assert.Equal(t, usrT.Session.Status.Authentication.TokenID, resp.sess.Status.LastAuthentications[0].TokenID)
@@ -123,7 +159,7 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 
 		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 		assert.Nil(t, err)
-		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc)
+		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
 	}
 }

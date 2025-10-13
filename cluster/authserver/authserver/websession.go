@@ -29,18 +29,18 @@ import (
 
 func (s *server) createOrUpdateSessWeb(r *http.Request,
 	usr *corev1.User, authResp *corev1.Session_Status_Authentication_Info,
-	cc *corev1.ClusterConfig) (*corev1.Session, error) {
+	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider) (*corev1.Session, error) {
 	ctx := r.Context()
 	cookie, err := r.Cookie("octelium_rt")
 	if err != nil {
 		zap.L().Debug("Could not find refresh token cookie. Creating a new webSession")
-		return s.createWebDevSess(r, usr, authResp, nil, cc)
+		return s.createWebDevSess(r, usr, authResp, cc, idp)
 	}
 
 	sess, err := s.getSessionFromRefreshToken(ctx, cookie.Value)
 	if err != nil {
 		zap.L().Debug("Could not get Session from refresh token. Creating a new webSession", zap.Error(err))
-		return s.createWebDevSess(r, usr, authResp, nil, cc)
+		return s.createWebDevSess(r, usr, authResp, cc, idp)
 	}
 
 	deleteSess := func() {
@@ -59,15 +59,16 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef == nil {
 		// This shouldn't be happening in production
 		deleteSess()
-		return s.createWebDevSess(r, usr, authResp, nil, cc)
+		return s.createWebDevSess(r, usr, authResp, cc, idp)
 	}
 	if authResp.GetIdentityProvider().IdentityProviderRef.Uid !=
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Uid {
 		deleteSess()
-		return s.createWebDevSess(r, usr, authResp, nil, cc)
+		return s.createWebDevSess(r, usr, authResp, cc, idp)
 	}
 
-	zap.S().Debugf("Rotating the token for the Session: %s", sess.Metadata.Name)
+	zap.L().Debug("Rotating the token for the Session",
+		zap.String("sess", sess.Metadata.Name))
 	s.setCurrAuthentication(sess, authResp, r.Header.Get("User-Agent"), cc, r.Header.Get("X-Forwarded-For"))
 
 	if authResp.GetIdentityProvider() != nil && authResp.GetIdentityProvider().PicURL != "" {
@@ -82,31 +83,60 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 }
 
 func (s *server) createWebDevSess(r *http.Request, usr *corev1.User,
-	authRespInfo *corev1.Session_Status_Authentication_Info, dev *corev1.Device,
-	cc *corev1.ClusterConfig) (*corev1.Session, error) {
+	authRespInfo *corev1.Session_Status_Authentication_Info,
+	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider) (*corev1.Session, error) {
 	ctx := r.Context()
 
 	var err error
 	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
 		return nil, err
 	}
+
+	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr)
+	if err != nil {
+		return nil, err
+	}
+
 	sess, err := sessionc.CreateSession(ctx,
 		&sessionc.CreateSessionOpts{
-			OcteliumC:          s.octeliumC,
-			ClusterConfig:      cc,
-			Usr:                usr,
-			Device:             dev,
-			AuthenticationInfo: authRespInfo,
-			SessType:           corev1.Session_Status_CLIENTLESS,
-			IsBrowser:          true,
-			UserAgent:          r.Header.Get("User-Agent"),
-			XFF:                r.Header.Get("X-Forwarded-For"),
+			OcteliumC:           s.octeliumC,
+			ClusterConfig:       cc,
+			Usr:                 usr,
+			AuthenticationInfo:  authRespInfo,
+			SessType:            corev1.Session_Status_CLIENTLESS,
+			IsBrowser:           true,
+			UserAgent:           r.Header.Get("User-Agent"),
+			XFF:                 r.Header.Get("X-Forwarded-For"),
+			AuthenticatorAction: authenticatorAction,
 		})
 	if err != nil {
 		return nil, err
 	}
 
 	return sess, nil
+}
+
+func (s *server) getAuthenticatorAction(ctx context.Context,
+	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (corev1.Session_Status_AuthenticatorAction, error) {
+	var authenticatorAction corev1.Session_Status_AuthenticatorAction
+
+	isAuthentication, err := s.isAuthenticatorAuthenticationRequired(ctx, cc, idp, usr)
+	if err != nil {
+		return authenticatorAction, err
+	}
+	if isAuthentication {
+		authenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
+	} else {
+		isRegistration, err := s.isAuthenticatorRegistrationRequired(ctx, cc, idp, usr)
+		if err != nil {
+			return authenticatorAction, err
+		}
+		if isRegistration {
+			authenticatorAction = corev1.Session_Status_REGISTRATION_REQUIRED
+		}
+	}
+
+	return authenticatorAction, nil
 }
 
 func (s *server) setCurrAuthenticationGRPC(ctx context.Context, sess *corev1.Session, cc *corev1.ClusterConfig, authInfo *corev1.Session_Status_Authentication_Info) {

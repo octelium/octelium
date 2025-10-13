@@ -220,10 +220,6 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func getAuthKey(state string) string {
-	return fmt.Sprintf("authserver.ls.%s", state)
-}
-
 func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	doRedirect := func(err error) {
@@ -234,7 +230,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	userState, err := s.getLoginStateFromCallback(r, true)
+	userState, err := s.getLoginStateFromCallback(r)
 	if err != nil {
 		zap.L().Debug("Could not get login state", zap.Error(err))
 		doRedirect(err)
@@ -290,30 +286,10 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var sess *corev1.Session
-	if ok, err := s.isAuthenticatorAuthenticationRequired(ctx, cc, idp, usr); err != nil {
+	sess, err := s.createOrUpdateSessWeb(r, usr, authInfo, cc, idp)
+	if err != nil {
 		doRedirect(err)
 		return
-	} else if ok {
-		authInfo.GetIdentityProvider().CallbackInfo = &corev1.Session_Status_Authentication_Info_IdentityProvider_CallbackInfo{
-			IsClient: userState.IsApp,
-			Url:      userState.CallbackURL,
-		}
-
-		sess, err = s.createOrUpdateSessWeb(r, usr, authInfo, cc)
-		if err != nil {
-			doRedirect(err)
-			return
-		}
-	} else if ok, err := s.isAuthenticatorRegistrationRequired(ctx, cc, idp, usr); err != nil {
-		doRedirect(err)
-		return
-	} else if ok {
-		sess, err = s.createOrUpdateSessWeb(r, usr, authInfo, cc)
-		if err != nil {
-			doRedirect(err)
-			return
-		}
 	}
 
 	if err := s.setAuthCallbackResponse(r, w, userState, sess); err != nil {
@@ -444,10 +420,17 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		return err
 	}
 
-	if sess.Status.IsAuthenticatorRequired {
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET:
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToAuthenticatorAuthenticate(w, r)
 		return nil
+	case corev1.Session_Status_REGISTRATION_REQUIRED:
+		s.setLoginCookies(w, accessToken, refreshToken, sess)
+		s.redirectToAuthenticatorRegister(w, r)
+	default:
+		return errors.Errorf("Unhandled authenticatorAction")
 	}
 
 	if state != nil && !state.IsApp {
