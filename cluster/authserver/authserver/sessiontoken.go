@@ -577,6 +577,7 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	}
 
 	s.setCurrAuthenticationGRPC(ctx, sess, cc, authInfo)
+	sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET
 
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, grpcutils.InternalWithErr(err)
