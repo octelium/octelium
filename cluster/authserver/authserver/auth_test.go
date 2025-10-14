@@ -585,7 +585,7 @@ func TestHandleSuccessCallback(t *testing.T) {
 	})
 
 	t.Run("logged-in", func(t *testing.T) {
-		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
 		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
@@ -609,7 +609,7 @@ func TestHandleSuccessCallback(t *testing.T) {
 	})
 
 	t.Run("logged-in-no-redirect", func(t *testing.T) {
-		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
 		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
@@ -629,7 +629,7 @@ func TestHandleSuccessCallback(t *testing.T) {
 	})
 
 	t.Run("logged-in-localhost", func(t *testing.T) {
-		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
 		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
@@ -653,7 +653,7 @@ func TestHandleSuccessCallback(t *testing.T) {
 	})
 
 	t.Run("other-domain", func(t *testing.T) {
-		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
 		req := httptest.NewRequest("POST", "http://localhost/begin", nil)

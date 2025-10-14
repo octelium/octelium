@@ -207,6 +207,38 @@ func NewUserWithType(
 	return WithUser(octeliumC, admSrv, usrSrv, usr, sessType)
 }
 
+func NewUserWeb(
+	octeliumC octeliumc.ClientInterface,
+	admSrv corev1.MainServiceServer,
+	usrSrv userv1.MainServiceServer, groups []string) (*User, error) {
+
+	ctx := context.Background()
+
+	usrA, err := admSrv.CreateUser(ctx, GenUserHuman(groups))
+	if err != nil {
+		return nil, err
+	}
+
+	usr, err := octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Uid: usrA.Metadata.Uid})
+	if err != nil {
+		return nil, err
+	}
+
+	ret, err := WithUser(octeliumC, admSrv, usrSrv, usr, corev1.Session_Status_CLIENTLESS)
+	if err != nil {
+		return nil, err
+	}
+
+	ret.Session.Status.IsBrowser = true
+
+	ret.Session, err = octeliumC.CoreC().UpdateSession(ctx, ret.Session)
+	if err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
 func (u *User) Connect() error {
 	return u.ConnectWithReq(u.Ctx(), false, false)
 }
