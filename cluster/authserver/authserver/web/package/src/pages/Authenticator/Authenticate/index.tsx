@@ -75,26 +75,30 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       );
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
-        const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
-          JSON.parse(response.challengeRequest.type.fido.request)
-        );
-        const credential = (await navigator.credentials.get({
-          publicKey,
-        })) as PublicKeyCredential;
+        try {
+          const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
+            JSON.parse(response.challengeRequest.type.fido.request)
+          );
+          const credential = (await navigator.credentials.get({
+            publicKey,
+          })) as PublicKeyCredential;
 
-        return await c.authenticateWithAuthenticator(
-          Auth.AuthenticateWithAuthenticatorRequest.create({
-            authenticatorRef: getResourceRef(authn),
-            challengeResponse: {
-              type: {
-                oneofKind: "fido",
-                fido: {
-                  response: JSON.stringify(credential.toJSON()),
+          return await c.authenticateWithAuthenticator(
+            Auth.AuthenticateWithAuthenticatorRequest.create({
+              authenticatorRef: getResourceRef(authn),
+              challengeResponse: {
+                type: {
+                  oneofKind: "fido",
+                  fido: {
+                    response: JSON.stringify(credential.toJSON()),
+                  },
                 },
               },
-            },
-          })
-        );
+            })
+          );
+        } catch (err) {
+          console.log("fido get err", err)
+        }
       }
     },
     onSuccess: (r) => {

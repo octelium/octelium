@@ -84,9 +84,12 @@ func (s *server) generateSessionTokenResponse(ctx context.Context, sess *corev1.
 			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()),
 		}
 
-		s.setCookiesGRPC(ctx, []*http.Cookie{
-			accessTokenCookie, refreshTokenCookie,
-		})
+		if err := s.setCookiesGRPC(ctx, []*http.Cookie{
+			accessTokenCookie,
+			refreshTokenCookie,
+		}); err != nil {
+			zap.L().Warn("Could not setCookiesGRPC", zap.Error(err))
+		}
 
 		ret = &authv1.SessionToken{}
 	}
@@ -508,7 +511,6 @@ func (s *server) setCookiesGRPC(ctx context.Context, cookies []*http.Cookie) err
 	md["set-cookie"] = cookieStrs
 
 	if err := grpc.SetHeader(ctx, md); err != nil {
-		zap.L().Warn("Could not set cookie grpc header", zap.Error(err))
 		return err
 	}
 
@@ -607,38 +609,6 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	ret, err := s.generateSessionTokenResponse(ctx, sess)
 	if err != nil {
 		return nil, err
-	}
-
-	if sess.Status.Type == corev1.Session_Status_CLIENTLESS &&
-		sess.Status.IsBrowser {
-
-		accessTokenCookie := &http.Cookie{
-			Name:     "octelium_auth",
-			Value:    ret.AccessToken,
-			Secure:   true,
-			HttpOnly: true,
-			Domain:   s.domain,
-			Path:     "/",
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToGo()),
-		}
-
-		refreshTokenCookie := &http.Cookie{
-			Name:     "octelium_rt",
-			Value:    ret.RefreshToken,
-			Secure:   true,
-			HttpOnly: true,
-			Domain:   s.domain,
-			Path:     "/",
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()),
-		}
-
-		s.setCookiesGRPC(ctx, []*http.Cookie{
-			accessTokenCookie, refreshTokenCookie,
-		})
-
-		ret = &authv1.SessionToken{}
 	}
 
 	return ret, nil
