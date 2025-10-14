@@ -151,7 +151,7 @@ const Page = () => {
                 <button
                   className={twMerge(
                     "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
-                    "shadow-2xl rounded-lg cursor-pointer",
+                    "shadow-2xl rounded-lg cursor-pointer font-bold",
                     "bg-[#242323] hover:bg-black text-white text-lg",
                     loginActive ? "!bg-[#777] shadow-none" : undefined
                   )}
@@ -177,7 +177,7 @@ const Page = () => {
                   }}
                 >
                   <div className="w-full flex flex-row items-center justify-center">
-                    <span className="flex-1 flex items-center justify-center">
+                    <span className="flex-1 flex items-center justify-center font-semibold">
                       {c.displayName}
                     </span>
                   </div>
