@@ -104,12 +104,16 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       );
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
+        console.log("Req", response.challengeRequest.type.fido.request)
         const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(
           JSON.parse(response.challengeRequest.type.fido.request)
         );
         const credential = (await navigator.credentials.create({
           publicKey,
         })) as PublicKeyCredential;
+
+        console.log("FIDO response", credential.toJSON())
+        console.log("serialized JSON response", JSON.stringify(credential.toJSON()))
 
         return await c.registerAuthenticatorFinish(
           Auth.AuthenticateWithAuthenticatorRequest.create({

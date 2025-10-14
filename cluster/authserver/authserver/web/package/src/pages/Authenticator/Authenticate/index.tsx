@@ -40,7 +40,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       );
     },
     onSuccess: (r) => {
-      window.location.href = "/callback/success";
+      // window.location.href = "/callback/success";
     },
     onError: (resp) => {},
   });
@@ -98,7 +98,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       }
     },
     onSuccess: (r) => {
-      window.location.href = "/callback/success";
+      // window.location.href = "/callback/success";
     },
     onError: (resp) => {},
   });

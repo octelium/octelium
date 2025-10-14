@@ -114,8 +114,9 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator {
 	return &authv1.Authenticator{
 		Metadata: &metav1.Metadata{
-			Uid:  i.Metadata.Uid,
-			Name: i.Metadata.Name,
+			Uid:       i.Metadata.Uid,
+			Name:      i.Metadata.Name,
+			CreatedAt: i.Metadata.CreatedAt,
 		},
 		Spec: &authv1.Authenticator_Spec{
 			DisplayName: i.Spec.DisplayName,
