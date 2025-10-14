@@ -31,13 +31,8 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	usr *corev1.User, authResp *corev1.Session_Status_Authentication_Info,
 	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider) (*corev1.Session, error) {
 	ctx := r.Context()
-	cookie, err := r.Cookie("octelium_rt")
-	if err != nil {
-		zap.L().Debug("Could not find refresh token cookie. Creating a new webSession")
-		return s.createWebDevSess(r, usr, authResp, cc, idp)
-	}
 
-	sess, err := s.getSessionFromRefreshToken(ctx, cookie.Value)
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		zap.L().Debug("Could not get Session from refresh token. Creating a new webSession", zap.Error(err))
 		return s.createWebDevSess(r, usr, authResp, cc, idp)

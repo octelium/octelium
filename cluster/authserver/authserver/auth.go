@@ -756,27 +756,9 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	cookie, err := r.Cookie("octelium_rt")
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		s.redirectToLogin(w, r)
-		return
-	}
-
-	refreshToken := cookie.Value
-
-	if refreshToken == "" {
-		s.redirectToLogin(w, r)
-		return
-	}
-
-	sess, err := s.getSessionFromRefreshToken(ctx, refreshToken)
-	if err != nil {
-		s.redirectToLogin(w, r)
-		return
-	}
-
-	if !sess.Status.IsBrowser {
-		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -860,35 +842,37 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 	return nil
 }
 
-func (s *server) handleAuthenticator(w http.ResponseWriter, r *http.Request) {
-
-	cookie, err := r.Cookie("octelium_rt")
+func (s *server) handleAuthenticatorAuthenticate(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		s.redirectToLogin(w, r)
 		return
 	}
 
-	refreshToken := cookie.Value
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		s.renderLoggedIn(w)
+	case corev1.Session_Status_REGISTRATION_REQUIRED:
+		s.redirectToAuthenticatorRegister(w, r)
+	default:
+		// s.redirectToPortal(w, r)
+		s.renderLoggedIn(w)
+	}
+}
 
-	if refreshToken == "" {
+func (s *server) handleAuthenticatorRegister(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
+	if err != nil {
 		s.redirectToLogin(w, r)
 		return
 	}
 
-	/*
-		ctx := r.Context()
-
-
-		sess, err := s.getSessionFromRefreshToken(ctx, refreshToken)
-		if err != nil {
-			s.redirectToLogin(w, r)
-			return
-		}
-
-		if !sess.Status.IsLocked {
-
-		}
-	*/
-
-	s.renderLoggedIn(w)
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_REGISTRATION_REQUIRED:
+		s.renderLoggedIn(w)
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		s.redirectToAuthenticatorAuthenticate(w, r)
+	default:
+		s.renderLoggedIn(w)
+	}
 }

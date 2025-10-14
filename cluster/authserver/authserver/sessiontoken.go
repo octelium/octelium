@@ -394,6 +394,27 @@ func (s *server) getSessionFromGRPCCtx(ctx context.Context) (*corev1.Session, er
 	return s.getSessionFromRefreshToken(ctx, refreshToken)
 }
 
+func (s *server) getWebSessionFromHTTPRefreshCookie(r *http.Request) (*corev1.Session, error) {
+
+	ctx := r.Context()
+
+	cookie, err := r.Cookie("octelium_rt")
+	if err != nil {
+		return nil, err
+	}
+
+	sess, err := s.getSessionFromRefreshToken(ctx, cookie.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	if !sess.Status.IsBrowser {
+		return nil, s.errInvalidArg("Not a WEB Session")
+	}
+
+	return sess, nil
+}
+
 func (s *server) getUserFromSession(ctx context.Context, sess *corev1.Session) (*corev1.User, error) {
 	return s.getUserFromUserRef(ctx, sess.Status.UserRef)
 }

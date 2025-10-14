@@ -38,27 +38,10 @@ var fsWeb embed.FS
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	cookie, err := r.Cookie("octelium_rt")
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		s.setLogoutCookies(w)
 		s.renderIndex(w)
-		return
-	}
-
-	sess, err := s.getSessionFromRefreshToken(ctx, cookie.Value)
-	if err != nil {
-		s.setLogoutCookies(w)
-		s.renderIndex(w)
-		return
-	}
-
-	if sess.Status.Type != corev1.Session_Status_CLIENTLESS {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	if !sess.Status.IsBrowser {
-		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -82,7 +65,8 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// We still go for a login to create a token for the client
 	}
 
-	zap.L().Debug("Session:needs an authentication in handleLogin", zap.String("sess", sess.Metadata.Name))
+	zap.L().Debug("Session needs an authentication in handleLogin",
+		zap.String("sess", sess.Metadata.Name))
 
 	if sess.Status.InitialAuthentication == nil || sess.Status.InitialAuthentication.Info == nil ||
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider() == nil {
