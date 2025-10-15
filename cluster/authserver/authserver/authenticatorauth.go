@@ -80,9 +80,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, s.errPermissionDenied("No valid current authentication attempt")
 	}
 
-	if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().
-		Add(-60 * time.Second).After(time.Now()) {
-
+	if s.isAuthenticationAttemptTimeoutExceeded(authn) {
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
 		}
@@ -559,8 +557,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		return nil, s.errInvalidArg("Authenticator is already registered")
 	}
 
-	if authn.Status.AuthenticationAttempt.CreatedAt.AsTime().
-		Add(-60 * time.Second).After(time.Now()) {
+	if s.isAuthenticationAttemptTimeoutExceeded(authn) {
 
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
@@ -659,6 +656,11 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	}
 
 	return &authv1.RegisterAuthenticatorFinishResponse{}, nil
+}
+
+func (s *server) isAuthenticationAttemptTimeoutExceeded(authn *corev1.Authenticator) bool {
+	return authn.Status.AuthenticationAttempt.CreatedAt.AsTime().
+		Add(-20 * time.Minute).After(time.Now())
 }
 
 func (s *server) validateChallengeResponse(req *authv1.ChallengeResponse) error {
