@@ -33,14 +33,10 @@
     "rmetav1",
     "clusterv1",
     "authv1",
-    "authserver"
+    "authserver",
+    "sess"
   ],
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  /*
-  "go.toolsEnvVars": {
-    "GOOS": "darwin"
   }
-  */
 }

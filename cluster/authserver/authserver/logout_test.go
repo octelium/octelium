@@ -22,7 +22,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -61,10 +60,9 @@ func TestHandleLogout(t *testing.T) {
 	}
 
 	{
-		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
-		
 		{
 			req := httptest.NewRequest("GET", "http://localhost/auth/v1/logout", nil)
 			w := httptest.NewRecorder()

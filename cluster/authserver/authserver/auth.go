@@ -422,11 +422,19 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 	case corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET:
 	case corev1.Session_Status_AUTHENTICATION_REQUIRED,
 		corev1.Session_Status_AUTHENTICATION_RECOMMENDED:
+		if err := s.saveAuthenticatorCallbackState(ctx, sess, state); err != nil {
+			return err
+		}
+
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToAuthenticatorAuthenticate(w, r)
 		return nil
 	case corev1.Session_Status_REGISTRATION_REQUIRED,
 		corev1.Session_Status_REGISTRATION_RECOMMENDED:
+		if err := s.saveAuthenticatorCallbackState(ctx, sess, state); err != nil {
+			return err
+		}
+
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToAuthenticatorRegister(w, r)
 	default:
