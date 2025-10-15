@@ -73,54 +73,6 @@ func (c *WebAuthNFactor) Begin(ctx context.Context, req *factors.BeginReq) (*fac
 		authn.Status.AuthenticationAttempt.DataMap = make(map[string][]byte)
 	}
 
-	/*
-		if !req.Authenticator.Status.IsRegistered {
-			zap.S().Debugf("Starting webauthn registration ceremony")
-
-			creation, sessData, err := webauthnctl.BeginRegistration(webauthnUsr,
-				webauthn.WithCredentialParameters([]protocol.CredentialParameter{
-					{
-						Type:      protocol.PublicKeyCredentialType,
-						Algorithm: webauthncose.AlgEdDSA,
-					},
-					{
-						Type:      protocol.PublicKeyCredentialType,
-						Algorithm: webauthncose.AlgES256,
-					},
-					{
-						Type:      protocol.PublicKeyCredentialType,
-						Algorithm: webauthncose.AlgRS256,
-					},
-				}),
-				webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
-				webauthn.WithExtensions(protocol.AuthenticationExtensions{
-					"credProps": true,
-				}))
-			if err != nil {
-				return nil, err
-			}
-
-			authn.Status.AuthenticationAttempt.DataMap["session"], err = json.Marshal(sessData)
-			if err != nil {
-				return nil, err
-			}
-
-			createOptsBytes, err := json.Marshal(creation.Response)
-			if err != nil {
-				return nil, err
-			}
-
-			ret.ChallengeRequest.GetWebauthn().Type = &authv1.ChallengeRequest_Webauthn_Registration_{
-				Registration: &authv1.ChallengeRequest_Webauthn_Registration{
-					Request: string(createOptsBytes),
-				},
-			}
-
-		}
-	*/
-
-	// zap.S().Debugf("Starting webauthn login ceremony")
-
 	assertion, sessData, err := webauthnctl.BeginLogin(webauthnUsr)
 	if err != nil {
 		return nil, err
@@ -162,9 +114,7 @@ func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator) (*webauthn.
 			authenticatorAttachment = protocol.Platform
 		case corev1.Authenticator_Status_Info_FIDO_ROAMING:
 			authenticatorAttachment = protocol.CrossPlatform
-
 		}
-
 	}
 
 	return webauthn.New(&webauthn.Config{
@@ -204,7 +154,7 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 	webauthnUsr := NewWebAuthnUsr(authn, c.opts.User)
 
 	if authn.Status.AuthenticationAttempt.DataMap == nil {
-		return errors.Errorf("")
+		return errors.Errorf("No authenticationAttempt dataMap")
 	}
 
 	sessData := &webauthn.SessionData{}
@@ -212,67 +162,6 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 		return err
 	}
 
-	/*
-		if !authn.Status.IsRegistered {
-
-			parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
-				strings.NewReader(resp.ChallengeResponse.GetWebauthn().Response))
-			if err != nil {
-				return err
-			}
-
-			cred, err := webauthnctl.CreateCredential(webauthnUsr, *sessData, parsedResponse)
-			if err != nil {
-				return err
-			}
-
-			if err := c.verifyAttestation(parsedResponse); err != nil {
-				return err
-			}
-
-			zap.S().Debugf("Registration cred: %+v", cred)
-
-			if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
-				return errors.Errorf("User is not verified")
-			}
-
-			{
-				authnList, err := c.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
-					Filters: []*rmetav1.ListOptions_Filter{
-						urscsrv.FilterFieldEQValStr("status.info.webauthn.id", base64.StdEncoding.EncodeToString(cred.ID)),
-					},
-				})
-				if err != nil {
-					return err
-				}
-
-				if len(authnList.Items) > 0 {
-					return errors.Errorf("Invalid credential ID")
-				}
-			}
-
-			authn.Status.IsRegistered = true
-
-			authn.Status.Info = &corev1.Authenticator_Status_Info{
-				Type: &corev1.Authenticator_Status_Info_Webauthn_{
-					Webauthn: &corev1.Authenticator_Status_Info_Webauthn{
-						Id:        cred.ID,
-						PublicKey: cred.PublicKey,
-						Type: func() corev1.Authenticator_Status_Info_Webauthn_Type {
-							switch cred.Authenticator.Attachment {
-							case protocol.Platform:
-								return corev1.Authenticator_Status_Info_Webauthn_PLATFORM
-							case protocol.CrossPlatform:
-								return corev1.Authenticator_Status_Info_Webauthn_ROAMING
-							}
-							return corev1.Authenticator_Status_Info_Webauthn_TYPE_UNKNOWN
-						}(),
-					},
-				},
-			}
-
-		}
-	*/
 	{
 		parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
 			strings.NewReader(resp.ChallengeResponse.GetFido().Response))
@@ -345,7 +234,8 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 
 }
 
-func (c *WebAuthNFactor) BeginRegistration(ctx context.Context, req *factors.BeginRegistrationReq) (*factors.BeginRegistrationResp, error) {
+func (c *WebAuthNFactor) BeginRegistration(ctx context.Context,
+	req *factors.BeginRegistrationReq) (*factors.BeginRegistrationResp, error) {
 	webauthnctl, err := c.getWebauthnCtl(c.opts.Authenticator)
 	if err != nil {
 		return nil, err
@@ -357,8 +247,6 @@ func (c *WebAuthNFactor) BeginRegistration(ctx context.Context, req *factors.Beg
 	if authn.Status.AuthenticationAttempt.DataMap == nil {
 		authn.Status.AuthenticationAttempt.DataMap = make(map[string][]byte)
 	}
-
-	zap.S().Debugf("Starting webauthn registration ceremony")
 
 	creation, sessData, err := webauthnctl.BeginRegistration(webauthnUsr,
 		webauthn.WithCredentialParameters([]protocol.CredentialParameter{
@@ -427,7 +315,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 	webauthnUsr := NewWebAuthnUsr(authn, c.opts.User)
 
 	if authn.Status.AuthenticationAttempt.DataMap == nil {
-		return errors.Errorf("")
+		return errors.Errorf("No authenticationAttempt dataMap")
 	}
 
 	sessData := &webauthn.SessionData{}
@@ -450,7 +338,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 		return err
 	}
 
-	zap.S().Debugf("Registration cred: %+v", cred)
+	zap.L().Debug("Successful CreateCredential", zap.Any("cred", cred))
 
 	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
 		return errors.Errorf("User is not verified")
