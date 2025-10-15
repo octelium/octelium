@@ -193,16 +193,6 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.Provider().Spec.IsDisabled {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	if provider.Provider().Status.IsLocked {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
 	loginState, err := s.doGenerateLoginState(ctx, provider, req.Query, w, r)
 	if err != nil {
 		if grpcerr.IsInternal(err) {
@@ -252,16 +242,6 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idp := provider.Provider()
-
-	if idp.Spec.IsDisabled {
-		doRedirect(errors.Errorf("IdentityProvider is disabled"))
-		return
-	}
-
-	if idp.Status.IsLocked {
-		doRedirect(errors.Errorf("IdentityProvider is locked"))
-		return
-	}
 
 	authInfo, err := provider.HandleCallback(r, userState.RequestID)
 	if err != nil {

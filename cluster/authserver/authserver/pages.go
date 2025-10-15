@@ -99,12 +99,6 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.Provider().Spec.IsDisabled {
-		s.setLogoutCookies(w)
-		s.renderIndex(w)
-		return
-	}
-
 	loginState, err := s.doGenerateLoginState(ctx, provider, r.URL.Query().Encode(), w, r)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
