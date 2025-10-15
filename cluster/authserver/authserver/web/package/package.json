@@ -11,10 +11,9 @@
     "build-dev": "tsc && vite build --mode development",
     "build-staging": "tsc && vite build --mode staging",
     "protoc-gen-auth": "npx protoc --ts_out ./tmp --ts_opt long_type_number --proto_path ../../../../../../pb apis/protobuf/main/authv1/authv1.proto",
-    "protoc-gen-user": "npx protoc --ts_out ./tmp --ts_opt long_type_number --proto_path ../../../../../../pb apis/protobuf/main/userv1/userv1.proto",
     "protoc-gen-meta": "npx protoc --ts_out ./tmp --ts_opt long_type_number --proto_path ../../../../../../pb apis/protobuf/main/metav1/metav1.proto",
-    "protoc-gen": "mkdir -p ./tmp/apis/protobuf && npm run protoc-gen-meta && npm run protoc-gen-user && npm run protoc-gen-auth",
-    "protoc-cp": "cp -r ./tmp/apis/protobuf/main/metav1 ./src/apis && cp -r ./tmp/apis/protobuf/main/userv1 ./src/apis && cp -r ./tmp/apis/protobuf/main/authv1 ./src/apis && find ./src -name \"*.proto\" -type f -delete",
+    "protoc-gen": "mkdir -p ./tmp/apis/protobuf && npm run protoc-gen-meta && npm run protoc-gen-auth",
+    "protoc-cp": "cp -r ./tmp/apis/protobuf/main/metav1 ./src/apis && cp -r ./tmp/apis/protobuf/main/authv1 ./src/apis && find ./src -name \"*.proto\" -type f -delete",
     "protoc-fix": "find ./src/apis -name '*.ts' -exec sed -i s#../../../../google/protobuf#../google/protobuf#g {} +",
     "protoc": "npm run protoc-gen && npm run protoc-cp && npm run protoc-fix"
   },
