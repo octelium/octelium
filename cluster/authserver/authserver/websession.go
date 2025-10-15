@@ -35,7 +35,7 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		zap.L().Debug("Could not get Session from refresh token. Creating a new webSession", zap.Error(err))
-		return s.createWebDevSess(r, usr, authResp, cc, idp)
+		return s.createWebSession(r, usr, authResp, cc, idp)
 	}
 
 	deleteSess := func() {
@@ -54,12 +54,12 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef == nil {
 		// This shouldn't be happening in production
 		deleteSess()
-		return s.createWebDevSess(r, usr, authResp, cc, idp)
+		return s.createWebSession(r, usr, authResp, cc, idp)
 	}
 	if authResp.GetIdentityProvider().IdentityProviderRef.Uid !=
 		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Uid {
 		deleteSess()
-		return s.createWebDevSess(r, usr, authResp, cc, idp)
+		return s.createWebSession(r, usr, authResp, cc, idp)
 	}
 
 	zap.L().Debug("Rotating the token for the Session",
@@ -77,7 +77,7 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	return sess, nil
 }
 
-func (s *server) createWebDevSess(r *http.Request, usr *corev1.User,
+func (s *server) createWebSession(r *http.Request, usr *corev1.User,
 	authRespInfo *corev1.Session_Status_Authentication_Info,
 	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider) (*corev1.Session, error) {
 	ctx := r.Context()

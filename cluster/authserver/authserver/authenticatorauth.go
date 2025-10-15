@@ -636,7 +636,9 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	authn.Status.IsRegistered = true
 	authn.Status.DeviceRef = sess.Status.DeviceRef
 
-	if sess.Status.AuthenticatorAction == corev1.Session_Status_REGISTRATION_REQUIRED {
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_REGISTRATION_RECOMMENDED,
+		corev1.Session_Status_REGISTRATION_REQUIRED:
 		sess, err = s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
 			Uid: sess.Metadata.Uid,
 		})
