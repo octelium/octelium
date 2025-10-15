@@ -316,11 +316,28 @@ func (s *server) isAuthenticatorAuthenticationRequired(ctx context.Context,
 func (s *server) isAuthenticatorRegistrationRequired(ctx context.Context,
 	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (bool, error) {
 
-	if cc.Spec.Authenticator == nil {
+	authnList, err := s.getAvailableWebAuthenticators(ctx, usr)
+	if err != nil {
+		return false, err
+	}
+
+	if len(authnList) > 0 {
 		return false, nil
 	}
 
-	return false, nil
+	if cc.Spec.Authenticator == nil || len(cc.Spec.Authenticator.RegistrationRules) == 0 {
+		return false, nil
+	}
+
+	switch s.doAuthenticatorEnforcementRule(ctx,
+		cc.Spec.Authenticator.RegistrationRules, idp, usr, nil) {
+	case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
+		return true, nil
+	case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.User) ([]*corev1.Authenticator, error) {
@@ -875,4 +892,32 @@ func (s *server) handleAuthenticatorRegister(w http.ResponseWriter, r *http.Requ
 	default:
 		s.renderLoggedIn(w)
 	}
+}
+
+func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
+	rules []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule,
+	idp *corev1.IdentityProvider,
+	usr *corev1.User, sess *corev1.Session) corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect {
+
+	inputMap := map[string]any{
+		"ctx": map[string]any{
+			"user":             pbutils.MustConvertToMap(usr),
+			"identityProvider": pbutils.MustConvertToMap(idp),
+			"session":          pbutils.MustConvertToMap(sess),
+		},
+	}
+
+	for _, rule := range rules {
+		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
+		if err != nil {
+			zap.L().Debug("Could not eval postAuthentication condition", zap.Error(err))
+			continue
+		}
+
+		if isMatched {
+			return rule.Effect
+		}
+	}
+
+	return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN
 }
