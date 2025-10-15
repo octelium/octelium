@@ -98,6 +98,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
           );
         } catch (err) {
           console.log("fido get err", err)
+          return err
         }
       }
     },
