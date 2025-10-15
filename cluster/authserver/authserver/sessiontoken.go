@@ -517,7 +517,8 @@ func (s *server) setCookiesGRPC(ctx context.Context, cookies []*http.Cookie) err
 	return nil
 }
 
-func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
+func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
+	req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -526,8 +527,6 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	if err := s.validateChallengeResponse(req.ChallengeResponse); err != nil {
 		return nil, err
 	}
-
-	zap.L().Debug("Got Session from creds", zap.Any("sess", sess))
 
 	if !s.needsReAuth(sess) {
 		return nil, s.errAlreadyExists("The Session is valid and does not need a authenticatorFinish")
@@ -554,35 +553,6 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context, req *authv
 	if err != nil {
 		return nil, err
 	}
-
-	/*
-		if authn.Status.Ext != nil {
-			if devStruct, ok := authn.Status.Ext["registeredDev"]; ok && devStruct != nil {
-				dev := &corev1.Device{}
-				if err := pbutils.StructToMessage(devStruct, dev); err != nil {
-					return nil, err
-				}
-
-				dev, err = s.octeliumC.CoreC().CreateDevice(ctx, dev)
-				if err != nil {
-					return nil, err
-				}
-
-				delete(authn.Status.Ext, "registeredDev")
-				authn.Status.DeviceRef = umetav1.GetObjectReference(dev)
-
-				if authn.Metadata.SystemLabels != nil &&
-					authn.Metadata.SystemLabels["waiting-device-registration"] == "true" {
-					delete(authn.Metadata.SystemLabels, "waiting-device-registration")
-				}
-
-				authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	*/
 
 	switch {
 	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef == nil:

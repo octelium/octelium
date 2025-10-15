@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -53,6 +54,10 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	authn, err := s.getAuthenticator(ctx, resp.AuthenticatorRef, sess)
 	if err != nil {
 		return nil, err
+	}
+
+	if !authn.Status.IsRegistered {
+		return nil, s.errPermissionDenied("Authenticator is not registered")
 	}
 
 	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {
@@ -146,6 +151,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	}
 
 	authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
+
+	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, sess, usr); err != nil {
+		return nil, s.errPermissionDeniedErr(err)
+	}
+
 	if err := nullifyCurrAndUpdate(); err != nil {
 		return nil, err
 	}
@@ -159,6 +169,40 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 			},
 		},
 	}, nil
+}
+
+func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
+	cc *corev1.ClusterConfig, authn *corev1.Authenticator, sess *corev1.Session, usr *corev1.User) error {
+	if cc.Spec.Authenticator == nil || len(cc.Spec.Authenticator.PostAuthenticationRules) == 0 {
+		return nil
+	}
+
+	inputMap := map[string]any{
+		"ctx": map[string]any{
+			"authenticator": pbutils.MustConvertToMap(authn),
+			"user":          pbutils.MustConvertToMap(usr),
+			"session":       pbutils.MustConvertToMap(sess),
+		},
+	}
+
+	for _, rule := range cc.Spec.Authenticator.PostAuthenticationRules {
+		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
+		if err != nil {
+			zap.L().Debug("Could not eval postAuthentication condition", zap.Error(err))
+			continue
+		}
+
+		if isMatched {
+			switch rule.Effect {
+			case corev1.ClusterConfig_Spec_Authenticator_Rule_ALLOW:
+				return nil
+			case corev1.ClusterConfig_Spec_Authenticator_Rule_DENY:
+				return errors.Errorf("Denied by postAuthentication rule")
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *server) getAuthenticator(ctx context.Context,
