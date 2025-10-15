@@ -703,8 +703,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 }
 
 func (s *server) isAuthenticationAttemptTimeoutExceeded(authn *corev1.Authenticator) bool {
-	return authn.Status.AuthenticationAttempt.CreatedAt.AsTime().
-		Add(-20 * time.Minute).After(time.Now())
+	return authn.Status.AuthenticationAttempt.CreatedAt.AsTime().Before(time.Now().Add(-20 * time.Minute))
 }
 
 func (s *server) validateChallengeResponse(req *authv1.ChallengeResponse) error {

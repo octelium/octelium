@@ -362,3 +362,43 @@ func TestAuthenticatorRegistration(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAuthenticationAttemptTimeoutExceeded(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err, "%+v", err)
+
+	assert.False(t, srv.isAuthenticationAttemptTimeoutExceeded(&corev1.Authenticator{
+		Status: &corev1.Authenticator_Status{
+			AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{
+				CreatedAt: pbutils.Now(),
+			},
+		},
+	}))
+
+	assert.False(t, srv.isAuthenticationAttemptTimeoutExceeded(&corev1.Authenticator{
+		Status: &corev1.Authenticator_Status{
+			AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{
+				CreatedAt: pbutils.Timestamp(time.Now().Add(-1 * time.Minute)),
+			},
+		},
+	}))
+
+	assert.True(t, srv.isAuthenticationAttemptTimeoutExceeded(&corev1.Authenticator{
+		Status: &corev1.Authenticator_Status{
+			AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{
+				CreatedAt: pbutils.Timestamp(time.Now().Add(-25 * time.Minute)),
+			},
+		},
+	}))
+}
