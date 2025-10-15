@@ -420,11 +420,13 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET:
-	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED,
+		corev1.Session_Status_AUTHENTICATION_RECOMMENDED:
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToAuthenticatorAuthenticate(w, r)
 		return nil
-	case corev1.Session_Status_REGISTRATION_REQUIRED:
+	case corev1.Session_Status_REGISTRATION_REQUIRED,
+		corev1.Session_Status_REGISTRATION_RECOMMENDED:
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToAuthenticatorRegister(w, r)
 	default:

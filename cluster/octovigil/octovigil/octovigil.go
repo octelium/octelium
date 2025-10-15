@@ -503,6 +503,8 @@ func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (
 		corev1.Session_Status_REGISTRATION_REQUIRED:
 		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_AUTH_REQUIRED
 		return false, reason, nil
+	case corev1.Session_Status_AUTHENTICATION_RECOMMENDED,
+		corev1.Session_Status_REGISTRATION_RECOMMENDED:
 	default:
 		return false, reason, errors.Errorf("Unhandled authenticatorAction")
 	}

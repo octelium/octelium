@@ -113,25 +113,52 @@ func (s *server) createWebDevSess(r *http.Request, usr *corev1.User,
 
 func (s *server) getAuthenticatorAction(ctx context.Context,
 	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (corev1.Session_Status_AuthenticatorAction, error) {
-	var authenticatorAction corev1.Session_Status_AuthenticatorAction
+	if cc.Spec.Authenticator == nil {
+		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+	}
 
-	isAuthentication, err := s.isAuthenticatorAuthenticationRequired(ctx, cc, idp, usr)
+	if len(cc.Spec.Authenticator.AuthenticationRules) == 0 &&
+		len(cc.Spec.Authenticator.RegistrationRules) == 0 {
+		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+	}
+
+	authnList, err := s.getAvailableWebAuthenticators(ctx, usr)
 	if err != nil {
-		return authenticatorAction, err
+		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, err
 	}
-	if isAuthentication {
-		authenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
-	} else {
-		isRegistration, err := s.isAuthenticatorRegistrationRequired(ctx, cc, idp, usr)
-		if err != nil {
-			return authenticatorAction, err
+
+	if len(authnList) > 0 {
+		if len(cc.Spec.Authenticator.AuthenticationRules) > 0 {
+			switch s.doAuthenticatorEnforcementRule(ctx,
+				cc.Spec.Authenticator.AuthenticationRules, idp, usr, nil) {
+			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
+				return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
+			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
+				return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND:
+				return corev1.Session_Status_AUTHENTICATION_RECOMMENDED, nil
+			default:
+				return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+			}
 		}
-		if isRegistration {
-			authenticatorAction = corev1.Session_Status_REGISTRATION_REQUIRED
+		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+	}
+
+	if len(cc.Spec.Authenticator.RegistrationRules) > 0 {
+		switch s.doAuthenticatorEnforcementRule(ctx,
+			cc.Spec.Authenticator.RegistrationRules, idp, usr, nil) {
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
+			return corev1.Session_Status_REGISTRATION_REQUIRED, nil
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
+			return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND:
+			return corev1.Session_Status_REGISTRATION_RECOMMENDED, nil
+		default:
+			return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 		}
 	}
 
-	return authenticatorAction, nil
+	return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 }
 
 func (s *server) setCurrAuthenticationGRPC(ctx context.Context, sess *corev1.Session, cc *corev1.ClusterConfig, authInfo *corev1.Session_Status_Authentication_Info) {
