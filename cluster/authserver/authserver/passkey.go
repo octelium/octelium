@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -39,13 +40,16 @@ import (
 func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
 
+	cc := s.ccCtl.Get()
+	if cc.Spec.Authenticator == nil || !cc.Spec.Authenticator.EnablePasskeyLogin {
+		return nil, s.errPermissionDenied("Passkey login is not enabled")
+	}
+
 	usr, authn, err := s.doAuthenticationWithPasskey(ctx, req.Response)
 	if err != nil {
 		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
 		return nil, grpcutils.Unauthorized("Invalid authentication")
 	}
-
-	cc := s.ccCtl.Get()
 
 	authInfo := &corev1.Session_Status_Authentication_Info{
 		Type: corev1.Session_Status_Authentication_Info_EXTERNAL,
@@ -61,7 +65,10 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		return nil, err
 	}
 
-	sess, err := s.createWebSession(ctx, usr, authInfo, cc, nil, "", "")
+	sess, err := s.createWebSession(ctx,
+		usr, authInfo, cc, nil,
+		grpcutils.GetHeaderValueMust(ctx, "user-agent"),
+		grpcutils.GetHeaderValueMust(ctx, "x-forwarded-for"))
 	if err != nil {
 		return nil, s.errInternalErr(err)
 	}
@@ -69,9 +76,15 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	return s.generateSessionTokenResponse(ctx, sess)
 }
 
-func (c *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
+func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyBeginRequest) (*authv1.AuthenticateWithPasskeyBeginResponse, error) {
-	assertion, sess, err := c.passkeyCtl.BeginDiscoverableLogin()
+
+	cc := s.ccCtl.Get()
+	if cc.Spec.Authenticator == nil || !cc.Spec.Authenticator.EnablePasskeyLogin {
+		return nil, s.errPermissionDenied("Passkey login is not enabled")
+	}
+
+	assertion, sess, err := s.passkeyCtl.BeginDiscoverableLogin()
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +93,7 @@ func (c *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 		return nil, err
 	}
 
-	if err := c.savePasskeyState(ctx, &passkeyState{
+	if err := s.savePasskeyState(ctx, &passkeyState{
 		Session: sess,
 	}); err != nil {
 		return nil, err
@@ -119,7 +132,9 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 			return nil, err
 		}
 
-		usr, err = s.rscCache.GetUserByUID(authn.Status.UserRef.Uid)
+		usr, err = s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
+			Uid: authn.Status.UserRef.Uid,
+		})
 		if err != nil {
 			return nil, err
 		}

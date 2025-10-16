@@ -19,9 +19,7 @@ package rsccache
 import (
 	"crypto/sha256"
 	"fmt"
-	"strings"
 
-	"github.com/asaskevich/govalidator"
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -158,6 +156,7 @@ func (c *Cache) deleteResource(kind string, key []byte) error {
 	return nil
 }
 
+/*
 func (c *Cache) SetUser(usr *corev1.User) error {
 	if usr.Spec.Email != "" {
 		if err := c.setResource([]byte(strings.ToLower(usr.Spec.Email)), usr, ucorev1.KindUser); err != nil {
@@ -206,6 +205,7 @@ func (c *Cache) DeleteUser(usr *corev1.User) error {
 
 	return nil
 }
+*/
 
 func (c *Cache) Close() error {
 	err := c.db.Close()
@@ -213,7 +213,9 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) SetAuthenticator(authn *corev1.Authenticator) error {
-	if authn.Status.GetInfo() != nil &&
+	if authn.Status.IsRegistered &&
+		authn.Status.Type == corev1.Authenticator_Status_FIDO &&
+		authn.Status.GetInfo() != nil &&
 		authn.Status.GetInfo().GetFido() != nil &&
 		len(authn.Status.GetInfo().GetFido().IdHash) > 0 {
 

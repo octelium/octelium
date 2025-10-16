@@ -91,6 +91,11 @@ func (s *server) getTemplateIndexArgs() map[string]any {
 		Domain: s.domain,
 	}
 
+	cc := s.ccCtl.Get()
+	if cc.Spec.Authenticator != nil && cc.Spec.Authenticator.EnablePasskeyLogin {
+		state.IsPasskeyLoginEnabled = true
+	}
+
 	s.webProvidersC.RLock()
 	defer s.webProvidersC.RUnlock()
 
@@ -121,8 +126,9 @@ func (s *server) getTemplateIndexArgs() map[string]any {
 }
 
 type templateState struct {
-	Domain            string                  `json:"domain"`
-	IdentityProviders []templateStateProvider `json:"identityProviders,omitempty"`
+	Domain                string                  `json:"domain"`
+	IdentityProviders     []templateStateProvider `json:"identityProviders,omitempty"`
+	IsPasskeyLoginEnabled bool                    `json:"isPasskeyLoginEnabled,omitempty"`
 }
 
 type templateStateProvider struct {

@@ -324,6 +324,19 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		return err
 	}
 
+	if err := watchers.NewCoreV1(s.octeliumC).Authenticator(ctx, nil,
+		func(ctx context.Context, item *corev1.Authenticator) error {
+			return s.rscCache.SetAuthenticator(item)
+		},
+		func(ctx context.Context, new, old *corev1.Authenticator) error {
+			return s.rscCache.SetAuthenticator(new)
+		},
+		func(ctx context.Context, item *corev1.Authenticator) error {
+			return s.rscCache.DeleteAuthenticator(item)
+		}); err != nil {
+		return err
+	}
+
 	if grpcMode {
 		authSrv := &authMainSvc{
 			s: s,
