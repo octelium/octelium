@@ -122,22 +122,6 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
-	/*
-		var dev *corev1.Device
-		if tkn.Status.DeviceRef != nil {
-			dev, err = s.octeliumC.CoreC().GetDevice(ctx,
-				&rmetav1.GetOptions{
-					Uid: tkn.Status.DeviceRef.Uid,
-				},
-			)
-			if err != nil {
-				if grpcerr.IsNotFound(err) {
-					return nil, s.errInvalidArg("Device is not found. Use another Authentication Token")
-				}
-			}
-		}
-	*/
-
 	scopes, err := oscope.GetScopes(req.Scopes)
 	if err != nil {
 		// already verified in the request body validation

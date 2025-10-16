@@ -61,6 +61,10 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		},
 	}
 
+	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, nil, usr); err != nil {
+		return nil, s.errPermissionDeniedErr(err)
+	}
+
 	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
 		return nil, err
 	}
