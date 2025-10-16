@@ -279,47 +279,6 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) isAuthenticatorAuthenticationRequired(ctx context.Context,
-	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (bool, error) {
-	if cc.Spec.Authenticator == nil {
-		return false, nil
-	}
-
-	authnList, err := s.getAvailableWebAuthenticators(ctx, usr)
-	if err != nil {
-		return false, err
-	}
-
-	return len(authnList) > 0, nil
-}
-
-func (s *server) isAuthenticatorRegistrationRequired(ctx context.Context,
-	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (bool, error) {
-
-	authnList, err := s.getAvailableWebAuthenticators(ctx, usr)
-	if err != nil {
-		return false, err
-	}
-
-	if len(authnList) > 0 {
-		return false, nil
-	}
-
-	if cc.Spec.Authenticator == nil || len(cc.Spec.Authenticator.RegistrationRules) == 0 {
-		return false, nil
-	}
-
-	switch s.doAuthenticatorEnforcementRule(ctx,
-		cc.Spec.Authenticator.RegistrationRules, idp, usr, nil) {
-	case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
-		return true, nil
-	case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
-		return false, nil
-	default:
-		return false, nil
-	}
-}
-
 func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.User) ([]*corev1.Authenticator, error) {
 	itmList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
 		Filters: []*rmetav1.ListOptions_Filter{

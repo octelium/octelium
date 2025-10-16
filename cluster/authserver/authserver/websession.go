@@ -69,6 +69,14 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	if authResp.GetIdentityProvider() != nil && authResp.GetIdentityProvider().PicURL != "" {
 		sess.Metadata.PicURL = authResp.GetIdentityProvider().PicURL
 	}
+
+	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	sess.Status.AuthenticatorAction = authenticatorAction
+
 	sess, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -87,7 +95,7 @@ func (s *server) createWebSession(r *http.Request, usr *corev1.User,
 		return nil, err
 	}
 
-	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr)
+	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +120,10 @@ func (s *server) createWebSession(r *http.Request, usr *corev1.User,
 }
 
 func (s *server) getAuthenticatorAction(ctx context.Context,
-	cc *corev1.ClusterConfig, idp *corev1.IdentityProvider, usr *corev1.User) (corev1.Session_Status_AuthenticatorAction, error) {
+	cc *corev1.ClusterConfig,
+	idp *corev1.IdentityProvider,
+	usr *corev1.User,
+	sess *corev1.Session) (corev1.Session_Status_AuthenticatorAction, error) {
 	if cc.Spec.Authenticator == nil {
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 	}
@@ -130,7 +141,7 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 	if len(authnList) > 0 {
 		if len(cc.Spec.Authenticator.AuthenticationRules) > 0 {
 			switch s.doAuthenticatorEnforcementRule(ctx,
-				cc.Spec.Authenticator.AuthenticationRules, idp, usr, nil) {
+				cc.Spec.Authenticator.AuthenticationRules, idp, usr, sess) {
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 				return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
@@ -146,7 +157,7 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 
 	if len(cc.Spec.Authenticator.RegistrationRules) > 0 {
 		switch s.doAuthenticatorEnforcementRule(ctx,
-			cc.Spec.Authenticator.RegistrationRules, idp, usr, nil) {
+			cc.Spec.Authenticator.RegistrationRules, idp, usr, sess) {
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 			return corev1.Session_Status_REGISTRATION_REQUIRED, nil
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
