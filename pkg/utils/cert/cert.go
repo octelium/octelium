@@ -26,6 +26,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"time"
 
@@ -37,12 +38,16 @@ type Cert struct {
 	PrivateKey  crypto.Signer
 }
 
-func GetCertificatePEM(c *x509.Certificate) ([]byte, error) {
-	caPEM := new(bytes.Buffer)
-	err := pem.Encode(caPEM, &pem.Block{
+func EncodePEMCertificate(out io.Writer, c *x509.Certificate) error {
+	return pem.Encode(out, &pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: c.Raw,
 	})
+}
+
+func GetCertificatePEM(c *x509.Certificate) ([]byte, error) {
+	caPEM := new(bytes.Buffer)
+	err := EncodePEMCertificate(caPEM, c)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +202,70 @@ func GenerateCARoot() (*Cert, error) {
 	return ret, nil
 }
 
-func GenerateCertificate(template *x509.Certificate, parent *x509.Certificate, caPrivateKey interface{}, isRSA bool) (*Cert, error) {
+func GenerateCARootFromCert(caCert *x509.Certificate) (*Cert, error) {
+	certPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	serialNumber, err := GenerateSerialNumber()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+
+	caCert.SerialNumber = serialNumber
+	caCert.BasicConstraintsValid = true
+	caCert.IsCA = true
+
+	if caCert.KeyUsage == 0 {
+		caCert.KeyUsage = x509.KeyUsageCertSign
+	}
+
+	if caCert.NotBefore.IsZero() {
+		caCert.NotBefore = now
+	}
+
+	if caCert.NotAfter.IsZero() {
+		caCert.NotAfter = now.Add(time.Hour * 24 * 365 * 8)
+	}
+	if caCert.Subject.CommonName == "" {
+		caCert.Subject.CommonName = "octelium-root"
+	}
+	if caCert.Subject.Organization == nil {
+		caCert.Subject.Organization = []string{"octelium.com"}
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, caCert, caCert, &certPrivKey.PublicKey, certPrivKey)
+	if err != nil {
+		return nil, err
+	}
+	caCert, err = x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &Cert{
+		Certificate: caCert,
+		PrivateKey:  certPrivKey,
+	}
+
+	pem, err := ret.GetCertPEM()
+	if err != nil {
+		return nil, err
+	}
+	crt, err := ParseX509LeafCertificateChainPEM([]byte(pem))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.Certificate = crt
+
+	return ret, nil
+}
+
+func GenerateCertificate(template *x509.Certificate, parent *x509.Certificate, caPrivateKey any, isRSA bool) (*Cert, error) {
 
 	ret := &Cert{
 		Certificate: template,
@@ -423,7 +491,6 @@ func GenerateSelfSignedCert(commonName string, sans []string, duration time.Dura
 	now := time.Now()
 
 	caCert := &x509.Certificate{
-
 		BasicConstraintsValid: true,
 		SerialNumber:          serialNumber,
 		Subject: pkix.Name{

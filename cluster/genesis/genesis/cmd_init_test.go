@@ -192,6 +192,15 @@ func TestRunInit(t *testing.T) {
 		err = g.RunInit(ctx)
 		assert.Nil(t, err, "%+v", err)
 
+		{
+			sec, err := g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+				Name: vutils.ClusterCertSecretName,
+			})
+			assert.Nil(t, err)
+
+			assert.True(t, vutils.IsCertReady(sec))
+		}
+
 		region, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
 			Name: region.Metadata.Name,
 		})

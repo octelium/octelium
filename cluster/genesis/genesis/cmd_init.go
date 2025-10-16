@@ -17,7 +17,10 @@
 package genesis
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"os"
 	"time"
@@ -241,6 +244,104 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 
 func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
 
+	now := time.Now()
+
+	root, err := utils_cert.GenerateCARootFromCert(&x509.Certificate{
+		NotAfter: now.Add(10 * 365 * 24 * time.Hour),
+	})
+	if err != nil {
+		return err
+	}
+
+	serialNumber, err := utils_cert.GenerateSerialNumber()
+	if err != nil {
+		return err
+	}
+
+	domain := clusterCfg.Status.Domain
+	sans := []string{
+		domain,
+		fmt.Sprintf("*.%s", domain),
+
+		fmt.Sprintf("*.octelium.%s", domain),
+		fmt.Sprintf("*.octelium-api.%s", domain),
+
+		fmt.Sprintf("*.local.%s", domain),
+		fmt.Sprintf("*.default.%s", domain),
+		fmt.Sprintf("*.default.local.%s", domain),
+
+		fmt.Sprintf("*.octelium.local.%s", domain),
+		fmt.Sprintf("*.octelium-api.local.%s", domain),
+	}
+
+	caCert := &x509.Certificate{
+		BasicConstraintsValid: true,
+		SerialNumber:          serialNumber,
+		Subject: pkix.Name{
+			CommonName:   domain,
+			Organization: []string{"octelium.com"},
+		},
+		DNSNames: sans,
+
+		NotBefore:   now,
+		NotAfter:    now.Add(5 * 365 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	initCrt, err := utils_cert.GenerateCertificate(caCert, root.Certificate, root.PrivateKey, false)
+	if err != nil {
+		return err
+	}
+
+	zap.L().Debug("Setting initial Cluster Certificate",
+		zap.String("domain", domain),
+		zap.Strings("sans", sans))
+
+	chainPEM := new(bytes.Buffer)
+
+	if err := utils_cert.EncodePEMCertificate(chainPEM, initCrt.Certificate); err != nil {
+		return err
+	}
+
+	if err := utils_cert.EncodePEMCertificate(chainPEM, root.Certificate); err != nil {
+		return err
+	}
+
+	privPEM, err := initCrt.GetPrivateKeyPEM()
+	if err != nil {
+		return err
+	}
+
+	crt := &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: vutils.ClusterCertSecretName,
+
+			IsSystem:       true,
+			IsSystemHidden: true,
+			IsUserHidden:   true,
+			SystemLabels: map[string]string{
+				"octelium-cert": "true",
+			},
+		},
+
+		Spec:   &corev1.Secret_Spec{},
+		Status: &corev1.Secret_Status{},
+	}
+
+	ucorev1.ToSecret(crt).SetCertificate(chainPEM.String(), privPEM)
+
+	_, err = g.octeliumC.CoreC().CreateSecret(ctx, crt)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+/*
+func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
+
 	domain := clusterCfg.Status.Domain
 	sans := []string{
 		domain,
@@ -301,6 +402,7 @@ func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *cor
 
 	return nil
 }
+*/
 
 func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Config) error {
 
