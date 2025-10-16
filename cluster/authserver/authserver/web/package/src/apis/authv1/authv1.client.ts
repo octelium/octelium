@@ -19,6 +19,9 @@
 import type { RpcTransport } from "@protobuf-ts/runtime-rpc";
 import type { ServiceInfo } from "@protobuf-ts/runtime-rpc";
 import { MainService } from "./authv1";
+import type { AuthenticateWithPasskeyRequest } from "./authv1";
+import type { AuthenticateWithPasskeyBeginResponse } from "./authv1";
+import type { AuthenticateWithPasskeyBeginRequest } from "./authv1";
 import type { ListAvailableAuthenticatorOptions } from "./authv1";
 import type { AuthenticateAuthenticatorBeginResponse } from "./authv1";
 import type { AuthenticateAuthenticatorBeginRequest } from "./authv1";
@@ -115,6 +118,14 @@ export interface IMainServiceClient {
      * @generated from protobuf rpc: ListAvailableAuthenticator(octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions) returns (octelium.api.main.auth.v1.AuthenticatorList);
      */
     listAvailableAuthenticator(input: ListAvailableAuthenticatorOptions, options?: RpcOptions): UnaryCall<ListAvailableAuthenticatorOptions, AuthenticatorList>;
+    /**
+     * @generated from protobuf rpc: AuthenticateWithPasskeyBegin(octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest) returns (octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse);
+     */
+    authenticateWithPasskeyBegin(input: AuthenticateWithPasskeyBeginRequest, options?: RpcOptions): UnaryCall<AuthenticateWithPasskeyBeginRequest, AuthenticateWithPasskeyBeginResponse>;
+    /**
+     * @generated from protobuf rpc: AuthenticateWithPasskey(octelium.api.main.auth.v1.AuthenticateWithPasskeyRequest) returns (octelium.api.main.auth.v1.SessionToken);
+     */
+    authenticateWithPasskey(input: AuthenticateWithPasskeyRequest, options?: RpcOptions): UnaryCall<AuthenticateWithPasskeyRequest, SessionToken>;
 }
 /**
  * @generated from protobuf service octelium.api.main.auth.v1.MainService
@@ -236,5 +247,19 @@ export class MainServiceClient implements IMainServiceClient, ServiceInfo {
     listAvailableAuthenticator(input: ListAvailableAuthenticatorOptions, options?: RpcOptions): UnaryCall<ListAvailableAuthenticatorOptions, AuthenticatorList> {
         const method = this.methods[15], opt = this._transport.mergeOptions(options);
         return stackIntercept<ListAvailableAuthenticatorOptions, AuthenticatorList>("unary", this._transport, method, opt, input);
+    }
+    /**
+     * @generated from protobuf rpc: AuthenticateWithPasskeyBegin(octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest) returns (octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse);
+     */
+    authenticateWithPasskeyBegin(input: AuthenticateWithPasskeyBeginRequest, options?: RpcOptions): UnaryCall<AuthenticateWithPasskeyBeginRequest, AuthenticateWithPasskeyBeginResponse> {
+        const method = this.methods[16], opt = this._transport.mergeOptions(options);
+        return stackIntercept<AuthenticateWithPasskeyBeginRequest, AuthenticateWithPasskeyBeginResponse>("unary", this._transport, method, opt, input);
+    }
+    /**
+     * @generated from protobuf rpc: AuthenticateWithPasskey(octelium.api.main.auth.v1.AuthenticateWithPasskeyRequest) returns (octelium.api.main.auth.v1.SessionToken);
+     */
+    authenticateWithPasskey(input: AuthenticateWithPasskeyRequest, options?: RpcOptions): UnaryCall<AuthenticateWithPasskeyRequest, SessionToken> {
+        const method = this.methods[17], opt = this._transport.mergeOptions(options);
+        return stackIntercept<AuthenticateWithPasskeyRequest, SessionToken>("unary", this._transport, method, opt, input);
     }
 }

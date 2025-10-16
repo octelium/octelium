@@ -865,6 +865,29 @@ export interface AuthenticateWithAuthenticatorRequest {
  */
 export interface ListAvailableAuthenticatorOptions {
 }
+/**
+ * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest
+ */
+export interface AuthenticateWithPasskeyBeginRequest {
+}
+/**
+ * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse
+ */
+export interface AuthenticateWithPasskeyBeginResponse {
+    /**
+     * @generated from protobuf field: string request = 1;
+     */
+    request: string;
+}
+/**
+ * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyRequest
+ */
+export interface AuthenticateWithPasskeyRequest {
+    /**
+     * @generated from protobuf field: string response = 1;
+     */
+    response: string;
+}
 // @generated message type with reflection information, may provide speed optimized methods
 class SessionToken$Type extends MessageType<SessionToken> {
     constructor() {
@@ -3689,6 +3712,138 @@ class ListAvailableAuthenticatorOptions$Type extends MessageType<ListAvailableAu
  * @generated MessageType for protobuf message octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions
  */
 export const ListAvailableAuthenticatorOptions = new ListAvailableAuthenticatorOptions$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class AuthenticateWithPasskeyBeginRequest$Type extends MessageType<AuthenticateWithPasskeyBeginRequest> {
+    constructor() {
+        super("octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest", []);
+    }
+    create(value?: PartialMessage<AuthenticateWithPasskeyBeginRequest>): AuthenticateWithPasskeyBeginRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        if (value !== undefined)
+            reflectionMergePartial<AuthenticateWithPasskeyBeginRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: AuthenticateWithPasskeyBeginRequest): AuthenticateWithPasskeyBeginRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: AuthenticateWithPasskeyBeginRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest
+ */
+export const AuthenticateWithPasskeyBeginRequest = new AuthenticateWithPasskeyBeginRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class AuthenticateWithPasskeyBeginResponse$Type extends MessageType<AuthenticateWithPasskeyBeginResponse> {
+    constructor() {
+        super("octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse", [
+            { no: 1, name: "request", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<AuthenticateWithPasskeyBeginResponse>): AuthenticateWithPasskeyBeginResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.request = "";
+        if (value !== undefined)
+            reflectionMergePartial<AuthenticateWithPasskeyBeginResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: AuthenticateWithPasskeyBeginResponse): AuthenticateWithPasskeyBeginResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string request */ 1:
+                    message.request = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: AuthenticateWithPasskeyBeginResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string request = 1; */
+        if (message.request !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.request);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse
+ */
+export const AuthenticateWithPasskeyBeginResponse = new AuthenticateWithPasskeyBeginResponse$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class AuthenticateWithPasskeyRequest$Type extends MessageType<AuthenticateWithPasskeyRequest> {
+    constructor() {
+        super("octelium.api.main.auth.v1.AuthenticateWithPasskeyRequest", [
+            { no: 1, name: "response", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
+    }
+    create(value?: PartialMessage<AuthenticateWithPasskeyRequest>): AuthenticateWithPasskeyRequest {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.response = "";
+        if (value !== undefined)
+            reflectionMergePartial<AuthenticateWithPasskeyRequest>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: AuthenticateWithPasskeyRequest): AuthenticateWithPasskeyRequest {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* string response */ 1:
+                    message.response = reader.string();
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: AuthenticateWithPasskeyRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string response = 1; */
+        if (message.response !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.response);
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyRequest
+ */
+export const AuthenticateWithPasskeyRequest = new AuthenticateWithPasskeyRequest$Type();
 /**
  * @generated ServiceType for protobuf service octelium.api.main.auth.v1.MainService
  */
@@ -3708,5 +3863,7 @@ export const MainService = new ServiceType("octelium.api.main.auth.v1.MainServic
     { name: "RegisterAuthenticatorBegin", options: {}, I: RegisterAuthenticatorBeginRequest, O: RegisterAuthenticatorBeginResponse },
     { name: "RegisterAuthenticatorFinish", options: {}, I: RegisterAuthenticatorFinishRequest, O: RegisterAuthenticatorFinishResponse },
     { name: "AuthenticateAuthenticatorBegin", options: {}, I: AuthenticateAuthenticatorBeginRequest, O: AuthenticateAuthenticatorBeginResponse },
-    { name: "ListAvailableAuthenticator", options: {}, I: ListAvailableAuthenticatorOptions, O: AuthenticatorList }
+    { name: "ListAvailableAuthenticator", options: {}, I: ListAvailableAuthenticatorOptions, O: AuthenticatorList },
+    { name: "AuthenticateWithPasskeyBegin", options: {}, I: AuthenticateWithPasskeyBeginRequest, O: AuthenticateWithPasskeyBeginResponse },
+    { name: "AuthenticateWithPasskey", options: {}, I: AuthenticateWithPasskeyRequest, O: SessionToken }
 ]);

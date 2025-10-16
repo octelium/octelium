@@ -6,6 +6,10 @@ import { twMerge } from "tailwind-merge";
 
 import { toast } from "react-hot-toast";
 import { isDev } from "@/utils";
+import * as Auth from "@/apis/authv1/authv1";
+import { getClientAuth } from "@/utils/client";
+import { useMutation } from "@tanstack/react-query";
+import { Divider } from "@mantine/core";
 
 interface authResponse {
   loginURL: string;
@@ -19,6 +23,7 @@ interface authReqCommon {
 interface State {
   domain: string;
   identityProviders?: StateProvider[];
+  isPasskeyLoginEnabled?: boolean;
 }
 
 interface StateProvider {
@@ -34,7 +39,7 @@ function getState() {
 
   return {
     domain: "example.com",
-
+    isPasskeyLoginEnabled: true,
     identityProviders: [
       {
         uid: "github",
@@ -51,6 +56,60 @@ function getState() {
     ],
   } as State;
 }
+
+const Passkey = () => {
+  const c = getClientAuth();
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const { response } = await c.authenticateWithPasskeyBegin(
+        Auth.AuthenticateWithPasskeyBeginRequest.create({})
+      );
+
+      try {
+        const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
+          JSON.parse(response.request)
+        );
+        const credential = (await navigator.credentials.get({
+          publicKey,
+          mediation: "conditional",
+        })) as PublicKeyCredential;
+
+        return await c.authenticateWithPasskey(
+          Auth.AuthenticateWithPasskeyRequest.create({
+            response: JSON.stringify(credential.toJSON()),
+          })
+        );
+      } catch (err) {
+        console.log("fido get err", err);
+        throw err;
+      }
+    },
+    onSuccess: (r) => {
+      window.location.href = "/callback/success";
+    },
+    onError: (resp) => {},
+  });
+
+  return (
+    <div className="w-full">
+      <button
+        disabled={mutation.isPending}
+        className={twMerge(
+          "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
+          "shadow-2xl rounded-lg cursor-pointer font-bold",
+          "bg-[#242323] hover:bg-black text-white text-lg",
+          mutation.isPending ? "!bg-[#777] shadow-none" : undefined
+        )}
+        onClick={() => {
+          mutation.mutate();
+        }}
+      >
+        <span className="font-bold text-lg">Login with Passkey</span>
+      </button>
+    </div>
+  );
+};
 
 const Page = () => {
   const state = getState();
@@ -125,9 +184,17 @@ const Page = () => {
 
       {(!state.identityProviders || state.identityProviders.length < 1) && (
         <div className="container mx-auto mt-2 p-2 md:p-8 w-full max-w-lg">
-          <h2 className="font-bold text-2xl text-slate-700 flex items-center justify-center mb-4 text-center">
-            No Available Identity Providers
-          </h2>
+          {!state.isPasskeyLoginEnabled && (
+            <h2 className="font-bold text-2xl text-slate-700 flex items-center justify-center mb-4 text-center">
+              No Available Identity Providers
+            </h2>
+          )}
+
+          {state.isPasskeyLoginEnabled && (
+            <div>
+              <Passkey />
+            </div>
+          )}
         </div>
       )}
       {state.identityProviders && state.identityProviders.length > 0 && (
@@ -185,6 +252,12 @@ const Page = () => {
               );
             })}
           </div>
+          {state.isPasskeyLoginEnabled && (
+            <div>
+              <Divider my="lg" label="OR" labelPosition="center" />
+              <Passkey />
+            </div>
+          )}
         </div>
       )}
     </div>
