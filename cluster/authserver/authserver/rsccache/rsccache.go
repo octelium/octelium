@@ -17,6 +17,7 @@
 package rsccache
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -209,4 +210,43 @@ func (c *Cache) DeleteUser(usr *corev1.User) error {
 func (c *Cache) Close() error {
 	err := c.db.Close()
 	return err
+}
+
+func (c *Cache) SetAuthenticator(authn *corev1.Authenticator) error {
+	if authn.Status.GetInfo() != nil &&
+		authn.Status.GetInfo().GetFido() != nil &&
+		len(authn.Status.GetInfo().GetFido().IdHash) > 0 {
+
+		if err := c.setResource(
+			authn.Status.GetInfo().GetFido().IdHash, authn, ucorev1.KindAuthenticator); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Cache) GetAuthenticatorByCredID(id []byte) (*corev1.Authenticator, error) {
+	if len(id) == 0 {
+		return nil, ErrNotFound
+	}
+
+	shaHash := sha256.Sum256(id)
+	ret, err := c.getResource(ucorev1.KindAuthenticator, shaHash[:])
+	if err != nil {
+		return nil, err
+	}
+	return ret.(*corev1.Authenticator), nil
+}
+
+func (c *Cache) DeleteAuthenticator(authn *corev1.Authenticator) error {
+	if authn.Status.Info == nil || authn.Status.Info.GetFido() == nil ||
+		len(authn.Status.Info.GetFido().Id) == 0 {
+		return nil
+	}
+	shaHash := sha256.Sum256(authn.Status.GetInfo().GetFido().Id)
+	return c.deleteResource(ucorev1.KindUser, shaHash[:])
+}
+
+func (c *Cache) HasPasskey(usr *corev1.User) bool {
+	return false
 }

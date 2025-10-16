@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gorilla/mux"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -34,6 +36,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/oidcassertion"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/saml"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
+	"github.com/octelium/octelium/cluster/authserver/authserver/rsccache"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -72,7 +75,10 @@ type server struct {
 	jwkCtl *jwkctl.Controller
 	ccCtl  *ccctl.Controller
 
-	celEngine   *celengine.CELEngine
+	celEngine *celengine.CELEngine
+
+	passkeyCtl  *webauthn.WebAuthn
+	rscCache    *rsccache.Cache
 	mdsProvider metadata.Provider
 }
 
@@ -150,6 +156,36 @@ func initServer(ctx context.Context,
 	}
 
 	ret.celEngine, err = celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return nil, err
+	}
+
+	ret.passkeyCtl, err = webauthn.New(&webauthn.Config{
+		RPDisplayName: "Octelium",
+		RPID:          clusterCfg.Status.Domain,
+		Debug:         ldflags.IsDev(),
+		RPOrigins:     []string{fmt.Sprintf("https://%s", clusterCfg.Status.Domain)},
+		Timeouts: webauthn.TimeoutsConfig{
+			Login: webauthn.TimeoutConfig{
+				Enforce:    true,
+				Timeout:    60 * time.Second,
+				TimeoutUVD: 60 * time.Second,
+			},
+			Registration: webauthn.TimeoutConfig{
+				Enforce:    true,
+				Timeout:    60 * time.Second,
+				TimeoutUVD: 60 * time.Second,
+			},
+		},
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationPreferred,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret.rscCache, err = rsccache.NewCache()
 	if err != nil {
 		return nil, err
 	}

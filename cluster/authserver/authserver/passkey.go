@@ -1,0 +1,205 @@
+/*
+ * Copyright Octelium Labs, LLC. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License version 3,
+ * as published by the Free Software Foundation of the License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package authserver
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/utils"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
+)
+
+func (s *server) doAuthenticateWithPasskey(ctx context.Context,
+	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
+
+	usr, authn, err := s.doAuthenticationWithPasskey(ctx, req.Response)
+	if err != nil {
+		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
+		return nil, grpcutils.Unauthorized("Invalid authentication")
+	}
+
+	cc := s.ccCtl.Get()
+
+	authInfo := &corev1.Session_Status_Authentication_Info{
+		Type: corev1.Session_Status_Authentication_Info_EXTERNAL,
+		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
+			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				Type:             corev1.Authenticator_Status_FIDO,
+			},
+		},
+	}
+
+	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
+		return nil, err
+	}
+
+	sess, err := s.createWebSession(ctx, usr, authInfo, cc, nil, "", "")
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	return s.generateSessionTokenResponse(ctx, sess)
+}
+
+func (c *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
+	req *authv1.AuthenticateWithPasskeyBeginRequest) (*authv1.AuthenticateWithPasskeyBeginResponse, error) {
+	assertion, sess, err := c.passkeyCtl.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, err
+	}
+	requestOptsBytes, err := json.Marshal(assertion.Response)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.savePasskeyState(ctx, &passkeyState{
+		Session: sess,
+	}); err != nil {
+		return nil, err
+	}
+
+	return &authv1.AuthenticateWithPasskeyBeginResponse{
+		Request: string(requestOptsBytes),
+	}, nil
+}
+
+func (s *server) doAuthenticationWithPasskey(ctx context.Context,
+	response string) (*corev1.User, *corev1.Authenticator, error) {
+
+	lenResp := len(response)
+	if lenResp < 100 || lenResp > 5000 {
+		return nil, nil, errors.Errorf("Invalid response length")
+	}
+
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
+		strings.NewReader(response))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	state, err := s.loadPasskeyState(ctx, parsedResponse.Response.CollectedClientData.Challenge)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var authn *corev1.Authenticator
+	var usr *corev1.User
+
+	getWebauthnUser := func(rawID, userHandle []byte) (user webauthn.User, err error) {
+		authn, err = s.rscCache.GetAuthenticatorByCredID(rawID)
+		if err != nil {
+			return nil, err
+		}
+
+		usr, err = s.rscCache.GetUserByUID(authn.Status.UserRef.Uid)
+		if err != nil {
+			return nil, err
+		}
+
+		webauthnUser := vwebauthn.NewWebAuthnUsr(authn, usr)
+		if !utils.SecureBytesEqual(webauthnUser.WebAuthnID(), userHandle) {
+			return nil, errors.Errorf("Incorrect userHandle")
+		}
+
+		return webauthnUser, nil
+	}
+
+	cred, err := s.passkeyCtl.ValidateDiscoverableLogin(getWebauthnUser, *state.Session, parsedResponse)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if !cred.Flags.UserVerified {
+		return nil, nil, errors.Errorf("userVerified not true")
+	}
+
+	if !cred.Flags.UserPresent {
+		return nil, nil, errors.Errorf("userPresent not true")
+	}
+
+	if usr == nil {
+		return nil, nil, errors.Errorf("User not set by getWebauthnUser")
+	}
+
+	if authn == nil {
+		return nil, nil, errors.Errorf("Authenticator not set by getWebauthnUser")
+	}
+
+	return usr, authn, nil
+}
+
+type passkeyState struct {
+	Session *webauthn.SessionData
+}
+
+func (s *server) savePasskeyState(ctx context.Context, state *passkeyState) error {
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.octeliumC.CacheC().SetCache(ctx, &rcachev1.SetCacheRequest{
+		Key:  []byte(getPasskeyKey(state.Session.Challenge)),
+		Data: stateBytes,
+		Duration: &metav1.Duration{
+			Type: &metav1.Duration_Minutes{
+				Minutes: 2,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) loadPasskeyState(ctx context.Context, challenge string) (*passkeyState, error) {
+
+	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
+		Key:    []byte(getPasskeyKey(challenge)),
+		Delete: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &passkeyState{}
+	if err := json.Unmarshal(res.Data, ret); err != nil {
+		zap.L().Warn("Could not unmarshal json of loginState from cache", zap.Error(err))
+		return nil, errors.Errorf("Invalid or expired state. Please try again.")
+	}
+
+	return ret, nil
+}
+
+func getPasskeyKey(challenge string) string {
+	return fmt.Sprintf("octelium:passkey:%s", challenge)
+}

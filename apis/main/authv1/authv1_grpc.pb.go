@@ -50,6 +50,8 @@ const (
 	MainService_RegisterAuthenticatorFinish_FullMethodName         = "/octelium.api.main.auth.v1.MainService/RegisterAuthenticatorFinish"
 	MainService_AuthenticateAuthenticatorBegin_FullMethodName      = "/octelium.api.main.auth.v1.MainService/AuthenticateAuthenticatorBegin"
 	MainService_ListAvailableAuthenticator_FullMethodName          = "/octelium.api.main.auth.v1.MainService/ListAvailableAuthenticator"
+	MainService_AuthenticateWithPasskeyBegin_FullMethodName        = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskeyBegin"
+	MainService_AuthenticateWithPasskey_FullMethodName             = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskey"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -72,6 +74,8 @@ type MainServiceClient interface {
 	RegisterAuthenticatorFinish(ctx context.Context, in *RegisterAuthenticatorFinishRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorFinishResponse, error)
 	AuthenticateAuthenticatorBegin(ctx context.Context, in *AuthenticateAuthenticatorBeginRequest, opts ...grpc.CallOption) (*AuthenticateAuthenticatorBeginResponse, error)
 	ListAvailableAuthenticator(ctx context.Context, in *ListAvailableAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error)
+	AuthenticateWithPasskeyBegin(ctx context.Context, in *AuthenticateWithPasskeyBeginRequest, opts ...grpc.CallOption) (*AuthenticateWithPasskeyBeginResponse, error)
+	AuthenticateWithPasskey(ctx context.Context, in *AuthenticateWithPasskeyRequest, opts ...grpc.CallOption) (*SessionToken, error)
 }
 
 type mainServiceClient struct {
@@ -242,6 +246,26 @@ func (c *mainServiceClient) ListAvailableAuthenticator(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *mainServiceClient) AuthenticateWithPasskeyBegin(ctx context.Context, in *AuthenticateWithPasskeyBeginRequest, opts ...grpc.CallOption) (*AuthenticateWithPasskeyBeginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticateWithPasskeyBeginResponse)
+	err := c.cc.Invoke(ctx, MainService_AuthenticateWithPasskeyBegin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) AuthenticateWithPasskey(ctx context.Context, in *AuthenticateWithPasskeyRequest, opts ...grpc.CallOption) (*SessionToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionToken)
+	err := c.cc.Invoke(ctx, MainService_AuthenticateWithPasskey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -262,6 +286,8 @@ type MainServiceServer interface {
 	RegisterAuthenticatorFinish(context.Context, *RegisterAuthenticatorFinishRequest) (*RegisterAuthenticatorFinishResponse, error)
 	AuthenticateAuthenticatorBegin(context.Context, *AuthenticateAuthenticatorBeginRequest) (*AuthenticateAuthenticatorBeginResponse, error)
 	ListAvailableAuthenticator(context.Context, *ListAvailableAuthenticatorOptions) (*AuthenticatorList, error)
+	AuthenticateWithPasskeyBegin(context.Context, *AuthenticateWithPasskeyBeginRequest) (*AuthenticateWithPasskeyBeginResponse, error)
+	AuthenticateWithPasskey(context.Context, *AuthenticateWithPasskeyRequest) (*SessionToken, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -319,6 +345,12 @@ func (UnimplementedMainServiceServer) AuthenticateAuthenticatorBegin(context.Con
 }
 func (UnimplementedMainServiceServer) ListAvailableAuthenticator(context.Context, *ListAvailableAuthenticatorOptions) (*AuthenticatorList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListAvailableAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) AuthenticateWithPasskeyBegin(context.Context, *AuthenticateWithPasskeyBeginRequest) (*AuthenticateWithPasskeyBeginResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithPasskeyBegin not implemented")
+}
+func (UnimplementedMainServiceServer) AuthenticateWithPasskey(context.Context, *AuthenticateWithPasskeyRequest) (*SessionToken, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithPasskey not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -629,6 +661,42 @@ func _MainService_ListAvailableAuthenticator_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_AuthenticateWithPasskeyBegin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateWithPasskeyBeginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).AuthenticateWithPasskeyBegin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_AuthenticateWithPasskeyBegin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).AuthenticateWithPasskeyBegin(ctx, req.(*AuthenticateWithPasskeyBeginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_AuthenticateWithPasskey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateWithPasskeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).AuthenticateWithPasskey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_AuthenticateWithPasskey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).AuthenticateWithPasskey(ctx, req.(*AuthenticateWithPasskeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -699,6 +767,14 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAvailableAuthenticator",
 			Handler:    _MainService_ListAvailableAuthenticator_Handler,
+		},
+		{
+			MethodName: "AuthenticateWithPasskeyBegin",
+			Handler:    _MainService_AuthenticateWithPasskeyBegin_Handler,
+		},
+		{
+			MethodName: "AuthenticateWithPasskey",
+			Handler:    _MainService_AuthenticateWithPasskey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -125,6 +125,23 @@ func (s *authMainSvc) ListAvailableAuthenticator(ctx context.Context, req *authv
 	return s.s.doListAvailableAuthenticator(ctx, req)
 }
 
+func (s *authMainSvc) AuthenticateWithPasskeyBegin(ctx context.Context,
+	req *authv1.AuthenticateWithPasskeyBeginRequest) (*authv1.AuthenticateWithPasskeyBeginResponse, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doAuthenticateWithPasskeyBegin(ctx, req)
+}
+
+func (s *authMainSvc) AuthenticateWithPasskey(ctx context.Context, req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doAuthenticateWithPasskey(ctx, req)
+}
+
 func (s *authMainSvc) doCheckProduction() error {
 	if !ldflags.IsDev() {
 		return s.s.errNotFound("")
