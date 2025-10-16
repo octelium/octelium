@@ -368,7 +368,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 		}
 	}
 
-	aaguid, err := uuid.ParseBytes(cred.Authenticator.AAGUID)
+	aaguid, err := uuid.FromBytes(cred.Authenticator.AAGUID)
 	if err != nil {
 		return err
 	}
