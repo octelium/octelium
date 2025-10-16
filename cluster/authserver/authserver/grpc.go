@@ -134,7 +134,8 @@ func (s *authMainSvc) AuthenticateWithPasskeyBegin(ctx context.Context,
 	return s.s.doAuthenticateWithPasskeyBegin(ctx, req)
 }
 
-func (s *authMainSvc) AuthenticateWithPasskey(ctx context.Context, req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
+func (s *authMainSvc) AuthenticateWithPasskey(ctx context.Context,
+	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}

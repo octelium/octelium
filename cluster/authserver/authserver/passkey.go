@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -115,6 +116,9 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 	if lenResp < 100 || lenResp > 5000 {
 		return nil, nil, errors.Errorf("Invalid response length")
 	}
+	if !govalidator.IsASCII(response) {
+		return nil, nil, errors.Errorf("Invalid response")
+	}
 
 	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
 		strings.NewReader(response))
@@ -144,6 +148,7 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		}
 
 		webauthnUser := vwebauthn.NewWebAuthnUsr(authn, usr)
+
 		if !utils.SecureBytesEqual(webauthnUser.WebAuthnID(), userHandle) {
 			return nil, errors.Errorf("Incorrect userHandle")
 		}
@@ -201,6 +206,14 @@ func (s *server) savePasskeyState(ctx context.Context, state *passkeyState) erro
 }
 
 func (s *server) loadPasskeyState(ctx context.Context, challenge string) (*passkeyState, error) {
+	lenChallenge := len(challenge)
+
+	if lenChallenge < 32 || lenChallenge > 64 {
+		return nil, s.errInvalidArg("Invalid challenge length")
+	}
+	if !govalidator.IsASCII(challenge) {
+		return nil, s.errInvalidArg("Invalid challenge")
+	}
 
 	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
 		Key:    []byte(getPasskeyKey(challenge)),
