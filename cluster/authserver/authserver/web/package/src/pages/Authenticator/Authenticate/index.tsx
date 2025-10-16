@@ -40,18 +40,23 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       );
     },
     onSuccess: (r) => {
-      // window.location.href = "/callback/success";
+      window.location.href = "/callback/success";
     },
     onError: (resp) => {},
   });
 
   return (
-    <div className="w-full flex items-center justify-center">
+    <div className="w-full flex flex-col items-center justify-center">
+      <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+        Enter the OTP
+      </h2>
+
       <PinInput
         type={"number"}
         inputType="tel"
         inputMode="numeric"
         length={6}
+        autoFocus
         size="lg"
         onComplete={(val) => {
           mutation.mutate(val);
@@ -97,13 +102,13 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
             })
           );
         } catch (err) {
-          console.log("fido get err", err)
-          return err
+          console.log("fido get err", err);
+          throw err
         }
       }
     },
     onSuccess: (r) => {
-      // window.location.href = "/callback/success";
+      window.location.href = "/callback/success";
     },
     onError: (resp) => {},
   });

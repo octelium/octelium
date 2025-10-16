@@ -72,6 +72,11 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
           <div className="mt-4 mb-4">
             <QRCodeSVG size={256} value={url} />
           </div>
+
+          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+            Scan the QR Code Above by Your TOTP Authenticator then Enter the OTP
+          </h2>
+
           <div>
             <PinInput
               type={"number"}
@@ -79,6 +84,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
               inputMode="numeric"
               length={6}
               size="lg"
+              autoFocus
               onComplete={(val) => {
                 mutationFinish.mutate(val);
               }}
@@ -135,12 +141,13 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
             })
           );
         } catch (err) {
-            console.log("create err", err)
+          console.log("create err", err);
+          throw err;
         }
       }
     },
     onSuccess: (r) => {
-      // window.location.href = "/callback/success";
+      window.location.href = "/callback/success";
     },
     onError: (resp) => {},
   });
