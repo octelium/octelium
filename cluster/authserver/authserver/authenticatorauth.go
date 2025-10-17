@@ -65,7 +65,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	}
 
 	nullifyCurrAndUpdate := func() error {
-		ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
+		s.prependToLastAttempts(authn)
 		authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 		if err != nil {
 			return s.errInternalErr(err)
@@ -316,7 +316,7 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 		}
 	}
 
-	ucorev1.ToAuthenticator(authn).PrependToLastAttempts()
+	s.prependToLastAttempts(authn)
 
 	fac, err := s.getAuthenticatorCtl(ctx, authn, usr, cc)
 	if err != nil {
@@ -776,4 +776,29 @@ func (s *server) validateChallengeResponse(req *authv1.ChallengeResponse) error 
 	}
 
 	return nil
+}
+
+func (s *server) prependToLastAttempts(a *corev1.Authenticator) {
+
+	if a.Status.AuthenticationAttempt == nil {
+		return
+	}
+
+	maxLen := 10
+
+	if len(a.Status.LastAuthenticationAttempts) >= maxLen {
+		a.Status.LastAuthenticationAttempts = a.Status.LastAuthenticationAttempts[:maxLen-2]
+	}
+
+	a.Status.LastAuthenticationAttempts = append([]*corev1.Authenticator_Status_AuthenticationAttempt{
+		a.Status.AuthenticationAttempt,
+	}, a.Status.LastAuthenticationAttempts...)
+
+	a.Status.AuthenticationAttempt = nil
+
+	for _, itm := range a.Status.LastAuthenticationAttempts {
+		itm.DataMap = nil
+		itm.EncryptedChallengeRequest = nil
+		itm.EncryptedDataMap = nil
+	}
 }

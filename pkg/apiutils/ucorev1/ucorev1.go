@@ -784,26 +784,7 @@ func (l *Service) GetMode() corev1.Service_Spec_Mode {
 		return l.Spec.Mode
 	}
 	return corev1.Service_Spec_TCP
-	/*
-		if l.IsESSH() {
-			return corev1.Service_Spec_SSH
-		}
 
-		if l.IsKubernetes() {
-			return corev1.Service_Spec_KUBERNETES
-		}
-
-		u := l.getFirstURL()
-
-		switch u.Scheme {
-		case "http", "https", "ws", "wss", "grpc":
-			return corev1.Service_Spec_HTTP
-		case "udp", "dns":
-			return corev1.Service_Spec_UDP
-		default:
-			return corev1.Service_Spec_TCP
-		}
-	*/
 }
 
 const API = "core"
@@ -844,59 +825,11 @@ type IdentityProviderList struct {
 	*corev1.IdentityProviderList
 }
 
-/*
-type IdentityProviderList struct {
-	*corev1.IdentityProviderList
-}
-*/
-
 func ToIdentityProviderList(a *corev1.IdentityProviderList) *IdentityProviderList {
 	return &IdentityProviderList{
 		IdentityProviderList: a,
 	}
 }
-
-/*
-func ToIdentityProviderList(a *corev1.IdentityProviderList) *IdentityProviderList {
-	return &IdentityProviderList{
-		IdentityProviderList: a,
-	}
-}
-*/
-
-/*
-func (s *IdentityProviderList) FilterByNamesWeb(lst []string) []*corev1.IdentityProvider {
-	var ret []*corev1.IdentityProvider
-
-	isInList := func(name string) (int, bool) {
-		for i, itm := range s.Items {
-			if itm.Metadata.Name == name && itm.Spec.GetWebauthn() != nil {
-				return i, true
-			}
-		}
-		return 0, false
-	}
-	for _, name := range lst {
-		idx, ok := isInList(name)
-		if ok {
-			ret = append(ret, s.Items[idx])
-		}
-	}
-
-	return ret
-}
-*/
-
-/*
-func (s *IdentityProviderList) GetByName(name string) *corev1.IdentityProvider {
-	for _, itm := range s.Items {
-		if itm.Metadata.Name == name {
-			return itm
-		}
-	}
-	return nil
-}
-*/
 
 func (s *IdentityProviderList) GetByUID(uid string) *corev1.IdentityProvider {
 	for _, itm := range s.Items {
@@ -1028,31 +961,6 @@ func (c *Secret) GetCertificateChainAndKey() ([]byte, []byte, error) {
 	return chain, key, nil
 }
 
-/*
-func (s *Service) GetHostnames() []string {
-	name := s.Name()
-	ns := s.Namespace()
-	ret := []string{
-		fmt.Sprintf("%s.%s", name, ns),
-	}
-
-	appendIfNotExists := func(arg string) {
-		if !slices.Contains(ret, arg) {
-			ret = append(ret, arg)
-		}
-	}
-	if name == "default" {
-		appendIfNotExists(ns)
-	}
-
-	if ns == "default" {
-		appendIfNotExists(name)
-	}
-
-	return ret
-}
-*/
-
 func (r *Region) IsDefault() bool {
 	return r.Metadata.Name == "default"
 }
@@ -1065,23 +973,4 @@ func ToAuthenticator(a *corev1.Authenticator) *Authenticator {
 	return &Authenticator{
 		Authenticator: a,
 	}
-}
-
-func (a *Authenticator) PrependToLastAttempts() {
-
-	if a.Status.AuthenticationAttempt == nil {
-		return
-	}
-
-	maxLen := 10
-
-	if len(a.Status.LastAuthenticationAttempts) >= maxLen {
-		a.Status.LastAuthenticationAttempts = a.Status.LastAuthenticationAttempts[:maxLen-2]
-	}
-
-	a.Status.LastAuthenticationAttempts = append([]*corev1.Authenticator_Status_AuthenticationAttempt{
-		a.Status.AuthenticationAttempt,
-	}, a.Status.LastAuthenticationAttempts...)
-
-	a.Status.AuthenticationAttempt = nil
 }
