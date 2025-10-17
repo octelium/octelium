@@ -140,7 +140,7 @@ func TestTPM(t *testing.T) {
 		})
 		assert.Nil(t, err)
 
-		err = fctr.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+		_, err = fctr.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
 
 			ChallengeRequest: beginResp.Response.ChallengeRequest,
 			Resp: &authv1.RegisterAuthenticatorFinishRequest{

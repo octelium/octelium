@@ -98,7 +98,7 @@ func TestTOTP(t *testing.T) {
 		passcode, err := totp.GenerateCode(k.Secret(), time.Now())
 		assert.Nil(t, err)
 
-		err = fctr.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+		_, err = fctr.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
 			ChallengeRequest: req.Response.ChallengeRequest,
 			Resp: &authv1.RegisterAuthenticatorFinishRequest{
 				ChallengeResponse: &authv1.ChallengeResponse{
@@ -124,7 +124,7 @@ func TestTOTP(t *testing.T) {
 		passcode, err := totp.GenerateCode(k.Secret(), time.Now())
 		assert.Nil(t, err)
 
-		err = fctr.Finish(ctx, &authenticators.FinishReq{
+		_, err = fctr.Finish(ctx, &authenticators.FinishReq{
 
 			ChallengeRequest: req.Response.ChallengeRequest,
 			Resp: &authv1.AuthenticateWithAuthenticatorRequest{

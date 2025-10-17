@@ -139,10 +139,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if err := factor.Finish(ctx, &authenticators.FinishReq{
+	finishResp, err := factor.Finish(ctx, &authenticators.FinishReq{
 		Resp:             resp,
 		ChallengeRequest: challengeReq,
-	}); err != nil {
+	})
+	if err != nil {
 		authn.Status.FailedAuthentications = authn.Status.FailedAuthentications + 1
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
@@ -160,7 +161,6 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	// TODO: set info
 	return &corev1.Session_Status_Authentication_Info{
 		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
 		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
@@ -175,6 +175,20 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 					default:
 						return corev1.Session_Status_Authentication_Info_Authenticator_DEFAULT
 					}
+				}(),
+				Info: func() *corev1.Session_Status_Authentication_Info_Authenticator_Info {
+					if authn.Status.Type == corev1.Authenticator_Status_FIDO && finishResp.Cred != nil {
+						return &corev1.Session_Status_Authentication_Info_Authenticator_Info{
+							Type: &corev1.Session_Status_Authentication_Info_Authenticator_Info_Fido{
+								Fido: &corev1.Session_Status_Authentication_Info_Authenticator_Info_FIDO{
+									UserPresent:  finishResp.Cred.Flags.UserPresent,
+									UserVerified: finishResp.Cred.Flags.UserVerified,
+								},
+							},
+						}
+					}
+
+					return nil
 				}(),
 			},
 		},
@@ -673,7 +687,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		return nil, err
 	}
 
-	if err := factor.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+	if _, err := factor.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
 		Resp:             req,
 		ChallengeRequest: challengeReq,
 	}); err != nil {

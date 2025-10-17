@@ -57,7 +57,7 @@ func (c *TOTPFactor) Begin(ctx context.Context, req *authenticators.BeginReq) (*
 	}, nil
 }
 
-func (c *TOTPFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishReq) error {
+func (c *TOTPFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishReq) (*authenticators.FinishResp, error) {
 
 	var err error
 
@@ -65,30 +65,30 @@ func (c *TOTPFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishRe
 	authn := c.opts.Authenticator
 
 	if resp == nil {
-		return errors.Errorf("Nil response")
+		return nil, errors.Errorf("Nil response")
 	}
 
 	if resp.ChallengeResponse == nil || resp.ChallengeResponse.GetTotp() == nil {
-		return errors.Errorf("Response is not TOTP")
+		return nil, errors.Errorf("Response is not TOTP")
 	}
 
 	if authn == nil || authn.Status.Info == nil || authn.Status.Info.GetTotp() == nil {
-		return errors.Errorf("Invalid req...")
+		return nil, errors.Errorf("Invalid req...")
 	}
 
 	zap.L().Debug("Getting TOTP secret from User auth factor state")
 
 	secretBytes, err := authenticators.DecryptData(ctx, c.octeliumC, authn.Status.Info.GetTotp().GetSharedSecret())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	isValid := totp.Validate(resp.ChallengeResponse.GetTotp().Response, string(secretBytes))
 	if !isValid {
-		return authenticators.ErrInvalidAuth
+		return nil, authenticators.ErrInvalidAuth
 	}
 
-	return nil
+	return &authenticators.FinishResp{}, nil
 }
 
 func (c *TOTPFactor) BeginRegistration(ctx context.Context, req *authenticators.BeginRegistrationReq) (*authenticators.BeginRegistrationResp, error) {
@@ -128,8 +128,8 @@ func (c *TOTPFactor) BeginRegistration(ctx context.Context, req *authenticators.
 	}, nil
 }
 
-func (c *TOTPFactor) FinishRegistration(ctx context.Context, reqCtx *authenticators.FinishRegistrationReq) error {
-	return c.Finish(ctx, &authenticators.FinishReq{
+func (c *TOTPFactor) FinishRegistration(ctx context.Context, reqCtx *authenticators.FinishRegistrationReq) (*authenticators.FinishRegistrationResp, error) {
+	if _, err := c.Finish(ctx, &authenticators.FinishReq{
 
 		Resp: &authv1.AuthenticateWithAuthenticatorRequest{
 			AuthenticatorRef:  reqCtx.Resp.AuthenticatorRef,
@@ -140,5 +140,9 @@ func (c *TOTPFactor) FinishRegistration(ctx context.Context, reqCtx *authenticat
 				Totp: &authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest_TOTP{},
 			},
 		},
-	})
+	}); err != nil {
+		return nil, err
+	}
+
+	return &authenticators.FinishRegistrationResp{}, nil
 }

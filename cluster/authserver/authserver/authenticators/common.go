@@ -22,6 +22,7 @@ import (
 	"crypto/cipher"
 	"fmt"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -40,8 +41,6 @@ type Opts struct {
 }
 
 type BeginReq struct {
-	// User          *corev1.User
-	// Authenticator *corev1.Authenticator
 	Req *authv1.AuthenticateAuthenticatorBeginRequest
 }
 
@@ -63,18 +62,23 @@ type BeginRegistrationResp struct {
 }
 
 type FinishRegistrationReq struct {
-	// User             *corev1.User
-	// Authenticator    *corev1.Authenticator
 	Resp             *authv1.RegisterAuthenticatorFinishRequest
 	ChallengeRequest *authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest
 }
 
+type FinishResp struct {
+	Cred *webauthn.Credential
+}
+
+type FinishRegistrationResp struct {
+}
+
 type Factor interface {
 	Begin(ctx context.Context, req *BeginReq) (*BeginResp, error)
-	Finish(ctx context.Context, req *FinishReq) error
+	Finish(ctx context.Context, req *FinishReq) (*FinishResp, error)
 
 	BeginRegistration(ctx context.Context, req *BeginRegistrationReq) (*BeginRegistrationResp, error)
-	FinishRegistration(ctx context.Context, req *FinishRegistrationReq) error
+	FinishRegistration(ctx context.Context, req *FinishRegistrationReq) (*FinishRegistrationResp, error)
 }
 
 var ErrInvalidAuth = errors.New("Invalid Authentication")

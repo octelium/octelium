@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	factors "github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -136,52 +137,56 @@ func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator) (*webauthn.
 	})
 }
 
-func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) error {
+func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) (*authenticators.FinishResp, error) {
 
 	resp := reqCtx.Resp
 	authn := c.opts.Authenticator
 
+	ret := &authenticators.FinishResp{}
+
 	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetFido() == nil ||
 		resp.ChallengeResponse.GetFido().Response == "" {
-		return errors.Errorf("Invalid Response")
+		return nil, errors.Errorf("Invalid Response")
 	}
 
 	webauthnctl, err := c.getWebauthnCtl(authn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	webauthnUsr := NewWebAuthnUsr(authn, c.opts.User)
 
 	if authn.Status.AuthenticationAttempt.DataMap == nil {
-		return errors.Errorf("No authenticationAttempt dataMap")
+		return nil, errors.Errorf("No authenticationAttempt dataMap")
 	}
 
 	sessData := &webauthn.SessionData{}
 	if err := json.Unmarshal(authn.Status.AuthenticationAttempt.DataMap["session"], sessData); err != nil {
-		return err
+		return nil, err
 	}
 
 	{
 		parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
 			strings.NewReader(resp.ChallengeResponse.GetFido().Response))
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		cred, err := webauthnctl.ValidateLogin(webauthnUsr, *sessData, parsedResponse)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
-			return errors.Errorf("User is not verified")
+			return nil, errors.Errorf("User is not verified")
 		}
 
 		zap.L().Debug("webauthn login successful", zap.Any("cred", cred))
+
+		ret.Cred = cred
 	}
 
-	return nil
+	return ret, nil
 }
 
 func NewWebAuthnUsr(authn *corev1.Authenticator, usr *corev1.User) *WebauthnUser {
@@ -300,51 +305,52 @@ func (c *WebAuthNFactor) BeginRegistration(ctx context.Context,
 	}, nil
 }
 
-func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors.FinishRegistrationReq) error {
+func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
+	reqCtx *factors.FinishRegistrationReq) (*authenticators.FinishRegistrationResp, error) {
 
 	resp := reqCtx.Resp
 	authn := c.opts.Authenticator
 
 	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetFido() == nil ||
 		resp.ChallengeResponse.GetFido().Response == "" {
-		return errors.Errorf("Invalid Response")
+		return nil, errors.Errorf("Invalid Response")
 	}
 
 	webauthnctl, err := c.getWebauthnCtl(authn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	webauthnUsr := NewWebAuthnUsr(authn, c.opts.User)
 
 	if authn.Status.AuthenticationAttempt.DataMap == nil {
-		return errors.Errorf("No authenticationAttempt dataMap")
+		return nil, errors.Errorf("No authenticationAttempt dataMap")
 	}
 
 	sessData := &webauthn.SessionData{}
 	if err := json.Unmarshal(authn.Status.AuthenticationAttempt.DataMap["session"], sessData); err != nil {
-		return err
+		return nil, err
 	}
 
 	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
 		strings.NewReader(resp.ChallengeResponse.GetFido().Response))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	cred, err := webauthnctl.CreateCredential(webauthnUsr, *sessData, parsedResponse)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := c.verifyAttestation(ctx, parsedResponse, cred); err != nil {
-		return err
+		return nil, err
 	}
 
 	zap.L().Debug("Successful CreateCredential", zap.Any("cred", cred))
 
 	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
-		return errors.Errorf("User is not verified")
+		return nil, errors.Errorf("User is not verified")
 	}
 
 	idHash := sha256.Sum256(cred.ID)
@@ -356,11 +362,11 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 			},
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if len(authnList.Items) > 0 {
-			return errors.Errorf("Invalid credential ID")
+			return nil, errors.Errorf("Invalid credential ID")
 		}
 	}
 
@@ -373,7 +379,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 
 	aaguid, err := uuid.FromBytes(cred.Authenticator.AAGUID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	authn.Status.Info = &corev1.Authenticator_Status_Info{
@@ -398,7 +404,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 		},
 	}
 
-	return nil
+	return &authenticators.FinishRegistrationResp{}, nil
 }
 
 func DefaultTimeout() webauthn.TimeoutConfig {
