@@ -46,18 +46,27 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		return nil, s.errPermissionDenied("Passkey login is not enabled")
 	}
 
-	usr, authn, err := s.doAuthenticationWithPasskey(ctx, req.Response)
+	usr, authn, cred, err := s.doAuthenticationWithPasskey(ctx, req.Response)
 	if err != nil {
 		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
 		return nil, grpcutils.Unauthorized("Invalid authentication")
 	}
 
 	authInfo := &corev1.Session_Status_Authentication_Info{
-		Type: corev1.Session_Status_Authentication_Info_EXTERNAL,
+		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
 		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
 			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
 				AuthenticatorRef: umetav1.GetObjectReference(authn),
 				Type:             corev1.Authenticator_Status_FIDO,
+				Info: &corev1.Session_Status_Authentication_Info_Authenticator_Info{
+					Type: &corev1.Session_Status_Authentication_Info_Authenticator_Info_Fido{
+						Fido: &corev1.Session_Status_Authentication_Info_Authenticator_Info_FIDO{
+							UserPresent:  cred.Flags.UserPresent,
+							UserVerified: cred.Flags.UserVerified,
+						},
+					},
+				},
+				Mode: corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY,
 			},
 		},
 	}
@@ -110,25 +119,25 @@ func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 }
 
 func (s *server) doAuthenticationWithPasskey(ctx context.Context,
-	response string) (*corev1.User, *corev1.Authenticator, error) {
+	response string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, error) {
 
 	lenResp := len(response)
 	if lenResp < 100 || lenResp > 5000 {
-		return nil, nil, errors.Errorf("Invalid response length")
+		return nil, nil, nil, errors.Errorf("Invalid response length")
 	}
 	if !govalidator.IsASCII(response) {
-		return nil, nil, errors.Errorf("Invalid response")
+		return nil, nil, nil, errors.Errorf("Invalid response")
 	}
 
 	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
 		strings.NewReader(response))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	state, err := s.loadPasskeyState(ctx, parsedResponse.Response.CollectedClientData.Challenge)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var authn *corev1.Authenticator
@@ -158,26 +167,18 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 
 	cred, err := s.passkeyCtl.ValidateDiscoverableLogin(getWebauthnUser, *state.Session, parsedResponse)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	if !cred.Flags.UserVerified {
-		return nil, nil, errors.Errorf("userVerified not true")
-	}
-
-	if !cred.Flags.UserPresent {
-		return nil, nil, errors.Errorf("userPresent not true")
+		return nil, nil, nil, err
 	}
 
 	if usr == nil {
-		return nil, nil, errors.Errorf("User not set by getWebauthnUser")
+		return nil, nil, nil, errors.Errorf("User not set by getWebauthnUser")
 	}
 
 	if authn == nil {
-		return nil, nil, errors.Errorf("Authenticator not set by getWebauthnUser")
+		return nil, nil, nil, errors.Errorf("Authenticator not set by getWebauthnUser")
 	}
 
-	return usr, authn, nil
+	return usr, authn, cred, nil
 }
 
 type passkeyState struct {

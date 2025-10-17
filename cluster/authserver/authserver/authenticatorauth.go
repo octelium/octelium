@@ -160,12 +160,22 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
+	// TODO: set info
 	return &corev1.Session_Status_Authentication_Info{
 		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
 		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
 			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
 				AuthenticatorRef: umetav1.GetObjectReference(authn),
 				Type:             authn.Status.Type,
+				Mode: func() corev1.Session_Status_Authentication_Info_Authenticator_Mode {
+					switch sess.Status.AuthenticatorAction {
+					case corev1.Session_Status_AUTHENTICATION_REQUIRED,
+						corev1.Session_Status_AUTHENTICATION_RECOMMENDED:
+						return corev1.Session_Status_Authentication_Info_Authenticator_MFA
+					default:
+						return corev1.Session_Status_Authentication_Info_Authenticator_DEFAULT
+					}
+				}(),
 			},
 		},
 	}, nil
