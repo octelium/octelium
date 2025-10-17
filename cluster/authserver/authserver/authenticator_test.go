@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -118,9 +119,20 @@ func TestAuthenticator(t *testing.T) {
 		})
 		assert.Nil(t, err, "%+v", err)
 
+		authn.Spec.DisplayName = utilrand.GetRandomStringCanonical(32)
+
+		authn, err = srv.doUpdateAuthenticator(getCtxRT(usrT), authn)
+		assert.Nil(t, err)
+		{
+			_, err := srv.doUpdateAuthenticator(getCtxRT(usr2T), authn)
+			assert.NotNil(t, err)
+			assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+		}
+
 		itmList, err = srv.doListAuthenticator(getCtxRT(usrT), &authv1.ListAuthenticatorOptions{})
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(itmList.Items))
+
 		assert.Equal(t, authn.Metadata.Uid, itmList.Items[0].Metadata.Uid)
 
 		{
