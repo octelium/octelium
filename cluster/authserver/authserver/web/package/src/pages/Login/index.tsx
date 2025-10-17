@@ -73,7 +73,7 @@ const Passkey = () => {
         );
         const credential = (await navigator.credentials.get({
           publicKey,
-          mediation: "conditional",
+          // mediation: "conditional",
         })) as PublicKeyCredential;
 
         console.log("Got credential", credential.toJSON());
@@ -108,7 +108,7 @@ const Passkey = () => {
           mutation.mutate();
         }}
       >
-        <span className="font-bold text-lg">Login with Passkey</span>
+        <span className="font-bold text-lg">Login with a Passkey</span>
       </button>
     </div>
   );
