@@ -29,7 +29,23 @@ import (
 
 func (s *Server) ListAuthenticator(ctx context.Context, req *corev1.ListAuthenticatorOptions) (*corev1.AuthenticatorList, error) {
 
-	vAuthenticators, err := s.octeliumC.CoreC().ListAuthenticator(ctx, urscsrv.GetPublicListOptions(req))
+	var listOpts []*rmetav1.ListOptions_Filter
+
+	if req.UserRef != nil {
+		if err := apivalidation.CheckObjectRef(req.UserRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
+			return nil, err
+		}
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
+			Uid:  req.UserRef.Uid,
+			Name: req.UserRef.Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+		listOpts = append(listOpts, urscsrv.FilterStatusUserUID(usr.Metadata.Uid))
+	}
+
+	vAuthenticators, err := s.octeliumC.CoreC().ListAuthenticator(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
