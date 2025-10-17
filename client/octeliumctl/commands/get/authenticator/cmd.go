@@ -42,7 +42,7 @@ var Cmd = &cobra.Command{
 	Use:     "authenticator",
 	Short:   "List/get Authenticators",
 	Example: example,
-	Aliases: []string{"authn", "authenticators"},
+	Aliases: []string{"authn", "authenticators", "authen"},
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -52,9 +52,8 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
-	// Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -86,8 +85,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	var usrRef *metav1.ObjectReference
+	if cmdArgs.User != "" {
+		usrRef = &metav1.ObjectReference{
+			Name: cmdArgs.User,
+		}
+	}
+
 	itmList, err := c.ListAuthenticator(cmd.Context(), &corev1.ListAuthenticatorOptions{
-		Common: cliutils.GetCommonListOptions(cmd),
+		Common:  cliutils.GetCommonListOptions(cmd),
+		UserRef: usrRef,
 	})
 	if err != nil {
 		return err
