@@ -67,6 +67,7 @@ const Passkey = () => {
       );
 
       try {
+        console.log("Got req", response.request);
         const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
           JSON.parse(response.request)
         );
@@ -74,6 +75,8 @@ const Passkey = () => {
           publicKey,
           mediation: "conditional",
         })) as PublicKeyCredential;
+
+        console.log("Got credential", credential.toJSON());
 
         return await c.authenticateWithPasskey(
           Auth.AuthenticateWithPasskeyRequest.create({

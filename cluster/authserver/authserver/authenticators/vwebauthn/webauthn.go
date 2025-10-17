@@ -229,6 +229,9 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 		{
 			ID:        u.authn.Status.Info.GetFido().Id,
 			PublicKey: u.authn.Status.Info.GetFido().PublicKey,
+			Flags: webauthn.CredentialFlags{
+				BackupEligible: u.authn.Status.Info.GetFido().BackupEligible,
+			},
 		},
 	}
 
@@ -376,11 +379,12 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context, reqCtx *factors
 	authn.Status.Info = &corev1.Authenticator_Status_Info{
 		Type: &corev1.Authenticator_Status_Info_Fido{
 			Fido: &corev1.Authenticator_Status_Info_FIDO{
-				Id:        cred.ID,
-				IdHash:    idHash[:],
-				PublicKey: cred.PublicKey,
-				Aaguid:    aaguid.String(),
-				IsPasskey: isResidentKey,
+				Id:             cred.ID,
+				IdHash:         idHash[:],
+				PublicKey:      cred.PublicKey,
+				BackupEligible: cred.Flags.BackupEligible,
+				Aaguid:         aaguid.String(),
+				IsPasskey:      isResidentKey,
 				Type: func() corev1.Authenticator_Status_Info_FIDO_Type {
 					switch cred.Authenticator.Attachment {
 					case protocol.Platform:

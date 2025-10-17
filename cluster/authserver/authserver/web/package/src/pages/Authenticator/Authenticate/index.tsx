@@ -81,12 +81,15 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
         try {
+          console.log("Got req", response.challengeRequest.type.fido.request);
           const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
             JSON.parse(response.challengeRequest.type.fido.request)
           );
           const credential = (await navigator.credentials.get({
             publicKey,
           })) as PublicKeyCredential;
+
+          console.log("Got credential", credential.toJSON());
 
           return await c.authenticateWithAuthenticator(
             Auth.AuthenticateWithAuthenticatorRequest.create({
@@ -103,7 +106,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
           );
         } catch (err) {
           console.log("fido get err", err);
-          throw err
+          throw err;
         }
       }
     },
