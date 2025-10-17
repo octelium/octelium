@@ -43,6 +43,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.1 // indirect
 	github.com/kaptinlin/go-i18n v0.1.3 // indirect
 	github.com/kaptinlin/jsonschema v0.2.3 // indirect
+	github.com/mileusna/useragent v1.3.5 // indirect
 	github.com/onsi/ginkgo/v2 v2.21.0 // indirect
 	github.com/open-policy-agent/opa v1.4.2 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect

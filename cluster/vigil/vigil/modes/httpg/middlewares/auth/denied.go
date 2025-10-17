@@ -23,8 +23,8 @@ import (
 	"net/url"
 	"strings"
 
-	ua "github.com/mileusna/useragent"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -91,10 +91,8 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 		}
 
 		if !reqCtx.IsAuthenticated {
-			u := ua.Parse(req.UserAgent())
-			switch {
-			case u.IsChrome(), u.IsFirefox(), u.IsSafari(), u.IsEdge(), u.IsOpera(),
-				u.IsWindows(), u.IsAndroid(), u.IsChromeOS(), u.IsIOS(), u.IsMacOS():
+
+			if err := apivalidation.ValidateBrowserUserAgent(req.UserAgent()); err == nil {
 				loginURL, err := url.Parse(fmt.Sprintf("https://%s/login", m.domain))
 				if err != nil {
 					w.WriteHeader(httpStatusCode)

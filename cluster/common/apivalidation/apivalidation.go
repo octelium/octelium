@@ -27,6 +27,7 @@ import (
 	"unicode"
 
 	"github.com/asaskevich/govalidator"
+	ua "github.com/mileusna/useragent"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
@@ -624,6 +625,28 @@ func ValidateEnvVarKey(key string) error {
 
 	if len(key) > 1024 {
 		return grpcutils.InvalidArg("Key is too long: %s", key)
+	}
+
+	return nil
+}
+
+func ValidateBrowserUserAgent(arg string) error {
+
+	if !govalidator.IsByteLength(arg, 3, 300) {
+		return grpcutils.InvalidArg("Invalid user agent length")
+	}
+
+	u := ua.Parse(arg)
+	if u.Name == "" {
+		return grpcutils.InvalidArg("Invalid user agent")
+	}
+
+	switch {
+	case u.Desktop, u.Mobile:
+	case u.IsChrome(), u.IsFirefox(), u.IsSafari(), u.IsEdge(), u.IsOpera(),
+		u.IsWindows(), u.IsAndroid(), u.IsChromeOS(), u.IsIOS(), u.IsMacOS():
+	default:
+		return grpcutils.InvalidArg("Unsupported user agent")
 	}
 
 	return nil

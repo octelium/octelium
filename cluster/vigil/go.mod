@@ -18,7 +18,6 @@ require (
 	github.com/klauspost/compress v1.18.0
 	github.com/lib/pq v1.10.9
 	github.com/miekg/dns v1.1.62
-	github.com/mileusna/useragent v1.3.5
 	github.com/moby/term v0.5.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
@@ -97,6 +96,7 @@ require (
 	github.com/kaptinlin/go-i18n v0.1.3 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
+	github.com/mileusna/useragent v1.3.5 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

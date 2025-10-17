@@ -28,7 +28,6 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/gosimple/slug"
-	ua "github.com/mileusna/useragent"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -63,15 +62,9 @@ func (s *server) validatePostAuthReq(i *postAuthReq) error {
 	}
 
 	{
-		if !govalidator.IsByteLength(i.UserAgent, 3, 170) {
+		if err := apivalidation.ValidateBrowserUserAgent(i.UserAgent); err != nil {
 			return errors.Errorf("Invalid user agent")
 		}
-
-		userAgent := ua.Parse(i.UserAgent)
-		if userAgent.Name == "" {
-			return errors.Errorf("Invalid user agent")
-		}
-
 	}
 
 	if i.Query != "" {
