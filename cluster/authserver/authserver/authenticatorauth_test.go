@@ -18,6 +18,7 @@ package authserver
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -401,4 +402,154 @@ func TestIsAuthenticationAttemptTimeoutExceeded(t *testing.T) {
 			},
 		},
 	}))
+}
+
+func TestDoPostAuthenticatorAuthenticationRules(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		assert.Nil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil, nil))
+	}
+
+	{
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			},
+		}
+		assert.NotNil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil, nil))
+	}
+
+	{
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_ALLOW,
+				},
+			},
+		}
+		assert.NotNil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil, nil))
+	}
+
+	{
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_ALLOW,
+				},
+
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			},
+		}
+		assert.Nil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil, nil))
+	}
+
+	{
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: "3 > 2",
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_ALLOW,
+				},
+			},
+		}
+		assert.Nil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil, nil))
+	}
+
+	{
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.info.aal == "AAL1"`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			},
+		}
+		assert.NotNil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, nil, nil,
+			&corev1.Session_Status_Authentication_Info{
+				Aal: corev1.Session_Status_Authentication_Info_AAL1,
+			}))
+	}
+
+	{
+
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: fmt.Sprintf(`ctx.user.metadata.uid == "%s"`, usrT.Usr.Metadata.Uid),
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			},
+		}
+		assert.NotNil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, usrT.Session, usrT.Usr,
+			&corev1.Session_Status_Authentication_Info{
+				Aal: corev1.Session_Status_Authentication_Info_AAL1,
+			}))
+	}
 }

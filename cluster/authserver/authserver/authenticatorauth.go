@@ -153,15 +153,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 
 	authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
 
-	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, sess, usr); err != nil {
-		return nil, s.errPermissionDeniedErr(err)
-	}
-
-	if err := nullifyCurrAndUpdate(); err != nil {
-		return nil, err
-	}
-
-	return &corev1.Session_Status_Authentication_Info{
+	authInfo := &corev1.Session_Status_Authentication_Info{
 		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
 		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
 			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
@@ -192,11 +184,23 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 				}(),
 			},
 		},
-	}, nil
+	}
+
+	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, sess, usr, authInfo); err != nil {
+		return nil, s.errPermissionDeniedErr(err)
+	}
+
+	if err := nullifyCurrAndUpdate(); err != nil {
+		return nil, err
+	}
+
+	return authInfo, nil
 }
 
 func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
-	cc *corev1.ClusterConfig, authn *corev1.Authenticator, sess *corev1.Session, usr *corev1.User) error {
+	cc *corev1.ClusterConfig, authn *corev1.Authenticator,
+	sess *corev1.Session, usr *corev1.User,
+	authInfo *corev1.Session_Status_Authentication_Info) error {
 	if cc.Spec.Authenticator == nil || len(cc.Spec.Authenticator.PostAuthenticationRules) == 0 {
 		return nil
 	}
@@ -206,6 +210,7 @@ func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
 			"authenticator": pbutils.MustConvertToMap(authn),
 			"user":          pbutils.MustConvertToMap(usr),
 			"session":       pbutils.MustConvertToMap(sess),
+			"info":          pbutils.MustConvertToMap(authInfo),
 		},
 	}
 

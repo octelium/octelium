@@ -71,7 +71,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		},
 	}
 
-	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, nil, usr); err != nil {
+	if err := s.doPostAuthenticatorAuthenticationRules(ctx, cc, authn, nil, usr, authInfo); err != nil {
 		return nil, s.errPermissionDeniedErr(err)
 	}
 
