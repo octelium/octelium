@@ -113,24 +113,6 @@ func TestAuthenticator(t *testing.T) {
 			assert.True(t, grpcerr.IsInvalidArg(err))
 		}
 
-		/*
-			factor, err := srv.octeliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
-				Metadata: &metav1.Metadata{
-					Name: utilrand.GetRandomStringCanonical(8),
-				},
-
-				Spec: &corev1.IdentityProvider_Spec{
-					Type: &corev1.IdentityProvider_Spec_Totp{
-						Totp: &corev1.IdentityProvider_Spec_TOTP{},
-					},
-				},
-				Status: &corev1.IdentityProvider_Status{
-					Type: corev1.IdentityProvider_Status_TOTP,
-				},
-			})
-			assert.Nil(t, err)
-		*/
-
 		authn, err := srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{
 			Type: authv1.Authenticator_Status_FIDO,
 		})
@@ -150,7 +132,7 @@ func TestAuthenticator(t *testing.T) {
 				Name: authn.Metadata.Name,
 			})
 			assert.NotNil(t, err)
-			assert.True(t, grpcerr.IsNotFound(err))
+			assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
 		}
 
 		_, err = srv.doDeleteAuthenticator(getCtxRT(usrT), &metav1.DeleteOptions{

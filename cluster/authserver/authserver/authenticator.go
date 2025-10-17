@@ -51,6 +51,10 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 	if !ucorev1.ToSession(sess).HasValidAccessToken() {
 		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
 	}
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		return nil, s.errPermissionDenied("Cannot modify Authenticators")
+	}
 
 	if len(req.DisplayName) > 120 {
 		return nil, s.errInvalidArg("displayName is too long")
@@ -172,32 +176,24 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	usr, err := s.getUserFromSession(ctx, sess)
-	if err != nil {
-		return nil, err
-	}
-
 	if !ucorev1.ToSession(sess).HasValidAccessToken() {
 		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	}
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		return nil, s.errPermissionDenied("Cannot modify Authenticators")
 	}
 
 	if err := apivalidation.CheckDeleteOptions(req, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 		return nil, s.errInvalidArgErr(err)
 	}
 
-	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+	authn, err := s.getAuthenticator(ctx, &metav1.ObjectReference{
 		Uid:  req.Uid,
 		Name: req.Name,
-	})
+	}, sess)
 	if err != nil {
-		if grpcerr.IsNotFound(err) {
-			return nil, s.errNotFound("This Authenticator does not exist")
-		}
-		return nil, s.errInternalErr(err)
-	}
-
-	if authn.Status.UserRef.Uid != usr.Metadata.Uid {
-		return nil, s.errNotFound("This Authenticator does not exist")
+		return nil, err
 	}
 
 	_, err = s.octeliumC.CoreC().DeleteAuthenticator(ctx, &rmetav1.DeleteOptions{
@@ -219,28 +215,12 @@ func (s *server) doGetAuthenticator(ctx context.Context, req *metav1.GetOptions)
 		return nil, err
 	}
 
-	usr, err := s.getUserFromSession(ctx, sess)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := apivalidation.CheckGetOptions(req, &apivalidation.CheckGetOptionsOpts{}); err != nil {
-		return nil, s.errInvalidArgErr(err)
-	}
-
-	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+	authn, err := s.getAuthenticator(ctx, &metav1.ObjectReference{
 		Uid:  req.Uid,
 		Name: req.Name,
-	})
+	}, sess)
 	if err != nil {
-		if grpcerr.IsNotFound(err) {
-			return nil, s.errNotFound("This Authenticator does not exist")
-		}
-		return nil, s.errInternalErr(err)
-	}
-
-	if authn.Status.UserRef.Uid != usr.Metadata.Uid {
-		return nil, s.errNotFound("This Authenticator does not exist")
+		return nil, err
 	}
 
 	return s.toAuthenticator(authn), nil
@@ -275,4 +255,54 @@ func (s *server) doListAvailableAuthenticator(ctx context.Context,
 	ret.ListResponseMeta = itmList.ListResponseMeta
 
 	return ret, nil
+}
+
+func (s *server) doUpdateAuthenticator(ctx context.Context,
+	req *authv1.Authenticator) (*authv1.Authenticator, error) {
+	sess, err := s.getSessionFromGRPCCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !ucorev1.ToSession(sess).HasValidAccessToken() {
+		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	}
+
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		return nil, s.errPermissionDenied("Cannot modify Authenticators")
+	}
+
+	if err := apivalidation.ValidateMetadata(req.Metadata, &apivalidation.ValidateMetadataOpts{}); err != nil {
+		return nil, s.errInvalidArgErr(err)
+	}
+
+	authn, err := s.getAuthenticator(ctx, &metav1.ObjectReference{
+		Uid:  req.Metadata.Uid,
+		Name: req.Metadata.Name,
+	}, sess)
+	if err != nil {
+		return nil, err
+	}
+	if req.Spec == nil {
+		return nil, s.errInvalidArg("Nil spec")
+	}
+
+	if len(req.Spec.DisplayName) > 120 {
+		return nil, s.errInvalidArg("displayName is too long")
+	}
+	if !govalidator.IsUTFLetterNumeric(req.Spec.DisplayName) {
+		return nil, s.errInvalidArg("displayName is invalid")
+	}
+
+	authn.Spec.DisplayName = req.Spec.DisplayName
+
+	authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+	if err != nil {
+		if !grpcerr.IsNotFound(err) {
+			return nil, s.errInternalErr(err)
+		}
+	}
+
+	return s.toAuthenticator(authn), nil
 }

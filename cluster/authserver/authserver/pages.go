@@ -179,35 +179,6 @@ func (s *server) getPortalURL() string {
 	return fmt.Sprintf("https://portal.%s", s.domain)
 }
 
-/*
-func (s *server) isWebSessionValid(r *http.Request) (bool, *corev1.Session, error) {
-	ctx := r.Context()
-
-	cookie, err := r.Cookie("octelium_rt")
-	if err != nil {
-		return false, nil, nil
-	}
-
-	claims, err := s.jwkCtl.VerifyRefreshToken(cookie.Value)
-	if err != nil {
-		return false, nil, nil
-	}
-
-	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: claims.SessionUID})
-	if err != nil {
-		if grpcerr.IsNotFound(err) {
-			return false, nil, nil
-		}
-		return false, nil, err
-	}
-
-	isValid := ucorev1.ToSession(sess).HasValidAccessTokenByTokenID(claims.TokenID) &&
-		!ucorev1.ToSession(sess).ShouldRefresh()
-
-	return isValid, sess, nil
-}
-*/
-
 func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", r.URL.Path))
 	if err != nil {

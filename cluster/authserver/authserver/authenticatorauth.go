@@ -246,7 +246,7 @@ func (s *server) getAuthenticator(ctx context.Context,
 	})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			return nil, s.errInvalidArgErr(err)
+			return nil, s.errNotFoundErr(err)
 		}
 		return nil, s.errInternalErr(err)
 	}
@@ -255,7 +255,7 @@ func (s *server) getAuthenticator(ctx context.Context,
 		return nil, s.errInternal("Nil Authenticator UserRef")
 	}
 	if authn.Status.UserRef.Uid != sess.Status.UserRef.Uid {
-		return nil, s.errInvalidArg("Authenticator does not belong to the User")
+		return nil, s.errPermissionDenied("Authenticator does not belong to the User")
 	}
 
 	return authn, nil
@@ -422,6 +422,14 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if !ucorev1.ToSession(sess).HasValidAccessToken() {
+		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	}
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		return nil, s.errPermissionDenied("Cannot modify Authenticators")
 	}
 
 	usr, err := s.getUserFromSession(ctx, sess)

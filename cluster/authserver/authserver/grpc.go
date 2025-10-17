@@ -93,6 +93,14 @@ func (s *authMainSvc) DeleteAuthenticator(ctx context.Context, req *metav1.Delet
 	return s.s.doDeleteAuthenticator(ctx, req)
 }
 
+func (s *authMainSvc) UpdateAuthenticator(ctx context.Context, req *authv1.Authenticator) (*authv1.Authenticator, error) {
+	if err := s.doCheckProduction(); err != nil {
+		return nil, err
+	}
+
+	return s.s.doUpdateAuthenticator(ctx, req)
+}
+
 func (s *authMainSvc) AuthenticateAuthenticatorBegin(ctx context.Context, req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
