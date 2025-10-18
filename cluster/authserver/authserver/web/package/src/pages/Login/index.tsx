@@ -57,10 +57,10 @@ function getState() {
   } as State;
 }
 
-const Passkey = (props: {
-  query?: string;
-}) => {
+const Passkey = (props: { query?: string }) => {
   const c = getClientAuth();
+
+  console.log("passkey query", props.query);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -77,7 +77,6 @@ const Passkey = (props: {
         );
         const credential = (await navigator.credentials.get({
           publicKey,
-          // mediation: "conditional",
         })) as PublicKeyCredential;
 
         console.log("Got credential", credential.toJSON());
@@ -126,11 +125,9 @@ const Page = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const query = searchParams.toString() ?? undefined;
-
   React.useEffect(() => {
     setReqCommon({
-      query,
+      query: searchParams.toString() ?? undefined,
       userAgent: window.navigator.userAgent,
     });
 
@@ -201,7 +198,7 @@ const Page = () => {
 
           {state.isPasskeyLoginEnabled && (
             <div>
-              <Passkey query={query} />
+              <Passkey query={reqCommon?.query} />
             </div>
           )}
         </div>
@@ -264,7 +261,7 @@ const Page = () => {
           {state.isPasskeyLoginEnabled && (
             <div>
               <Divider my="lg" label="OR" labelPosition="center" />
-              <Passkey query={query} />
+              <Passkey query={reqCommon?.query} />
             </div>
           )}
         </div>
