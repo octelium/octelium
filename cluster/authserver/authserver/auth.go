@@ -727,12 +727,12 @@ func (s *server) generateCallbackURL(query string) (string, bool, error) {
 
 	queryVals, err := url.ParseQuery(query)
 	if err != nil {
-		return "", false, grpcutils.InvalidArg("")
+		return "", false, grpcutils.InvalidArg("Could not parse query: %s", query)
 	}
 	if val := queryVals.Get("octelium_req"); val != "" {
 		loginReq, err := getLoginReq(val)
 		if err != nil {
-			return "", false, grpcutils.InvalidArg("")
+			return "", false, grpcutils.InvalidArg("Invalid octelium_req")
 		}
 
 		callbackURL = fmt.Sprintf("http://localhost:%d/callback/success/%s",
@@ -761,6 +761,7 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 	if sess.Status.Authentication != nil &&
 		sess.Status.Authentication.Info != nil &&
 		sess.Status.Authentication.Info.GetAuthenticator() != nil {
+		zap.L().Debug("Starting loadAuthenticatorCallbackState")
 		if state, err := s.loadAuthenticatorCallbackState(ctx, sess); err == nil {
 			if !state.IsApp {
 				if state.CallbackURL != "" {
@@ -773,12 +774,15 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 
 			u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
 			if err != nil {
+				zap.L().Debug("Could not generateClientCallbackURL", zap.Error(err))
 				s.redirectToCallbackSuccess(w, r, s.getPortalURL())
 				return
 			}
 
 			s.redirectToCallbackSuccess(w, r, u.String())
 			return
+		} else {
+			zap.L().Debug("Could not loadAuthenticatorCallbackState", zap.Error(err))
 		}
 	}
 

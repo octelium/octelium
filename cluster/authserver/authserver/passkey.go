@@ -93,6 +93,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	}
 
 	if query != "" {
+		zap.L().Debug("Got query in doAuthenticateWithPasskey", zap.String("val", query))
 		callbackURL, isApp, err := s.generateCallbackURL(query)
 		if err == nil {
 			if err := s.saveAuthenticatorCallbackState(ctx, sess, &loginState{
@@ -101,6 +102,8 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 			}); err != nil {
 				zap.L().Warn("Could not saveAuthenticatorCallbackState", zap.Error(err))
 			}
+		} else {
+			zap.L().Debug("Could not generateCallbackURL", zap.Error(err))
 		}
 	}
 
