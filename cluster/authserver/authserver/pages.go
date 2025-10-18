@@ -46,7 +46,8 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ucorev1.ToSession(sess).ShouldRefresh() {
-		zap.L().Debug("No need to re-authenticate Session in handleLogin", zap.String("sess", sess.Metadata.Name))
+		zap.L().Debug("No need to re-authenticate Session in handleLogin",
+			zap.String("sess", sess.Metadata.Name))
 		if vReq := r.URL.Query().Get("octelium_req"); vReq == "" {
 			if redirect := r.URL.Query().Get("redirect"); redirect != "" && s.isURLSameClusterOrigin(redirect) {
 				http.Redirect(w, r, redirect, http.StatusSeeOther)
@@ -68,44 +69,56 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	zap.L().Debug("Session needs an authentication in handleLogin",
 		zap.String("sess", sess.Metadata.Name))
 
-	if sess.Status.InitialAuthentication == nil || sess.Status.InitialAuthentication.Info == nil ||
-		sess.Status.InitialAuthentication.Info.GetIdentityProvider() == nil {
+	if sess.Status.InitialAuthentication == nil || sess.Status.InitialAuthentication.Info == nil {
 		s.setLogoutCookies(w)
 		s.renderIndex(w)
 		return
 	}
 
-	switch sess.Status.InitialAuthentication.Info.GetIdentityProvider().Type {
-	case corev1.IdentityProvider_Status_GITHUB,
-		corev1.IdentityProvider_Status_OIDC,
-		corev1.IdentityProvider_Status_SAML:
+	info := sess.Status.InitialAuthentication.Info
+
+	switch {
+	case info.GetAuthenticator() != nil:
+		s.redirectToAuthenticatorAuthenticate(w, r)
+		return
+	case info.GetIdentityProvider() != nil:
+		switch info.GetIdentityProvider().Type {
+		case corev1.IdentityProvider_Status_GITHUB,
+			corev1.IdentityProvider_Status_OIDC,
+			corev1.IdentityProvider_Status_SAML:
+		default:
+			s.setLogoutCookies(w)
+			s.renderIndex(w)
+			return
+		}
+
+		provider, err := s.getWebProviderFromUID(
+			info.GetIdentityProvider().IdentityProviderRef.Uid)
+		if err != nil {
+			zap.L().
+				Debug("Could not get IdentityProvider. Probably removed by Cluster admins. Removing the Session too",
+					zap.String("sess", sess.Metadata.Name),
+					zap.String("idp", info.GetIdentityProvider().IdentityProviderRef.Name))
+			s.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
+				Uid: sess.Metadata.Uid,
+			})
+			s.setLogoutCookies(w)
+			s.renderIndex(w)
+			return
+		}
+
+		loginState, err := s.doGenerateLoginState(ctx, provider, r.URL.Query().Encode(), w, r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		http.Redirect(w, r, loginState.LoginURL, http.StatusSeeOther)
 	default:
 		s.setLogoutCookies(w)
 		s.renderIndex(w)
 		return
 	}
-
-	provider, err := s.getWebProviderFromUID(
-		sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Uid)
-	if err != nil {
-		zap.L().Debug("Could not get IdentityProvider. Probably removed by Cluster admins. Removing the Session too",
-			zap.String("sess", sess.Metadata.Name),
-			zap.String("idp", sess.Status.InitialAuthentication.Info.GetIdentityProvider().IdentityProviderRef.Name))
-		s.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
-			Uid: sess.Metadata.Uid,
-		})
-		s.setLogoutCookies(w)
-		s.renderIndex(w)
-		return
-	}
-
-	loginState, err := s.doGenerateLoginState(ctx, provider, r.URL.Query().Encode(), w, r)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	http.Redirect(w, r, loginState.LoginURL, http.StatusSeeOther)
 }
 
 func (s *server) isURLSameClusterOrigin(arg string) bool {
