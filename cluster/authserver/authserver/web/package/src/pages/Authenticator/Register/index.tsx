@@ -8,7 +8,14 @@ import { getClientAuth } from "@/utils/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import TimeAgo from "@/components/TimeAgo";
 import { getResourceRef } from "@/utils/pb";
-import { Button, Collapse, PinInput, UnstyledButton } from "@mantine/core";
+import {
+  Button,
+  Collapse,
+  Input,
+  PinInput,
+  TextInput,
+  UnstyledButton,
+} from "@mantine/core";
 import { Timestamp } from "@/apis/google/protobuf/timestamp";
 import { twMerge } from "tailwind-merge";
 import { QRCodeSVG } from "qrcode.react";
@@ -73,11 +80,19 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
             <QRCodeSVG size={256} value={url} />
           </div>
 
-          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
-            Scan the QR Code Above by Your TOTP Authenticator then Enter the OTP
-          </h2>
+          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+            Scan the QR Code Above by Your TOTP Authenticator (e.g. Google
+            Authenticator) then Enter the OTP
+          </div>
 
-          <div>
+          <div className="font-bold text-sm text-slate-500 flex items-center justify-center my-2 text-center">
+            <span>Or use use the link </span>{" "}
+            <a className="ml-2 text-black font-extrabold shadow-2xl" href={url}>
+              here
+            </a>
+          </div>
+
+          <div className="mt-8">
             <PinInput
               type={"number"}
               inputType="tel"
@@ -177,14 +192,14 @@ const Page = () => {
       if (isDev()) {
         return Auth.Authenticator.create({
           metadata: {
-            name: "totp-1",
+            name: "authn-1234",
             createdAt: Timestamp.now(),
           },
           spec: {
-            displayName: "Google Authenticator",
+            displayName: props.displayName,
           },
           status: {
-            type: Auth.Authenticator_Status_Type.TOTP,
+            type: props.type,
           },
         });
       }
@@ -219,40 +234,62 @@ const Page = () => {
                 <span>Register an MFA Authenticator</span>
               </div>
             </div>
-            <div className="w-full">
-              <button
-                className={twMerge(
-                  "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
-                  "shadow-2xl rounded-lg cursor-pointer font-bold",
-                  "bg-[#242323] hover:bg-black text-white text-lg",
-                  mutation.isPending ? "!bg-[#777] shadow-none" : undefined
-                )}
-                onClick={() => {
-                  mutation.mutate({
-                    type: Auth.Authenticator_Status_Type.TOTP,
-                    displayName,
-                  });
-                }}
-              >
-                <span className="font-bold text-lg">TOTP</span>
-              </button>
 
-              <button
-                className={twMerge(
-                  "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
-                  "shadow-2xl rounded-lg cursor-pointer font-bold",
-                  "bg-[#242323] hover:bg-black text-white text-lg",
-                  mutation.isPending ? "!bg-[#777] shadow-none" : undefined
-                )}
-                onClick={() => {
-                  mutation.mutate({
-                    type: Auth.Authenticator_Status_Type.FIDO,
-                    displayName,
-                  });
+            <div className="w-full my-8">
+              <TextInput
+                value={displayName}
+                className="!active:shadow-none"
+                placeholder="My Authenticator"
+                variant={"unstyled"}
+                description={
+                  <span className="text-xs font-bold text-black">
+                    Display Name (Optional)
+                  </span>
+                }
+                size="xl"
+                onChange={(e) => {
+                  setDisplayName(e.target.value);
                 }}
-              >
-                <span className="font-bold text-lg">FIDO</span>
-              </button>
+              />
+            </div>
+            <div className="w-full">
+              {[
+                {
+                  name: "TOTP",
+                  type: Auth.Authenticator_Status_Type.TOTP,
+                  description:
+                    "Use Time-based One Time Password (TOTP) Authenticators such as Google Authenticator",
+                },
+                {
+                  name: "FIDO",
+                  type: Auth.Authenticator_Status_Type.FIDO,
+                  description:
+                    "Use WebAuthn/Passkey/FIDO 2 Security Keys, Windows Hello, Android and Compliant Password Managers",
+                },
+              ].map((x) => (
+                <button
+                  key={x.name}
+                  className={twMerge(
+                    "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
+                    "shadow-2xl rounded-lg cursor-pointer font-bold",
+                    "bg-[#242323] hover:bg-black text-white text-lg",
+                    mutation.isPending ? "!bg-[#777] shadow-none" : undefined
+                  )}
+                  onClick={() => {
+                    mutation.mutate({
+                      type: x.type,
+                      displayName,
+                    });
+                  }}
+                >
+                  <div className="flex items-center">
+                    <span className="font-bold text-xl">{x.name}</span>
+                    <span className="font-semibold text-sm flex-1 text-left ml-6">
+                      {x.description}
+                    </span>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         )}

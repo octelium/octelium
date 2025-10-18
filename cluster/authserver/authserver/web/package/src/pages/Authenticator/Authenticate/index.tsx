@@ -19,11 +19,12 @@ import {
 } from "@mantine/core";
 import { Timestamp } from "@/apis/google/protobuf/timestamp";
 import { twMerge } from "tailwind-merge";
-import { useDisclosure } from "@mantine/hooks";
+import { useClickOutside, useDisclosure } from "@mantine/hooks";
 import { DeleteOptions } from "@/apis/metav1/metav1";
 import { MdEdit } from "react-icons/md";
 import { MdEditOff } from "react-icons/md";
 import { IoMdSend } from "react-icons/io";
+import { Link } from "react-router-dom";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
@@ -140,7 +141,12 @@ const Authenticator = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
   let [open, setOpen] = React.useState(false);
   let [isEdit, setIsEdit] = React.useState(false);
-  let [displayName, setDisplayName] = React.useState<string>("");
+  let [displayName, setDisplayName] = React.useState<string>(
+    authn.spec!.displayName
+  );
+  const ref = useClickOutside(() => {
+    setIsEdit(false);
+  });
 
   const isDelete = useDisclosure(false);
   const c = getClientAuth();
@@ -214,8 +220,9 @@ const Authenticator = (props: { authn: Auth.Authenticator }) => {
               <div className="flex items-center">
                 <Input
                   placeholder="My Authenticator"
+                  ref={ref}
                   variant={"unstyled"}
-                  value={authn.spec?.displayName}
+                  value={displayName}
                   onChange={(e) => {
                     setDisplayName(e.target.value);
                   }}
@@ -346,11 +353,26 @@ const AvailableAuthenticators = (props: {
 }) => {
   const { resp } = props;
 
+  if (resp.availableAuthenticators.length < 1) {
+    return <></>;
+  }
+
   return (
     <div className="w-full">
-      {resp.availableAuthenticators.map((x) => (
-        <Authenticator authn={x} />
-      ))}
+      <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+        Your Available Authenticators{" "}
+        <Link
+          to={`/authenticator/register`}
+          className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
+        >
+          Register
+        </Link>
+      </h2>
+      <div className="w-full">
+        {resp.availableAuthenticators.map((x) => (
+          <Authenticator authn={x} />
+        ))}
+      </div>
     </div>
   );
 };
@@ -361,19 +383,15 @@ const Page = () => {
   const { isError, isLoading, data } = useQuery({
     queryKey: ["getAvailableAuthenticator"],
     queryFn: async () => {
-      return await c.getAvailableAuthenticator({});
+      if (isDev()) {
+        return Auth.GetAvailableAuthenticatorResponse.create({
+          availableAuthenticators: devList.items,
+        });
+      }
+      const { response } = await c.getAvailableAuthenticator({});
+      return response;
     },
   });
-
-  if (isDev()) {
-    return (
-      <div>
-        {devList.items.map((x) => (
-          <Authenticator authn={x} />
-        ))}
-      </div>
-    );
-  }
 
   if (isLoading) {
     return <></>;
@@ -384,22 +402,23 @@ const Page = () => {
 
   return (
     <div>
+      <title>Authenticate with an Authenticator - Octelium</title>
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        {data.response.mainAuthenticator && (
+        {data.mainAuthenticator && (
           <div>
-            {data.response.mainAuthenticator.status?.type ===
+            {data.mainAuthenticator.status?.type ===
               Auth.Authenticator_Status_Type.FIDO && (
-              <Fido authn={data.response.mainAuthenticator} />
+              <Fido authn={data.mainAuthenticator} />
             )}
 
-            {data.response.mainAuthenticator.status?.type ===
+            {data.mainAuthenticator.status?.type ===
               Auth.Authenticator_Status_Type.TOTP && (
-              <TOTP authn={data.response.mainAuthenticator} />
+              <TOTP authn={data.mainAuthenticator} />
             )}
           </div>
         )}
 
-        <AvailableAuthenticators resp={data.response} />
+        <AvailableAuthenticators resp={data} />
       </div>
     </div>
   );
