@@ -201,7 +201,7 @@ const Page = () => {
 
           {state.isPasskeyLoginEnabled && (
             <div>
-              <Passkey />
+              <Passkey query={query} />
             </div>
           )}
         </div>
@@ -264,7 +264,7 @@ const Page = () => {
           {state.isPasskeyLoginEnabled && (
             <div>
               <Divider my="lg" label="OR" labelPosition="center" />
-              <Passkey />
+              <Passkey query={query} />
             </div>
           )}
         </div>
