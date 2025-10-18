@@ -1,16 +1,29 @@
 import OtpInput from "react-otp-input";
 import * as React from "react";
 
-import { isDev } from "@/utils";
+import { isDev, queryClient } from "@/utils";
 
 import * as Auth from "@/apis/authv1/authv1";
 import { getClientAuth } from "@/utils/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import TimeAgo from "@/components/TimeAgo";
 import { getResourceRef } from "@/utils/pb";
-import { Collapse, PinInput } from "@mantine/core";
+import {
+  ActionIcon,
+  Button,
+  Collapse,
+  Input,
+  Modal,
+  PinInput,
+  Tooltip,
+} from "@mantine/core";
 import { Timestamp } from "@/apis/google/protobuf/timestamp";
 import { twMerge } from "tailwind-merge";
+import { useDisclosure } from "@mantine/hooks";
+import { DeleteOptions } from "@/apis/metav1/metav1";
+import { MdEdit } from "react-icons/md";
+import { MdEditOff } from "react-icons/md";
+import { IoMdSend } from "react-icons/io";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
@@ -126,14 +139,50 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
 const Authenticator = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
   let [open, setOpen] = React.useState(false);
+  let [isEdit, setIsEdit] = React.useState(false);
+  let [displayName, setDisplayName] = React.useState<string>("");
+
+  const isDelete = useDisclosure(false);
+  const c = getClientAuth();
+
+  const mutationDelete = useMutation({
+    mutationFn: async () => {
+      await c.deleteAuthenticator(
+        DeleteOptions.create({
+          uid: authn.metadata?.uid,
+          name: authn.metadata?.name,
+        })
+      );
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({
+        queryKey: ["getAvailableAuthenticator"],
+      });
+    },
+    onError: (resp) => {},
+  });
+
+  const mutationUpdate = useMutation({
+    mutationFn: async () => {
+      let req = Auth.Authenticator.clone(authn);
+      req.spec!.displayName = displayName ?? "";
+      await c.updateAuthenticator(req);
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({
+        queryKey: ["getAvailableAuthenticator"],
+      });
+    },
+    onError: (resp) => {},
+  });
+
   return (
     <div
       className={twMerge(
         "w-full",
         "p-4 mb-3",
-        open
-          ? `shadow-sm bg-white`
-          : `cursor-pointer bg-slate-50 hover:bg-white`,
+
+        `bg-slate-50 hover:bg-white`,
         `border-[2px] border-gray-200 rounded-lg`,
         "w-full",
 
@@ -147,35 +196,118 @@ const Authenticator = (props: { authn: Auth.Authenticator }) => {
         "mb-4"
       )}
     >
-      <div
-        onClick={() => {
-          setOpen(!open);
-        }}
-      >
-        <div className="w-full font-bold">
-          <span className="text-slate-600">{authn.metadata!.name}</span>{" "}
-          {authn.spec?.displayName && (
-            <span className="text-black ml-2">{authn.spec.displayName}</span>
-          )}
-        </div>
-      </div>
+      <div className="flex items-center">
+        <div className="w-full font-bold flex-1">
+          <div className="flex items-center">
+            <span className="text-white bg-slate-800 rounded-lg p-2 text-xs shadow-md">
+              {authn.status?.type === Auth.Authenticator_Status_Type.FIDO &&
+                "FIDO"}
+              {authn.status?.type === Auth.Authenticator_Status_Type.TOTP &&
+                "TOTP"}
+            </span>{" "}
+            {!isEdit && (
+              <span className="text-black ml-1">
+                {authn.spec?.displayName ?? authn.metadata!.name}
+              </span>
+            )}
+            {isEdit && (
+              <div className="flex items-center">
+                <Input
+                  placeholder="My Authenticator"
+                  variant={"unstyled"}
+                  value={authn.spec?.displayName}
+                  onChange={(e) => {
+                    setDisplayName(e.target.value);
+                  }}
+                />
 
-      <div className="text-xs mt-1 mb-2 text-slate-500">
-        <span>Created </span>
-        <TimeAgo rfc3339={authn.metadata?.createdAt} />
+                <ActionIcon
+                  aria-label="Submit"
+                  onClick={() => {
+                    mutationUpdate.mutate();
+                  }}
+                >
+                  <IoMdSend />
+                </ActionIcon>
+              </div>
+            )}
+            <Tooltip label="Edit Display Name">
+              <ActionIcon
+                variant="transparent"
+                aria-label="Edit Display Name"
+                onClick={() => {
+                  setIsEdit(!isEdit);
+                }}
+              >
+                {isEdit ? (
+                  <MdEditOff className="text-slate-500" />
+                ) : (
+                  <MdEdit className="text-slate-500" />
+                )}
+              </ActionIcon>
+            </Tooltip>
+          </div>
+          <div className="text-xs mt-1 mb-2 text-slate-500">
+            <span>Created </span>
+            <TimeAgo rfc3339={authn.metadata?.createdAt} />
+          </div>
+        </div>
+        <div className="flex flex-col items-center">
+          <Button
+            onClick={() => {
+              setOpen(!open);
+            }}
+            variant={open ? "outline" : undefined}
+          >
+            {open ? "Cancel" : "Authenticate"}
+          </Button>
+          <Button
+            className="mt-3 !rounded-md !transition-all !duration-500 !border-slate-500"
+            fullWidth
+            size="compact-xs"
+            variant="outline"
+            onClick={isDelete[1].open}
+          >
+            <span className="text-slate-600">Delete</span>
+          </Button>
+        </div>
       </div>
 
       <Collapse in={open} transitionDuration={300}>
-        <div>
-          {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
-            <Fido authn={authn} />
-          )}
+        {open && (
+          <div>
+            {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
+              <Fido authn={authn} />
+            )}
 
-          {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
-            <TOTP authn={authn} />
-          )}
-        </div>
+            {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
+              <TOTP authn={authn} />
+            )}
+          </div>
+        )}
       </Collapse>
+
+      <Modal opened={isDelete[0]} onClose={isDelete[1].close} centered>
+        <div className="font-bold text-xl mb-4">
+          {`Do you really want to delete this Authenticator?`}
+        </div>
+
+        <div className="mt-4 flex justify-end items-center">
+          <Button variant="outline" onClick={isDelete[1].close}>
+            Cancel
+          </Button>
+          <Button
+            className="ml-4"
+            loading={mutationDelete.isPending}
+            onClick={() => {
+              mutationDelete.mutate();
+            }}
+            autoFocus
+          >
+            Yes, Delete
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 };
@@ -209,11 +341,25 @@ const devList = Auth.AuthenticatorList.create({
   ],
 });
 
+const AvailableAuthenticators = (props: {
+  resp: Auth.GetAvailableAuthenticatorResponse;
+}) => {
+  const { resp } = props;
+
+  return (
+    <div className="w-full">
+      {resp.availableAuthenticators.map((x) => (
+        <Authenticator authn={x} />
+      ))}
+    </div>
+  );
+};
+
 const Page = () => {
   const c = getClientAuth();
 
   const { isError, isLoading, data } = useQuery({
-    queryKey: ["listAvailableAuthenticator"],
+    queryKey: ["getAvailableAuthenticator"],
     queryFn: async () => {
       return await c.getAvailableAuthenticator({});
     },
@@ -239,9 +385,21 @@ const Page = () => {
   return (
     <div>
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        {data.response.availableAuthenticators.map((x) => (
-          <Authenticator authn={x} />
-        ))}
+        {data.response.mainAuthenticator && (
+          <div>
+            {data.response.mainAuthenticator.status?.type ===
+              Auth.Authenticator_Status_Type.FIDO && (
+              <Fido authn={data.response.mainAuthenticator} />
+            )}
+
+            {data.response.mainAuthenticator.status?.type ===
+              Auth.Authenticator_Status_Type.TOTP && (
+              <TOTP authn={data.response.mainAuthenticator} />
+            )}
+          </div>
+        )}
+
+        <AvailableAuthenticators resp={data.response} />
       </div>
     </div>
   );

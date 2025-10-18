@@ -1,3 +1,5 @@
+import { QueryClient } from "@tanstack/react-query";
+
 const isDevVal = import.meta.env.MODE === "development";
 
 export function isDev(): boolean {
@@ -24,3 +26,11 @@ export const getDomain = (): string => {
 
   return __domain;
 };
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000,
+    },
+  },
+});
