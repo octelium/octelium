@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestDoAuthenticateWithPasskeyBegin(t *testing.T) {
@@ -52,7 +53,13 @@ func TestDoAuthenticateWithPasskeyBegin(t *testing.T) {
 	assert.Nil(t, err)
 
 	{
-		res, err := srv.doAuthenticateWithPasskeyBegin(ctx, &authv1.AuthenticateWithPasskeyBeginRequest{})
+
+		res, err := srv.doAuthenticateWithPasskeyBegin(
+			metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+				"user-agent": "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0",
+				"origin":     srv.rootURL,
+			})),
+			&authv1.AuthenticateWithPasskeyBeginRequest{})
 		assert.Nil(t, err, "%+v", err)
 
 		response := &protocol.PublicKeyCredentialRequestOptions{}

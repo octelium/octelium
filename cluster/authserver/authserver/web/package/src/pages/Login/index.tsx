@@ -57,13 +57,17 @@ function getState() {
   } as State;
 }
 
-const Passkey = () => {
+const Passkey = (props: {
+  query?: string;
+}) => {
   const c = getClientAuth();
 
   const mutation = useMutation({
     mutationFn: async () => {
       const { response } = await c.authenticateWithPasskeyBegin(
-        Auth.AuthenticateWithPasskeyBeginRequest.create({})
+        Auth.AuthenticateWithPasskeyBeginRequest.create({
+          query: props.query,
+        })
       );
 
       try {
@@ -122,9 +126,11 @@ const Page = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const query = searchParams.toString() ?? undefined;
+
   React.useEffect(() => {
     setReqCommon({
-      query: searchParams.toString() ?? "",
+      query,
       userAgent: window.navigator.userAgent,
     });
 

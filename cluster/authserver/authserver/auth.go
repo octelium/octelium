@@ -61,10 +61,8 @@ func (s *server) validatePostAuthReq(i *postAuthReq) error {
 		return errors.Errorf("Nil object")
 	}
 
-	{
-		if err := apivalidation.ValidateBrowserUserAgent(i.UserAgent); err != nil {
-			return errors.Errorf("Invalid user agent")
-		}
+	if err := apivalidation.ValidateBrowserUserAgent(i.UserAgent); err != nil {
+		return errors.Errorf("Invalid user agent")
 	}
 
 	if i.Query != "" {
@@ -709,6 +707,45 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 	})
 
 	return userState, nil
+}
+
+func (s *server) generateCallbackURL(query string) (string, bool, error) {
+	getRedirectURL := func(urlVals url.Values) string {
+		if redirect := urlVals.Get("redirect"); redirect != "" && s.isURLSameClusterOrigin(redirect) {
+			return redirect
+		}
+
+		return ""
+	}
+
+	if query == "" {
+		return "", false, nil
+	}
+
+	var callbackURL string
+	var isApp bool
+
+	queryVals, err := url.ParseQuery(query)
+	if err != nil {
+		return "", false, grpcutils.InvalidArg("")
+	}
+	if val := queryVals.Get("octelium_req"); val != "" {
+		loginReq, err := getLoginReq(val)
+		if err != nil {
+			return "", false, grpcutils.InvalidArg("")
+		}
+
+		callbackURL = fmt.Sprintf("http://localhost:%d/callback/success/%s",
+			loginReq.CallbackPort, loginReq.CallbackSuffix)
+
+		isApp = true
+	}
+
+	if callbackURL == "" {
+		callbackURL = getRedirectURL(queryVals)
+	}
+
+	return callbackURL, isApp, nil
 }
 
 func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {

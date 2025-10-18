@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils"
@@ -41,12 +42,16 @@ import (
 func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
 
+	if grpcutils.GetHeaderValueMust(ctx, "origin") != s.rootURL {
+		return nil, s.errInvalidArg("Invalid origin")
+	}
+
 	cc := s.ccCtl.Get()
 	if cc.Spec.Authenticator == nil || !cc.Spec.Authenticator.EnablePasskeyLogin {
 		return nil, s.errPermissionDenied("Passkey login is not enabled")
 	}
 
-	usr, authn, cred, err := s.doAuthenticationWithPasskey(ctx, req.Response)
+	usr, authn, cred, query, err := s.doAuthenticationWithPasskey(ctx, req.Response)
 	if err != nil {
 		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
 		return nil, grpcutils.Unauthorized("Invalid authentication")
@@ -87,11 +92,37 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		return nil, s.errInternalErr(err)
 	}
 
+	if query != "" {
+		callbackURL, isApp, err := s.generateCallbackURL(query)
+		if err == nil {
+			if err := s.saveAuthenticatorCallbackState(ctx, sess, &loginState{
+				CallbackURL: callbackURL,
+				IsApp:       isApp,
+			}); err != nil {
+				zap.L().Warn("Could not saveAuthenticatorCallbackState", zap.Error(err))
+			}
+		}
+	}
+
 	return s.generateSessionTokenResponse(ctx, sess)
 }
 
 func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyBeginRequest) (*authv1.AuthenticateWithPasskeyBeginResponse, error) {
+
+	if req.Query != "" {
+		if err := validateLoginQuery(req.Query); err != nil {
+			return nil, s.errInvalidArg("Invalid query")
+		}
+	}
+
+	if grpcutils.GetHeaderValueMust(ctx, "origin") != s.rootURL {
+		return nil, s.errInvalidArg("Invalid origin")
+	}
+
+	if err := apivalidation.ValidateBrowserUserAgent(grpcutils.GetHeaderValueMust(ctx, "user-agent")); err != nil {
+		return nil, s.errInvalidArg("Invalid User Agent")
+	}
 
 	cc := s.ccCtl.Get()
 	if cc.Spec.Authenticator == nil || !cc.Spec.Authenticator.EnablePasskeyLogin {
@@ -109,6 +140,7 @@ func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 
 	if err := s.savePasskeyState(ctx, &passkeyState{
 		Session: sess,
+		Query:   req.Query,
 	}); err != nil {
 		return nil, err
 	}
@@ -119,25 +151,29 @@ func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 }
 
 func (s *server) doAuthenticationWithPasskey(ctx context.Context,
-	response string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, error) {
+	response string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+
+	retErr := func(err error) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+		return nil, nil, nil, "", err
+	}
 
 	lenResp := len(response)
 	if lenResp < 100 || lenResp > 5000 {
-		return nil, nil, nil, errors.Errorf("Invalid response length")
+		return retErr(errors.Errorf("Invalid response length"))
 	}
 	if !govalidator.IsASCII(response) {
-		return nil, nil, nil, errors.Errorf("Invalid response")
+		return retErr(errors.Errorf("Invalid response"))
 	}
 
 	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
 		strings.NewReader(response))
 	if err != nil {
-		return nil, nil, nil, err
+		return retErr(err)
 	}
 
 	state, err := s.loadPasskeyState(ctx, parsedResponse.Response.CollectedClientData.Challenge)
 	if err != nil {
-		return nil, nil, nil, err
+		return retErr(err)
 	}
 
 	var authn *corev1.Authenticator
@@ -167,22 +203,23 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 
 	cred, err := s.passkeyCtl.ValidateDiscoverableLogin(getWebauthnUser, *state.Session, parsedResponse)
 	if err != nil {
-		return nil, nil, nil, err
+		return retErr(err)
 	}
 
 	if usr == nil {
-		return nil, nil, nil, errors.Errorf("User not set by getWebauthnUser")
+		return retErr(errors.Errorf("User not set by getWebauthnUser"))
 	}
 
 	if authn == nil {
-		return nil, nil, nil, errors.Errorf("Authenticator not set by getWebauthnUser")
+		return retErr(errors.Errorf("Authenticator not set by getWebauthnUser"))
 	}
 
-	return usr, authn, cred, nil
+	return usr, authn, cred, state.Query, nil
 }
 
 type passkeyState struct {
 	Session *webauthn.SessionData
+	Query   string
 }
 
 func (s *server) savePasskeyState(ctx context.Context, state *passkeyState) error {

@@ -869,6 +869,10 @@ export interface ListAvailableAuthenticatorOptions {
  * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest
  */
 export interface AuthenticateWithPasskeyBeginRequest {
+    /**
+     * @generated from protobuf field: string query = 1;
+     */
+    query: string;
 }
 /**
  * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse
@@ -3715,10 +3719,13 @@ export const ListAvailableAuthenticatorOptions = new ListAvailableAuthenticatorO
 // @generated message type with reflection information, may provide speed optimized methods
 class AuthenticateWithPasskeyBeginRequest$Type extends MessageType<AuthenticateWithPasskeyBeginRequest> {
     constructor() {
-        super("octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest", []);
+        super("octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest", [
+            { no: 1, name: "query", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
+        ]);
     }
     create(value?: PartialMessage<AuthenticateWithPasskeyBeginRequest>): AuthenticateWithPasskeyBeginRequest {
         const message = globalThis.Object.create((this.messagePrototype!));
+        message.query = "";
         if (value !== undefined)
             reflectionMergePartial<AuthenticateWithPasskeyBeginRequest>(this, message, value);
         return message;
@@ -3728,6 +3735,9 @@ class AuthenticateWithPasskeyBeginRequest$Type extends MessageType<AuthenticateW
         while (reader.pos < end) {
             let [fieldNo, wireType] = reader.tag();
             switch (fieldNo) {
+                case /* string query */ 1:
+                    message.query = reader.string();
+                    break;
                 default:
                     let u = options.readUnknownField;
                     if (u === "throw")
@@ -3740,6 +3750,9 @@ class AuthenticateWithPasskeyBeginRequest$Type extends MessageType<AuthenticateW
         return message;
     }
     internalBinaryWrite(message: AuthenticateWithPasskeyBeginRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* string query = 1; */
+        if (message.query !== "")
+            writer.tag(1, WireType.LengthDelimited).string(message.query);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
