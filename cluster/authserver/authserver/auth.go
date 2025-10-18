@@ -297,8 +297,31 @@ func (s *server) getAvailableWebAuthenticators(ctx context.Context, usr *corev1.
 	return ret, nil
 }
 
-func (s *server) listAvailableAuthenticators(ctx context.Context,
-	sess *corev1.Session, usr *corev1.User) (*corev1.AuthenticatorList, error) {
+type getAvailableWebAuthenticatorsResp struct {
+	MainAuthenticator       *corev1.Authenticator
+	AvailableAuthenticators []*corev1.Authenticator
+}
+
+func (s *server) getAvailableAuthenticators(ctx context.Context,
+	sess *corev1.Session, usr *corev1.User) (*getAvailableWebAuthenticatorsResp, error) {
+
+	ret := &getAvailableWebAuthenticatorsResp{}
+
+	if sess.Status.InitialAuthentication != nil &&
+		sess.Status.InitialAuthentication.Info != nil &&
+		sess.Status.InitialAuthentication.Info.GetAuthenticator() != nil &&
+		sess.Status.InitialAuthentication.Info.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO {
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: sess.Status.InitialAuthentication.Info.GetAuthenticator().AuthenticatorRef.Uid,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret.MainAuthenticator = authn
+
+		return ret, nil
+	}
 
 	itmList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
 		Filters: []*rmetav1.ListOptions_Filter{
@@ -310,12 +333,6 @@ func (s *server) listAvailableAuthenticators(ctx context.Context,
 		return nil, s.errInternalErr(err)
 	}
 
-	ret := &corev1.AuthenticatorList{
-		ApiVersion: itmList.ApiVersion,
-		Kind:       itmList.Kind,
-	}
-
-itemLoop:
 	for _, itm := range itmList.Items {
 		if !itm.Status.IsRegistered {
 			continue
@@ -330,8 +347,10 @@ itemLoop:
 			}
 			if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
 				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
-				ret.Items = []*corev1.Authenticator{itm}
-				break itemLoop
+				ret.MainAuthenticator = itm
+				ret.AvailableAuthenticators = nil
+
+				return ret, nil
 			}
 		case corev1.Session_Status_CLIENTLESS:
 			if !sess.Status.IsBrowser {
@@ -344,11 +363,7 @@ itemLoop:
 			}
 		}
 
-		ret.Items = append(ret.Items, itm)
-	}
-
-	ret.ListResponseMeta = &metav1.ListResponseMeta{
-		TotalCount: uint32(len(ret.Items)),
+		ret.AvailableAuthenticators = append(ret.AvailableAuthenticators, itm)
 	}
 
 	return ret, nil

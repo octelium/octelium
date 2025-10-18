@@ -861,9 +861,22 @@ export interface AuthenticateWithAuthenticatorRequest {
     challengeResponse?: ChallengeResponse;
 }
 /**
- * @generated from protobuf message octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions
+ * @generated from protobuf message octelium.api.main.auth.v1.GetAvailableAuthenticatorRequest
  */
-export interface ListAvailableAuthenticatorOptions {
+export interface GetAvailableAuthenticatorRequest {
+}
+/**
+ * @generated from protobuf message octelium.api.main.auth.v1.GetAvailableAuthenticatorResponse
+ */
+export interface GetAvailableAuthenticatorResponse {
+    /**
+     * @generated from protobuf field: octelium.api.main.auth.v1.Authenticator mainAuthenticator = 1;
+     */
+    mainAuthenticator?: Authenticator;
+    /**
+     * @generated from protobuf field: repeated octelium.api.main.auth.v1.Authenticator availableAuthenticators = 2;
+     */
+    availableAuthenticators: Authenticator[];
 }
 /**
  * @generated from protobuf message octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest
@@ -3679,17 +3692,17 @@ class AuthenticateWithAuthenticatorRequest$Type extends MessageType<Authenticate
  */
 export const AuthenticateWithAuthenticatorRequest = new AuthenticateWithAuthenticatorRequest$Type();
 // @generated message type with reflection information, may provide speed optimized methods
-class ListAvailableAuthenticatorOptions$Type extends MessageType<ListAvailableAuthenticatorOptions> {
+class GetAvailableAuthenticatorRequest$Type extends MessageType<GetAvailableAuthenticatorRequest> {
     constructor() {
-        super("octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions", []);
+        super("octelium.api.main.auth.v1.GetAvailableAuthenticatorRequest", []);
     }
-    create(value?: PartialMessage<ListAvailableAuthenticatorOptions>): ListAvailableAuthenticatorOptions {
+    create(value?: PartialMessage<GetAvailableAuthenticatorRequest>): GetAvailableAuthenticatorRequest {
         const message = globalThis.Object.create((this.messagePrototype!));
         if (value !== undefined)
-            reflectionMergePartial<ListAvailableAuthenticatorOptions>(this, message, value);
+            reflectionMergePartial<GetAvailableAuthenticatorRequest>(this, message, value);
         return message;
     }
-    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: ListAvailableAuthenticatorOptions): ListAvailableAuthenticatorOptions {
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: GetAvailableAuthenticatorRequest): GetAvailableAuthenticatorRequest {
         let message = target ?? this.create(), end = reader.pos + length;
         while (reader.pos < end) {
             let [fieldNo, wireType] = reader.tag();
@@ -3705,7 +3718,7 @@ class ListAvailableAuthenticatorOptions$Type extends MessageType<ListAvailableAu
         }
         return message;
     }
-    internalBinaryWrite(message: ListAvailableAuthenticatorOptions, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+    internalBinaryWrite(message: GetAvailableAuthenticatorRequest, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
@@ -3713,9 +3726,63 @@ class ListAvailableAuthenticatorOptions$Type extends MessageType<ListAvailableAu
     }
 }
 /**
- * @generated MessageType for protobuf message octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions
+ * @generated MessageType for protobuf message octelium.api.main.auth.v1.GetAvailableAuthenticatorRequest
  */
-export const ListAvailableAuthenticatorOptions = new ListAvailableAuthenticatorOptions$Type();
+export const GetAvailableAuthenticatorRequest = new GetAvailableAuthenticatorRequest$Type();
+// @generated message type with reflection information, may provide speed optimized methods
+class GetAvailableAuthenticatorResponse$Type extends MessageType<GetAvailableAuthenticatorResponse> {
+    constructor() {
+        super("octelium.api.main.auth.v1.GetAvailableAuthenticatorResponse", [
+            { no: 1, name: "mainAuthenticator", kind: "message", T: () => Authenticator },
+            { no: 2, name: "availableAuthenticators", kind: "message", repeat: 2 /*RepeatType.UNPACKED*/, T: () => Authenticator }
+        ]);
+    }
+    create(value?: PartialMessage<GetAvailableAuthenticatorResponse>): GetAvailableAuthenticatorResponse {
+        const message = globalThis.Object.create((this.messagePrototype!));
+        message.availableAuthenticators = [];
+        if (value !== undefined)
+            reflectionMergePartial<GetAvailableAuthenticatorResponse>(this, message, value);
+        return message;
+    }
+    internalBinaryRead(reader: IBinaryReader, length: number, options: BinaryReadOptions, target?: GetAvailableAuthenticatorResponse): GetAvailableAuthenticatorResponse {
+        let message = target ?? this.create(), end = reader.pos + length;
+        while (reader.pos < end) {
+            let [fieldNo, wireType] = reader.tag();
+            switch (fieldNo) {
+                case /* octelium.api.main.auth.v1.Authenticator mainAuthenticator */ 1:
+                    message.mainAuthenticator = Authenticator.internalBinaryRead(reader, reader.uint32(), options, message.mainAuthenticator);
+                    break;
+                case /* repeated octelium.api.main.auth.v1.Authenticator availableAuthenticators */ 2:
+                    message.availableAuthenticators.push(Authenticator.internalBinaryRead(reader, reader.uint32(), options));
+                    break;
+                default:
+                    let u = options.readUnknownField;
+                    if (u === "throw")
+                        throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+                    let d = reader.skip(wireType);
+                    if (u !== false)
+                        (u === true ? UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+            }
+        }
+        return message;
+    }
+    internalBinaryWrite(message: GetAvailableAuthenticatorResponse, writer: IBinaryWriter, options: BinaryWriteOptions): IBinaryWriter {
+        /* octelium.api.main.auth.v1.Authenticator mainAuthenticator = 1; */
+        if (message.mainAuthenticator)
+            Authenticator.internalBinaryWrite(message.mainAuthenticator, writer.tag(1, WireType.LengthDelimited).fork(), options).join();
+        /* repeated octelium.api.main.auth.v1.Authenticator availableAuthenticators = 2; */
+        for (let i = 0; i < message.availableAuthenticators.length; i++)
+            Authenticator.internalBinaryWrite(message.availableAuthenticators[i], writer.tag(2, WireType.LengthDelimited).fork(), options).join();
+        let u = options.writeUnknownFields;
+        if (u !== false)
+            (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+        return writer;
+    }
+}
+/**
+ * @generated MessageType for protobuf message octelium.api.main.auth.v1.GetAvailableAuthenticatorResponse
+ */
+export const GetAvailableAuthenticatorResponse = new GetAvailableAuthenticatorResponse$Type();
 // @generated message type with reflection information, may provide speed optimized methods
 class AuthenticateWithPasskeyBeginRequest$Type extends MessageType<AuthenticateWithPasskeyBeginRequest> {
     constructor() {
@@ -3876,7 +3943,7 @@ export const MainService = new ServiceType("octelium.api.main.auth.v1.MainServic
     { name: "RegisterAuthenticatorBegin", options: {}, I: RegisterAuthenticatorBeginRequest, O: RegisterAuthenticatorBeginResponse },
     { name: "RegisterAuthenticatorFinish", options: {}, I: RegisterAuthenticatorFinishRequest, O: RegisterAuthenticatorFinishResponse },
     { name: "AuthenticateAuthenticatorBegin", options: {}, I: AuthenticateAuthenticatorBeginRequest, O: AuthenticateAuthenticatorBeginResponse },
-    { name: "ListAvailableAuthenticator", options: {}, I: ListAvailableAuthenticatorOptions, O: AuthenticatorList },
+    { name: "GetAvailableAuthenticator", options: {}, I: GetAvailableAuthenticatorRequest, O: GetAvailableAuthenticatorResponse },
     { name: "AuthenticateWithPasskeyBegin", options: {}, I: AuthenticateWithPasskeyBeginRequest, O: AuthenticateWithPasskeyBeginResponse },
     { name: "AuthenticateWithPasskey", options: {}, I: AuthenticateWithPasskeyRequest, O: SessionToken }
 ]);

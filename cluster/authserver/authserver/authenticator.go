@@ -116,6 +116,10 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 }
 
 func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator {
+	if i == nil {
+		return nil
+	}
+
 	return &authv1.Authenticator{
 		Metadata: &metav1.Metadata{
 			Uid:       i.Metadata.Uid,
@@ -226,8 +230,8 @@ func (s *server) doGetAuthenticator(ctx context.Context, req *metav1.GetOptions)
 	return s.toAuthenticator(authn), nil
 }
 
-func (s *server) doListAvailableAuthenticator(ctx context.Context,
-	req *authv1.ListAvailableAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+func (s *server) doGetAvailableAuthenticator(ctx context.Context,
+	_ *authv1.GetAvailableAuthenticatorRequest) (*authv1.GetAvailableAuthenticatorResponse, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -238,21 +242,20 @@ func (s *server) doListAvailableAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	ret := &authv1.AuthenticatorList{
-		ApiVersion: "auth/v1",
-		Kind:       "AuthenticatorList",
-	}
-
-	itmList, err := s.listAvailableAuthenticators(ctx, sess, usr)
+	resp, err := s.getAvailableAuthenticators(ctx, sess, usr)
 	if err != nil {
 		return nil, s.errInternalErr(err)
 	}
 
-	for _, itm := range itmList.Items {
-		ret.Items = append(ret.Items, s.toAuthenticator(itm))
+	ret := &authv1.GetAvailableAuthenticatorResponse{}
+
+	if resp.MainAuthenticator != nil {
+		ret.MainAuthenticator = s.toAuthenticator(resp.MainAuthenticator)
 	}
 
-	ret.ListResponseMeta = itmList.ListResponseMeta
+	for _, itm := range resp.AvailableAuthenticators {
+		ret.AvailableAuthenticators = append(ret.AvailableAuthenticators, s.toAuthenticator(itm))
+	}
 
 	return ret, nil
 }

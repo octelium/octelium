@@ -29,15 +29,18 @@ type authMainSvc struct {
 	s *server
 }
 
-func (s *authMainSvc) AuthenticateWithAuthenticationToken(ctx context.Context, req *authv1.AuthenticateWithAuthenticationTokenRequest) (*authv1.SessionToken, error) {
+func (s *authMainSvc) AuthenticateWithAuthenticationToken(ctx context.Context,
+	req *authv1.AuthenticateWithAuthenticationTokenRequest) (*authv1.SessionToken, error) {
 	return s.s.doAuthenticateWithAuthenticationToken(ctx, req)
 }
 
-func (s *authMainSvc) AuthenticateWithAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*authv1.SessionToken, error) {
+func (s *authMainSvc) AuthenticateWithAssertion(ctx context.Context,
+	req *authv1.AuthenticateWithAssertionRequest) (*authv1.SessionToken, error) {
 	return s.s.doAuthenticateWithAssertion(ctx, req)
 }
 
-func (s *authMainSvc) AuthenticateWithRefreshToken(ctx context.Context, req *authv1.AuthenticateWithRefreshTokenRequest) (*authv1.SessionToken, error) {
+func (s *authMainSvc) AuthenticateWithRefreshToken(ctx context.Context,
+	req *authv1.AuthenticateWithRefreshTokenRequest) (*authv1.SessionToken, error) {
 	return s.s.doAuthenticateWithRefreshToken(ctx, req)
 }
 
@@ -45,15 +48,18 @@ func (s *authMainSvc) Logout(ctx context.Context, req *authv1.LogoutRequest) (*a
 	return s.s.doLogout(ctx, req)
 }
 
-func (s *authMainSvc) RegisterDeviceBegin(ctx context.Context, req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
+func (s *authMainSvc) RegisterDeviceBegin(ctx context.Context,
+	req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
 	return s.s.doRegisterDeviceBegin(ctx, req)
 }
 
-func (s *authMainSvc) RegisterDeviceFinish(ctx context.Context, req *authv1.RegisterDeviceFinishRequest) (*authv1.RegisterDeviceFinishResponse, error) {
+func (s *authMainSvc) RegisterDeviceFinish(ctx context.Context,
+	req *authv1.RegisterDeviceFinishRequest) (*authv1.RegisterDeviceFinishResponse, error) {
 	return s.s.doRegisterDeviceFinish(ctx, req)
 }
 
-func (s *authMainSvc) AuthenticateWithAuthenticator(ctx context.Context, req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
+func (s *authMainSvc) AuthenticateWithAuthenticator(ctx context.Context,
+	req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -61,7 +67,8 @@ func (s *authMainSvc) AuthenticateWithAuthenticator(ctx context.Context, req *au
 	return s.s.doAuthenticateWithAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) CreateAuthenticator(ctx context.Context, req *authv1.CreateAuthenticatorRequest) (*authv1.Authenticator, error) {
+func (s *authMainSvc) CreateAuthenticator(ctx context.Context,
+	req *authv1.CreateAuthenticatorRequest) (*authv1.Authenticator, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -69,7 +76,8 @@ func (s *authMainSvc) CreateAuthenticator(ctx context.Context, req *authv1.Creat
 	return s.s.doCreateAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) ListAuthenticator(ctx context.Context, req *authv1.ListAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+func (s *authMainSvc) ListAuthenticator(ctx context.Context,
+	req *authv1.ListAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -77,7 +85,8 @@ func (s *authMainSvc) ListAuthenticator(ctx context.Context, req *authv1.ListAut
 	return s.s.doListAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) GetAuthenticator(ctx context.Context, req *metav1.GetOptions) (*authv1.Authenticator, error) {
+func (s *authMainSvc) GetAuthenticator(ctx context.Context,
+	req *metav1.GetOptions) (*authv1.Authenticator, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -85,7 +94,8 @@ func (s *authMainSvc) GetAuthenticator(ctx context.Context, req *metav1.GetOptio
 	return s.s.doGetAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) DeleteAuthenticator(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+func (s *authMainSvc) DeleteAuthenticator(ctx context.Context,
+	req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -93,7 +103,8 @@ func (s *authMainSvc) DeleteAuthenticator(ctx context.Context, req *metav1.Delet
 	return s.s.doDeleteAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) UpdateAuthenticator(ctx context.Context, req *authv1.Authenticator) (*authv1.Authenticator, error) {
+func (s *authMainSvc) UpdateAuthenticator(ctx context.Context,
+	req *authv1.Authenticator) (*authv1.Authenticator, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -101,7 +112,8 @@ func (s *authMainSvc) UpdateAuthenticator(ctx context.Context, req *authv1.Authe
 	return s.s.doUpdateAuthenticator(ctx, req)
 }
 
-func (s *authMainSvc) AuthenticateAuthenticatorBegin(ctx context.Context, req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
+func (s *authMainSvc) AuthenticateAuthenticatorBegin(ctx context.Context,
+	req *authv1.AuthenticateAuthenticatorBeginRequest) (*authv1.AuthenticateAuthenticatorBeginResponse, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -109,7 +121,8 @@ func (s *authMainSvc) AuthenticateAuthenticatorBegin(ctx context.Context, req *a
 	return s.s.doAuthenticateAuthenticatorBegin(ctx, req)
 }
 
-func (s *authMainSvc) RegisterAuthenticatorBegin(ctx context.Context, req *authv1.RegisterAuthenticatorBeginRequest) (*authv1.RegisterAuthenticatorBeginResponse, error) {
+func (s *authMainSvc) RegisterAuthenticatorBegin(ctx context.Context,
+	req *authv1.RegisterAuthenticatorBeginRequest) (*authv1.RegisterAuthenticatorBeginResponse, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -117,7 +130,8 @@ func (s *authMainSvc) RegisterAuthenticatorBegin(ctx context.Context, req *authv
 	return s.s.doRegisterAuthenticatorBegin(ctx, req)
 }
 
-func (s *authMainSvc) RegisterAuthenticatorFinish(ctx context.Context, req *authv1.RegisterAuthenticatorFinishRequest) (*authv1.RegisterAuthenticatorFinishResponse, error) {
+func (s *authMainSvc) RegisterAuthenticatorFinish(ctx context.Context,
+	req *authv1.RegisterAuthenticatorFinishRequest) (*authv1.RegisterAuthenticatorFinishResponse, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
@@ -125,12 +139,13 @@ func (s *authMainSvc) RegisterAuthenticatorFinish(ctx context.Context, req *auth
 	return s.s.doRegisterAuthenticatorFinish(ctx, req)
 }
 
-func (s *authMainSvc) ListAvailableAuthenticator(ctx context.Context, req *authv1.ListAvailableAuthenticatorOptions) (*authv1.AuthenticatorList, error) {
+func (s *authMainSvc) GetAvailableAuthenticator(ctx context.Context,
+	req *authv1.GetAvailableAuthenticatorRequest) (*authv1.GetAvailableAuthenticatorResponse, error) {
 	if err := s.doCheckProduction(); err != nil {
 		return nil, err
 	}
 
-	return s.s.doListAvailableAuthenticator(ctx, req)
+	return s.s.doGetAvailableAuthenticator(ctx, req)
 }
 
 func (s *authMainSvc) AuthenticateWithPasskeyBegin(ctx context.Context,

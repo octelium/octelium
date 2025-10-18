@@ -215,7 +215,7 @@ const Page = () => {
   const { isError, isLoading, data } = useQuery({
     queryKey: ["listAvailableAuthenticator"],
     queryFn: async () => {
-      return await c.listAvailableAuthenticator({});
+      return await c.getAvailableAuthenticator({});
     },
   });
 
@@ -239,7 +239,7 @@ const Page = () => {
   return (
     <div>
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        {data.response.items.map((x) => (
+        {data.response.availableAuthenticators.map((x) => (
           <Authenticator authn={x} />
         ))}
       </div>

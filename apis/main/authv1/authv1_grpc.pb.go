@@ -49,7 +49,7 @@ const (
 	MainService_RegisterAuthenticatorBegin_FullMethodName          = "/octelium.api.main.auth.v1.MainService/RegisterAuthenticatorBegin"
 	MainService_RegisterAuthenticatorFinish_FullMethodName         = "/octelium.api.main.auth.v1.MainService/RegisterAuthenticatorFinish"
 	MainService_AuthenticateAuthenticatorBegin_FullMethodName      = "/octelium.api.main.auth.v1.MainService/AuthenticateAuthenticatorBegin"
-	MainService_ListAvailableAuthenticator_FullMethodName          = "/octelium.api.main.auth.v1.MainService/ListAvailableAuthenticator"
+	MainService_GetAvailableAuthenticator_FullMethodName           = "/octelium.api.main.auth.v1.MainService/GetAvailableAuthenticator"
 	MainService_AuthenticateWithPasskeyBegin_FullMethodName        = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskeyBegin"
 	MainService_AuthenticateWithPasskey_FullMethodName             = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskey"
 )
@@ -73,7 +73,7 @@ type MainServiceClient interface {
 	RegisterAuthenticatorBegin(ctx context.Context, in *RegisterAuthenticatorBeginRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorBeginResponse, error)
 	RegisterAuthenticatorFinish(ctx context.Context, in *RegisterAuthenticatorFinishRequest, opts ...grpc.CallOption) (*RegisterAuthenticatorFinishResponse, error)
 	AuthenticateAuthenticatorBegin(ctx context.Context, in *AuthenticateAuthenticatorBeginRequest, opts ...grpc.CallOption) (*AuthenticateAuthenticatorBeginResponse, error)
-	ListAvailableAuthenticator(ctx context.Context, in *ListAvailableAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error)
+	GetAvailableAuthenticator(ctx context.Context, in *GetAvailableAuthenticatorRequest, opts ...grpc.CallOption) (*GetAvailableAuthenticatorResponse, error)
 	AuthenticateWithPasskeyBegin(ctx context.Context, in *AuthenticateWithPasskeyBeginRequest, opts ...grpc.CallOption) (*AuthenticateWithPasskeyBeginResponse, error)
 	AuthenticateWithPasskey(ctx context.Context, in *AuthenticateWithPasskeyRequest, opts ...grpc.CallOption) (*SessionToken, error)
 }
@@ -236,10 +236,10 @@ func (c *mainServiceClient) AuthenticateAuthenticatorBegin(ctx context.Context, 
 	return out, nil
 }
 
-func (c *mainServiceClient) ListAvailableAuthenticator(ctx context.Context, in *ListAvailableAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error) {
+func (c *mainServiceClient) GetAvailableAuthenticator(ctx context.Context, in *GetAvailableAuthenticatorRequest, opts ...grpc.CallOption) (*GetAvailableAuthenticatorResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AuthenticatorList)
-	err := c.cc.Invoke(ctx, MainService_ListAvailableAuthenticator_FullMethodName, in, out, cOpts...)
+	out := new(GetAvailableAuthenticatorResponse)
+	err := c.cc.Invoke(ctx, MainService_GetAvailableAuthenticator_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ type MainServiceServer interface {
 	RegisterAuthenticatorBegin(context.Context, *RegisterAuthenticatorBeginRequest) (*RegisterAuthenticatorBeginResponse, error)
 	RegisterAuthenticatorFinish(context.Context, *RegisterAuthenticatorFinishRequest) (*RegisterAuthenticatorFinishResponse, error)
 	AuthenticateAuthenticatorBegin(context.Context, *AuthenticateAuthenticatorBeginRequest) (*AuthenticateAuthenticatorBeginResponse, error)
-	ListAvailableAuthenticator(context.Context, *ListAvailableAuthenticatorOptions) (*AuthenticatorList, error)
+	GetAvailableAuthenticator(context.Context, *GetAvailableAuthenticatorRequest) (*GetAvailableAuthenticatorResponse, error)
 	AuthenticateWithPasskeyBegin(context.Context, *AuthenticateWithPasskeyBeginRequest) (*AuthenticateWithPasskeyBeginResponse, error)
 	AuthenticateWithPasskey(context.Context, *AuthenticateWithPasskeyRequest) (*SessionToken, error)
 	mustEmbedUnimplementedMainServiceServer()
@@ -343,8 +343,8 @@ func (UnimplementedMainServiceServer) RegisterAuthenticatorFinish(context.Contex
 func (UnimplementedMainServiceServer) AuthenticateAuthenticatorBegin(context.Context, *AuthenticateAuthenticatorBeginRequest) (*AuthenticateAuthenticatorBeginResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateAuthenticatorBegin not implemented")
 }
-func (UnimplementedMainServiceServer) ListAvailableAuthenticator(context.Context, *ListAvailableAuthenticatorOptions) (*AuthenticatorList, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListAvailableAuthenticator not implemented")
+func (UnimplementedMainServiceServer) GetAvailableAuthenticator(context.Context, *GetAvailableAuthenticatorRequest) (*GetAvailableAuthenticatorResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAvailableAuthenticator not implemented")
 }
 func (UnimplementedMainServiceServer) AuthenticateWithPasskeyBegin(context.Context, *AuthenticateWithPasskeyBeginRequest) (*AuthenticateWithPasskeyBeginResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithPasskeyBegin not implemented")
@@ -643,20 +643,20 @@ func _MainService_AuthenticateAuthenticatorBegin_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MainService_ListAvailableAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListAvailableAuthenticatorOptions)
+func _MainService_GetAvailableAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAvailableAuthenticatorRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MainServiceServer).ListAvailableAuthenticator(ctx, in)
+		return srv.(MainServiceServer).GetAvailableAuthenticator(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MainService_ListAvailableAuthenticator_FullMethodName,
+		FullMethod: MainService_GetAvailableAuthenticator_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MainServiceServer).ListAvailableAuthenticator(ctx, req.(*ListAvailableAuthenticatorOptions))
+		return srv.(MainServiceServer).GetAvailableAuthenticator(ctx, req.(*GetAvailableAuthenticatorRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -765,8 +765,8 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MainService_AuthenticateAuthenticatorBegin_Handler,
 		},
 		{
-			MethodName: "ListAvailableAuthenticator",
-			Handler:    _MainService_ListAvailableAuthenticator_Handler,
+			MethodName: "GetAvailableAuthenticator",
+			Handler:    _MainService_GetAvailableAuthenticator_Handler,
 		},
 		{
 			MethodName: "AuthenticateWithPasskeyBegin",

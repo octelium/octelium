@@ -22,7 +22,8 @@ import { MainService } from "./authv1";
 import type { AuthenticateWithPasskeyRequest } from "./authv1";
 import type { AuthenticateWithPasskeyBeginResponse } from "./authv1";
 import type { AuthenticateWithPasskeyBeginRequest } from "./authv1";
-import type { ListAvailableAuthenticatorOptions } from "./authv1";
+import type { GetAvailableAuthenticatorResponse } from "./authv1";
+import type { GetAvailableAuthenticatorRequest } from "./authv1";
 import type { AuthenticateAuthenticatorBeginResponse } from "./authv1";
 import type { AuthenticateAuthenticatorBeginRequest } from "./authv1";
 import type { RegisterAuthenticatorFinishResponse } from "./authv1";
@@ -115,9 +116,9 @@ export interface IMainServiceClient {
      */
     authenticateAuthenticatorBegin(input: AuthenticateAuthenticatorBeginRequest, options?: RpcOptions): UnaryCall<AuthenticateAuthenticatorBeginRequest, AuthenticateAuthenticatorBeginResponse>;
     /**
-     * @generated from protobuf rpc: ListAvailableAuthenticator(octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions) returns (octelium.api.main.auth.v1.AuthenticatorList);
+     * @generated from protobuf rpc: GetAvailableAuthenticator(octelium.api.main.auth.v1.GetAvailableAuthenticatorRequest) returns (octelium.api.main.auth.v1.GetAvailableAuthenticatorResponse);
      */
-    listAvailableAuthenticator(input: ListAvailableAuthenticatorOptions, options?: RpcOptions): UnaryCall<ListAvailableAuthenticatorOptions, AuthenticatorList>;
+    getAvailableAuthenticator(input: GetAvailableAuthenticatorRequest, options?: RpcOptions): UnaryCall<GetAvailableAuthenticatorRequest, GetAvailableAuthenticatorResponse>;
     /**
      * @generated from protobuf rpc: AuthenticateWithPasskeyBegin(octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest) returns (octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse);
      */
@@ -242,11 +243,11 @@ export class MainServiceClient implements IMainServiceClient, ServiceInfo {
         return stackIntercept<AuthenticateAuthenticatorBeginRequest, AuthenticateAuthenticatorBeginResponse>("unary", this._transport, method, opt, input);
     }
     /**
-     * @generated from protobuf rpc: ListAvailableAuthenticator(octelium.api.main.auth.v1.ListAvailableAuthenticatorOptions) returns (octelium.api.main.auth.v1.AuthenticatorList);
+     * @generated from protobuf rpc: GetAvailableAuthenticator(octelium.api.main.auth.v1.GetAvailableAuthenticatorRequest) returns (octelium.api.main.auth.v1.GetAvailableAuthenticatorResponse);
      */
-    listAvailableAuthenticator(input: ListAvailableAuthenticatorOptions, options?: RpcOptions): UnaryCall<ListAvailableAuthenticatorOptions, AuthenticatorList> {
+    getAvailableAuthenticator(input: GetAvailableAuthenticatorRequest, options?: RpcOptions): UnaryCall<GetAvailableAuthenticatorRequest, GetAvailableAuthenticatorResponse> {
         const method = this.methods[15], opt = this._transport.mergeOptions(options);
-        return stackIntercept<ListAvailableAuthenticatorOptions, AuthenticatorList>("unary", this._transport, method, opt, input);
+        return stackIntercept<GetAvailableAuthenticatorRequest, GetAvailableAuthenticatorResponse>("unary", this._transport, method, opt, input);
     }
     /**
      * @generated from protobuf rpc: AuthenticateWithPasskeyBegin(octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginRequest) returns (octelium.api.main.auth.v1.AuthenticateWithPasskeyBeginResponse);
