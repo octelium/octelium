@@ -95,7 +95,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
           <div className="mt-8">
             <PinInput
               type={"number"}
-              inputType="tel"
+              inputType="number"
               inputMode="numeric"
               length={6}
               size="lg"
@@ -125,22 +125,14 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       );
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
-        console.log("Req", response.challengeRequest.type.fido.request);
         const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(
           JSON.parse(response.challengeRequest.type.fido.request)
         );
-        console.log("publicKey", publicKey);
 
         try {
           const credential = (await navigator.credentials.create({
             publicKey,
           })) as PublicKeyCredential;
-
-          console.log("FIDO response", credential.toJSON());
-          console.log(
-            "serialized JSON response",
-            JSON.stringify(credential.toJSON())
-          );
 
           return await c.registerAuthenticatorFinish(
             Auth.AuthenticateWithAuthenticatorRequest.create({
@@ -156,7 +148,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
             })
           );
         } catch (err) {
-          console.log("create err", err);
+          console.log("fido create err", err);
           throw err;
         }
       }

@@ -41,8 +41,6 @@ const devList = Auth.AuthenticatorList.create({
   ],
 });
 
-
-
 const Page = () => {
   const c = getClientAuth();
 

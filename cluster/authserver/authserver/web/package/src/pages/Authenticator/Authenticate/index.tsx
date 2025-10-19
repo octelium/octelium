@@ -67,7 +67,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
 
       <PinInput
         type={"number"}
-        inputType="tel"
+        inputType="number"
         inputMode="numeric"
         length={6}
         autoFocus
@@ -95,15 +95,12 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
         try {
-          console.log("Got req", response.challengeRequest.type.fido.request);
           const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
             JSON.parse(response.challengeRequest.type.fido.request)
           );
           const credential = (await navigator.credentials.get({
             publicKey,
           })) as PublicKeyCredential;
-
-          console.log("Got credential", credential.toJSON());
 
           return await c.authenticateWithAuthenticator(
             Auth.AuthenticateWithAuthenticatorRequest.create({
@@ -144,9 +141,6 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
   let [displayName, setDisplayName] = React.useState<string>(
     authn.spec!.displayName
   );
-  const ref = useClickOutside(() => {
-    setIsEdit(false);
-  });
 
   const isDelete = useDisclosure(false);
   const c = getClientAuth();
@@ -172,12 +166,14 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
     mutationFn: async () => {
       let req = Auth.Authenticator.clone(authn);
       req.spec!.displayName = displayName ?? "";
+
       await c.updateAuthenticator(req);
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({
         queryKey: ["getAvailableAuthenticator"],
       });
+      setIsEdit(false);
     },
     onError: (resp) => {},
   });
@@ -205,54 +201,63 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
       <div className="flex items-center">
         <div className="w-full font-bold flex-1">
           <div className="flex items-center">
-            <span className="text-white bg-slate-800 rounded-lg p-2 text-xs shadow-md">
+            <span className="text-white bg-slate-800 rounded-lg py-2 px-2 text-xs shadow-md">
               {authn.status?.type === Auth.Authenticator_Status_Type.FIDO &&
                 "FIDO"}
               {authn.status?.type === Auth.Authenticator_Status_Type.TOTP &&
                 "TOTP"}
             </span>{" "}
-            {!isEdit && (
-              <span className="text-black ml-1">
-                {authn.spec?.displayName ?? authn.metadata!.name}
-              </span>
-            )}
-            {isEdit && (
-              <div className="flex items-center">
-                <Input
-                  placeholder="My Authenticator"
-                  ref={ref}
-                  variant={"unstyled"}
-                  value={displayName}
-                  onChange={(e) => {
-                    setDisplayName(e.target.value);
-                  }}
-                />
+            <div className="ml-1 flex-1 w-full">
+              <div className="text-black ml-1 flex items-center w-full">
+                <Tooltip label="Edit Display Name">
+                  <ActionIcon
+                    variant="transparent"
+                    aria-label="Edit Display Name"
+                    onClick={() => {
+                      setIsEdit(!isEdit);
+                    }}
+                  >
+                    {isEdit ? (
+                      <MdEditOff className="text-slate-500" />
+                    ) : (
+                      <MdEdit className="text-slate-500" />
+                    )}
+                  </ActionIcon>
+                </Tooltip>
 
-                <ActionIcon
-                  aria-label="Submit"
-                  onClick={() => {
-                    mutationUpdate.mutate();
-                  }}
-                >
-                  <IoMdSend />
-                </ActionIcon>
-              </div>
-            )}
-            <Tooltip label="Edit Display Name">
-              <ActionIcon
-                variant="transparent"
-                aria-label="Edit Display Name"
-                onClick={() => {
-                  setIsEdit(!isEdit);
-                }}
-              >
-                {isEdit ? (
-                  <MdEditOff className="text-slate-500" />
-                ) : (
-                  <MdEdit className="text-slate-500" />
+                {!isEdit && (
+                  <span>{authn.spec?.displayName ?? authn.metadata!.name}</span>
                 )}
-              </ActionIcon>
-            </Tooltip>
+                {isEdit && (
+                  <div className="flex items-center flex-1 w-full">
+                    <Input
+                      placeholder="My Authenticator"
+                      variant={"unstyled"}
+                      value={displayName}
+                      onChange={(e) => {
+                        setDisplayName(e.target.value);
+                      }}
+                    />
+
+                    <ActionIcon
+                      aria-label="Submit"
+                      loading={mutationUpdate.isPending}
+                      onClick={() => {
+                        mutationUpdate.mutate();
+                      }}
+                    >
+                      <IoMdSend />
+                    </ActionIcon>
+                  </div>
+                )}
+              </div>
+
+              {authn.spec?.displayName && (
+                <div className="text-slate-700 text-xs ml-1">
+                  {authn.metadata!.name}
+                </div>
+              )}
+            </div>
           </div>
           <div className="text-xs mt-1 mb-2 text-slate-500">
             <span>Created </span>
@@ -373,20 +378,45 @@ export const ListAvailableAuthenticators = (props: {
 
   return (
     <div className="w-full">
-      <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
-        Your Available Authenticators{" "}
-        <Link
-          to={`/authenticators/register`}
-          className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
-        >
-          Register
-        </Link>
-      </h2>
-      <div className="w-full">
-        {resp.availableAuthenticators.map((x) => (
-          <Authenticator authn={x} />
-        ))}
-      </div>
+      {resp.mainAuthenticator && (
+        <div className="mb-8">
+          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+            Your Session's Main Authenticator
+          </div>
+
+          <Authenticator authn={resp.mainAuthenticator} />
+        </div>
+      )}
+      {resp.availableAuthenticators.length < 1 ? (
+        <div className="w-full">
+          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+            You have no Available Authenticators{" "}
+            <Link
+              to={`/authenticators/register`}
+              className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
+            >
+              Register
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+            Your Available Authenticators{" "}
+            <Link
+              to={`/authenticators/register`}
+              className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
+            >
+              Register
+            </Link>
+          </h2>
+          <div className="w-full">
+            {resp.availableAuthenticators.map((x) => (
+              <Authenticator key={x.metadata!.name} authn={x} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
