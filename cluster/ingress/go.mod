@@ -15,7 +15,7 @@ require (
 	google.golang.org/protobuf v1.36.10
 )
 
-require github.com/envoyproxy/go-control-plane/envoy v1.32.4
+require github.com/envoyproxy/go-control-plane/envoy v1.35.0
 
 require (
 	cel.dev/expr v0.24.0 // indirect
