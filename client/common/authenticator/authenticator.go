@@ -30,7 +30,9 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/cliutils"
+	authn "github.com/octelium/octelium/client/common/commands/auth/authenticator"
 	"github.com/octelium/octelium/octelium-go/authc"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -222,6 +224,29 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		if !needsNewAccessToken(a.at) {
 			// zap.L().Debug("No need to fetch a new access token. The current one is still new")
 			return a.at.SessionToken.AccessToken, nil
+		}
+
+		if resp, err := a.c.C().GetAvailableAuthenticator(ctx,
+			&authv1.GetAvailableAuthenticatorRequest{}); err == nil && resp.MainAuthenticator != nil {
+			if err := authn.DoAuthenticate(ctx,
+				a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
+				sessTkn, err := cliutils.GetDB().GetSessionToken(a.domain)
+				if err != nil {
+					return "", err
+				}
+
+				zap.L().Debug("Successfully authenticated with main Authenticator",
+					zap.Any("authenticator", resp.MainAuthenticator))
+
+				return sessTkn.AccessToken, nil
+			} else {
+				zap.L().Warn("Could not DoAuthenticate for Authenticator",
+					zap.Error(err), zap.Any("authenticator", resp.MainAuthenticator))
+			}
+		} else if grpcerr.IsUnimplemented(err) {
+			zap.L().Debug("GetAvailableAuthenticator is not implemented at the Cluster.")
+		} else {
+			zap.L().Warn("Could not getAvailableAuthenticator", zap.Error(err))
 		}
 
 		sessTkn, err := a.c.C().AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})
