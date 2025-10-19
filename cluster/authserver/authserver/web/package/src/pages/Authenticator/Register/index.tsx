@@ -177,10 +177,7 @@ const Page = () => {
   );
 
   const mutation = useMutation({
-    mutationFn: async (props: {
-      type: Auth.Authenticator_Status_Type;
-      displayName?: string;
-    }) => {
+    mutationFn: async (props: { type: Auth.Authenticator_Status_Type }) => {
       if (isDev()) {
         return Auth.Authenticator.create({
           metadata: {
@@ -188,7 +185,7 @@ const Page = () => {
             createdAt: Timestamp.now(),
           },
           spec: {
-            displayName: props.displayName,
+            displayName,
           },
           status: {
             type: props.type,
@@ -199,7 +196,7 @@ const Page = () => {
       const { response } = await c.createAuthenticator(
         Auth.CreateAuthenticatorRequest.create({
           type: props.type,
-          displayName: props.displayName,
+          displayName,
         })
       );
 
@@ -263,7 +260,7 @@ const Page = () => {
                 <button
                   key={x.name}
                   className={twMerge(
-                    "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
+                    "w-full px-3 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
                     "shadow-2xl rounded-lg cursor-pointer font-bold",
                     "bg-[#242323] hover:bg-black text-white text-lg",
                     mutation.isPending ? "!bg-[#777] shadow-none" : undefined
@@ -271,13 +268,12 @@ const Page = () => {
                   onClick={() => {
                     mutation.mutate({
                       type: x.type,
-                      displayName,
                     });
                   }}
                 >
                   <div className="flex items-center">
                     <span className="font-bold text-xl">{x.name}</span>
-                    <span className="font-semibold text-sm flex-1 text-left ml-6">
+                    <span className="font-bold text-sm flex-1 text-left ml-4 text-slate-300">
                       {x.description}
                     </span>
                   </div>
