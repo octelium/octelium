@@ -319,6 +319,9 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 		}
 
 		ret.MainAuthenticator = authn
+		ret.AvailableAuthenticators = []*corev1.Authenticator{
+			authn,
+		}
 
 		return ret, nil
 	}
@@ -873,6 +876,16 @@ func (s *server) handleAuthenticatorAuthenticate(w http.ResponseWriter, r *http.
 		// s.redirectToPortal(w, r)
 		s.renderLoggedIn(w)
 	}
+}
+
+func (s *server) handleAuthenticatorList(w http.ResponseWriter, r *http.Request) {
+	_, err := s.getWebSessionFromHTTPRefreshCookie(r)
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	s.renderLoggedIn(w)
 }
 
 func (s *server) handleAuthenticatorRegister(w http.ResponseWriter, r *http.Request) {

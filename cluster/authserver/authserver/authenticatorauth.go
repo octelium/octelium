@@ -19,6 +19,7 @@ package authserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -285,6 +286,19 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 
 	if !authn.Status.IsRegistered {
 		return nil, s.errInvalidArg("Authenticator is not registered")
+	}
+
+	{
+		res, err := s.getAvailableAuthenticators(ctx, sess, usr)
+		if err != nil {
+			return nil, err
+		}
+
+		if idx := slices.IndexFunc(res.AvailableAuthenticators, func(itm *corev1.Authenticator) bool {
+			return itm.Metadata.Uid == authn.Metadata.Uid
+		}); idx < 0 {
+			return nil, s.errPermissionDenied("Authenticator is not available for this Session")
+		}
 	}
 
 	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {

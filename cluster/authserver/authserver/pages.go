@@ -164,13 +164,13 @@ func (s *server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) redirectToAuthenticatorAuthenticate(w http.ResponseWriter, r *http.Request) {
-	murl, _ := url.Parse(fmt.Sprintf("%s/authenticator/authenticate", s.rootURL))
+	murl, _ := url.Parse(fmt.Sprintf("%s/authenticators/authenticate", s.rootURL))
 	murl.RawQuery = r.URL.RawQuery
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
 }
 
 func (s *server) redirectToAuthenticatorRegister(w http.ResponseWriter, r *http.Request) {
-	murl, _ := url.Parse(fmt.Sprintf("%s/authenticator/register", s.rootURL))
+	murl, _ := url.Parse(fmt.Sprintf("%s/authenticators/register", s.rootURL))
 	murl.RawQuery = r.URL.RawQuery
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
 }

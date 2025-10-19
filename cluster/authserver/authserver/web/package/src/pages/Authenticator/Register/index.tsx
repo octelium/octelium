@@ -221,6 +221,7 @@ const Page = () => {
 
   return (
     <div>
+      <title>Register an Authenticator - Octelium</title>
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
         {!authn && (
           <div className="w-full mt-16">

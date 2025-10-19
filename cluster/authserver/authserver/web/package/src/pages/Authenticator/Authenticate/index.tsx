@@ -137,7 +137,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
   return <div></div>;
 };
 
-const Authenticator = (props: { authn: Auth.Authenticator }) => {
+export const Authenticator = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
   let [open, setOpen] = React.useState(false);
   let [isEdit, setIsEdit] = React.useState(false);
@@ -162,7 +162,7 @@ const Authenticator = (props: { authn: Auth.Authenticator }) => {
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({
-        queryKey: ["getAvailableAuthenticator"],
+        queryKey: ["getAvailableAuthenticator", "listAuthenticator"],
       });
     },
     onError: (resp) => {},
@@ -260,14 +260,16 @@ const Authenticator = (props: { authn: Auth.Authenticator }) => {
           </div>
         </div>
         <div className="flex flex-col items-center">
-          <Button
-            onClick={() => {
-              setOpen(!open);
-            }}
-            variant={open ? "outline" : undefined}
-          >
-            {open ? "Cancel" : "Authenticate"}
-          </Button>
+          {authn.status?.isRegistered && (
+            <Button
+              onClick={() => {
+                setOpen(!open);
+              }}
+              variant={open ? "outline" : undefined}
+            >
+              {open ? "Cancel" : "Authenticate"}
+            </Button>
+          )}
           <Button
             className="mt-3 !rounded-md !transition-all !duration-500 !border-slate-500"
             fullWidth
@@ -362,7 +364,7 @@ const AvailableAuthenticators = (props: {
       <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
         Your Available Authenticators{" "}
         <Link
-          to={`/authenticator/register`}
+          to={`/authenticators/register`}
           className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
         >
           Register
