@@ -314,6 +314,218 @@ func TestIsAuthorized(t *testing.T) {
 	}
 
 	{
+		// Locked Session
+
+		svcReq := tests.GenService(network.Metadata.Name)
+		svcReq.Spec.IsPublic = true
+		svcReq.Spec.Mode = corev1.Service_Spec_HTTP
+
+		svcReq.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `1 == 1`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err := adminSrv.CreateService(ctx, svcReq)
+		assert.Nil(t, err, "%+v", err)
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svcV)
+
+		usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+		assert.Nil(t, err)
+
+		usr.Session.Status.IsLocked = true
+
+		usr.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usr.Session)
+		assert.Nil(t, err)
+
+		srv.cache.SetUser(usr.Usr)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetSession(usr.Session)
+
+		testIsUnauthorized(srv, svc, getReq(usr.Session, svc))
+		testIsUnauthorized(srv, svc, getReqHTTP(usr.Session, svc, "/", "GET"))
+	}
+
+	{
+		// Locked User
+
+		svcReq := tests.GenService(network.Metadata.Name)
+		svcReq.Spec.IsPublic = true
+		svcReq.Spec.Mode = corev1.Service_Spec_HTTP
+
+		svcReq.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `1 == 1`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err := adminSrv.CreateService(ctx, svcReq)
+		assert.Nil(t, err, "%+v", err)
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svcV)
+
+		usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+		assert.Nil(t, err)
+
+		usr.Usr.Status.IsLocked = true
+
+		usr.Usr, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr.Usr)
+		assert.Nil(t, err)
+
+		srv.cache.SetUser(usr.Usr)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetSession(usr.Session)
+
+		testIsUnauthorized(srv, svc, getReq(usr.Session, svc))
+		testIsUnauthorized(srv, svc, getReqHTTP(usr.Session, svc, "/", "GET"))
+	}
+
+	{
+		// AuthenticatorAction - required authentication
+
+		svcReq := tests.GenService(network.Metadata.Name)
+		svcReq.Spec.IsPublic = true
+		svcReq.Spec.Mode = corev1.Service_Spec_HTTP
+
+		svcReq.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `1 == 1`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err := adminSrv.CreateService(ctx, svcReq)
+		assert.Nil(t, err, "%+v", err)
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svcV)
+
+		usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+		assert.Nil(t, err)
+
+		usr.Session.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
+
+		usr.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usr.Session)
+		assert.Nil(t, err)
+
+		srv.cache.SetUser(usr.Usr)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetSession(usr.Session)
+
+		testIsUnauthorized(srv, svc, getReq(usr.Session, svc))
+		testIsUnauthorized(srv, svc, getReqHTTP(usr.Session, svc, "/", "GET"))
+	}
+
+	{
+		// AuthenticatorAction - required registration
+
+		svcReq := tests.GenService(network.Metadata.Name)
+		svcReq.Spec.IsPublic = true
+		svcReq.Spec.Mode = corev1.Service_Spec_HTTP
+
+		svcReq.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `1 == 1`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err := adminSrv.CreateService(ctx, svcReq)
+		assert.Nil(t, err, "%+v", err)
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svcV)
+
+		usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+		assert.Nil(t, err)
+
+		usr.Session.Status.AuthenticatorAction = corev1.Session_Status_REGISTRATION_REQUIRED
+
+		usr.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usr.Session)
+		assert.Nil(t, err)
+
+		srv.cache.SetUser(usr.Usr)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetSession(usr.Session)
+
+		testIsUnauthorized(srv, svc, getReq(usr.Session, svc))
+		testIsUnauthorized(srv, svc, getReqHTTP(usr.Session, svc, "/", "GET"))
+	}
+
+	{
 		// Deviceless code
 
 		svcReq := tests.GenService(network.Metadata.Name)

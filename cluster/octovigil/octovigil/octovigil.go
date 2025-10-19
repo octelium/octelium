@@ -499,9 +499,11 @@ func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (
 
 	switch req.Session.Status.AuthenticatorAction {
 	case corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET:
-	case corev1.Session_Status_AUTHENTICATION_REQUIRED,
-		corev1.Session_Status_REGISTRATION_REQUIRED:
-		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_AUTH_REQUIRED
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_AUTHENTICATION_REQUIRED
+		return false, reason, nil
+	case corev1.Session_Status_REGISTRATION_REQUIRED:
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_AUTHENTICATOR_REGISTRATION_REQUIRED
 		return false, reason, nil
 	case corev1.Session_Status_AUTHENTICATION_RECOMMENDED,
 		corev1.Session_Status_REGISTRATION_RECOMMENDED:
