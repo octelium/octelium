@@ -317,7 +317,6 @@ func (s *Server) authenticate(ctx context.Context, req *coctovigilv1.DoAuthentic
 	}
 
 	if di.User == nil {
-		// zap.S().Debugf("Getting user: %s from resource server", di.Session.Status.UserRef.Name)
 		usr, err := s.octeliumC.CoreC().GetUser(ctx,
 			&rmetav1.GetOptions{Uid: di.Session.Status.UserRef.Uid})
 		if err != nil {
@@ -330,7 +329,6 @@ func (s *Server) authenticate(ctx context.Context, req *coctovigilv1.DoAuthentic
 	}
 
 	if di.Device == nil && di.Session.Status.DeviceRef != nil {
-		// zap.S().Debugf("Getting device: %s from resource server", di.Session.Status.DeviceRef.Name)
 		device, err := s.octeliumC.CoreC().GetDevice(ctx,
 			&rmetav1.GetOptions{
 				Uid: di.Session.Status.DeviceRef.Uid,
@@ -443,7 +441,8 @@ func (s *Server) getServiceConfigName(ctx context.Context, reqCtx *corev1.Reques
 	for _, rule := range svc.Spec.DynamicConfig.Rules {
 		isMatch, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Warn("Could not evalCondition for dynamicConfig rule", zap.Any("cond", rule.Condition), zap.Error(err))
+			zap.L().Warn("Could not evalCondition for dynamicConfig rule",
+				zap.Any("cond", rule.Condition), zap.Error(err))
 			continue
 		}
 		if isMatch {
@@ -454,7 +453,8 @@ func (s *Server) getServiceConfigName(ctx context.Context, reqCtx *corev1.Reques
 	return "", nil
 }
 
-func (s *Server) DoAuthorize(ctx context.Context, req *corev1.RequestContext) (*coctovigilv1.AuthorizeResponse, error) {
+func (s *Server) DoAuthorize(ctx context.Context,
+	req *corev1.RequestContext) (*coctovigilv1.AuthorizeResponse, error) {
 	isAuthorized, reason, err := s.isAuthorized(ctx, req)
 	if err != nil {
 		return nil, err
@@ -466,7 +466,8 @@ func (s *Server) DoAuthorize(ctx context.Context, req *corev1.RequestContext) (*
 	}, nil
 }
 
-func (s *Server) isAuthorized(ctx context.Context, req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+func (s *Server) isAuthorized(ctx context.Context,
+	req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 
 	reason := &corev1.AccessLog_Entry_Common_Reason{}
 	if req == nil {
