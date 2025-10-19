@@ -351,7 +351,7 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 			if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
 				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
 				ret.MainAuthenticator = itm
-				ret.AvailableAuthenticators = nil
+				ret.AvailableAuthenticators = []*corev1.Authenticator{itm}
 
 				return ret, nil
 			}

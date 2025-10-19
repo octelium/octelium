@@ -153,7 +153,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
 
   const mutationDelete = useMutation({
     mutationFn: async () => {
-      await c.deleteAuthenticator(
+      return await c.deleteAuthenticator(
         DeleteOptions.create({
           uid: authn.metadata?.uid,
           name: authn.metadata?.name,
@@ -162,7 +162,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
     },
     onSuccess: (r) => {
       queryClient.invalidateQueries({
-        queryKey: ["getAvailableAuthenticator", "listAuthenticator"],
+        queryKey: ["getAvailableAuthenticator"],
       });
     },
     onError: (resp) => {},
@@ -350,13 +350,25 @@ const devList = Auth.AuthenticatorList.create({
   ],
 });
 
-const AvailableAuthenticators = (props: {
+export const ListAvailableAuthenticators = (props: {
   resp: Auth.GetAvailableAuthenticatorResponse;
 }) => {
   const { resp } = props;
 
   if (resp.availableAuthenticators.length < 1) {
-    return <></>;
+    return (
+      <div className="w-full">
+        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+          You have no Available Authenticators{" "}
+          <Link
+            to={`/authenticators/register`}
+            className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
+          >
+            Register
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -420,7 +432,7 @@ const Page = () => {
           </div>
         )}
 
-        <AvailableAuthenticators resp={data} />
+        {!data.mainAuthenticator && <ListAvailableAuthenticators resp={data} />}
       </div>
     </div>
   );
