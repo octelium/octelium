@@ -38,7 +38,7 @@ type dctx struct {
 
 	mu       sync.Mutex
 	isClosed bool
-	conn     quic.Connection
+	conn     *quic.Conn
 
 	sendCh    chan []byte
 	processCh chan []byte
@@ -53,7 +53,7 @@ type dctx struct {
 }
 
 func newDctx(sess *corev1.Session,
-	conn quic.Connection, tunCh chan<- []byte, svcCIDRs []netip.Prefix, mtu int) *dctx {
+	conn *quic.Conn, tunCh chan<- []byte, svcCIDRs []netip.Prefix, mtu int) *dctx {
 
 	zap.L().Debug("Creating a new dctx", zap.String("sessionUID", sess.Metadata.Uid), zap.Int("mtu", mtu))
 

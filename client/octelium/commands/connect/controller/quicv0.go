@@ -93,7 +93,7 @@ type quicGWMap struct {
 type quicGW struct {
 	sync.Mutex
 	gw            *userv1.Gateway
-	conn          quic.Connection
+	conn          *quic.Conn
 	tunCh         chan<- []byte
 	gwCh          chan []byte
 	cidrs         []netip.Prefix
@@ -265,7 +265,7 @@ func encodeMsg(resp pbutils.Message, typ uint32) ([]byte, error) {
 	return buf, nil
 }
 
-func decodeMsg(stream quic.Stream) ([]byte, uint32, error) {
+func decodeMsg(stream *quic.Stream) ([]byte, uint32, error) {
 	bufSize := 1024
 	buf := make([]byte, bufSize)
 	n, err := stream.Read(buf)

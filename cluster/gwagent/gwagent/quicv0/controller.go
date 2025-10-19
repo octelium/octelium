@@ -189,7 +189,7 @@ func (c *QUICController) startLoop(ctx context.Context) {
 	}
 }
 
-func (c *QUICController) handleConnection(ctx context.Context, conn quic.Connection) {
+func (c *QUICController) handleConnection(ctx context.Context, conn *quic.Conn) {
 	if err := c.doHandleConnection(ctx, conn); err != nil {
 		conn.CloseWithError(8, "")
 		zap.L().Debug("Could not handle connection", zap.Error(err))
@@ -198,8 +198,7 @@ func (c *QUICController) handleConnection(ctx context.Context, conn quic.Connect
 
 const hdrSize = 8
 
-func (c *QUICController) getBuf(ctx context.Context, stream quic.Stream, desiredType uint32) ([]byte, error) {
-
+func (c *QUICController) getBuf(ctx context.Context, stream *quic.Stream, desiredType uint32) ([]byte, error) {
 	payload, typ, err := decodeMsg(stream)
 	if err != nil {
 		return nil, err
@@ -212,7 +211,7 @@ func (c *QUICController) getBuf(ctx context.Context, stream quic.Stream, desired
 	return payload, nil
 }
 
-func decodeMsg(stream quic.Stream) ([]byte, uint32, error) {
+func decodeMsg(stream *quic.Stream) ([]byte, uint32, error) {
 	bufSize := 1024
 	buf := make([]byte, bufSize)
 	n, err := stream.Read(buf)
@@ -265,7 +264,7 @@ func decodeMsg(stream quic.Stream) ([]byte, uint32, error) {
 	return ret[hdrSize:], typ, nil
 }
 
-func (c *QUICController) doInit(ctx context.Context, stream quic.Stream) (*corev1.Session, error) {
+func (c *QUICController) doInit(ctx context.Context, stream *quic.Stream) (*corev1.Session, error) {
 	buf, err := c.getBuf(ctx, stream, 1)
 	if err != nil {
 		return nil, err
@@ -323,7 +322,7 @@ func (c *QUICController) doInit(ctx context.Context, stream quic.Stream) (*corev
 	return sess, nil
 }
 
-func (c *QUICController) writeResponse(ctx context.Context, stream quic.Stream, resp pbutils.Message, typ uint32) error {
+func (c *QUICController) writeResponse(ctx context.Context, stream *quic.Stream, resp pbutils.Message, typ uint32) error {
 
 	buf, err := encodeMsg(resp, typ)
 	if err != nil {
@@ -455,7 +454,7 @@ func (c *QUICController) doHandleConnection(ctx context.Context, conn quic.Conne
 }
 */
 
-func (c *QUICController) doHandleConnection(ctx context.Context, conn quic.Connection) error {
+func (c *QUICController) doHandleConnection(ctx context.Context, conn *quic.Conn) error {
 	initCtx, cancelFn := context.WithTimeout(ctx, 3*time.Second)
 	defer cancelFn()
 	zap.L().Debug("Accepting new stream", zap.String("conn", conn.RemoteAddr().String()))
