@@ -140,20 +140,6 @@ func (s *server) isURLSameClusterOrigin(arg string) bool {
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
-
-	/*
-		isValid, _, err := s.isWebSessionValid(r)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if isValid {
-			s.redirectToPortal(w, r)
-			return
-		}
-
-	*/
-
 	s.redirectToLogin(w, r)
 }
 

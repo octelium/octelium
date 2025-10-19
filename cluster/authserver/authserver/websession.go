@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/sessionc"
@@ -116,6 +117,17 @@ func (s *server) createWebSession(ctx context.Context, usr *corev1.User,
 			UserAgent:           userAgent,
 			XFF:                 xff,
 			AuthenticatorAction: authenticatorAction,
+			RequiredAuthenticatorRef: func() *metav1.ObjectReference {
+				if authRespInfo != nil &&
+					authRespInfo.GetAuthenticator() != nil &&
+					authRespInfo.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO &&
+					authRespInfo.GetAuthenticator().Mode ==
+						corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY {
+					return authRespInfo.GetAuthenticator().AuthenticatorRef
+				}
+
+				return nil
+			}(),
 		})
 	if err != nil {
 		return nil, err

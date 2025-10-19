@@ -288,7 +288,11 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 		return nil, s.errInvalidArg("Authenticator is not registered")
 	}
 
-	{
+	if sess.Status.RequiredAuthenticatorRef != nil {
+		if sess.Status.RequiredAuthenticatorRef.Uid != authn.Metadata.Uid {
+			return nil, s.errPermissionDenied("This is not the required Session Authenticator")
+		}
+	} else {
 		res, err := s.getAvailableAuthenticators(ctx, sess, usr)
 		if err != nil {
 			return nil, err

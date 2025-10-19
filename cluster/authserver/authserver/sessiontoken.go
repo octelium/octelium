@@ -317,8 +317,7 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 		return nil, err
 	}
 
-	switch {
-	case sess.Status.IsBrowser:
+	if sess.Status.IsBrowser {
 		zap.L().Debug("refreshToken flow is not allowed for Browsers")
 		return nil, s.errPermissionDenied("Invalid Session type")
 	}
@@ -555,6 +554,13 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 
 	s.setCurrAuthenticationGRPC(ctx, sess, cc, authInfo)
 	sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET
+
+	if sess.Status.RequiredAuthenticatorRef == nil {
+		switch authn.Status.Type {
+		case corev1.Authenticator_Status_TPM, corev1.Authenticator_Status_FIDO:
+			sess.Status.RequiredAuthenticatorRef = umetav1.GetObjectReference(authn)
+		}
+	}
 
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, grpcutils.InternalWithErr(err)

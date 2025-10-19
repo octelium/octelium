@@ -307,6 +307,22 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 
 	ret := &getAvailableWebAuthenticatorsResp{}
 
+	if sess.Status.RequiredAuthenticatorRef != nil {
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: sess.Status.RequiredAuthenticatorRef.Uid,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret.MainAuthenticator = authn
+		ret.AvailableAuthenticators = []*corev1.Authenticator{
+			authn,
+		}
+
+		return ret, nil
+	}
+
 	if sess.Status.InitialAuthentication != nil &&
 		sess.Status.InitialAuthentication.Info != nil &&
 		sess.Status.InitialAuthentication.Info.GetAuthenticator() != nil &&
