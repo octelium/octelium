@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/tj/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCache(t *testing.T) {

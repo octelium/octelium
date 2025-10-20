@@ -24,7 +24,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker/decls"
 	"github.com/octelium/octelium/cluster/common/tests"
-	"github.com/tj/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCELLib(t *testing.T) {
