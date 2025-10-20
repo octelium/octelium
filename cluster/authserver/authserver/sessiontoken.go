@@ -328,6 +328,10 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 		return nil, s.errAlreadyExists("The Session is valid and does not need a refresh")
 	}
 
+	if sess.Status.RequiredAuthenticatorRef != nil {
+		return nil, s.errPermissionDenied("This Session has a required Authenticator")
+	}
+
 	_, err = s.getUserFromSession(ctx, sess)
 	if err != nil {
 		return nil, err
