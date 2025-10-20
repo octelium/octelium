@@ -18,6 +18,7 @@ package svccontroller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -344,7 +345,8 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 
 func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 	// Redeploy the Service pod if such fields change
-	ret := map[string]string{
+
+	deployMap := map[string]string{
 		"octelium.com/svc-port":  fmt.Sprintf("%d", svc.Status.Port),
 		"octelium.com/svc-mode":  svc.Spec.Mode.String(),
 		"octelium.com/svc-tls":   fmt.Sprintf("%t", svc.Spec.IsTLS),
@@ -356,7 +358,13 @@ func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 
 			return svc.Metadata.SystemLabels[vutils.UpgradeIDKey]
 		}(),
-		"k8s.v1.cni.cncf.io/networks": "octelium/octelium",
+	}
+
+	deployMapJSON, _ := json.Marshal(deployMap)
+
+	ret := map[string]string{
+		"octelium.com/svc-deployment-id": vutils.Sha256SumHex(deployMapJSON),
+		"k8s.v1.cni.cncf.io/networks":    "octelium/octelium",
 	}
 
 	return ret
