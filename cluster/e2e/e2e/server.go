@@ -220,6 +220,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runOcteliumConnectQUIC(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runOcteliumctlAccessToken(ctx); err != nil {
 		return err
 	}
@@ -1045,6 +1049,33 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			zap.L().Debug("octelium connect exited")
 		}
 	}
+
+	return nil
+}
+
+func (s *server) runOcteliumConnectQUIC(ctx context.Context) error {
+	t := s.t
+
+	connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
+		"--tunnel-mode quicv0",
+		"-p nginx:15001",
+	})
+	assert.Nil(t, err)
+
+	time.Sleep(2 * time.Second)
+
+	{
+		assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "nginx"))
+		res, err := s.httpC().R().Get("http://localhost:15001")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+
+		_, err = html.Parse(strings.NewReader(string(res.Body())))
+		assert.Nil(t, err)
+	}
+
+	assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+	connCmd.Wait()
 
 	return nil
 }
