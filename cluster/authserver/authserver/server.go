@@ -376,11 +376,9 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 
 		r.HandleFunc("/assets/{file}", s.handleStatic).Methods("GET")
 
-		if ldflags.IsDev() {
-			r.HandleFunc("/authenticators/authenticate", s.handleAuthenticatorAuthenticate).Methods("GET")
-			r.HandleFunc("/authenticators/register", s.handleAuthenticatorRegister).Methods("GET")
-			r.HandleFunc("/authenticators", s.handleAuthenticatorList).Methods("GET")
-		}
+		r.HandleFunc("/authenticators/authenticate", s.handleAuthenticatorAuthenticate).Methods("GET")
+		r.HandleFunc("/authenticators/register", s.handleAuthenticatorRegister).Methods("GET")
+		r.HandleFunc("/authenticators", s.handleAuthenticatorList).Methods("GET")
 
 		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			zap.L().Debug("404 req", zap.Any("path", r.URL.Path), zap.String("method", r.Method))
