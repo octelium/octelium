@@ -95,6 +95,10 @@ func (s *Server) validateClusterConfigSpec(ctx context.Context, c *corev1.Cluste
 		return err
 	}
 
+	if err := s.validateCCAuthenticator(ctx, c); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -184,6 +188,67 @@ func validateDNS(c *corev1.ClusterConfig) error {
 				default:
 					return grpcutils.InvalidArg("Invalid DNS server: %s", srv)
 				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterConfig) error {
+	if c.Spec.Authenticator == nil {
+		return nil
+	}
+
+	cfg := c.Spec.Authenticator
+
+	{
+		if len(cfg.AuthenticationRules) > 256 {
+			return grpcutils.InvalidArg("Too many AuthenticationRules")
+		}
+
+		for _, r := range cfg.AuthenticationRules {
+			if err := s.validateCondition(ctx, r.Condition); err != nil {
+				return err
+			}
+
+			switch r.Effect {
+			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN:
+				return grpcutils.InvalidArg("Rule effect must be set")
+			}
+		}
+	}
+
+	{
+		if len(cfg.PostAuthenticationRules) > 256 {
+			return grpcutils.InvalidArg("Too many PostAuthenticationRules")
+		}
+
+		for _, r := range cfg.PostAuthenticationRules {
+			if err := s.validateCondition(ctx, r.Condition); err != nil {
+				return err
+			}
+
+			switch r.Effect {
+			case corev1.ClusterConfig_Spec_Authenticator_Rule_EFFECT_UNKNOWN:
+				return grpcutils.InvalidArg("Rule effect must be set")
+			}
+		}
+	}
+
+	{
+		if len(cfg.RegistrationRules) > 256 {
+			return grpcutils.InvalidArg("Too many RegistrationRules")
+		}
+
+		for _, r := range cfg.RegistrationRules {
+			if err := s.validateCondition(ctx, r.Condition); err != nil {
+				return err
+			}
+
+			switch r.Effect {
+			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN:
+				return grpcutils.InvalidArg("Rule effect must be set")
 			}
 		}
 	}
