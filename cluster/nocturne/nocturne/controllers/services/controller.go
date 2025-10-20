@@ -351,6 +351,12 @@ func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 		"octelium.com/svc-mode":  svc.Spec.Mode.String(),
 		"octelium.com/svc-tls":   fmt.Sprintf("%t", svc.Spec.IsTLS),
 		"octelium.com/svc-http2": fmt.Sprintf("%t", ucorev1.ToService(svc).IsListenerHTTP2()),
+	}
+
+	deployMapJSON, _ := json.Marshal(deployMap)
+
+	ret := map[string]string{
+		"octelium.com/svc-deployment-id": vutils.Sha256SumHex(deployMapJSON),
 		"octelium.com/svc-upgrade-uid": func() string {
 			if svc.Metadata.SystemLabels == nil {
 				return ""
@@ -358,13 +364,7 @@ func (c *Controller) getPodAnnotations(svc *corev1.Service) map[string]string {
 
 			return svc.Metadata.SystemLabels[vutils.UpgradeIDKey]
 		}(),
-	}
-
-	deployMapJSON, _ := json.Marshal(deployMap)
-
-	ret := map[string]string{
-		"octelium.com/svc-deployment-id": vutils.Sha256SumHex(deployMapJSON),
-		"k8s.v1.cni.cncf.io/networks":    "octelium/octelium",
+		"k8s.v1.cni.cncf.io/networks": "octelium/octelium",
 	}
 
 	return ret
