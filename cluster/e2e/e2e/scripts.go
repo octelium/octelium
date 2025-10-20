@@ -32,7 +32,7 @@ const scriptInstall = `
 set -e
 
 DOMAIN="localhost"
-VERSION="main"
+VERSION=$GITHUB_REF_NAME
 DEBIAN_FRONTEND=noninteractive
 K8S_VERSION=1.32
 PG_PASSWORD=$(openssl rand -base64 12)
@@ -188,7 +188,7 @@ EOF
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
 helm repo update
 
-cat <<EOF > /tmp/octelium-otel.yaml
+helm install my-otel open-telemetry/opentelemetry-collector -n octelium -f - <<EOF
 mode: deployment
 image:
   repository: "otel/opentelemetry-collector-contrib"
@@ -201,14 +201,7 @@ ports:
     servicePort: 8080
     hostPort: 4317
     protocol: TCP
-    # nodePort: 30317
     appProtocol: grpc
-  otlp-http:
-    enabled: true
-    containerPort: 4318
-    servicePort: 8081
-    hostPort: 4318
-    protocol: TCP
 
 fullnameOverride: octelium-collector
 
@@ -256,10 +249,6 @@ config:
         receivers:
           - otlp
 EOF
-
-helm install my-otel open-telemetry/opentelemetry-collector \
-  -f /tmp/octelium-otel.yaml \
-  -n octelium
 
 kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
 kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
