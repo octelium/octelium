@@ -56,13 +56,6 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		return nil, s.errPermissionDenied("Cannot modify Authenticators")
 	}
 
-	if len(req.DisplayName) > 120 {
-		return nil, s.errInvalidArg("displayName is too long")
-	}
-	if !govalidator.IsUTFLetterNumeric(req.DisplayName) {
-		return nil, s.errInvalidArg("displayName is invalid")
-	}
-
 	switch req.Type {
 	case authv1.Authenticator_Status_FIDO:
 		if usr.Spec.Type != corev1.User_Spec_HUMAN {
@@ -107,6 +100,11 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 			Type:    corev1.Authenticator_Status_Type(req.Type),
 		},
 	}
+
+	if err := s.validateAuthenticatorSpec(authenticator); err != nil {
+		return nil, err
+	}
+
 	authenticator, err = s.octeliumC.CoreC().CreateAuthenticator(ctx, authenticator)
 	if err != nil {
 		return nil, s.errInternalErr(err)
@@ -291,14 +289,11 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 		return nil, s.errInvalidArg("Nil spec")
 	}
 
-	if len(req.Spec.DisplayName) > 120 {
-		return nil, s.errInvalidArg("displayName is too long")
-	}
-	if !govalidator.IsUTFLetterNumeric(req.Spec.DisplayName) {
-		return nil, s.errInvalidArg("displayName is invalid")
-	}
-
 	authn.Spec.DisplayName = req.Spec.DisplayName
+
+	if err := s.validateAuthenticatorSpec(authn); err != nil {
+		return nil, err
+	}
 
 	authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 	if err != nil {
@@ -308,4 +303,21 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 	}
 
 	return s.toAuthenticator(authn), nil
+}
+
+func (s *server) validateAuthenticatorSpec(req *corev1.Authenticator) error {
+
+	if req.Spec == nil {
+		return s.errInvalidArg("Nil spec")
+	}
+
+	if len(req.Spec.DisplayName) > 120 {
+		return s.errInvalidArg("displayName is too long")
+	}
+
+	if !govalidator.IsASCII(req.Spec.DisplayName) {
+		return s.errInvalidArg("Invalid display name")
+	}
+
+	return nil
 }
