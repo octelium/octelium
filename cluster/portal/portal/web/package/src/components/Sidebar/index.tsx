@@ -1,5 +1,5 @@
 import { Button } from "@mantine/core";
-import { PanelTop, Boxes, LogOut } from "lucide-react";
+import { PanelTop, Boxes, LogOut, LockKeyhole } from "lucide-react";
 
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -9,6 +9,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { useMutation } from "@tanstack/react-query";
 import { getClientAuth } from "@/utils/client";
 import { LogoutRequest } from "@/apis/userv1/userv1";
+import { getDomain } from "@/utils";
 
 const items = [
   {
@@ -22,8 +23,6 @@ const items = [
     icon: Boxes,
   },
 ];
-
-
 
 export default function () {
   const loc = useLocation();
@@ -66,7 +65,18 @@ export default function () {
           ))}
         </div>
         <div className="flex-1"></div>
-        <div>
+        <div className="flex flex-col">
+          <Button
+            className="mb-3"
+            fullWidth
+            variant="outline"
+            component="a"
+            href={`https://${getDomain()}/authenticators`}
+          >
+            <LockKeyhole className="mr-1" />
+            <span>Authenticators</span>
+          </Button>
+
           <Button fullWidth variant="outline" onClick={open}>
             <LogOut className="mr-1" />
             <span>Logout</span>
