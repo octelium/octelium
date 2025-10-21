@@ -66,6 +66,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
+	"golang.org/x/oauth2/clientcredentials"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -225,6 +226,10 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlAccessToken(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runOcteliumctlOAuth2CC(ctx); err != nil {
 		return err
 	}
 
@@ -1096,6 +1101,37 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 
 	{
 		s.httpCPublicAccessTokenCheck("demo-nginx", res.GetAccessToken().AccessToken)
+	}
+
+	return nil
+}
+
+func (s *server) runOcteliumctlOAuth2CC(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx,
+		"octeliumctl create cred --user root --policy allow-all --type oauth2 -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.CredentialToken{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	{
+
+		conf := &clientcredentials.Config{
+			ClientID:     res.GetOauth2Credentials().ClientID,
+			ClientSecret: res.GetOauth2Credentials().ClientSecret,
+			TokenURL:     fmt.Sprintf("https://%s/oauth2/token", s.domain),
+		}
+
+		tkn, err := conf.Token(ctx)
+		assert.Nil(t, err)
+
+		s.httpCPublicAccessTokenCheck("demo-nginx", tkn.AccessToken)
 	}
 
 	return nil
