@@ -164,8 +164,7 @@ func GenerateCARoot() (*Cert, error) {
 		BasicConstraintsValid: true,
 		SerialNumber:          serialNumber,
 		Subject: pkix.Name{
-			CommonName:   "octelium-root",
-			Organization: []string{"octelium.com"},
+			CommonName: "Octelium Root CA",
 		},
 		NotBefore: now,
 		NotAfter:  now.Add(time.Hour * 24 * 3650 * 2),
@@ -231,10 +230,7 @@ func GenerateCARootFromCert(caCert *x509.Certificate) (*Cert, error) {
 		caCert.NotAfter = now.Add(time.Hour * 24 * 365 * 8)
 	}
 	if caCert.Subject.CommonName == "" {
-		caCert.Subject.CommonName = "octelium-root"
-	}
-	if caCert.Subject.Organization == nil {
-		caCert.Subject.Organization = []string{"octelium.com"}
+		caCert.Subject.CommonName = "Octelium Root CA"
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, caCert, caCert, &certPrivKey.PublicKey, certPrivKey)
@@ -323,8 +319,7 @@ func GenerateCertificateTmp(commonName string, parent *Cert, isRSA bool) (*Cert,
 	temp := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName:   commonName,
-			Organization: []string{"octelium.com"},
+			CommonName: commonName,
 		},
 		NotBefore: now,
 		NotAfter:  now.Add(time.Hour * 24 * 3650 * 2),
@@ -345,8 +340,7 @@ func GenerateIntermediateCATmp(commonName string, parent *Cert) (*Cert, error) {
 	temp := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName:   commonName,
-			Organization: []string{"octelium.com"},
+			CommonName: commonName,
 		},
 		NotBefore: now,
 		NotAfter:  now.Add(time.Hour * 24 * 3650 * 2),
@@ -494,8 +488,7 @@ func GenerateSelfSignedCert(commonName string, sans []string, duration time.Dura
 		BasicConstraintsValid: true,
 		SerialNumber:          serialNumber,
 		Subject: pkix.Name{
-			CommonName:   commonName,
-			Organization: []string{"octelium.com"},
+			CommonName: commonName,
 		},
 		DNSNames: sans,
 
