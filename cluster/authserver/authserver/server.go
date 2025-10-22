@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
+	"github.com/go-webauthn/webauthn/metadata/providers/cached"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gorilla/mux"
@@ -47,6 +48,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -190,16 +192,14 @@ func initServer(ctx context.Context,
 		return nil, err
 	}
 
-	/*
-		ret.mdsProvider, err = cached.New(
-			cached.WithPath(fmt.Sprintf("/tmp/mds-%s", utilrand.GetRandomStringCanonical(8))),
-			cached.WithForceUpdate(true),
-			cached.WithUpdate(true),
-		)
-		if err != nil {
-			return nil, err
-		}
-	*/
+	ret.mdsProvider, err = cached.New(
+		cached.WithPath(fmt.Sprintf("/tmp/mds-%s", utilrand.GetRandomStringCanonical(8))),
+		cached.WithForceUpdate(true),
+		cached.WithUpdate(true),
+	)
+	if err != nil {
+		zap.L().Warn("Could not create MDS provider")
+	}
 
 	zap.L().Debug("initializing authServer completed")
 

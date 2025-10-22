@@ -18,10 +18,10 @@ package vwebauthn
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +37,7 @@ import (
 	factors "github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -343,22 +344,19 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 		return nil, err
 	}
 
-	if err := c.verifyAttestation(ctx, parsedResponse, cred); err != nil {
-		return nil, err
-	}
-
 	zap.L().Debug("Successful CreateCredential", zap.Any("cred", cred))
 
 	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
 		return nil, errors.Errorf("User is not verified")
 	}
 
-	idHash := sha256.Sum256(cred.ID)
+	idHash := vutils.Sha256Sum(cred.ID)
 
 	{
 		authnList, err := c.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
 			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("status.info.webauthn.idHash", base64.StdEncoding.EncodeToString(idHash[:])),
+				urscsrv.FilterFieldEQValStr("status.info.webauthn.idHash",
+					base64.StdEncoding.EncodeToString(idHash)),
 			},
 		})
 		if err != nil {
@@ -386,7 +384,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 		Type: &corev1.Authenticator_Status_Info_Fido{
 			Fido: &corev1.Authenticator_Status_Info_FIDO{
 				Id:             cred.ID,
-				IdHash:         idHash[:],
+				IdHash:         idHash,
 				PublicKey:      cred.PublicKey,
 				BackupEligible: cred.Flags.BackupEligible,
 				Aaguid:         aaguid.String(),
@@ -400,8 +398,40 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 					}
 					return corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN
 				}(),
+				IsAttestationVerified: func() bool {
+					switch parsedResponse.Response.AttestationObject.Format {
+					case "none":
+						return false
+					default:
+						if c.mds != nil {
+							if err := cred.Verify(c.mds); err == nil {
+								return true
+							} else {
+								zap.L().Debug("Could not verify attestation", zap.Error(err))
+							}
+						}
+
+						return false
+					}
+				}(),
 			},
 		},
+	}
+
+	if c.mds != nil {
+		if entry, err := c.mds.GetEntry(ctx, aaguid); err == nil && entry != nil {
+			zap.L().Debug("Found mds entry", zap.Any("entry", entry))
+			authn.Status.Description = entry.MetadataStatement.Description
+
+			fido := authn.Status.Info.GetFido()
+			keyProtection := entry.MetadataStatement.KeyProtection
+
+			fido.IsSoftware = slices.Contains(keyProtection, "software")
+			fido.IsHardware = (slices.Contains(keyProtection, "hardware") &&
+				slices.Contains(keyProtection, "secure_element")) ||
+				(slices.Contains(keyProtection, "hardware") &&
+					slices.Contains(keyProtection, "tee"))
+		}
 	}
 
 	return &authenticators.FinishRegistrationResp{}, nil
