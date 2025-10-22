@@ -101,36 +101,43 @@ func (s *server) createWebSession(ctx context.Context, usr *corev1.User,
 		return nil, err
 	}
 
-	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr, nil)
+	opts := &sessionc.CreateSessionOpts{
+		OcteliumC:          s.octeliumC,
+		ClusterConfig:      cc,
+		Usr:                usr,
+		AuthenticationInfo: authRespInfo,
+		SessType:           corev1.Session_Status_CLIENTLESS,
+		IsBrowser:          true,
+		UserAgent:          userAgent,
+		XFF:                xff,
+		RequiredAuthenticatorRef: func() *metav1.ObjectReference {
+			if authRespInfo != nil &&
+				authRespInfo.GetAuthenticator() != nil &&
+				authRespInfo.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO &&
+				authRespInfo.GetAuthenticator().Mode ==
+					corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY {
+				return authRespInfo.GetAuthenticator().AuthenticatorRef
+			}
+
+			return nil
+		}(),
+	}
+
+	initSess, err := sessionc.NewSession(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	sess, err := sessionc.CreateSession(ctx,
-		&sessionc.CreateSessionOpts{
-			OcteliumC:           s.octeliumC,
-			ClusterConfig:       cc,
-			Usr:                 usr,
-			AuthenticationInfo:  authRespInfo,
-			SessType:            corev1.Session_Status_CLIENTLESS,
-			IsBrowser:           true,
-			UserAgent:           userAgent,
-			XFF:                 xff,
-			AuthenticatorAction: authenticatorAction,
-			RequiredAuthenticatorRef: func() *metav1.ObjectReference {
-				if authRespInfo != nil &&
-					authRespInfo.GetAuthenticator() != nil &&
-					authRespInfo.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO &&
-					authRespInfo.GetAuthenticator().Mode ==
-						corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY {
-					return authRespInfo.GetAuthenticator().AuthenticatorRef
-				}
-
-				return nil
-			}(),
-		})
+	authenticatorAction, err := s.getAuthenticatorAction(ctx, cc, idp, usr, initSess)
 	if err != nil {
 		return nil, err
+	}
+
+	initSess.Status.AuthenticatorAction = authenticatorAction
+
+	sess, err := s.octeliumC.CoreC().CreateSession(ctx, initSess)
+	if err != nil {
+		return nil, s.errInternalErr(err)
 	}
 
 	return sess, nil
@@ -150,12 +157,12 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 	}
 
-	authnList, err := s.getAvailableWebAuthenticators(ctx, usr)
+	r, err := s.getAvailableAuthenticators(ctx, sess, usr)
 	if err != nil {
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, err
 	}
 
-	if len(authnList) > 0 {
+	if len(r.AvailableAuthenticators) > 0 {
 		if len(cc.Spec.Authenticator.AuthenticationRules) > 0 {
 			switch s.doAuthenticatorEnforcementRule(ctx,
 				cc.Spec.Authenticator.AuthenticationRules, idp, usr, sess) {

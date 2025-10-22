@@ -321,3 +321,98 @@ func (s *server) validateAuthenticatorSpec(req *corev1.Authenticator) error {
 
 	return nil
 }
+
+type getAvailableAuthenticatorsResp struct {
+	MainAuthenticator       *corev1.Authenticator
+	AvailableAuthenticators []*corev1.Authenticator
+}
+
+func (s *server) getAvailableAuthenticators(ctx context.Context,
+	sess *corev1.Session, usr *corev1.User) (*getAvailableAuthenticatorsResp, error) {
+
+	ret := &getAvailableAuthenticatorsResp{}
+
+	if sess == nil || usr == nil {
+		return nil, s.errInvalidArg("Session and User must be provided")
+	}
+
+	if sess.Status.RequiredAuthenticatorRef != nil {
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: sess.Status.RequiredAuthenticatorRef.Uid,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret.MainAuthenticator = authn
+		ret.AvailableAuthenticators = []*corev1.Authenticator{
+			authn,
+		}
+
+		return ret, nil
+	}
+
+	if sess.Status.InitialAuthentication != nil &&
+		sess.Status.InitialAuthentication.Info != nil &&
+		sess.Status.InitialAuthentication.Info.GetAuthenticator() != nil &&
+		sess.Status.InitialAuthentication.Info.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO {
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+			Uid: sess.Status.InitialAuthentication.Info.GetAuthenticator().AuthenticatorRef.Uid,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret.MainAuthenticator = authn
+		ret.AvailableAuthenticators = []*corev1.Authenticator{
+			authn,
+		}
+
+		return ret, nil
+	}
+
+	itmList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterStatusUserUID(usr.Metadata.Uid),
+			urscsrv.FilterFieldBooleanTrue("status.isRegistered"),
+		},
+	})
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	for _, itm := range itmList.Items {
+		if !itm.Status.IsRegistered {
+			continue
+		}
+
+		switch sess.Status.Type {
+		case corev1.Session_Status_CLIENT:
+			switch itm.Status.Type {
+			case corev1.Authenticator_Status_TPM, corev1.Authenticator_Status_TOTP:
+			default:
+				continue
+			}
+			if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
+				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
+				ret.MainAuthenticator = itm
+				ret.AvailableAuthenticators = []*corev1.Authenticator{itm}
+
+				return ret, nil
+			}
+		case corev1.Session_Status_CLIENTLESS:
+			if !sess.Status.IsBrowser {
+				continue
+			}
+			switch itm.Status.Type {
+			case corev1.Authenticator_Status_FIDO, corev1.Authenticator_Status_TOTP:
+			default:
+				continue
+			}
+		}
+
+		ret.AvailableAuthenticators = append(ret.AvailableAuthenticators, itm)
+	}
+
+	return ret, nil
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -100,12 +101,26 @@ func TestAuthenticator(t *testing.T) {
 		itmList, err := srv.doListAuthenticator(getCtxRT(usrT), &authv1.ListAuthenticatorOptions{})
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, 0, len(itmList.Items))
+		{
+			res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+			assert.Nil(t, err)
+
+			assert.Nil(t, res.MainAuthenticator)
+			assert.Equal(t, 0, len(res.AvailableAuthenticators))
+		}
 
 		{
 			_, err = srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{})
 			assert.NotNil(t, err)
 
 			assert.True(t, grpcerr.IsInvalidArg(err))
+		}
+		{
+			res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+			assert.Nil(t, err)
+
+			assert.Nil(t, res.MainAuthenticator)
+			assert.Equal(t, 0, len(res.AvailableAuthenticators))
 		}
 		{
 			_, err = srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{})
@@ -136,6 +151,14 @@ func TestAuthenticator(t *testing.T) {
 		assert.Equal(t, authn.Metadata.Uid, itmList.Items[0].Metadata.Uid)
 
 		{
+			res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+			assert.Nil(t, err)
+
+			assert.Nil(t, res.MainAuthenticator)
+			assert.Equal(t, 0, len(res.AvailableAuthenticators))
+		}
+
+		{
 			itmList, err = srv.doListAuthenticator(getCtxRT(usr2T), &authv1.ListAuthenticatorOptions{})
 			assert.Nil(t, err)
 			assert.Equal(t, 0, len(itmList.Items))
@@ -157,5 +180,188 @@ func TestAuthenticator(t *testing.T) {
 		})
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsNotFound(err))
+	}
+}
+
+func TestGetAvailableAuthenticators(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	{
+		_, err = srv.doGetAvailableAuthenticator(ctx, &authv1.GetAvailableAuthenticatorRequest{})
+		assert.NotNil(t, err)
+
+		assert.True(t, grpcerr.IsUnauthenticated(err))
+	}
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err)
+
+	usr2T, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err)
+
+	usr2T.Session.Status.Type = corev1.Session_Status_CLIENTLESS
+	usr2T.Session.Status.IsBrowser = true
+	usr2T.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usr2T.Session)
+	assert.Nil(t, err)
+
+	res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+	assert.Nil(t, err)
+
+	assert.Nil(t, res.MainAuthenticator)
+	assert.Equal(t, 0, len(res.AvailableAuthenticators))
+
+	_, err = srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Authenticator_Spec{},
+		Status: &corev1.Authenticator_Status{
+			UserRef: umetav1.GetObjectReference(usrT.Usr),
+			Type:    corev1.Authenticator_Status_TPM,
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 0, len(res.AvailableAuthenticators))
+	}
+
+	authn, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Authenticator_Spec{},
+		Status: &corev1.Authenticator_Status{
+			UserRef:      umetav1.GetObjectReference(usrT.Usr),
+			Type:         corev1.Authenticator_Status_TPM,
+			IsRegistered: true,
+		},
+	})
+	assert.Nil(t, err)
+
+	res, err = srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+	assert.Nil(t, err)
+
+	assert.Nil(t, res.MainAuthenticator)
+	assert.Equal(t, 1, len(res.AvailableAuthenticators))
+
+	assert.Equal(t, authn.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usr2T), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 0, len(res.AvailableAuthenticators))
+	}
+
+	_, err = srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Authenticator_Spec{},
+		Status: &corev1.Authenticator_Status{
+			UserRef:      umetav1.GetObjectReference(usrT.Usr),
+			Type:         corev1.Authenticator_Status_FIDO,
+			IsRegistered: true,
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 1, len(res.AvailableAuthenticators))
+
+		assert.Equal(t, authn.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
+	}
+
+	authn2, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Authenticator_Spec{},
+		Status: &corev1.Authenticator_Status{
+			UserRef:      umetav1.GetObjectReference(usr2T.Usr),
+			Type:         corev1.Authenticator_Status_FIDO,
+			IsRegistered: true,
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 1, len(res.AvailableAuthenticators))
+
+		assert.Equal(t, authn.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
+	}
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usr2T), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 1, len(res.AvailableAuthenticators))
+
+		assert.Equal(t, authn2.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
+	}
+
+	authn1, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Authenticator_Spec{},
+		Status: &corev1.Authenticator_Status{
+			UserRef:      umetav1.GetObjectReference(usrT.Usr),
+			Type:         corev1.Authenticator_Status_TPM,
+			IsRegistered: true,
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usrT), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 2, len(res.AvailableAuthenticators))
+
+		assert.Equal(t, authn1.Metadata.Uid, res.AvailableAuthenticators[1].Metadata.Uid)
+	}
+	{
+		res, err := srv.doGetAvailableAuthenticator(getCtxRT(usr2T), &authv1.GetAvailableAuthenticatorRequest{})
+		assert.Nil(t, err)
+
+		assert.Nil(t, res.MainAuthenticator)
+		assert.Equal(t, 1, len(res.AvailableAuthenticators))
+
+		assert.Equal(t, authn2.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
 	}
 }
