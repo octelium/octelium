@@ -28,6 +28,7 @@ var Cmd = &cobra.Command{
  octelium auth delete authenticator totp-abcdef
 		 `,
 	Aliases: []string{"authn"},
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

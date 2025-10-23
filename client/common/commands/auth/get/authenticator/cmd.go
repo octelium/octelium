@@ -37,11 +37,12 @@ var Cmd = &cobra.Command{
 	Use:   "authenticator",
 	Short: "List your Authenticators",
 	Example: `
- octelium get authn
- octelium get authenticator -o json
- octelium get authenticators -o yaml
+ octelium auth get authn
+ octelium auth get authenticator -o json
+ octelium auth get authenticators -o yaml
 	 `,
 	Aliases: []string{"authn"},
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

@@ -33,17 +33,18 @@ type args struct {
 
 func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.DisplayName, "display-name", "", "Display Name")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Authenticator Type. It must take one of the values "totp", "tpm", "certstore"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Authenticator Type. It must be set to "totp" or "tpm"`)
 }
 
 var Cmd = &cobra.Command{
 	Use:   "authenticator",
 	Short: "Create an Authenticator",
 	Example: `
-  octelium create authn --type tpm
-  octelium create authenticator --totp --display-name Phone Authenticator
+  octelium auth create authn --type tpm
+  octelium auth create authenticator --totp --display-name Phone Authenticator
 	  `,
 	Aliases: []string{"authn"},
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

@@ -36,6 +36,7 @@ var Cmd = &cobra.Command{
 octelium auth device register
 octelium auth dev register
 	   `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
