@@ -198,7 +198,7 @@ func initServer(ctx context.Context,
 		cached.WithUpdate(true),
 	)
 	if err != nil {
-		zap.L().Warn("Could not create MDS provider")
+		zap.L().Warn("Could not create MDS provider", zap.Error(err))
 	}
 
 	zap.L().Debug("initializing authServer completed")

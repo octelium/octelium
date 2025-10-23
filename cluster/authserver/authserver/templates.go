@@ -68,17 +68,9 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "octelium_domain",
-		Value:    s.domain,
-		Secure:   true,
-		Domain:   s.domain,
-		Path:     "/",
-		SameSite: http.SameSiteNoneMode,
-	})
-
-	w.Write(b2.Bytes())
+	s.setDomainCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(b2.Bytes())
 }
 
 func (s *server) getTemplateIndexArgs() map[string]any {
@@ -155,6 +147,18 @@ func (s *server) renderLoggedIn(w http.ResponseWriter) {
 		return
 	}
 
-	w.Write(blob)
+	s.setDomainCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(blob)
+}
+
+func (s *server) setDomainCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "octelium_domain",
+		Value:    s.domain,
+		Secure:   true,
+		Domain:   s.domain,
+		Path:     "/",
+		SameSite: http.SameSiteNoneMode,
+	})
 }
