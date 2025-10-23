@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
-	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -48,9 +47,10 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if !ucorev1.ToSession(sess).HasValidAccessToken() {
-		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	if err := s.checkSessionValidAccessToken(sess); err != nil {
+		return nil, err
 	}
+
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
 		return nil, s.errPermissionDenied("Cannot modify Authenticators")
@@ -178,9 +178,10 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if !ucorev1.ToSession(sess).HasValidAccessToken() {
-		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	if err := s.checkSessionValidAccessToken(sess); err != nil {
+		return nil, err
 	}
+
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
 		return nil, s.errPermissionDenied("Cannot modify Authenticators")
@@ -265,8 +266,8 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if !ucorev1.ToSession(sess).HasValidAccessToken() {
-		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	if err := s.checkSessionValidAccessToken(sess); err != nil {
+		return nil, err
 	}
 
 	switch sess.Status.AuthenticatorAction {

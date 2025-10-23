@@ -24,7 +24,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
-	"github.com/pkg/errors"
 	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"
 )
@@ -65,15 +64,15 @@ func (c *TOTPFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishRe
 	authn := c.opts.Authenticator
 
 	if resp == nil {
-		return nil, errors.Errorf("Nil response")
+		return nil, authenticators.ErrInvalidAuthMsg("Nil response")
 	}
 
 	if resp.ChallengeResponse == nil || resp.ChallengeResponse.GetTotp() == nil {
-		return nil, errors.Errorf("Response is not TOTP")
+		return nil, authenticators.ErrInvalidAuthMsg("Response is not TOTP")
 	}
 
 	if authn == nil || authn.Status.Info == nil || authn.Status.Info.GetTotp() == nil {
-		return nil, errors.Errorf("Invalid req...")
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid req...")
 	}
 
 	zap.L().Debug("Getting TOTP secret from User auth factor state")
@@ -85,7 +84,7 @@ func (c *TOTPFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishRe
 
 	isValid := totp.Validate(resp.ChallengeResponse.GetTotp().Response, string(secretBytes))
 	if !isValid {
-		return nil, authenticators.ErrInvalidAuth
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid code")
 	}
 
 	return &authenticators.FinishResp{}, nil

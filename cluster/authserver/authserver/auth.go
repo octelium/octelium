@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -831,4 +832,12 @@ func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	}
 
 	return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN
+}
+
+func (s *server) checkSessionValidAccessToken(sess *corev1.Session) error {
+	if !ucorev1.ToSession(sess).HasValidAccessToken() {
+		return s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	}
+
+	return nil
 }

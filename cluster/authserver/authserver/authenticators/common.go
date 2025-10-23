@@ -81,7 +81,32 @@ type Factor interface {
 	FinishRegistration(ctx context.Context, req *FinishRegistrationReq) (*FinishRegistrationResp, error)
 }
 
-var ErrInvalidAuth = errors.New("Invalid Authentication")
+// var ErrInvalidAuth = errors.New("Invalid Authentication")
+
+func ErrInvalidAuthMsg(msg string) error {
+	return &errInvalidAuth{
+		err: errors.New(msg),
+	}
+}
+
+func ErrInvalidAuth(err error) error {
+	return &errInvalidAuth{
+		err: err,
+	}
+}
+
+type errInvalidAuth struct {
+	err error
+}
+
+func (e *errInvalidAuth) Error() string {
+	return fmt.Sprintf("Authentication error: %+v", e.err)
+}
+
+func IsErrInvalidAuth(err error) bool {
+	_, ok := err.(*errInvalidAuth)
+	return ok
+}
 
 func EncryptData(ctx context.Context, octeliumC octeliumc.ClientInterface, plaintext []byte) (*corev1.Authenticator_Status_EncryptedData, error) {
 	secretList, err := octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{

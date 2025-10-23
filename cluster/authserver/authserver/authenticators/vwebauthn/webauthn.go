@@ -147,7 +147,7 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 
 	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetFido() == nil ||
 		resp.ChallengeResponse.GetFido().Response == "" {
-		return nil, errors.Errorf("Invalid Response")
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid Response")
 	}
 
 	webauthnctl, err := c.getWebauthnCtl(authn)
@@ -157,8 +157,8 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 
 	webauthnUsr := NewWebAuthnUsr(authn, c.opts.User)
 
-	if authn.Status.AuthenticationAttempt.DataMap == nil {
-		return nil, errors.Errorf("No authenticationAttempt dataMap")
+	if authn.Status.AuthenticationAttempt == nil || authn.Status.AuthenticationAttempt.DataMap == nil {
+		return nil, authenticators.ErrInvalidAuthMsg("No authenticationAttempt dataMap")
 	}
 
 	sessData := &webauthn.SessionData{}
@@ -166,26 +166,24 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 		return nil, err
 	}
 
-	{
-		parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
-			strings.NewReader(resp.ChallengeResponse.GetFido().Response))
-		if err != nil {
-			return nil, err
-		}
-
-		cred, err := webauthnctl.ValidateLogin(webauthnUsr, *sessData, parsedResponse)
-		if err != nil {
-			return nil, err
-		}
-
-		if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
-			return nil, errors.Errorf("User is not verified")
-		}
-
-		zap.L().Debug("webauthn login successful", zap.Any("cred", cred))
-
-		ret.Cred = cred
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(
+		strings.NewReader(resp.ChallengeResponse.GetFido().Response))
+	if err != nil {
+		return nil, authenticators.ErrInvalidAuth(err)
 	}
+
+	cred, err := webauthnctl.ValidateLogin(webauthnUsr, *sessData, parsedResponse)
+	if err != nil {
+		return nil, authenticators.ErrInvalidAuth(err)
+	}
+
+	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
+		return nil, authenticators.ErrInvalidAuthMsg("User is not verified")
+	}
+
+	zap.L().Debug("webauthn login successful", zap.Any("cred", cred))
+
+	ret.Cred = cred
 
 	return ret, nil
 }

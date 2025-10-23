@@ -34,7 +34,6 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
-	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -97,12 +96,12 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	challengeReqBytes, err := authenticators.DecryptData(ctx,
 		s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	challengeReq := &authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest{}
 	if err := pbutils.Unmarshal(challengeReqBytes, challengeReq); err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	var factor authenticators.Factor
@@ -145,11 +144,13 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		ChallengeRequest: challengeReq,
 	})
 	if err != nil {
+		zap.L().Debug("Could not do Authenticator finish", zap.Any("authn", authn), zap.Error(err))
 		authn.Status.FailedAuthentications = authn.Status.FailedAuthentications + 1
-		if err := nullifyCurrAndUpdate(); err != nil {
-			return nil, err
+		nullifyCurrAndUpdate()
+		if authenticators.IsErrInvalidAuth(err) {
+			return nil, s.errPermissionDenied("Invalid authentication")
 		}
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
@@ -352,26 +353,26 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 		Req: req,
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	authn.Status.TotalAuthenticationAttempts = authn.Status.TotalAuthenticationAttempts + 1
 
 	challengeReqBytes, err := pbutils.Marshal(ret.Response.ChallengeRequest)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	encryptedChallengeRequest, err := authenticators.EncryptData(ctx, s.octeliumC, challengeReqBytes)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	authn.Status.AuthenticationAttempt.EncryptedChallengeRequest = encryptedChallengeRequest
 
 	_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	return ret.Response, nil
@@ -442,9 +443,10 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 		return nil, err
 	}
 
-	if !ucorev1.ToSession(sess).HasValidAccessToken() {
-		return nil, s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	if err := s.checkSessionValidAccessToken(sess); err != nil {
+		return nil, err
 	}
+
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
 		return nil, s.errPermissionDenied("Cannot modify Authenticators")
@@ -494,24 +496,24 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 		Req: req,
 	})
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	challengeReqBytes, err := pbutils.Marshal(ret.Response.ChallengeRequest)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	encryptedChallengeRequest, err := authenticators.EncryptData(ctx, s.octeliumC, challengeReqBytes)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	authn.Status.AuthenticationAttempt.EncryptedChallengeRequest = encryptedChallengeRequest
 
 	_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	return ret.Response, nil
@@ -613,10 +615,8 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		return nil, err
 	}
 
-	zap.L().Debug("Got Session from creds", zap.Any("sess", sess))
-
-	if !s.needsReAuth(sess) {
-		return nil, s.errAlreadyExists("The Session is valid and does not need a authenticatorFinish")
+	if err := s.checkSessionValidAccessToken(sess); err != nil {
+		return nil, err
 	}
 
 	usr, err := s.getUserFromSession(ctx, sess)
@@ -657,7 +657,6 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	}
 
 	if s.isAuthenticationAttemptTimeoutExceeded(authn) {
-
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
 		}
@@ -674,12 +673,12 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	challengeReqBytes, err := authenticators.DecryptData(ctx,
 		s.octeliumC, authn.Status.AuthenticationAttempt.EncryptedChallengeRequest)
 	if err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	challengeReq := &authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest{}
 	if err := pbutils.Unmarshal(challengeReqBytes, challengeReq); err != nil {
-		return nil, err
+		return nil, s.errInternalErr(err)
 	}
 
 	var factor authenticators.Factor
@@ -722,9 +721,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		Resp:             req,
 		ChallengeRequest: challengeReq,
 	}); err != nil {
-		if err := nullifyCurrAndUpdate(); err != nil {
-			return nil, err
-		}
+		nullifyCurrAndUpdate()
 		return nil, err
 	}
 
