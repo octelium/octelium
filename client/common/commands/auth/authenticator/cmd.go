@@ -44,6 +44,7 @@ octelium auth authn totp-123456
 octelium auth authenticator totp-abcdef
 		`,
 	Aliases: []string{"authn"},
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
