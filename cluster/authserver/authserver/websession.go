@@ -153,8 +153,8 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 	}
 
-	if len(cc.Spec.Authenticator.AuthenticationRules) == 0 &&
-		len(cc.Spec.Authenticator.RegistrationRules) == 0 {
+	if len(cc.Spec.Authenticator.AuthenticationEnforcementRules) == 0 &&
+		len(cc.Spec.Authenticator.RegistrationEnforcementRules) == 0 {
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 	}
 
@@ -173,9 +173,9 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 	}
 
 	if len(r.AvailableAuthenticators) > 0 {
-		if len(cc.Spec.Authenticator.AuthenticationRules) > 0 {
+		if len(cc.Spec.Authenticator.AuthenticationEnforcementRules) > 0 {
 			switch s.doAuthenticatorEnforcementRule(ctx,
-				cc.Spec.Authenticator.AuthenticationRules, idp, usr, sess, authnList) {
+				cc.Spec.Authenticator.AuthenticationEnforcementRules, idp, usr, sess, authnList) {
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 				return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
@@ -189,9 +189,9 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
 	}
 
-	if len(cc.Spec.Authenticator.RegistrationRules) > 0 {
+	if len(cc.Spec.Authenticator.RegistrationEnforcementRules) > 0 {
 		switch s.doAuthenticatorEnforcementRule(ctx,
-			cc.Spec.Authenticator.RegistrationRules, idp, usr, sess, authnList) {
+			cc.Spec.Authenticator.RegistrationEnforcementRules, idp, usr, sess, authnList) {
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 			return corev1.Session_Status_REGISTRATION_REQUIRED, nil
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:

@@ -203,11 +203,11 @@ func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterC
 	cfg := c.Spec.Authenticator
 
 	{
-		if len(cfg.AuthenticationRules) > 256 {
+		if len(cfg.AuthenticationEnforcementRules) > 256 {
 			return grpcutils.InvalidArg("Too many AuthenticationRules")
 		}
 
-		for _, r := range cfg.AuthenticationRules {
+		for _, r := range cfg.AuthenticationEnforcementRules {
 			if err := s.validateCondition(ctx, r.Condition); err != nil {
 				return err
 			}
@@ -237,11 +237,11 @@ func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterC
 	}
 
 	{
-		if len(cfg.RegistrationRules) > 256 {
+		if len(cfg.RegistrationEnforcementRules) > 256 {
 			return grpcutils.InvalidArg("Too many RegistrationRules")
 		}
 
-		for _, r := range cfg.RegistrationRules {
+		for _, r := range cfg.RegistrationEnforcementRules {
 			if err := s.validateCondition(ctx, r.Condition); err != nil {
 				return err
 			}
