@@ -193,7 +193,8 @@ func (c *TPMFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishReq
 		return nil, authenticators.ErrInvalidAuthMsg("Authenticator is not TPM")
 	}
 
-	secret, err := authenticators.DecryptData(ctx, c.octeliumC, authn.Status.AuthenticationAttempt.EncryptedDataMap["secret"])
+	secret, err := authenticators.DecryptData(ctx, c.octeliumC,
+		authn.Status.AuthenticationAttempt.EncryptedDataMap["secret"])
 	if err != nil {
 		return nil, err
 	}
@@ -334,20 +335,21 @@ func (c *TPMFactor) FinishRegistration(ctx context.Context,
 	authn := c.opts.Authenticator
 
 	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetTpm() == nil {
-		return nil, errors.Errorf("Response is not TPM")
+		return nil, authenticators.ErrInvalidAuthMsg("Response is not TPM")
 	}
 
 	if authn == nil || authn.Status.Info == nil || authn.Status.Info.GetTpm() == nil {
-		return nil, errors.Errorf("Invalid req...")
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid req...")
 	}
 
-	secret, err := authenticators.DecryptData(ctx, c.octeliumC, authn.Status.AuthenticationAttempt.EncryptedDataMap["secret"])
+	secret, err := authenticators.DecryptData(ctx, c.octeliumC,
+		authn.Status.AuthenticationAttempt.EncryptedDataMap["secret"])
 	if err != nil {
 		return nil, err
 	}
 
 	if !utils.SecureBytesEqual(secret, resp.ChallengeResponse.GetTpm().Response) {
-		return nil, errors.Errorf("Invalid response")
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid response")
 	}
 
 	return &authenticators.FinishRegistrationResp{}, nil

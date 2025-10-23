@@ -722,7 +722,10 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		ChallengeRequest: challengeReq,
 	}); err != nil {
 		nullifyCurrAndUpdate()
-		return nil, err
+		if authenticators.IsErrInvalidAuth(err) {
+			return nil, s.errPermissionDenied("Invalid registration")
+		}
+		return nil, s.errInternalErr(err)
 	}
 
 	authn.Status.AuthenticationAttempt = nil

@@ -334,18 +334,18 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
 		strings.NewReader(resp.ChallengeResponse.GetFido().Response))
 	if err != nil {
-		return nil, err
+		return nil, authenticators.ErrInvalidAuth(err)
 	}
 
 	cred, err := webauthnctl.CreateCredential(webauthnUsr, *sessData, parsedResponse)
 	if err != nil {
-		return nil, err
+		return nil, authenticators.ErrInvalidAuth(err)
 	}
 
 	zap.L().Debug("Successful CreateCredential", zap.Any("cred", cred))
 
 	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
-		return nil, errors.Errorf("User is not verified")
+		return nil, authenticators.ErrInvalidAuthMsg("User is not verified")
 	}
 
 	idHash := vutils.Sha256Sum(cred.ID)
