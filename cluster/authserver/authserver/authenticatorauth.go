@@ -29,9 +29,9 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/totp"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/tpm"
-	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -534,7 +534,7 @@ func (s *server) getAuthenticatorCtl(ctx context.Context,
 	var err error
 	switch authn.Status.Type {
 	case corev1.Authenticator_Status_FIDO:
-		ret, err = vwebauthn.NewFactor(ctx, opts, s.mdsProvider)
+		ret, err = fido.NewFactor(ctx, opts, s.mdsProvider)
 	case corev1.Authenticator_Status_TOTP:
 		ret, err = totp.NewFactor(ctx, opts)
 	case corev1.Authenticator_Status_TPM:

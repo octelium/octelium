@@ -30,7 +30,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
-	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/vwebauthn"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -195,7 +195,7 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 			return nil, err
 		}
 
-		webauthnUser := vwebauthn.NewWebAuthnUsr(authn, usr)
+		webauthnUser := fido.NewWebAuthnUsr(authn, usr)
 
 		if !utils.SecureBytesEqual(webauthnUser.WebAuthnID(), userHandle) {
 			return nil, errors.Errorf("Incorrect userHandle")
