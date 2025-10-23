@@ -47,7 +47,7 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if err := s.checkSessionValidAccessToken(sess); err != nil {
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 
@@ -178,7 +178,7 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if err := s.checkSessionValidAccessToken(sess); err != nil {
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 
@@ -266,7 +266,7 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if err := s.checkSessionValidAccessToken(sess); err != nil {
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 

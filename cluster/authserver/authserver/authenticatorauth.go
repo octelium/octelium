@@ -443,7 +443,7 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 		return nil, err
 	}
 
-	if err := s.checkSessionValidAccessToken(sess); err != nil {
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 
@@ -615,7 +615,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 		return nil, err
 	}
 
-	if err := s.checkSessionValidAccessToken(sess); err != nil {
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 

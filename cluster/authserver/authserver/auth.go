@@ -834,9 +834,18 @@ func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN
 }
 
-func (s *server) checkSessionValidAccessToken(sess *corev1.Session) error {
-	if !ucorev1.ToSession(sess).HasValidAccessToken() {
+func (s *server) checkSessionValid(sess *corev1.Session) error {
+	if !ucorev1.ToSession(sess).IsValid() {
 		return s.errPermissionDenied("Old Access Token. Please re-authenticate")
+	}
+
+	if sess.Status.IsLocked {
+		return s.errPermissionDenied("Session is locked")
+	}
+
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED:
+		return s.errPermissionDenied("Authenticator authentication is required")
 	}
 
 	return nil

@@ -107,6 +107,10 @@ func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.Register
 		return nil, s.errPermissionDenied("Not a CLIENT Session")
 	}
 
+	if err := s.checkSessionValid(sess); err != nil {
+		return nil, err
+	}
+
 	if sess.Status.DeviceRef != nil {
 		return nil, grpcutils.AlreadyExists("This Device is already registered")
 	}
@@ -161,6 +165,10 @@ func (s *server) doRegisterDeviceFinish(ctx context.Context, reqi *authv1.Regist
 
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 
