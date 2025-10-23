@@ -33,7 +33,7 @@
     "react-otp-input": "^3.1.1",
     "react-router-dom": "^7.6.0",
     "tailwind-merge": "^3.3.0",
-    "vite-plugin-svgr": "^4.3.0"
+    "vite-plugin-svgr": "^4.5.0"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.3",
@@ -42,7 +42,7 @@
     "@types/react-dom": "^19.1.4",
     "@typescript-eslint/eslint-plugin": "^8.32.1",
     "@typescript-eslint/parser": "^8.32.1",
-    "@vitejs/plugin-react-swc": "^3.9.0",
+    "@vitejs/plugin-react-swc": "^4.1.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.26.0",
     "eslint-plugin-react-hooks": "^5.2.0",
