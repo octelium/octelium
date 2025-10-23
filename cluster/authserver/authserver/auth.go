@@ -806,13 +806,15 @@ func (s *server) handleAuthenticatorRegister(w http.ResponseWriter, r *http.Requ
 func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	rules []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule,
 	idp *corev1.IdentityProvider,
-	usr *corev1.User, sess *corev1.Session) corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect {
+	usr *corev1.User, sess *corev1.Session,
+	authnList *corev1.AuthenticatorList) corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect {
 
 	inputMap := map[string]any{
 		"ctx": map[string]any{
-			"user":             pbutils.MustConvertToMap(usr),
-			"identityProvider": pbutils.MustConvertToMap(idp),
-			"session":          pbutils.MustConvertToMap(sess),
+			"user":              pbutils.MustConvertToMap(usr),
+			"identityProvider":  pbutils.MustConvertToMap(idp),
+			"session":           pbutils.MustConvertToMap(sess),
+			"authenticatorList": pbutils.MustConvertToMap(authnList),
 		},
 	}
 

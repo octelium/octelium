@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/sessionc"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"go.uber.org/zap"
 )
 
@@ -162,10 +163,19 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, err
 	}
 
+	authnList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterStatusUserUID(usr.Metadata.Uid),
+		},
+	})
+	if err != nil {
+		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, s.errInternalErr(err)
+	}
+
 	if len(r.AvailableAuthenticators) > 0 {
 		if len(cc.Spec.Authenticator.AuthenticationRules) > 0 {
 			switch s.doAuthenticatorEnforcementRule(ctx,
-				cc.Spec.Authenticator.AuthenticationRules, idp, usr, sess) {
+				cc.Spec.Authenticator.AuthenticationRules, idp, usr, sess, authnList) {
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 				return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
@@ -181,7 +191,7 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 
 	if len(cc.Spec.Authenticator.RegistrationRules) > 0 {
 		switch s.doAuthenticatorEnforcementRule(ctx,
-			cc.Spec.Authenticator.RegistrationRules, idp, usr, sess) {
+			cc.Spec.Authenticator.RegistrationRules, idp, usr, sess, authnList) {
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
 			return corev1.Session_Status_REGISTRATION_REQUIRED, nil
 		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
