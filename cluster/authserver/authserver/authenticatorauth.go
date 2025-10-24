@@ -209,6 +209,7 @@ func (s *server) getSessionAuthenticatorInfoFIDO(cred *webauthn.Credential,
 		ret.IsSoftware = fido.IsSoftware
 		ret.IsPasskey = fido.IsPasskey
 		ret.IsAttestationVerified = fido.IsAttestationVerified
+		ret.Aaguid = fido.Aaguid
 	}
 
 	return ret
