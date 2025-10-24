@@ -3,6 +3,7 @@ import Root from "./index";
 import routerLogin from "./Login/router";
 import routerAuthenticator from './Authenticator/router'
 import Home from "./Home";
+import Denied from './Denied'
 
 export default (): RouteObject => {
   return {
@@ -12,6 +13,10 @@ export default (): RouteObject => {
       {
         path: "",
         element: <Home />,
+      },
+      {
+        path: "denied",
+        element: <Denied />,
       },
       
       routerLogin(),

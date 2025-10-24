@@ -787,6 +787,16 @@ func (s *server) handleAuthenticatorList(w http.ResponseWriter, r *http.Request)
 	s.renderLoggedIn(w)
 }
 
+func (s *server) handleDenied(w http.ResponseWriter, r *http.Request) {
+	_, err := s.getWebSessionFromHTTPRefreshCookie(r)
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	s.renderLoggedIn(w)
+}
+
 func (s *server) handleAuthenticatorRegister(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {

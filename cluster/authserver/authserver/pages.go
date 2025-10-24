@@ -188,7 +188,3 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
 	w.Write(blob)
 }
-
-func (s *server) handleDenied(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, fmt.Sprintf("%s/denied", s.rootURL), http.StatusSeeOther)
-}
