@@ -124,6 +124,10 @@ func (s *server) getSessionFromRefreshToken(ctx context.Context, refreshToken st
 		return nil, s.errUnauthenticated("Session is rejected")
 	}
 
+	if sess.Status.IsLocked {
+		return nil, s.errUnauthenticated("Session is locked")
+	}
+
 	return sess, nil
 }
 

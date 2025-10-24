@@ -422,6 +422,11 @@ func (s *server) getUserFromUserRef(ctx context.Context, usrRef *metav1.ObjectRe
 	if usr.Spec.IsDisabled {
 		return nil, s.errPermissionDenied("User is deactivated")
 	}
+
+	if usr.Status.IsLocked {
+		return nil, s.errPermissionDenied("User is locked")
+	}
+
 	return usr, nil
 }
 
