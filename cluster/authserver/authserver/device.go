@@ -55,10 +55,9 @@ func (s *server) doBuildDevice(ctx context.Context,
 
 	deviceReq := &corev1.Device{
 		Metadata: &metav1.Metadata{
-			Name: fmt.Sprintf("%s-%s-%s",
-				usr.Metadata.Name,
+			Name: fmt.Sprintf("%s-%s",
 				strings.ToLower(req.Info.OsType.String()),
-				utilrand.GetRandomStringLowercase(4)),
+				utilrand.GetRandomStringLowercase(8)),
 		},
 
 		Spec: &corev1.Device_Spec{
