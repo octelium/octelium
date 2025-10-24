@@ -226,7 +226,11 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
                 </Tooltip>
 
                 {!isEdit && (
-                  <span>{authn.spec?.displayName ?? authn.metadata!.name}</span>
+                  <span>
+                    {authn.spec!.displayName.length > 0
+                      ? authn.spec!.displayName
+                      : authn.metadata!.name}
+                  </span>
                 )}
                 {isEdit && (
                   <div className="flex items-center flex-1 w-full">
@@ -252,9 +256,14 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
                 )}
               </div>
 
-              {authn.spec?.displayName && (
+              {!authn.spec!.displayName && (
                 <div className="text-slate-700 text-xs ml-1">
                   {authn.metadata!.name}
+                </div>
+              )}
+              {!!authn.status?.description && (
+                <div className="text-slate-500 text-xs ml-1">
+                  {authn.status.description}
                 </div>
               )}
             </div>
@@ -350,6 +359,7 @@ const devList = Auth.AuthenticatorList.create({
       },
       status: {
         type: Auth.Authenticator_Status_Type.FIDO,
+        description: "FIDO Security Key",
       },
     }),
   ],
@@ -365,12 +375,9 @@ export const ListAvailableAuthenticators = (props: {
       <div className="w-full">
         <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
           You have no Available Authenticators{" "}
-          <Link
-            to={`/authenticators/register`}
-            className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
-          >
+          <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
             Register
-          </Link>
+          </Button>
         </div>
       </div>
     );
@@ -391,24 +398,18 @@ export const ListAvailableAuthenticators = (props: {
         <div className="w-full">
           <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
             You have no Available Authenticators{" "}
-            <Link
-              to={`/authenticators/register`}
-              className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
-            >
+            <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
               Register
-            </Link>
+            </Button>
           </div>
         </div>
       ) : (
         <div>
           <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
             Your Available Authenticators{" "}
-            <Link
-              to={`/authenticators/register`}
-              className="text-sm mx-4 duration-500 transition-all text-slate-800 hover:text-black text-shadow-sm border-slate-500 border-[1px] py-1 px-2 rounded-md"
-            >
+            <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
               Register
-            </Link>
+            </Button>
           </h2>
           <div className="w-full">
             {resp.availableAuthenticators.map((x) => (

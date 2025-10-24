@@ -8,8 +8,7 @@ import { getClientAuth } from "@/utils/client";
 import { useQuery } from "@tanstack/react-query";
 
 import { Timestamp } from "@/apis/google/protobuf/timestamp";
-import { Link } from "react-router-dom";
-import { Authenticator, ListAvailableAuthenticators } from "../Authenticate";
+import { ListAvailableAuthenticators } from "../Authenticate";
 
 const devList = Auth.AuthenticatorList.create({
   items: [

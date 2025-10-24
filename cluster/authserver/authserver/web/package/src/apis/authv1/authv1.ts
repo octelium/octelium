@@ -692,6 +692,10 @@ export interface Authenticator_Status {
      * @generated from protobuf field: octelium.api.main.auth.v1.Authenticator.Status.Type type = 2;
      */
     type: Authenticator_Status_Type;
+    /**
+     * @generated from protobuf field: string description = 3;
+     */
+    description: string;
 }
 /**
  * @generated from protobuf enum octelium.api.main.auth.v1.Authenticator.Status.Type
@@ -3106,13 +3110,15 @@ class Authenticator_Status$Type extends MessageType<Authenticator_Status> {
     constructor() {
         super("octelium.api.main.auth.v1.Authenticator.Status", [
             { no: 1, name: "isRegistered", kind: "scalar", T: 8 /*ScalarType.BOOL*/ },
-            { no: 2, name: "type", kind: "enum", T: () => ["octelium.api.main.auth.v1.Authenticator.Status.Type", Authenticator_Status_Type] }
+            { no: 2, name: "type", kind: "enum", T: () => ["octelium.api.main.auth.v1.Authenticator.Status.Type", Authenticator_Status_Type] },
+            { no: 3, name: "description", kind: "scalar", T: 9 /*ScalarType.STRING*/ }
         ]);
     }
     create(value?: PartialMessage<Authenticator_Status>): Authenticator_Status {
         const message = globalThis.Object.create((this.messagePrototype!));
         message.isRegistered = false;
         message.type = 0;
+        message.description = "";
         if (value !== undefined)
             reflectionMergePartial<Authenticator_Status>(this, message, value);
         return message;
@@ -3127,6 +3133,9 @@ class Authenticator_Status$Type extends MessageType<Authenticator_Status> {
                     break;
                 case /* octelium.api.main.auth.v1.Authenticator.Status.Type type */ 2:
                     message.type = reader.int32();
+                    break;
+                case /* string description */ 3:
+                    message.description = reader.string();
                     break;
                 default:
                     let u = options.readUnknownField;
@@ -3146,6 +3155,9 @@ class Authenticator_Status$Type extends MessageType<Authenticator_Status> {
         /* octelium.api.main.auth.v1.Authenticator.Status.Type type = 2; */
         if (message.type !== 0)
             writer.tag(2, WireType.Varint).int32(message.type);
+        /* string description = 3; */
+        if (message.description !== "")
+            writer.tag(3, WireType.LengthDelimited).string(message.description);
         let u = options.writeUnknownFields;
         if (u !== false)
             (u == true ? UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
