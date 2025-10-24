@@ -312,7 +312,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 
 	if resp == nil || resp.ChallengeResponse == nil || resp.ChallengeResponse.GetFido() == nil ||
 		resp.ChallengeResponse.GetFido().Response == "" {
-		return nil, errors.Errorf("Invalid Response")
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid Response")
 	}
 
 	webauthnctl, err := c.getWebauthnCtl(authn)
@@ -362,7 +362,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 		}
 
 		if len(authnList.Items) > 0 {
-			return nil, errors.Errorf("Invalid credential ID")
+			return nil, authenticators.ErrInvalidAuthMsg("Invalid credential ID")
 		}
 	}
 
@@ -375,7 +375,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 
 	aaguid, err := uuid.FromBytes(cred.Authenticator.AAGUID)
 	if err != nil {
-		return nil, err
+		return nil, authenticators.ErrInvalidAuthMsg("Invalid AAGUID")
 	}
 
 	authn.Status.Info = &corev1.Authenticator_Status_Info{
@@ -429,6 +429,9 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 				slices.Contains(keyProtection, "secure_element")) ||
 				(slices.Contains(keyProtection, "hardware") &&
 					slices.Contains(keyProtection, "tee"))
+		} else if err != nil {
+			zap.L().Debug("Could not get MDS entry",
+				zap.String("aaguid", aaguid.String()), zap.Error(err))
 		}
 	}
 

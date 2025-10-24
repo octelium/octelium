@@ -42,8 +42,8 @@ import (
 func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
 
-	if grpcutils.GetHeaderValueMust(ctx, "origin") != s.rootURL {
-		return nil, s.errInvalidArg("Invalid origin")
+	if err := s.checkGRPCRequestIsWeb(ctx); err != nil {
+		return nil, err
 	}
 
 	cc := s.ccCtl.Get()
@@ -104,7 +104,8 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		}
 	}
 
-	zap.L().Debug("doAuthenticateWithPasskey is successful", zap.Any("sess", sess))
+	zap.L().Debug("doAuthenticateWithPasskey is successful",
+		zap.Any("sess", sess), zap.Any("authn", authn))
 
 	return s.generateSessionTokenResponse(ctx, sess)
 }
@@ -118,12 +119,8 @@ func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 		}
 	}
 
-	if grpcutils.GetHeaderValueMust(ctx, "origin") != s.rootURL {
-		return nil, s.errInvalidArg("Invalid origin")
-	}
-
-	if err := apivalidation.ValidateBrowserUserAgent(grpcutils.GetHeaderValueMust(ctx, "user-agent")); err != nil {
-		return nil, s.errInvalidArg("Invalid User Agent")
+	if err := s.checkGRPCRequestIsWeb(ctx); err != nil {
+		return nil, err
 	}
 
 	cc := s.ccCtl.Get()
@@ -150,6 +147,19 @@ func (s *server) doAuthenticateWithPasskeyBegin(ctx context.Context,
 	return &authv1.AuthenticateWithPasskeyBeginResponse{
 		Request: string(requestOptsBytes),
 	}, nil
+}
+
+func (s *server) checkGRPCRequestIsWeb(ctx context.Context) error {
+
+	if grpcutils.GetHeaderValueMust(ctx, "origin") != s.rootURL {
+		return s.errInvalidArg("Invalid origin")
+	}
+
+	if err := apivalidation.ValidateBrowserUserAgent(grpcutils.GetHeaderValueMust(ctx, "user-agent")); err != nil {
+		return s.errInvalidArg("Invalid User Agent")
+	}
+
+	return nil
 }
 
 func (s *server) doAuthenticationWithPasskey(ctx context.Context,

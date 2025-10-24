@@ -250,7 +250,7 @@ const Page = () => {
                   }}
                 >
                   <div className="w-full flex flex-row items-center justify-center">
-                    <span className="flex-1 flex items-center justify-center font-semibold">
+                    <span className="flex-1 flex items-center justify-center font-bold">
                       {c.displayName}
                     </span>
                   </div>
