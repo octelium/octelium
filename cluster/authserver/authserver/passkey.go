@@ -65,10 +65,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 				Type:             corev1.Authenticator_Status_FIDO,
 				Info: &corev1.Session_Status_Authentication_Info_Authenticator_Info{
 					Type: &corev1.Session_Status_Authentication_Info_Authenticator_Info_Fido{
-						Fido: &corev1.Session_Status_Authentication_Info_Authenticator_Info_FIDO{
-							UserPresent:  cred.Flags.UserPresent,
-							UserVerified: cred.Flags.UserVerified,
-						},
+						Fido: s.getSessionAuthenticatorInfoFIDO(cred, authn),
 					},
 				},
 				Mode: corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY,
@@ -106,6 +103,8 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 			zap.L().Debug("Could not generateCallbackURL", zap.Error(err))
 		}
 	}
+
+	zap.L().Debug("doAuthenticateWithPasskey is successful", zap.Any("sess", sess))
 
 	return s.generateSessionTokenResponse(ctx, sess)
 }
