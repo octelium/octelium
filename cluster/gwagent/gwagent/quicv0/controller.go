@@ -312,6 +312,10 @@ func (c *QUICController) doInit(ctx context.Context, stream *quic.Stream) (*core
 		return nil, errors.Errorf("Not a QUIC connection")
 	}
 
+	if sess.Status.IsLocked {
+		return nil, errors.Errorf("Session is locked")
+	}
+
 	resp := &quicv0.InitResponse{
 		Type: quicv0.InitResponse_OK,
 	}
