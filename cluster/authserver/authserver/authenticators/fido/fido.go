@@ -229,12 +229,30 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 		return nil
 	}
 
+	fido := u.authn.Status.Info.GetFido()
+
+	aaguid, _ := uuid.Parse(fido.Aaguid)
+
 	return []webauthn.Credential{
 		{
-			ID:        u.authn.Status.Info.GetFido().Id,
-			PublicKey: u.authn.Status.Info.GetFido().PublicKey,
+			ID:        fido.Id,
+			PublicKey: fido.PublicKey,
 			Flags: webauthn.CredentialFlags{
-				BackupEligible: u.authn.Status.Info.GetFido().BackupEligible,
+				BackupEligible: fido.BackupEligible,
+			},
+			AttestationType: func() string {
+
+				/*
+					if fido.IsAttestationVerified {
+						return ""
+					}
+				*/
+
+				// Skip MDS attestation verification in login ceremony
+				return "none"
+			}(),
+			Authenticator: webauthn.Authenticator{
+				AAGUID: aaguid[:],
 			},
 		},
 	}
