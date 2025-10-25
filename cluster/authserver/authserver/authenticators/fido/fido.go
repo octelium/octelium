@@ -248,7 +248,7 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 					}
 				*/
 
-				// Skip MDS attestation verification in login ceremony
+				// Skip MDS attestation verification in authentication ceremony
 				return "none"
 			}(),
 			Authenticator: webauthn.Authenticator{
