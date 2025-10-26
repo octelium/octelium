@@ -48,6 +48,7 @@ const Page = () => {
     queryFn: async () => {
       if (isDev()) {
         return Auth.GetAvailableAuthenticatorResponse.create({
+          mainAuthenticator: devList.items[0],
           availableAuthenticators: devList.items,
         });
       }

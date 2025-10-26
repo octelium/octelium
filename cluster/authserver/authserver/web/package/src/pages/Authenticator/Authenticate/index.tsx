@@ -256,7 +256,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
                 )}
               </div>
 
-              {!authn.spec!.displayName && (
+              {authn.spec!.displayName.length > 0 && (
                 <div className="text-slate-700 text-xs ml-1">
                   {authn.metadata!.name}
                 </div>
@@ -386,7 +386,7 @@ export const ListAvailableAuthenticators = (props: {
   return (
     <div className="w-full">
       {resp.mainAuthenticator && (
-        <div className="mb-8">
+        <div className="mb-24">
           <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
             Your Session's Main Authenticator
           </div>
