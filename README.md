@@ -63,7 +63,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 - **Context-aware, identity-based, L7-aware dynamic configuration and routing** Route to different upstreams, different credentials representing different upstream contexts and accounts using policy-as-code with CEL and OPA on a per-request basis. You can read in detail about dynamic configuration [here](https://octelium.com/docs/octelium/latest/management/core/service/dynamic-config).
 
 
-- **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secretless authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)).
+- **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secretless authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)). Built-in support for MFA/re-authentication/login via FIDO2/WebAuthn/Passkey, TOTP and TPM 2.0 _Authenticators_.
 
 
 - **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools.
@@ -152,11 +152,6 @@ Octelium is free and open source software:
 - **What is the current status of the project?**
 
   It's now in public beta. It's basically v1.0 but with bugs. The architecture, main features and APIs had been stabilized before the project was open sourced and made publicly available.
-
-- **Why are there so few commits for such a big project?**
-
-  Octelium has been in active development since early 2020 with nearly 9000 manual commits but was only open sourced in May 2025 in a new repository when it became mature and stable enough.
-
 
 - **Who's behind this project?**
 
