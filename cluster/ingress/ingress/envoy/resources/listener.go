@@ -32,6 +32,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	brotlicompr "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/brotli/compressor/v3"
 	gzipcompr "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/gzip/compressor/v3"
 	compressv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/compressor/v3"
 
@@ -284,6 +285,34 @@ func getHttpConnManagerFilterMain(domain string, svcList []*corev1.Service) (*li
 
 func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 	filters := []*envoyhcm.HttpFilter{}
+
+	{
+		brotliFilter := &brotlicompr.Brotli{}
+
+		brotliPbFilter, err := anypb.New(brotliFilter)
+		if err != nil {
+			return nil, err
+		}
+
+		compressorFilter := &compressv3.Compressor{
+			CompressorLibrary: &core.TypedExtensionConfig{
+				Name:        "brotli-compressor",
+				TypedConfig: brotliPbFilter,
+			},
+		}
+
+		pbFilter, err := anypb.New(compressorFilter)
+		if err != nil {
+			return nil, err
+		}
+
+		filters = append(filters, &envoyhcm.HttpFilter{
+			Name: "envoy.filters.http.compressor",
+			ConfigType: &envoyhcm.HttpFilter_TypedConfig{
+				TypedConfig: pbFilter,
+			},
+		})
+	}
 
 	{
 		gzipFilter := &gzipcompr.Gzip{
