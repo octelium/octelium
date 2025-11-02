@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/common/types/traits"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker/decls"
@@ -93,6 +95,25 @@ func (e *CELEngine) EvalPolicyString(ctx context.Context, exp string, input map[
 	}
 
 	return out.Value().(string), nil
+}
+
+func (e *CELEngine) EvalPolicyMapStrAny(ctx context.Context, exp string, input map[string]any) (map[string]any, error) {
+	prg, err := e.getOrSetProg(ctx, exp, cel.StringType)
+	if err != nil {
+		return nil, err
+	}
+
+	out, _, err := prg.ContextEval(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	res, ok := convertCelToGo(out).(map[string]any)
+	if !ok {
+		return nil, errors.Errorf("Could not assert cel val to map[string]any")
+	}
+
+	return res, nil
 }
 
 func (e *CELEngine) AddPolicy(ctx context.Context, exp string) error {
@@ -308,4 +329,57 @@ func (s *CELEngine) isConditionMatchedNone(ctx context.Context, condition *corev
 	}
 
 	return true, nil
+}
+
+func convertCelToGo(val ref.Val) any {
+	if val == nil {
+		return nil
+	}
+
+	switch val.Type() {
+	case types.StringType:
+		return string(val.(types.String))
+	case types.IntType:
+		return int64(val.(types.Int))
+	case types.UintType:
+		return uint64(val.(types.Uint))
+	case types.DoubleType:
+		return float64(val.(types.Double))
+	case types.BoolType:
+		return bool(val.(types.Bool))
+	case types.BytesType:
+		return []byte(val.(types.Bytes))
+	case types.NullType:
+		return nil
+	case types.MapType:
+		m := val.(traits.Mapper)
+		result := make(map[string]any)
+		it := m.Iterator()
+		for it.HasNext() == types.True {
+			key := it.Next()
+			keyStr := convertCelToGo(key)
+			value := m.Get(key)
+			if keyString, ok := keyStr.(string); ok {
+				result[keyString] = convertCelToGo(value)
+			}
+		}
+		return result
+	case types.ListType:
+		l := val.(traits.Lister)
+		size := int(l.Size().(types.Int))
+		result := make([]any, size)
+		for i := 0; i < size; i++ {
+			result[i] = convertCelToGo(l.Get(types.Int(i)))
+		}
+		return result
+	default:
+		if v, ok := val.(interface{ Value() any }); ok {
+			underlying := v.Value()
+			if celVal, isCelVal := underlying.(ref.Val); isCelVal {
+				return convertCelToGo(celVal)
+			}
+			return underlying
+		}
+		return val
+	}
 }
