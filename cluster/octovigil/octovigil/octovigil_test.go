@@ -1509,7 +1509,9 @@ func TestServiceConfig(t *testing.T) {
 					},
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 < 1`,
@@ -1555,7 +1557,9 @@ func TestServiceConfig(t *testing.T) {
 					},
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 > 1`,
@@ -1601,7 +1605,9 @@ func TestServiceConfig(t *testing.T) {
 					},
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 > 1`,
@@ -1609,7 +1615,9 @@ func TestServiceConfig(t *testing.T) {
 							},
 						},
 						{
-							ConfigName: "cfg-2",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-2",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 > 1`,
@@ -1655,7 +1663,9 @@ func TestServiceConfig(t *testing.T) {
 					},
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 < 1`,
@@ -1663,7 +1673,9 @@ func TestServiceConfig(t *testing.T) {
 							},
 						},
 						{
-							ConfigName: "cfg-2",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-2",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 > 1`,
@@ -1709,7 +1721,9 @@ func TestServiceConfig(t *testing.T) {
 					},
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `2 < 1`,
@@ -1717,7 +1731,9 @@ func TestServiceConfig(t *testing.T) {
 							},
 						},
 						{
-							ConfigName: "cfg-2",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-2",
+							},
 							Condition: &corev1.Condition{
 								Type: &corev1.Condition_Match{
 									Match: `4 < 3`,
@@ -1756,9 +1772,12 @@ func TestServiceConfig(t *testing.T) {
 				User: usr,
 			}
 
-			name, err := srv.getServiceConfigName(ctx, reqCtx)
+			req := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+				RequestContext: reqCtx,
+			}
+			err := srv.setServiceConfig(ctx, req)
 			assert.Nil(t, err)
-			assert.Equal(t, tstCase.res, name)
+			assert.Equal(t, tstCase.res, req.ServiceConfigName)
 		}
 	}
 }

@@ -35,6 +35,10 @@ func GetServiceConfig(ctx context.Context, req *coctovigilv1.AuthenticateAndAuth
 		return nil
 	}
 
+	if req.Config != nil {
+		return req.Config
+	}
+
 	svc := req.RequestContext.Service
 	cfgName := req.ServiceConfigName
 

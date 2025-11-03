@@ -1115,7 +1115,9 @@ func TestServiceDirectResponse(t *testing.T) {
 									MatchAny: true,
 								},
 							},
-							ConfigName: "cfg-1",
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+								ConfigName: "cfg-1",
+							},
 						},
 					},
 					Configs: []*corev1.Service_Spec_Config{

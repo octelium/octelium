@@ -402,9 +402,7 @@ func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1
 	ret.IsAuthorized = isAuthorized
 	ret.AuthorizationDecisionReason = reason
 
-	if svcCfgName, err := s.getServiceConfigName(ctx, ret.RequestContext); err == nil {
-		ret.ServiceConfigName = svcCfgName
-	} else {
+	if err := s.setServiceConfig(ctx, ret); err != nil {
 		zap.L().Warn("Could not getServiceConfigNam", zap.Error(err))
 	}
 
@@ -423,15 +421,17 @@ func (s *Server) isAuthorizedWithMetrics(ctx context.Context, req *corev1.Reques
 	return isAuthorized, reason, err
 }
 
-func (s *Server) getServiceConfigName(ctx context.Context, reqCtx *corev1.RequestContext) (string, error) {
+func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.AuthenticateAndAuthorizeResponse) error {
+
+	reqCtx := resp.RequestContext
 	svc := reqCtx.Service
 	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
-		return "", nil
+		return nil
 	}
 
 	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	inputMap := map[string]any{
@@ -446,11 +446,23 @@ func (s *Server) getServiceConfigName(ctx context.Context, reqCtx *corev1.Reques
 			continue
 		}
 		if isMatch {
-			return rule.ConfigName, nil
+			switch rule.Type.(type) {
+			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
+				resp.ServiceConfigName = rule.GetConfigName()
+				return nil
+			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
+				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
+					cfg := &corev1.Service_Spec_Config{}
+					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						resp.Config = cfg
+						return nil
+					}
+				}
+			}
 		}
 	}
 
-	return "", nil
+	return nil
 }
 
 func (s *Server) DoAuthorize(ctx context.Context,

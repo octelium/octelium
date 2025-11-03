@@ -1252,9 +1252,18 @@ func (s *Server) checkAndSetService(ctx context.Context,
 			if err := s.validateCondition(ctx, rule.Condition); err != nil {
 				return err
 			}
-			if err := apivalidation.ValidateName(rule.ConfigName, 0, 0); err != nil {
-				return err
+
+			switch rule.Type.(type) {
+			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
+				if err := apivalidation.ValidateName(rule.GetConfigName(), 0, 0); err != nil {
+					return err
+				}
+			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
+
+			default:
+				return grpcutils.InvalidArg("You must provide either a config name or eval")
 			}
+
 		}
 	}
 

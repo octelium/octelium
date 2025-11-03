@@ -71,8 +71,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				IsAuthorized: true,
 			}
 		}
-		reqCtx.AuthResponse.ServiceConfigName = m.getServiceConfigName(ctx, reqCtx.DownstreamInfo)
-		reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
+		m.setServiceConfig(ctx, reqCtx)
+		// reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
 		// Already set by preauth
 		// reqCtx.IsAuthorized = true
 		m.next.ServeHTTP(w, req)
@@ -208,15 +208,17 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 
 */
 
-func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.RequestContext) string {
+func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.RequestContext) {
+
+	reqCtx := req.DownstreamInfo
 	svc := reqCtx.Service
 	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
-		return ""
+		return
 	}
 
 	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
 	if err != nil {
-		return ""
+		return
 	}
 
 	inputMap := map[string]any{
@@ -229,9 +231,21 @@ func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.Re
 			continue
 		}
 		if isMatch {
-			return rule.ConfigName
+			switch rule.Type.(type) {
+			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
+				req.AuthResponse.ServiceConfigName = rule.GetConfigName()
+				vigilutils.GetServiceConfig(ctx, req.AuthResponse)
+				return
+			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
+				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
+					cfg := &corev1.Service_Spec_Config{}
+					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						req.AuthResponse.ServiceConfigName = rule.GetConfigName()
+						vigilutils.GetServiceConfig(ctx, req.AuthResponse)
+						return
+					}
+				}
+			}
 		}
 	}
-
-	return ""
 }
