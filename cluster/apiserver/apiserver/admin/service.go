@@ -628,6 +628,58 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				return grpcutils.InvalidArg("Either HTTP, WEB or GRPC modes must be set for HTTP config to be used")
 			}
 
+			if cfg.GetHttp().Header != nil {
+				hdrSpec := cfg.GetHttp().Header
+
+				if len(hdrSpec.AddRequestHeaders) > 256 {
+					return grpcutils.InvalidArg("Too many addRequestHeaders")
+				}
+
+				if len(hdrSpec.AddResponseHeaders) > 256 {
+					return grpcutils.InvalidArg("Too many addResponseHeaders")
+				}
+
+				if len(hdrSpec.RemoveRequestHeaders) > 256 {
+					return grpcutils.InvalidArg("Too many removeRequestHeaders")
+				}
+
+				if len(hdrSpec.RemoveResponseHeaders) > 256 {
+					return grpcutils.InvalidArg("Too many removeResponseHeaders")
+				}
+
+				for _, hdr := range hdrSpec.AddRequestHeaders {
+					if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
+						return err
+					}
+
+					if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
+						return err
+					}
+				}
+
+				for _, hdr := range hdrSpec.AddResponseHeaders {
+					if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
+						return err
+					}
+
+					if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
+						return err
+					}
+				}
+
+				for _, hdr := range hdrSpec.RemoveRequestHeaders {
+					if err := s.validateGenStr(hdr, true, "key"); err != nil {
+						return err
+					}
+				}
+
+				for _, hdr := range hdrSpec.RemoveResponseHeaders {
+					if err := s.validateGenStr(hdr, true, "key"); err != nil {
+						return err
+					}
+				}
+			}
+
 			if cfg.GetHttp().Auth != nil {
 				authSpec := cfg.GetHttp().Auth
 
