@@ -1311,7 +1311,9 @@ func (s *Server) checkAndSetService(ctx context.Context,
 					return err
 				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
-
+				if err := checkCELExpression(ctx, rule.GetEval()); err != nil {
+					return grpcutils.InvalidArg("Invalid eval: %s", rule.GetEval())
+				}
 			default:
 				return grpcutils.InvalidArg("You must provide either a config name or eval")
 			}
