@@ -171,7 +171,6 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 				SecurityContext: &k8scorev1.SecurityContext{
 					Privileged:               utils_types.BoolToPtr(false),
 					AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
-					ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
 					Capabilities: &k8scorev1.Capabilities{
 						Drop: []k8scorev1.Capability{
 							"all",
