@@ -108,7 +108,6 @@ func getOctovigilDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 							SecurityContext: &k8scorev1.SecurityContext{
 								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
 								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
-								RunAsNonRoot:             utils_types.BoolToPtr(true),
 							},
 						},
 					},
