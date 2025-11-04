@@ -28,10 +28,12 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -56,7 +58,10 @@ func TestMiddleware(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Response", "octelium")
 	})
-	mdlwr, err := New(ctx, next, secretMan)
+
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+	mdlwr, err := New(ctx, next, celEngine, secretMan)
 	assert.Nil(t, err)
 
 	{
@@ -171,12 +176,22 @@ func TestMiddleware(t *testing.T) {
 							Header: &corev1.Service_Spec_Config_HTTP_Header{
 								AddRequestHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
 									{
-										Key:   "X-Set-1",
-										Value: utilrand.GetRandomString(32),
+										Key: "X-Set-1",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: utilrand.GetRandomString(32),
+										},
 									},
 									{
-										Key:   "X-Set-2",
-										Value: utilrand.GetRandomString(32),
+										Key: "X-Set-2",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: utilrand.GetRandomString(32),
+										},
+									},
+									{
+										Key: "X-Service-Name",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval{
+											Eval: `ctx.service.metadata.name`,
+										},
 									},
 								},
 
@@ -186,12 +201,22 @@ func TestMiddleware(t *testing.T) {
 
 								AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
 									{
-										Key:   "X-Set-3",
-										Value: utilrand.GetRandomString(32),
+										Key: "X-Set-3",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: utilrand.GetRandomString(32),
+										},
 									},
 									{
-										Key:   "X-Set-4",
-										Value: utilrand.GetRandomString(32),
+										Key: "X-Set-4",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: utilrand.GetRandomString(32),
+										},
+									},
+									{
+										Key: "X-Service-Name",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval{
+											Eval: `ctx.service.metadata.name`,
+										},
 									},
 								},
 
@@ -212,6 +237,11 @@ func TestMiddleware(t *testing.T) {
 				CreatedAt:     time.Now(),
 				Service:       svc,
 				ServiceConfig: svc.Spec.Config,
+				ReqCtxMap: map[string]any{
+					"ctx": map[string]any{
+						"service": pbutils.MustConvertToMap(svc),
+					},
+				},
 			}))
 
 		rw := httptest.NewRecorder()
@@ -219,10 +249,12 @@ func TestMiddleware(t *testing.T) {
 
 		assert.Equal(t, "", req.Header.Get("X-Del-1"))
 
-		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddRequestHeaders[0].Value, req.Header.Get("X-Set-1"))
-		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddRequestHeaders[1].Value, req.Header.Get("X-Set-2"))
-		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddResponseHeaders[0].Value, rw.Header().Get("X-Set-3"))
-		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddResponseHeaders[1].Value, rw.Header().Get("X-Set-4"))
+		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddRequestHeaders[0].GetValue(), req.Header.Get("X-Set-1"))
+		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddRequestHeaders[1].GetValue(), req.Header.Get("X-Set-2"))
+		assert.Equal(t, svc.Metadata.Name, req.Header.Get("X-Service-Name"))
+		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddResponseHeaders[0].GetValue(), rw.Header().Get("X-Set-3"))
+		assert.Equal(t, svc.Spec.Config.GetHttp().Header.AddResponseHeaders[1].GetValue(), rw.Header().Get("X-Set-4"))
+		assert.Equal(t, svc.Metadata.Name, rw.Header().Get("X-Service-Name"))
 		assert.Equal(t, "", rw.Header().Get("X-Response"))
 	}
 

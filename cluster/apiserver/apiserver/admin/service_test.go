@@ -193,12 +193,16 @@ func TestCreateService(t *testing.T) {
 							Header: &corev1.Service_Spec_Config_HTTP_Header{
 								AddRequestHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
 									{
-										Key:   "x-hdr1",
-										Value: "val1",
+										Key: "x-hdr1",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: "val1",
+										},
 									},
 									{
-										Key:   "x-hdr2",
-										Value: "val2",
+										Key: "x-hdr2",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: "val2",
+										},
 									},
 								},
 								RemoveRequestHeaders: []string{
@@ -210,12 +214,16 @@ func TestCreateService(t *testing.T) {
 
 								AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
 									{
-										Key:   "x-hdr1",
-										Value: "val1",
+										Key: "x-hdr1",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: "val1",
+										},
 									},
 									{
-										Key:   "x-hdr2",
-										Value: "val2",
+										Key: "x-hdr2",
+										Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+											Value: "val2",
+										},
 									},
 								},
 							},

@@ -327,7 +327,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return headers.New(ctx, next, s.secretMan)
+		return headers.New(ctx, next, s.celEngine, s.secretMan)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

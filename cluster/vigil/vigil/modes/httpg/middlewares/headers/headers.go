@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -35,12 +37,15 @@ import (
 type middleware struct {
 	next      http.Handler
 	secretMan *secretman.SecretManager
+	celEngine *celengine.CELEngine
 }
 
-func New(ctx context.Context, next http.Handler, secretMan *secretman.SecretManager) (http.Handler, error) {
+func New(ctx context.Context,
+	next http.Handler, celEngine *celengine.CELEngine, secretMan *secretman.SecretManager) (http.Handler, error) {
 	return &middleware{
 		next:      next,
 		secretMan: secretMan,
+		celEngine: celEngine,
 	}, nil
 }
 
@@ -70,13 +75,28 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	req.Header.Del("X-Envoy-Internal")
 	req.Header.Del("X-Request-Id")
 
+	inputMap := reqCtx.ReqCtxMap
+
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddRequestHeaders {
 			if hdr.Append {
-				req.Header.Add(hdr.Key, hdr.Value)
+				switch hdr.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+					req.Header.Add(hdr.Key, hdr.GetValue())
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					req.Header.Add(hdr.Key, val)
+				}
+
 			} else {
-				req.Header.Set(hdr.Key, hdr.Value)
+				switch hdr.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+					req.Header.Set(hdr.Key, hdr.GetValue())
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					req.Header.Set(hdr.Key, val)
+				}
 			}
 		}
 
@@ -237,14 +257,28 @@ func (m *middleware) postRequestModifyResponseHeaders(rw http.ResponseWriter, re
 	svcCfg := reqCtx.ServiceConfig
 
 	rwHdr := rw.Header()
+	ctx := req.Context()
+	inputMap := reqCtx.ReqCtxMap
 
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
 		for _, hdr := range cfg.AddResponseHeaders {
 			if hdr.Append {
-				rwHdr.Add(hdr.Key, hdr.Value)
+				switch hdr.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+					rwHdr.Add(hdr.Key, hdr.GetValue())
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					rwHdr.Add(hdr.Key, val)
+				}
 			} else {
-				rwHdr.Set(hdr.Key, hdr.Value)
+				switch hdr.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+					rwHdr.Set(hdr.Key, hdr.GetValue())
+				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					rwHdr.Set(hdr.Key, val)
+				}
 			}
 		}
 

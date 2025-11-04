@@ -652,9 +652,19 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						return err
 					}
 
-					if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
-						return err
+					switch hdr.Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+						if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
+							return err
+						}
+					case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+						if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+							return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
+						}
+					default:
+						return grpcutils.InvalidArg("You must provide either a header value or eval")
 					}
+
 				}
 
 				for _, hdr := range hdrSpec.AddResponseHeaders {
@@ -662,8 +672,17 @@ func (s *Server) checkAndSetService(ctx context.Context,
 						return err
 					}
 
-					if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
-						return err
+					switch hdr.Type.(type) {
+					case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+						if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
+							return err
+						}
+					case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+						if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+							return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
+						}
+					default:
+						return grpcutils.InvalidArg("You must provide either a header value or eval")
 					}
 				}
 
