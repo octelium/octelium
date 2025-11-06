@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package device
+package authenticator
 
 import (
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -23,15 +23,15 @@ import (
 )
 
 const example = `
- octeliumctl update device --approve usr1-linux-uvc4
- octeliumctl update dev --reject usr1-linux-uvc4
+ octeliumctl update authenticator --approve fido-123456
+ octeliumctl update authn --reject totp-123456
  `
 
 var Cmd = &cobra.Command{
-	Use:     "device",
-	Short:   "Update a Device",
+	Use:     "authenticator",
+	Short:   "Update an Authenticator",
 	Example: example,
-	Aliases: []string{"dev"},
+	Aliases: []string{"authn"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -46,8 +46,8 @@ type args struct {
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().BoolVar(&cmdArgs.Approve, "approve", false, "Approve the Device")
-	Cmd.PersistentFlags().BoolVar(&cmdArgs.Reject, "reject", false, "Reject the Device")
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.Approve, "approve", false, "Approve the Authenticator")
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.Reject, "reject", false, "Reject the Authenticator")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -65,7 +65,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := corev1.NewMainServiceClient(conn)
 
-	dev, err := c.GetDevice(ctx, &metav1.GetOptions{
+	authn, err := c.GetAuthenticator(ctx, &metav1.GetOptions{
 		Name: i.FirstArg(),
 	})
 	if err != nil {
@@ -74,19 +74,19 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	switch {
 	case cmdArgs.Approve:
-		dev.Spec.State = corev1.Device_Spec_ACTIVE
+		authn.Spec.State = corev1.Authenticator_Spec_ACTIVE
 	case cmdArgs.Reject:
-		dev.Spec.State = corev1.Device_Spec_REJECTED
+		authn.Spec.State = corev1.Authenticator_Spec_REJECTED
 	default:
 		return nil
 	}
 
-	_, err = c.UpdateDevice(ctx, dev)
+	_, err = c.UpdateAuthenticator(ctx, authn)
 	if err != nil {
 		return err
 	}
 
-	cliutils.LineNotify("Device %s successfully updated\n", i.FirstArg())
+	cliutils.LineNotify("Authenticator %s successfully updated\n", i.FirstArg())
 
 	return nil
 }
