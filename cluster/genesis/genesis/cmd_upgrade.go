@@ -110,6 +110,10 @@ func (g *Genesis) RunUpgrade(ctx context.Context) error {
 		return err
 	}
 
+	if err := g.doPostUpgrade(ctx); err != nil {
+		zap.L().Warn("Could not doPostUpgrade", zap.Error(err))
+	}
+
 	zap.L().Info("Upgrade successfully completed...")
 
 	return nil
@@ -197,4 +201,26 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 	}
 
 	return ret, nil
+}
+
+func (g *Genesis) doPostUpgrade(ctx context.Context) error {
+	{
+		authnList, err := g.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+
+		for _, itm := range authnList.Items {
+			switch itm.Spec.State {
+			case corev1.Authenticator_Spec_STATE_UNKNOWN:
+				itm.Spec.State = corev1.Authenticator_Spec_ACTIVE
+				_, err = g.octeliumC.CoreC().UpdateAuthenticator(ctx, itm)
+				if err != nil {
+					zap.L().Debug("Could not updateAuthenticator in doPostUpgrade", zap.Error(err))
+				}
+			}
+		}
+	}
+
+	return nil
 }
