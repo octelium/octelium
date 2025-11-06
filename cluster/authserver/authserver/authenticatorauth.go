@@ -60,6 +60,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	if !authn.Status.IsRegistered {
 		return nil, s.errPermissionDenied("Authenticator is not registered")
 	}
+	switch authn.Spec.State {
+	case corev1.Authenticator_Spec_ACTIVE:
+	default:
+		return nil, s.errPermissionDenied("Authenticator is not ACTIVE")
+	}
 
 	if err := s.checkAuthenticatorRateLimit(ctx, authn); err != nil {
 		return nil, err
@@ -303,6 +308,12 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 
 	if !authn.Status.IsRegistered {
 		return nil, s.errInvalidArg("Authenticator is not registered")
+	}
+
+	switch authn.Spec.State {
+	case corev1.Authenticator_Spec_ACTIVE:
+	default:
+		return nil, s.errPermissionDenied("Authenticator is not ACTIVE")
 	}
 
 	if sess.Status.RequiredAuthenticatorRef != nil {

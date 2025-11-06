@@ -94,6 +94,7 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		},
 		Spec: &corev1.Authenticator_Spec{
 			DisplayName: req.DisplayName,
+			State:       corev1.Authenticator_Spec_ACTIVE,
 		},
 		Status: &corev1.Authenticator_Status{
 			UserRef: umetav1.GetObjectReference(usr),
