@@ -232,7 +232,9 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			UserRef: umetav1.GetObjectReference(usrT.Usr),
 			Type:    corev1.Authenticator_Status_TPM,
@@ -252,7 +254,9 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			UserRef:      umetav1.GetObjectReference(usrT.Usr),
 			Type:         corev1.Authenticator_Status_TPM,
@@ -281,7 +285,9 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			UserRef:      umetav1.GetObjectReference(usrT.Usr),
 			Type:         corev1.Authenticator_Status_FIDO,
@@ -304,7 +310,9 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			UserRef:      umetav1.GetObjectReference(usr2T.Usr),
 			Type:         corev1.Authenticator_Status_FIDO,
@@ -337,7 +345,9 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			UserRef:      umetav1.GetObjectReference(usrT.Usr),
 			Type:         corev1.Authenticator_Status_TPM,

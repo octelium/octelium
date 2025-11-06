@@ -94,7 +94,9 @@ func TestHandleBeginAuthenticator(t *testing.T) {
 			Metadata: &metav1.Metadata{
 				Name: utilrand.GetRandomStringCanonical(8),
 			},
-			Spec: &corev1.Authenticator_Spec{},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
 			Status: &corev1.Authenticator_Status{
 				UserRef: umetav1.GetObjectReference(usrT.Usr),
 				Type:    corev1.Authenticator_Status_TOTP,
@@ -162,7 +164,9 @@ func TestHandleBeginAuthenticator(t *testing.T) {
 			Metadata: &metav1.Metadata{
 				Name: utilrand.GetRandomStringCanonical(8),
 			},
-			Spec: &corev1.Authenticator_Spec{},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
 			Status: &corev1.Authenticator_Status{
 				UserRef: umetav1.GetObjectReference(usrT2.Usr),
 				Type:    corev1.Authenticator_Status_TOTP,
@@ -208,7 +212,9 @@ func TestCheckAuthenticatorRateLimit(t *testing.T) {
 			Metadata: &metav1.Metadata{
 				Name: utilrand.GetRandomStringCanonical(8),
 			},
-			Spec: &corev1.Authenticator_Spec{},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
 			Status: &corev1.Authenticator_Status{
 				UserRef: umetav1.GetObjectReference(usrT.Usr),
 				Type:    corev1.Authenticator_Status_TOTP,

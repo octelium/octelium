@@ -70,7 +70,9 @@ func TestBegin(t *testing.T) {
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
-		Spec: &corev1.Authenticator_Spec{},
+		Spec: &corev1.Authenticator_Spec{
+			State: corev1.Authenticator_Spec_ACTIVE,
+		},
 		Status: &corev1.Authenticator_Status{
 			// IdentityProviderRef: umetav1.GetObjectReference(fctr),
 			UserRef:               umetav1.GetObjectReference(usr.Usr),
