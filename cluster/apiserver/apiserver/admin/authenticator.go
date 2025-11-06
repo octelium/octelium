@@ -19,11 +19,13 @@ package admin
 import (
 	"context"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 )
 
@@ -87,4 +89,56 @@ func (s *Server) GetAuthenticator(ctx context.Context, req *metav1.GetOptions) (
 	}
 
 	return ret, nil
+}
+
+func (s *Server) UpdateAuthenticator(ctx context.Context, req *corev1.Authenticator) (*corev1.Authenticator, error) {
+	if err := s.validateAuthenticator(ctx, req); err != nil {
+		return nil, serr.InvalidArgWithErr(err)
+	}
+
+	item, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
+		Uid:  req.Metadata.Uid,
+		Name: req.Metadata.Name,
+	})
+	if err != nil {
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	item.Spec = req.Spec
+
+	item, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, item)
+	if err != nil {
+		return nil, serr.K8sInternal(err)
+	}
+
+	return item, nil
+}
+
+func (s *Server) validateAuthenticator(ctx context.Context, itm *corev1.Authenticator) error {
+	if err := apivalidation.ValidateCommon(itm, &apivalidation.ValidateCommonOpts{
+		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
+			RequireName: true,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if itm.Spec == nil {
+		return grpcutils.InvalidArg("You must provide spec")
+	}
+
+	switch itm.Spec.State {
+	case corev1.Authenticator_Spec_STATE_UNKNOWN:
+		return grpcutils.InvalidArg("State cannot be UNKNOWN")
+	}
+
+	if len(itm.Spec.DisplayName) > 120 {
+		return grpcutils.InvalidArg("displayName is too long")
+	}
+
+	if !govalidator.IsASCII(itm.Spec.DisplayName) {
+		return grpcutils.InvalidArg("Invalid display name")
+	}
+
+	return nil
 }

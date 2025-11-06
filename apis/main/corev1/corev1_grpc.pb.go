@@ -92,6 +92,7 @@ const (
 	MainService_ListAuthenticator_FullMethodName       = "/octelium.api.main.core.v1.MainService/ListAuthenticator"
 	MainService_DeleteAuthenticator_FullMethodName     = "/octelium.api.main.core.v1.MainService/DeleteAuthenticator"
 	MainService_GetAuthenticator_FullMethodName        = "/octelium.api.main.core.v1.MainService/GetAuthenticator"
+	MainService_UpdateAuthenticator_FullMethodName     = "/octelium.api.main.core.v1.MainService/UpdateAuthenticator"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -214,6 +215,8 @@ type MainServiceClient interface {
 	DeleteAuthenticator(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
 	// GetAuthenticator retrieves a specific Authenticator
 	GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error)
+	// UpdateAuthenticator updates an Authenticator
+	UpdateAuthenticator(ctx context.Context, in *Authenticator, opts ...grpc.CallOption) (*Authenticator, error)
 }
 
 type mainServiceClient struct {
@@ -804,6 +807,16 @@ func (c *mainServiceClient) GetAuthenticator(ctx context.Context, in *metav1.Get
 	return out, nil
 }
 
+func (c *mainServiceClient) UpdateAuthenticator(ctx context.Context, in *Authenticator, opts ...grpc.CallOption) (*Authenticator, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Authenticator)
+	err := c.cc.Invoke(ctx, MainService_UpdateAuthenticator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -924,6 +937,8 @@ type MainServiceServer interface {
 	DeleteAuthenticator(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
 	// GetAuthenticator retrieves a specific Authenticator
 	GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error)
+	// UpdateAuthenticator updates an Authenticator
+	UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -1107,6 +1122,9 @@ func (UnimplementedMainServiceServer) DeleteAuthenticator(context.Context, *meta
 }
 func (UnimplementedMainServiceServer) GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateAuthenticator not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -2173,6 +2191,24 @@ func _MainService_GetAuthenticator_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_UpdateAuthenticator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Authenticator)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).UpdateAuthenticator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_UpdateAuthenticator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).UpdateAuthenticator(ctx, req.(*Authenticator))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2411,6 +2447,10 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAuthenticator",
 			Handler:    _MainService_GetAuthenticator_Handler,
+		},
+		{
+			MethodName: "UpdateAuthenticator",
+			Handler:    _MainService_UpdateAuthenticator_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

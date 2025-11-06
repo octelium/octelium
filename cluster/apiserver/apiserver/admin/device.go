@@ -98,7 +98,10 @@ func (s *Server) UpdateDevice(ctx context.Context, req *corev1.Device) (*corev1.
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{
+		Uid:  req.Metadata.Uid,
+		Name: req.Metadata.Name,
+	})
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

@@ -29129,7 +29129,7 @@ var file_corev1_proto_rawDesc = []byte{
 	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
 	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74,
 	0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x07, 0x75, 0x73, 0x65, 0x72, 0x52,
-	0x65, 0x66, 0x32, 0xae, 0x2d, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69,
+	0x65, 0x66, 0x32, 0x9b, 0x2e, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69,
 	0x63, 0x65, 0x12, 0x56, 0x0a, 0x0c, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69,
 	0x63, 0x79, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
 	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50,
@@ -29492,10 +29492,17 @@ var file_corev1_proto_rawDesc = []byte{
 	0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
 	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
 	0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
-	0x72, 0x22, 0x00, 0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f,
-	0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x63, 0x6f,
-	0x72, 0x65, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x72, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74,
+	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00,
+	0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x76,
+	0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -30494,66 +30501,68 @@ var file_corev1_proto_depIdxs = []int32{
 	96,  // 595: octelium.api.main.core.v1.MainService.ListAuthenticator:input_type -> octelium.api.main.core.v1.ListAuthenticatorOptions
 	378, // 596: octelium.api.main.core.v1.MainService.DeleteAuthenticator:input_type -> octelium.api.main.meta.v1.DeleteOptions
 	379, // 597: octelium.api.main.core.v1.MainService.GetAuthenticator:input_type -> octelium.api.main.meta.v1.GetOptions
-	74,  // 598: octelium.api.main.core.v1.MainService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	75,  // 599: octelium.api.main.core.v1.MainService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
-	74,  // 600: octelium.api.main.core.v1.MainService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	380, // 601: octelium.api.main.core.v1.MainService.DeletePolicy:output_type -> octelium.api.main.meta.v1.OperationResult
-	74,  // 602: octelium.api.main.core.v1.MainService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
-	47,  // 603: octelium.api.main.core.v1.MainService.CreateUser:output_type -> octelium.api.main.core.v1.User
-	48,  // 604: octelium.api.main.core.v1.MainService.ListUser:output_type -> octelium.api.main.core.v1.UserList
-	47,  // 605: octelium.api.main.core.v1.MainService.UpdateUser:output_type -> octelium.api.main.core.v1.User
-	380, // 606: octelium.api.main.core.v1.MainService.DeleteUser:output_type -> octelium.api.main.meta.v1.OperationResult
-	47,  // 607: octelium.api.main.core.v1.MainService.GetUser:output_type -> octelium.api.main.core.v1.User
-	44,  // 608: octelium.api.main.core.v1.MainService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	44,  // 609: octelium.api.main.core.v1.MainService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	45,  // 610: octelium.api.main.core.v1.MainService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
-	380, // 611: octelium.api.main.core.v1.MainService.DeleteNamespace:output_type -> octelium.api.main.meta.v1.OperationResult
-	44,  // 612: octelium.api.main.core.v1.MainService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	49,  // 613: octelium.api.main.core.v1.MainService.CreateService:output_type -> octelium.api.main.core.v1.Service
-	50,  // 614: octelium.api.main.core.v1.MainService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
-	49,  // 615: octelium.api.main.core.v1.MainService.UpdateService:output_type -> octelium.api.main.core.v1.Service
-	380, // 616: octelium.api.main.core.v1.MainService.DeleteService:output_type -> octelium.api.main.meta.v1.OperationResult
-	49,  // 617: octelium.api.main.core.v1.MainService.GetService:output_type -> octelium.api.main.core.v1.Service
-	54,  // 618: octelium.api.main.core.v1.MainService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
-	380, // 619: octelium.api.main.core.v1.MainService.DeleteSession:output_type -> octelium.api.main.meta.v1.OperationResult
-	53,  // 620: octelium.api.main.core.v1.MainService.GetSession:output_type -> octelium.api.main.core.v1.Session
-	53,  // 621: octelium.api.main.core.v1.MainService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
-	55,  // 622: octelium.api.main.core.v1.MainService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
-	56,  // 623: octelium.api.main.core.v1.MainService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
-	380, // 624: octelium.api.main.core.v1.MainService.DeleteSecret:output_type -> octelium.api.main.meta.v1.OperationResult
-	55,  // 625: octelium.api.main.core.v1.MainService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
-	55,  // 626: octelium.api.main.core.v1.MainService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
-	59,  // 627: octelium.api.main.core.v1.MainService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
-	60,  // 628: octelium.api.main.core.v1.MainService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
-	59,  // 629: octelium.api.main.core.v1.MainService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
-	380, // 630: octelium.api.main.core.v1.MainService.DeleteGroup:output_type -> octelium.api.main.meta.v1.OperationResult
-	59,  // 631: octelium.api.main.core.v1.MainService.GetGroup:output_type -> octelium.api.main.core.v1.Group
-	62,  // 632: octelium.api.main.core.v1.MainService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
-	380, // 633: octelium.api.main.core.v1.MainService.DeleteDevice:output_type -> octelium.api.main.meta.v1.OperationResult
-	61,  // 634: octelium.api.main.core.v1.MainService.GetDevice:output_type -> octelium.api.main.core.v1.Device
-	61,  // 635: octelium.api.main.core.v1.MainService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
-	57,  // 636: octelium.api.main.core.v1.MainService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
-	57,  // 637: octelium.api.main.core.v1.MainService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
-	380, // 638: octelium.api.main.core.v1.MainService.DeleteCredential:output_type -> octelium.api.main.meta.v1.OperationResult
-	58,  // 639: octelium.api.main.core.v1.MainService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
-	57,  // 640: octelium.api.main.core.v1.MainService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
-	52,  // 641: octelium.api.main.core.v1.MainService.GenerateCredentialToken:output_type -> octelium.api.main.core.v1.CredentialToken
-	79,  // 642: octelium.api.main.core.v1.MainService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	79,  // 643: octelium.api.main.core.v1.MainService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	80,  // 644: octelium.api.main.core.v1.MainService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
-	79,  // 645: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	380, // 646: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:output_type -> octelium.api.main.meta.v1.OperationResult
-	81,  // 647: octelium.api.main.core.v1.MainService.GetRegion:output_type -> octelium.api.main.core.v1.Region
-	82,  // 648: octelium.api.main.core.v1.MainService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
-	84,  // 649: octelium.api.main.core.v1.MainService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
-	83,  // 650: octelium.api.main.core.v1.MainService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
-	89,  // 651: octelium.api.main.core.v1.MainService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	89,  // 652: octelium.api.main.core.v1.MainService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	95,  // 653: octelium.api.main.core.v1.MainService.ListAuthenticator:output_type -> octelium.api.main.core.v1.AuthenticatorList
-	380, // 654: octelium.api.main.core.v1.MainService.DeleteAuthenticator:output_type -> octelium.api.main.meta.v1.OperationResult
-	94,  // 655: octelium.api.main.core.v1.MainService.GetAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
-	598, // [598:656] is the sub-list for method output_type
-	540, // [540:598] is the sub-list for method input_type
+	94,  // 598: octelium.api.main.core.v1.MainService.UpdateAuthenticator:input_type -> octelium.api.main.core.v1.Authenticator
+	74,  // 599: octelium.api.main.core.v1.MainService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	75,  // 600: octelium.api.main.core.v1.MainService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
+	74,  // 601: octelium.api.main.core.v1.MainService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	380, // 602: octelium.api.main.core.v1.MainService.DeletePolicy:output_type -> octelium.api.main.meta.v1.OperationResult
+	74,  // 603: octelium.api.main.core.v1.MainService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
+	47,  // 604: octelium.api.main.core.v1.MainService.CreateUser:output_type -> octelium.api.main.core.v1.User
+	48,  // 605: octelium.api.main.core.v1.MainService.ListUser:output_type -> octelium.api.main.core.v1.UserList
+	47,  // 606: octelium.api.main.core.v1.MainService.UpdateUser:output_type -> octelium.api.main.core.v1.User
+	380, // 607: octelium.api.main.core.v1.MainService.DeleteUser:output_type -> octelium.api.main.meta.v1.OperationResult
+	47,  // 608: octelium.api.main.core.v1.MainService.GetUser:output_type -> octelium.api.main.core.v1.User
+	44,  // 609: octelium.api.main.core.v1.MainService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	44,  // 610: octelium.api.main.core.v1.MainService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	45,  // 611: octelium.api.main.core.v1.MainService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
+	380, // 612: octelium.api.main.core.v1.MainService.DeleteNamespace:output_type -> octelium.api.main.meta.v1.OperationResult
+	44,  // 613: octelium.api.main.core.v1.MainService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	49,  // 614: octelium.api.main.core.v1.MainService.CreateService:output_type -> octelium.api.main.core.v1.Service
+	50,  // 615: octelium.api.main.core.v1.MainService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
+	49,  // 616: octelium.api.main.core.v1.MainService.UpdateService:output_type -> octelium.api.main.core.v1.Service
+	380, // 617: octelium.api.main.core.v1.MainService.DeleteService:output_type -> octelium.api.main.meta.v1.OperationResult
+	49,  // 618: octelium.api.main.core.v1.MainService.GetService:output_type -> octelium.api.main.core.v1.Service
+	54,  // 619: octelium.api.main.core.v1.MainService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
+	380, // 620: octelium.api.main.core.v1.MainService.DeleteSession:output_type -> octelium.api.main.meta.v1.OperationResult
+	53,  // 621: octelium.api.main.core.v1.MainService.GetSession:output_type -> octelium.api.main.core.v1.Session
+	53,  // 622: octelium.api.main.core.v1.MainService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
+	55,  // 623: octelium.api.main.core.v1.MainService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
+	56,  // 624: octelium.api.main.core.v1.MainService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
+	380, // 625: octelium.api.main.core.v1.MainService.DeleteSecret:output_type -> octelium.api.main.meta.v1.OperationResult
+	55,  // 626: octelium.api.main.core.v1.MainService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
+	55,  // 627: octelium.api.main.core.v1.MainService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
+	59,  // 628: octelium.api.main.core.v1.MainService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
+	60,  // 629: octelium.api.main.core.v1.MainService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
+	59,  // 630: octelium.api.main.core.v1.MainService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
+	380, // 631: octelium.api.main.core.v1.MainService.DeleteGroup:output_type -> octelium.api.main.meta.v1.OperationResult
+	59,  // 632: octelium.api.main.core.v1.MainService.GetGroup:output_type -> octelium.api.main.core.v1.Group
+	62,  // 633: octelium.api.main.core.v1.MainService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
+	380, // 634: octelium.api.main.core.v1.MainService.DeleteDevice:output_type -> octelium.api.main.meta.v1.OperationResult
+	61,  // 635: octelium.api.main.core.v1.MainService.GetDevice:output_type -> octelium.api.main.core.v1.Device
+	61,  // 636: octelium.api.main.core.v1.MainService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
+	57,  // 637: octelium.api.main.core.v1.MainService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
+	57,  // 638: octelium.api.main.core.v1.MainService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
+	380, // 639: octelium.api.main.core.v1.MainService.DeleteCredential:output_type -> octelium.api.main.meta.v1.OperationResult
+	58,  // 640: octelium.api.main.core.v1.MainService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
+	57,  // 641: octelium.api.main.core.v1.MainService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
+	52,  // 642: octelium.api.main.core.v1.MainService.GenerateCredentialToken:output_type -> octelium.api.main.core.v1.CredentialToken
+	79,  // 643: octelium.api.main.core.v1.MainService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	79,  // 644: octelium.api.main.core.v1.MainService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	80,  // 645: octelium.api.main.core.v1.MainService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
+	79,  // 646: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	380, // 647: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:output_type -> octelium.api.main.meta.v1.OperationResult
+	81,  // 648: octelium.api.main.core.v1.MainService.GetRegion:output_type -> octelium.api.main.core.v1.Region
+	82,  // 649: octelium.api.main.core.v1.MainService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
+	84,  // 650: octelium.api.main.core.v1.MainService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
+	83,  // 651: octelium.api.main.core.v1.MainService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
+	89,  // 652: octelium.api.main.core.v1.MainService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	89,  // 653: octelium.api.main.core.v1.MainService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	95,  // 654: octelium.api.main.core.v1.MainService.ListAuthenticator:output_type -> octelium.api.main.core.v1.AuthenticatorList
+	380, // 655: octelium.api.main.core.v1.MainService.DeleteAuthenticator:output_type -> octelium.api.main.meta.v1.OperationResult
+	94,  // 656: octelium.api.main.core.v1.MainService.GetAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	94,  // 657: octelium.api.main.core.v1.MainService.UpdateAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	599, // [599:658] is the sub-list for method output_type
+	540, // [540:599] is the sub-list for method input_type
 	540, // [540:540] is the sub-list for extension type_name
 	540, // [540:540] is the sub-list for extension extendee
 	0,   // [0:540] is the sub-list for field type_name
