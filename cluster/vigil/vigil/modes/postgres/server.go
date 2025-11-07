@@ -232,6 +232,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 						Database:          dctx.getEffectiveDB(),
 						RequestedUser:     startupMessage.Parameters["user"],
 						RequestedDatabase: startupMessage.Parameters["database"],
+						ApplicationName:   startupMessage.Parameters["application_name"],
 					},
 				},
 			},
@@ -351,8 +352,9 @@ func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn, startupMessag
 				Postgres: &corev1.RequestContext_Request_Postgres{
 					Type: &corev1.RequestContext_Request_Postgres_Connect_{
 						Connect: &corev1.RequestContext_Request_Postgres_Connect{
-							User:     startupMessage.Parameters["user"],
-							Database: startupMessage.Parameters["database"],
+							User:            startupMessage.Parameters["user"],
+							Database:        startupMessage.Parameters["database"],
+							ApplicationName: startupMessage.Parameters["application_name"],
 						},
 					},
 				},
