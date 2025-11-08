@@ -38,6 +38,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/octovigilc"
 	"github.com/octelium/octelium/cluster/common/oscope"
+	"github.com/octelium/octelium/cluster/common/rscutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -454,9 +455,14 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						resp.Config = cfg
+						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
 						return nil
+					} else {
+						zap.L().Warn("Could not unmarshal eval Service config from map",
+							zap.Error(err), zap.Any("cfg", cfgMap))
 					}
+				} else {
+					zap.L().Warn("Could not evalPolicyMapStrAny", zap.Error(err))
 				}
 			}
 		}
