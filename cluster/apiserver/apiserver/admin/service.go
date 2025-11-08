@@ -1417,8 +1417,18 @@ func (s *Server) checkAndSetService(ctx context.Context,
 
 	if !ucorev1.ToService(svc).IsManagedService() {
 		if svc.Spec.Config == nil &&
-			(svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Configs) == 0) {
-			return grpcutils.InvalidArg("There must be at least a Config or a named dynamic Config")
+			(svc.Spec.DynamicConfig == nil) {
+			if len(svc.Spec.DynamicConfig.Configs) == 0 && !slices.ContainsFunc(svc.Spec.DynamicConfig.Rules, func(itm *corev1.Service_Spec_DynamicConfig_Rule) bool {
+				switch itm.Type.(type) {
+				case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
+					return true
+				default:
+					return false
+				}
+			}) {
+				return grpcutils.InvalidArg(
+					"There must be at least a Config, a named dynamic Config or an evaluated dynamic Config")
+			}
 		}
 	}
 

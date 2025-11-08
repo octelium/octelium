@@ -1052,7 +1052,65 @@ func TestServiceDynamicConfig(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 	}
 
-	// assert.Equal(t, "true", svc.Metadata.SpecLabels["enable-public"])
+	{
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port:     8080,
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
+
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		_, err = srv.CreateService(ctx, req)
+		assert.NotNil(t, err, "%+v", err)
+	}
+
+	{
+		req := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Port:     8080,
+				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
+
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{
+								Eval: `{"upstream": {"url": "https://example.com"}}`,
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		_, err = srv.CreateService(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+	}
+
 }
 
 func TestServiceDirectResponse(t *testing.T) {
