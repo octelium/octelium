@@ -18,6 +18,7 @@ package celengine
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/open-policy-agent/opa/v1/rego"
@@ -32,55 +33,29 @@ type opaEngine struct {
 type opaOpts struct {
 }
 
-func newOPAEngine(ctx context.Context, opts *opaOpts) (*opaEngine, error) {
+func newOPAEngine(_ context.Context, _ *opaOpts) (*opaEngine, error) {
 	return &opaEngine{
 		c: cache.New(24*time.Hour, 10*time.Minute),
 	}, nil
 }
 
 func (e *opaEngine) EvalPolicy(ctx context.Context, script string, input map[string]any) (bool, error) {
-	if script == "" {
-		return false, nil
-	}
-	pq, err := e.getOrSetPQ(ctx, script)
+
+	res, err := e.doEvalPolicy(ctx, script, input, "condition", "match")
 	if err != nil {
-		return false, err
-	}
-
-	// startedAt := time.Now()
-	rs, err := pq.Eval(ctx, rego.EvalInput(input))
-	if err != nil {
-		return false, err
-	}
-
-	/*
-		zap.L().Debug("OPA evaluation done",
-			zap.Float32("time microsec", float32(time.Since(startedAt).Nanoseconds())/1000),
-			zap.String("script", script),
-		)
-	*/
-
-	if len(rs) < 1 || len(rs[0].Expressions) < 1 {
 		return false, nil
 	}
 
-	for _, exp := range rs[0].Expressions {
-		if exp.Text == "data.octelium.condition.match" {
-			ret, _ := exp.Value.(bool)
-			return ret, nil
-		}
-	}
-
-	return false, nil
+	return res.(bool), nil
 }
 
 func (e *opaEngine) AddPolicy(ctx context.Context, script string) error {
 
-	_, err := e.getOrSetPQ(ctx, script)
+	_, err := e.getOrSetPQ(ctx, script, "condition", "match")
 	return err
 }
 
-func (e *opaEngine) getOrSetPQ(ctx context.Context, script string) (*rego.PreparedEvalQuery, error) {
+func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry string) (*rego.PreparedEvalQuery, error) {
 
 	if len(script) > 20000 {
 		return nil, errors.Errorf("OPA script is too long")
@@ -92,10 +67,9 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string) (*rego.Prepar
 		return cacheI.(*rego.PreparedEvalQuery), nil
 	}
 
-	// startedAt := time.Now()
 	rg := rego.New(
-		rego.Query("data.octelium.condition.match"),
-		rego.Module("octelium.condition", script),
+		rego.Query(fmt.Sprintf("data.octelium.%s.%s", mod, qry)),
+		rego.Module(fmt.Sprintf("octelium.%s", mod), script),
 	)
 
 	pq, err := rg.PrepareForEval(ctx)
@@ -103,12 +77,34 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string) (*rego.Prepar
 		return nil, err
 	}
 	e.c.Set(key, &pq, cache.DefaultExpiration)
-	/*
-		zap.L().Debug("OPA preparation done",
-			zap.Float32("time microsec", float32(time.Since(startedAt).Nanoseconds())/1000),
-			zap.String("script", script),
-		)
-	*/
 
 	return &pq, nil
+}
+
+func (e *opaEngine) doEvalPolicy(ctx context.Context, script string, input map[string]any, mod, qry string) (any, error) {
+	if script == "" {
+		return nil, errors.Errorf("Rego script is empty")
+	}
+	pq, err := e.getOrSetPQ(ctx, script, mod, qry)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := pq.Eval(ctx, rego.EvalInput(input))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rs) < 1 || len(rs[0].Expressions) < 1 {
+		return nil, errors.Errorf("No expressions")
+	}
+
+	expr := fmt.Sprintf("data.octelium.%s.%s", mod, qry)
+	for _, exp := range rs[0].Expressions {
+		if exp.Text == expr {
+			return exp.Value, nil
+		}
+	}
+
+	return nil, errors.Errorf("Could not find %s", expr)
 }

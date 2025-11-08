@@ -18,6 +18,7 @@ package celengine
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -57,7 +58,7 @@ func TestConditionOPA(t *testing.T) {
 						Inline: `
 package octelium.condition
 
-match {
+match if {
 	input.ctx.user.spec.type == "HUMAN"
 	input.attrs.attr1 == "val1"
 }
@@ -71,7 +72,7 @@ match {
 				"attr1": "val1",
 			},
 		})
-		assert.Nil(t, err)
+		assert.Nil(t, err, "%+v", err)
 		assert.True(t, res)
 	}
 
@@ -94,12 +95,12 @@ match {
 						Inline: `
 package octelium.condition
 
-match {
+match if {
 	input.ctx.user.spec.type == "WORKLOAD"
 	input.attrs.attr1 == "val1"
 }
 
-match222 {
+match222 if {
 	2 > 1
 }
 						`,
@@ -112,7 +113,45 @@ match222 {
 				"attr1": "val1",
 			},
 		})
-		assert.Nil(t, err)
+		assert.Nil(t, err, "%+v", err)
 		assert.False(t, res)
 	}
+}
+
+func TestDoEvaluatePolicy(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	e, err := newOPAEngine(ctx, nil)
+	assert.Nil(t, err)
+
+	usr := tests.GenUser(nil)
+	res, err := e.doEvalPolicy(ctx, `
+package octelium.eval
+
+result := {
+	"upstream": {
+		"url": sprintf("https://%s.example.com", [input.ctx.user.metadata.name])
+	}
+}`, map[string]any{
+		"ctx": map[string]any{
+			"user": pbutils.MustConvertToMap(usr),
+		},
+	}, "eval", "result")
+	assert.Nil(t, err, "%+v", err)
+
+	cfg := &corev1.Service_Spec_Config{}
+
+	cfgMap, ok := res.(map[string]any)
+	assert.True(t, ok)
+
+	err = pbutils.UnmarshalFromMap(cfgMap, cfg)
+	assert.Nil(t, err)
+
+	assert.Equal(t, fmt.Sprintf("https://%s.example.com", usr.Metadata.Name), cfg.Upstream.GetUrl())
 }

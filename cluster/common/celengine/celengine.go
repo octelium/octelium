@@ -383,3 +383,17 @@ func convertCelToGo(val ref.Val) any {
 		return val
 	}
 }
+
+func (e *CELEngine) OPAEvalPolicyMapStrAny(ctx context.Context, exp string, input map[string]any) (map[string]any, error) {
+	res, err := e.opaEngine.doEvalPolicy(ctx, exp, input, "eval", "result")
+	if err != nil {
+		return nil, err
+	}
+
+	ret, ok := res.(map[string]any)
+	if !ok {
+		return nil, errors.Errorf("Result is not a map")
+	}
+
+	return ret, nil
+}
