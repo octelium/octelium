@@ -464,6 +464,19 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 				} else {
 					zap.L().Warn("Could not evalPolicyMapStrAny", zap.Error(err))
 				}
+			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
+				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
+					cfg := &corev1.Service_Spec_Config{}
+					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+						return nil
+					} else {
+						zap.L().Warn("Could not unmarshal eval Service config from map",
+							zap.Error(err), zap.Any("cfg", cfgMap))
+					}
+				} else {
+					zap.L().Warn("Could not opaEvalPolicyMapStrAny", zap.Error(err))
+				}
 			}
 		}
 	}
