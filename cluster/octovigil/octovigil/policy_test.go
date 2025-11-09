@@ -2565,7 +2565,7 @@ func TestGetDecisionRule(t *testing.T) {
 package octelium.condition
 
 default match = false
-match {
+match if {
 	2 > 1
 }
 									`,
@@ -2617,7 +2617,7 @@ match {
 package octelium.condition
 
 default match = false
-match {
+match if {
 	2 < 1
 }
 									`,
