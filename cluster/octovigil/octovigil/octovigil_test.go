@@ -758,7 +758,7 @@ package octelium.condition
 										
 default match = false
 										
-match {
+match if {
 	input.ctx.session.status.userRef.name == input.ctx.user.metadata.name
 	startswith(input.ctx.request.http.path, "/path1")
 }
