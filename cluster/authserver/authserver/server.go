@@ -453,6 +453,14 @@ func (s *server) getWebProviderFromUID(uid string) (utils.Provider, error) {
 			return nil, s.errPermissionDenied("IdentityProvider is locked")
 		}
 
+		switch idp.Status.Type {
+		case corev1.IdentityProvider_Status_GITHUB,
+			corev1.IdentityProvider_Status_OIDC,
+			corev1.IdentityProvider_Status_SAML:
+		default:
+			return nil, s.errPermissionDenied("This is not a web IdentityProvider")
+		}
+
 		return itm, nil
 	}
 
