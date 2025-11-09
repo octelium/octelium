@@ -1333,6 +1333,10 @@ func (s *Server) checkAndSetService(ctx context.Context,
 				if err := checkCELExpression(ctx, rule.GetEval()); err != nil {
 					return grpcutils.InvalidArg("Invalid eval: %s", rule.GetEval())
 				}
+			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
+				if err := checkCELExpression(ctx, rule.GetOpa()); err != nil {
+					return grpcutils.InvalidArg("Invalid OPA script: %s", rule.GetOpa())
+				}
 			default:
 				return grpcutils.InvalidArg("You must provide either a config name or eval")
 			}
@@ -1420,7 +1424,8 @@ func (s *Server) checkAndSetService(ctx context.Context,
 			(svc.Spec.DynamicConfig == nil) {
 			if len(svc.Spec.DynamicConfig.Configs) == 0 && !slices.ContainsFunc(svc.Spec.DynamicConfig.Rules, func(itm *corev1.Service_Spec_DynamicConfig_Rule) bool {
 				switch itm.Type.(type) {
-				case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
+				case *corev1.Service_Spec_DynamicConfig_Rule_Eval,
+					*corev1.Service_Spec_DynamicConfig_Rule_Opa:
 					return true
 				default:
 					return false
