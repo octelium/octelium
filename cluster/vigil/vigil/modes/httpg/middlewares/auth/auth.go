@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/rscutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
@@ -233,15 +234,21 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 		if isMatch {
 			switch rule.Type.(type) {
 			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
-				req.AuthResponse.ServiceConfigName = rule.GetConfigName()
-				vigilutils.GetServiceConfig(ctx, req.AuthResponse)
+				req.ServiceConfig = vigilutils.GetServiceConfig(ctx, req.AuthResponse)
 				return
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
 				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						req.AuthResponse.ServiceConfigName = rule.GetConfigName()
-						vigilutils.GetServiceConfig(ctx, req.AuthResponse)
+						req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
+						return
+					}
+				}
+			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
+				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
+					cfg := &corev1.Service_Spec_Config{}
+					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
 						return
 					}
 				}
