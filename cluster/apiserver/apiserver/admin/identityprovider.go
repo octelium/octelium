@@ -145,12 +145,15 @@ func (s *Server) UpdateIdentityProvider(ctx context.Context, req *corev1.Identit
 		return nil, err
 	}
 
-	if item.Status.Type != req.Status.Type {
-		return nil, grpcutils.InvalidArg("Cannot change the IdentityProvider type after creation.")
-	}
+	/*
+		if item.Status.Type != req.Status.Type {
+			return nil, grpcutils.InvalidArg("Cannot change the IdentityProvider type after creation.")
+		}
+	*/
 
 	apisrvcommon.MetadataUpdate(item.Metadata, req.Metadata)
 	item.Spec = req.Spec
+	item.Status.Type = req.Status.Type
 
 	item, err = s.octeliumC.CoreC().UpdateIdentityProvider(ctx, item)
 	if err != nil {
