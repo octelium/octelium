@@ -84,6 +84,9 @@ func TestHandleAuth(t *testing.T) {
 				},
 			},
 		},
+		Status: &corev1.IdentityProvider_Status{
+			Type: corev1.IdentityProvider_Status_GITHUB,
+		},
 	})
 	assert.Nil(t, err)
 
@@ -105,6 +108,9 @@ func TestHandleAuth(t *testing.T) {
 					},
 				},
 			},
+		},
+		Status: &corev1.IdentityProvider_Status{
+			Type: corev1.IdentityProvider_Status_OIDC,
 		},
 	})
 	assert.Nil(t, err)
