@@ -1420,21 +1420,27 @@ func (s *Server) checkAndSetService(ctx context.Context,
 	}
 
 	if !ucorev1.ToService(svc).IsManagedService() {
-		if svc.Spec.Config == nil &&
-			(svc.Spec.DynamicConfig == nil) {
-			if len(svc.Spec.DynamicConfig.Configs) == 0 && !slices.ContainsFunc(svc.Spec.DynamicConfig.Rules, func(itm *corev1.Service_Spec_DynamicConfig_Rule) bool {
-				switch itm.Type.(type) {
-				case *corev1.Service_Spec_DynamicConfig_Rule_Eval,
-					*corev1.Service_Spec_DynamicConfig_Rule_Opa:
-					return true
-				default:
-					return false
-				}
-			}) {
+		switch {
+		case svc.Spec.Config == nil && svc.Spec.DynamicConfig == nil:
+			return grpcutils.InvalidArg(
+				"There must be at least a Config, a named dynamic Config or an evaluated dynamic Config")
+		case svc.Spec.DynamicConfig != nil:
+			if len(svc.Spec.DynamicConfig.Configs) == 0 &&
+				!slices.ContainsFunc(svc.Spec.DynamicConfig.Rules,
+					func(itm *corev1.Service_Spec_DynamicConfig_Rule) bool {
+						switch itm.Type.(type) {
+						case *corev1.Service_Spec_DynamicConfig_Rule_Eval,
+							*corev1.Service_Spec_DynamicConfig_Rule_Opa:
+							return true
+						default:
+							return false
+						}
+					}) {
 				return grpcutils.InvalidArg(
-					"There must be at least a Config, a named dynamic Config or an evaluated dynamic Config")
+					"There must be at a named dynamic Config or an evaluated dynamic Config in your dynamic Configuration")
 			}
 		}
+
 	}
 
 	/*
