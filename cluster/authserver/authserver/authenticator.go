@@ -56,6 +56,11 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		return nil, s.errPermissionDenied("Cannot modify Authenticators")
 	}
 
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
 	switch req.Type {
 	case authv1.Authenticator_Status_FIDO:
 		if usr.Spec.Type != corev1.User_Spec_HUMAN {
@@ -94,7 +99,17 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		},
 		Spec: &corev1.Authenticator_Spec{
 			DisplayName: req.DisplayName,
-			State:       corev1.Authenticator_Spec_ACTIVE,
+			State: func() corev1.Authenticator_Spec_State {
+				if cc.Spec.Authenticator != nil {
+					switch cc.Spec.Authenticator.DefaultState {
+					case corev1.Authenticator_Spec_STATE_UNKNOWN:
+					default:
+						return cc.Spec.Authenticator.DefaultState
+					}
+				}
+
+				return corev1.Authenticator_Spec_ACTIVE
+			}(),
 		},
 		Status: &corev1.Authenticator_Status{
 			UserRef: umetav1.GetObjectReference(usr),
