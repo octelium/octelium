@@ -100,6 +100,14 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		Spec: &corev1.Authenticator_Spec{
 			DisplayName: req.DisplayName,
 			State: func() corev1.Authenticator_Spec_State {
+				if usr.Spec.Authentication != nil {
+					switch usr.Spec.Authentication.AuthenticatorDefaultState {
+					case corev1.Authenticator_Spec_STATE_UNKNOWN:
+					default:
+						return usr.Spec.Authentication.AuthenticatorDefaultState
+					}
+				}
+
 				if cc.Spec.Authenticator != nil {
 					switch cc.Spec.Authenticator.DefaultState {
 					case corev1.Authenticator_Spec_STATE_UNKNOWN:
