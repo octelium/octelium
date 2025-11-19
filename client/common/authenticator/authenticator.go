@@ -227,22 +227,25 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		}
 
 		if resp, err := a.c.C().GetAvailableAuthenticator(ctx,
-			&authv1.GetAvailableAuthenticatorRequest{}); err == nil && resp.MainAuthenticator != nil {
-			if err := authn.DoAuthenticate(ctx,
-				a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
-				sessTkn, err := cliutils.GetDB().GetSessionToken(a.domain)
-				if err != nil {
-					return "", err
+			&authv1.GetAvailableAuthenticatorRequest{}); err == nil {
+			if resp.MainAuthenticator != nil {
+				if err := authn.DoAuthenticate(ctx,
+					a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
+					sessTkn, err := cliutils.GetDB().GetSessionToken(a.domain)
+					if err != nil {
+						return "", err
+					}
+
+					zap.L().Debug("Successfully authenticated with main Authenticator",
+						zap.Any("authenticator", resp.MainAuthenticator))
+
+					return sessTkn.AccessToken, nil
+				} else {
+					zap.L().Warn("Could not DoAuthenticate for Authenticator",
+						zap.Error(err), zap.Any("authenticator", resp.MainAuthenticator))
 				}
-
-				zap.L().Debug("Successfully authenticated with main Authenticator",
-					zap.Any("authenticator", resp.MainAuthenticator))
-
-				return sessTkn.AccessToken, nil
-			} else {
-				zap.L().Warn("Could not DoAuthenticate for Authenticator",
-					zap.Error(err), zap.Any("authenticator", resp.MainAuthenticator))
 			}
+
 		} else if grpcerr.IsUnimplemented(err) {
 			zap.L().Debug("GetAvailableAuthenticator is not implemented at the Cluster.")
 		} else {
