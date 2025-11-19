@@ -18,7 +18,6 @@ package otelutils
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"time"
 
@@ -73,9 +72,11 @@ func GetMeter() metric.Meter {
 	return otel.GetMeterProvider().Meter("default")
 }
 
+/*
 func GetComponentKeyWithPrefix(arg string) string {
 	return fmt.Sprintf("%s.%s.%s", components.MyComponentNamespace(), components.MyComponentType(), arg)
 }
+*/
 
 func SetProcessMetrics(ctx context.Context) error {
 

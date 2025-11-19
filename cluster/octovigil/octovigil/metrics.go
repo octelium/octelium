@@ -39,18 +39,18 @@ func newCommonMetrics(ctx context.Context) (*commonMetrics, error) {
 	meter := otelutils.GetMeter()
 
 	ret.ActiveRequests, err = meter.Int64UpDownCounter(
-		otelutils.GetComponentKeyWithPrefix("authorization.req.active"), metric.WithDescription("Number of active requests"))
+		"authorization.req.active", metric.WithDescription("Number of active requests"))
 	if err != nil {
 		return nil, err
 	}
 
-	ret.TotalRequests, err = meter.Int64Counter(otelutils.GetComponentKeyWithPrefix("authorization.req.total"),
+	ret.TotalRequests, err = meter.Int64Counter("authorization.req.total",
 		metric.WithDescription("Total number of requests"))
 	if err != nil {
 		return nil, err
 	}
 
-	ret.RequestDuration, err = meter.Float64Histogram(otelutils.GetComponentKeyWithPrefix("authorization.req.duration"),
+	ret.RequestDuration, err = meter.Float64Histogram("authorization.req.duration",
 		metric.WithUnit("us"), metric.WithDescription("Request duration in microseconds"))
 	if err != nil {
 		return nil, err
