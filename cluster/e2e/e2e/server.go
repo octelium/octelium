@@ -986,12 +986,10 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 			{
 
-				/*
-					for range 7 {
-						s.describeUpstreamPod(ctx, "ollama")
-						time.Sleep(6 * time.Second)
-					}
-				*/
+				for range 3 {
+					s.describeUpstreamPod(ctx, "ollama")
+					time.Sleep(6 * time.Second)
+				}
 
 				s.startKubectlLog(ctx, fmt.Sprintf(
 					`$(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,

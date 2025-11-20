@@ -276,7 +276,7 @@ spec:
     upstream:
       container:
         port: 11434
-        image: ollama/ollama
+        image: ollama/ollama:0.12.0
         resourceLimit:
           cpu:
             millicores: 6000
