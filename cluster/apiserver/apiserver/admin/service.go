@@ -92,7 +92,7 @@ func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions
 func (s *Server) UpdateService(ctx context.Context, req *corev1.Service) (*corev1.Service, error) {
 
 	if err := s.validateService(ctx, req); err != nil {
-		return nil, serr.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	nsName, err := getNamespace(req.Metadata.Name)
