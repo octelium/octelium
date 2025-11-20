@@ -38,6 +38,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 		Spec: &corev1.Policy_Spec{
 			Rules: []*corev1.Policy_Spec_Rule{
 				{
+					Name:   "main",
 					Effect: corev1.Policy_Spec_Rule_ALLOW,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_MatchAny{
@@ -56,6 +57,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 		Spec: &corev1.Policy_Spec{
 			Rules: []*corev1.Policy_Spec_Rule{
 				{
+					Name:   "main",
 					Effect: corev1.Policy_Spec_Rule_DENY,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_MatchAny{
@@ -75,6 +77,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 		Spec: &corev1.Policy_Spec{
 			Rules: []*corev1.Policy_Spec_Rule{
 				{
+					Name:     "main",
 					Effect:   corev1.Policy_Spec_Rule_ALLOW,
 					Priority: -1,
 					Condition: &corev1.Condition{
@@ -119,6 +122,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 			},
 			Rules: []*corev1.Policy_Spec_Rule{
 				{
+					Name:     "allowed-methods",
 					Effect:   corev1.Policy_Spec_Rule_ALLOW,
 					Priority: -1,
 					Condition: &corev1.Condition{
@@ -128,6 +132,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 					},
 				},
 				{
+					Name:   "deny-otherwise",
 					Effect: corev1.Policy_Spec_Rule_DENY,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_MatchAny{
@@ -156,6 +161,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 			},
 			Rules: []*corev1.Policy_Spec_Rule{
 				{
+					Name:     "allowed-methodss",
 					Effect:   corev1.Policy_Spec_Rule_ALLOW,
 					Priority: -1,
 					Condition: &corev1.Condition{
@@ -165,6 +171,7 @@ func (g *Genesis) getBuiltinPolicies(ctx context.Context) (*corev1.PolicyList, e
 					},
 				},
 				{
+					Name:   "deny-otherwise",
 					Effect: corev1.Policy_Spec_Rule_DENY,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_MatchAny{
