@@ -994,7 +994,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				*/
 
 				s.startKubectlLog(ctx, fmt.Sprintf(
-					`kubectl describe pod -n octelium $(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,
+					`$(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,
 					vutils.GetServiceFullNameFromName("ollama")))
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
