@@ -162,7 +162,7 @@ func (s *server) run(ctx context.Context) error {
 			s.startKubectlLog(ctx, "-l octelium.com/component=rscserver")
 			s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
 		*/
-		s.startKubectlLog(ctx, "-l octelium.com/component=collector")
+		// s.startKubectlLog(ctx, "-l octelium.com/component=collector")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
