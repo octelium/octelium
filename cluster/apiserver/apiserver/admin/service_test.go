@@ -798,6 +798,7 @@ func TestValidateService(t *testing.T) {
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_TCP,
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
@@ -810,6 +811,7 @@ func TestValidateService(t *testing.T) {
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_TCP,
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
@@ -823,6 +825,7 @@ func TestValidateService(t *testing.T) {
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_TCP,
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
@@ -837,7 +840,7 @@ func TestValidateService(t *testing.T) {
 
 	for _, svc := range validSvcs {
 		err := srv.validateService(ctx, svc)
-		assert.Nil(t, err)
+		assert.Nil(t, err, "%+v", err)
 	}
 }
 
