@@ -223,8 +223,6 @@ config:
         receivers:
           - otlp
       metrics:
-        exporters:
-          - debug
         processors:
           - memory_limiter
           - batch
