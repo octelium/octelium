@@ -46,22 +46,22 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 		return true
 	}
 
-	doCheck := func() (bool, error) {
+	doCheck := func() (bool, *appsv1.Deployment, error) {
 		dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 
 		newReplicaSet, err := GetNewReplicaSet(dep, k8sC.AppsV1())
 		if err != nil || newReplicaSet == nil {
-			return false, err
+			return false, dep, err
 		}
 
-		return deploymentReady(newReplicaSet, dep), nil
+		return deploymentReady(newReplicaSet, dep), dep, nil
 	}
 
-	for i := 0; i < 10000; i++ {
-		isDone, err := doCheck()
+	for i := range 10000 {
+		isDone, dep, err := doCheck()
 		if err != nil && !shouldRetry(err) {
 			return err
 		}
@@ -71,7 +71,9 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 		}
 
 		zap.L().Debug("Deployment is not ready",
-			zap.String("deployment", name), zap.String("namespace", ns), zap.Int("attempt", i+1))
+			zap.String("deployment", name),
+			zap.String("namespace", ns),
+			zap.Int("attempt", i+1), zap.Any("dep", dep))
 
 		time.Sleep(2 * time.Second)
 	}
