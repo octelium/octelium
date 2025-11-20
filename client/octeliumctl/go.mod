@@ -44,10 +44,10 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zcalusic/sysinfo v1.1.3 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/crypto v0.40.0 // indirect
-	golang.org/x/net v0.42.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250804133106-a7a43d27e69b // indirect
 	google.golang.org/grpc v1.76.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
