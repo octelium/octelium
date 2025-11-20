@@ -985,6 +985,11 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, client.Disconnect(ctx))
 			}
 			{
+
+				for range 7 {
+					s.describeUpstreamPod(ctx, "ollama")
+					time.Sleep(6 * time.Second)
+				}
 				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
 				s.execServiceUpstream(ctx, "ollama", "ollama run qwen3:0.6b")
@@ -1364,6 +1369,13 @@ func (s *server) execServiceUpstream(ctx context.Context, svc string, cmd string
 		fmt.Sprintf(
 			`kubectl exec -n octelium -it $(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}') -- %s`,
 			vutils.GetServiceFullNameFromName(svc), cmd))
+}
+
+func (s *server) describeUpstreamPod(ctx context.Context, svc string) error {
+	return s.runCmd(ctx,
+		fmt.Sprintf(
+			`kubectl describe pod -n octelium $(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,
+			vutils.GetServiceFullNameFromName(svc)))
 }
 
 func (s *server) logServiceUpstream(ctx context.Context, svc string) error {
