@@ -643,7 +643,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -p 15004 %s@localhost 'echo hello world'`, res.Session.Metadata.Name)))
+					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost 'echo hello world'`, res.Session.Metadata.Name)))
 			}
 
 			{
