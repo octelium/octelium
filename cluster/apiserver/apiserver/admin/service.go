@@ -526,7 +526,11 @@ func (s *Server) validateServiceConfig(ctx context.Context, cfg *corev1.Service_
 
 		checkURL := func(u string) error {
 			if u == "" {
-				return grpcutils.InvalidArg("You must provide backend URL")
+				return grpcutils.InvalidArg("URL is empty")
+			}
+
+			if len(u) > 2048 {
+				return grpcutils.InvalidArg("URL is too long: %s", u)
 			}
 
 			backendURL, err := url.Parse(u)
