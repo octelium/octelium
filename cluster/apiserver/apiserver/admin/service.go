@@ -1573,7 +1573,7 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 
 	svc.Status.Port = func() uint32 {
 		if svc.Spec.Port != 0 {
-			return (svc.Spec.Port)
+			return svc.Spec.Port
 		}
 
 		l := ucorev1.ToService(svc)
@@ -1592,7 +1592,31 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return 80
 		}
 
-		return uint32(upstreamPort)
+		if upstreamPort != 0 {
+			return uint32(upstreamPort)
+		}
+
+		switch l.Spec.Mode {
+		case corev1.Service_Spec_TCP,
+			corev1.Service_Spec_UDP,
+			corev1.Service_Spec_MODE_UNSET:
+			return 0
+		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB:
+			if l.Spec.IsTLS {
+				return 443
+			}
+			return 80
+		case corev1.Service_Spec_SSH:
+			return 22
+		case corev1.Service_Spec_DNS:
+			return 53
+		case corev1.Service_Spec_POSTGRES:
+			return 5432
+		case corev1.Service_Spec_MYSQL:
+			return 3306
+		default:
+			return 0
+		}
 	}()
 
 	if svc.Status.Port == 0 {
