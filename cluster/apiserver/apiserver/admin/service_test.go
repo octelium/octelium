@@ -356,9 +356,10 @@ func TestCreateService(t *testing.T) {
 	*/
 
 	{
+		name := fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5))
 		svc, err := srv.CreateService(ctx, &corev1.Service{
 			Metadata: &metav1.Metadata{
-				Name: fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5)),
+				Name: name,
 			},
 			Spec: &corev1.Service_Spec{
 				IsPublic: true,
@@ -383,6 +384,13 @@ func TestCreateService(t *testing.T) {
 		assert.True(t, pbutils.IsEqual(svc, svcV))
 		assert.Equal(t, 80, ucorev1.ToService(svcV).RealPort())
 
+		rgn, err := srv.GetRegion(ctx, &metav1.GetOptions{
+			Name: "default",
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, rgn.Metadata.Uid, svcV.Status.RegionRef.Uid)
+		assert.Equal(t, name, svcV.Status.PrimaryHostname)
+		assert.NotZero(t, svcV.Status.Port)
 	}
 
 }
