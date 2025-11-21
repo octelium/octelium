@@ -1396,3 +1396,40 @@ func TestMergedServiceConfig(t *testing.T) {
 		assert.True(t, pbutils.IsEqual(req.Spec, svc.Spec))
 	}
 }
+
+func TestServiceHostUser(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	usr, err := srv.CreateUser(ctx, tests.GenUser(nil))
+	assert.Nil(t, err)
+
+	svc, err := srv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+		},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					User: usr.Metadata.Name,
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://example.com",
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	assert.Equal(t,
+		usr.Metadata.Uid,
+		svc.Metadata.SpecLabels[fmt.Sprintf("host-user-%s", usr.Metadata.Name)])
+}
