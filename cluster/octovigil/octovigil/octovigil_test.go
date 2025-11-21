@@ -1780,4 +1780,83 @@ func TestServiceConfig(t *testing.T) {
 			assert.Equal(t, tstCase.res, req.ServiceConfigName)
 		}
 	}
+
+	{
+		svc, err := srv.coreSrv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{
+								Eval: `{"upstream": {"url": "https://" + ctx.service.metadata.uid + ".example.com" }}`,
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		req := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: &corev1.RequestContext{
+				Service: svc,
+			},
+		}
+		err = srv.setServiceConfig(ctx, req)
+		assert.Nil(t, err)
+		assert.Equal(t, fmt.Sprintf("https://%s.example.com", svc.Metadata.Uid), req.Config.Upstream.GetUrl())
+	}
+
+	{
+		svc, err := srv.coreSrv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{
+								Opa: `
+package octelium.eval
+
+result := {
+	"upstream": {
+		"url": sprintf("https://%s.example.com", [input.ctx.service.metadata.uid])
+	}
+}`,
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		req := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: &corev1.RequestContext{
+				Service: svc,
+			},
+		}
+		err = srv.setServiceConfig(ctx, req)
+		assert.Nil(t, err)
+		assert.Equal(t, fmt.Sprintf("https://%s.example.com", svc.Metadata.Uid), req.Config.Upstream.GetUrl())
+	}
 }

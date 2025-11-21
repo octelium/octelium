@@ -376,7 +376,7 @@ func (s *Server) validateService(ctx context.Context,
 					return grpcutils.InvalidArg("Invalid eval: %s", rule.GetEval())
 				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
-				if err := checkCELExpression(ctx, rule.GetOpa()); err != nil {
+				if err := checkOPAMapAny(ctx, rule.GetOpa()); err != nil {
 					return grpcutils.InvalidArg("Invalid OPA script: %s", rule.GetOpa())
 				}
 			default:

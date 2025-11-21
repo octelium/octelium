@@ -40,6 +40,32 @@ func checkCELExpression(ctx context.Context, arg string) error {
 	return nil
 }
 
+func checkOPAMapAny(ctx context.Context, arg string) error {
+	engine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return grpcutils.InternalWithErr(err)
+	}
+
+	if err := engine.AddPolicyMapAnyOPA(ctx, arg); err != nil {
+		return grpcutils.InvalidArgWithErr(err)
+	}
+
+	return nil
+}
+
+func checkOPACondition(ctx context.Context, arg string) error {
+	engine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return grpcutils.InternalWithErr(err)
+	}
+
+	if err := engine.AddPolicyOPA(ctx, arg); err != nil {
+		return grpcutils.InvalidArgWithErr(err)
+	}
+
+	return nil
+}
+
 func getNamespace(name string) (string, error) {
 
 	args := strings.Split(name, ".")

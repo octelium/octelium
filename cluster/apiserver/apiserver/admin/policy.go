@@ -317,6 +317,9 @@ func (s *Server) validateCondition(ctx context.Context, c *corev1.Condition) err
 			return err
 		}
 	case *corev1.Condition_Opa:
+		if err := checkOPACondition(ctx, c.GetOpa().GetInline()); err != nil {
+			return err
+		}
 	default:
 		return grpcutils.InvalidArg("Invalid Condition type")
 	}

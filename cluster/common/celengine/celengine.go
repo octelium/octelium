@@ -126,6 +126,20 @@ func (e *CELEngine) AddPolicyString(ctx context.Context, exp string) error {
 	return err
 }
 
+func (e *CELEngine) AddPolicyOPA(ctx context.Context, exp string) error {
+	return e.opaEngine.AddPolicy(ctx, exp)
+}
+
+func (e *CELEngine) AddPolicyStringOPA(ctx context.Context, exp string) error {
+	_, err := e.opaEngine.getOrSetPQ(ctx, exp, "eval", "result")
+	return err
+}
+
+func (e *CELEngine) AddPolicyMapAnyOPA(ctx context.Context, exp string) error {
+	_, err := e.opaEngine.getOrSetPQ(ctx, exp, "eval", "result")
+	return err
+}
+
 func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type) (cel.Program, error) {
 	if len(exp) > 10000 {
 		return nil, errors.Errorf("Expression is too long")
