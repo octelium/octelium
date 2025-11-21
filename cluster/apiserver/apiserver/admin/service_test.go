@@ -393,6 +393,60 @@ func TestCreateService(t *testing.T) {
 		assert.NotZero(t, svcV.Status.Port)
 	}
 
+	{
+		_, err := srv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{
+								Eval: `{"upstream": {"url": "https://example.com"}}`,
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		svc, err := srv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5)),
+			},
+			Spec: &corev1.Service_Spec{
+				Port: 8080,
+				Mode: corev1.Service_Spec_HTTP,
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+							Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{
+								Eval: `{"upstream": {"url": "https://example.com"}}`,
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 8080, ucorev1.ToService(svc).RealPort())
+	}
+
 }
 func TestServiceMode(t *testing.T) {
 	ctx := context.Background()

@@ -1595,6 +1595,10 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 		return uint32(upstreamPort)
 	}()
 
+	if svc.Status.Port == 0 {
+		return grpcutils.InvalidArg("Service port number needs to be explicitly specified")
+	}
+
 	if svc.Spec.Region != "" {
 		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: svc.Spec.Region})
 		if err != nil {

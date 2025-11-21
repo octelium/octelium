@@ -1788,6 +1788,7 @@ func TestServiceConfig(t *testing.T) {
 			},
 			Spec: &corev1.Service_Spec{
 				Mode: corev1.Service_Spec_HTTP,
+				Port: 8080,
 				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 						{
@@ -1823,6 +1824,7 @@ func TestServiceConfig(t *testing.T) {
 				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
 			},
 			Spec: &corev1.Service_Spec{
+				Port: 8080,
 				Mode: corev1.Service_Spec_HTTP,
 				DynamicConfig: &corev1.Service_Spec_DynamicConfig{
 					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
