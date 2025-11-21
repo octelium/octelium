@@ -22,6 +22,7 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/rscutils"
@@ -40,6 +41,7 @@ type middleware struct {
 	next       http.Handler
 	domain     string
 	celEngine  *celengine.CELEngine
+	coreSrv    *admin.Server
 }
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, octovigilC *octovigilc.Client, domain string) (http.Handler, error) {
@@ -55,6 +57,11 @@ func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInter
 		octovigilC: octovigilC,
 		domain:     domain,
 		celEngine:  celEngine,
+
+		coreSrv: admin.NewServer(&admin.Opts{
+			OcteliumC:  octeliumC,
+			IsEmbedded: true,
+		}),
 	}, nil
 }
 
@@ -240,16 +247,20 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
-						return
+						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
+							req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
+							return
+						}
 					}
 				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
 				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
-						return
+						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
+							req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
+							return
+						}
 					}
 				}
 			}
