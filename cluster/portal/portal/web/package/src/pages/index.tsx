@@ -70,10 +70,7 @@ export default () => {
               <Footer />
             </div>
           </AppShell.Main>
-          <AppShell.Aside
-            p="md"
-            className="!bg-transparent mt-[60px]"
-          >
+          <AppShell.Aside p="md" className="!bg-transparent mt-[60px]">
             <Links />
           </AppShell.Aside>
         </AppShell>

@@ -1,14 +1,10 @@
 import * as React from "react";
 
-import truncate from "truncate-utf8-bytes";
-
-import { CopyButton, ActionIcon, Tooltip, rem } from "@mantine/core";
-
 import { MdOutlineContentCopy } from "react-icons/md";
 import { FaCheckDouble } from "react-icons/fa6";
-import { IoCopySharp } from "react-icons/io5";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
+import { truncateUtf8 } from "@/utils";
 
 const CopyText = (props: {
   value?: string;
@@ -25,8 +21,8 @@ const CopyText = (props: {
     <span className="flex items-center justify-center">
       {!hide && (
         <span className="mx-1">
-          {props.truncate && props.truncate < value.length
-            ? `${truncate(value, props.truncate)}...`
+          {props.truncate && props.truncate > 0
+            ? `${truncateUtf8(value, props.truncate, { suffix: "..." })}`
             : `${value}`}
         </span>
       )}
