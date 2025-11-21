@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -76,6 +77,8 @@ type Server struct {
 	ccCtl            *ccctl.Controller
 	policyTriggerCtl *policyTriggerCtl
 	commonMetrics    *commonMetrics
+
+	coreSrv *admin.Server
 }
 
 type policyTriggerCtl struct {
@@ -110,6 +113,10 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Server, err
 		policyTriggerCtl: &policyTriggerCtl{
 			ptMap: make(map[string]*corev1.PolicyTrigger),
 		},
+		coreSrv: admin.NewServer(&admin.Opts{
+			OcteliumC:  octeliumC,
+			IsEmbedded: true,
+		}),
 	}
 
 	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
@@ -404,7 +411,7 @@ func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1
 	ret.AuthorizationDecisionReason = reason
 
 	if err := s.setServiceConfig(ctx, ret); err != nil {
-		zap.L().Warn("Could not getServiceConfigNam", zap.Error(err))
+		zap.L().Warn("Could not setServiceConfig", zap.Error(err))
 	}
 
 	return ret, nil
@@ -455,6 +462,9 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+							return err
+						}
 						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
 						return nil
 					} else {
@@ -468,6 +478,9 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
+						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+							return err
+						}
 						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
 						return nil
 					} else {

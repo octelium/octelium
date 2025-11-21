@@ -329,7 +329,7 @@ func (s *Server) validateService(ctx context.Context,
 			return grpcutils.InvalidArg("Default config cannot have a parent")
 		}
 
-		if err := s.validateServiceConfig(ctx, spec.Config, svc); err != nil {
+		if err := s.validateServiceConfig(ctx, spec.Config, svc, false); err != nil {
 			return err
 		}
 	}
@@ -353,7 +353,7 @@ func (s *Server) validateService(ctx context.Context,
 
 			names = append(names, cfg.Name)
 
-			if err := s.validateServiceConfig(ctx, cfg, svc); err != nil {
+			if err := s.validateServiceConfig(ctx, cfg, svc, false); err != nil {
 				return err
 			}
 		}
@@ -442,7 +442,13 @@ func (s *Server) validateService(ctx context.Context,
 	return nil
 }
 
-func (s *Server) validateServiceConfig(ctx context.Context, cfg *corev1.Service_Spec_Config, svc *corev1.Service) error {
+func (s *Server) ValidateServiceConfig(ctx context.Context,
+	cfg *corev1.Service_Spec_Config, svc *corev1.Service, skipRscCheck bool) error {
+	return s.validateServiceConfig(ctx, cfg, svc, skipRscCheck)
+}
+
+func (s *Server) validateServiceConfig(ctx context.Context,
+	cfg *corev1.Service_Spec_Config, svc *corev1.Service, skipRscCheck bool) error {
 
 	if cfg == nil {
 		return grpcutils.InvalidArg("Config is not set")
@@ -897,17 +903,8 @@ func (s *Server) validateServiceConfig(ctx context.Context, cfg *corev1.Service_
 			authSpec := cfg.GetHttp().Auth
 
 			if authSpec.GetBearer() != nil {
-				if authSpec.GetBearer().GetFromSecret() != "" {
-					_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-						Name: authSpec.GetBearer().GetFromSecret()})
-					if err != nil {
-						if !grpcerr.IsInternal(err) {
-							return serr.InvalidArg("Bearer Secret: %s does not exist",
-								authSpec.GetBearer().GetFromSecret())
-						}
-						return serr.InternalWithErr(err)
-					}
-
+				if err := s.validateSecretOwner(ctx, authSpec.GetBearer()); err != nil {
+					return err
 				}
 			}
 
@@ -1348,18 +1345,8 @@ func (s *Server) validateServiceConfig(ctx context.Context, cfg *corev1.Service_
 			}
 
 		case *corev1.Service_Spec_Config_Kubernetes_ClientCertificate:
-			if k8s.GetClientCertificate() == nil ||
-				k8s.GetClientCertificate().GetFromSecret() == "" {
-				return serr.InvalidArg("Client certificate key secret must be supplied")
-			}
-
-			_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-				Name: k8s.GetClientCertificate().GetFromSecret()})
-			if err != nil {
-				if grpcerr.IsNotFound(err) {
-					return serr.InvalidArg("The Secret %s does not exist", k8s.GetKubeconfig().GetFromSecret())
-				}
-				return serr.InternalWithErr(err)
+			if err := s.validateSecretOwner(ctx, k8s.GetClientCertificate()); err != nil {
+				return err
 			}
 		case *corev1.Service_Spec_Config_Kubernetes_BearerToken_:
 
@@ -1380,33 +1367,12 @@ func (s *Server) validateServiceConfig(ctx context.Context, cfg *corev1.Service_
 		if inSSH.Auth != nil {
 			switch inSSH.Auth.Type.(type) {
 			case *corev1.Service_Spec_Config_SSH_Auth_Password_:
-
-				switch inSSH.Auth.GetPassword().Type.(type) {
-				case *corev1.Service_Spec_Config_SSH_Auth_Password_FromSecret:
-
-					_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: inSSH.Auth.GetPassword().GetFromSecret()})
-					if err != nil {
-						if !grpcerr.IsInternal(err) {
-							return serr.InvalidArg("SSH password Secret: %s does not exist", inSSH.Auth.GetPassword().GetFromSecret())
-						}
-						return serr.InternalWithErr(err)
-					}
-
+				if err := s.validateSecretOwner(ctx, inSSH.Auth.GetPassword()); err != nil {
+					return err
 				}
-
 			case *corev1.Service_Spec_Config_SSH_Auth_PrivateKey_:
-
-				switch inSSH.Auth.GetPrivateKey().Type.(type) {
-				case *corev1.Service_Spec_Config_SSH_Auth_PrivateKey_FromSecret:
-
-					_, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: inSSH.Auth.GetPrivateKey().GetFromSecret()})
-					if err != nil {
-						if !grpcerr.IsInternal(err) {
-							return serr.InvalidArg("SSH private key Secret: %s does not exist", inSSH.Auth.GetPrivateKey().GetFromSecret())
-						}
-						return serr.InternalWithErr(err)
-					}
-
+				if err := s.validateSecretOwner(ctx, inSSH.Auth.GetPrivateKey()); err != nil {
+					return err
 				}
 			}
 		}
