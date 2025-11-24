@@ -28,6 +28,7 @@ import (
 
 type stateController struct {
 	c                     *cliconfigv1.Connection
+	initAt                time.Time
 	ctl                   *controller.Controller
 	proxy                 *proxy.Controller
 	getConnErrCh          chan error
@@ -78,6 +79,11 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 				continue
 			}
 
+			if c.shouldSkipConnectResponseMessage(resp) {
+				zap.L().Debug("Skipping old response message", zap.Any("resp", resp))
+				continue
+			}
+
 			if c.isDisconnect(resp) {
 				zap.L().Debug("Got disconnected msg")
 				close(c.apiserverDisconnectCh)
@@ -89,6 +95,15 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (c *stateController) shouldSkipConnectResponseMessage(r *userv1.ConnectResponse) bool {
+	if c.initAt.IsZero() || r == nil ||
+		r.CreatedAt == nil || !r.CreatedAt.IsValid() || r.CreatedAt.AsTime().IsZero() {
+		return false
+	}
+
+	return r.CreatedAt.AsTime().Before(c.initAt)
 }
 
 func (c *stateController) isDisconnect(state *userv1.ConnectResponse) bool {

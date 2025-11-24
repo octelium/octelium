@@ -41,6 +41,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const defaultESSHPort = 22022
@@ -123,12 +124,12 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 	return streamC.Send(req)
 }
 
-func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) (*userv1.ConnectionState, error) {
+func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) (*userv1.ConnectionState, *timestamppb.Timestamp, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	errCh := make(chan error, 10)
-	resCh := make(chan *userv1.ConnectionState, 10)
+	resCh := make(chan *userv1.ConnectResponse, 10)
 
 	go func(ctx context.Context) {
 		for {
@@ -143,7 +144,7 @@ func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) 
 				}
 
 				if msg.GetState() != nil {
-					resCh <- msg.GetState()
+					resCh <- msg
 					return
 				}
 
@@ -153,11 +154,11 @@ func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) 
 	}(ctx)
 	select {
 	case <-ctx.Done():
-		return nil, errors.Errorf("Could not get initial state message after a timeout")
+		return nil, nil, errors.Errorf("Could not get initial state message after a timeout")
 	case res := <-resCh:
-		return res, nil
+		return res.GetState(), res.CreatedAt, nil
 	case err := <-errCh:
-		return nil, err
+		return nil, nil, err
 	}
 }
 
@@ -165,11 +166,11 @@ func getConnectionConfig(ctx context.Context,
 	c userv1.MainServiceClient,
 	streamC userv1.MainService_ConnectClient,
 	publishedSevices []*cliconfigv1.Connection_Preferences_PublishedService,
-	domain string) (*cliconfigv1.Connection, error) {
+	domain string) (*cliconfigv1.Connection, *timestamppb.Timestamp, error) {
 
-	resp, err := getStateMsg(ctx, streamC)
+	resp, initAt, err := getStateMsg(ctx, streamC)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	connCfg := &cliconfigv1.Connection{
@@ -291,7 +292,7 @@ func getConnectionConfig(ctx context.Context,
 	}
 
 	if connCfg.Preferences.LocalDNS.IsEnabled && connCfg.Preferences.LocalDNS.ListenAddress == "" {
-		return nil, errors.Errorf("Invalid local DNS server listen address: %s", cmdArgs.LocalDNSListenAddr)
+		return nil, nil, errors.Errorf("Invalid local DNS server listen address: %s", cmdArgs.LocalDNSListenAddr)
 	}
 
 	if connCfg.Preferences.KeepAliveSeconds == 0 {
@@ -332,7 +333,7 @@ func getConnectionConfig(ctx context.Context,
 		connCfg.Preferences.ESSH.IsEnabled = false
 	}
 
-	return connCfg, nil
+	return connCfg, initAt, nil
 }
 
 func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
@@ -401,7 +402,10 @@ type ctl struct {
 	cancelFn        context.CancelFunc
 }
 
-func newCtl(ctx context.Context, streamC userv1.MainService_ConnectClient, connCfg *cliconfigv1.Connection) (*ctl, error) {
+func newCtl(ctx context.Context,
+	streamC userv1.MainService_ConnectClient,
+	connCfg *cliconfigv1.Connection,
+	initAt *timestamppb.Timestamp) (*ctl, error) {
 	var err error
 	ret := &ctl{}
 
@@ -420,6 +424,9 @@ func newCtl(ctx context.Context, streamC userv1.MainService_ConnectClient, connC
 	}
 
 	ret.stateController = newStateController(connCfg, ret.devCtl, ret.proxyCtl, streamC)
+	if initAt != nil {
+		ret.stateController.initAt = initAt.AsTime()
+	}
 
 	return ret, nil
 }
@@ -573,7 +580,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		}
 	}
 
-	connCfg, err := getConnectionConfig(ctx, c, streamC, publishedServices, domain)
+	connCfg, initAt, err := getConnectionConfig(ctx, c, streamC, publishedServices, domain)
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
@@ -581,7 +588,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		}
 	}
 
-	ctl, err := newCtl(ctx, streamC, connCfg)
+	ctl, err := newCtl(ctx, streamC, connCfg, initAt)
 	if err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not initialize controller: %s", err.Error()),
