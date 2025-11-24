@@ -1,7 +1,8 @@
 FROM node:24 as builder-web
 
 COPY cluster/portal/portal/web/package /build
-RUN cd /build && rm -rf node_modules package-lock.json && npm install && npm run build
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN cd /build && npm ci && npm run build
 
 FROM golang:1.24.7 as builder
 RUN mkdir /build
