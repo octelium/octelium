@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Controller struct {
@@ -55,7 +56,7 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 	}
 
 	if !new.Status.IsConnected && old.Status.IsConnected {
-		if err := c.sendDisconnect(new); err != nil {
+		if err := c.sendDisconnect(new, new.Metadata.UpdatedAt); err != nil {
 			zap.L().Warn("Could not sendDisconnect", zap.Error(err))
 		}
 	}
@@ -187,12 +188,13 @@ func (c *Controller) doDelete(ctx context.Context, sess *corev1.Session) error {
 		return nil
 	}
 
-	return c.sendDisconnect(sess)
+	return c.sendDisconnect(sess, nil)
 }
 
-func (c *Controller) sendDisconnect(sess *corev1.Session) error {
+func (c *Controller) sendDisconnect(sess *corev1.Session, ts *timestamppb.Timestamp) error {
 	zap.L().Debug("Sending doDisconnect msg to connected Session", zap.String("sessName", sess.Metadata.Name))
 	return c.ctlI.SendMessage(&userv1.ConnectResponse{
+		CreatedAt: ts,
 		Event: &userv1.ConnectResponse_Disconnect_{
 			Disconnect: &userv1.ConnectResponse_Disconnect{},
 		},

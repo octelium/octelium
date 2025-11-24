@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,10 @@ func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
 	s.RLock()
 	defer s.RUnlock()
 	zap.L().Debug("Broadcasting message", zap.Any("msg", msg))
+	if msg.CreatedAt == nil {
+		msg.CreatedAt = pbutils.Now()
+	}
+
 	for _, conn := range s.connectedSessMap {
 		conn.stream.Send(msg)
 	}
@@ -80,6 +85,9 @@ func (s *connServer) SendMessage(msg *userv1.ConnectResponse, sessUID string) er
 	}
 
 	zap.L().Debug("Sending unicast msg", zap.Any("msg", msg), zap.String("sessUID", sessUID))
+	if msg.CreatedAt == nil {
+		msg.CreatedAt = pbutils.Now()
+	}
 
 	return conn.stream.Send(msg)
 }

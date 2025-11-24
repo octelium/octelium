@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -152,6 +153,7 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 	}
 
 	return &userv1.ConnectResponse{
+		CreatedAt: pbutils.Now(),
 		Event: &userv1.ConnectResponse_State{
 			State: ret,
 		},
