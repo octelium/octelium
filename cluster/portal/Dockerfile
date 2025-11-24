@@ -1,7 +1,7 @@
-FROM node:22 as builder-web
+FROM node:24 as builder-web
 
 COPY cluster/portal/portal/web/package /build
-RUN cd /build && npm install && npm run build
+RUN cd /build && rm -rf node_modules package-lock.json && npm install && npm run build
 
 FROM golang:1.24.7 as builder
 RUN mkdir /build
