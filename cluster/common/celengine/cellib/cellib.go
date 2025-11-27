@@ -30,8 +30,10 @@ type celLib struct{}
 func (*celLib) CompileOptions() []cel.EnvOption {
 	var ret []cel.EnvOption
 
-	ret = append(ret, functionNow())
-	ret = append(ret, functionJSONFrom())
+	ret = append(ret,
+		functionNow(),
+		functionJSONFrom(),
+		functionJSONMarshal())
 
 	ret = append(ret, MethodsList())
 	ret = append(ret, Str())

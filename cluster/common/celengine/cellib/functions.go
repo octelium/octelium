@@ -49,6 +49,18 @@ func functionJSONFrom() cel.EnvOption {
 	)
 }
 
+func functionJSONMarshal() cel.EnvOption {
+	return cel.Function("json.marshal",
+		cel.Overload("json_marshal",
+			[]*cel.Type{
+				cel.DynType,
+			},
+			cel.StringType,
+			cel.UnaryBinding(fnJSONMarshal),
+		),
+	)
+}
+
 func fnJSONFrom(val ref.Val) ref.Val {
 	value := val.Value()
 	switch tVal := value.(type) {
@@ -67,4 +79,13 @@ func fnJSONFrom(val ref.Val) ref.Val {
 	default:
 		return types.NewErr("Invalid json_from arg")
 	}
+}
+
+func fnJSONMarshal(val ref.Val) ref.Val {
+	value := val.Value()
+	out, err := json.Marshal(value)
+	if err != nil {
+		return types.NewErr("Could not marshal json")
+	}
+	return types.DefaultTypeAdapter.NativeToValue(string(out))
 }
