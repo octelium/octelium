@@ -1592,7 +1592,7 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return 80
 		}
 
-		if upstreamPort != 0 {
+		if upstreamPort != 0 && apivalidation.ValidatePort(upstreamPort) == nil {
 			return uint32(upstreamPort)
 		}
 
