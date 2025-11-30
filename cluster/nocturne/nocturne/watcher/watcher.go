@@ -49,7 +49,7 @@ func (w *Watcher) runSessions(ctx context.Context) {
 				zap.L().Debug("Deleting expired Session", zap.Any("sess", sess))
 				if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
 					&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
-					return err
+					zap.L().Warn("Could not delete expired Session", zap.Any("sess", sess), zap.Error(err))
 				}
 			}
 
@@ -59,7 +59,8 @@ func (w *Watcher) runSessions(ctx context.Context) {
 					zap.L().Debug("Deleting Session with expired refresh token", zap.Any("sess", sess))
 					if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
 						&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
-						return err
+						zap.L().Warn("Could not delete Session by expired refresh token",
+							zap.Any("sess", sess), zap.Error(err))
 					}
 				}
 			}
@@ -67,7 +68,7 @@ func (w *Watcher) runSessions(ctx context.Context) {
 		return nil
 	}
 
-	tickerCh := time.NewTicker(10 * time.Minute)
+	tickerCh := time.NewTicker(5 * time.Minute)
 	defer tickerCh.Stop()
 
 	for {
@@ -98,14 +99,15 @@ func (w *Watcher) runCredentials(ctx context.Context) {
 				zap.L().Debug("Removing expired Credential", zap.Any("cred", tkn))
 				if _, err := w.octeliumC.CoreC().DeleteCredential(ctx,
 					&rmetav1.DeleteOptions{Uid: tkn.Metadata.Uid}); err != nil {
-					return err
+					zap.L().Warn("Could not delete expired Credential",
+						zap.Any("cred", tkn), zap.Error(err))
 				}
 			}
 		}
 		return nil
 	}
 
-	tickerCh := time.NewTicker(13 * time.Minute)
+	tickerCh := time.NewTicker(7 * time.Minute)
 	defer tickerCh.Stop()
 
 	for {
