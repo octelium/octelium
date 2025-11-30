@@ -65,7 +65,8 @@ func (w *Watcher) doRunJWKSecret(ctx context.Context) error {
 
 	for _, secret := range secrets.Items {
 		if err := w.doProcessJWKSecret(ctx, secret); err != nil {
-			return err
+			zap.L().Warn("Could not doProcessJWKSecret",
+				zap.Any("secretMetadata", secret.Metadata), zap.Error(err))
 		}
 	}
 
