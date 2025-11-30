@@ -50,6 +50,8 @@ func (w *Watcher) runSessions(ctx context.Context) {
 				if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
 					&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
 					zap.L().Warn("Could not delete expired Session", zap.Any("sess", sess), zap.Error(err))
+				} else {
+					continue
 				}
 			}
 
