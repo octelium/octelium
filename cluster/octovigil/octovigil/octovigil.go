@@ -534,6 +534,13 @@ func (s *Server) isAuthorized(ctx context.Context,
 	case corev1.Session_Spec_ACTIVE:
 	default:
 		reason.Type = corev1.AccessLog_Entry_Common_Reason_SESSION_NOT_ACTIVE
+		reason.Details = &corev1.AccessLog_Entry_Common_Reason_Details{
+			Type: &corev1.AccessLog_Entry_Common_Reason_Details_SessionNotActive_{
+				SessionNotActive: &corev1.AccessLog_Entry_Common_Reason_Details_SessionNotActive{
+					State: sess.Spec.State,
+				},
+			},
+		}
 		return false, reason, nil
 	}
 
