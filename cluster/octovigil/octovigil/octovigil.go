@@ -527,8 +527,23 @@ func (s *Server) isAuthorized(ctx context.Context,
 		return false, nil, errors.Errorf("Nil Service")
 	}
 
-	if !ucorev1.ToSession(req.Session).IsValid() {
-		reason.Type = corev1.AccessLog_Entry_Common_Reason_SESSION_INVALID
+	sess := req.Session
+	sessI := ucorev1.ToSession(sess)
+
+	switch sess.Spec.State {
+	case corev1.Session_Spec_ACTIVE:
+	default:
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_SESSION_NOT_ACTIVE
+		return false, reason, nil
+	}
+
+	if sessI.IsExpired() {
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_SESSION_EXPIRED
+		return false, reason, nil
+	}
+
+	if !sessI.HasValidAccessToken() {
+		reason.Type = corev1.AccessLog_Entry_Common_Reason_ACCESS_TOKEN_EXPIRED
 		return false, reason, nil
 	}
 
