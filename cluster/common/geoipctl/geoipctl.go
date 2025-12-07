@@ -18,6 +18,7 @@ package geoipctl
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -103,4 +104,112 @@ func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
 
 func (c *Controller) Close() error {
 	return c.db.Close()
+}
+
+func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.db == nil {
+		return nil
+	}
+
+	ret := &corev1.GeoIP{
+		Ip: addr.String(),
+		IpVersion: func() corev1.GeoIP_IPVersion {
+			switch {
+			case addr.Is6():
+				return corev1.GeoIP_V6
+			case addr.Is4():
+				return corev1.GeoIP_V4
+			default:
+				return corev1.GeoIP_IP_VERSION_UNKNOWN
+			}
+		}(),
+	}
+
+	if val, err := c.db.Enterprise(addr); err == nil && val.HasData() {
+		if val.Country.HasData() {
+			ret.Country = &corev1.GeoIP_Country{
+				Name: val.Country.Names.English,
+				Code: val.Country.ISOCode,
+			}
+		}
+
+		if val.City.HasData() {
+			ret.City = &corev1.GeoIP_City{
+				Name: val.City.Names.English,
+			}
+		}
+
+		if val.Continent.HasData() {
+			ret.Continent = &corev1.GeoIP_Continent{
+				Name: val.Continent.Names.English,
+				Code: val.Continent.Code,
+			}
+		}
+
+		if val.Postal.HasData() {
+			ret.PostalCode = val.Postal.Code
+		}
+
+		if val.Location.HasData() {
+			ret.Timezone = &corev1.GeoIP_Timezone{
+				Id: val.Location.TimeZone,
+			}
+		}
+	} else if val, err := c.db.City(addr); err == nil && val.HasData() {
+		if val.Country.HasData() {
+			ret.Country = &corev1.GeoIP_Country{
+				Name: val.Country.Names.English,
+				Code: val.Country.ISOCode,
+			}
+		}
+
+		if val.City.HasData() {
+			ret.City = &corev1.GeoIP_City{
+				Name: val.City.Names.English,
+			}
+		}
+
+		if val.Continent.HasData() {
+			ret.Continent = &corev1.GeoIP_Continent{
+				Name: val.Continent.Names.English,
+				Code: val.Continent.Code,
+			}
+		}
+
+		if val.Postal.HasData() {
+			ret.PostalCode = val.Postal.Code
+		}
+
+		if val.Location.HasData() {
+			ret.Timezone = &corev1.GeoIP_Timezone{
+				Id: val.Location.TimeZone,
+			}
+		}
+	} else if val, err := c.db.Country(addr); err == nil && val.HasData() {
+		if val.Country.HasData() {
+			ret.Country = &corev1.GeoIP_Country{
+				Name: val.Country.Names.English,
+				Code: val.Country.ISOCode,
+			}
+		}
+
+		if val.Continent.HasData() {
+			ret.Continent = &corev1.GeoIP_Continent{
+				Name: val.Continent.Names.English,
+				Code: val.Continent.Code,
+			}
+		}
+	}
+
+	return ret
+}
+
+func (c *Controller) ResolveStr(addrStr string) *corev1.GeoIP {
+	if addr, err := netip.ParseAddr(addrStr); err == nil {
+		return c.Resolve(addr)
+	}
+	return nil
 }

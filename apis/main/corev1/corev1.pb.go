@@ -2576,6 +2576,55 @@ func (Authenticator_Status_Info_FIDO_Type) EnumDescriptor() ([]byte, []int) {
 	return file_corev1_proto_rawDescGZIP(), []int{50, 1, 1, 0, 0}
 }
 
+type GeoIP_IPVersion int32
+
+const (
+	GeoIP_IP_VERSION_UNKNOWN GeoIP_IPVersion = 0
+	GeoIP_V4                 GeoIP_IPVersion = 1
+	GeoIP_V6                 GeoIP_IPVersion = 2
+)
+
+// Enum value maps for GeoIP_IPVersion.
+var (
+	GeoIP_IPVersion_name = map[int32]string{
+		0: "IP_VERSION_UNKNOWN",
+		1: "V4",
+		2: "V6",
+	}
+	GeoIP_IPVersion_value = map[string]int32{
+		"IP_VERSION_UNKNOWN": 0,
+		"V4":                 1,
+		"V6":                 2,
+	}
+)
+
+func (x GeoIP_IPVersion) Enum() *GeoIP_IPVersion {
+	p := new(GeoIP_IPVersion)
+	*p = x
+	return p
+}
+
+func (x GeoIP_IPVersion) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GeoIP_IPVersion) Descriptor() protoreflect.EnumDescriptor {
+	return file_corev1_proto_enumTypes[44].Descriptor()
+}
+
+func (GeoIP_IPVersion) Type() protoreflect.EnumType {
+	return &file_corev1_proto_enumTypes[44]
+}
+
+func (x GeoIP_IPVersion) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GeoIP_IPVersion.Descriptor instead.
+func (GeoIP_IPVersion) EnumDescriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 0}
+}
+
 type Namespace struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// APIVersion is the API version (i.e. "core/v1")
@@ -6315,6 +6364,114 @@ func (x *ListAuthenticatorOptions) GetUserRef() *metav1.ObjectReference {
 	return nil
 }
 
+type GeoIP struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	IpVersion     GeoIP_IPVersion        `protobuf:"varint,2,opt,name=ipVersion,proto3,enum=octelium.api.main.core.v1.GeoIP_IPVersion" json:"ipVersion,omitempty"`
+	Country       *GeoIP_Country         `protobuf:"bytes,3,opt,name=country,proto3" json:"country,omitempty"`
+	Region        *GeoIP_Region          `protobuf:"bytes,4,opt,name=region,proto3" json:"region,omitempty"`
+	City          *GeoIP_City            `protobuf:"bytes,5,opt,name=city,proto3" json:"city,omitempty"`
+	Continent     *GeoIP_Continent       `protobuf:"bytes,6,opt,name=continent,proto3" json:"continent,omitempty"`
+	Network       *GeoIP_Network         `protobuf:"bytes,7,opt,name=network,proto3" json:"network,omitempty"`
+	Timezone      *GeoIP_Timezone        `protobuf:"bytes,8,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	PostalCode    string                 `protobuf:"bytes,9,opt,name=postalCode,proto3" json:"postalCode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP) Reset() {
+	*x = GeoIP{}
+	mi := &file_corev1_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP) ProtoMessage() {}
+
+func (x *GeoIP) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP.ProtoReflect.Descriptor instead.
+func (*GeoIP) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *GeoIP) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+func (x *GeoIP) GetIpVersion() GeoIP_IPVersion {
+	if x != nil {
+		return x.IpVersion
+	}
+	return GeoIP_IP_VERSION_UNKNOWN
+}
+
+func (x *GeoIP) GetCountry() *GeoIP_Country {
+	if x != nil {
+		return x.Country
+	}
+	return nil
+}
+
+func (x *GeoIP) GetRegion() *GeoIP_Region {
+	if x != nil {
+		return x.Region
+	}
+	return nil
+}
+
+func (x *GeoIP) GetCity() *GeoIP_City {
+	if x != nil {
+		return x.City
+	}
+	return nil
+}
+
+func (x *GeoIP) GetContinent() *GeoIP_Continent {
+	if x != nil {
+		return x.Continent
+	}
+	return nil
+}
+
+func (x *GeoIP) GetNetwork() *GeoIP_Network {
+	if x != nil {
+		return x.Network
+	}
+	return nil
+}
+
+func (x *GeoIP) GetTimezone() *GeoIP_Timezone {
+	if x != nil {
+		return x.Timezone
+	}
+	return nil
+}
+
+func (x *GeoIP) GetPostalCode() string {
+	if x != nil {
+		return x.PostalCode
+	}
+	return ""
+}
+
 type Namespace_Spec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Authorization sets the authorization-related configuration
@@ -6329,7 +6486,7 @@ type Namespace_Spec struct {
 
 func (x *Namespace_Spec) Reset() {
 	*x = Namespace_Spec{}
-	mi := &file_corev1_proto_msgTypes[53]
+	mi := &file_corev1_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6341,7 +6498,7 @@ func (x *Namespace_Spec) String() string {
 func (*Namespace_Spec) ProtoMessage() {}
 
 func (x *Namespace_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[53]
+	mi := &file_corev1_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6379,7 +6536,7 @@ type Namespace_Status struct {
 
 func (x *Namespace_Status) Reset() {
 	*x = Namespace_Status{}
-	mi := &file_corev1_proto_msgTypes[54]
+	mi := &file_corev1_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6391,7 +6548,7 @@ func (x *Namespace_Status) String() string {
 func (*Namespace_Status) ProtoMessage() {}
 
 func (x *Namespace_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[54]
+	mi := &file_corev1_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6419,7 +6576,7 @@ type Namespace_Spec_Authorization struct {
 
 func (x *Namespace_Spec_Authorization) Reset() {
 	*x = Namespace_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[55]
+	mi := &file_corev1_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6431,7 +6588,7 @@ func (x *Namespace_Spec_Authorization) String() string {
 func (*Namespace_Spec_Authorization) ProtoMessage() {}
 
 func (x *Namespace_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[55]
+	mi := &file_corev1_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6493,7 +6650,7 @@ type User_Spec struct {
 
 func (x *User_Spec) Reset() {
 	*x = User_Spec{}
-	mi := &file_corev1_proto_msgTypes[56]
+	mi := &file_corev1_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6505,7 +6662,7 @@ func (x *User_Spec) String() string {
 func (*User_Spec) ProtoMessage() {}
 
 func (x *User_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[56]
+	mi := &file_corev1_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6595,7 +6752,7 @@ type User_Status struct {
 
 func (x *User_Status) Reset() {
 	*x = User_Status{}
-	mi := &file_corev1_proto_msgTypes[57]
+	mi := &file_corev1_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6607,7 +6764,7 @@ func (x *User_Status) String() string {
 func (*User_Status) ProtoMessage() {}
 
 func (x *User_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[57]
+	mi := &file_corev1_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6656,7 +6813,7 @@ type User_Spec_Authorization struct {
 
 func (x *User_Spec_Authorization) Reset() {
 	*x = User_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[58]
+	mi := &file_corev1_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6668,7 +6825,7 @@ func (x *User_Spec_Authorization) String() string {
 func (*User_Spec_Authorization) ProtoMessage() {}
 
 func (x *User_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[58]
+	mi := &file_corev1_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6709,7 +6866,7 @@ type User_Spec_Authentication struct {
 
 func (x *User_Spec_Authentication) Reset() {
 	*x = User_Spec_Authentication{}
-	mi := &file_corev1_proto_msgTypes[59]
+	mi := &file_corev1_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6721,7 +6878,7 @@ func (x *User_Spec_Authentication) String() string {
 func (*User_Spec_Authentication) ProtoMessage() {}
 
 func (x *User_Spec_Authentication) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[59]
+	mi := &file_corev1_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6775,7 +6932,7 @@ type User_Spec_Session struct {
 
 func (x *User_Spec_Session) Reset() {
 	*x = User_Spec_Session{}
-	mi := &file_corev1_proto_msgTypes[60]
+	mi := &file_corev1_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6787,7 +6944,7 @@ func (x *User_Spec_Session) String() string {
 func (*User_Spec_Session) ProtoMessage() {}
 
 func (x *User_Spec_Session) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[60]
+	mi := &file_corev1_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6860,7 +7017,7 @@ type User_Spec_Info struct {
 
 func (x *User_Spec_Info) Reset() {
 	*x = User_Spec_Info{}
-	mi := &file_corev1_proto_msgTypes[61]
+	mi := &file_corev1_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6872,7 +7029,7 @@ func (x *User_Spec_Info) String() string {
 func (*User_Spec_Info) ProtoMessage() {}
 
 func (x *User_Spec_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[61]
+	mi := &file_corev1_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6952,7 +7109,7 @@ type User_Spec_Authentication_Identity struct {
 
 func (x *User_Spec_Authentication_Identity) Reset() {
 	*x = User_Spec_Authentication_Identity{}
-	mi := &file_corev1_proto_msgTypes[62]
+	mi := &file_corev1_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6964,7 +7121,7 @@ func (x *User_Spec_Authentication_Identity) String() string {
 func (*User_Spec_Authentication_Identity) ProtoMessage() {}
 
 func (x *User_Spec_Authentication_Identity) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[62]
+	mi := &file_corev1_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7037,7 +7194,7 @@ type Service_Spec struct {
 
 func (x *Service_Spec) Reset() {
 	*x = Service_Spec{}
-	mi := &file_corev1_proto_msgTypes[64]
+	mi := &file_corev1_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7049,7 +7206,7 @@ func (x *Service_Spec) String() string {
 func (*Service_Spec) ProtoMessage() {}
 
 func (x *Service_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[64]
+	mi := &file_corev1_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7160,7 +7317,7 @@ type Service_Status struct {
 
 func (x *Service_Status) Reset() {
 	*x = Service_Status{}
-	mi := &file_corev1_proto_msgTypes[65]
+	mi := &file_corev1_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7172,7 +7329,7 @@ func (x *Service_Status) String() string {
 func (*Service_Status) ProtoMessage() {}
 
 func (x *Service_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[65]
+	mi := &file_corev1_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7249,7 +7406,7 @@ type Service_Spec_Authorization struct {
 
 func (x *Service_Spec_Authorization) Reset() {
 	*x = Service_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[66]
+	mi := &file_corev1_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7261,7 +7418,7 @@ func (x *Service_Spec_Authorization) String() string {
 func (*Service_Spec_Authorization) ProtoMessage() {}
 
 func (x *Service_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[66]
+	mi := &file_corev1_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7322,7 +7479,7 @@ type Service_Spec_Config struct {
 
 func (x *Service_Spec_Config) Reset() {
 	*x = Service_Spec_Config{}
-	mi := &file_corev1_proto_msgTypes[67]
+	mi := &file_corev1_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7334,7 +7491,7 @@ func (x *Service_Spec_Config) String() string {
 func (*Service_Spec_Config) ProtoMessage() {}
 
 func (x *Service_Spec_Config) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[67]
+	mi := &file_corev1_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7486,7 +7643,7 @@ type Service_Spec_Deployment struct {
 
 func (x *Service_Spec_Deployment) Reset() {
 	*x = Service_Spec_Deployment{}
-	mi := &file_corev1_proto_msgTypes[68]
+	mi := &file_corev1_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7498,7 +7655,7 @@ func (x *Service_Spec_Deployment) String() string {
 func (*Service_Spec_Deployment) ProtoMessage() {}
 
 func (x *Service_Spec_Deployment) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[68]
+	mi := &file_corev1_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7536,7 +7693,7 @@ type Service_Spec_DynamicConfig struct {
 
 func (x *Service_Spec_DynamicConfig) Reset() {
 	*x = Service_Spec_DynamicConfig{}
-	mi := &file_corev1_proto_msgTypes[69]
+	mi := &file_corev1_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7548,7 +7705,7 @@ func (x *Service_Spec_DynamicConfig) String() string {
 func (*Service_Spec_DynamicConfig) ProtoMessage() {}
 
 func (x *Service_Spec_DynamicConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[69]
+	mi := &file_corev1_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7619,7 +7776,7 @@ type Service_Spec_Config_HTTP struct {
 
 func (x *Service_Spec_Config_HTTP) Reset() {
 	*x = Service_Spec_Config_HTTP{}
-	mi := &file_corev1_proto_msgTypes[70]
+	mi := &file_corev1_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7631,7 +7788,7 @@ func (x *Service_Spec_Config_HTTP) String() string {
 func (*Service_Spec_Config_HTTP) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[70]
+	mi := &file_corev1_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7757,7 +7914,7 @@ type Service_Spec_Config_SSH struct {
 
 func (x *Service_Spec_Config_SSH) Reset() {
 	*x = Service_Spec_Config_SSH{}
-	mi := &file_corev1_proto_msgTypes[71]
+	mi := &file_corev1_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7769,7 +7926,7 @@ func (x *Service_Spec_Config_SSH) String() string {
 func (*Service_Spec_Config_SSH) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[71]
+	mi := &file_corev1_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7857,7 +8014,7 @@ type Service_Spec_Config_Postgres struct {
 
 func (x *Service_Spec_Config_Postgres) Reset() {
 	*x = Service_Spec_Config_Postgres{}
-	mi := &file_corev1_proto_msgTypes[72]
+	mi := &file_corev1_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7869,7 +8026,7 @@ func (x *Service_Spec_Config_Postgres) String() string {
 func (*Service_Spec_Config_Postgres) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Postgres) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[72]
+	mi := &file_corev1_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7932,7 +8089,7 @@ type Service_Spec_Config_MySQL struct {
 
 func (x *Service_Spec_Config_MySQL) Reset() {
 	*x = Service_Spec_Config_MySQL{}
-	mi := &file_corev1_proto_msgTypes[73]
+	mi := &file_corev1_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7944,7 +8101,7 @@ func (x *Service_Spec_Config_MySQL) String() string {
 func (*Service_Spec_Config_MySQL) ProtoMessage() {}
 
 func (x *Service_Spec_Config_MySQL) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[73]
+	mi := &file_corev1_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8001,7 +8158,7 @@ type Service_Spec_Config_ClientCertificate struct {
 
 func (x *Service_Spec_Config_ClientCertificate) Reset() {
 	*x = Service_Spec_Config_ClientCertificate{}
-	mi := &file_corev1_proto_msgTypes[74]
+	mi := &file_corev1_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8013,7 +8170,7 @@ func (x *Service_Spec_Config_ClientCertificate) String() string {
 func (*Service_Spec_Config_ClientCertificate) ProtoMessage() {}
 
 func (x *Service_Spec_Config_ClientCertificate) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[74]
+	mi := &file_corev1_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8075,7 +8232,7 @@ type Service_Spec_Config_TLS struct {
 
 func (x *Service_Spec_Config_TLS) Reset() {
 	*x = Service_Spec_Config_TLS{}
-	mi := &file_corev1_proto_msgTypes[75]
+	mi := &file_corev1_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8087,7 +8244,7 @@ func (x *Service_Spec_Config_TLS) String() string {
 func (*Service_Spec_Config_TLS) ProtoMessage() {}
 
 func (x *Service_Spec_Config_TLS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[75]
+	mi := &file_corev1_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8145,7 +8302,7 @@ type Service_Spec_Config_Kubernetes struct {
 
 func (x *Service_Spec_Config_Kubernetes) Reset() {
 	*x = Service_Spec_Config_Kubernetes{}
-	mi := &file_corev1_proto_msgTypes[76]
+	mi := &file_corev1_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8157,7 +8314,7 @@ func (x *Service_Spec_Config_Kubernetes) String() string {
 func (*Service_Spec_Config_Kubernetes) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Kubernetes) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[76]
+	mi := &file_corev1_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8250,7 +8407,7 @@ type Service_Spec_Config_Upstream struct {
 
 func (x *Service_Spec_Config_Upstream) Reset() {
 	*x = Service_Spec_Config_Upstream{}
-	mi := &file_corev1_proto_msgTypes[77]
+	mi := &file_corev1_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8262,7 +8419,7 @@ func (x *Service_Spec_Config_Upstream) String() string {
 func (*Service_Spec_Config_Upstream) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[77]
+	mi := &file_corev1_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8374,7 +8531,7 @@ type Service_Spec_Config_HTTP_CORS struct {
 
 func (x *Service_Spec_Config_HTTP_CORS) Reset() {
 	*x = Service_Spec_Config_HTTP_CORS{}
-	mi := &file_corev1_proto_msgTypes[78]
+	mi := &file_corev1_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8386,7 +8543,7 @@ func (x *Service_Spec_Config_HTTP_CORS) String() string {
 func (*Service_Spec_Config_HTTP_CORS) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_CORS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[78]
+	mi := &file_corev1_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8460,7 +8617,7 @@ type Service_Spec_Config_HTTP_Auth struct {
 
 func (x *Service_Spec_Config_HTTP_Auth) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth{}
-	mi := &file_corev1_proto_msgTypes[79]
+	mi := &file_corev1_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8472,7 +8629,7 @@ func (x *Service_Spec_Config_HTTP_Auth) String() string {
 func (*Service_Spec_Config_HTTP_Auth) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[79]
+	mi := &file_corev1_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8595,7 +8752,7 @@ type Service_Spec_Config_HTTP_Path struct {
 
 func (x *Service_Spec_Config_HTTP_Path) Reset() {
 	*x = Service_Spec_Config_HTTP_Path{}
-	mi := &file_corev1_proto_msgTypes[80]
+	mi := &file_corev1_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8607,7 +8764,7 @@ func (x *Service_Spec_Config_HTTP_Path) String() string {
 func (*Service_Spec_Config_HTTP_Path) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Path) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[80]
+	mi := &file_corev1_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8649,7 +8806,7 @@ type Service_Spec_Config_HTTP_Body struct {
 
 func (x *Service_Spec_Config_HTTP_Body) Reset() {
 	*x = Service_Spec_Config_HTTP_Body{}
-	mi := &file_corev1_proto_msgTypes[81]
+	mi := &file_corev1_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8661,7 +8818,7 @@ func (x *Service_Spec_Config_HTTP_Body) String() string {
 func (*Service_Spec_Config_HTTP_Body) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Body) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[81]
+	mi := &file_corev1_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8718,7 +8875,7 @@ type Service_Spec_Config_HTTP_Header struct {
 
 func (x *Service_Spec_Config_HTTP_Header) Reset() {
 	*x = Service_Spec_Config_HTTP_Header{}
-	mi := &file_corev1_proto_msgTypes[82]
+	mi := &file_corev1_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8730,7 +8887,7 @@ func (x *Service_Spec_Config_HTTP_Header) String() string {
 func (*Service_Spec_Config_HTTP_Header) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Header) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[82]
+	mi := &file_corev1_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8793,7 +8950,7 @@ type Service_Spec_Config_HTTP_Response struct {
 
 func (x *Service_Spec_Config_HTTP_Response) Reset() {
 	*x = Service_Spec_Config_HTTP_Response{}
-	mi := &file_corev1_proto_msgTypes[83]
+	mi := &file_corev1_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8805,7 +8962,7 @@ func (x *Service_Spec_Config_HTTP_Response) String() string {
 func (*Service_Spec_Config_HTTP_Response) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Response) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[83]
+	mi := &file_corev1_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8862,7 +9019,7 @@ type Service_Spec_Config_HTTP_Retry struct {
 
 func (x *Service_Spec_Config_HTTP_Retry) Reset() {
 	*x = Service_Spec_Config_HTTP_Retry{}
-	mi := &file_corev1_proto_msgTypes[84]
+	mi := &file_corev1_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8874,7 +9031,7 @@ func (x *Service_Spec_Config_HTTP_Retry) String() string {
 func (*Service_Spec_Config_HTTP_Retry) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Retry) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[84]
+	mi := &file_corev1_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8961,7 +9118,7 @@ type Service_Spec_Config_HTTP_Plugin struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin{}
-	mi := &file_corev1_proto_msgTypes[85]
+	mi := &file_corev1_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8973,7 +9130,7 @@ func (x *Service_Spec_Config_HTTP_Plugin) String() string {
 func (*Service_Spec_Config_HTTP_Plugin) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[85]
+	mi := &file_corev1_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9155,7 +9312,7 @@ type Service_Spec_Config_HTTP_Visibility struct {
 
 func (x *Service_Spec_Config_HTTP_Visibility) Reset() {
 	*x = Service_Spec_Config_HTTP_Visibility{}
-	mi := &file_corev1_proto_msgTypes[86]
+	mi := &file_corev1_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9167,7 +9324,7 @@ func (x *Service_Spec_Config_HTTP_Visibility) String() string {
 func (*Service_Spec_Config_HTTP_Visibility) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Visibility) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[86]
+	mi := &file_corev1_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9265,7 +9422,7 @@ type Service_Spec_Config_HTTP_Auth_Bearer struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Bearer) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Bearer{}
-	mi := &file_corev1_proto_msgTypes[87]
+	mi := &file_corev1_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9277,7 +9434,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Bearer) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Bearer) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Bearer) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[87]
+	mi := &file_corev1_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9332,7 +9489,7 @@ type Service_Spec_Config_HTTP_Auth_Basic struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Basic) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Basic{}
-	mi := &file_corev1_proto_msgTypes[88]
+	mi := &file_corev1_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9344,7 +9501,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Basic) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Basic) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Basic) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[88]
+	mi := &file_corev1_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9386,7 +9543,7 @@ type Service_Spec_Config_HTTP_Auth_Custom struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Custom) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Custom{}
-	mi := &file_corev1_proto_msgTypes[89]
+	mi := &file_corev1_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9398,7 +9555,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Custom) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Custom) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Custom) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[89]
+	mi := &file_corev1_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9444,7 +9601,7 @@ type Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials{}
-	mi := &file_corev1_proto_msgTypes[90]
+	mi := &file_corev1_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9456,7 +9613,7 @@ func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials) String() string 
 func (*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[90]
+	mi := &file_corev1_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9512,7 +9669,7 @@ type Service_Spec_Config_HTTP_Auth_Sigv4 struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Sigv4) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Sigv4{}
-	mi := &file_corev1_proto_msgTypes[91]
+	mi := &file_corev1_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9524,7 +9681,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Sigv4) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Sigv4) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Sigv4) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[91]
+	mi := &file_corev1_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9580,7 +9737,7 @@ type Service_Spec_Config_HTTP_Auth_Basic_Password struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Basic_Password) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Basic_Password{}
-	mi := &file_corev1_proto_msgTypes[92]
+	mi := &file_corev1_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9592,7 +9749,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Basic_Password) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Basic_Password) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Basic_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[92]
+	mi := &file_corev1_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9647,7 +9804,7 @@ type Service_Spec_Config_HTTP_Auth_Custom_Value struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Custom_Value) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Custom_Value{}
-	mi := &file_corev1_proto_msgTypes[93]
+	mi := &file_corev1_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9659,7 +9816,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Custom_Value) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Custom_Value) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Custom_Value) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[93]
+	mi := &file_corev1_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9714,7 +9871,7 @@ type Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret{}
-	mi := &file_corev1_proto_msgTypes[94]
+	mi := &file_corev1_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9726,7 +9883,7 @@ func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret) Str
 func (*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[94]
+	mi := &file_corev1_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9781,7 +9938,7 @@ type Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey struct {
 
 func (x *Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey) Reset() {
 	*x = Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey{}
-	mi := &file_corev1_proto_msgTypes[95]
+	mi := &file_corev1_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9793,7 +9950,7 @@ func (x *Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey) String() string {
 func (*Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[95]
+	mi := &file_corev1_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9848,7 +10005,7 @@ type Service_Spec_Config_HTTP_Body_Validation struct {
 
 func (x *Service_Spec_Config_HTTP_Body_Validation) Reset() {
 	*x = Service_Spec_Config_HTTP_Body_Validation{}
-	mi := &file_corev1_proto_msgTypes[96]
+	mi := &file_corev1_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9860,7 +10017,7 @@ func (x *Service_Spec_Config_HTTP_Body_Validation) String() string {
 func (*Service_Spec_Config_HTTP_Body_Validation) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Body_Validation) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[96]
+	mi := &file_corev1_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9915,7 +10072,7 @@ type Service_Spec_Config_HTTP_Body_Validation_JSONSchema struct {
 
 func (x *Service_Spec_Config_HTTP_Body_Validation_JSONSchema) Reset() {
 	*x = Service_Spec_Config_HTTP_Body_Validation_JSONSchema{}
-	mi := &file_corev1_proto_msgTypes[97]
+	mi := &file_corev1_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9927,7 +10084,7 @@ func (x *Service_Spec_Config_HTTP_Body_Validation_JSONSchema) String() string {
 func (*Service_Spec_Config_HTTP_Body_Validation_JSONSchema) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Body_Validation_JSONSchema) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[97]
+	mi := &file_corev1_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9988,7 +10145,7 @@ type Service_Spec_Config_HTTP_Header_KeyValue struct {
 
 func (x *Service_Spec_Config_HTTP_Header_KeyValue) Reset() {
 	*x = Service_Spec_Config_HTTP_Header_KeyValue{}
-	mi := &file_corev1_proto_msgTypes[98]
+	mi := &file_corev1_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10000,7 +10157,7 @@ func (x *Service_Spec_Config_HTTP_Header_KeyValue) String() string {
 func (*Service_Spec_Config_HTTP_Header_KeyValue) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Header_KeyValue) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[98]
+	mi := &file_corev1_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10089,7 +10246,7 @@ type Service_Spec_Config_HTTP_Response_Direct struct {
 
 func (x *Service_Spec_Config_HTTP_Response_Direct) Reset() {
 	*x = Service_Spec_Config_HTTP_Response_Direct{}
-	mi := &file_corev1_proto_msgTypes[99]
+	mi := &file_corev1_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10101,7 +10258,7 @@ func (x *Service_Spec_Config_HTTP_Response_Direct) String() string {
 func (*Service_Spec_Config_HTTP_Response_Direct) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Response_Direct) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[99]
+	mi := &file_corev1_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10189,7 +10346,7 @@ type Service_Spec_Config_HTTP_Plugin_ExtProc struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_ExtProc{}
-	mi := &file_corev1_proto_msgTypes[100]
+	mi := &file_corev1_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10201,7 +10358,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_ExtProc) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_ExtProc) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[100]
+	mi := &file_corev1_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10286,7 +10443,7 @@ type Service_Spec_Config_HTTP_Plugin_Lua struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Lua) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Lua{}
-	mi := &file_corev1_proto_msgTypes[101]
+	mi := &file_corev1_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10298,7 +10455,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Lua) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Lua) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Lua) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[101]
+	mi := &file_corev1_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10351,7 +10508,7 @@ type Service_Spec_Config_HTTP_Plugin_Direct struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Direct) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Direct{}
-	mi := &file_corev1_proto_msgTypes[102]
+	mi := &file_corev1_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10363,7 +10520,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Direct) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Direct) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Direct) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[102]
+	mi := &file_corev1_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10414,7 +10571,7 @@ type Service_Spec_Config_HTTP_Plugin_RateLimit struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_RateLimit{}
-	mi := &file_corev1_proto_msgTypes[103]
+	mi := &file_corev1_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10426,7 +10583,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_RateLimit) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_RateLimit) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[103]
+	mi := &file_corev1_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10497,7 +10654,7 @@ type Service_Spec_Config_HTTP_Plugin_Cache struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Cache) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Cache{}
-	mi := &file_corev1_proto_msgTypes[104]
+	mi := &file_corev1_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10509,7 +10666,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Cache) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Cache) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Cache) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[104]
+	mi := &file_corev1_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10575,7 +10732,7 @@ type Service_Spec_Config_HTTP_Plugin_JSONSchema struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_JSONSchema{}
-	mi := &file_corev1_proto_msgTypes[105]
+	mi := &file_corev1_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10587,7 +10744,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_JSONSchema) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[105]
+	mi := &file_corev1_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10665,7 +10822,7 @@ type Service_Spec_Config_HTTP_Plugin_Path struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Path) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Path{}
-	mi := &file_corev1_proto_msgTypes[106]
+	mi := &file_corev1_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10677,7 +10834,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Path) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Path) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Path) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[106]
+	mi := &file_corev1_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10717,7 +10874,7 @@ type Service_Spec_Config_HTTP_Plugin_ExtProc_Container struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_Container) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_ExtProc_Container{}
-	mi := &file_corev1_proto_msgTypes[107]
+	mi := &file_corev1_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10729,7 +10886,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_Container) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_ExtProc_Container) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_Container) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[107]
+	mi := &file_corev1_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10771,7 +10928,7 @@ type Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{}
-	mi := &file_corev1_proto_msgTypes[108]
+	mi := &file_corev1_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10783,7 +10940,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode) String() string
 func (*Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[108]
+	mi := &file_corev1_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10840,7 +10997,7 @@ type Service_Spec_Config_HTTP_Plugin_Direct_Body struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Direct_Body) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Direct_Body{}
-	mi := &file_corev1_proto_msgTypes[109]
+	mi := &file_corev1_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10852,7 +11009,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Direct_Body) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Direct_Body) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Direct_Body) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[109]
+	mi := &file_corev1_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10924,7 +11081,7 @@ type Service_Spec_Config_HTTP_Plugin_RateLimit_Body struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Body) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_RateLimit_Body{}
-	mi := &file_corev1_proto_msgTypes[111]
+	mi := &file_corev1_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10936,7 +11093,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Body) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_RateLimit_Body) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Body) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[111]
+	mi := &file_corev1_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11009,7 +11166,7 @@ type Service_Spec_Config_HTTP_Plugin_RateLimit_Key struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Key) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_RateLimit_Key{}
-	mi := &file_corev1_proto_msgTypes[112]
+	mi := &file_corev1_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11021,7 +11178,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Key) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_RateLimit_Key) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_RateLimit_Key) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[112]
+	mi := &file_corev1_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11108,7 +11265,7 @@ type Service_Spec_Config_HTTP_Plugin_Cache_Key struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_Cache_Key) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_Cache_Key{}
-	mi := &file_corev1_proto_msgTypes[114]
+	mi := &file_corev1_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11120,7 +11277,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_Cache_Key) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_Cache_Key) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_Cache_Key) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[114]
+	mi := &file_corev1_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11176,7 +11333,7 @@ type Service_Spec_Config_HTTP_Plugin_JSONSchema_Body struct {
 
 func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema_Body) Reset() {
 	*x = Service_Spec_Config_HTTP_Plugin_JSONSchema_Body{}
-	mi := &file_corev1_proto_msgTypes[115]
+	mi := &file_corev1_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11188,7 +11345,7 @@ func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema_Body) String() string {
 func (*Service_Spec_Config_HTTP_Plugin_JSONSchema_Body) ProtoMessage() {}
 
 func (x *Service_Spec_Config_HTTP_Plugin_JSONSchema_Body) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[115]
+	mi := &file_corev1_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11260,7 +11417,7 @@ type Service_Spec_Config_SSH_Auth struct {
 
 func (x *Service_Spec_Config_SSH_Auth) Reset() {
 	*x = Service_Spec_Config_SSH_Auth{}
-	mi := &file_corev1_proto_msgTypes[117]
+	mi := &file_corev1_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11272,7 +11429,7 @@ func (x *Service_Spec_Config_SSH_Auth) String() string {
 func (*Service_Spec_Config_SSH_Auth) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[117]
+	mi := &file_corev1_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11346,7 +11503,7 @@ type Service_Spec_Config_SSH_UpstreamHostKey struct {
 
 func (x *Service_Spec_Config_SSH_UpstreamHostKey) Reset() {
 	*x = Service_Spec_Config_SSH_UpstreamHostKey{}
-	mi := &file_corev1_proto_msgTypes[118]
+	mi := &file_corev1_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11358,7 +11515,7 @@ func (x *Service_Spec_Config_SSH_UpstreamHostKey) String() string {
 func (*Service_Spec_Config_SSH_UpstreamHostKey) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH_UpstreamHostKey) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[118]
+	mi := &file_corev1_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11431,7 +11588,7 @@ type Service_Spec_Config_SSH_Visibility struct {
 
 func (x *Service_Spec_Config_SSH_Visibility) Reset() {
 	*x = Service_Spec_Config_SSH_Visibility{}
-	mi := &file_corev1_proto_msgTypes[119]
+	mi := &file_corev1_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11443,7 +11600,7 @@ func (x *Service_Spec_Config_SSH_Visibility) String() string {
 func (*Service_Spec_Config_SSH_Visibility) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH_Visibility) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[119]
+	mi := &file_corev1_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11485,7 +11642,7 @@ type Service_Spec_Config_SSH_Auth_Password struct {
 
 func (x *Service_Spec_Config_SSH_Auth_Password) Reset() {
 	*x = Service_Spec_Config_SSH_Auth_Password{}
-	mi := &file_corev1_proto_msgTypes[120]
+	mi := &file_corev1_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11497,7 +11654,7 @@ func (x *Service_Spec_Config_SSH_Auth_Password) String() string {
 func (*Service_Spec_Config_SSH_Auth_Password) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH_Auth_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[120]
+	mi := &file_corev1_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11552,7 +11709,7 @@ type Service_Spec_Config_SSH_Auth_PrivateKey struct {
 
 func (x *Service_Spec_Config_SSH_Auth_PrivateKey) Reset() {
 	*x = Service_Spec_Config_SSH_Auth_PrivateKey{}
-	mi := &file_corev1_proto_msgTypes[121]
+	mi := &file_corev1_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11564,7 +11721,7 @@ func (x *Service_Spec_Config_SSH_Auth_PrivateKey) String() string {
 func (*Service_Spec_Config_SSH_Auth_PrivateKey) ProtoMessage() {}
 
 func (x *Service_Spec_Config_SSH_Auth_PrivateKey) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[121]
+	mi := &file_corev1_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11619,7 +11776,7 @@ type Service_Spec_Config_Postgres_Auth struct {
 
 func (x *Service_Spec_Config_Postgres_Auth) Reset() {
 	*x = Service_Spec_Config_Postgres_Auth{}
-	mi := &file_corev1_proto_msgTypes[122]
+	mi := &file_corev1_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11631,7 +11788,7 @@ func (x *Service_Spec_Config_Postgres_Auth) String() string {
 func (*Service_Spec_Config_Postgres_Auth) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Postgres_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[122]
+	mi := &file_corev1_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11683,7 +11840,7 @@ type Service_Spec_Config_Postgres_Authorization struct {
 
 func (x *Service_Spec_Config_Postgres_Authorization) Reset() {
 	*x = Service_Spec_Config_Postgres_Authorization{}
-	mi := &file_corev1_proto_msgTypes[123]
+	mi := &file_corev1_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11695,7 +11852,7 @@ func (x *Service_Spec_Config_Postgres_Authorization) String() string {
 func (*Service_Spec_Config_Postgres_Authorization) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Postgres_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[123]
+	mi := &file_corev1_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11730,7 +11887,7 @@ type Service_Spec_Config_Postgres_Auth_Password struct {
 
 func (x *Service_Spec_Config_Postgres_Auth_Password) Reset() {
 	*x = Service_Spec_Config_Postgres_Auth_Password{}
-	mi := &file_corev1_proto_msgTypes[124]
+	mi := &file_corev1_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11742,7 +11899,7 @@ func (x *Service_Spec_Config_Postgres_Auth_Password) String() string {
 func (*Service_Spec_Config_Postgres_Auth_Password) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Postgres_Auth_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[124]
+	mi := &file_corev1_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11797,7 +11954,7 @@ type Service_Spec_Config_MySQL_Auth struct {
 
 func (x *Service_Spec_Config_MySQL_Auth) Reset() {
 	*x = Service_Spec_Config_MySQL_Auth{}
-	mi := &file_corev1_proto_msgTypes[125]
+	mi := &file_corev1_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11809,7 +11966,7 @@ func (x *Service_Spec_Config_MySQL_Auth) String() string {
 func (*Service_Spec_Config_MySQL_Auth) ProtoMessage() {}
 
 func (x *Service_Spec_Config_MySQL_Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[125]
+	mi := &file_corev1_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11863,7 +12020,7 @@ type Service_Spec_Config_MySQL_Auth_Password struct {
 
 func (x *Service_Spec_Config_MySQL_Auth_Password) Reset() {
 	*x = Service_Spec_Config_MySQL_Auth_Password{}
-	mi := &file_corev1_proto_msgTypes[126]
+	mi := &file_corev1_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11875,7 +12032,7 @@ func (x *Service_Spec_Config_MySQL_Auth_Password) String() string {
 func (*Service_Spec_Config_MySQL_Auth_Password) ProtoMessage() {}
 
 func (x *Service_Spec_Config_MySQL_Auth_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[126]
+	mi := &file_corev1_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11930,7 +12087,7 @@ type Service_Spec_Config_TLS_ClientCertificate struct {
 
 func (x *Service_Spec_Config_TLS_ClientCertificate) Reset() {
 	*x = Service_Spec_Config_TLS_ClientCertificate{}
-	mi := &file_corev1_proto_msgTypes[127]
+	mi := &file_corev1_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11942,7 +12099,7 @@ func (x *Service_Spec_Config_TLS_ClientCertificate) String() string {
 func (*Service_Spec_Config_TLS_ClientCertificate) ProtoMessage() {}
 
 func (x *Service_Spec_Config_TLS_ClientCertificate) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[127]
+	mi := &file_corev1_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11998,7 +12155,7 @@ type Service_Spec_Config_Kubernetes_BearerToken struct {
 
 func (x *Service_Spec_Config_Kubernetes_BearerToken) Reset() {
 	*x = Service_Spec_Config_Kubernetes_BearerToken{}
-	mi := &file_corev1_proto_msgTypes[128]
+	mi := &file_corev1_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12010,7 +12167,7 @@ func (x *Service_Spec_Config_Kubernetes_BearerToken) String() string {
 func (*Service_Spec_Config_Kubernetes_BearerToken) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Kubernetes_BearerToken) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[128]
+	mi := &file_corev1_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12075,7 +12232,7 @@ type Service_Spec_Config_Kubernetes_Kubeconfig struct {
 
 func (x *Service_Spec_Config_Kubernetes_Kubeconfig) Reset() {
 	*x = Service_Spec_Config_Kubernetes_Kubeconfig{}
-	mi := &file_corev1_proto_msgTypes[129]
+	mi := &file_corev1_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12087,7 +12244,7 @@ func (x *Service_Spec_Config_Kubernetes_Kubeconfig) String() string {
 func (*Service_Spec_Config_Kubernetes_Kubeconfig) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Kubernetes_Kubeconfig) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[129]
+	mi := &file_corev1_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12147,7 +12304,7 @@ type Service_Spec_Config_Upstream_Loadbalance struct {
 
 func (x *Service_Spec_Config_Upstream_Loadbalance) Reset() {
 	*x = Service_Spec_Config_Upstream_Loadbalance{}
-	mi := &file_corev1_proto_msgTypes[130]
+	mi := &file_corev1_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12159,7 +12316,7 @@ func (x *Service_Spec_Config_Upstream_Loadbalance) String() string {
 func (*Service_Spec_Config_Upstream_Loadbalance) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Loadbalance) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[130]
+	mi := &file_corev1_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12214,7 +12371,7 @@ type Service_Spec_Config_Upstream_Container struct {
 
 func (x *Service_Spec_Config_Upstream_Container) Reset() {
 	*x = Service_Spec_Config_Upstream_Container{}
-	mi := &file_corev1_proto_msgTypes[131]
+	mi := &file_corev1_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12226,7 +12383,7 @@ func (x *Service_Spec_Config_Upstream_Container) String() string {
 func (*Service_Spec_Config_Upstream_Container) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[131]
+	mi := &file_corev1_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12351,7 +12508,7 @@ type Service_Spec_Config_Upstream_Loadbalance_Endpoint struct {
 
 func (x *Service_Spec_Config_Upstream_Loadbalance_Endpoint) Reset() {
 	*x = Service_Spec_Config_Upstream_Loadbalance_Endpoint{}
-	mi := &file_corev1_proto_msgTypes[132]
+	mi := &file_corev1_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12363,7 +12520,7 @@ func (x *Service_Spec_Config_Upstream_Loadbalance_Endpoint) String() string {
 func (*Service_Spec_Config_Upstream_Loadbalance_Endpoint) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Loadbalance_Endpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[132]
+	mi := &file_corev1_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12409,7 +12566,7 @@ type Service_Spec_Config_Upstream_Container_Env struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Env) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Env{}
-	mi := &file_corev1_proto_msgTypes[133]
+	mi := &file_corev1_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12421,7 +12578,7 @@ func (x *Service_Spec_Config_Upstream_Container_Env) String() string {
 func (*Service_Spec_Config_Upstream_Container_Env) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Env) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[133]
+	mi := &file_corev1_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12520,7 +12677,7 @@ type Service_Spec_Config_Upstream_Container_Credentials struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Credentials{}
-	mi := &file_corev1_proto_msgTypes[134]
+	mi := &file_corev1_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12532,7 +12689,7 @@ func (x *Service_Spec_Config_Upstream_Container_Credentials) String() string {
 func (*Service_Spec_Config_Upstream_Container_Credentials) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[134]
+	mi := &file_corev1_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12592,7 +12749,7 @@ type Service_Spec_Config_Upstream_Container_ResourceLimit struct {
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_ResourceLimit{}
-	mi := &file_corev1_proto_msgTypes[135]
+	mi := &file_corev1_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12604,7 +12761,7 @@ func (x *Service_Spec_Config_Upstream_Container_ResourceLimit) String() string {
 func (*Service_Spec_Config_Upstream_Container_ResourceLimit) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[135]
+	mi := &file_corev1_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12653,7 +12810,7 @@ type Service_Spec_Config_Upstream_Container_SecurityContext struct {
 
 func (x *Service_Spec_Config_Upstream_Container_SecurityContext) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_SecurityContext{}
-	mi := &file_corev1_proto_msgTypes[136]
+	mi := &file_corev1_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12665,7 +12822,7 @@ func (x *Service_Spec_Config_Upstream_Container_SecurityContext) String() string
 func (*Service_Spec_Config_Upstream_Container_SecurityContext) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_SecurityContext) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[136]
+	mi := &file_corev1_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12708,7 +12865,7 @@ type Service_Spec_Config_Upstream_Container_Volume struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Volume) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Volume{}
-	mi := &file_corev1_proto_msgTypes[137]
+	mi := &file_corev1_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12720,7 +12877,7 @@ func (x *Service_Spec_Config_Upstream_Container_Volume) String() string {
 func (*Service_Spec_Config_Upstream_Container_Volume) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Volume) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[137]
+	mi := &file_corev1_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12782,7 +12939,7 @@ type Service_Spec_Config_Upstream_Container_VolumeMount struct {
 
 func (x *Service_Spec_Config_Upstream_Container_VolumeMount) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_VolumeMount{}
-	mi := &file_corev1_proto_msgTypes[138]
+	mi := &file_corev1_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12794,7 +12951,7 @@ func (x *Service_Spec_Config_Upstream_Container_VolumeMount) String() string {
 func (*Service_Spec_Config_Upstream_Container_VolumeMount) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_VolumeMount) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[138]
+	mi := &file_corev1_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12857,7 +13014,7 @@ type Service_Spec_Config_Upstream_Container_Probe struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Probe) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Probe{}
-	mi := &file_corev1_proto_msgTypes[139]
+	mi := &file_corev1_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12869,7 +13026,7 @@ func (x *Service_Spec_Config_Upstream_Container_Probe) String() string {
 func (*Service_Spec_Config_Upstream_Container_Probe) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Probe) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[139]
+	mi := &file_corev1_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12991,7 +13148,7 @@ type Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef{}
-	mi := &file_corev1_proto_msgTypes[140]
+	mi := &file_corev1_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13003,7 +13160,7 @@ func (x *Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef) String(
 func (*Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[140]
+	mi := &file_corev1_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13050,7 +13207,7 @@ type Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword struct 
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword{}
-	mi := &file_corev1_proto_msgTypes[141]
+	mi := &file_corev1_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13062,7 +13219,7 @@ func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword) St
 func (*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[141]
+	mi := &file_corev1_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13111,7 +13268,7 @@ type Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Passwor
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password{}
-	mi := &file_corev1_proto_msgTypes[142]
+	mi := &file_corev1_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13123,7 +13280,7 @@ func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Pas
 func (*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[142]
+	mi := &file_corev1_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13178,7 +13335,7 @@ type Service_Spec_Config_Upstream_Container_ResourceLimit_CPU struct {
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_CPU) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_ResourceLimit_CPU{}
-	mi := &file_corev1_proto_msgTypes[143]
+	mi := &file_corev1_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13190,7 +13347,7 @@ func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_CPU) String() stri
 func (*Service_Spec_Config_Upstream_Container_ResourceLimit_CPU) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_CPU) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[143]
+	mi := &file_corev1_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13223,7 +13380,7 @@ type Service_Spec_Config_Upstream_Container_ResourceLimit_Memory struct {
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_Memory) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_ResourceLimit_Memory{}
-	mi := &file_corev1_proto_msgTypes[144]
+	mi := &file_corev1_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13235,7 +13392,7 @@ func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_Memory) String() s
 func (*Service_Spec_Config_Upstream_Container_ResourceLimit_Memory) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_ResourceLimit_Memory) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[144]
+	mi := &file_corev1_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13267,7 +13424,7 @@ type Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim struct 
 
 func (x *Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim{}
-	mi := &file_corev1_proto_msgTypes[146]
+	mi := &file_corev1_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13279,7 +13436,7 @@ func (x *Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim) St
 func (*Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[146]
+	mi := &file_corev1_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13312,7 +13469,7 @@ type Service_Spec_Config_Upstream_Container_Probe_HTTPGet struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_HTTPGet) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Probe_HTTPGet{}
-	mi := &file_corev1_proto_msgTypes[147]
+	mi := &file_corev1_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13324,7 +13481,7 @@ func (x *Service_Spec_Config_Upstream_Container_Probe_HTTPGet) String() string {
 func (*Service_Spec_Config_Upstream_Container_Probe_HTTPGet) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_HTTPGet) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[147]
+	mi := &file_corev1_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13363,7 +13520,7 @@ type Service_Spec_Config_Upstream_Container_Probe_TCPSocket struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_TCPSocket) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Probe_TCPSocket{}
-	mi := &file_corev1_proto_msgTypes[148]
+	mi := &file_corev1_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13375,7 +13532,7 @@ func (x *Service_Spec_Config_Upstream_Container_Probe_TCPSocket) String() string
 func (*Service_Spec_Config_Upstream_Container_Probe_TCPSocket) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_TCPSocket) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[148]
+	mi := &file_corev1_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13407,7 +13564,7 @@ type Service_Spec_Config_Upstream_Container_Probe_GRPC struct {
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_GRPC) Reset() {
 	*x = Service_Spec_Config_Upstream_Container_Probe_GRPC{}
-	mi := &file_corev1_proto_msgTypes[149]
+	mi := &file_corev1_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13419,7 +13576,7 @@ func (x *Service_Spec_Config_Upstream_Container_Probe_GRPC) String() string {
 func (*Service_Spec_Config_Upstream_Container_Probe_GRPC) ProtoMessage() {}
 
 func (x *Service_Spec_Config_Upstream_Container_Probe_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[149]
+	mi := &file_corev1_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13458,7 +13615,7 @@ type Service_Spec_DynamicConfig_Rule struct {
 
 func (x *Service_Spec_DynamicConfig_Rule) Reset() {
 	*x = Service_Spec_DynamicConfig_Rule{}
-	mi := &file_corev1_proto_msgTypes[150]
+	mi := &file_corev1_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13470,7 +13627,7 @@ func (x *Service_Spec_DynamicConfig_Rule) String() string {
 func (*Service_Spec_DynamicConfig_Rule) ProtoMessage() {}
 
 func (x *Service_Spec_DynamicConfig_Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[150]
+	mi := &file_corev1_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13563,7 +13720,7 @@ type Service_Status_Address struct {
 
 func (x *Service_Status_Address) Reset() {
 	*x = Service_Status_Address{}
-	mi := &file_corev1_proto_msgTypes[151]
+	mi := &file_corev1_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13575,7 +13732,7 @@ func (x *Service_Status_Address) String() string {
 func (*Service_Status_Address) ProtoMessage() {}
 
 func (x *Service_Status_Address) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[151]
+	mi := &file_corev1_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13624,7 +13781,7 @@ type Service_Status_ManagedService struct {
 
 func (x *Service_Status_ManagedService) Reset() {
 	*x = Service_Status_ManagedService{}
-	mi := &file_corev1_proto_msgTypes[152]
+	mi := &file_corev1_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13636,7 +13793,7 @@ func (x *Service_Status_ManagedService) String() string {
 func (*Service_Status_ManagedService) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[152]
+	mi := &file_corev1_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13741,7 +13898,7 @@ type Service_Status_ManagedService_HealthCheck struct {
 
 func (x *Service_Status_ManagedService_HealthCheck) Reset() {
 	*x = Service_Status_ManagedService_HealthCheck{}
-	mi := &file_corev1_proto_msgTypes[153]
+	mi := &file_corev1_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13753,7 +13910,7 @@ func (x *Service_Status_ManagedService_HealthCheck) String() string {
 func (*Service_Status_ManagedService_HealthCheck) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService_HealthCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[153]
+	mi := &file_corev1_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13806,7 +13963,7 @@ type Service_Status_ManagedService_ResourceLimit struct {
 
 func (x *Service_Status_ManagedService_ResourceLimit) Reset() {
 	*x = Service_Status_ManagedService_ResourceLimit{}
-	mi := &file_corev1_proto_msgTypes[154]
+	mi := &file_corev1_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13818,7 +13975,7 @@ func (x *Service_Status_ManagedService_ResourceLimit) String() string {
 func (*Service_Status_ManagedService_ResourceLimit) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService_ResourceLimit) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[154]
+	mi := &file_corev1_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13857,7 +14014,7 @@ type Service_Status_ManagedService_HealthCheck_GRPC struct {
 
 func (x *Service_Status_ManagedService_HealthCheck_GRPC) Reset() {
 	*x = Service_Status_ManagedService_HealthCheck_GRPC{}
-	mi := &file_corev1_proto_msgTypes[156]
+	mi := &file_corev1_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13869,7 +14026,7 @@ func (x *Service_Status_ManagedService_HealthCheck_GRPC) String() string {
 func (*Service_Status_ManagedService_HealthCheck_GRPC) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService_HealthCheck_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[156]
+	mi := &file_corev1_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13901,7 +14058,7 @@ type Service_Status_ManagedService_ResourceLimit_CPU struct {
 
 func (x *Service_Status_ManagedService_ResourceLimit_CPU) Reset() {
 	*x = Service_Status_ManagedService_ResourceLimit_CPU{}
-	mi := &file_corev1_proto_msgTypes[157]
+	mi := &file_corev1_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13913,7 +14070,7 @@ func (x *Service_Status_ManagedService_ResourceLimit_CPU) String() string {
 func (*Service_Status_ManagedService_ResourceLimit_CPU) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService_ResourceLimit_CPU) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[157]
+	mi := &file_corev1_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13945,7 +14102,7 @@ type Service_Status_ManagedService_ResourceLimit_Memory struct {
 
 func (x *Service_Status_ManagedService_ResourceLimit_Memory) Reset() {
 	*x = Service_Status_ManagedService_ResourceLimit_Memory{}
-	mi := &file_corev1_proto_msgTypes[158]
+	mi := &file_corev1_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13957,7 +14114,7 @@ func (x *Service_Status_ManagedService_ResourceLimit_Memory) String() string {
 func (*Service_Status_ManagedService_ResourceLimit_Memory) ProtoMessage() {}
 
 func (x *Service_Status_ManagedService_ResourceLimit_Memory) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[158]
+	mi := &file_corev1_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13989,7 +14146,7 @@ type CredentialToken_AuthenticationToken struct {
 
 func (x *CredentialToken_AuthenticationToken) Reset() {
 	*x = CredentialToken_AuthenticationToken{}
-	mi := &file_corev1_proto_msgTypes[159]
+	mi := &file_corev1_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14001,7 +14158,7 @@ func (x *CredentialToken_AuthenticationToken) String() string {
 func (*CredentialToken_AuthenticationToken) ProtoMessage() {}
 
 func (x *CredentialToken_AuthenticationToken) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[159]
+	mi := &file_corev1_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14036,7 +14193,7 @@ type CredentialToken_OAuth2Credentials struct {
 
 func (x *CredentialToken_OAuth2Credentials) Reset() {
 	*x = CredentialToken_OAuth2Credentials{}
-	mi := &file_corev1_proto_msgTypes[160]
+	mi := &file_corev1_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14048,7 +14205,7 @@ func (x *CredentialToken_OAuth2Credentials) String() string {
 func (*CredentialToken_OAuth2Credentials) ProtoMessage() {}
 
 func (x *CredentialToken_OAuth2Credentials) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[160]
+	mi := &file_corev1_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14087,7 +14244,7 @@ type CredentialToken_AccessToken struct {
 
 func (x *CredentialToken_AccessToken) Reset() {
 	*x = CredentialToken_AccessToken{}
-	mi := &file_corev1_proto_msgTypes[161]
+	mi := &file_corev1_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14099,7 +14256,7 @@ func (x *CredentialToken_AccessToken) String() string {
 func (*CredentialToken_AccessToken) ProtoMessage() {}
 
 func (x *CredentialToken_AccessToken) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[161]
+	mi := &file_corev1_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14135,7 +14292,7 @@ type Session_Spec struct {
 
 func (x *Session_Spec) Reset() {
 	*x = Session_Spec{}
-	mi := &file_corev1_proto_msgTypes[162]
+	mi := &file_corev1_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14147,7 +14304,7 @@ func (x *Session_Spec) String() string {
 func (*Session_Spec) ProtoMessage() {}
 
 func (x *Session_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[162]
+	mi := &file_corev1_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14223,7 +14380,7 @@ type Session_Status struct {
 
 func (x *Session_Status) Reset() {
 	*x = Session_Status{}
-	mi := &file_corev1_proto_msgTypes[163]
+	mi := &file_corev1_proto_msgTypes[164]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14235,7 +14392,7 @@ func (x *Session_Status) String() string {
 func (*Session_Status) ProtoMessage() {}
 
 func (x *Session_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[163]
+	mi := &file_corev1_proto_msgTypes[164]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14389,7 +14546,7 @@ type Session_Spec_Authorization struct {
 
 func (x *Session_Spec_Authorization) Reset() {
 	*x = Session_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[164]
+	mi := &file_corev1_proto_msgTypes[165]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14401,7 +14558,7 @@ func (x *Session_Spec_Authorization) String() string {
 func (*Session_Spec_Authorization) ProtoMessage() {}
 
 func (x *Session_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[164]
+	mi := &file_corev1_proto_msgTypes[165]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14469,7 +14626,7 @@ type Session_Status_Connection struct {
 
 func (x *Session_Status_Connection) Reset() {
 	*x = Session_Status_Connection{}
-	mi := &file_corev1_proto_msgTypes[165]
+	mi := &file_corev1_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14481,7 +14638,7 @@ func (x *Session_Status_Connection) String() string {
 func (*Session_Status_Connection) ProtoMessage() {}
 
 func (x *Session_Status_Connection) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[165]
+	mi := &file_corev1_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14601,7 +14758,7 @@ type Session_Status_Authentication struct {
 
 func (x *Session_Status_Authentication) Reset() {
 	*x = Session_Status_Authentication{}
-	mi := &file_corev1_proto_msgTypes[166]
+	mi := &file_corev1_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14613,7 +14770,7 @@ func (x *Session_Status_Authentication) String() string {
 func (*Session_Status_Authentication) ProtoMessage() {}
 
 func (x *Session_Status_Authentication) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[166]
+	mi := &file_corev1_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14674,7 +14831,7 @@ type Session_Status_LastConnection struct {
 
 func (x *Session_Status_LastConnection) Reset() {
 	*x = Session_Status_LastConnection{}
-	mi := &file_corev1_proto_msgTypes[167]
+	mi := &file_corev1_proto_msgTypes[168]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14686,7 +14843,7 @@ func (x *Session_Status_LastConnection) String() string {
 func (*Session_Status_LastConnection) ProtoMessage() {}
 
 func (x *Session_Status_LastConnection) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[167]
+	mi := &file_corev1_proto_msgTypes[168]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14731,7 +14888,7 @@ type Session_Status_Connection_ServiceOptions struct {
 
 func (x *Session_Status_Connection_ServiceOptions) Reset() {
 	*x = Session_Status_Connection_ServiceOptions{}
-	mi := &file_corev1_proto_msgTypes[169]
+	mi := &file_corev1_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14743,7 +14900,7 @@ func (x *Session_Status_Connection_ServiceOptions) String() string {
 func (*Session_Status_Connection_ServiceOptions) ProtoMessage() {}
 
 func (x *Session_Status_Connection_ServiceOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[169]
+	mi := &file_corev1_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14794,7 +14951,7 @@ type Session_Status_Connection_Upstream struct {
 
 func (x *Session_Status_Connection_Upstream) Reset() {
 	*x = Session_Status_Connection_Upstream{}
-	mi := &file_corev1_proto_msgTypes[170]
+	mi := &file_corev1_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14806,7 +14963,7 @@ func (x *Session_Status_Connection_Upstream) String() string {
 func (*Session_Status_Connection_Upstream) ProtoMessage() {}
 
 func (x *Session_Status_Connection_Upstream) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[170]
+	mi := &file_corev1_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14875,7 +15032,7 @@ type Session_Status_Connection_PublishedService struct {
 
 func (x *Session_Status_Connection_PublishedService) Reset() {
 	*x = Session_Status_Connection_PublishedService{}
-	mi := &file_corev1_proto_msgTypes[171]
+	mi := &file_corev1_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14887,7 +15044,7 @@ func (x *Session_Status_Connection_PublishedService) String() string {
 func (*Session_Status_Connection_PublishedService) ProtoMessage() {}
 
 func (x *Session_Status_Connection_PublishedService) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[171]
+	mi := &file_corev1_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14934,7 +15091,7 @@ type Session_Status_Connection_ServiceOptions_RequestedService struct {
 
 func (x *Session_Status_Connection_ServiceOptions_RequestedService) Reset() {
 	*x = Session_Status_Connection_ServiceOptions_RequestedService{}
-	mi := &file_corev1_proto_msgTypes[172]
+	mi := &file_corev1_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14946,7 +15103,7 @@ func (x *Session_Status_Connection_ServiceOptions_RequestedService) String() str
 func (*Session_Status_Connection_ServiceOptions_RequestedService) ProtoMessage() {}
 
 func (x *Session_Status_Connection_ServiceOptions_RequestedService) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[172]
+	mi := &file_corev1_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14988,7 +15145,7 @@ type Session_Status_Connection_Upstream_Backend struct {
 
 func (x *Session_Status_Connection_Upstream_Backend) Reset() {
 	*x = Session_Status_Connection_Upstream_Backend{}
-	mi := &file_corev1_proto_msgTypes[173]
+	mi := &file_corev1_proto_msgTypes[174]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15000,7 +15157,7 @@ func (x *Session_Status_Connection_Upstream_Backend) String() string {
 func (*Session_Status_Connection_Upstream_Backend) ProtoMessage() {}
 
 func (x *Session_Status_Connection_Upstream_Backend) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[173]
+	mi := &file_corev1_proto_msgTypes[174]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15048,7 +15205,7 @@ type Session_Status_Authentication_Info struct {
 
 func (x *Session_Status_Authentication_Info) Reset() {
 	*x = Session_Status_Authentication_Info{}
-	mi := &file_corev1_proto_msgTypes[174]
+	mi := &file_corev1_proto_msgTypes[175]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15060,7 +15217,7 @@ func (x *Session_Status_Authentication_Info) String() string {
 func (*Session_Status_Authentication_Info) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[174]
+	mi := &file_corev1_proto_msgTypes[175]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15184,7 +15341,7 @@ type Session_Status_Authentication_Info_IdentityProvider struct {
 
 func (x *Session_Status_Authentication_Info_IdentityProvider) Reset() {
 	*x = Session_Status_Authentication_Info_IdentityProvider{}
-	mi := &file_corev1_proto_msgTypes[175]
+	mi := &file_corev1_proto_msgTypes[176]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15196,7 +15353,7 @@ func (x *Session_Status_Authentication_Info_IdentityProvider) String() string {
 func (*Session_Status_Authentication_Info_IdentityProvider) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_IdentityProvider) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[175]
+	mi := &file_corev1_proto_msgTypes[176]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15258,7 +15415,7 @@ type Session_Status_Authentication_Info_Credential struct {
 
 func (x *Session_Status_Authentication_Info_Credential) Reset() {
 	*x = Session_Status_Authentication_Info_Credential{}
-	mi := &file_corev1_proto_msgTypes[176]
+	mi := &file_corev1_proto_msgTypes[177]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15270,7 +15427,7 @@ func (x *Session_Status_Authentication_Info_Credential) String() string {
 func (*Session_Status_Authentication_Info_Credential) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_Credential) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[176]
+	mi := &file_corev1_proto_msgTypes[177]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15317,7 +15474,7 @@ type Session_Status_Authentication_Info_External struct {
 
 func (x *Session_Status_Authentication_Info_External) Reset() {
 	*x = Session_Status_Authentication_Info_External{}
-	mi := &file_corev1_proto_msgTypes[177]
+	mi := &file_corev1_proto_msgTypes[178]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15329,7 +15486,7 @@ func (x *Session_Status_Authentication_Info_External) String() string {
 func (*Session_Status_Authentication_Info_External) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_External) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[177]
+	mi := &file_corev1_proto_msgTypes[178]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15371,7 +15528,7 @@ type Session_Status_Authentication_Info_Authenticator struct {
 
 func (x *Session_Status_Authentication_Info_Authenticator) Reset() {
 	*x = Session_Status_Authentication_Info_Authenticator{}
-	mi := &file_corev1_proto_msgTypes[178]
+	mi := &file_corev1_proto_msgTypes[179]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15383,7 +15540,7 @@ func (x *Session_Status_Authentication_Info_Authenticator) String() string {
 func (*Session_Status_Authentication_Info_Authenticator) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_Authenticator) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[178]
+	mi := &file_corev1_proto_msgTypes[179]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15438,7 +15595,7 @@ type Session_Status_Authentication_Info_Downstream struct {
 
 func (x *Session_Status_Authentication_Info_Downstream) Reset() {
 	*x = Session_Status_Authentication_Info_Downstream{}
-	mi := &file_corev1_proto_msgTypes[179]
+	mi := &file_corev1_proto_msgTypes[180]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15450,7 +15607,7 @@ func (x *Session_Status_Authentication_Info_Downstream) String() string {
 func (*Session_Status_Authentication_Info_Downstream) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_Downstream) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[179]
+	mi := &file_corev1_proto_msgTypes[180]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15499,7 +15656,7 @@ type Session_Status_Authentication_Info_Authenticator_Info struct {
 
 func (x *Session_Status_Authentication_Info_Authenticator_Info) Reset() {
 	*x = Session_Status_Authentication_Info_Authenticator_Info{}
-	mi := &file_corev1_proto_msgTypes[180]
+	mi := &file_corev1_proto_msgTypes[181]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15511,7 +15668,7 @@ func (x *Session_Status_Authentication_Info_Authenticator_Info) String() string 
 func (*Session_Status_Authentication_Info_Authenticator_Info) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_Authenticator_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[180]
+	mi := &file_corev1_proto_msgTypes[181]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15569,7 +15726,7 @@ type Session_Status_Authentication_Info_Authenticator_Info_FIDO struct {
 
 func (x *Session_Status_Authentication_Info_Authenticator_Info_FIDO) Reset() {
 	*x = Session_Status_Authentication_Info_Authenticator_Info_FIDO{}
-	mi := &file_corev1_proto_msgTypes[181]
+	mi := &file_corev1_proto_msgTypes[182]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15581,7 +15738,7 @@ func (x *Session_Status_Authentication_Info_Authenticator_Info_FIDO) String() st
 func (*Session_Status_Authentication_Info_Authenticator_Info_FIDO) ProtoMessage() {}
 
 func (x *Session_Status_Authentication_Info_Authenticator_Info_FIDO) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[181]
+	mi := &file_corev1_proto_msgTypes[182]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15655,7 +15812,7 @@ type Secret_Spec struct {
 
 func (x *Secret_Spec) Reset() {
 	*x = Secret_Spec{}
-	mi := &file_corev1_proto_msgTypes[182]
+	mi := &file_corev1_proto_msgTypes[183]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15667,7 +15824,7 @@ func (x *Secret_Spec) String() string {
 func (*Secret_Spec) ProtoMessage() {}
 
 func (x *Secret_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[182]
+	mi := &file_corev1_proto_msgTypes[183]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15699,7 +15856,7 @@ type Secret_Status struct {
 
 func (x *Secret_Status) Reset() {
 	*x = Secret_Status{}
-	mi := &file_corev1_proto_msgTypes[183]
+	mi := &file_corev1_proto_msgTypes[184]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15711,7 +15868,7 @@ func (x *Secret_Status) String() string {
 func (*Secret_Status) ProtoMessage() {}
 
 func (x *Secret_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[183]
+	mi := &file_corev1_proto_msgTypes[184]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15747,7 +15904,7 @@ type Secret_Data struct {
 
 func (x *Secret_Data) Reset() {
 	*x = Secret_Data{}
-	mi := &file_corev1_proto_msgTypes[184]
+	mi := &file_corev1_proto_msgTypes[185]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15759,7 +15916,7 @@ func (x *Secret_Data) String() string {
 func (*Secret_Data) ProtoMessage() {}
 
 func (x *Secret_Data) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[184]
+	mi := &file_corev1_proto_msgTypes[185]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15831,7 +15988,7 @@ type Secret_Spec_Data struct {
 
 func (x *Secret_Spec_Data) Reset() {
 	*x = Secret_Spec_Data{}
-	mi := &file_corev1_proto_msgTypes[185]
+	mi := &file_corev1_proto_msgTypes[186]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15843,7 +16000,7 @@ func (x *Secret_Spec_Data) String() string {
 func (*Secret_Spec_Data) ProtoMessage() {}
 
 func (x *Secret_Spec_Data) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[185]
+	mi := &file_corev1_proto_msgTypes[186]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15923,7 +16080,7 @@ type Credential_Spec struct {
 
 func (x *Credential_Spec) Reset() {
 	*x = Credential_Spec{}
-	mi := &file_corev1_proto_msgTypes[187]
+	mi := &file_corev1_proto_msgTypes[188]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15935,7 +16092,7 @@ func (x *Credential_Spec) String() string {
 func (*Credential_Spec) ProtoMessage() {}
 
 func (x *Credential_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[187]
+	mi := &file_corev1_proto_msgTypes[188]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16023,7 +16180,7 @@ type Credential_Status struct {
 
 func (x *Credential_Status) Reset() {
 	*x = Credential_Status{}
-	mi := &file_corev1_proto_msgTypes[188]
+	mi := &file_corev1_proto_msgTypes[189]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16035,7 +16192,7 @@ func (x *Credential_Status) String() string {
 func (*Credential_Status) ProtoMessage() {}
 
 func (x *Credential_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[188]
+	mi := &file_corev1_proto_msgTypes[189]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16112,7 +16269,7 @@ type Credential_Spec_Authorization struct {
 
 func (x *Credential_Spec_Authorization) Reset() {
 	*x = Credential_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[189]
+	mi := &file_corev1_proto_msgTypes[190]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16124,7 +16281,7 @@ func (x *Credential_Spec_Authorization) String() string {
 func (*Credential_Spec_Authorization) ProtoMessage() {}
 
 func (x *Credential_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[189]
+	mi := &file_corev1_proto_msgTypes[190]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16165,7 +16322,7 @@ type Group_Spec struct {
 
 func (x *Group_Spec) Reset() {
 	*x = Group_Spec{}
-	mi := &file_corev1_proto_msgTypes[190]
+	mi := &file_corev1_proto_msgTypes[191]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16177,7 +16334,7 @@ func (x *Group_Spec) String() string {
 func (*Group_Spec) ProtoMessage() {}
 
 func (x *Group_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[190]
+	mi := &file_corev1_proto_msgTypes[191]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16216,7 +16373,7 @@ type Group_Status struct {
 
 func (x *Group_Status) Reset() {
 	*x = Group_Status{}
-	mi := &file_corev1_proto_msgTypes[191]
+	mi := &file_corev1_proto_msgTypes[192]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16228,7 +16385,7 @@ func (x *Group_Status) String() string {
 func (*Group_Status) ProtoMessage() {}
 
 func (x *Group_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[191]
+	mi := &file_corev1_proto_msgTypes[192]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16263,7 +16420,7 @@ type Group_Spec_Authorization struct {
 
 func (x *Group_Spec_Authorization) Reset() {
 	*x = Group_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[192]
+	mi := &file_corev1_proto_msgTypes[193]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16275,7 +16432,7 @@ func (x *Group_Spec_Authorization) String() string {
 func (*Group_Spec_Authorization) ProtoMessage() {}
 
 func (x *Group_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[192]
+	mi := &file_corev1_proto_msgTypes[193]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16316,7 +16473,7 @@ type Device_Spec struct {
 
 func (x *Device_Spec) Reset() {
 	*x = Device_Spec{}
-	mi := &file_corev1_proto_msgTypes[194]
+	mi := &file_corev1_proto_msgTypes[195]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16328,7 +16485,7 @@ func (x *Device_Spec) String() string {
 func (*Device_Spec) ProtoMessage() {}
 
 func (x *Device_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[194]
+	mi := &file_corev1_proto_msgTypes[195]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16376,7 +16533,7 @@ type Device_Status struct {
 
 func (x *Device_Status) Reset() {
 	*x = Device_Status{}
-	mi := &file_corev1_proto_msgTypes[195]
+	mi := &file_corev1_proto_msgTypes[196]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16388,7 +16545,7 @@ func (x *Device_Status) String() string {
 func (*Device_Status) ProtoMessage() {}
 
 func (x *Device_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[195]
+	mi := &file_corev1_proto_msgTypes[196]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16472,7 +16629,7 @@ type Device_Spec_Authorization struct {
 
 func (x *Device_Spec_Authorization) Reset() {
 	*x = Device_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[196]
+	mi := &file_corev1_proto_msgTypes[197]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16484,7 +16641,7 @@ func (x *Device_Spec_Authorization) String() string {
 func (*Device_Spec_Authorization) ProtoMessage() {}
 
 func (x *Device_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[196]
+	mi := &file_corev1_proto_msgTypes[197]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16522,7 +16679,7 @@ type Config_Spec struct {
 
 func (x *Config_Spec) Reset() {
 	*x = Config_Spec{}
-	mi := &file_corev1_proto_msgTypes[198]
+	mi := &file_corev1_proto_msgTypes[199]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16534,7 +16691,7 @@ func (x *Config_Spec) String() string {
 func (*Config_Spec) ProtoMessage() {}
 
 func (x *Config_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[198]
+	mi := &file_corev1_proto_msgTypes[199]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16558,7 +16715,7 @@ type Config_Status struct {
 
 func (x *Config_Status) Reset() {
 	*x = Config_Status{}
-	mi := &file_corev1_proto_msgTypes[199]
+	mi := &file_corev1_proto_msgTypes[200]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16570,7 +16727,7 @@ func (x *Config_Status) String() string {
 func (*Config_Status) ProtoMessage() {}
 
 func (x *Config_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[199]
+	mi := &file_corev1_proto_msgTypes[200]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16601,7 +16758,7 @@ type Config_Data struct {
 
 func (x *Config_Data) Reset() {
 	*x = Config_Data{}
-	mi := &file_corev1_proto_msgTypes[200]
+	mi := &file_corev1_proto_msgTypes[201]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16613,7 +16770,7 @@ func (x *Config_Data) String() string {
 func (*Config_Data) ProtoMessage() {}
 
 func (x *Config_Data) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[200]
+	mi := &file_corev1_proto_msgTypes[201]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16715,7 +16872,7 @@ type Config_Data_DataMap struct {
 
 func (x *Config_Data_DataMap) Reset() {
 	*x = Config_Data_DataMap{}
-	mi := &file_corev1_proto_msgTypes[201]
+	mi := &file_corev1_proto_msgTypes[202]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16727,7 +16884,7 @@ func (x *Config_Data_DataMap) String() string {
 func (*Config_Data_DataMap) ProtoMessage() {}
 
 func (x *Config_Data_DataMap) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[201]
+	mi := &file_corev1_proto_msgTypes[202]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16763,7 +16920,7 @@ type Scope_Service struct {
 
 func (x *Scope_Service) Reset() {
 	*x = Scope_Service{}
-	mi := &file_corev1_proto_msgTypes[203]
+	mi := &file_corev1_proto_msgTypes[204]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16775,7 +16932,7 @@ func (x *Scope_Service) String() string {
 func (*Scope_Service) ProtoMessage() {}
 
 func (x *Scope_Service) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[203]
+	mi := &file_corev1_proto_msgTypes[204]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16847,7 +17004,7 @@ type Scope_API struct {
 
 func (x *Scope_API) Reset() {
 	*x = Scope_API{}
-	mi := &file_corev1_proto_msgTypes[204]
+	mi := &file_corev1_proto_msgTypes[205]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16859,7 +17016,7 @@ func (x *Scope_API) String() string {
 func (*Scope_API) ProtoMessage() {}
 
 func (x *Scope_API) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[204]
+	mi := &file_corev1_proto_msgTypes[205]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16927,7 +17084,7 @@ type Scope_Service_All struct {
 
 func (x *Scope_Service_All) Reset() {
 	*x = Scope_Service_All{}
-	mi := &file_corev1_proto_msgTypes[205]
+	mi := &file_corev1_proto_msgTypes[206]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16939,7 +17096,7 @@ func (x *Scope_Service_All) String() string {
 func (*Scope_Service_All) ProtoMessage() {}
 
 func (x *Scope_Service_All) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[205]
+	mi := &file_corev1_proto_msgTypes[206]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16967,7 +17124,7 @@ type Scope_Service_Filter struct {
 
 func (x *Scope_Service_Filter) Reset() {
 	*x = Scope_Service_Filter{}
-	mi := &file_corev1_proto_msgTypes[206]
+	mi := &file_corev1_proto_msgTypes[207]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16979,7 +17136,7 @@ func (x *Scope_Service_Filter) String() string {
 func (*Scope_Service_Filter) ProtoMessage() {}
 
 func (x *Scope_Service_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[206]
+	mi := &file_corev1_proto_msgTypes[207]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17017,7 +17174,7 @@ type Scope_API_All struct {
 
 func (x *Scope_API_All) Reset() {
 	*x = Scope_API_All{}
-	mi := &file_corev1_proto_msgTypes[207]
+	mi := &file_corev1_proto_msgTypes[208]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17029,7 +17186,7 @@ func (x *Scope_API_All) String() string {
 func (*Scope_API_All) ProtoMessage() {}
 
 func (x *Scope_API_All) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[207]
+	mi := &file_corev1_proto_msgTypes[208]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17059,7 +17216,7 @@ type Scope_API_Filter struct {
 
 func (x *Scope_API_Filter) Reset() {
 	*x = Scope_API_Filter{}
-	mi := &file_corev1_proto_msgTypes[208]
+	mi := &file_corev1_proto_msgTypes[209]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17071,7 +17228,7 @@ func (x *Scope_API_Filter) String() string {
 func (*Scope_API_Filter) ProtoMessage() {}
 
 func (x *Scope_API_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[208]
+	mi := &file_corev1_proto_msgTypes[209]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17128,7 +17285,7 @@ type Policy_Spec struct {
 
 func (x *Policy_Spec) Reset() {
 	*x = Policy_Spec{}
-	mi := &file_corev1_proto_msgTypes[209]
+	mi := &file_corev1_proto_msgTypes[210]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17140,7 +17297,7 @@ func (x *Policy_Spec) String() string {
 func (*Policy_Spec) ProtoMessage() {}
 
 func (x *Policy_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[209]
+	mi := &file_corev1_proto_msgTypes[210]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17193,7 +17350,7 @@ type Policy_Status struct {
 
 func (x *Policy_Status) Reset() {
 	*x = Policy_Status{}
-	mi := &file_corev1_proto_msgTypes[210]
+	mi := &file_corev1_proto_msgTypes[211]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17205,7 +17362,7 @@ func (x *Policy_Status) String() string {
 func (*Policy_Status) ProtoMessage() {}
 
 func (x *Policy_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[210]
+	mi := &file_corev1_proto_msgTypes[211]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17250,7 +17407,7 @@ type Policy_Spec_Rule struct {
 
 func (x *Policy_Spec_Rule) Reset() {
 	*x = Policy_Spec_Rule{}
-	mi := &file_corev1_proto_msgTypes[211]
+	mi := &file_corev1_proto_msgTypes[212]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17262,7 +17419,7 @@ func (x *Policy_Spec_Rule) String() string {
 func (*Policy_Spec_Rule) ProtoMessage() {}
 
 func (x *Policy_Spec_Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[211]
+	mi := &file_corev1_proto_msgTypes[212]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17319,7 +17476,7 @@ type Policy_Spec_EnforcementRule struct {
 
 func (x *Policy_Spec_EnforcementRule) Reset() {
 	*x = Policy_Spec_EnforcementRule{}
-	mi := &file_corev1_proto_msgTypes[212]
+	mi := &file_corev1_proto_msgTypes[213]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17331,7 +17488,7 @@ func (x *Policy_Spec_EnforcementRule) String() string {
 func (*Policy_Spec_EnforcementRule) ProtoMessage() {}
 
 func (x *Policy_Spec_EnforcementRule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[212]
+	mi := &file_corev1_proto_msgTypes[213]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17372,7 +17529,7 @@ type AccessLog_Entry struct {
 
 func (x *AccessLog_Entry) Reset() {
 	*x = AccessLog_Entry{}
-	mi := &file_corev1_proto_msgTypes[213]
+	mi := &file_corev1_proto_msgTypes[214]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17384,7 +17541,7 @@ func (x *AccessLog_Entry) String() string {
 func (*AccessLog_Entry) ProtoMessage() {}
 
 func (x *AccessLog_Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[213]
+	mi := &file_corev1_proto_msgTypes[214]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17434,7 +17591,7 @@ type AccessLog_Entry_Info struct {
 
 func (x *AccessLog_Entry_Info) Reset() {
 	*x = AccessLog_Entry_Info{}
-	mi := &file_corev1_proto_msgTypes[214]
+	mi := &file_corev1_proto_msgTypes[215]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17446,7 +17603,7 @@ func (x *AccessLog_Entry_Info) String() string {
 func (*AccessLog_Entry_Info) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[214]
+	mi := &file_corev1_proto_msgTypes[215]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17649,7 +17806,7 @@ type AccessLog_Entry_Common struct {
 
 func (x *AccessLog_Entry_Common) Reset() {
 	*x = AccessLog_Entry_Common{}
-	mi := &file_corev1_proto_msgTypes[215]
+	mi := &file_corev1_proto_msgTypes[216]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17661,7 +17818,7 @@ func (x *AccessLog_Entry_Common) String() string {
 func (*AccessLog_Entry_Common) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[215]
+	mi := &file_corev1_proto_msgTypes[216]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17803,7 +17960,7 @@ type AccessLog_Entry_Info_HTTP struct {
 
 func (x *AccessLog_Entry_Info_HTTP) Reset() {
 	*x = AccessLog_Entry_Info_HTTP{}
-	mi := &file_corev1_proto_msgTypes[216]
+	mi := &file_corev1_proto_msgTypes[217]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17815,7 +17972,7 @@ func (x *AccessLog_Entry_Info_HTTP) String() string {
 func (*AccessLog_Entry_Info_HTTP) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[216]
+	mi := &file_corev1_proto_msgTypes[217]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17868,7 +18025,7 @@ type AccessLog_Entry_Info_TCP struct {
 
 func (x *AccessLog_Entry_Info_TCP) Reset() {
 	*x = AccessLog_Entry_Info_TCP{}
-	mi := &file_corev1_proto_msgTypes[217]
+	mi := &file_corev1_proto_msgTypes[218]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17880,7 +18037,7 @@ func (x *AccessLog_Entry_Info_TCP) String() string {
 func (*AccessLog_Entry_Info_TCP) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_TCP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[217]
+	mi := &file_corev1_proto_msgTypes[218]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17935,7 +18092,7 @@ type AccessLog_Entry_Info_SSH struct {
 
 func (x *AccessLog_Entry_Info_SSH) Reset() {
 	*x = AccessLog_Entry_Info_SSH{}
-	mi := &file_corev1_proto_msgTypes[218]
+	mi := &file_corev1_proto_msgTypes[219]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17947,7 +18104,7 @@ func (x *AccessLog_Entry_Info_SSH) String() string {
 func (*AccessLog_Entry_Info_SSH) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[218]
+	mi := &file_corev1_proto_msgTypes[219]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18073,7 +18230,7 @@ type AccessLog_Entry_Info_UDP struct {
 
 func (x *AccessLog_Entry_Info_UDP) Reset() {
 	*x = AccessLog_Entry_Info_UDP{}
-	mi := &file_corev1_proto_msgTypes[219]
+	mi := &file_corev1_proto_msgTypes[220]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18085,7 +18242,7 @@ func (x *AccessLog_Entry_Info_UDP) String() string {
 func (*AccessLog_Entry_Info_UDP) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_UDP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[219]
+	mi := &file_corev1_proto_msgTypes[220]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18124,7 +18281,7 @@ type AccessLog_Entry_Info_Postgres struct {
 
 func (x *AccessLog_Entry_Info_Postgres) Reset() {
 	*x = AccessLog_Entry_Info_Postgres{}
-	mi := &file_corev1_proto_msgTypes[220]
+	mi := &file_corev1_proto_msgTypes[221]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18136,7 +18293,7 @@ func (x *AccessLog_Entry_Info_Postgres) String() string {
 func (*AccessLog_Entry_Info_Postgres) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_Postgres) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[220]
+	mi := &file_corev1_proto_msgTypes[221]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18235,7 +18392,7 @@ type AccessLog_Entry_Info_MySQL struct {
 
 func (x *AccessLog_Entry_Info_MySQL) Reset() {
 	*x = AccessLog_Entry_Info_MySQL{}
-	mi := &file_corev1_proto_msgTypes[221]
+	mi := &file_corev1_proto_msgTypes[222]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18247,7 +18404,7 @@ func (x *AccessLog_Entry_Info_MySQL) String() string {
 func (*AccessLog_Entry_Info_MySQL) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[221]
+	mi := &file_corev1_proto_msgTypes[222]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18383,7 +18540,7 @@ type AccessLog_Entry_Info_Kubernetes struct {
 
 func (x *AccessLog_Entry_Info_Kubernetes) Reset() {
 	*x = AccessLog_Entry_Info_Kubernetes{}
-	mi := &file_corev1_proto_msgTypes[222]
+	mi := &file_corev1_proto_msgTypes[223]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18395,7 +18552,7 @@ func (x *AccessLog_Entry_Info_Kubernetes) String() string {
 func (*AccessLog_Entry_Info_Kubernetes) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_Kubernetes) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[222]
+	mi := &file_corev1_proto_msgTypes[223]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18497,7 +18654,7 @@ type AccessLog_Entry_Info_GRPC struct {
 
 func (x *AccessLog_Entry_Info_GRPC) Reset() {
 	*x = AccessLog_Entry_Info_GRPC{}
-	mi := &file_corev1_proto_msgTypes[223]
+	mi := &file_corev1_proto_msgTypes[224]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18509,7 +18666,7 @@ func (x *AccessLog_Entry_Info_GRPC) String() string {
 func (*AccessLog_Entry_Info_GRPC) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[223]
+	mi := &file_corev1_proto_msgTypes[224]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18587,7 +18744,7 @@ type AccessLog_Entry_Info_DNS struct {
 
 func (x *AccessLog_Entry_Info_DNS) Reset() {
 	*x = AccessLog_Entry_Info_DNS{}
-	mi := &file_corev1_proto_msgTypes[224]
+	mi := &file_corev1_proto_msgTypes[225]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18599,7 +18756,7 @@ func (x *AccessLog_Entry_Info_DNS) String() string {
 func (*AccessLog_Entry_Info_DNS) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_DNS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[224]
+	mi := &file_corev1_proto_msgTypes[225]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18683,7 +18840,7 @@ type AccessLog_Entry_Info_HTTP_Request struct {
 
 func (x *AccessLog_Entry_Info_HTTP_Request) Reset() {
 	*x = AccessLog_Entry_Info_HTTP_Request{}
-	mi := &file_corev1_proto_msgTypes[225]
+	mi := &file_corev1_proto_msgTypes[226]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18695,7 +18852,7 @@ func (x *AccessLog_Entry_Info_HTTP_Request) String() string {
 func (*AccessLog_Entry_Info_HTTP_Request) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_HTTP_Request) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[225]
+	mi := &file_corev1_proto_msgTypes[226]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18815,7 +18972,7 @@ type AccessLog_Entry_Info_HTTP_Response struct {
 
 func (x *AccessLog_Entry_Info_HTTP_Response) Reset() {
 	*x = AccessLog_Entry_Info_HTTP_Response{}
-	mi := &file_corev1_proto_msgTypes[226]
+	mi := &file_corev1_proto_msgTypes[227]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18827,7 +18984,7 @@ func (x *AccessLog_Entry_Info_HTTP_Response) String() string {
 func (*AccessLog_Entry_Info_HTTP_Response) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_HTTP_Response) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[226]
+	mi := &file_corev1_proto_msgTypes[227]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18898,7 +19055,7 @@ type AccessLog_Entry_Info_SSH_Start struct {
 
 func (x *AccessLog_Entry_Info_SSH_Start) Reset() {
 	*x = AccessLog_Entry_Info_SSH_Start{}
-	mi := &file_corev1_proto_msgTypes[229]
+	mi := &file_corev1_proto_msgTypes[230]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18910,7 +19067,7 @@ func (x *AccessLog_Entry_Info_SSH_Start) String() string {
 func (*AccessLog_Entry_Info_SSH_Start) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH_Start) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[229]
+	mi := &file_corev1_proto_msgTypes[230]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18952,7 +19109,7 @@ type AccessLog_Entry_Info_SSH_SessionRecording struct {
 
 func (x *AccessLog_Entry_Info_SSH_SessionRecording) Reset() {
 	*x = AccessLog_Entry_Info_SSH_SessionRecording{}
-	mi := &file_corev1_proto_msgTypes[230]
+	mi := &file_corev1_proto_msgTypes[231]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18964,7 +19121,7 @@ func (x *AccessLog_Entry_Info_SSH_SessionRecording) String() string {
 func (*AccessLog_Entry_Info_SSH_SessionRecording) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH_SessionRecording) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[230]
+	mi := &file_corev1_proto_msgTypes[231]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19004,7 +19161,7 @@ type AccessLog_Entry_Info_SSH_SessionRequestExec struct {
 
 func (x *AccessLog_Entry_Info_SSH_SessionRequestExec) Reset() {
 	*x = AccessLog_Entry_Info_SSH_SessionRequestExec{}
-	mi := &file_corev1_proto_msgTypes[231]
+	mi := &file_corev1_proto_msgTypes[232]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19016,7 +19173,7 @@ func (x *AccessLog_Entry_Info_SSH_SessionRequestExec) String() string {
 func (*AccessLog_Entry_Info_SSH_SessionRequestExec) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH_SessionRequestExec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[231]
+	mi := &file_corev1_proto_msgTypes[232]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19049,7 +19206,7 @@ type AccessLog_Entry_Info_SSH_SessionRequestSubsystem struct {
 
 func (x *AccessLog_Entry_Info_SSH_SessionRequestSubsystem) Reset() {
 	*x = AccessLog_Entry_Info_SSH_SessionRequestSubsystem{}
-	mi := &file_corev1_proto_msgTypes[232]
+	mi := &file_corev1_proto_msgTypes[233]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19061,7 +19218,7 @@ func (x *AccessLog_Entry_Info_SSH_SessionRequestSubsystem) String() string {
 func (*AccessLog_Entry_Info_SSH_SessionRequestSubsystem) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH_SessionRequestSubsystem) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[232]
+	mi := &file_corev1_proto_msgTypes[233]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19096,7 +19253,7 @@ type AccessLog_Entry_Info_SSH_DirectTCPIPStart struct {
 
 func (x *AccessLog_Entry_Info_SSH_DirectTCPIPStart) Reset() {
 	*x = AccessLog_Entry_Info_SSH_DirectTCPIPStart{}
-	mi := &file_corev1_proto_msgTypes[233]
+	mi := &file_corev1_proto_msgTypes[234]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19108,7 +19265,7 @@ func (x *AccessLog_Entry_Info_SSH_DirectTCPIPStart) String() string {
 func (*AccessLog_Entry_Info_SSH_DirectTCPIPStart) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_SSH_DirectTCPIPStart) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[233]
+	mi := &file_corev1_proto_msgTypes[234]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19160,7 +19317,7 @@ type AccessLog_Entry_Info_Postgres_Start struct {
 
 func (x *AccessLog_Entry_Info_Postgres_Start) Reset() {
 	*x = AccessLog_Entry_Info_Postgres_Start{}
-	mi := &file_corev1_proto_msgTypes[234]
+	mi := &file_corev1_proto_msgTypes[235]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19172,7 +19329,7 @@ func (x *AccessLog_Entry_Info_Postgres_Start) String() string {
 func (*AccessLog_Entry_Info_Postgres_Start) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_Postgres_Start) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[234]
+	mi := &file_corev1_proto_msgTypes[235]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19233,7 +19390,7 @@ type AccessLog_Entry_Info_Postgres_Query struct {
 
 func (x *AccessLog_Entry_Info_Postgres_Query) Reset() {
 	*x = AccessLog_Entry_Info_Postgres_Query{}
-	mi := &file_corev1_proto_msgTypes[235]
+	mi := &file_corev1_proto_msgTypes[236]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19245,7 +19402,7 @@ func (x *AccessLog_Entry_Info_Postgres_Query) String() string {
 func (*AccessLog_Entry_Info_Postgres_Query) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_Postgres_Query) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[235]
+	mi := &file_corev1_proto_msgTypes[236]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19280,7 +19437,7 @@ type AccessLog_Entry_Info_Postgres_Parse struct {
 
 func (x *AccessLog_Entry_Info_Postgres_Parse) Reset() {
 	*x = AccessLog_Entry_Info_Postgres_Parse{}
-	mi := &file_corev1_proto_msgTypes[236]
+	mi := &file_corev1_proto_msgTypes[237]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19292,7 +19449,7 @@ func (x *AccessLog_Entry_Info_Postgres_Parse) String() string {
 func (*AccessLog_Entry_Info_Postgres_Parse) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_Postgres_Parse) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[236]
+	mi := &file_corev1_proto_msgTypes[237]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19331,7 +19488,7 @@ type AccessLog_Entry_Info_MySQL_Query struct {
 
 func (x *AccessLog_Entry_Info_MySQL_Query) Reset() {
 	*x = AccessLog_Entry_Info_MySQL_Query{}
-	mi := &file_corev1_proto_msgTypes[237]
+	mi := &file_corev1_proto_msgTypes[238]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19343,7 +19500,7 @@ func (x *AccessLog_Entry_Info_MySQL_Query) String() string {
 func (*AccessLog_Entry_Info_MySQL_Query) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL_Query) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[237]
+	mi := &file_corev1_proto_msgTypes[238]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19375,7 +19532,7 @@ type AccessLog_Entry_Info_MySQL_InitDB struct {
 
 func (x *AccessLog_Entry_Info_MySQL_InitDB) Reset() {
 	*x = AccessLog_Entry_Info_MySQL_InitDB{}
-	mi := &file_corev1_proto_msgTypes[238]
+	mi := &file_corev1_proto_msgTypes[239]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19387,7 +19544,7 @@ func (x *AccessLog_Entry_Info_MySQL_InitDB) String() string {
 func (*AccessLog_Entry_Info_MySQL_InitDB) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL_InitDB) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[238]
+	mi := &file_corev1_proto_msgTypes[239]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19419,7 +19576,7 @@ type AccessLog_Entry_Info_MySQL_CreateDB struct {
 
 func (x *AccessLog_Entry_Info_MySQL_CreateDB) Reset() {
 	*x = AccessLog_Entry_Info_MySQL_CreateDB{}
-	mi := &file_corev1_proto_msgTypes[239]
+	mi := &file_corev1_proto_msgTypes[240]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19431,7 +19588,7 @@ func (x *AccessLog_Entry_Info_MySQL_CreateDB) String() string {
 func (*AccessLog_Entry_Info_MySQL_CreateDB) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL_CreateDB) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[239]
+	mi := &file_corev1_proto_msgTypes[240]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19463,7 +19620,7 @@ type AccessLog_Entry_Info_MySQL_DropDB struct {
 
 func (x *AccessLog_Entry_Info_MySQL_DropDB) Reset() {
 	*x = AccessLog_Entry_Info_MySQL_DropDB{}
-	mi := &file_corev1_proto_msgTypes[240]
+	mi := &file_corev1_proto_msgTypes[241]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19475,7 +19632,7 @@ func (x *AccessLog_Entry_Info_MySQL_DropDB) String() string {
 func (*AccessLog_Entry_Info_MySQL_DropDB) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL_DropDB) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[240]
+	mi := &file_corev1_proto_msgTypes[241]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19507,7 +19664,7 @@ type AccessLog_Entry_Info_MySQL_PrepareStatement struct {
 
 func (x *AccessLog_Entry_Info_MySQL_PrepareStatement) Reset() {
 	*x = AccessLog_Entry_Info_MySQL_PrepareStatement{}
-	mi := &file_corev1_proto_msgTypes[241]
+	mi := &file_corev1_proto_msgTypes[242]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19519,7 +19676,7 @@ func (x *AccessLog_Entry_Info_MySQL_PrepareStatement) String() string {
 func (*AccessLog_Entry_Info_MySQL_PrepareStatement) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Info_MySQL_PrepareStatement) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[241]
+	mi := &file_corev1_proto_msgTypes[242]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19552,7 +19709,7 @@ type AccessLog_Entry_Common_Reason struct {
 
 func (x *AccessLog_Entry_Common_Reason) Reset() {
 	*x = AccessLog_Entry_Common_Reason{}
-	mi := &file_corev1_proto_msgTypes[242]
+	mi := &file_corev1_proto_msgTypes[243]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19564,7 +19721,7 @@ func (x *AccessLog_Entry_Common_Reason) String() string {
 func (*AccessLog_Entry_Common_Reason) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[242]
+	mi := &file_corev1_proto_msgTypes[243]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19607,7 +19764,7 @@ type AccessLog_Entry_Common_Reason_Details struct {
 
 func (x *AccessLog_Entry_Common_Reason_Details) Reset() {
 	*x = AccessLog_Entry_Common_Reason_Details{}
-	mi := &file_corev1_proto_msgTypes[243]
+	mi := &file_corev1_proto_msgTypes[244]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19619,7 +19776,7 @@ func (x *AccessLog_Entry_Common_Reason_Details) String() string {
 func (*AccessLog_Entry_Common_Reason_Details) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason_Details) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[243]
+	mi := &file_corev1_proto_msgTypes[244]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19693,7 +19850,7 @@ type AccessLog_Entry_Common_Reason_Details_PolicyMatch struct {
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch) Reset() {
 	*x = AccessLog_Entry_Common_Reason_Details_PolicyMatch{}
-	mi := &file_corev1_proto_msgTypes[244]
+	mi := &file_corev1_proto_msgTypes[245]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19705,7 +19862,7 @@ func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch) String() string {
 func (*AccessLog_Entry_Common_Reason_Details_PolicyMatch) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[244]
+	mi := &file_corev1_proto_msgTypes[245]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19791,7 +19948,7 @@ type AccessLog_Entry_Common_Reason_Details_SessionNotActive struct {
 
 func (x *AccessLog_Entry_Common_Reason_Details_SessionNotActive) Reset() {
 	*x = AccessLog_Entry_Common_Reason_Details_SessionNotActive{}
-	mi := &file_corev1_proto_msgTypes[245]
+	mi := &file_corev1_proto_msgTypes[246]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19803,7 +19960,7 @@ func (x *AccessLog_Entry_Common_Reason_Details_SessionNotActive) String() string
 func (*AccessLog_Entry_Common_Reason_Details_SessionNotActive) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason_Details_SessionNotActive) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[245]
+	mi := &file_corev1_proto_msgTypes[246]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19839,7 +19996,7 @@ type AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy struct {
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy) Reset() {
 	*x = AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy{}
-	mi := &file_corev1_proto_msgTypes[246]
+	mi := &file_corev1_proto_msgTypes[247]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19851,7 +20008,7 @@ func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy) String(
 func (*AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[246]
+	mi := &file_corev1_proto_msgTypes[247]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19891,7 +20048,7 @@ type AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy struct {
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy) Reset() {
 	*x = AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy{}
-	mi := &file_corev1_proto_msgTypes[247]
+	mi := &file_corev1_proto_msgTypes[248]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19903,7 +20060,7 @@ func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy) String() stri
 func (*AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy) ProtoMessage() {}
 
 func (x *AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[247]
+	mi := &file_corev1_proto_msgTypes[248]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -19957,7 +20114,7 @@ type IdentityProvider_Spec struct {
 
 func (x *IdentityProvider_Spec) Reset() {
 	*x = IdentityProvider_Spec{}
-	mi := &file_corev1_proto_msgTypes[248]
+	mi := &file_corev1_proto_msgTypes[249]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -19969,7 +20126,7 @@ func (x *IdentityProvider_Spec) String() string {
 func (*IdentityProvider_Spec) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[248]
+	mi := &file_corev1_proto_msgTypes[249]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20106,7 +20263,7 @@ type IdentityProvider_Status struct {
 
 func (x *IdentityProvider_Status) Reset() {
 	*x = IdentityProvider_Status{}
-	mi := &file_corev1_proto_msgTypes[249]
+	mi := &file_corev1_proto_msgTypes[250]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20118,7 +20275,7 @@ func (x *IdentityProvider_Status) String() string {
 func (*IdentityProvider_Status) ProtoMessage() {}
 
 func (x *IdentityProvider_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[249]
+	mi := &file_corev1_proto_msgTypes[250]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20158,7 +20315,7 @@ type IdentityProvider_Spec_Github struct {
 
 func (x *IdentityProvider_Spec_Github) Reset() {
 	*x = IdentityProvider_Spec_Github{}
-	mi := &file_corev1_proto_msgTypes[250]
+	mi := &file_corev1_proto_msgTypes[251]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20170,7 +20327,7 @@ func (x *IdentityProvider_Spec_Github) String() string {
 func (*IdentityProvider_Spec_Github) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_Github) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[250]
+	mi := &file_corev1_proto_msgTypes[251]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20227,7 +20384,7 @@ type IdentityProvider_Spec_OIDC struct {
 
 func (x *IdentityProvider_Spec_OIDC) Reset() {
 	*x = IdentityProvider_Spec_OIDC{}
-	mi := &file_corev1_proto_msgTypes[251]
+	mi := &file_corev1_proto_msgTypes[252]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20239,7 +20396,7 @@ func (x *IdentityProvider_Spec_OIDC) String() string {
 func (*IdentityProvider_Spec_OIDC) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_OIDC) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[251]
+	mi := &file_corev1_proto_msgTypes[252]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20328,7 +20485,7 @@ type IdentityProvider_Spec_SAML struct {
 
 func (x *IdentityProvider_Spec_SAML) Reset() {
 	*x = IdentityProvider_Spec_SAML{}
-	mi := &file_corev1_proto_msgTypes[252]
+	mi := &file_corev1_proto_msgTypes[253]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20340,7 +20497,7 @@ func (x *IdentityProvider_Spec_SAML) String() string {
 func (*IdentityProvider_Spec_SAML) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_SAML) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[252]
+	mi := &file_corev1_proto_msgTypes[253]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20436,7 +20593,7 @@ type IdentityProvider_Spec_OIDCIdentityToken struct {
 
 func (x *IdentityProvider_Spec_OIDCIdentityToken) Reset() {
 	*x = IdentityProvider_Spec_OIDCIdentityToken{}
-	mi := &file_corev1_proto_msgTypes[253]
+	mi := &file_corev1_proto_msgTypes[254]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20448,7 +20605,7 @@ func (x *IdentityProvider_Spec_OIDCIdentityToken) String() string {
 func (*IdentityProvider_Spec_OIDCIdentityToken) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_OIDCIdentityToken) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[253]
+	mi := &file_corev1_proto_msgTypes[254]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20549,7 +20706,7 @@ type IdentityProvider_Spec_AALRule struct {
 
 func (x *IdentityProvider_Spec_AALRule) Reset() {
 	*x = IdentityProvider_Spec_AALRule{}
-	mi := &file_corev1_proto_msgTypes[254]
+	mi := &file_corev1_proto_msgTypes[255]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20561,7 +20718,7 @@ func (x *IdentityProvider_Spec_AALRule) String() string {
 func (*IdentityProvider_Spec_AALRule) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_AALRule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[254]
+	mi := &file_corev1_proto_msgTypes[255]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20603,7 +20760,7 @@ type IdentityProvider_Spec_PostAuthenticationRule struct {
 
 func (x *IdentityProvider_Spec_PostAuthenticationRule) Reset() {
 	*x = IdentityProvider_Spec_PostAuthenticationRule{}
-	mi := &file_corev1_proto_msgTypes[255]
+	mi := &file_corev1_proto_msgTypes[256]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20615,7 +20772,7 @@ func (x *IdentityProvider_Spec_PostAuthenticationRule) String() string {
 func (*IdentityProvider_Spec_PostAuthenticationRule) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_PostAuthenticationRule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[255]
+	mi := &file_corev1_proto_msgTypes[256]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20657,7 +20814,7 @@ type IdentityProvider_Spec_Github_ClientSecret struct {
 
 func (x *IdentityProvider_Spec_Github_ClientSecret) Reset() {
 	*x = IdentityProvider_Spec_Github_ClientSecret{}
-	mi := &file_corev1_proto_msgTypes[256]
+	mi := &file_corev1_proto_msgTypes[257]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20669,7 +20826,7 @@ func (x *IdentityProvider_Spec_Github_ClientSecret) String() string {
 func (*IdentityProvider_Spec_Github_ClientSecret) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_Github_ClientSecret) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[256]
+	mi := &file_corev1_proto_msgTypes[257]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20724,7 +20881,7 @@ type IdentityProvider_Spec_OIDC_ClientSecret struct {
 
 func (x *IdentityProvider_Spec_OIDC_ClientSecret) Reset() {
 	*x = IdentityProvider_Spec_OIDC_ClientSecret{}
-	mi := &file_corev1_proto_msgTypes[257]
+	mi := &file_corev1_proto_msgTypes[258]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20736,7 +20893,7 @@ func (x *IdentityProvider_Spec_OIDC_ClientSecret) String() string {
 func (*IdentityProvider_Spec_OIDC_ClientSecret) ProtoMessage() {}
 
 func (x *IdentityProvider_Spec_OIDC_ClientSecret) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[257]
+	mi := &file_corev1_proto_msgTypes[258]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20787,7 +20944,7 @@ type Region_Spec struct {
 
 func (x *Region_Spec) Reset() {
 	*x = Region_Spec{}
-	mi := &file_corev1_proto_msgTypes[258]
+	mi := &file_corev1_proto_msgTypes[259]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20799,7 +20956,7 @@ func (x *Region_Spec) String() string {
 func (*Region_Spec) ProtoMessage() {}
 
 func (x *Region_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[258]
+	mi := &file_corev1_proto_msgTypes[259]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20828,7 +20985,7 @@ type Region_Status struct {
 
 func (x *Region_Status) Reset() {
 	*x = Region_Status{}
-	mi := &file_corev1_proto_msgTypes[259]
+	mi := &file_corev1_proto_msgTypes[260]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20840,7 +20997,7 @@ func (x *Region_Status) String() string {
 func (*Region_Status) ProtoMessage() {}
 
 func (x *Region_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[259]
+	mi := &file_corev1_proto_msgTypes[260]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20899,7 +21056,7 @@ type Gateway_Spec struct {
 
 func (x *Gateway_Spec) Reset() {
 	*x = Gateway_Spec{}
-	mi := &file_corev1_proto_msgTypes[261]
+	mi := &file_corev1_proto_msgTypes[262]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20911,7 +21068,7 @@ func (x *Gateway_Spec) String() string {
 func (*Gateway_Spec) ProtoMessage() {}
 
 func (x *Gateway_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[261]
+	mi := &file_corev1_proto_msgTypes[262]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -20956,7 +21113,7 @@ type Gateway_Status struct {
 
 func (x *Gateway_Status) Reset() {
 	*x = Gateway_Status{}
-	mi := &file_corev1_proto_msgTypes[262]
+	mi := &file_corev1_proto_msgTypes[263]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -20968,7 +21125,7 @@ func (x *Gateway_Status) String() string {
 func (*Gateway_Status) ProtoMessage() {}
 
 func (x *Gateway_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[262]
+	mi := &file_corev1_proto_msgTypes[263]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21053,7 +21210,7 @@ type Gateway_Status_WireGuard struct {
 
 func (x *Gateway_Status_WireGuard) Reset() {
 	*x = Gateway_Status_WireGuard{}
-	mi := &file_corev1_proto_msgTypes[263]
+	mi := &file_corev1_proto_msgTypes[264]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21065,7 +21222,7 @@ func (x *Gateway_Status_WireGuard) String() string {
 func (*Gateway_Status_WireGuard) ProtoMessage() {}
 
 func (x *Gateway_Status_WireGuard) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[263]
+	mi := &file_corev1_proto_msgTypes[264]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21112,7 +21269,7 @@ type Gateway_Status_QUICV0 struct {
 
 func (x *Gateway_Status_QUICV0) Reset() {
 	*x = Gateway_Status_QUICV0{}
-	mi := &file_corev1_proto_msgTypes[264]
+	mi := &file_corev1_proto_msgTypes[265]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21124,7 +21281,7 @@ func (x *Gateway_Status_QUICV0) String() string {
 func (*Gateway_Status_QUICV0) ProtoMessage() {}
 
 func (x *Gateway_Status_QUICV0) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[264]
+	mi := &file_corev1_proto_msgTypes[265]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21156,7 +21313,7 @@ type Condition_All struct {
 
 func (x *Condition_All) Reset() {
 	*x = Condition_All{}
-	mi := &file_corev1_proto_msgTypes[265]
+	mi := &file_corev1_proto_msgTypes[266]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21168,7 +21325,7 @@ func (x *Condition_All) String() string {
 func (*Condition_All) ProtoMessage() {}
 
 func (x *Condition_All) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[265]
+	mi := &file_corev1_proto_msgTypes[266]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21201,7 +21358,7 @@ type Condition_Any struct {
 
 func (x *Condition_Any) Reset() {
 	*x = Condition_Any{}
-	mi := &file_corev1_proto_msgTypes[266]
+	mi := &file_corev1_proto_msgTypes[267]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21213,7 +21370,7 @@ func (x *Condition_Any) String() string {
 func (*Condition_Any) ProtoMessage() {}
 
 func (x *Condition_Any) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[266]
+	mi := &file_corev1_proto_msgTypes[267]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21246,7 +21403,7 @@ type Condition_None struct {
 
 func (x *Condition_None) Reset() {
 	*x = Condition_None{}
-	mi := &file_corev1_proto_msgTypes[267]
+	mi := &file_corev1_proto_msgTypes[268]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21258,7 +21415,7 @@ func (x *Condition_None) String() string {
 func (*Condition_None) ProtoMessage() {}
 
 func (x *Condition_None) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[267]
+	mi := &file_corev1_proto_msgTypes[268]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21293,7 +21450,7 @@ type Condition_OPA struct {
 
 func (x *Condition_OPA) Reset() {
 	*x = Condition_OPA{}
-	mi := &file_corev1_proto_msgTypes[268]
+	mi := &file_corev1_proto_msgTypes[269]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21305,7 +21462,7 @@ func (x *Condition_OPA) String() string {
 func (*Condition_OPA) ProtoMessage() {}
 
 func (x *Condition_OPA) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[268]
+	mi := &file_corev1_proto_msgTypes[269]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21368,7 +21525,7 @@ type ClusterConfig_Spec struct {
 
 func (x *ClusterConfig_Spec) Reset() {
 	*x = ClusterConfig_Spec{}
-	mi := &file_corev1_proto_msgTypes[269]
+	mi := &file_corev1_proto_msgTypes[270]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21380,7 +21537,7 @@ func (x *ClusterConfig_Spec) String() string {
 func (*ClusterConfig_Spec) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[269]
+	mi := &file_corev1_proto_msgTypes[270]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21457,7 +21614,7 @@ type ClusterConfig_Status struct {
 
 func (x *ClusterConfig_Status) Reset() {
 	*x = ClusterConfig_Status{}
-	mi := &file_corev1_proto_msgTypes[270]
+	mi := &file_corev1_proto_msgTypes[271]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21469,7 +21626,7 @@ func (x *ClusterConfig_Status) String() string {
 func (*ClusterConfig_Status) ProtoMessage() {}
 
 func (x *ClusterConfig_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[270]
+	mi := &file_corev1_proto_msgTypes[271]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21524,7 +21681,7 @@ type ClusterConfig_Spec_Ingress struct {
 
 func (x *ClusterConfig_Spec_Ingress) Reset() {
 	*x = ClusterConfig_Spec_Ingress{}
-	mi := &file_corev1_proto_msgTypes[271]
+	mi := &file_corev1_proto_msgTypes[272]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21536,7 +21693,7 @@ func (x *ClusterConfig_Spec_Ingress) String() string {
 func (*ClusterConfig_Spec_Ingress) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Ingress) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[271]
+	mi := &file_corev1_proto_msgTypes[272]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21571,7 +21728,7 @@ type ClusterConfig_Spec_Session struct {
 
 func (x *ClusterConfig_Spec_Session) Reset() {
 	*x = ClusterConfig_Spec_Session{}
-	mi := &file_corev1_proto_msgTypes[272]
+	mi := &file_corev1_proto_msgTypes[273]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21583,7 +21740,7 @@ func (x *ClusterConfig_Spec_Session) String() string {
 func (*ClusterConfig_Spec_Session) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Session) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[272]
+	mi := &file_corev1_proto_msgTypes[273]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21625,7 +21782,7 @@ type ClusterConfig_Spec_Device struct {
 
 func (x *ClusterConfig_Spec_Device) Reset() {
 	*x = ClusterConfig_Spec_Device{}
-	mi := &file_corev1_proto_msgTypes[273]
+	mi := &file_corev1_proto_msgTypes[274]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21637,7 +21794,7 @@ func (x *ClusterConfig_Spec_Device) String() string {
 func (*ClusterConfig_Spec_Device) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Device) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[273]
+	mi := &file_corev1_proto_msgTypes[274]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21678,7 +21835,7 @@ type ClusterConfig_Spec_Gateway struct {
 
 func (x *ClusterConfig_Spec_Gateway) Reset() {
 	*x = ClusterConfig_Spec_Gateway{}
-	mi := &file_corev1_proto_msgTypes[274]
+	mi := &file_corev1_proto_msgTypes[275]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21690,7 +21847,7 @@ func (x *ClusterConfig_Spec_Gateway) String() string {
 func (*ClusterConfig_Spec_Gateway) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Gateway) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[274]
+	mi := &file_corev1_proto_msgTypes[275]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21722,7 +21879,7 @@ type ClusterConfig_Spec_DNS struct {
 
 func (x *ClusterConfig_Spec_DNS) Reset() {
 	*x = ClusterConfig_Spec_DNS{}
-	mi := &file_corev1_proto_msgTypes[275]
+	mi := &file_corev1_proto_msgTypes[276]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21734,7 +21891,7 @@ func (x *ClusterConfig_Spec_DNS) String() string {
 func (*ClusterConfig_Spec_DNS) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_DNS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[275]
+	mi := &file_corev1_proto_msgTypes[276]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21769,7 +21926,7 @@ type ClusterConfig_Spec_Authorization struct {
 
 func (x *ClusterConfig_Spec_Authorization) Reset() {
 	*x = ClusterConfig_Spec_Authorization{}
-	mi := &file_corev1_proto_msgTypes[276]
+	mi := &file_corev1_proto_msgTypes[277]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21781,7 +21938,7 @@ func (x *ClusterConfig_Spec_Authorization) String() string {
 func (*ClusterConfig_Spec_Authorization) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Authorization) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[276]
+	mi := &file_corev1_proto_msgTypes[277]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21824,7 +21981,7 @@ type ClusterConfig_Spec_Authenticator struct {
 
 func (x *ClusterConfig_Spec_Authenticator) Reset() {
 	*x = ClusterConfig_Spec_Authenticator{}
-	mi := &file_corev1_proto_msgTypes[277]
+	mi := &file_corev1_proto_msgTypes[278]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21836,7 +21993,7 @@ func (x *ClusterConfig_Spec_Authenticator) String() string {
 func (*ClusterConfig_Spec_Authenticator) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Authenticator) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[277]
+	mi := &file_corev1_proto_msgTypes[278]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21911,7 +22068,7 @@ type ClusterConfig_Spec_Session_Human struct {
 
 func (x *ClusterConfig_Spec_Session_Human) Reset() {
 	*x = ClusterConfig_Spec_Session_Human{}
-	mi := &file_corev1_proto_msgTypes[278]
+	mi := &file_corev1_proto_msgTypes[279]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -21923,7 +22080,7 @@ func (x *ClusterConfig_Spec_Session_Human) String() string {
 func (*ClusterConfig_Spec_Session_Human) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Session_Human) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[278]
+	mi := &file_corev1_proto_msgTypes[279]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22005,7 +22162,7 @@ type ClusterConfig_Spec_Session_Workload struct {
 
 func (x *ClusterConfig_Spec_Session_Workload) Reset() {
 	*x = ClusterConfig_Spec_Session_Workload{}
-	mi := &file_corev1_proto_msgTypes[279]
+	mi := &file_corev1_proto_msgTypes[280]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22017,7 +22174,7 @@ func (x *ClusterConfig_Spec_Session_Workload) String() string {
 func (*ClusterConfig_Spec_Session_Workload) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Session_Workload) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[279]
+	mi := &file_corev1_proto_msgTypes[280]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22087,7 +22244,7 @@ type ClusterConfig_Spec_Device_Human struct {
 
 func (x *ClusterConfig_Spec_Device_Human) Reset() {
 	*x = ClusterConfig_Spec_Device_Human{}
-	mi := &file_corev1_proto_msgTypes[280]
+	mi := &file_corev1_proto_msgTypes[281]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22099,7 +22256,7 @@ func (x *ClusterConfig_Spec_Device_Human) String() string {
 func (*ClusterConfig_Spec_Device_Human) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Device_Human) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[280]
+	mi := &file_corev1_proto_msgTypes[281]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22141,7 +22298,7 @@ type ClusterConfig_Spec_Device_Workload struct {
 
 func (x *ClusterConfig_Spec_Device_Workload) Reset() {
 	*x = ClusterConfig_Spec_Device_Workload{}
-	mi := &file_corev1_proto_msgTypes[281]
+	mi := &file_corev1_proto_msgTypes[282]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22153,7 +22310,7 @@ func (x *ClusterConfig_Spec_Device_Workload) String() string {
 func (*ClusterConfig_Spec_Device_Workload) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Device_Workload) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[281]
+	mi := &file_corev1_proto_msgTypes[282]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22193,7 +22350,7 @@ type ClusterConfig_Spec_DNS_Zone struct {
 
 func (x *ClusterConfig_Spec_DNS_Zone) Reset() {
 	*x = ClusterConfig_Spec_DNS_Zone{}
-	mi := &file_corev1_proto_msgTypes[282]
+	mi := &file_corev1_proto_msgTypes[283]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22205,7 +22362,7 @@ func (x *ClusterConfig_Spec_DNS_Zone) String() string {
 func (*ClusterConfig_Spec_DNS_Zone) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_DNS_Zone) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[282]
+	mi := &file_corev1_proto_msgTypes[283]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22247,7 +22404,7 @@ type ClusterConfig_Spec_Authenticator_EnforcementRule struct {
 
 func (x *ClusterConfig_Spec_Authenticator_EnforcementRule) Reset() {
 	*x = ClusterConfig_Spec_Authenticator_EnforcementRule{}
-	mi := &file_corev1_proto_msgTypes[283]
+	mi := &file_corev1_proto_msgTypes[284]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22259,7 +22416,7 @@ func (x *ClusterConfig_Spec_Authenticator_EnforcementRule) String() string {
 func (*ClusterConfig_Spec_Authenticator_EnforcementRule) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Authenticator_EnforcementRule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[283]
+	mi := &file_corev1_proto_msgTypes[284]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22306,7 +22463,7 @@ type ClusterConfig_Spec_Authenticator_Rule struct {
 
 func (x *ClusterConfig_Spec_Authenticator_Rule) Reset() {
 	*x = ClusterConfig_Spec_Authenticator_Rule{}
-	mi := &file_corev1_proto_msgTypes[284]
+	mi := &file_corev1_proto_msgTypes[285]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22318,7 +22475,7 @@ func (x *ClusterConfig_Spec_Authenticator_Rule) String() string {
 func (*ClusterConfig_Spec_Authenticator_Rule) ProtoMessage() {}
 
 func (x *ClusterConfig_Spec_Authenticator_Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[284]
+	mi := &file_corev1_proto_msgTypes[285]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22375,7 +22532,7 @@ type ClusterConfig_Status_NetworkConfig struct {
 
 func (x *ClusterConfig_Status_NetworkConfig) Reset() {
 	*x = ClusterConfig_Status_NetworkConfig{}
-	mi := &file_corev1_proto_msgTypes[285]
+	mi := &file_corev1_proto_msgTypes[286]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22387,7 +22544,7 @@ func (x *ClusterConfig_Status_NetworkConfig) String() string {
 func (*ClusterConfig_Status_NetworkConfig) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_NetworkConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[285]
+	mi := &file_corev1_proto_msgTypes[286]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22451,7 +22608,7 @@ type ClusterConfig_Status_Network struct {
 
 func (x *ClusterConfig_Status_Network) Reset() {
 	*x = ClusterConfig_Status_Network{}
-	mi := &file_corev1_proto_msgTypes[286]
+	mi := &file_corev1_proto_msgTypes[287]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22463,7 +22620,7 @@ func (x *ClusterConfig_Status_Network) String() string {
 func (*ClusterConfig_Status_Network) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_Network) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[286]
+	mi := &file_corev1_proto_msgTypes[287]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22524,7 +22681,7 @@ type ClusterConfig_Status_SecretManager struct {
 
 func (x *ClusterConfig_Status_SecretManager) Reset() {
 	*x = ClusterConfig_Status_SecretManager{}
-	mi := &file_corev1_proto_msgTypes[287]
+	mi := &file_corev1_proto_msgTypes[288]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22536,7 +22693,7 @@ func (x *ClusterConfig_Status_SecretManager) String() string {
 func (*ClusterConfig_Status_SecretManager) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_SecretManager) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[287]
+	mi := &file_corev1_proto_msgTypes[288]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22577,7 +22734,7 @@ type ClusterConfig_Status_NetworkConfig_V4 struct {
 
 func (x *ClusterConfig_Status_NetworkConfig_V4) Reset() {
 	*x = ClusterConfig_Status_NetworkConfig_V4{}
-	mi := &file_corev1_proto_msgTypes[288]
+	mi := &file_corev1_proto_msgTypes[289]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22589,7 +22746,7 @@ func (x *ClusterConfig_Status_NetworkConfig_V4) String() string {
 func (*ClusterConfig_Status_NetworkConfig_V4) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_NetworkConfig_V4) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[288]
+	mi := &file_corev1_proto_msgTypes[289]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22623,7 +22780,7 @@ type ClusterConfig_Status_NetworkConfig_V6 struct {
 
 func (x *ClusterConfig_Status_NetworkConfig_V6) Reset() {
 	*x = ClusterConfig_Status_NetworkConfig_V6{}
-	mi := &file_corev1_proto_msgTypes[289]
+	mi := &file_corev1_proto_msgTypes[290]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22635,7 +22792,7 @@ func (x *ClusterConfig_Status_NetworkConfig_V6) String() string {
 func (*ClusterConfig_Status_NetworkConfig_V6) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_NetworkConfig_V6) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[289]
+	mi := &file_corev1_proto_msgTypes[290]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22670,7 +22827,7 @@ type ClusterConfig_Status_NetworkConfig_Wireguard struct {
 
 func (x *ClusterConfig_Status_NetworkConfig_Wireguard) Reset() {
 	*x = ClusterConfig_Status_NetworkConfig_Wireguard{}
-	mi := &file_corev1_proto_msgTypes[290]
+	mi := &file_corev1_proto_msgTypes[291]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22682,7 +22839,7 @@ func (x *ClusterConfig_Status_NetworkConfig_Wireguard) String() string {
 func (*ClusterConfig_Status_NetworkConfig_Wireguard) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_NetworkConfig_Wireguard) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[290]
+	mi := &file_corev1_proto_msgTypes[291]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22726,7 +22883,7 @@ type ClusterConfig_Status_NetworkConfig_QUICV0 struct {
 
 func (x *ClusterConfig_Status_NetworkConfig_QUICV0) Reset() {
 	*x = ClusterConfig_Status_NetworkConfig_QUICV0{}
-	mi := &file_corev1_proto_msgTypes[291]
+	mi := &file_corev1_proto_msgTypes[292]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22738,7 +22895,7 @@ func (x *ClusterConfig_Status_NetworkConfig_QUICV0) String() string {
 func (*ClusterConfig_Status_NetworkConfig_QUICV0) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_NetworkConfig_QUICV0) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[291]
+	mi := &file_corev1_proto_msgTypes[292]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22783,7 +22940,7 @@ type ClusterConfig_Status_SecretManager_TLS struct {
 
 func (x *ClusterConfig_Status_SecretManager_TLS) Reset() {
 	*x = ClusterConfig_Status_SecretManager_TLS{}
-	mi := &file_corev1_proto_msgTypes[292]
+	mi := &file_corev1_proto_msgTypes[293]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22795,7 +22952,7 @@ func (x *ClusterConfig_Status_SecretManager_TLS) String() string {
 func (*ClusterConfig_Status_SecretManager_TLS) ProtoMessage() {}
 
 func (x *ClusterConfig_Status_SecretManager_TLS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[292]
+	mi := &file_corev1_proto_msgTypes[293]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22828,7 +22985,7 @@ type RequestContext_Request struct {
 
 func (x *RequestContext_Request) Reset() {
 	*x = RequestContext_Request{}
-	mi := &file_corev1_proto_msgTypes[293]
+	mi := &file_corev1_proto_msgTypes[294]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -22840,7 +22997,7 @@ func (x *RequestContext_Request) String() string {
 func (*RequestContext_Request) ProtoMessage() {}
 
 func (x *RequestContext_Request) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[293]
+	mi := &file_corev1_proto_msgTypes[294]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -22991,7 +23148,7 @@ type RequestContext_Request_HTTP struct {
 
 func (x *RequestContext_Request_HTTP) Reset() {
 	*x = RequestContext_Request_HTTP{}
-	mi := &file_corev1_proto_msgTypes[294]
+	mi := &file_corev1_proto_msgTypes[295]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23003,7 +23160,7 @@ func (x *RequestContext_Request_HTTP) String() string {
 func (*RequestContext_Request_HTTP) ProtoMessage() {}
 
 func (x *RequestContext_Request_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[294]
+	mi := &file_corev1_proto_msgTypes[295]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23108,7 +23265,7 @@ type RequestContext_Request_SSH struct {
 
 func (x *RequestContext_Request_SSH) Reset() {
 	*x = RequestContext_Request_SSH{}
-	mi := &file_corev1_proto_msgTypes[295]
+	mi := &file_corev1_proto_msgTypes[296]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23120,7 +23277,7 @@ func (x *RequestContext_Request_SSH) String() string {
 func (*RequestContext_Request_SSH) ProtoMessage() {}
 
 func (x *RequestContext_Request_SSH) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[295]
+	mi := &file_corev1_proto_msgTypes[296]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23179,7 +23336,7 @@ type RequestContext_Request_Kubernetes struct {
 
 func (x *RequestContext_Request_Kubernetes) Reset() {
 	*x = RequestContext_Request_Kubernetes{}
-	mi := &file_corev1_proto_msgTypes[296]
+	mi := &file_corev1_proto_msgTypes[297]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23191,7 +23348,7 @@ func (x *RequestContext_Request_Kubernetes) String() string {
 func (*RequestContext_Request_Kubernetes) ProtoMessage() {}
 
 func (x *RequestContext_Request_Kubernetes) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[296]
+	mi := &file_corev1_proto_msgTypes[297]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23283,7 +23440,7 @@ type RequestContext_Request_GRPC struct {
 
 func (x *RequestContext_Request_GRPC) Reset() {
 	*x = RequestContext_Request_GRPC{}
-	mi := &file_corev1_proto_msgTypes[297]
+	mi := &file_corev1_proto_msgTypes[298]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23295,7 +23452,7 @@ func (x *RequestContext_Request_GRPC) String() string {
 func (*RequestContext_Request_GRPC) ProtoMessage() {}
 
 func (x *RequestContext_Request_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[297]
+	mi := &file_corev1_proto_msgTypes[298]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23360,7 +23517,7 @@ type RequestContext_Request_Postgres struct {
 
 func (x *RequestContext_Request_Postgres) Reset() {
 	*x = RequestContext_Request_Postgres{}
-	mi := &file_corev1_proto_msgTypes[298]
+	mi := &file_corev1_proto_msgTypes[299]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23372,7 +23529,7 @@ func (x *RequestContext_Request_Postgres) String() string {
 func (*RequestContext_Request_Postgres) ProtoMessage() {}
 
 func (x *RequestContext_Request_Postgres) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[298]
+	mi := &file_corev1_proto_msgTypes[299]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23454,7 +23611,7 @@ type RequestContext_Request_DNS struct {
 
 func (x *RequestContext_Request_DNS) Reset() {
 	*x = RequestContext_Request_DNS{}
-	mi := &file_corev1_proto_msgTypes[299]
+	mi := &file_corev1_proto_msgTypes[300]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23466,7 +23623,7 @@ func (x *RequestContext_Request_DNS) String() string {
 func (*RequestContext_Request_DNS) ProtoMessage() {}
 
 func (x *RequestContext_Request_DNS) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[299]
+	mi := &file_corev1_proto_msgTypes[300]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23505,7 +23662,7 @@ type RequestContext_Request_SSH_Connect struct {
 
 func (x *RequestContext_Request_SSH_Connect) Reset() {
 	*x = RequestContext_Request_SSH_Connect{}
-	mi := &file_corev1_proto_msgTypes[302]
+	mi := &file_corev1_proto_msgTypes[303]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23517,7 +23674,7 @@ func (x *RequestContext_Request_SSH_Connect) String() string {
 func (*RequestContext_Request_SSH_Connect) ProtoMessage() {}
 
 func (x *RequestContext_Request_SSH_Connect) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[302]
+	mi := &file_corev1_proto_msgTypes[303]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23551,7 +23708,7 @@ type RequestContext_Request_Postgres_Connect struct {
 
 func (x *RequestContext_Request_Postgres_Connect) Reset() {
 	*x = RequestContext_Request_Postgres_Connect{}
-	mi := &file_corev1_proto_msgTypes[303]
+	mi := &file_corev1_proto_msgTypes[304]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23563,7 +23720,7 @@ func (x *RequestContext_Request_Postgres_Connect) String() string {
 func (*RequestContext_Request_Postgres_Connect) ProtoMessage() {}
 
 func (x *RequestContext_Request_Postgres_Connect) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[303]
+	mi := &file_corev1_proto_msgTypes[304]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23609,7 +23766,7 @@ type RequestContext_Request_Postgres_Query struct {
 
 func (x *RequestContext_Request_Postgres_Query) Reset() {
 	*x = RequestContext_Request_Postgres_Query{}
-	mi := &file_corev1_proto_msgTypes[304]
+	mi := &file_corev1_proto_msgTypes[305]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23621,7 +23778,7 @@ func (x *RequestContext_Request_Postgres_Query) String() string {
 func (*RequestContext_Request_Postgres_Query) ProtoMessage() {}
 
 func (x *RequestContext_Request_Postgres_Query) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[304]
+	mi := &file_corev1_proto_msgTypes[305]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23654,7 +23811,7 @@ type RequestContext_Request_Postgres_Parse struct {
 
 func (x *RequestContext_Request_Postgres_Parse) Reset() {
 	*x = RequestContext_Request_Postgres_Parse{}
-	mi := &file_corev1_proto_msgTypes[305]
+	mi := &file_corev1_proto_msgTypes[306]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23666,7 +23823,7 @@ func (x *RequestContext_Request_Postgres_Parse) String() string {
 func (*RequestContext_Request_Postgres_Parse) ProtoMessage() {}
 
 func (x *RequestContext_Request_Postgres_Parse) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[305]
+	mi := &file_corev1_proto_msgTypes[306]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23704,7 +23861,7 @@ type PolicyTrigger_Spec struct {
 
 func (x *PolicyTrigger_Spec) Reset() {
 	*x = PolicyTrigger_Spec{}
-	mi := &file_corev1_proto_msgTypes[306]
+	mi := &file_corev1_proto_msgTypes[307]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23716,7 +23873,7 @@ func (x *PolicyTrigger_Spec) String() string {
 func (*PolicyTrigger_Spec) ProtoMessage() {}
 
 func (x *PolicyTrigger_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[306]
+	mi := &file_corev1_proto_msgTypes[307]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23747,7 +23904,7 @@ type PolicyTrigger_Status struct {
 
 func (x *PolicyTrigger_Status) Reset() {
 	*x = PolicyTrigger_Status{}
-	mi := &file_corev1_proto_msgTypes[307]
+	mi := &file_corev1_proto_msgTypes[308]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23759,7 +23916,7 @@ func (x *PolicyTrigger_Status) String() string {
 func (*PolicyTrigger_Status) ProtoMessage() {}
 
 func (x *PolicyTrigger_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[307]
+	mi := &file_corev1_proto_msgTypes[308]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23829,7 +23986,7 @@ type PolicyTrigger_Status_PreCondition struct {
 
 func (x *PolicyTrigger_Status_PreCondition) Reset() {
 	*x = PolicyTrigger_Status_PreCondition{}
-	mi := &file_corev1_proto_msgTypes[308]
+	mi := &file_corev1_proto_msgTypes[309]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -23841,7 +23998,7 @@ func (x *PolicyTrigger_Status_PreCondition) String() string {
 func (*PolicyTrigger_Status_PreCondition) ProtoMessage() {}
 
 func (x *PolicyTrigger_Status_PreCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[308]
+	mi := &file_corev1_proto_msgTypes[309]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23997,7 +24154,7 @@ type PolicyTrigger_Status_PreCondition_Any struct {
 
 func (x *PolicyTrigger_Status_PreCondition_Any) Reset() {
 	*x = PolicyTrigger_Status_PreCondition_Any{}
-	mi := &file_corev1_proto_msgTypes[309]
+	mi := &file_corev1_proto_msgTypes[310]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24009,7 +24166,7 @@ func (x *PolicyTrigger_Status_PreCondition_Any) String() string {
 func (*PolicyTrigger_Status_PreCondition_Any) ProtoMessage() {}
 
 func (x *PolicyTrigger_Status_PreCondition_Any) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[309]
+	mi := &file_corev1_proto_msgTypes[310]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24041,7 +24198,7 @@ type PolicyTrigger_Status_PreCondition_All struct {
 
 func (x *PolicyTrigger_Status_PreCondition_All) Reset() {
 	*x = PolicyTrigger_Status_PreCondition_All{}
-	mi := &file_corev1_proto_msgTypes[310]
+	mi := &file_corev1_proto_msgTypes[311]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24053,7 +24210,7 @@ func (x *PolicyTrigger_Status_PreCondition_All) String() string {
 func (*PolicyTrigger_Status_PreCondition_All) ProtoMessage() {}
 
 func (x *PolicyTrigger_Status_PreCondition_All) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[310]
+	mi := &file_corev1_proto_msgTypes[311]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24092,7 +24249,7 @@ type ComponentLog_Entry struct {
 
 func (x *ComponentLog_Entry) Reset() {
 	*x = ComponentLog_Entry{}
-	mi := &file_corev1_proto_msgTypes[311]
+	mi := &file_corev1_proto_msgTypes[312]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24104,7 +24261,7 @@ func (x *ComponentLog_Entry) String() string {
 func (*ComponentLog_Entry) ProtoMessage() {}
 
 func (x *ComponentLog_Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[311]
+	mi := &file_corev1_proto_msgTypes[312]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24187,7 +24344,7 @@ type ComponentLog_Entry_Component struct {
 
 func (x *ComponentLog_Entry_Component) Reset() {
 	*x = ComponentLog_Entry_Component{}
-	mi := &file_corev1_proto_msgTypes[312]
+	mi := &file_corev1_proto_msgTypes[313]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24199,7 +24356,7 @@ func (x *ComponentLog_Entry_Component) String() string {
 func (*ComponentLog_Entry_Component) ProtoMessage() {}
 
 func (x *ComponentLog_Entry_Component) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[312]
+	mi := &file_corev1_proto_msgTypes[313]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24246,7 +24403,7 @@ type Authenticator_Spec struct {
 
 func (x *Authenticator_Spec) Reset() {
 	*x = Authenticator_Spec{}
-	mi := &file_corev1_proto_msgTypes[313]
+	mi := &file_corev1_proto_msgTypes[314]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24258,7 +24415,7 @@ func (x *Authenticator_Spec) String() string {
 func (*Authenticator_Spec) ProtoMessage() {}
 
 func (x *Authenticator_Spec) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[313]
+	mi := &file_corev1_proto_msgTypes[314]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24308,7 +24465,7 @@ type Authenticator_Status struct {
 
 func (x *Authenticator_Status) Reset() {
 	*x = Authenticator_Status{}
-	mi := &file_corev1_proto_msgTypes[314]
+	mi := &file_corev1_proto_msgTypes[315]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24320,7 +24477,7 @@ func (x *Authenticator_Status) String() string {
 func (*Authenticator_Status) ProtoMessage() {}
 
 func (x *Authenticator_Status) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[314]
+	mi := &file_corev1_proto_msgTypes[315]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24431,7 +24588,7 @@ type Authenticator_Status_EncryptedData struct {
 
 func (x *Authenticator_Status_EncryptedData) Reset() {
 	*x = Authenticator_Status_EncryptedData{}
-	mi := &file_corev1_proto_msgTypes[315]
+	mi := &file_corev1_proto_msgTypes[316]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24443,7 +24600,7 @@ func (x *Authenticator_Status_EncryptedData) String() string {
 func (*Authenticator_Status_EncryptedData) ProtoMessage() {}
 
 func (x *Authenticator_Status_EncryptedData) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[315]
+	mi := &file_corev1_proto_msgTypes[316]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24494,7 +24651,7 @@ type Authenticator_Status_Info struct {
 
 func (x *Authenticator_Status_Info) Reset() {
 	*x = Authenticator_Status_Info{}
-	mi := &file_corev1_proto_msgTypes[316]
+	mi := &file_corev1_proto_msgTypes[317]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24506,7 +24663,7 @@ func (x *Authenticator_Status_Info) String() string {
 func (*Authenticator_Status_Info) ProtoMessage() {}
 
 func (x *Authenticator_Status_Info) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[316]
+	mi := &file_corev1_proto_msgTypes[317]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24591,7 +24748,7 @@ type Authenticator_Status_AuthenticationAttempt struct {
 
 func (x *Authenticator_Status_AuthenticationAttempt) Reset() {
 	*x = Authenticator_Status_AuthenticationAttempt{}
-	mi := &file_corev1_proto_msgTypes[317]
+	mi := &file_corev1_proto_msgTypes[318]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24603,7 +24760,7 @@ func (x *Authenticator_Status_AuthenticationAttempt) String() string {
 func (*Authenticator_Status_AuthenticationAttempt) ProtoMessage() {}
 
 func (x *Authenticator_Status_AuthenticationAttempt) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[317]
+	mi := &file_corev1_proto_msgTypes[318]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24672,7 +24829,7 @@ type Authenticator_Status_Info_FIDO struct {
 
 func (x *Authenticator_Status_Info_FIDO) Reset() {
 	*x = Authenticator_Status_Info_FIDO{}
-	mi := &file_corev1_proto_msgTypes[319]
+	mi := &file_corev1_proto_msgTypes[320]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24684,7 +24841,7 @@ func (x *Authenticator_Status_Info_FIDO) String() string {
 func (*Authenticator_Status_Info_FIDO) ProtoMessage() {}
 
 func (x *Authenticator_Status_Info_FIDO) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[319]
+	mi := &file_corev1_proto_msgTypes[320]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24779,7 +24936,7 @@ type Authenticator_Status_Info_TOTP struct {
 
 func (x *Authenticator_Status_Info_TOTP) Reset() {
 	*x = Authenticator_Status_Info_TOTP{}
-	mi := &file_corev1_proto_msgTypes[320]
+	mi := &file_corev1_proto_msgTypes[321]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24791,7 +24948,7 @@ func (x *Authenticator_Status_Info_TOTP) String() string {
 func (*Authenticator_Status_Info_TOTP) ProtoMessage() {}
 
 func (x *Authenticator_Status_Info_TOTP) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[320]
+	mi := &file_corev1_proto_msgTypes[321]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24825,7 +24982,7 @@ type Authenticator_Status_Info_TPM struct {
 
 func (x *Authenticator_Status_Info_TPM) Reset() {
 	*x = Authenticator_Status_Info_TPM{}
-	mi := &file_corev1_proto_msgTypes[321]
+	mi := &file_corev1_proto_msgTypes[322]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24837,7 +24994,7 @@ func (x *Authenticator_Status_Info_TPM) String() string {
 func (*Authenticator_Status_Info_TPM) ProtoMessage() {}
 
 func (x *Authenticator_Status_Info_TPM) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[321]
+	mi := &file_corev1_proto_msgTypes[322]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24886,7 +25043,7 @@ type Authenticator_Status_Info_TPM_AttestationParameters struct {
 
 func (x *Authenticator_Status_Info_TPM_AttestationParameters) Reset() {
 	*x = Authenticator_Status_Info_TPM_AttestationParameters{}
-	mi := &file_corev1_proto_msgTypes[322]
+	mi := &file_corev1_proto_msgTypes[323]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24898,7 +25055,7 @@ func (x *Authenticator_Status_Info_TPM_AttestationParameters) String() string {
 func (*Authenticator_Status_Info_TPM_AttestationParameters) ProtoMessage() {}
 
 func (x *Authenticator_Status_Info_TPM_AttestationParameters) ProtoReflect() protoreflect.Message {
-	mi := &file_corev1_proto_msgTypes[322]
+	mi := &file_corev1_proto_msgTypes[323]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24940,6 +25097,378 @@ func (x *Authenticator_Status_Info_TPM_AttestationParameters) GetCreateSignature
 		return x.CreateSignature
 	}
 	return nil
+}
+
+type GeoIP_Country struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Country) Reset() {
+	*x = GeoIP_Country{}
+	mi := &file_corev1_proto_msgTypes[326]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Country) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Country) ProtoMessage() {}
+
+func (x *GeoIP_Country) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[326]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Country.ProtoReflect.Descriptor instead.
+func (*GeoIP_Country) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 0}
+}
+
+func (x *GeoIP_Country) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *GeoIP_Country) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GeoIP_Continent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Continent) Reset() {
+	*x = GeoIP_Continent{}
+	mi := &file_corev1_proto_msgTypes[327]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Continent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Continent) ProtoMessage() {}
+
+func (x *GeoIP_Continent) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[327]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Continent.ProtoReflect.Descriptor instead.
+func (*GeoIP_Continent) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 1}
+}
+
+func (x *GeoIP_Continent) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *GeoIP_Continent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GeoIP_Region struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Region) Reset() {
+	*x = GeoIP_Region{}
+	mi := &file_corev1_proto_msgTypes[328]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Region) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Region) ProtoMessage() {}
+
+func (x *GeoIP_Region) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[328]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Region.ProtoReflect.Descriptor instead.
+func (*GeoIP_Region) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 2}
+}
+
+func (x *GeoIP_Region) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *GeoIP_Region) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GeoIP_City struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_City) Reset() {
+	*x = GeoIP_City{}
+	mi := &file_corev1_proto_msgTypes[329]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_City) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_City) ProtoMessage() {}
+
+func (x *GeoIP_City) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[329]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_City.ProtoReflect.Descriptor instead.
+func (*GeoIP_City) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 3}
+}
+
+func (x *GeoIP_City) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GeoIP_Coordinates struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Latitude      float64                `protobuf:"fixed64,1,opt,name=latitude,proto3" json:"latitude,omitempty"`
+	Longitude     float64                `protobuf:"fixed64,2,opt,name=longitude,proto3" json:"longitude,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Coordinates) Reset() {
+	*x = GeoIP_Coordinates{}
+	mi := &file_corev1_proto_msgTypes[330]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Coordinates) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Coordinates) ProtoMessage() {}
+
+func (x *GeoIP_Coordinates) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[330]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Coordinates.ProtoReflect.Descriptor instead.
+func (*GeoIP_Coordinates) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 4}
+}
+
+func (x *GeoIP_Coordinates) GetLatitude() float64 {
+	if x != nil {
+		return x.Latitude
+	}
+	return 0
+}
+
+func (x *GeoIP_Coordinates) GetLongitude() float64 {
+	if x != nil {
+		return x.Longitude
+	}
+	return 0
+}
+
+type GeoIP_Network struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Asn           int64                  `protobuf:"varint,1,opt,name=asn,proto3" json:"asn,omitempty"`
+	Isp           string                 `protobuf:"bytes,2,opt,name=isp,proto3" json:"isp,omitempty"`
+	Organization  string                 `protobuf:"bytes,3,opt,name=organization,proto3" json:"organization,omitempty"`
+	Domain        string                 `protobuf:"bytes,4,opt,name=domain,proto3" json:"domain,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Network) Reset() {
+	*x = GeoIP_Network{}
+	mi := &file_corev1_proto_msgTypes[331]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Network) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Network) ProtoMessage() {}
+
+func (x *GeoIP_Network) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[331]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Network.ProtoReflect.Descriptor instead.
+func (*GeoIP_Network) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 5}
+}
+
+func (x *GeoIP_Network) GetAsn() int64 {
+	if x != nil {
+		return x.Asn
+	}
+	return 0
+}
+
+func (x *GeoIP_Network) GetIsp() string {
+	if x != nil {
+		return x.Isp
+	}
+	return ""
+}
+
+func (x *GeoIP_Network) GetOrganization() string {
+	if x != nil {
+		return x.Organization
+	}
+	return ""
+}
+
+func (x *GeoIP_Network) GetDomain() string {
+	if x != nil {
+		return x.Domain
+	}
+	return ""
+}
+
+type GeoIP_Timezone struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Offset        float64                `protobuf:"fixed64,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GeoIP_Timezone) Reset() {
+	*x = GeoIP_Timezone{}
+	mi := &file_corev1_proto_msgTypes[332]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GeoIP_Timezone) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GeoIP_Timezone) ProtoMessage() {}
+
+func (x *GeoIP_Timezone) ProtoReflect() protoreflect.Message {
+	mi := &file_corev1_proto_msgTypes[332]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GeoIP_Timezone.ProtoReflect.Descriptor instead.
+func (*GeoIP_Timezone) Descriptor() ([]byte, []int) {
+	return file_corev1_proto_rawDescGZIP(), []int{53, 6}
+}
+
+func (x *GeoIP_Timezone) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *GeoIP_Timezone) GetOffset() float64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
 }
 
 var File_corev1_proto protoreflect.FileDescriptor
@@ -29283,380 +29812,443 @@ var file_corev1_proto_rawDesc = []byte{
 	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
 	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74,
 	0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x07, 0x75, 0x73, 0x65, 0x72, 0x52,
-	0x65, 0x66, 0x32, 0x9b, 0x2e, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69,
-	0x63, 0x65, 0x12, 0x56, 0x0a, 0x0c, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69,
-	0x73, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4f,
-	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x65, 0x66, 0x22, 0xe9, 0x07, 0x0a, 0x05, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x12, 0x0e, 0x0a, 0x02,
+	0x69, 0x70, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x70, 0x12, 0x48, 0x0a, 0x09,
+	0x69, 0x70, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e, 0x32,
+	0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49,
+	0x50, 0x2e, 0x49, 0x50, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x52, 0x09, 0x69, 0x70, 0x56,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x42, 0x0a, 0x07, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x72,
+	0x79, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
+	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
+	0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x2e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x72,
+	0x79, 0x52, 0x07, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x72, 0x79, 0x12, 0x3f, 0x0a, 0x06, 0x72, 0x65,
+	0x67, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x2e, 0x52, 0x65, 0x67,
+	0x69, 0x6f, 0x6e, 0x52, 0x06, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x39, 0x0a, 0x04, 0x63,
+	0x69, 0x74, 0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x2e, 0x43, 0x69, 0x74, 0x79,
+	0x52, 0x04, 0x63, 0x69, 0x74, 0x79, 0x12, 0x48, 0x0a, 0x09, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e,
+	0x65, 0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x2e, 0x43, 0x6f, 0x6e, 0x74,
+	0x69, 0x6e, 0x65, 0x6e, 0x74, 0x52, 0x09, 0x63, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x65, 0x6e, 0x74,
+	0x12, 0x42, 0x0a, 0x07, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x18, 0x07, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65,
+	0x6f, 0x49, 0x50, 0x2e, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x52, 0x07, 0x6e, 0x65, 0x74,
+	0x77, 0x6f, 0x72, 0x6b, 0x12, 0x45, 0x0a, 0x08, 0x74, 0x69, 0x6d, 0x65, 0x7a, 0x6f, 0x6e, 0x65,
+	0x18, 0x08, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x29, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
 	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12,
-	0x56, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12,
+	0x76, 0x31, 0x2e, 0x47, 0x65, 0x6f, 0x49, 0x50, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x7a, 0x6f, 0x6e,
+	0x65, 0x52, 0x08, 0x74, 0x69, 0x6d, 0x65, 0x7a, 0x6f, 0x6e, 0x65, 0x12, 0x1e, 0x0a, 0x0a, 0x70,
+	0x6f, 0x73, 0x74, 0x61, 0x6c, 0x43, 0x6f, 0x64, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0a, 0x70, 0x6f, 0x73, 0x74, 0x61, 0x6c, 0x43, 0x6f, 0x64, 0x65, 0x1a, 0x31, 0x0a, 0x07, 0x43,
+	0x6f, 0x75, 0x6e, 0x74, 0x72, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x63, 0x6f, 0x64, 0x65, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x63, 0x6f, 0x64, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61,
+	0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x1a, 0x33,
+	0x0a, 0x09, 0x43, 0x6f, 0x6e, 0x74, 0x69, 0x6e, 0x65, 0x6e, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x63,
+	0x6f, 0x64, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x63, 0x6f, 0x64, 0x65, 0x12,
+	0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e,
+	0x61, 0x6d, 0x65, 0x1a, 0x30, 0x0a, 0x06, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a,
+	0x04, 0x63, 0x6f, 0x64, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x63, 0x6f, 0x64,
+	0x65, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x04, 0x6e, 0x61, 0x6d, 0x65, 0x1a, 0x1a, 0x0a, 0x04, 0x43, 0x69, 0x74, 0x79, 0x12, 0x12, 0x0a,
+	0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d,
+	0x65, 0x1a, 0x47, 0x0a, 0x0b, 0x43, 0x6f, 0x6f, 0x72, 0x64, 0x69, 0x6e, 0x61, 0x74, 0x65, 0x73,
+	0x12, 0x1a, 0x0a, 0x08, 0x6c, 0x61, 0x74, 0x69, 0x74, 0x75, 0x64, 0x65, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x01, 0x52, 0x08, 0x6c, 0x61, 0x74, 0x69, 0x74, 0x75, 0x64, 0x65, 0x12, 0x1c, 0x0a, 0x09,
+	0x6c, 0x6f, 0x6e, 0x67, 0x69, 0x74, 0x75, 0x64, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x01, 0x52,
+	0x09, 0x6c, 0x6f, 0x6e, 0x67, 0x69, 0x74, 0x75, 0x64, 0x65, 0x1a, 0x69, 0x0a, 0x07, 0x4e, 0x65,
+	0x74, 0x77, 0x6f, 0x72, 0x6b, 0x12, 0x10, 0x0a, 0x03, 0x61, 0x73, 0x6e, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x03, 0x61, 0x73, 0x6e, 0x12, 0x10, 0x0a, 0x03, 0x69, 0x73, 0x70, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x69, 0x73, 0x70, 0x12, 0x22, 0x0a, 0x0c, 0x6f, 0x72, 0x67,
+	0x61, 0x6e, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0c, 0x6f, 0x72, 0x67, 0x61, 0x6e, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x16, 0x0a,
+	0x06, 0x64, 0x6f, 0x6d, 0x61, 0x69, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x64,
+	0x6f, 0x6d, 0x61, 0x69, 0x6e, 0x1a, 0x32, 0x0a, 0x08, 0x54, 0x69, 0x6d, 0x65, 0x7a, 0x6f, 0x6e,
+	0x65, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69,
+	0x64, 0x12, 0x16, 0x0a, 0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x01, 0x52, 0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x22, 0x33, 0x0a, 0x09, 0x49, 0x50, 0x56,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x16, 0x0a, 0x12, 0x49, 0x50, 0x5f, 0x56, 0x45, 0x52,
+	0x53, 0x49, 0x4f, 0x4e, 0x5f, 0x55, 0x4e, 0x4b, 0x4e, 0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x06,
+	0x0a, 0x02, 0x56, 0x34, 0x10, 0x01, 0x12, 0x06, 0x0a, 0x02, 0x56, 0x36, 0x10, 0x02, 0x32, 0x9b,
+	0x2e, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x56,
+	0x0a, 0x0c, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x21,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4f, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50,
+	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x55,
+	0x70, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x21, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x1a, 0x21,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
+	0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x57, 0x0a, 0x09, 0x47,
+	0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74,
+	0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
 	0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
 	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x50,
-	0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74,
-	0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61,
-	0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
-	0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70,
-	0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12,
-	0x57, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x25, 0x2e, 0x6f,
-	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
-	0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x0a, 0x43, 0x72, 0x65, 0x61,
-	0x74, 0x65, 0x55, 0x73, 0x65, 0x72, 0x12, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72, 0x1a, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72, 0x22, 0x00, 0x12, 0x5d, 0x0a, 0x08, 0x4c, 0x69,
-	0x73, 0x74, 0x55, 0x73, 0x65, 0x72, 0x12, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x55, 0x73, 0x65, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f,
-	0x6e, 0x73, 0x1a, 0x23, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x63, 0x79, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x0a, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x55, 0x73,
+	0x65, 0x72, 0x12, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
 	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x55,
-	0x73, 0x65, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x0a, 0x55, 0x70, 0x64,
-	0x61, 0x74, 0x65, 0x55, 0x73, 0x65, 0x72, 0x12, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72, 0x1a, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72, 0x22, 0x00, 0x12, 0x64, 0x0a, 0x0a, 0x44,
-	0x65, 0x6c, 0x65, 0x74, 0x65, 0x55, 0x73, 0x65, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
-	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22,
-	0x00, 0x12, 0x53, 0x0a, 0x07, 0x47, 0x65, 0x74, 0x55, 0x73, 0x65, 0x72, 0x12, 0x25, 0x2e, 0x6f,
-	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x1a, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x73, 0x65, 0x72, 0x1a, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
 	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
-	0x55, 0x73, 0x65, 0x72, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0f, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65,
-	0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x1a,
-	0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65,
-	0x73, 0x70, 0x61, 0x63, 0x65, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0f, 0x55, 0x70, 0x64, 0x61, 0x74,
-	0x65, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x24, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65,
-	0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
-	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d,
-	0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x22, 0x00, 0x12, 0x6c, 0x0a, 0x0d, 0x4c, 0x69, 0x73, 0x74,
-	0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70,
-	0x61, 0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65,
-	0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x69, 0x0a, 0x0f, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65,
-	0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
-	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22,
-	0x00, 0x12, 0x5d, 0x0a, 0x0c, 0x47, 0x65, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63,
-	0x65, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65,
-	0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x22, 0x00,
-	0x12, 0x59, 0x0a, 0x0d, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63,
-	0x65, 0x12, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65,
-	0x72, 0x76, 0x69, 0x63, 0x65, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b, 0x4c,
-	0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x2d, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69,
-	0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x4c, 0x69, 0x73,
-	0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0d, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x53, 0x65, 0x72,
-	0x76, 0x69, 0x63, 0x65, 0x12, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x55, 0x73, 0x65, 0x72, 0x22, 0x00, 0x12, 0x5d, 0x0a, 0x08, 0x4c, 0x69, 0x73, 0x74, 0x55, 0x73,
+	0x65, 0x72, 0x12, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c,
+	0x69, 0x73, 0x74, 0x55, 0x73, 0x65, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x23,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72, 0x4c,
+	0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x50, 0x0a, 0x0a, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x55,
+	0x73, 0x65, 0x72, 0x12, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x55, 0x73, 0x65, 0x72, 0x1a, 0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
 	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
-	0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x67,
-	0x0a, 0x0d, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12,
-	0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65,
-	0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
-	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52,
-	0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65,
-	0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x55, 0x73, 0x65, 0x72, 0x22, 0x00, 0x12, 0x64, 0x0a, 0x0a, 0x44, 0x65, 0x6c, 0x65, 0x74,
+	0x65, 0x55, 0x73, 0x65, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
 	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76,
-	0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f,
+	0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
+	0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x53, 0x0a,
+	0x07, 0x47, 0x65, 0x74, 0x55, 0x73, 0x65, 0x72, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74,
+	0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
+	0x1f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x55, 0x73, 0x65, 0x72,
+	0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0f, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x4e, 0x61, 0x6d, 0x65,
+	0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x1a, 0x24, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63,
+	0x65, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0f, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x4e, 0x61, 0x6d,
+	0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x1a, 0x24, 0x2e, 0x6f,
 	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
-	0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f,
-	0x6e, 0x12, 0x2d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69,
-	0x73, 0x74, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73,
-	0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
-	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x73,
-	0x73, 0x69, 0x6f, 0x6e, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x67, 0x0a, 0x0d, 0x44, 0x65,
-	0x6c, 0x65, 0x74, 0x65, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x28, 0x2e, 0x6f, 0x63,
+	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61,
+	0x63, 0x65, 0x22, 0x00, 0x12, 0x6c, 0x0a, 0x0d, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65,
+	0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x4f,
+	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74,
+	0x22, 0x00, 0x12, 0x69, 0x0a, 0x0f, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4e, 0x61, 0x6d, 0x65,
+	0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76,
+	0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
+	0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x5d, 0x0a,
+	0x0c, 0x47, 0x65, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x25, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74,
+	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0d,
+	0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x22, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63,
+	0x65, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65,
+	0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b, 0x4c, 0x69, 0x73, 0x74, 0x53,
+	0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x2d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x4f, 0x70,
+	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12,
+	0x59, 0x0a, 0x0d, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
+	0x12, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
+	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72,
+	0x76, 0x69, 0x63, 0x65, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x67, 0x0a, 0x0d, 0x44, 0x65,
+	0x6c, 0x65, 0x74, 0x65, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x28, 0x2e, 0x6f, 0x63,
 	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
 	0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70,
 	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
 	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76,
 	0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c,
-	0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f,
-	0x6e, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63,
+	0x65, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
 	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65,
 	0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
 	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x59,
-	0x0a, 0x0d, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12,
+	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x66,
+	0x0a, 0x0b, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x2d, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65,
+	0x73, 0x73, 0x69, 0x6f, 0x6e, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e,
+	0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x67, 0x0a, 0x0d, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65,
+	0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
+	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61,
+	0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70,
+	0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12,
+	0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x25, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74,
+	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0d, 0x55, 0x70,
+	0x64, 0x61, 0x74, 0x65, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x22, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x1a,
 	0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
 	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x73, 0x73,
-	0x69, 0x6f, 0x6e, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
-	0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x43, 0x72, 0x65,
-	0x61, 0x74, 0x65, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x53,
+	0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
+	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x22, 0x00, 0x12, 0x63, 0x0a,
+	0x0a, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x2c, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x63, 0x72,
+	0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65,
 	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x1a, 0x21, 0x2e, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x4c, 0x69, 0x73, 0x74,
+	0x22, 0x00, 0x12, 0x66, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x53, 0x65, 0x63, 0x72,
+	0x65, 0x74, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44,
+	0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f,
 	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x22,
-	0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12,
-	0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74,
-	0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e,
+	0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x57, 0x0a, 0x09, 0x47, 0x65,
+	0x74, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
+	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61,
+	0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x21,
+	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65,
+	0x74, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x53, 0x65, 0x63,
+	0x72, 0x65, 0x74, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x22, 0x00, 0x12, 0x53, 0x0a, 0x0b, 0x43,
+	0x72, 0x65, 0x61, 0x74, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x20, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x1a, 0x20, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x22, 0x00,
+	0x12, 0x60, 0x0a, 0x09, 0x4c, 0x69, 0x73, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x2b, 0x2e,
 	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74,
-	0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65,
-	0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4c, 0x69, 0x73, 0x74,
+	0x22, 0x00, 0x12, 0x53, 0x0a, 0x0b, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x12, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x1a, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x47, 0x72, 0x6f, 0x75, 0x70, 0x22, 0x00, 0x12, 0x65, 0x0a, 0x0b, 0x44, 0x65, 0x6c, 0x65, 0x74,
+	0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
 	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e,
 	0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73,
 	0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
 	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65,
-	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x57,
-	0x0a, 0x09, 0x47, 0x65, 0x74, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x25, 0x2e, 0x6f, 0x63,
-	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
-	0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f,
-	0x6e, 0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53,
-	0x65, 0x63, 0x72, 0x65, 0x74, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74,
-	0x65, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x12, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74, 0x22, 0x00, 0x12,
-	0x53, 0x0a, 0x0b, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x20,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70,
-	0x1a, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
-	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f,
-	0x75, 0x70, 0x22, 0x00, 0x12, 0x60, 0x0a, 0x09, 0x4c, 0x69, 0x73, 0x74, 0x47, 0x72, 0x6f, 0x75,
-	0x70, 0x12, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69,
-	0x73, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x24,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70,
-	0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x53, 0x0a, 0x0b, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x1a, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x22, 0x00, 0x12, 0x65, 0x0a, 0x0b, 0x44,
-	0x65, 0x6c, 0x65, 0x74, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74,
+	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x55,
+	0x0a, 0x08, 0x47, 0x65, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d,
+	0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x1a, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69, 0x73, 0x74, 0x44, 0x65, 0x76,
+	0x69, 0x63, 0x65, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x4c, 0x69, 0x73, 0x74, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65,
+	0x76, 0x69, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0c, 0x44, 0x65,
+	0x6c, 0x65, 0x74, 0x65, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74,
 	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d,
 	0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74,
 	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
 	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31,
 	0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74,
-	0x22, 0x00, 0x12, 0x55, 0x0a, 0x08, 0x47, 0x65, 0x74, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x25,
+	0x22, 0x00, 0x12, 0x57, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12,
+	0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f,
+	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x56, 0x0a, 0x0c, 0x55,
+	0x70, 0x64, 0x61, 0x74, 0x65, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12, 0x21, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x1a, 0x21,
 	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70,
-	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x20, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69, 0x73,
-	0x74, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x76, 0x69, 0x63,
+	0x65, 0x22, 0x00, 0x12, 0x62, 0x0a, 0x10, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x43, 0x72, 0x65,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
 	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x4f, 0x70,
-	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x66,
-	0x0a, 0x0c, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12, 0x28,
+	0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x1a, 0x25,
 	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74,
-	0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74,
-	0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65,
-	0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x57, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x44, 0x65, 0x76,
-	0x69, 0x63, 0x65, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12,
-	0x56, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x12,
-	0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x76, 0x69,
-	0x63, 0x65, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x44,
-	0x65, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x12, 0x62, 0x0a, 0x10, 0x43, 0x72, 0x65, 0x61, 0x74,
+	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64, 0x65,
+	0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12, 0x62, 0x0a, 0x10, 0x55, 0x70, 0x64, 0x61, 0x74,
 	0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x25, 0x2e, 0x6f, 0x63,
 	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
 	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69,
 	0x61, 0x6c, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
 	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43,
-	0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12, 0x62, 0x0a, 0x10, 0x55,
-	0x70, 0x64, 0x61, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12,
-	0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64,
-	0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12,
-	0x6a, 0x0a, 0x10, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74,
-	0x69, 0x61, 0x6c, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x6f, 0x0a, 0x0e, 0x4c,
-	0x69, 0x73, 0x74, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x30, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x43, 0x72,
-	0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
-	0x29, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64,
-	0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0d,
-	0x47, 0x65, 0x74, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x25, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74,
-	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
-	0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12, 0x82, 0x01,
-	0x0a, 0x17, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e,
-	0x74, 0x69, 0x61, 0x6c, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x39, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12, 0x6a, 0x0a, 0x10, 0x44,
+	0x65, 0x6c, 0x65, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12,
+	0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
+	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52,
+	0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x6f, 0x0a, 0x0e, 0x4c, 0x69, 0x73, 0x74, 0x43,
+	0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x30, 0x2e, 0x6f, 0x63, 0x74, 0x65,
 	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x43, 0x72,
-	0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
-	0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x54, 0x6f, 0x6b, 0x65, 0x6e,
-	0x22, 0x00, 0x12, 0x74, 0x0a, 0x16, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x49, 0x64, 0x65, 0x6e,
-	0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x2b, 0x2e, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e,
+	0x74, 0x69, 0x61, 0x6c, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x29, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69,
+	0x61, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x0d, 0x47, 0x65, 0x74, 0x43,
+	0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
+	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73,
+	0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
+	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x22, 0x00, 0x12, 0x82, 0x01, 0x0a, 0x17, 0x47, 0x65,
+	0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c,
+	0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x39, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x43, 0x72, 0x65, 0x64, 0x65, 0x6e,
+	0x74, 0x69, 0x61, 0x6c, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
+	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x72, 0x65,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x61, 0x6c, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x22, 0x00, 0x12, 0x74,
+	0x0a, 0x16, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79,
+	0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
+	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f,
+	0x76, 0x69, 0x64, 0x65, 0x72, 0x1a, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
+	0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64,
+	0x65, 0x72, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x47, 0x65, 0x74, 0x49, 0x64, 0x65, 0x6e, 0x74,
+	0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x25, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x1a, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x22,
+	0x00, 0x12, 0x81, 0x01, 0x0a, 0x14, 0x4c, 0x69, 0x73, 0x74, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69,
+	0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x36, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x49, 0x64, 0x65, 0x6e, 0x74,
+	0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x1a, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x4c,
+	0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x74, 0x0a, 0x16, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x49,
+	0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12,
+	0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e,
+	0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x1a, 0x2b, 0x2e, 0x6f,
 	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
 	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74,
-	0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x1a, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
-	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72,
-	0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x47, 0x65, 0x74, 0x49,
-	0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12,
-	0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
-	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f,
-	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69,
-	0x64, 0x65, 0x72, 0x22, 0x00, 0x12, 0x81, 0x01, 0x0a, 0x14, 0x4c, 0x69, 0x73, 0x74, 0x49, 0x64,
-	0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x36,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x49,
-	0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x4f,
-	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69,
-	0x64, 0x65, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x74, 0x0a, 0x16, 0x55, 0x70, 0x64,
-	0x61, 0x74, 0x65, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69,
-	0x64, 0x65, 0x72, 0x12, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
-	0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72,
-	0x1a, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
-	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x49, 0x64, 0x65,
-	0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x22, 0x00, 0x12,
-	0x70, 0x0a, 0x16, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74,
-	0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65,
-	0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e,
-	0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22,
-	0x00, 0x12, 0x57, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x25,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70,
-	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76,
-	0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69,
-	0x73, 0x74, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x4f,
-	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12,
-	0x66, 0x0a, 0x0b, 0x4c, 0x69, 0x73, 0x74, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x12, 0x2d,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x47,
-	0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61,
-	0x79, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x47, 0x61,
-	0x74, 0x65, 0x77, 0x61, 0x79, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x79, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65, 0x72, 0x22, 0x00, 0x12, 0x70, 0x0a, 0x16, 0x44,
+	0x65, 0x6c, 0x65, 0x74, 0x65, 0x49, 0x64, 0x65, 0x6e, 0x74, 0x69, 0x74, 0x79, 0x50, 0x72, 0x6f,
+	0x76, 0x69, 0x64, 0x65, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
 	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76,
-	0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f,
-	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79,
-	0x22, 0x00, 0x12, 0x72, 0x0a, 0x10, 0x47, 0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72,
-	0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x32, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
-	0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e,
-	0x66, 0x69, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f,
-	0x6e, 0x66, 0x69, 0x67, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x28, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65,
-	0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69,
-	0x67, 0x22, 0x00, 0x12, 0x78, 0x0a, 0x11, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65,
-	0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x33, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
-	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
-	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
-	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2c, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e,
-	0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x6d, 0x0a,
-	0x13, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
-	0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31,
-	0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x65, 0x0a, 0x10,
-	0x47, 0x65, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
-	0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
-	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74,
-	0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65,
-	0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f,
-	0x72, 0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74,
-	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74,
-	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
-	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
-	0x61, 0x74, 0x6f, 0x72, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x31, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a,
+	0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x57, 0x0a,
+	0x09, 0x47, 0x65, 0x74, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d,
+	0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x1a, 0x21, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x52, 0x65,
+	0x67, 0x69, 0x6f, 0x6e, 0x22, 0x00, 0x12, 0x63, 0x0a, 0x0a, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65,
+	0x67, 0x69, 0x6f, 0x6e, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
 	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
-	0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00,
-	0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f,
-	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
-	0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x76,
-	0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x2e, 0x4c, 0x69, 0x73, 0x74, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x4f, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x1a, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x52,
+	0x65, 0x67, 0x69, 0x6f, 0x6e, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b, 0x4c,
+	0x69, 0x73, 0x74, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x12, 0x2d, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63,
+	0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x47, 0x61, 0x74, 0x65, 0x77,
+	0x61, 0x79, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x4c, 0x69, 0x73,
+	0x74, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61,
+	0x79, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
+	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65,
+	0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72,
+	0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x61, 0x74, 0x65, 0x77, 0x61, 0x79, 0x22, 0x00, 0x12, 0x72,
+	0x0a, 0x10, 0x47, 0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66,
+	0x69, 0x67, 0x12, 0x32, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x47,
+	0x65, 0x74, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67,
+	0x22, 0x00, 0x12, 0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x43, 0x6c, 0x75, 0x73,
+	0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e,
+	0x66, 0x69, 0x67, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x22, 0x00, 0x12,
+	0x78, 0x0a, 0x11, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63,
+	0x61, 0x74, 0x6f, 0x72, 0x12, 0x33, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31,
+	0x2e, 0x4c, 0x69, 0x73, 0x74, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74,
+	0x6f, 0x72, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f,
+	0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61,
+	0x74, 0x6f, 0x72, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x6d, 0x0a, 0x13, 0x44, 0x65, 0x6c,
+	0x65, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
+	0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
+	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x65, 0x6c,
+	0x65, 0x74, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d,
+	0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x70, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0x00, 0x12, 0x65, 0x0a, 0x10, 0x47, 0x65, 0x74, 0x41,
+	0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x25, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69,
+	0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e,
+	0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x12,
+	0x6b, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74,
+	0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e,
+	0x76, 0x31, 0x2e, 0x41, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72,
+	0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e,
+	0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x63, 0x6f, 0x72, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x75, 0x74,
+	0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x00, 0x42, 0x2f, 0x5a, 0x2d,
+	0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c,
+	0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x61, 0x70, 0x69,
+	0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x63, 0x6f, 0x72, 0x65, 0x76, 0x31, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -29671,8 +30263,8 @@ func file_corev1_proto_rawDescGZIP() []byte {
 	return file_corev1_proto_rawDescData
 }
 
-var file_corev1_proto_enumTypes = make([]protoimpl.EnumInfo, 44)
-var file_corev1_proto_msgTypes = make([]protoimpl.MessageInfo, 325)
+var file_corev1_proto_enumTypes = make([]protoimpl.EnumInfo, 45)
+var file_corev1_proto_msgTypes = make([]protoimpl.MessageInfo, 333)
 var file_corev1_proto_goTypes = []any{
 	(User_Spec_Type)(0),                                                        // 0: octelium.api.main.core.v1.User.Spec.Type
 	(Service_Spec_Mode)(0),                                                     // 1: octelium.api.main.core.v1.Service.Spec.Mode
@@ -29718,1013 +30310,1029 @@ var file_corev1_proto_goTypes = []any{
 	(Authenticator_Spec_State)(0),                                              // 41: octelium.api.main.core.v1.Authenticator.Spec.State
 	(Authenticator_Status_Type)(0),                                             // 42: octelium.api.main.core.v1.Authenticator.Status.Type
 	(Authenticator_Status_Info_FIDO_Type)(0),                                   // 43: octelium.api.main.core.v1.Authenticator.Status.Info.FIDO.Type
-	(*Namespace)(nil),                                                          // 44: octelium.api.main.core.v1.Namespace
-	(*NamespaceList)(nil),                                                      // 45: octelium.api.main.core.v1.NamespaceList
-	(*InlinePolicy)(nil),                                                       // 46: octelium.api.main.core.v1.InlinePolicy
-	(*User)(nil),                                                               // 47: octelium.api.main.core.v1.User
-	(*UserList)(nil),                                                           // 48: octelium.api.main.core.v1.UserList
-	(*Service)(nil),                                                            // 49: octelium.api.main.core.v1.Service
-	(*ServiceList)(nil),                                                        // 50: octelium.api.main.core.v1.ServiceList
-	(*GenerateCredentialTokenRequest)(nil),                                     // 51: octelium.api.main.core.v1.GenerateCredentialTokenRequest
-	(*CredentialToken)(nil),                                                    // 52: octelium.api.main.core.v1.CredentialToken
-	(*Session)(nil),                                                            // 53: octelium.api.main.core.v1.Session
-	(*SessionList)(nil),                                                        // 54: octelium.api.main.core.v1.SessionList
-	(*Secret)(nil),                                                             // 55: octelium.api.main.core.v1.Secret
-	(*SecretList)(nil),                                                         // 56: octelium.api.main.core.v1.SecretList
-	(*Credential)(nil),                                                         // 57: octelium.api.main.core.v1.Credential
-	(*CredentialList)(nil),                                                     // 58: octelium.api.main.core.v1.CredentialList
-	(*Group)(nil),                                                              // 59: octelium.api.main.core.v1.Group
-	(*GroupList)(nil),                                                          // 60: octelium.api.main.core.v1.GroupList
-	(*Device)(nil),                                                             // 61: octelium.api.main.core.v1.Device
-	(*DeviceList)(nil),                                                         // 62: octelium.api.main.core.v1.DeviceList
-	(*ListUserOptions)(nil),                                                    // 63: octelium.api.main.core.v1.ListUserOptions
-	(*ListNamespaceOptions)(nil),                                               // 64: octelium.api.main.core.v1.ListNamespaceOptions
-	(*ListServiceOptions)(nil),                                                 // 65: octelium.api.main.core.v1.ListServiceOptions
-	(*ListSessionOptions)(nil),                                                 // 66: octelium.api.main.core.v1.ListSessionOptions
-	(*ListSecretOptions)(nil),                                                  // 67: octelium.api.main.core.v1.ListSecretOptions
-	(*ListCredentialOptions)(nil),                                              // 68: octelium.api.main.core.v1.ListCredentialOptions
-	(*ListGroupOptions)(nil),                                                   // 69: octelium.api.main.core.v1.ListGroupOptions
-	(*ListDeviceOptions)(nil),                                                  // 70: octelium.api.main.core.v1.ListDeviceOptions
-	(*Config)(nil),                                                             // 71: octelium.api.main.core.v1.Config
-	(*ConfigList)(nil),                                                         // 72: octelium.api.main.core.v1.ConfigList
-	(*Scope)(nil),                                                              // 73: octelium.api.main.core.v1.Scope
-	(*Policy)(nil),                                                             // 74: octelium.api.main.core.v1.Policy
-	(*PolicyList)(nil),                                                         // 75: octelium.api.main.core.v1.PolicyList
-	(*ListPolicyOptions)(nil),                                                  // 76: octelium.api.main.core.v1.ListPolicyOptions
-	(*AccessLog)(nil),                                                          // 77: octelium.api.main.core.v1.AccessLog
-	(*ListIdentityProviderOptions)(nil),                                        // 78: octelium.api.main.core.v1.ListIdentityProviderOptions
-	(*IdentityProvider)(nil),                                                   // 79: octelium.api.main.core.v1.IdentityProvider
-	(*IdentityProviderList)(nil),                                               // 80: octelium.api.main.core.v1.IdentityProviderList
-	(*Region)(nil),                                                             // 81: octelium.api.main.core.v1.Region
-	(*RegionList)(nil),                                                         // 82: octelium.api.main.core.v1.RegionList
-	(*Gateway)(nil),                                                            // 83: octelium.api.main.core.v1.Gateway
-	(*GatewayList)(nil),                                                        // 84: octelium.api.main.core.v1.GatewayList
-	(*ListGatewayOptions)(nil),                                                 // 85: octelium.api.main.core.v1.ListGatewayOptions
-	(*ListRegionOptions)(nil),                                                  // 86: octelium.api.main.core.v1.ListRegionOptions
-	(*Condition)(nil),                                                          // 87: octelium.api.main.core.v1.Condition
-	(*GetClusterConfigRequest)(nil),                                            // 88: octelium.api.main.core.v1.GetClusterConfigRequest
-	(*ClusterConfig)(nil),                                                      // 89: octelium.api.main.core.v1.ClusterConfig
-	(*RequestContext)(nil),                                                     // 90: octelium.api.main.core.v1.RequestContext
-	(*PolicyTrigger)(nil),                                                      // 91: octelium.api.main.core.v1.PolicyTrigger
-	(*PolicyTriggerList)(nil),                                                  // 92: octelium.api.main.core.v1.PolicyTriggerList
-	(*ComponentLog)(nil),                                                       // 93: octelium.api.main.core.v1.ComponentLog
-	(*Authenticator)(nil),                                                      // 94: octelium.api.main.core.v1.Authenticator
-	(*AuthenticatorList)(nil),                                                  // 95: octelium.api.main.core.v1.AuthenticatorList
-	(*ListAuthenticatorOptions)(nil),                                           // 96: octelium.api.main.core.v1.ListAuthenticatorOptions
-	(*Namespace_Spec)(nil),                                                     // 97: octelium.api.main.core.v1.Namespace.Spec
-	(*Namespace_Status)(nil),                                                   // 98: octelium.api.main.core.v1.Namespace.Status
-	(*Namespace_Spec_Authorization)(nil),                                       // 99: octelium.api.main.core.v1.Namespace.Spec.Authorization
-	(*User_Spec)(nil),                                                          // 100: octelium.api.main.core.v1.User.Spec
-	(*User_Status)(nil),                                                        // 101: octelium.api.main.core.v1.User.Status
-	(*User_Spec_Authorization)(nil),                                            // 102: octelium.api.main.core.v1.User.Spec.Authorization
-	(*User_Spec_Authentication)(nil),                                           // 103: octelium.api.main.core.v1.User.Spec.Authentication
-	(*User_Spec_Session)(nil),                                                  // 104: octelium.api.main.core.v1.User.Spec.Session
-	(*User_Spec_Info)(nil),                                                     // 105: octelium.api.main.core.v1.User.Spec.Info
-	(*User_Spec_Authentication_Identity)(nil),                                  // 106: octelium.api.main.core.v1.User.Spec.Authentication.Identity
-	nil,                                                                        // 107: octelium.api.main.core.v1.User.Status.ExtEntry
-	(*Service_Spec)(nil),                                                       // 108: octelium.api.main.core.v1.Service.Spec
-	(*Service_Status)(nil),                                                     // 109: octelium.api.main.core.v1.Service.Status
-	(*Service_Spec_Authorization)(nil),                                         // 110: octelium.api.main.core.v1.Service.Spec.Authorization
-	(*Service_Spec_Config)(nil),                                                // 111: octelium.api.main.core.v1.Service.Spec.Config
-	(*Service_Spec_Deployment)(nil),                                            // 112: octelium.api.main.core.v1.Service.Spec.Deployment
-	(*Service_Spec_DynamicConfig)(nil),                                         // 113: octelium.api.main.core.v1.Service.Spec.DynamicConfig
-	(*Service_Spec_Config_HTTP)(nil),                                           // 114: octelium.api.main.core.v1.Service.Spec.Config.HTTP
-	(*Service_Spec_Config_SSH)(nil),                                            // 115: octelium.api.main.core.v1.Service.Spec.Config.SSH
-	(*Service_Spec_Config_Postgres)(nil),                                       // 116: octelium.api.main.core.v1.Service.Spec.Config.Postgres
-	(*Service_Spec_Config_MySQL)(nil),                                          // 117: octelium.api.main.core.v1.Service.Spec.Config.MySQL
-	(*Service_Spec_Config_ClientCertificate)(nil),                              // 118: octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
-	(*Service_Spec_Config_TLS)(nil),                                            // 119: octelium.api.main.core.v1.Service.Spec.Config.TLS
-	(*Service_Spec_Config_Kubernetes)(nil),                                     // 120: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes
-	(*Service_Spec_Config_Upstream)(nil),                                       // 121: octelium.api.main.core.v1.Service.Spec.Config.Upstream
-	(*Service_Spec_Config_HTTP_CORS)(nil),                                      // 122: octelium.api.main.core.v1.Service.Spec.Config.HTTP.CORS
-	(*Service_Spec_Config_HTTP_Auth)(nil),                                      // 123: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth
-	(*Service_Spec_Config_HTTP_Path)(nil),                                      // 124: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Path
-	(*Service_Spec_Config_HTTP_Body)(nil),                                      // 125: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body
-	(*Service_Spec_Config_HTTP_Header)(nil),                                    // 126: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header
-	(*Service_Spec_Config_HTTP_Response)(nil),                                  // 127: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response
-	(*Service_Spec_Config_HTTP_Retry)(nil),                                     // 128: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry
-	(*Service_Spec_Config_HTTP_Plugin)(nil),                                    // 129: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin
-	(*Service_Spec_Config_HTTP_Visibility)(nil),                                // 130: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Visibility
-	(*Service_Spec_Config_HTTP_Auth_Bearer)(nil),                               // 131: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Bearer
-	(*Service_Spec_Config_HTTP_Auth_Basic)(nil),                                // 132: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic
-	(*Service_Spec_Config_HTTP_Auth_Custom)(nil),                               // 133: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom
-	(*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials)(nil),              // 134: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials
-	(*Service_Spec_Config_HTTP_Auth_Sigv4)(nil),                                // 135: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4
-	(*Service_Spec_Config_HTTP_Auth_Basic_Password)(nil),                       // 136: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.Password
-	(*Service_Spec_Config_HTTP_Auth_Custom_Value)(nil),                         // 137: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.Value
-	(*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret)(nil), // 138: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.ClientSecret
-	(*Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey)(nil),                // 139: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.SecretAccessKey
-	(*Service_Spec_Config_HTTP_Body_Validation)(nil),                           // 140: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation
-	(*Service_Spec_Config_HTTP_Body_Validation_JSONSchema)(nil),                // 141: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.JSONSchema
-	(*Service_Spec_Config_HTTP_Header_KeyValue)(nil),                           // 142: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
-	(*Service_Spec_Config_HTTP_Response_Direct)(nil),                           // 143: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.Direct
-	(*Service_Spec_Config_HTTP_Plugin_ExtProc)(nil),                            // 144: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc
-	(*Service_Spec_Config_HTTP_Plugin_Lua)(nil),                                // 145: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Lua
-	(*Service_Spec_Config_HTTP_Plugin_Direct)(nil),                             // 146: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct
-	(*Service_Spec_Config_HTTP_Plugin_RateLimit)(nil),                          // 147: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit
-	(*Service_Spec_Config_HTTP_Plugin_Cache)(nil),                              // 148: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache
-	(*Service_Spec_Config_HTTP_Plugin_JSONSchema)(nil),                         // 149: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema
-	(*Service_Spec_Config_HTTP_Plugin_Path)(nil),                               // 150: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Path
-	(*Service_Spec_Config_HTTP_Plugin_ExtProc_Container)(nil),                  // 151: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.Container
-	(*Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode)(nil),             // 152: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode
-	(*Service_Spec_Config_HTTP_Plugin_Direct_Body)(nil),                        // 153: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.Body
-	nil, // 154: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.HeadersEntry
-	(*Service_Spec_Config_HTTP_Plugin_RateLimit_Body)(nil), // 155: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Body
-	(*Service_Spec_Config_HTTP_Plugin_RateLimit_Key)(nil),  // 156: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Key
-	nil, // 157: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.HeadersEntry
-	(*Service_Spec_Config_HTTP_Plugin_Cache_Key)(nil),       // 158: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.Key
-	(*Service_Spec_Config_HTTP_Plugin_JSONSchema_Body)(nil), // 159: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.Body
-	nil,                                  // 160: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.HeadersEntry
-	(*Service_Spec_Config_SSH_Auth)(nil), // 161: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth
-	(*Service_Spec_Config_SSH_UpstreamHostKey)(nil),                                      // 162: octelium.api.main.core.v1.Service.Spec.Config.SSH.UpstreamHostKey
-	(*Service_Spec_Config_SSH_Visibility)(nil),                                           // 163: octelium.api.main.core.v1.Service.Spec.Config.SSH.Visibility
-	(*Service_Spec_Config_SSH_Auth_Password)(nil),                                        // 164: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.Password
-	(*Service_Spec_Config_SSH_Auth_PrivateKey)(nil),                                      // 165: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.PrivateKey
-	(*Service_Spec_Config_Postgres_Auth)(nil),                                            // 166: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth
-	(*Service_Spec_Config_Postgres_Authorization)(nil),                                   // 167: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization
-	(*Service_Spec_Config_Postgres_Auth_Password)(nil),                                   // 168: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.Password
-	(*Service_Spec_Config_MySQL_Auth)(nil),                                               // 169: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth
-	(*Service_Spec_Config_MySQL_Auth_Password)(nil),                                      // 170: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.Password
-	(*Service_Spec_Config_TLS_ClientCertificate)(nil),                                    // 171: octelium.api.main.core.v1.Service.Spec.Config.TLS.ClientCertificate
-	(*Service_Spec_Config_Kubernetes_BearerToken)(nil),                                   // 172: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.BearerToken
-	(*Service_Spec_Config_Kubernetes_Kubeconfig)(nil),                                    // 173: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.Kubeconfig
-	(*Service_Spec_Config_Upstream_Loadbalance)(nil),                                     // 174: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance
-	(*Service_Spec_Config_Upstream_Container)(nil),                                       // 175: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container
-	(*Service_Spec_Config_Upstream_Loadbalance_Endpoint)(nil),                            // 176: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.Endpoint
-	(*Service_Spec_Config_Upstream_Container_Env)(nil),                                   // 177: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env
-	(*Service_Spec_Config_Upstream_Container_Credentials)(nil),                           // 178: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials
-	(*Service_Spec_Config_Upstream_Container_ResourceLimit)(nil),                         // 179: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit
-	(*Service_Spec_Config_Upstream_Container_SecurityContext)(nil),                       // 180: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.SecurityContext
-	(*Service_Spec_Config_Upstream_Container_Volume)(nil),                                // 181: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume
-	(*Service_Spec_Config_Upstream_Container_VolumeMount)(nil),                           // 182: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.VolumeMount
-	(*Service_Spec_Config_Upstream_Container_Probe)(nil),                                 // 183: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
-	(*Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef)(nil),               // 184: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.KubernetesSecretRef
-	(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword)(nil),          // 185: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword
-	(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password)(nil), // 186: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.Password
-	(*Service_Spec_Config_Upstream_Container_ResourceLimit_CPU)(nil),                     // 187: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.CPU
-	(*Service_Spec_Config_Upstream_Container_ResourceLimit_Memory)(nil),                  // 188: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.Memory
-	nil, // 189: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ExtEntry
-	(*Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim)(nil), // 190: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.PersistentVolumeClaim
-	(*Service_Spec_Config_Upstream_Container_Probe_HTTPGet)(nil),                // 191: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.HTTPGet
-	(*Service_Spec_Config_Upstream_Container_Probe_TCPSocket)(nil),              // 192: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.TCPSocket
-	(*Service_Spec_Config_Upstream_Container_Probe_GRPC)(nil),                   // 193: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.GRPC
-	(*Service_Spec_DynamicConfig_Rule)(nil),                                     // 194: octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule
-	(*Service_Status_Address)(nil),                                              // 195: octelium.api.main.core.v1.Service.Status.Address
-	(*Service_Status_ManagedService)(nil),                                       // 196: octelium.api.main.core.v1.Service.Status.ManagedService
-	(*Service_Status_ManagedService_HealthCheck)(nil),                           // 197: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck
-	(*Service_Status_ManagedService_ResourceLimit)(nil),                         // 198: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit
-	nil, // 199: octelium.api.main.core.v1.Service.Status.ManagedService.K8sLabelsEntry
-	(*Service_Status_ManagedService_HealthCheck_GRPC)(nil),             // 200: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.GRPC
-	(*Service_Status_ManagedService_ResourceLimit_CPU)(nil),            // 201: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.CPU
-	(*Service_Status_ManagedService_ResourceLimit_Memory)(nil),         // 202: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.Memory
-	(*CredentialToken_AuthenticationToken)(nil),                        // 203: octelium.api.main.core.v1.CredentialToken.AuthenticationToken
-	(*CredentialToken_OAuth2Credentials)(nil),                          // 204: octelium.api.main.core.v1.CredentialToken.OAuth2Credentials
-	(*CredentialToken_AccessToken)(nil),                                // 205: octelium.api.main.core.v1.CredentialToken.AccessToken
-	(*Session_Spec)(nil),                                               // 206: octelium.api.main.core.v1.Session.Spec
-	(*Session_Status)(nil),                                             // 207: octelium.api.main.core.v1.Session.Status
-	(*Session_Spec_Authorization)(nil),                                 // 208: octelium.api.main.core.v1.Session.Spec.Authorization
-	(*Session_Status_Connection)(nil),                                  // 209: octelium.api.main.core.v1.Session.Status.Connection
-	(*Session_Status_Authentication)(nil),                              // 210: octelium.api.main.core.v1.Session.Status.Authentication
-	(*Session_Status_LastConnection)(nil),                              // 211: octelium.api.main.core.v1.Session.Status.LastConnection
-	nil,                                                                // 212: octelium.api.main.core.v1.Session.Status.ExtEntry
-	(*Session_Status_Connection_ServiceOptions)(nil),                   // 213: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions
-	(*Session_Status_Connection_Upstream)(nil),                         // 214: octelium.api.main.core.v1.Session.Status.Connection.Upstream
-	(*Session_Status_Connection_PublishedService)(nil),                 // 215: octelium.api.main.core.v1.Session.Status.Connection.PublishedService
-	(*Session_Status_Connection_ServiceOptions_RequestedService)(nil),  // 216: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService
-	(*Session_Status_Connection_Upstream_Backend)(nil),                 // 217: octelium.api.main.core.v1.Session.Status.Connection.Upstream.Backend
-	(*Session_Status_Authentication_Info)(nil),                         // 218: octelium.api.main.core.v1.Session.Status.Authentication.Info
-	(*Session_Status_Authentication_Info_IdentityProvider)(nil),        // 219: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider
-	(*Session_Status_Authentication_Info_Credential)(nil),              // 220: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential
-	(*Session_Status_Authentication_Info_External)(nil),                // 221: octelium.api.main.core.v1.Session.Status.Authentication.Info.External
-	(*Session_Status_Authentication_Info_Authenticator)(nil),           // 222: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator
-	(*Session_Status_Authentication_Info_Downstream)(nil),              // 223: octelium.api.main.core.v1.Session.Status.Authentication.Info.Downstream
-	(*Session_Status_Authentication_Info_Authenticator_Info)(nil),      // 224: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info
-	(*Session_Status_Authentication_Info_Authenticator_Info_FIDO)(nil), // 225: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.FIDO
-	(*Secret_Spec)(nil),                                                // 226: octelium.api.main.core.v1.Secret.Spec
-	(*Secret_Status)(nil),                                              // 227: octelium.api.main.core.v1.Secret.Status
-	(*Secret_Data)(nil),                                                // 228: octelium.api.main.core.v1.Secret.Data
-	(*Secret_Spec_Data)(nil),                                           // 229: octelium.api.main.core.v1.Secret.Spec.Data
-	nil,                                                                // 230: octelium.api.main.core.v1.Secret.Status.ExtEntry
-	(*Credential_Spec)(nil),                                            // 231: octelium.api.main.core.v1.Credential.Spec
-	(*Credential_Status)(nil),                                          // 232: octelium.api.main.core.v1.Credential.Status
-	(*Credential_Spec_Authorization)(nil),                              // 233: octelium.api.main.core.v1.Credential.Spec.Authorization
-	(*Group_Spec)(nil),                                                 // 234: octelium.api.main.core.v1.Group.Spec
-	(*Group_Status)(nil),                                               // 235: octelium.api.main.core.v1.Group.Status
-	(*Group_Spec_Authorization)(nil),                                   // 236: octelium.api.main.core.v1.Group.Spec.Authorization
-	nil,                                                                // 237: octelium.api.main.core.v1.Group.Status.ExtEntry
-	(*Device_Spec)(nil),                                                // 238: octelium.api.main.core.v1.Device.Spec
-	(*Device_Status)(nil),                                              // 239: octelium.api.main.core.v1.Device.Status
-	(*Device_Spec_Authorization)(nil),                                  // 240: octelium.api.main.core.v1.Device.Spec.Authorization
-	nil,                                                                // 241: octelium.api.main.core.v1.Device.Status.ExtEntry
-	(*Config_Spec)(nil),                                                // 242: octelium.api.main.core.v1.Config.Spec
-	(*Config_Status)(nil),                                              // 243: octelium.api.main.core.v1.Config.Status
-	(*Config_Data)(nil),                                                // 244: octelium.api.main.core.v1.Config.Data
-	(*Config_Data_DataMap)(nil),                                        // 245: octelium.api.main.core.v1.Config.Data.DataMap
-	nil,                                                                // 246: octelium.api.main.core.v1.Config.Data.DataMap.MapEntry
-	(*Scope_Service)(nil),                                              // 247: octelium.api.main.core.v1.Scope.Service
-	(*Scope_API)(nil),                                                  // 248: octelium.api.main.core.v1.Scope.API
-	(*Scope_Service_All)(nil),                                          // 249: octelium.api.main.core.v1.Scope.Service.All
-	(*Scope_Service_Filter)(nil),                                       // 250: octelium.api.main.core.v1.Scope.Service.Filter
-	(*Scope_API_All)(nil),                                              // 251: octelium.api.main.core.v1.Scope.API.All
-	(*Scope_API_Filter)(nil),                                           // 252: octelium.api.main.core.v1.Scope.API.Filter
-	(*Policy_Spec)(nil),                                                // 253: octelium.api.main.core.v1.Policy.Spec
-	(*Policy_Status)(nil),                                              // 254: octelium.api.main.core.v1.Policy.Status
-	(*Policy_Spec_Rule)(nil),                                           // 255: octelium.api.main.core.v1.Policy.Spec.Rule
-	(*Policy_Spec_EnforcementRule)(nil),                                // 256: octelium.api.main.core.v1.Policy.Spec.EnforcementRule
-	(*AccessLog_Entry)(nil),                                            // 257: octelium.api.main.core.v1.AccessLog.Entry
-	(*AccessLog_Entry_Info)(nil),                                       // 258: octelium.api.main.core.v1.AccessLog.Entry.Info
-	(*AccessLog_Entry_Common)(nil),                                     // 259: octelium.api.main.core.v1.AccessLog.Entry.Common
-	(*AccessLog_Entry_Info_HTTP)(nil),                                  // 260: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
-	(*AccessLog_Entry_Info_TCP)(nil),                                   // 261: octelium.api.main.core.v1.AccessLog.Entry.Info.TCP
-	(*AccessLog_Entry_Info_SSH)(nil),                                   // 262: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH
-	(*AccessLog_Entry_Info_UDP)(nil),                                   // 263: octelium.api.main.core.v1.AccessLog.Entry.Info.UDP
-	(*AccessLog_Entry_Info_Postgres)(nil),                              // 264: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres
-	(*AccessLog_Entry_Info_MySQL)(nil),                                 // 265: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL
-	(*AccessLog_Entry_Info_Kubernetes)(nil),                            // 266: octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes
-	(*AccessLog_Entry_Info_GRPC)(nil),                                  // 267: octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC
-	(*AccessLog_Entry_Info_DNS)(nil),                                   // 268: octelium.api.main.core.v1.AccessLog.Entry.Info.DNS
-	(*AccessLog_Entry_Info_HTTP_Request)(nil),                          // 269: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request
-	(*AccessLog_Entry_Info_HTTP_Response)(nil),                         // 270: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response
-	nil,                                    // 271: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.HeadersEntry
-	nil,                                    // 272: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.HeadersEntry
-	(*AccessLog_Entry_Info_SSH_Start)(nil), // 273: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Start
-	(*AccessLog_Entry_Info_SSH_SessionRecording)(nil),                      // 274: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording
-	(*AccessLog_Entry_Info_SSH_SessionRequestExec)(nil),                    // 275: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestExec
-	(*AccessLog_Entry_Info_SSH_SessionRequestSubsystem)(nil),               // 276: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestSubsystem
-	(*AccessLog_Entry_Info_SSH_DirectTCPIPStart)(nil),                      // 277: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.DirectTCPIPStart
-	(*AccessLog_Entry_Info_Postgres_Start)(nil),                            // 278: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Start
-	(*AccessLog_Entry_Info_Postgres_Query)(nil),                            // 279: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Query
-	(*AccessLog_Entry_Info_Postgres_Parse)(nil),                            // 280: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Parse
-	(*AccessLog_Entry_Info_MySQL_Query)(nil),                               // 281: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Query
-	(*AccessLog_Entry_Info_MySQL_InitDB)(nil),                              // 282: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.InitDB
-	(*AccessLog_Entry_Info_MySQL_CreateDB)(nil),                            // 283: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.CreateDB
-	(*AccessLog_Entry_Info_MySQL_DropDB)(nil),                              // 284: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.DropDB
-	(*AccessLog_Entry_Info_MySQL_PrepareStatement)(nil),                    // 285: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.PrepareStatement
-	(*AccessLog_Entry_Common_Reason)(nil),                                  // 286: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason
-	(*AccessLog_Entry_Common_Reason_Details)(nil),                          // 287: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details
-	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch)(nil),              // 288: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch
-	(*AccessLog_Entry_Common_Reason_Details_SessionNotActive)(nil),         // 289: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive
-	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy)(nil), // 290: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy
-	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy)(nil),       // 291: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy
-	(*IdentityProvider_Spec)(nil),                                          // 292: octelium.api.main.core.v1.IdentityProvider.Spec
-	(*IdentityProvider_Status)(nil),                                        // 293: octelium.api.main.core.v1.IdentityProvider.Status
-	(*IdentityProvider_Spec_Github)(nil),                                   // 294: octelium.api.main.core.v1.IdentityProvider.Spec.Github
-	(*IdentityProvider_Spec_OIDC)(nil),                                     // 295: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC
-	(*IdentityProvider_Spec_SAML)(nil),                                     // 296: octelium.api.main.core.v1.IdentityProvider.Spec.SAML
-	(*IdentityProvider_Spec_OIDCIdentityToken)(nil),                        // 297: octelium.api.main.core.v1.IdentityProvider.Spec.OIDCIdentityToken
-	(*IdentityProvider_Spec_AALRule)(nil),                                  // 298: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule
-	(*IdentityProvider_Spec_PostAuthenticationRule)(nil),                   // 299: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule
-	(*IdentityProvider_Spec_Github_ClientSecret)(nil),                      // 300: octelium.api.main.core.v1.IdentityProvider.Spec.Github.ClientSecret
-	(*IdentityProvider_Spec_OIDC_ClientSecret)(nil),                        // 301: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.ClientSecret
-	(*Region_Spec)(nil),                                                    // 302: octelium.api.main.core.v1.Region.Spec
-	(*Region_Status)(nil),                                                  // 303: octelium.api.main.core.v1.Region.Status
-	nil,                                                                    // 304: octelium.api.main.core.v1.Region.Status.ExtEntry
-	(*Gateway_Spec)(nil),                                                   // 305: octelium.api.main.core.v1.Gateway.Spec
-	(*Gateway_Status)(nil),                                                 // 306: octelium.api.main.core.v1.Gateway.Status
-	(*Gateway_Status_WireGuard)(nil),                                       // 307: octelium.api.main.core.v1.Gateway.Status.WireGuard
-	(*Gateway_Status_QUICV0)(nil),                                          // 308: octelium.api.main.core.v1.Gateway.Status.QUICV0
-	(*Condition_All)(nil),                                                  // 309: octelium.api.main.core.v1.Condition.All
-	(*Condition_Any)(nil),                                                  // 310: octelium.api.main.core.v1.Condition.Any
-	(*Condition_None)(nil),                                                 // 311: octelium.api.main.core.v1.Condition.None
-	(*Condition_OPA)(nil),                                                  // 312: octelium.api.main.core.v1.Condition.OPA
-	(*ClusterConfig_Spec)(nil),                                             // 313: octelium.api.main.core.v1.ClusterConfig.Spec
-	(*ClusterConfig_Status)(nil),                                           // 314: octelium.api.main.core.v1.ClusterConfig.Status
-	(*ClusterConfig_Spec_Ingress)(nil),                                     // 315: octelium.api.main.core.v1.ClusterConfig.Spec.Ingress
-	(*ClusterConfig_Spec_Session)(nil),                                     // 316: octelium.api.main.core.v1.ClusterConfig.Spec.Session
-	(*ClusterConfig_Spec_Device)(nil),                                      // 317: octelium.api.main.core.v1.ClusterConfig.Spec.Device
-	(*ClusterConfig_Spec_Gateway)(nil),                                     // 318: octelium.api.main.core.v1.ClusterConfig.Spec.Gateway
-	(*ClusterConfig_Spec_DNS)(nil),                                         // 319: octelium.api.main.core.v1.ClusterConfig.Spec.DNS
-	(*ClusterConfig_Spec_Authorization)(nil),                               // 320: octelium.api.main.core.v1.ClusterConfig.Spec.Authorization
-	(*ClusterConfig_Spec_Authenticator)(nil),                               // 321: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator
-	(*ClusterConfig_Spec_Session_Human)(nil),                               // 322: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human
-	(*ClusterConfig_Spec_Session_Workload)(nil),                            // 323: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload
-	(*ClusterConfig_Spec_Device_Human)(nil),                                // 324: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human
-	(*ClusterConfig_Spec_Device_Workload)(nil),                             // 325: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload
-	(*ClusterConfig_Spec_DNS_Zone)(nil),                                    // 326: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone
-	(*ClusterConfig_Spec_Authenticator_EnforcementRule)(nil),               // 327: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
-	(*ClusterConfig_Spec_Authenticator_Rule)(nil),                          // 328: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule
-	(*ClusterConfig_Status_NetworkConfig)(nil),                             // 329: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig
-	(*ClusterConfig_Status_Network)(nil),                                   // 330: octelium.api.main.core.v1.ClusterConfig.Status.Network
-	(*ClusterConfig_Status_SecretManager)(nil),                             // 331: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager
-	(*ClusterConfig_Status_NetworkConfig_V4)(nil),                          // 332: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V4
-	(*ClusterConfig_Status_NetworkConfig_V6)(nil),                          // 333: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V6
-	(*ClusterConfig_Status_NetworkConfig_Wireguard)(nil),                   // 334: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Wireguard
-	(*ClusterConfig_Status_NetworkConfig_QUICV0)(nil),                      // 335: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.QUICV0
-	(*ClusterConfig_Status_SecretManager_TLS)(nil),                         // 336: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.TLS
-	(*RequestContext_Request)(nil),                                         // 337: octelium.api.main.core.v1.RequestContext.Request
-	(*RequestContext_Request_HTTP)(nil),                                    // 338: octelium.api.main.core.v1.RequestContext.Request.HTTP
-	(*RequestContext_Request_SSH)(nil),                                     // 339: octelium.api.main.core.v1.RequestContext.Request.SSH
-	(*RequestContext_Request_Kubernetes)(nil),                              // 340: octelium.api.main.core.v1.RequestContext.Request.Kubernetes
-	(*RequestContext_Request_GRPC)(nil),                                    // 341: octelium.api.main.core.v1.RequestContext.Request.GRPC
-	(*RequestContext_Request_Postgres)(nil),                                // 342: octelium.api.main.core.v1.RequestContext.Request.Postgres
-	(*RequestContext_Request_DNS)(nil),                                     // 343: octelium.api.main.core.v1.RequestContext.Request.DNS
-	nil,                                                                    // 344: octelium.api.main.core.v1.RequestContext.Request.HTTP.HeadersEntry
-	nil,                                                                    // 345: octelium.api.main.core.v1.RequestContext.Request.HTTP.QueryParamsEntry
-	(*RequestContext_Request_SSH_Connect)(nil),                             // 346: octelium.api.main.core.v1.RequestContext.Request.SSH.Connect
-	(*RequestContext_Request_Postgres_Connect)(nil),                        // 347: octelium.api.main.core.v1.RequestContext.Request.Postgres.Connect
-	(*RequestContext_Request_Postgres_Query)(nil),                          // 348: octelium.api.main.core.v1.RequestContext.Request.Postgres.Query
-	(*RequestContext_Request_Postgres_Parse)(nil),                          // 349: octelium.api.main.core.v1.RequestContext.Request.Postgres.Parse
-	(*PolicyTrigger_Spec)(nil),                                             // 350: octelium.api.main.core.v1.PolicyTrigger.Spec
-	(*PolicyTrigger_Status)(nil),                                           // 351: octelium.api.main.core.v1.PolicyTrigger.Status
-	(*PolicyTrigger_Status_PreCondition)(nil),                              // 352: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
-	(*PolicyTrigger_Status_PreCondition_Any)(nil),                          // 353: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any
-	(*PolicyTrigger_Status_PreCondition_All)(nil),                          // 354: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All
-	(*ComponentLog_Entry)(nil),                                             // 355: octelium.api.main.core.v1.ComponentLog.Entry
-	(*ComponentLog_Entry_Component)(nil),                                   // 356: octelium.api.main.core.v1.ComponentLog.Entry.Component
-	(*Authenticator_Spec)(nil),                                             // 357: octelium.api.main.core.v1.Authenticator.Spec
-	(*Authenticator_Status)(nil),                                           // 358: octelium.api.main.core.v1.Authenticator.Status
-	(*Authenticator_Status_EncryptedData)(nil),                             // 359: octelium.api.main.core.v1.Authenticator.Status.EncryptedData
-	(*Authenticator_Status_Info)(nil),                                      // 360: octelium.api.main.core.v1.Authenticator.Status.Info
-	(*Authenticator_Status_AuthenticationAttempt)(nil),                     // 361: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
-	nil,                                    // 362: octelium.api.main.core.v1.Authenticator.Status.ExtEntry
-	(*Authenticator_Status_Info_FIDO)(nil), // 363: octelium.api.main.core.v1.Authenticator.Status.Info.FIDO
-	(*Authenticator_Status_Info_TOTP)(nil), // 364: octelium.api.main.core.v1.Authenticator.Status.Info.TOTP
-	(*Authenticator_Status_Info_TPM)(nil),  // 365: octelium.api.main.core.v1.Authenticator.Status.Info.TPM
-	(*Authenticator_Status_Info_TPM_AttestationParameters)(nil), // 366: octelium.api.main.core.v1.Authenticator.Status.Info.TPM.AttestationParameters
-	nil,                              // 367: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry
-	nil,                              // 368: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.DataMapEntry
-	(*metav1.Metadata)(nil),          // 369: octelium.api.main.meta.v1.Metadata
-	(*metav1.ListResponseMeta)(nil),  // 370: octelium.api.main.meta.v1.ListResponseMeta
-	(*metav1.ObjectReference)(nil),   // 371: octelium.api.main.meta.v1.ObjectReference
-	(*metav1.CommonListOptions)(nil), // 372: octelium.api.main.meta.v1.CommonListOptions
-	(*metav1.LogMetadata)(nil),       // 373: octelium.api.main.meta.v1.LogMetadata
-	(*structpb.Struct)(nil),          // 374: google.protobuf.Struct
-	(*metav1.Duration)(nil),          // 375: octelium.api.main.meta.v1.Duration
-	(*metav1.DualStackIP)(nil),       // 376: octelium.api.main.meta.v1.DualStackIP
-	(*timestamppb.Timestamp)(nil),    // 377: google.protobuf.Timestamp
-	(*metav1.DualStackNetwork)(nil),  // 378: octelium.api.main.meta.v1.DualStackNetwork
-	(*metav1.DeleteOptions)(nil),     // 379: octelium.api.main.meta.v1.DeleteOptions
-	(*metav1.GetOptions)(nil),        // 380: octelium.api.main.meta.v1.GetOptions
-	(*metav1.OperationResult)(nil),   // 381: octelium.api.main.meta.v1.OperationResult
+	(GeoIP_IPVersion)(0),                                                       // 44: octelium.api.main.core.v1.GeoIP.IPVersion
+	(*Namespace)(nil),                                                          // 45: octelium.api.main.core.v1.Namespace
+	(*NamespaceList)(nil),                                                      // 46: octelium.api.main.core.v1.NamespaceList
+	(*InlinePolicy)(nil),                                                       // 47: octelium.api.main.core.v1.InlinePolicy
+	(*User)(nil),                                                               // 48: octelium.api.main.core.v1.User
+	(*UserList)(nil),                                                           // 49: octelium.api.main.core.v1.UserList
+	(*Service)(nil),                                                            // 50: octelium.api.main.core.v1.Service
+	(*ServiceList)(nil),                                                        // 51: octelium.api.main.core.v1.ServiceList
+	(*GenerateCredentialTokenRequest)(nil),                                     // 52: octelium.api.main.core.v1.GenerateCredentialTokenRequest
+	(*CredentialToken)(nil),                                                    // 53: octelium.api.main.core.v1.CredentialToken
+	(*Session)(nil),                                                            // 54: octelium.api.main.core.v1.Session
+	(*SessionList)(nil),                                                        // 55: octelium.api.main.core.v1.SessionList
+	(*Secret)(nil),                                                             // 56: octelium.api.main.core.v1.Secret
+	(*SecretList)(nil),                                                         // 57: octelium.api.main.core.v1.SecretList
+	(*Credential)(nil),                                                         // 58: octelium.api.main.core.v1.Credential
+	(*CredentialList)(nil),                                                     // 59: octelium.api.main.core.v1.CredentialList
+	(*Group)(nil),                                                              // 60: octelium.api.main.core.v1.Group
+	(*GroupList)(nil),                                                          // 61: octelium.api.main.core.v1.GroupList
+	(*Device)(nil),                                                             // 62: octelium.api.main.core.v1.Device
+	(*DeviceList)(nil),                                                         // 63: octelium.api.main.core.v1.DeviceList
+	(*ListUserOptions)(nil),                                                    // 64: octelium.api.main.core.v1.ListUserOptions
+	(*ListNamespaceOptions)(nil),                                               // 65: octelium.api.main.core.v1.ListNamespaceOptions
+	(*ListServiceOptions)(nil),                                                 // 66: octelium.api.main.core.v1.ListServiceOptions
+	(*ListSessionOptions)(nil),                                                 // 67: octelium.api.main.core.v1.ListSessionOptions
+	(*ListSecretOptions)(nil),                                                  // 68: octelium.api.main.core.v1.ListSecretOptions
+	(*ListCredentialOptions)(nil),                                              // 69: octelium.api.main.core.v1.ListCredentialOptions
+	(*ListGroupOptions)(nil),                                                   // 70: octelium.api.main.core.v1.ListGroupOptions
+	(*ListDeviceOptions)(nil),                                                  // 71: octelium.api.main.core.v1.ListDeviceOptions
+	(*Config)(nil),                                                             // 72: octelium.api.main.core.v1.Config
+	(*ConfigList)(nil),                                                         // 73: octelium.api.main.core.v1.ConfigList
+	(*Scope)(nil),                                                              // 74: octelium.api.main.core.v1.Scope
+	(*Policy)(nil),                                                             // 75: octelium.api.main.core.v1.Policy
+	(*PolicyList)(nil),                                                         // 76: octelium.api.main.core.v1.PolicyList
+	(*ListPolicyOptions)(nil),                                                  // 77: octelium.api.main.core.v1.ListPolicyOptions
+	(*AccessLog)(nil),                                                          // 78: octelium.api.main.core.v1.AccessLog
+	(*ListIdentityProviderOptions)(nil),                                        // 79: octelium.api.main.core.v1.ListIdentityProviderOptions
+	(*IdentityProvider)(nil),                                                   // 80: octelium.api.main.core.v1.IdentityProvider
+	(*IdentityProviderList)(nil),                                               // 81: octelium.api.main.core.v1.IdentityProviderList
+	(*Region)(nil),                                                             // 82: octelium.api.main.core.v1.Region
+	(*RegionList)(nil),                                                         // 83: octelium.api.main.core.v1.RegionList
+	(*Gateway)(nil),                                                            // 84: octelium.api.main.core.v1.Gateway
+	(*GatewayList)(nil),                                                        // 85: octelium.api.main.core.v1.GatewayList
+	(*ListGatewayOptions)(nil),                                                 // 86: octelium.api.main.core.v1.ListGatewayOptions
+	(*ListRegionOptions)(nil),                                                  // 87: octelium.api.main.core.v1.ListRegionOptions
+	(*Condition)(nil),                                                          // 88: octelium.api.main.core.v1.Condition
+	(*GetClusterConfigRequest)(nil),                                            // 89: octelium.api.main.core.v1.GetClusterConfigRequest
+	(*ClusterConfig)(nil),                                                      // 90: octelium.api.main.core.v1.ClusterConfig
+	(*RequestContext)(nil),                                                     // 91: octelium.api.main.core.v1.RequestContext
+	(*PolicyTrigger)(nil),                                                      // 92: octelium.api.main.core.v1.PolicyTrigger
+	(*PolicyTriggerList)(nil),                                                  // 93: octelium.api.main.core.v1.PolicyTriggerList
+	(*ComponentLog)(nil),                                                       // 94: octelium.api.main.core.v1.ComponentLog
+	(*Authenticator)(nil),                                                      // 95: octelium.api.main.core.v1.Authenticator
+	(*AuthenticatorList)(nil),                                                  // 96: octelium.api.main.core.v1.AuthenticatorList
+	(*ListAuthenticatorOptions)(nil),                                           // 97: octelium.api.main.core.v1.ListAuthenticatorOptions
+	(*GeoIP)(nil),                                                              // 98: octelium.api.main.core.v1.GeoIP
+	(*Namespace_Spec)(nil),                                                     // 99: octelium.api.main.core.v1.Namespace.Spec
+	(*Namespace_Status)(nil),                                                   // 100: octelium.api.main.core.v1.Namespace.Status
+	(*Namespace_Spec_Authorization)(nil),                                       // 101: octelium.api.main.core.v1.Namespace.Spec.Authorization
+	(*User_Spec)(nil),                                                          // 102: octelium.api.main.core.v1.User.Spec
+	(*User_Status)(nil),                                                        // 103: octelium.api.main.core.v1.User.Status
+	(*User_Spec_Authorization)(nil),                                            // 104: octelium.api.main.core.v1.User.Spec.Authorization
+	(*User_Spec_Authentication)(nil),                                           // 105: octelium.api.main.core.v1.User.Spec.Authentication
+	(*User_Spec_Session)(nil),                                                  // 106: octelium.api.main.core.v1.User.Spec.Session
+	(*User_Spec_Info)(nil),                                                     // 107: octelium.api.main.core.v1.User.Spec.Info
+	(*User_Spec_Authentication_Identity)(nil),                                  // 108: octelium.api.main.core.v1.User.Spec.Authentication.Identity
+	nil,                                                                        // 109: octelium.api.main.core.v1.User.Status.ExtEntry
+	(*Service_Spec)(nil),                                                       // 110: octelium.api.main.core.v1.Service.Spec
+	(*Service_Status)(nil),                                                     // 111: octelium.api.main.core.v1.Service.Status
+	(*Service_Spec_Authorization)(nil),                                         // 112: octelium.api.main.core.v1.Service.Spec.Authorization
+	(*Service_Spec_Config)(nil),                                                // 113: octelium.api.main.core.v1.Service.Spec.Config
+	(*Service_Spec_Deployment)(nil),                                            // 114: octelium.api.main.core.v1.Service.Spec.Deployment
+	(*Service_Spec_DynamicConfig)(nil),                                         // 115: octelium.api.main.core.v1.Service.Spec.DynamicConfig
+	(*Service_Spec_Config_HTTP)(nil),                                           // 116: octelium.api.main.core.v1.Service.Spec.Config.HTTP
+	(*Service_Spec_Config_SSH)(nil),                                            // 117: octelium.api.main.core.v1.Service.Spec.Config.SSH
+	(*Service_Spec_Config_Postgres)(nil),                                       // 118: octelium.api.main.core.v1.Service.Spec.Config.Postgres
+	(*Service_Spec_Config_MySQL)(nil),                                          // 119: octelium.api.main.core.v1.Service.Spec.Config.MySQL
+	(*Service_Spec_Config_ClientCertificate)(nil),                              // 120: octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
+	(*Service_Spec_Config_TLS)(nil),                                            // 121: octelium.api.main.core.v1.Service.Spec.Config.TLS
+	(*Service_Spec_Config_Kubernetes)(nil),                                     // 122: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes
+	(*Service_Spec_Config_Upstream)(nil),                                       // 123: octelium.api.main.core.v1.Service.Spec.Config.Upstream
+	(*Service_Spec_Config_HTTP_CORS)(nil),                                      // 124: octelium.api.main.core.v1.Service.Spec.Config.HTTP.CORS
+	(*Service_Spec_Config_HTTP_Auth)(nil),                                      // 125: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth
+	(*Service_Spec_Config_HTTP_Path)(nil),                                      // 126: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Path
+	(*Service_Spec_Config_HTTP_Body)(nil),                                      // 127: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body
+	(*Service_Spec_Config_HTTP_Header)(nil),                                    // 128: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header
+	(*Service_Spec_Config_HTTP_Response)(nil),                                  // 129: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response
+	(*Service_Spec_Config_HTTP_Retry)(nil),                                     // 130: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry
+	(*Service_Spec_Config_HTTP_Plugin)(nil),                                    // 131: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin
+	(*Service_Spec_Config_HTTP_Visibility)(nil),                                // 132: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Visibility
+	(*Service_Spec_Config_HTTP_Auth_Bearer)(nil),                               // 133: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Bearer
+	(*Service_Spec_Config_HTTP_Auth_Basic)(nil),                                // 134: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic
+	(*Service_Spec_Config_HTTP_Auth_Custom)(nil),                               // 135: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom
+	(*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials)(nil),              // 136: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials
+	(*Service_Spec_Config_HTTP_Auth_Sigv4)(nil),                                // 137: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4
+	(*Service_Spec_Config_HTTP_Auth_Basic_Password)(nil),                       // 138: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.Password
+	(*Service_Spec_Config_HTTP_Auth_Custom_Value)(nil),                         // 139: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.Value
+	(*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret)(nil), // 140: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.ClientSecret
+	(*Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey)(nil),                // 141: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.SecretAccessKey
+	(*Service_Spec_Config_HTTP_Body_Validation)(nil),                           // 142: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation
+	(*Service_Spec_Config_HTTP_Body_Validation_JSONSchema)(nil),                // 143: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.JSONSchema
+	(*Service_Spec_Config_HTTP_Header_KeyValue)(nil),                           // 144: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
+	(*Service_Spec_Config_HTTP_Response_Direct)(nil),                           // 145: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.Direct
+	(*Service_Spec_Config_HTTP_Plugin_ExtProc)(nil),                            // 146: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc
+	(*Service_Spec_Config_HTTP_Plugin_Lua)(nil),                                // 147: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Lua
+	(*Service_Spec_Config_HTTP_Plugin_Direct)(nil),                             // 148: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct
+	(*Service_Spec_Config_HTTP_Plugin_RateLimit)(nil),                          // 149: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit
+	(*Service_Spec_Config_HTTP_Plugin_Cache)(nil),                              // 150: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache
+	(*Service_Spec_Config_HTTP_Plugin_JSONSchema)(nil),                         // 151: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema
+	(*Service_Spec_Config_HTTP_Plugin_Path)(nil),                               // 152: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Path
+	(*Service_Spec_Config_HTTP_Plugin_ExtProc_Container)(nil),                  // 153: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.Container
+	(*Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode)(nil),             // 154: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode
+	(*Service_Spec_Config_HTTP_Plugin_Direct_Body)(nil),                        // 155: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.Body
+	nil, // 156: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.HeadersEntry
+	(*Service_Spec_Config_HTTP_Plugin_RateLimit_Body)(nil), // 157: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Body
+	(*Service_Spec_Config_HTTP_Plugin_RateLimit_Key)(nil),  // 158: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Key
+	nil, // 159: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.HeadersEntry
+	(*Service_Spec_Config_HTTP_Plugin_Cache_Key)(nil),       // 160: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.Key
+	(*Service_Spec_Config_HTTP_Plugin_JSONSchema_Body)(nil), // 161: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.Body
+	nil,                                  // 162: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.HeadersEntry
+	(*Service_Spec_Config_SSH_Auth)(nil), // 163: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth
+	(*Service_Spec_Config_SSH_UpstreamHostKey)(nil),                                      // 164: octelium.api.main.core.v1.Service.Spec.Config.SSH.UpstreamHostKey
+	(*Service_Spec_Config_SSH_Visibility)(nil),                                           // 165: octelium.api.main.core.v1.Service.Spec.Config.SSH.Visibility
+	(*Service_Spec_Config_SSH_Auth_Password)(nil),                                        // 166: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.Password
+	(*Service_Spec_Config_SSH_Auth_PrivateKey)(nil),                                      // 167: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.PrivateKey
+	(*Service_Spec_Config_Postgres_Auth)(nil),                                            // 168: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth
+	(*Service_Spec_Config_Postgres_Authorization)(nil),                                   // 169: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization
+	(*Service_Spec_Config_Postgres_Auth_Password)(nil),                                   // 170: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.Password
+	(*Service_Spec_Config_MySQL_Auth)(nil),                                               // 171: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth
+	(*Service_Spec_Config_MySQL_Auth_Password)(nil),                                      // 172: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.Password
+	(*Service_Spec_Config_TLS_ClientCertificate)(nil),                                    // 173: octelium.api.main.core.v1.Service.Spec.Config.TLS.ClientCertificate
+	(*Service_Spec_Config_Kubernetes_BearerToken)(nil),                                   // 174: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.BearerToken
+	(*Service_Spec_Config_Kubernetes_Kubeconfig)(nil),                                    // 175: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.Kubeconfig
+	(*Service_Spec_Config_Upstream_Loadbalance)(nil),                                     // 176: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance
+	(*Service_Spec_Config_Upstream_Container)(nil),                                       // 177: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container
+	(*Service_Spec_Config_Upstream_Loadbalance_Endpoint)(nil),                            // 178: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.Endpoint
+	(*Service_Spec_Config_Upstream_Container_Env)(nil),                                   // 179: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env
+	(*Service_Spec_Config_Upstream_Container_Credentials)(nil),                           // 180: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials
+	(*Service_Spec_Config_Upstream_Container_ResourceLimit)(nil),                         // 181: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit
+	(*Service_Spec_Config_Upstream_Container_SecurityContext)(nil),                       // 182: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.SecurityContext
+	(*Service_Spec_Config_Upstream_Container_Volume)(nil),                                // 183: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume
+	(*Service_Spec_Config_Upstream_Container_VolumeMount)(nil),                           // 184: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.VolumeMount
+	(*Service_Spec_Config_Upstream_Container_Probe)(nil),                                 // 185: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
+	(*Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef)(nil),               // 186: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.KubernetesSecretRef
+	(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword)(nil),          // 187: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword
+	(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password)(nil), // 188: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.Password
+	(*Service_Spec_Config_Upstream_Container_ResourceLimit_CPU)(nil),                     // 189: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.CPU
+	(*Service_Spec_Config_Upstream_Container_ResourceLimit_Memory)(nil),                  // 190: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.Memory
+	nil, // 191: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ExtEntry
+	(*Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim)(nil), // 192: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.PersistentVolumeClaim
+	(*Service_Spec_Config_Upstream_Container_Probe_HTTPGet)(nil),                // 193: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.HTTPGet
+	(*Service_Spec_Config_Upstream_Container_Probe_TCPSocket)(nil),              // 194: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.TCPSocket
+	(*Service_Spec_Config_Upstream_Container_Probe_GRPC)(nil),                   // 195: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.GRPC
+	(*Service_Spec_DynamicConfig_Rule)(nil),                                     // 196: octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule
+	(*Service_Status_Address)(nil),                                              // 197: octelium.api.main.core.v1.Service.Status.Address
+	(*Service_Status_ManagedService)(nil),                                       // 198: octelium.api.main.core.v1.Service.Status.ManagedService
+	(*Service_Status_ManagedService_HealthCheck)(nil),                           // 199: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck
+	(*Service_Status_ManagedService_ResourceLimit)(nil),                         // 200: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit
+	nil, // 201: octelium.api.main.core.v1.Service.Status.ManagedService.K8sLabelsEntry
+	(*Service_Status_ManagedService_HealthCheck_GRPC)(nil),             // 202: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.GRPC
+	(*Service_Status_ManagedService_ResourceLimit_CPU)(nil),            // 203: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.CPU
+	(*Service_Status_ManagedService_ResourceLimit_Memory)(nil),         // 204: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.Memory
+	(*CredentialToken_AuthenticationToken)(nil),                        // 205: octelium.api.main.core.v1.CredentialToken.AuthenticationToken
+	(*CredentialToken_OAuth2Credentials)(nil),                          // 206: octelium.api.main.core.v1.CredentialToken.OAuth2Credentials
+	(*CredentialToken_AccessToken)(nil),                                // 207: octelium.api.main.core.v1.CredentialToken.AccessToken
+	(*Session_Spec)(nil),                                               // 208: octelium.api.main.core.v1.Session.Spec
+	(*Session_Status)(nil),                                             // 209: octelium.api.main.core.v1.Session.Status
+	(*Session_Spec_Authorization)(nil),                                 // 210: octelium.api.main.core.v1.Session.Spec.Authorization
+	(*Session_Status_Connection)(nil),                                  // 211: octelium.api.main.core.v1.Session.Status.Connection
+	(*Session_Status_Authentication)(nil),                              // 212: octelium.api.main.core.v1.Session.Status.Authentication
+	(*Session_Status_LastConnection)(nil),                              // 213: octelium.api.main.core.v1.Session.Status.LastConnection
+	nil,                                                                // 214: octelium.api.main.core.v1.Session.Status.ExtEntry
+	(*Session_Status_Connection_ServiceOptions)(nil),                   // 215: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions
+	(*Session_Status_Connection_Upstream)(nil),                         // 216: octelium.api.main.core.v1.Session.Status.Connection.Upstream
+	(*Session_Status_Connection_PublishedService)(nil),                 // 217: octelium.api.main.core.v1.Session.Status.Connection.PublishedService
+	(*Session_Status_Connection_ServiceOptions_RequestedService)(nil),  // 218: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService
+	(*Session_Status_Connection_Upstream_Backend)(nil),                 // 219: octelium.api.main.core.v1.Session.Status.Connection.Upstream.Backend
+	(*Session_Status_Authentication_Info)(nil),                         // 220: octelium.api.main.core.v1.Session.Status.Authentication.Info
+	(*Session_Status_Authentication_Info_IdentityProvider)(nil),        // 221: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider
+	(*Session_Status_Authentication_Info_Credential)(nil),              // 222: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential
+	(*Session_Status_Authentication_Info_External)(nil),                // 223: octelium.api.main.core.v1.Session.Status.Authentication.Info.External
+	(*Session_Status_Authentication_Info_Authenticator)(nil),           // 224: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator
+	(*Session_Status_Authentication_Info_Downstream)(nil),              // 225: octelium.api.main.core.v1.Session.Status.Authentication.Info.Downstream
+	(*Session_Status_Authentication_Info_Authenticator_Info)(nil),      // 226: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info
+	(*Session_Status_Authentication_Info_Authenticator_Info_FIDO)(nil), // 227: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.FIDO
+	(*Secret_Spec)(nil),                                                // 228: octelium.api.main.core.v1.Secret.Spec
+	(*Secret_Status)(nil),                                              // 229: octelium.api.main.core.v1.Secret.Status
+	(*Secret_Data)(nil),                                                // 230: octelium.api.main.core.v1.Secret.Data
+	(*Secret_Spec_Data)(nil),                                           // 231: octelium.api.main.core.v1.Secret.Spec.Data
+	nil,                                                                // 232: octelium.api.main.core.v1.Secret.Status.ExtEntry
+	(*Credential_Spec)(nil),                                            // 233: octelium.api.main.core.v1.Credential.Spec
+	(*Credential_Status)(nil),                                          // 234: octelium.api.main.core.v1.Credential.Status
+	(*Credential_Spec_Authorization)(nil),                              // 235: octelium.api.main.core.v1.Credential.Spec.Authorization
+	(*Group_Spec)(nil),                                                 // 236: octelium.api.main.core.v1.Group.Spec
+	(*Group_Status)(nil),                                               // 237: octelium.api.main.core.v1.Group.Status
+	(*Group_Spec_Authorization)(nil),                                   // 238: octelium.api.main.core.v1.Group.Spec.Authorization
+	nil,                                                                // 239: octelium.api.main.core.v1.Group.Status.ExtEntry
+	(*Device_Spec)(nil),                                                // 240: octelium.api.main.core.v1.Device.Spec
+	(*Device_Status)(nil),                                              // 241: octelium.api.main.core.v1.Device.Status
+	(*Device_Spec_Authorization)(nil),                                  // 242: octelium.api.main.core.v1.Device.Spec.Authorization
+	nil,                                                                // 243: octelium.api.main.core.v1.Device.Status.ExtEntry
+	(*Config_Spec)(nil),                                                // 244: octelium.api.main.core.v1.Config.Spec
+	(*Config_Status)(nil),                                              // 245: octelium.api.main.core.v1.Config.Status
+	(*Config_Data)(nil),                                                // 246: octelium.api.main.core.v1.Config.Data
+	(*Config_Data_DataMap)(nil),                                        // 247: octelium.api.main.core.v1.Config.Data.DataMap
+	nil,                                                                // 248: octelium.api.main.core.v1.Config.Data.DataMap.MapEntry
+	(*Scope_Service)(nil),                                              // 249: octelium.api.main.core.v1.Scope.Service
+	(*Scope_API)(nil),                                                  // 250: octelium.api.main.core.v1.Scope.API
+	(*Scope_Service_All)(nil),                                          // 251: octelium.api.main.core.v1.Scope.Service.All
+	(*Scope_Service_Filter)(nil),                                       // 252: octelium.api.main.core.v1.Scope.Service.Filter
+	(*Scope_API_All)(nil),                                              // 253: octelium.api.main.core.v1.Scope.API.All
+	(*Scope_API_Filter)(nil),                                           // 254: octelium.api.main.core.v1.Scope.API.Filter
+	(*Policy_Spec)(nil),                                                // 255: octelium.api.main.core.v1.Policy.Spec
+	(*Policy_Status)(nil),                                              // 256: octelium.api.main.core.v1.Policy.Status
+	(*Policy_Spec_Rule)(nil),                                           // 257: octelium.api.main.core.v1.Policy.Spec.Rule
+	(*Policy_Spec_EnforcementRule)(nil),                                // 258: octelium.api.main.core.v1.Policy.Spec.EnforcementRule
+	(*AccessLog_Entry)(nil),                                            // 259: octelium.api.main.core.v1.AccessLog.Entry
+	(*AccessLog_Entry_Info)(nil),                                       // 260: octelium.api.main.core.v1.AccessLog.Entry.Info
+	(*AccessLog_Entry_Common)(nil),                                     // 261: octelium.api.main.core.v1.AccessLog.Entry.Common
+	(*AccessLog_Entry_Info_HTTP)(nil),                                  // 262: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
+	(*AccessLog_Entry_Info_TCP)(nil),                                   // 263: octelium.api.main.core.v1.AccessLog.Entry.Info.TCP
+	(*AccessLog_Entry_Info_SSH)(nil),                                   // 264: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH
+	(*AccessLog_Entry_Info_UDP)(nil),                                   // 265: octelium.api.main.core.v1.AccessLog.Entry.Info.UDP
+	(*AccessLog_Entry_Info_Postgres)(nil),                              // 266: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres
+	(*AccessLog_Entry_Info_MySQL)(nil),                                 // 267: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL
+	(*AccessLog_Entry_Info_Kubernetes)(nil),                            // 268: octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes
+	(*AccessLog_Entry_Info_GRPC)(nil),                                  // 269: octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC
+	(*AccessLog_Entry_Info_DNS)(nil),                                   // 270: octelium.api.main.core.v1.AccessLog.Entry.Info.DNS
+	(*AccessLog_Entry_Info_HTTP_Request)(nil),                          // 271: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request
+	(*AccessLog_Entry_Info_HTTP_Response)(nil),                         // 272: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response
+	nil,                                    // 273: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.HeadersEntry
+	nil,                                    // 274: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.HeadersEntry
+	(*AccessLog_Entry_Info_SSH_Start)(nil), // 275: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Start
+	(*AccessLog_Entry_Info_SSH_SessionRecording)(nil),                      // 276: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording
+	(*AccessLog_Entry_Info_SSH_SessionRequestExec)(nil),                    // 277: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestExec
+	(*AccessLog_Entry_Info_SSH_SessionRequestSubsystem)(nil),               // 278: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestSubsystem
+	(*AccessLog_Entry_Info_SSH_DirectTCPIPStart)(nil),                      // 279: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.DirectTCPIPStart
+	(*AccessLog_Entry_Info_Postgres_Start)(nil),                            // 280: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Start
+	(*AccessLog_Entry_Info_Postgres_Query)(nil),                            // 281: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Query
+	(*AccessLog_Entry_Info_Postgres_Parse)(nil),                            // 282: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Parse
+	(*AccessLog_Entry_Info_MySQL_Query)(nil),                               // 283: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Query
+	(*AccessLog_Entry_Info_MySQL_InitDB)(nil),                              // 284: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.InitDB
+	(*AccessLog_Entry_Info_MySQL_CreateDB)(nil),                            // 285: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.CreateDB
+	(*AccessLog_Entry_Info_MySQL_DropDB)(nil),                              // 286: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.DropDB
+	(*AccessLog_Entry_Info_MySQL_PrepareStatement)(nil),                    // 287: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.PrepareStatement
+	(*AccessLog_Entry_Common_Reason)(nil),                                  // 288: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason
+	(*AccessLog_Entry_Common_Reason_Details)(nil),                          // 289: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details
+	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch)(nil),              // 290: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch
+	(*AccessLog_Entry_Common_Reason_Details_SessionNotActive)(nil),         // 291: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive
+	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy)(nil), // 292: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy
+	(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy)(nil),       // 293: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy
+	(*IdentityProvider_Spec)(nil),                                          // 294: octelium.api.main.core.v1.IdentityProvider.Spec
+	(*IdentityProvider_Status)(nil),                                        // 295: octelium.api.main.core.v1.IdentityProvider.Status
+	(*IdentityProvider_Spec_Github)(nil),                                   // 296: octelium.api.main.core.v1.IdentityProvider.Spec.Github
+	(*IdentityProvider_Spec_OIDC)(nil),                                     // 297: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC
+	(*IdentityProvider_Spec_SAML)(nil),                                     // 298: octelium.api.main.core.v1.IdentityProvider.Spec.SAML
+	(*IdentityProvider_Spec_OIDCIdentityToken)(nil),                        // 299: octelium.api.main.core.v1.IdentityProvider.Spec.OIDCIdentityToken
+	(*IdentityProvider_Spec_AALRule)(nil),                                  // 300: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule
+	(*IdentityProvider_Spec_PostAuthenticationRule)(nil),                   // 301: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule
+	(*IdentityProvider_Spec_Github_ClientSecret)(nil),                      // 302: octelium.api.main.core.v1.IdentityProvider.Spec.Github.ClientSecret
+	(*IdentityProvider_Spec_OIDC_ClientSecret)(nil),                        // 303: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.ClientSecret
+	(*Region_Spec)(nil),                                                    // 304: octelium.api.main.core.v1.Region.Spec
+	(*Region_Status)(nil),                                                  // 305: octelium.api.main.core.v1.Region.Status
+	nil,                                                                    // 306: octelium.api.main.core.v1.Region.Status.ExtEntry
+	(*Gateway_Spec)(nil),                                                   // 307: octelium.api.main.core.v1.Gateway.Spec
+	(*Gateway_Status)(nil),                                                 // 308: octelium.api.main.core.v1.Gateway.Status
+	(*Gateway_Status_WireGuard)(nil),                                       // 309: octelium.api.main.core.v1.Gateway.Status.WireGuard
+	(*Gateway_Status_QUICV0)(nil),                                          // 310: octelium.api.main.core.v1.Gateway.Status.QUICV0
+	(*Condition_All)(nil),                                                  // 311: octelium.api.main.core.v1.Condition.All
+	(*Condition_Any)(nil),                                                  // 312: octelium.api.main.core.v1.Condition.Any
+	(*Condition_None)(nil),                                                 // 313: octelium.api.main.core.v1.Condition.None
+	(*Condition_OPA)(nil),                                                  // 314: octelium.api.main.core.v1.Condition.OPA
+	(*ClusterConfig_Spec)(nil),                                             // 315: octelium.api.main.core.v1.ClusterConfig.Spec
+	(*ClusterConfig_Status)(nil),                                           // 316: octelium.api.main.core.v1.ClusterConfig.Status
+	(*ClusterConfig_Spec_Ingress)(nil),                                     // 317: octelium.api.main.core.v1.ClusterConfig.Spec.Ingress
+	(*ClusterConfig_Spec_Session)(nil),                                     // 318: octelium.api.main.core.v1.ClusterConfig.Spec.Session
+	(*ClusterConfig_Spec_Device)(nil),                                      // 319: octelium.api.main.core.v1.ClusterConfig.Spec.Device
+	(*ClusterConfig_Spec_Gateway)(nil),                                     // 320: octelium.api.main.core.v1.ClusterConfig.Spec.Gateway
+	(*ClusterConfig_Spec_DNS)(nil),                                         // 321: octelium.api.main.core.v1.ClusterConfig.Spec.DNS
+	(*ClusterConfig_Spec_Authorization)(nil),                               // 322: octelium.api.main.core.v1.ClusterConfig.Spec.Authorization
+	(*ClusterConfig_Spec_Authenticator)(nil),                               // 323: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator
+	(*ClusterConfig_Spec_Session_Human)(nil),                               // 324: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human
+	(*ClusterConfig_Spec_Session_Workload)(nil),                            // 325: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload
+	(*ClusterConfig_Spec_Device_Human)(nil),                                // 326: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human
+	(*ClusterConfig_Spec_Device_Workload)(nil),                             // 327: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload
+	(*ClusterConfig_Spec_DNS_Zone)(nil),                                    // 328: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone
+	(*ClusterConfig_Spec_Authenticator_EnforcementRule)(nil),               // 329: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
+	(*ClusterConfig_Spec_Authenticator_Rule)(nil),                          // 330: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule
+	(*ClusterConfig_Status_NetworkConfig)(nil),                             // 331: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig
+	(*ClusterConfig_Status_Network)(nil),                                   // 332: octelium.api.main.core.v1.ClusterConfig.Status.Network
+	(*ClusterConfig_Status_SecretManager)(nil),                             // 333: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager
+	(*ClusterConfig_Status_NetworkConfig_V4)(nil),                          // 334: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V4
+	(*ClusterConfig_Status_NetworkConfig_V6)(nil),                          // 335: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V6
+	(*ClusterConfig_Status_NetworkConfig_Wireguard)(nil),                   // 336: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Wireguard
+	(*ClusterConfig_Status_NetworkConfig_QUICV0)(nil),                      // 337: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.QUICV0
+	(*ClusterConfig_Status_SecretManager_TLS)(nil),                         // 338: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.TLS
+	(*RequestContext_Request)(nil),                                         // 339: octelium.api.main.core.v1.RequestContext.Request
+	(*RequestContext_Request_HTTP)(nil),                                    // 340: octelium.api.main.core.v1.RequestContext.Request.HTTP
+	(*RequestContext_Request_SSH)(nil),                                     // 341: octelium.api.main.core.v1.RequestContext.Request.SSH
+	(*RequestContext_Request_Kubernetes)(nil),                              // 342: octelium.api.main.core.v1.RequestContext.Request.Kubernetes
+	(*RequestContext_Request_GRPC)(nil),                                    // 343: octelium.api.main.core.v1.RequestContext.Request.GRPC
+	(*RequestContext_Request_Postgres)(nil),                                // 344: octelium.api.main.core.v1.RequestContext.Request.Postgres
+	(*RequestContext_Request_DNS)(nil),                                     // 345: octelium.api.main.core.v1.RequestContext.Request.DNS
+	nil,                                                                    // 346: octelium.api.main.core.v1.RequestContext.Request.HTTP.HeadersEntry
+	nil,                                                                    // 347: octelium.api.main.core.v1.RequestContext.Request.HTTP.QueryParamsEntry
+	(*RequestContext_Request_SSH_Connect)(nil),                             // 348: octelium.api.main.core.v1.RequestContext.Request.SSH.Connect
+	(*RequestContext_Request_Postgres_Connect)(nil),                        // 349: octelium.api.main.core.v1.RequestContext.Request.Postgres.Connect
+	(*RequestContext_Request_Postgres_Query)(nil),                          // 350: octelium.api.main.core.v1.RequestContext.Request.Postgres.Query
+	(*RequestContext_Request_Postgres_Parse)(nil),                          // 351: octelium.api.main.core.v1.RequestContext.Request.Postgres.Parse
+	(*PolicyTrigger_Spec)(nil),                                             // 352: octelium.api.main.core.v1.PolicyTrigger.Spec
+	(*PolicyTrigger_Status)(nil),                                           // 353: octelium.api.main.core.v1.PolicyTrigger.Status
+	(*PolicyTrigger_Status_PreCondition)(nil),                              // 354: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
+	(*PolicyTrigger_Status_PreCondition_Any)(nil),                          // 355: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any
+	(*PolicyTrigger_Status_PreCondition_All)(nil),                          // 356: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All
+	(*ComponentLog_Entry)(nil),                                             // 357: octelium.api.main.core.v1.ComponentLog.Entry
+	(*ComponentLog_Entry_Component)(nil),                                   // 358: octelium.api.main.core.v1.ComponentLog.Entry.Component
+	(*Authenticator_Spec)(nil),                                             // 359: octelium.api.main.core.v1.Authenticator.Spec
+	(*Authenticator_Status)(nil),                                           // 360: octelium.api.main.core.v1.Authenticator.Status
+	(*Authenticator_Status_EncryptedData)(nil),                             // 361: octelium.api.main.core.v1.Authenticator.Status.EncryptedData
+	(*Authenticator_Status_Info)(nil),                                      // 362: octelium.api.main.core.v1.Authenticator.Status.Info
+	(*Authenticator_Status_AuthenticationAttempt)(nil),                     // 363: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
+	nil,                                    // 364: octelium.api.main.core.v1.Authenticator.Status.ExtEntry
+	(*Authenticator_Status_Info_FIDO)(nil), // 365: octelium.api.main.core.v1.Authenticator.Status.Info.FIDO
+	(*Authenticator_Status_Info_TOTP)(nil), // 366: octelium.api.main.core.v1.Authenticator.Status.Info.TOTP
+	(*Authenticator_Status_Info_TPM)(nil),  // 367: octelium.api.main.core.v1.Authenticator.Status.Info.TPM
+	(*Authenticator_Status_Info_TPM_AttestationParameters)(nil), // 368: octelium.api.main.core.v1.Authenticator.Status.Info.TPM.AttestationParameters
+	nil,                              // 369: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry
+	nil,                              // 370: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.DataMapEntry
+	(*GeoIP_Country)(nil),            // 371: octelium.api.main.core.v1.GeoIP.Country
+	(*GeoIP_Continent)(nil),          // 372: octelium.api.main.core.v1.GeoIP.Continent
+	(*GeoIP_Region)(nil),             // 373: octelium.api.main.core.v1.GeoIP.Region
+	(*GeoIP_City)(nil),               // 374: octelium.api.main.core.v1.GeoIP.City
+	(*GeoIP_Coordinates)(nil),        // 375: octelium.api.main.core.v1.GeoIP.Coordinates
+	(*GeoIP_Network)(nil),            // 376: octelium.api.main.core.v1.GeoIP.Network
+	(*GeoIP_Timezone)(nil),           // 377: octelium.api.main.core.v1.GeoIP.Timezone
+	(*metav1.Metadata)(nil),          // 378: octelium.api.main.meta.v1.Metadata
+	(*metav1.ListResponseMeta)(nil),  // 379: octelium.api.main.meta.v1.ListResponseMeta
+	(*metav1.ObjectReference)(nil),   // 380: octelium.api.main.meta.v1.ObjectReference
+	(*metav1.CommonListOptions)(nil), // 381: octelium.api.main.meta.v1.CommonListOptions
+	(*metav1.LogMetadata)(nil),       // 382: octelium.api.main.meta.v1.LogMetadata
+	(*structpb.Struct)(nil),          // 383: google.protobuf.Struct
+	(*metav1.Duration)(nil),          // 384: octelium.api.main.meta.v1.Duration
+	(*metav1.DualStackIP)(nil),       // 385: octelium.api.main.meta.v1.DualStackIP
+	(*timestamppb.Timestamp)(nil),    // 386: google.protobuf.Timestamp
+	(*metav1.DualStackNetwork)(nil),  // 387: octelium.api.main.meta.v1.DualStackNetwork
+	(*metav1.DeleteOptions)(nil),     // 388: octelium.api.main.meta.v1.DeleteOptions
+	(*metav1.GetOptions)(nil),        // 389: octelium.api.main.meta.v1.GetOptions
+	(*metav1.OperationResult)(nil),   // 390: octelium.api.main.meta.v1.OperationResult
 }
 var file_corev1_proto_depIdxs = []int32{
-	369, // 0: octelium.api.main.core.v1.Namespace.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	97,  // 1: octelium.api.main.core.v1.Namespace.spec:type_name -> octelium.api.main.core.v1.Namespace.Spec
-	98,  // 2: octelium.api.main.core.v1.Namespace.status:type_name -> octelium.api.main.core.v1.Namespace.Status
-	44,  // 3: octelium.api.main.core.v1.NamespaceList.items:type_name -> octelium.api.main.core.v1.Namespace
-	370, // 4: octelium.api.main.core.v1.NamespaceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	253, // 5: octelium.api.main.core.v1.InlinePolicy.spec:type_name -> octelium.api.main.core.v1.Policy.Spec
-	369, // 6: octelium.api.main.core.v1.User.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	100, // 7: octelium.api.main.core.v1.User.spec:type_name -> octelium.api.main.core.v1.User.Spec
-	101, // 8: octelium.api.main.core.v1.User.status:type_name -> octelium.api.main.core.v1.User.Status
-	47,  // 9: octelium.api.main.core.v1.UserList.items:type_name -> octelium.api.main.core.v1.User
-	370, // 10: octelium.api.main.core.v1.UserList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 11: octelium.api.main.core.v1.Service.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	108, // 12: octelium.api.main.core.v1.Service.spec:type_name -> octelium.api.main.core.v1.Service.Spec
-	109, // 13: octelium.api.main.core.v1.Service.status:type_name -> octelium.api.main.core.v1.Service.Status
-	49,  // 14: octelium.api.main.core.v1.ServiceList.items:type_name -> octelium.api.main.core.v1.Service
-	370, // 15: octelium.api.main.core.v1.ServiceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	371, // 16: octelium.api.main.core.v1.GenerateCredentialTokenRequest.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	203, // 17: octelium.api.main.core.v1.CredentialToken.authenticationToken:type_name -> octelium.api.main.core.v1.CredentialToken.AuthenticationToken
-	204, // 18: octelium.api.main.core.v1.CredentialToken.oauth2Credentials:type_name -> octelium.api.main.core.v1.CredentialToken.OAuth2Credentials
-	205, // 19: octelium.api.main.core.v1.CredentialToken.accessToken:type_name -> octelium.api.main.core.v1.CredentialToken.AccessToken
-	369, // 20: octelium.api.main.core.v1.Session.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	206, // 21: octelium.api.main.core.v1.Session.spec:type_name -> octelium.api.main.core.v1.Session.Spec
-	207, // 22: octelium.api.main.core.v1.Session.status:type_name -> octelium.api.main.core.v1.Session.Status
-	53,  // 23: octelium.api.main.core.v1.SessionList.items:type_name -> octelium.api.main.core.v1.Session
-	370, // 24: octelium.api.main.core.v1.SessionList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 25: octelium.api.main.core.v1.Secret.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	226, // 26: octelium.api.main.core.v1.Secret.spec:type_name -> octelium.api.main.core.v1.Secret.Spec
-	227, // 27: octelium.api.main.core.v1.Secret.status:type_name -> octelium.api.main.core.v1.Secret.Status
-	228, // 28: octelium.api.main.core.v1.Secret.data:type_name -> octelium.api.main.core.v1.Secret.Data
-	55,  // 29: octelium.api.main.core.v1.SecretList.items:type_name -> octelium.api.main.core.v1.Secret
-	370, // 30: octelium.api.main.core.v1.SecretList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 31: octelium.api.main.core.v1.Credential.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	231, // 32: octelium.api.main.core.v1.Credential.spec:type_name -> octelium.api.main.core.v1.Credential.Spec
-	232, // 33: octelium.api.main.core.v1.Credential.status:type_name -> octelium.api.main.core.v1.Credential.Status
-	57,  // 34: octelium.api.main.core.v1.CredentialList.items:type_name -> octelium.api.main.core.v1.Credential
-	370, // 35: octelium.api.main.core.v1.CredentialList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 36: octelium.api.main.core.v1.Group.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	234, // 37: octelium.api.main.core.v1.Group.spec:type_name -> octelium.api.main.core.v1.Group.Spec
-	235, // 38: octelium.api.main.core.v1.Group.status:type_name -> octelium.api.main.core.v1.Group.Status
-	59,  // 39: octelium.api.main.core.v1.GroupList.items:type_name -> octelium.api.main.core.v1.Group
-	370, // 40: octelium.api.main.core.v1.GroupList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 41: octelium.api.main.core.v1.Device.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	238, // 42: octelium.api.main.core.v1.Device.spec:type_name -> octelium.api.main.core.v1.Device.Spec
-	239, // 43: octelium.api.main.core.v1.Device.status:type_name -> octelium.api.main.core.v1.Device.Status
-	61,  // 44: octelium.api.main.core.v1.DeviceList.items:type_name -> octelium.api.main.core.v1.Device
-	370, // 45: octelium.api.main.core.v1.DeviceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	372, // 46: octelium.api.main.core.v1.ListUserOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	372, // 47: octelium.api.main.core.v1.ListNamespaceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	372, // 48: octelium.api.main.core.v1.ListServiceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 49: octelium.api.main.core.v1.ListServiceOptions.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 50: octelium.api.main.core.v1.ListServiceOptions.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	372, // 51: octelium.api.main.core.v1.ListSessionOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 52: octelium.api.main.core.v1.ListSessionOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	372, // 53: octelium.api.main.core.v1.ListSecretOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	372, // 54: octelium.api.main.core.v1.ListCredentialOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 55: octelium.api.main.core.v1.ListCredentialOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	372, // 56: octelium.api.main.core.v1.ListGroupOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	372, // 57: octelium.api.main.core.v1.ListDeviceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 58: octelium.api.main.core.v1.ListDeviceOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	369, // 59: octelium.api.main.core.v1.Config.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	242, // 60: octelium.api.main.core.v1.Config.spec:type_name -> octelium.api.main.core.v1.Config.Spec
-	243, // 61: octelium.api.main.core.v1.Config.status:type_name -> octelium.api.main.core.v1.Config.Status
-	244, // 62: octelium.api.main.core.v1.Config.data:type_name -> octelium.api.main.core.v1.Config.Data
-	71,  // 63: octelium.api.main.core.v1.ConfigList.items:type_name -> octelium.api.main.core.v1.Config
-	370, // 64: octelium.api.main.core.v1.ConfigList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	247, // 65: octelium.api.main.core.v1.Scope.service:type_name -> octelium.api.main.core.v1.Scope.Service
-	248, // 66: octelium.api.main.core.v1.Scope.api:type_name -> octelium.api.main.core.v1.Scope.API
-	369, // 67: octelium.api.main.core.v1.Policy.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	253, // 68: octelium.api.main.core.v1.Policy.spec:type_name -> octelium.api.main.core.v1.Policy.Spec
-	254, // 69: octelium.api.main.core.v1.Policy.status:type_name -> octelium.api.main.core.v1.Policy.Status
-	74,  // 70: octelium.api.main.core.v1.PolicyList.items:type_name -> octelium.api.main.core.v1.Policy
-	370, // 71: octelium.api.main.core.v1.PolicyList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	372, // 72: octelium.api.main.core.v1.ListPolicyOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	373, // 73: octelium.api.main.core.v1.AccessLog.metadata:type_name -> octelium.api.main.meta.v1.LogMetadata
-	257, // 74: octelium.api.main.core.v1.AccessLog.entry:type_name -> octelium.api.main.core.v1.AccessLog.Entry
-	372, // 75: octelium.api.main.core.v1.ListIdentityProviderOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	369, // 76: octelium.api.main.core.v1.IdentityProvider.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	292, // 77: octelium.api.main.core.v1.IdentityProvider.spec:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec
-	293, // 78: octelium.api.main.core.v1.IdentityProvider.status:type_name -> octelium.api.main.core.v1.IdentityProvider.Status
-	79,  // 79: octelium.api.main.core.v1.IdentityProviderList.items:type_name -> octelium.api.main.core.v1.IdentityProvider
-	370, // 80: octelium.api.main.core.v1.IdentityProviderList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 81: octelium.api.main.core.v1.Region.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	302, // 82: octelium.api.main.core.v1.Region.spec:type_name -> octelium.api.main.core.v1.Region.Spec
-	303, // 83: octelium.api.main.core.v1.Region.status:type_name -> octelium.api.main.core.v1.Region.Status
-	81,  // 84: octelium.api.main.core.v1.RegionList.items:type_name -> octelium.api.main.core.v1.Region
-	370, // 85: octelium.api.main.core.v1.RegionList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	369, // 86: octelium.api.main.core.v1.Gateway.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	305, // 87: octelium.api.main.core.v1.Gateway.spec:type_name -> octelium.api.main.core.v1.Gateway.Spec
-	306, // 88: octelium.api.main.core.v1.Gateway.status:type_name -> octelium.api.main.core.v1.Gateway.Status
-	83,  // 89: octelium.api.main.core.v1.GatewayList.items:type_name -> octelium.api.main.core.v1.Gateway
-	370, // 90: octelium.api.main.core.v1.GatewayList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	372, // 91: octelium.api.main.core.v1.ListGatewayOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 92: octelium.api.main.core.v1.ListGatewayOptions.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	372, // 93: octelium.api.main.core.v1.ListRegionOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	309, // 94: octelium.api.main.core.v1.Condition.all:type_name -> octelium.api.main.core.v1.Condition.All
-	310, // 95: octelium.api.main.core.v1.Condition.any:type_name -> octelium.api.main.core.v1.Condition.Any
-	311, // 96: octelium.api.main.core.v1.Condition.none:type_name -> octelium.api.main.core.v1.Condition.None
-	312, // 97: octelium.api.main.core.v1.Condition.opa:type_name -> octelium.api.main.core.v1.Condition.OPA
-	369, // 98: octelium.api.main.core.v1.ClusterConfig.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	313, // 99: octelium.api.main.core.v1.ClusterConfig.spec:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec
-	314, // 100: octelium.api.main.core.v1.ClusterConfig.status:type_name -> octelium.api.main.core.v1.ClusterConfig.Status
-	337, // 101: octelium.api.main.core.v1.RequestContext.request:type_name -> octelium.api.main.core.v1.RequestContext.Request
-	53,  // 102: octelium.api.main.core.v1.RequestContext.session:type_name -> octelium.api.main.core.v1.Session
-	47,  // 103: octelium.api.main.core.v1.RequestContext.user:type_name -> octelium.api.main.core.v1.User
-	59,  // 104: octelium.api.main.core.v1.RequestContext.groups:type_name -> octelium.api.main.core.v1.Group
-	61,  // 105: octelium.api.main.core.v1.RequestContext.device:type_name -> octelium.api.main.core.v1.Device
-	49,  // 106: octelium.api.main.core.v1.RequestContext.service:type_name -> octelium.api.main.core.v1.Service
-	44,  // 107: octelium.api.main.core.v1.RequestContext.namespace:type_name -> octelium.api.main.core.v1.Namespace
-	369, // 108: octelium.api.main.core.v1.PolicyTrigger.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	350, // 109: octelium.api.main.core.v1.PolicyTrigger.spec:type_name -> octelium.api.main.core.v1.PolicyTrigger.Spec
-	351, // 110: octelium.api.main.core.v1.PolicyTrigger.status:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status
-	91,  // 111: octelium.api.main.core.v1.PolicyTriggerList.items:type_name -> octelium.api.main.core.v1.PolicyTrigger
-	370, // 112: octelium.api.main.core.v1.PolicyTriggerList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	373, // 113: octelium.api.main.core.v1.ComponentLog.metadata:type_name -> octelium.api.main.meta.v1.LogMetadata
-	355, // 114: octelium.api.main.core.v1.ComponentLog.entry:type_name -> octelium.api.main.core.v1.ComponentLog.Entry
-	369, // 115: octelium.api.main.core.v1.Authenticator.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	357, // 116: octelium.api.main.core.v1.Authenticator.spec:type_name -> octelium.api.main.core.v1.Authenticator.Spec
-	358, // 117: octelium.api.main.core.v1.Authenticator.status:type_name -> octelium.api.main.core.v1.Authenticator.Status
-	94,  // 118: octelium.api.main.core.v1.AuthenticatorList.items:type_name -> octelium.api.main.core.v1.Authenticator
-	370, // 119: octelium.api.main.core.v1.AuthenticatorList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	372, // 120: octelium.api.main.core.v1.ListAuthenticatorOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	371, // 121: octelium.api.main.core.v1.ListAuthenticatorOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	99,  // 122: octelium.api.main.core.v1.Namespace.Spec.authorization:type_name -> octelium.api.main.core.v1.Namespace.Spec.Authorization
-	374, // 123: octelium.api.main.core.v1.Namespace.Spec.attrs:type_name -> google.protobuf.Struct
-	46,  // 124: octelium.api.main.core.v1.Namespace.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	0,   // 125: octelium.api.main.core.v1.User.Spec.type:type_name -> octelium.api.main.core.v1.User.Spec.Type
-	105, // 126: octelium.api.main.core.v1.User.Spec.info:type_name -> octelium.api.main.core.v1.User.Spec.Info
-	104, // 127: octelium.api.main.core.v1.User.Spec.session:type_name -> octelium.api.main.core.v1.User.Spec.Session
-	102, // 128: octelium.api.main.core.v1.User.Spec.authorization:type_name -> octelium.api.main.core.v1.User.Spec.Authorization
-	374, // 129: octelium.api.main.core.v1.User.Spec.attrs:type_name -> google.protobuf.Struct
-	103, // 130: octelium.api.main.core.v1.User.Spec.authentication:type_name -> octelium.api.main.core.v1.User.Spec.Authentication
-	107, // 131: octelium.api.main.core.v1.User.Status.ext:type_name -> octelium.api.main.core.v1.User.Status.ExtEntry
-	371, // 132: octelium.api.main.core.v1.User.Status.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	46,  // 133: octelium.api.main.core.v1.User.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	106, // 134: octelium.api.main.core.v1.User.Spec.Authentication.identities:type_name -> octelium.api.main.core.v1.User.Spec.Authentication.Identity
-	41,  // 135: octelium.api.main.core.v1.User.Spec.Authentication.authenticatorDefaultState:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
-	375, // 136: octelium.api.main.core.v1.User.Spec.Session.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 137: octelium.api.main.core.v1.User.Spec.Session.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 138: octelium.api.main.core.v1.User.Spec.Session.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 139: octelium.api.main.core.v1.User.Spec.Session.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	9,   // 140: octelium.api.main.core.v1.User.Spec.Session.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
-	374, // 141: octelium.api.main.core.v1.User.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	1,   // 142: octelium.api.main.core.v1.Service.Spec.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Mode
-	110, // 143: octelium.api.main.core.v1.Service.Spec.authorization:type_name -> octelium.api.main.core.v1.Service.Spec.Authorization
-	111, // 144: octelium.api.main.core.v1.Service.Spec.config:type_name -> octelium.api.main.core.v1.Service.Spec.Config
-	113, // 145: octelium.api.main.core.v1.Service.Spec.dynamicConfig:type_name -> octelium.api.main.core.v1.Service.Spec.DynamicConfig
-	112, // 146: octelium.api.main.core.v1.Service.Spec.deployment:type_name -> octelium.api.main.core.v1.Service.Spec.Deployment
-	374, // 147: octelium.api.main.core.v1.Service.Spec.attrs:type_name -> google.protobuf.Struct
-	195, // 148: octelium.api.main.core.v1.Service.Status.addresses:type_name -> octelium.api.main.core.v1.Service.Status.Address
-	371, // 149: octelium.api.main.core.v1.Service.Status.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	196, // 150: octelium.api.main.core.v1.Service.Status.managedService:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService
-	371, // 151: octelium.api.main.core.v1.Service.Status.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	46,  // 152: octelium.api.main.core.v1.Service.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	118, // 153: octelium.api.main.core.v1.Service.Spec.Config.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
-	121, // 154: octelium.api.main.core.v1.Service.Spec.Config.upstream:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream
-	119, // 155: octelium.api.main.core.v1.Service.Spec.Config.tls:type_name -> octelium.api.main.core.v1.Service.Spec.Config.TLS
-	114, // 156: octelium.api.main.core.v1.Service.Spec.Config.http:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP
-	115, // 157: octelium.api.main.core.v1.Service.Spec.Config.ssh:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH
-	116, // 158: octelium.api.main.core.v1.Service.Spec.Config.postgres:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres
-	117, // 159: octelium.api.main.core.v1.Service.Spec.Config.mysql:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL
-	120, // 160: octelium.api.main.core.v1.Service.Spec.Config.kubernetes:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes
-	111, // 161: octelium.api.main.core.v1.Service.Spec.DynamicConfig.configs:type_name -> octelium.api.main.core.v1.Service.Spec.Config
-	194, // 162: octelium.api.main.core.v1.Service.Spec.DynamicConfig.rules:type_name -> octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule
-	123, // 163: octelium.api.main.core.v1.Service.Spec.Config.HTTP.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth
-	126, // 164: octelium.api.main.core.v1.Service.Spec.Config.HTTP.header:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header
-	124, // 165: octelium.api.main.core.v1.Service.Spec.Config.HTTP.path:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Path
-	122, // 166: octelium.api.main.core.v1.Service.Spec.Config.HTTP.cors:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.CORS
-	125, // 167: octelium.api.main.core.v1.Service.Spec.Config.HTTP.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body
-	127, // 168: octelium.api.main.core.v1.Service.Spec.Config.HTTP.response:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response
-	129, // 169: octelium.api.main.core.v1.Service.Spec.Config.HTTP.plugins:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin
-	130, // 170: octelium.api.main.core.v1.Service.Spec.Config.HTTP.visibility:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Visibility
-	128, // 171: octelium.api.main.core.v1.Service.Spec.Config.HTTP.retry:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry
-	161, // 172: octelium.api.main.core.v1.Service.Spec.Config.SSH.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth
-	162, // 173: octelium.api.main.core.v1.Service.Spec.Config.SSH.upstreamHostKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.UpstreamHostKey
-	163, // 174: octelium.api.main.core.v1.Service.Spec.Config.SSH.visibility:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Visibility
-	166, // 175: octelium.api.main.core.v1.Service.Spec.Config.Postgres.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth
-	7,   // 176: octelium.api.main.core.v1.Service.Spec.Config.Postgres.sslMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.SSLMode
-	167, // 177: octelium.api.main.core.v1.Service.Spec.Config.Postgres.authorization:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization
-	169, // 178: octelium.api.main.core.v1.Service.Spec.Config.MySQL.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth
-	171, // 179: octelium.api.main.core.v1.Service.Spec.Config.TLS.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.TLS.ClientCertificate
-	173, // 180: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.kubeconfig:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.Kubeconfig
-	172, // 181: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.bearerToken:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.BearerToken
-	118, // 182: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
-	174, // 183: octelium.api.main.core.v1.Service.Spec.Config.Upstream.loadbalance:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance
-	175, // 184: octelium.api.main.core.v1.Service.Spec.Config.Upstream.container:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container
-	131, // 185: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.bearer:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Bearer
-	132, // 186: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.basic:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic
-	133, // 187: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.custom:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom
-	134, // 188: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.oauth2ClientCredentials:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials
-	135, // 189: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.sigv4:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4
-	2,   // 190: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Mode
-	140, // 191: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.validation:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation
-	142, // 192: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.addRequestHeaders:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
-	142, // 193: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.addResponseHeaders:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
-	3,   // 194: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.forwardedMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.ForwardedMode
-	143, // 195: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.direct:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.Direct
-	375, // 196: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.initialInterval:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 197: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.maxInterval:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 198: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.maxElapsedTime:type_name -> octelium.api.main.meta.v1.Duration
-	4,   // 199: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.phase:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Phase
-	87,  // 200: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.condition:type_name -> octelium.api.main.core.v1.Condition
-	144, // 201: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.extProc:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc
-	145, // 202: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.lua:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Lua
-	146, // 203: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.direct:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct
-	147, // 204: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.rateLimit:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit
-	148, // 205: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.cache:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache
-	149, // 206: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.jsonSchema:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema
-	150, // 207: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.path:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Path
-	136, // 208: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.Password
-	137, // 209: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.value:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.Value
-	138, // 210: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.clientSecret:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.ClientSecret
-	139, // 211: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.secretAccessKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.SecretAccessKey
-	141, // 212: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.jsonSchema:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.JSONSchema
-	151, // 213: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.container:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.Container
-	152, // 214: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.processingMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode
-	375, // 215: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.messageTimeout:type_name -> octelium.api.main.meta.v1.Duration
-	153, // 216: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.Body
-	154, // 217: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.HeadersEntry
-	155, // 218: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Body
-	156, // 219: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.key:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Key
-	375, // 220: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.window:type_name -> octelium.api.main.meta.v1.Duration
-	157, // 221: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.HeadersEntry
-	158, // 222: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.key:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.Key
-	375, // 223: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.ttl:type_name -> octelium.api.main.meta.v1.Duration
-	159, // 224: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.Body
-	160, // 225: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.HeadersEntry
-	5,   // 226: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.requestHeaderMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.HeaderSendMode
-	5,   // 227: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.responseHeaderMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.HeaderSendMode
-	6,   // 228: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.requestBodyMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.BodySendMode
-	6,   // 229: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.responseBodyMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.BodySendMode
-	164, // 230: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.Password
-	165, // 231: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.privateKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.PrivateKey
-	168, // 232: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.Password
-	8,   // 233: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization.Mode
-	170, // 234: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.Password
-	176, // 235: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.endpoints:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.Endpoint
-	177, // 236: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.env:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env
-	178, // 237: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.credentials:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials
-	179, // 238: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.resourceLimit:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit
-	180, // 239: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.securityContext:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.SecurityContext
-	181, // 240: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.volumes:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume
-	182, // 241: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.volumeMounts:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.VolumeMount
-	183, // 242: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.livenessProbe:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
-	183, // 243: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.readinessProbe:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
-	184, // 244: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.kubernetesSecretRef:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.KubernetesSecretRef
-	185, // 245: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.usernamePassword:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword
-	187, // 246: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.cpu:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.CPU
-	188, // 247: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.memory:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.Memory
-	189, // 248: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ext:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ExtEntry
-	190, // 249: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.persistentVolumeClaim:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.PersistentVolumeClaim
-	191, // 250: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.httpGet:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.HTTPGet
-	192, // 251: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.tcpSocket:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.TCPSocket
-	193, // 252: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.grpc:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.GRPC
-	186, // 253: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.Password
-	87,  // 254: octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
-	376, // 255: octelium.api.main.core.v1.Service.Status.Address.dualStackIP:type_name -> octelium.api.main.meta.v1.DualStackIP
-	371, // 256: octelium.api.main.core.v1.Service.Status.Address.podRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	199, // 257: octelium.api.main.core.v1.Service.Status.ManagedService.k8sLabels:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.K8sLabelsEntry
-	197, // 258: octelium.api.main.core.v1.Service.Status.ManagedService.healthCheck:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck
-	198, // 259: octelium.api.main.core.v1.Service.Status.ManagedService.resourceLimit:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit
-	200, // 260: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.grpc:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.GRPC
-	201, // 261: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.cpu:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.CPU
-	202, // 262: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.memory:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.Memory
-	377, // 263: octelium.api.main.core.v1.Session.Spec.expiresAt:type_name -> google.protobuf.Timestamp
-	9,   // 264: octelium.api.main.core.v1.Session.Spec.state:type_name -> octelium.api.main.core.v1.Session.Spec.State
-	208, // 265: octelium.api.main.core.v1.Session.Spec.authorization:type_name -> octelium.api.main.core.v1.Session.Spec.Authorization
-	371, // 266: octelium.api.main.core.v1.Session.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 267: octelium.api.main.core.v1.Session.Status.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	10,  // 268: octelium.api.main.core.v1.Session.Status.type:type_name -> octelium.api.main.core.v1.Session.Status.Type
-	210, // 269: octelium.api.main.core.v1.Session.Status.authentication:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
-	210, // 270: octelium.api.main.core.v1.Session.Status.lastAuthentications:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
-	210, // 271: octelium.api.main.core.v1.Session.Status.initialAuthentication:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
-	209, // 272: octelium.api.main.core.v1.Session.Status.connection:type_name -> octelium.api.main.core.v1.Session.Status.Connection
-	371, // 273: octelium.api.main.core.v1.Session.Status.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	212, // 274: octelium.api.main.core.v1.Session.Status.ext:type_name -> octelium.api.main.core.v1.Session.Status.ExtEntry
-	73,  // 275: octelium.api.main.core.v1.Session.Status.scopes:type_name -> octelium.api.main.core.v1.Scope
-	211, // 276: octelium.api.main.core.v1.Session.Status.lastConnections:type_name -> octelium.api.main.core.v1.Session.Status.LastConnection
-	11,  // 277: octelium.api.main.core.v1.Session.Status.authenticatorAction:type_name -> octelium.api.main.core.v1.Session.Status.AuthenticatorAction
-	371, // 278: octelium.api.main.core.v1.Session.Status.requiredAuthenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	46,  // 279: octelium.api.main.core.v1.Session.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	377, // 280: octelium.api.main.core.v1.Session.Status.Connection.startedAt:type_name -> google.protobuf.Timestamp
-	377, // 281: octelium.api.main.core.v1.Session.Status.Connection.lastSeenAt:type_name -> google.protobuf.Timestamp
-	214, // 282: octelium.api.main.core.v1.Session.Status.Connection.upstreams:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream
-	378, // 283: octelium.api.main.core.v1.Session.Status.Connection.addresses:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	12,  // 284: octelium.api.main.core.v1.Session.Status.Connection.l3Mode:type_name -> octelium.api.main.core.v1.Session.Status.Connection.L3Mode
-	213, // 285: octelium.api.main.core.v1.Session.Status.Connection.serviceOptions:type_name -> octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions
-	13,  // 286: octelium.api.main.core.v1.Session.Status.Connection.type:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Type
-	215, // 287: octelium.api.main.core.v1.Session.Status.Connection.publishedServices:type_name -> octelium.api.main.core.v1.Session.Status.Connection.PublishedService
-	218, // 288: octelium.api.main.core.v1.Session.Status.Authentication.info:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info
-	377, // 289: octelium.api.main.core.v1.Session.Status.Authentication.setAt:type_name -> google.protobuf.Timestamp
-	375, // 290: octelium.api.main.core.v1.Session.Status.Authentication.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 291: octelium.api.main.core.v1.Session.Status.Authentication.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	377, // 292: octelium.api.main.core.v1.Session.Status.LastConnection.startedAt:type_name -> google.protobuf.Timestamp
-	377, // 293: octelium.api.main.core.v1.Session.Status.LastConnection.endedAt:type_name -> google.protobuf.Timestamp
-	374, // 294: octelium.api.main.core.v1.Session.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	216, // 295: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.requestedServices:type_name -> octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService
-	14,  // 296: octelium.api.main.core.v1.Session.Status.Connection.Upstream.l4Type:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.L4Type
-	371, // 297: octelium.api.main.core.v1.Session.Status.Connection.Upstream.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 298: octelium.api.main.core.v1.Session.Status.Connection.Upstream.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	217, // 299: octelium.api.main.core.v1.Session.Status.Connection.Upstream.backend:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.Backend
-	15,  // 300: octelium.api.main.core.v1.Session.Status.Connection.Upstream.mode:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.Mode
-	371, // 301: octelium.api.main.core.v1.Session.Status.Connection.PublishedService.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 302: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 303: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	16,  // 304: octelium.api.main.core.v1.Session.Status.Authentication.Info.type:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Type
-	221, // 305: octelium.api.main.core.v1.Session.Status.Authentication.Info.external:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.External
-	219, // 306: octelium.api.main.core.v1.Session.Status.Authentication.Info.identityProvider:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider
-	220, // 307: octelium.api.main.core.v1.Session.Status.Authentication.Info.credential:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential
-	222, // 308: octelium.api.main.core.v1.Session.Status.Authentication.Info.authenticator:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator
-	17,  // 309: octelium.api.main.core.v1.Session.Status.Authentication.Info.aal:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.AAL
-	223, // 310: octelium.api.main.core.v1.Session.Status.Authentication.Info.downstream:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Downstream
-	371, // 311: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	36,  // 312: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider.type:type_name -> octelium.api.main.core.v1.IdentityProvider.Status.Type
-	371, // 313: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	19,  // 314: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential.type:type_name -> octelium.api.main.core.v1.Credential.Spec.Type
-	371, // 315: octelium.api.main.core.v1.Session.Status.Authentication.Info.External.ownerRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	374, // 316: octelium.api.main.core.v1.Session.Status.Authentication.Info.External.attrs:type_name -> google.protobuf.Struct
-	371, // 317: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.authenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	42,  // 318: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Type
-	224, // 319: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.info:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info
-	18,  // 320: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.mode:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Mode
-	225, // 321: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.fido:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.FIDO
-	229, // 322: octelium.api.main.core.v1.Secret.Spec.data:type_name -> octelium.api.main.core.v1.Secret.Spec.Data
-	230, // 323: octelium.api.main.core.v1.Secret.Status.ext:type_name -> octelium.api.main.core.v1.Secret.Status.ExtEntry
-	374, // 324: octelium.api.main.core.v1.Secret.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	19,  // 325: octelium.api.main.core.v1.Credential.Spec.type:type_name -> octelium.api.main.core.v1.Credential.Spec.Type
-	377, // 326: octelium.api.main.core.v1.Credential.Spec.expiresAt:type_name -> google.protobuf.Timestamp
-	10,  // 327: octelium.api.main.core.v1.Credential.Spec.sessionType:type_name -> octelium.api.main.core.v1.Session.Status.Type
-	233, // 328: octelium.api.main.core.v1.Credential.Spec.authorization:type_name -> octelium.api.main.core.v1.Credential.Spec.Authorization
-	371, // 329: octelium.api.main.core.v1.Credential.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	377, // 330: octelium.api.main.core.v1.Credential.Status.lastRotationAt:type_name -> google.protobuf.Timestamp
-	46,  // 331: octelium.api.main.core.v1.Credential.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	236, // 332: octelium.api.main.core.v1.Group.Spec.authorization:type_name -> octelium.api.main.core.v1.Group.Spec.Authorization
-	374, // 333: octelium.api.main.core.v1.Group.Spec.attrs:type_name -> google.protobuf.Struct
-	237, // 334: octelium.api.main.core.v1.Group.Status.ext:type_name -> octelium.api.main.core.v1.Group.Status.ExtEntry
-	46,  // 335: octelium.api.main.core.v1.Group.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	374, // 336: octelium.api.main.core.v1.Group.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	20,  // 337: octelium.api.main.core.v1.Device.Spec.state:type_name -> octelium.api.main.core.v1.Device.Spec.State
-	240, // 338: octelium.api.main.core.v1.Device.Spec.authorization:type_name -> octelium.api.main.core.v1.Device.Spec.Authorization
-	241, // 339: octelium.api.main.core.v1.Device.Status.ext:type_name -> octelium.api.main.core.v1.Device.Status.ExtEntry
-	371, // 340: octelium.api.main.core.v1.Device.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	21,  // 341: octelium.api.main.core.v1.Device.Status.osType:type_name -> octelium.api.main.core.v1.Device.Status.OSType
-	46,  // 342: octelium.api.main.core.v1.Device.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	374, // 343: octelium.api.main.core.v1.Device.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	245, // 344: octelium.api.main.core.v1.Config.Data.dataMap:type_name -> octelium.api.main.core.v1.Config.Data.DataMap
-	374, // 345: octelium.api.main.core.v1.Config.Data.attrs:type_name -> google.protobuf.Struct
-	246, // 346: octelium.api.main.core.v1.Config.Data.DataMap.map:type_name -> octelium.api.main.core.v1.Config.Data.DataMap.MapEntry
-	249, // 347: octelium.api.main.core.v1.Scope.Service.all:type_name -> octelium.api.main.core.v1.Scope.Service.All
-	250, // 348: octelium.api.main.core.v1.Scope.Service.filter:type_name -> octelium.api.main.core.v1.Scope.Service.Filter
-	251, // 349: octelium.api.main.core.v1.Scope.API.all:type_name -> octelium.api.main.core.v1.Scope.API.All
-	252, // 350: octelium.api.main.core.v1.Scope.API.filter:type_name -> octelium.api.main.core.v1.Scope.API.Filter
-	255, // 351: octelium.api.main.core.v1.Policy.Spec.rules:type_name -> octelium.api.main.core.v1.Policy.Spec.Rule
-	256, // 352: octelium.api.main.core.v1.Policy.Spec.enforcementRules:type_name -> octelium.api.main.core.v1.Policy.Spec.EnforcementRule
-	374, // 353: octelium.api.main.core.v1.Policy.Spec.attrs:type_name -> google.protobuf.Struct
-	371, // 354: octelium.api.main.core.v1.Policy.Status.parentPolicyRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	87,  // 355: octelium.api.main.core.v1.Policy.Spec.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
-	22,  // 356: octelium.api.main.core.v1.Policy.Spec.Rule.effect:type_name -> octelium.api.main.core.v1.Policy.Spec.Rule.Effect
-	87,  // 357: octelium.api.main.core.v1.Policy.Spec.EnforcementRule.condition:type_name -> octelium.api.main.core.v1.Condition
-	23,  // 358: octelium.api.main.core.v1.Policy.Spec.EnforcementRule.effect:type_name -> octelium.api.main.core.v1.Policy.Spec.EnforcementRule.Effect
-	259, // 359: octelium.api.main.core.v1.AccessLog.Entry.common:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common
-	258, // 360: octelium.api.main.core.v1.AccessLog.Entry.info:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info
-	261, // 361: octelium.api.main.core.v1.AccessLog.Entry.Info.tcp:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.TCP
-	260, // 362: octelium.api.main.core.v1.AccessLog.Entry.Info.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
-	262, // 363: octelium.api.main.core.v1.AccessLog.Entry.Info.ssh:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH
-	263, // 364: octelium.api.main.core.v1.AccessLog.Entry.Info.udp:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.UDP
-	264, // 365: octelium.api.main.core.v1.AccessLog.Entry.Info.postgres:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres
-	266, // 366: octelium.api.main.core.v1.AccessLog.Entry.Info.kubernetes:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes
-	267, // 367: octelium.api.main.core.v1.AccessLog.Entry.Info.grpc:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC
-	265, // 368: octelium.api.main.core.v1.AccessLog.Entry.Info.mysql:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL
-	268, // 369: octelium.api.main.core.v1.AccessLog.Entry.Info.dns:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.DNS
-	377, // 370: octelium.api.main.core.v1.AccessLog.Entry.Common.startedAt:type_name -> google.protobuf.Timestamp
-	377, // 371: octelium.api.main.core.v1.AccessLog.Entry.Common.endedAt:type_name -> google.protobuf.Timestamp
-	32,  // 372: octelium.api.main.core.v1.AccessLog.Entry.Common.status:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Status
-	1,   // 373: octelium.api.main.core.v1.AccessLog.Entry.Common.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Mode
-	286, // 374: octelium.api.main.core.v1.AccessLog.Entry.Common.reason:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason
-	371, // 375: octelium.api.main.core.v1.AccessLog.Entry.Common.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 376: octelium.api.main.core.v1.AccessLog.Entry.Common.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 377: octelium.api.main.core.v1.AccessLog.Entry.Common.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 378: octelium.api.main.core.v1.AccessLog.Entry.Common.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 379: octelium.api.main.core.v1.AccessLog.Entry.Common.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 380: octelium.api.main.core.v1.AccessLog.Entry.Common.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	269, // 381: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.request:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request
-	270, // 382: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.response:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response
-	24,  // 383: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.httpVersion:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.HTTPVersion
-	25,  // 384: octelium.api.main.core.v1.AccessLog.Entry.Info.TCP.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.TCP.Type
-	26,  // 385: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Type
-	273, // 386: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.start:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Start
-	277, // 387: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.directTCPIPStart:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.DirectTCPIPStart
-	274, // 388: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRecording:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording
-	275, // 389: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRequestExec:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestExec
-	276, // 390: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRequestSubsystem:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestSubsystem
-	28,  // 391: octelium.api.main.core.v1.AccessLog.Entry.Info.UDP.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.UDP.Type
-	29,  // 392: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Type
-	278, // 393: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.start:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Start
-	279, // 394: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.query:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Query
-	280, // 395: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.parse:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Parse
-	30,  // 396: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Type
-	281, // 397: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.query:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Query
-	282, // 398: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.initDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.InitDB
-	283, // 399: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.createDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.CreateDB
-	284, // 400: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.dropDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.DropDB
-	285, // 401: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.prepareStatement:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.PrepareStatement
-	260, // 402: octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
-	260, // 403: octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
-	31,  // 404: octelium.api.main.core.v1.AccessLog.Entry.Info.DNS.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.DNS.Type
-	374, // 405: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.bodyMap:type_name -> google.protobuf.Struct
-	271, // 406: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.headers:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.HeadersEntry
-	374, // 407: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.bodyMap:type_name -> google.protobuf.Struct
-	272, // 408: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.headers:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.HeadersEntry
-	27,  // 409: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording.Type
-	33,  // 410: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Type
-	287, // 411: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.details:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details
-	288, // 412: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.policyMatch:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch
-	289, // 413: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.sessionNotActive:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive
-	291, // 414: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.policy:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy
-	290, // 415: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.inlinePolicy:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy
-	9,   // 416: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive.state:type_name -> octelium.api.main.core.v1.Session.Spec.State
-	371, // 417: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy.resourceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 418: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy.policyRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	298, // 419: octelium.api.main.core.v1.IdentityProvider.Spec.aalRules:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.AALRule
-	299, // 420: octelium.api.main.core.v1.IdentityProvider.Spec.postAuthenticationRules:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule
-	294, // 421: octelium.api.main.core.v1.IdentityProvider.Spec.github:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.Github
-	295, // 422: octelium.api.main.core.v1.IdentityProvider.Spec.oidc:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDC
-	296, // 423: octelium.api.main.core.v1.IdentityProvider.Spec.saml:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.SAML
-	297, // 424: octelium.api.main.core.v1.IdentityProvider.Spec.oidcIdentityToken:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDCIdentityToken
-	36,  // 425: octelium.api.main.core.v1.IdentityProvider.Status.type:type_name -> octelium.api.main.core.v1.IdentityProvider.Status.Type
-	300, // 426: octelium.api.main.core.v1.IdentityProvider.Spec.Github.clientSecret:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.Github.ClientSecret
-	301, // 427: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.clientSecret:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.ClientSecret
-	87,  // 428: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.condition:type_name -> octelium.api.main.core.v1.Condition
-	34,  // 429: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.aal:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.AAL
-	87,  // 430: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.condition:type_name -> octelium.api.main.core.v1.Condition
-	35,  // 431: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.effect:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.Effect
-	304, // 432: octelium.api.main.core.v1.Region.Status.ext:type_name -> octelium.api.main.core.v1.Region.Status.ExtEntry
-	374, // 433: octelium.api.main.core.v1.Region.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	371, // 434: octelium.api.main.core.v1.Gateway.Status.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 435: octelium.api.main.core.v1.Gateway.Status.nodeRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	378, // 436: octelium.api.main.core.v1.Gateway.Status.cidr:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	307, // 437: octelium.api.main.core.v1.Gateway.Status.wireguard:type_name -> octelium.api.main.core.v1.Gateway.Status.WireGuard
-	308, // 438: octelium.api.main.core.v1.Gateway.Status.quicv0:type_name -> octelium.api.main.core.v1.Gateway.Status.QUICV0
-	377, // 439: octelium.api.main.core.v1.Gateway.Status.WireGuard.keyRotatedAt:type_name -> google.protobuf.Timestamp
-	87,  // 440: octelium.api.main.core.v1.Condition.All.of:type_name -> octelium.api.main.core.v1.Condition
-	87,  // 441: octelium.api.main.core.v1.Condition.Any.of:type_name -> octelium.api.main.core.v1.Condition
-	87,  // 442: octelium.api.main.core.v1.Condition.None.of:type_name -> octelium.api.main.core.v1.Condition
-	320, // 443: octelium.api.main.core.v1.ClusterConfig.Spec.authorization:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authorization
-	315, // 444: octelium.api.main.core.v1.ClusterConfig.Spec.ingress:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Ingress
-	316, // 445: octelium.api.main.core.v1.ClusterConfig.Spec.session:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session
-	317, // 446: octelium.api.main.core.v1.ClusterConfig.Spec.device:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device
-	318, // 447: octelium.api.main.core.v1.ClusterConfig.Spec.gateway:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Gateway
-	319, // 448: octelium.api.main.core.v1.ClusterConfig.Spec.dns:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.DNS
-	321, // 449: octelium.api.main.core.v1.ClusterConfig.Spec.authenticator:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator
-	330, // 450: octelium.api.main.core.v1.ClusterConfig.Status.network:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.Network
-	329, // 451: octelium.api.main.core.v1.ClusterConfig.Status.networkConfig:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig
-	331, // 452: octelium.api.main.core.v1.ClusterConfig.Status.secretManager:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.SecretManager
-	322, // 453: octelium.api.main.core.v1.ClusterConfig.Spec.Session.human:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human
-	323, // 454: octelium.api.main.core.v1.ClusterConfig.Spec.Session.workload:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload
-	324, // 455: octelium.api.main.core.v1.ClusterConfig.Spec.Device.human:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human
-	325, // 456: octelium.api.main.core.v1.ClusterConfig.Spec.Device.workload:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload
-	375, // 457: octelium.api.main.core.v1.ClusterConfig.Spec.Gateway.wireguardKeyRotationDuration:type_name -> octelium.api.main.meta.v1.Duration
-	326, // 458: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.fallbackZone:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone
-	46,  // 459: octelium.api.main.core.v1.ClusterConfig.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	327, // 460: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.registrationEnforcementRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
-	327, // 461: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.authenticationEnforcementRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
-	328, // 462: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.postAuthenticationRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule
-	41,  // 463: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.defaultState:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
-	375, // 464: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 465: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 466: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 467: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	9,   // 468: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
-	375, // 469: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 470: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 471: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	375, // 472: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
-	9,   // 473: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
-	20,  // 474: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human.defaultState:type_name -> octelium.api.main.core.v1.Device.Spec.State
-	20,  // 475: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload.defaultState:type_name -> octelium.api.main.core.v1.Device.Spec.State
-	375, // 476: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone.cacheDuration:type_name -> octelium.api.main.meta.v1.Duration
-	87,  // 477: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.condition:type_name -> octelium.api.main.core.v1.Condition
-	37,  // 478: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.effect:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.Effect
-	87,  // 479: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
-	38,  // 480: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.effect:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.Effect
-	39,  // 481: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.mode:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Mode
-	332, // 482: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.v4:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V4
-	333, // 483: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.v6:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V6
-	334, // 484: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.wireguard:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Wireguard
-	335, // 485: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.quicv0:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.QUICV0
-	378, // 486: octelium.api.main.core.v1.ClusterConfig.Status.Network.clusterNetwork:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	378, // 487: octelium.api.main.core.v1.ClusterConfig.Status.Network.wgConnSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	378, // 488: octelium.api.main.core.v1.ClusterConfig.Status.Network.serviceSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	378, // 489: octelium.api.main.core.v1.ClusterConfig.Status.Network.quicConnSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	336, // 490: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.tls:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.TLS
-	338, // 491: octelium.api.main.core.v1.RequestContext.Request.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
-	339, // 492: octelium.api.main.core.v1.RequestContext.Request.ssh:type_name -> octelium.api.main.core.v1.RequestContext.Request.SSH
-	340, // 493: octelium.api.main.core.v1.RequestContext.Request.kubernetes:type_name -> octelium.api.main.core.v1.RequestContext.Request.Kubernetes
-	341, // 494: octelium.api.main.core.v1.RequestContext.Request.grpc:type_name -> octelium.api.main.core.v1.RequestContext.Request.GRPC
-	342, // 495: octelium.api.main.core.v1.RequestContext.Request.postgres:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres
-	343, // 496: octelium.api.main.core.v1.RequestContext.Request.dns:type_name -> octelium.api.main.core.v1.RequestContext.Request.DNS
-	344, // 497: octelium.api.main.core.v1.RequestContext.Request.HTTP.headers:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP.HeadersEntry
-	374, // 498: octelium.api.main.core.v1.RequestContext.Request.HTTP.bodyMap:type_name -> google.protobuf.Struct
-	345, // 499: octelium.api.main.core.v1.RequestContext.Request.HTTP.queryParams:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP.QueryParamsEntry
-	346, // 500: octelium.api.main.core.v1.RequestContext.Request.SSH.connect:type_name -> octelium.api.main.core.v1.RequestContext.Request.SSH.Connect
-	338, // 501: octelium.api.main.core.v1.RequestContext.Request.Kubernetes.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
-	338, // 502: octelium.api.main.core.v1.RequestContext.Request.GRPC.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
-	347, // 503: octelium.api.main.core.v1.RequestContext.Request.Postgres.connect:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Connect
-	348, // 504: octelium.api.main.core.v1.RequestContext.Request.Postgres.query:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Query
-	349, // 505: octelium.api.main.core.v1.RequestContext.Request.Postgres.parse:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Parse
-	371, // 506: octelium.api.main.core.v1.PolicyTrigger.Status.ownerRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	352, // 507: octelium.api.main.core.v1.PolicyTrigger.Status.preCondition:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
-	46,  // 508: octelium.api.main.core.v1.PolicyTrigger.Status.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
-	377, // 509: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.notBefore:type_name -> google.protobuf.Timestamp
-	377, // 510: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.notAfter:type_name -> google.protobuf.Timestamp
-	371, // 511: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 512: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	87,  // 513: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.condition:type_name -> octelium.api.main.core.v1.Condition
-	353, // 514: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.any:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any
-	354, // 515: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.all:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All
-	352, // 516: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any.of:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
-	352, // 517: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All.of:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
-	40,  // 518: octelium.api.main.core.v1.ComponentLog.Entry.level:type_name -> octelium.api.main.core.v1.ComponentLog.Entry.Level
-	356, // 519: octelium.api.main.core.v1.ComponentLog.Entry.component:type_name -> octelium.api.main.core.v1.ComponentLog.Entry.Component
-	374, // 520: octelium.api.main.core.v1.ComponentLog.Entry.fields:type_name -> google.protobuf.Struct
-	377, // 521: octelium.api.main.core.v1.ComponentLog.Entry.time:type_name -> google.protobuf.Timestamp
-	41,  // 522: octelium.api.main.core.v1.Authenticator.Spec.state:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
-	371, // 523: octelium.api.main.core.v1.Authenticator.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	371, // 524: octelium.api.main.core.v1.Authenticator.Status.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	42,  // 525: octelium.api.main.core.v1.Authenticator.Status.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Type
-	360, // 526: octelium.api.main.core.v1.Authenticator.Status.info:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info
-	361, // 527: octelium.api.main.core.v1.Authenticator.Status.authenticationAttempt:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
-	361, // 528: octelium.api.main.core.v1.Authenticator.Status.lastAuthenticationAttempts:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
-	362, // 529: octelium.api.main.core.v1.Authenticator.Status.ext:type_name -> octelium.api.main.core.v1.Authenticator.Status.ExtEntry
-	371, // 530: octelium.api.main.core.v1.Authenticator.Status.EncryptedData.keySecretRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	363, // 531: octelium.api.main.core.v1.Authenticator.Status.Info.fido:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.FIDO
-	364, // 532: octelium.api.main.core.v1.Authenticator.Status.Info.totp:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TOTP
-	365, // 533: octelium.api.main.core.v1.Authenticator.Status.Info.tpm:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TPM
-	377, // 534: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.createdAt:type_name -> google.protobuf.Timestamp
-	359, // 535: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.encryptedChallengeRequest:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
-	367, // 536: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.encryptedDataMap:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry
-	368, // 537: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.dataMap:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.DataMapEntry
-	371, // 538: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
-	374, // 539: octelium.api.main.core.v1.Authenticator.Status.ExtEntry.value:type_name -> google.protobuf.Struct
-	43,  // 540: octelium.api.main.core.v1.Authenticator.Status.Info.FIDO.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.FIDO.Type
-	359, // 541: octelium.api.main.core.v1.Authenticator.Status.Info.TOTP.sharedSecret:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
-	366, // 542: octelium.api.main.core.v1.Authenticator.Status.Info.TPM.attestationParameters:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TPM.AttestationParameters
-	359, // 543: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry.value:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
-	74,  // 544: octelium.api.main.core.v1.MainService.CreatePolicy:input_type -> octelium.api.main.core.v1.Policy
-	76,  // 545: octelium.api.main.core.v1.MainService.ListPolicy:input_type -> octelium.api.main.core.v1.ListPolicyOptions
-	74,  // 546: octelium.api.main.core.v1.MainService.UpdatePolicy:input_type -> octelium.api.main.core.v1.Policy
-	379, // 547: octelium.api.main.core.v1.MainService.DeletePolicy:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 548: octelium.api.main.core.v1.MainService.GetPolicy:input_type -> octelium.api.main.meta.v1.GetOptions
-	47,  // 549: octelium.api.main.core.v1.MainService.CreateUser:input_type -> octelium.api.main.core.v1.User
-	63,  // 550: octelium.api.main.core.v1.MainService.ListUser:input_type -> octelium.api.main.core.v1.ListUserOptions
-	47,  // 551: octelium.api.main.core.v1.MainService.UpdateUser:input_type -> octelium.api.main.core.v1.User
-	379, // 552: octelium.api.main.core.v1.MainService.DeleteUser:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 553: octelium.api.main.core.v1.MainService.GetUser:input_type -> octelium.api.main.meta.v1.GetOptions
-	44,  // 554: octelium.api.main.core.v1.MainService.CreateNamespace:input_type -> octelium.api.main.core.v1.Namespace
-	44,  // 555: octelium.api.main.core.v1.MainService.UpdateNamespace:input_type -> octelium.api.main.core.v1.Namespace
-	64,  // 556: octelium.api.main.core.v1.MainService.ListNamespace:input_type -> octelium.api.main.core.v1.ListNamespaceOptions
-	379, // 557: octelium.api.main.core.v1.MainService.DeleteNamespace:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 558: octelium.api.main.core.v1.MainService.GetNamespace:input_type -> octelium.api.main.meta.v1.GetOptions
-	49,  // 559: octelium.api.main.core.v1.MainService.CreateService:input_type -> octelium.api.main.core.v1.Service
-	65,  // 560: octelium.api.main.core.v1.MainService.ListService:input_type -> octelium.api.main.core.v1.ListServiceOptions
-	49,  // 561: octelium.api.main.core.v1.MainService.UpdateService:input_type -> octelium.api.main.core.v1.Service
-	379, // 562: octelium.api.main.core.v1.MainService.DeleteService:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 563: octelium.api.main.core.v1.MainService.GetService:input_type -> octelium.api.main.meta.v1.GetOptions
-	66,  // 564: octelium.api.main.core.v1.MainService.ListSession:input_type -> octelium.api.main.core.v1.ListSessionOptions
-	379, // 565: octelium.api.main.core.v1.MainService.DeleteSession:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 566: octelium.api.main.core.v1.MainService.GetSession:input_type -> octelium.api.main.meta.v1.GetOptions
-	53,  // 567: octelium.api.main.core.v1.MainService.UpdateSession:input_type -> octelium.api.main.core.v1.Session
-	55,  // 568: octelium.api.main.core.v1.MainService.CreateSecret:input_type -> octelium.api.main.core.v1.Secret
-	67,  // 569: octelium.api.main.core.v1.MainService.ListSecret:input_type -> octelium.api.main.core.v1.ListSecretOptions
-	379, // 570: octelium.api.main.core.v1.MainService.DeleteSecret:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 571: octelium.api.main.core.v1.MainService.GetSecret:input_type -> octelium.api.main.meta.v1.GetOptions
-	55,  // 572: octelium.api.main.core.v1.MainService.UpdateSecret:input_type -> octelium.api.main.core.v1.Secret
-	59,  // 573: octelium.api.main.core.v1.MainService.CreateGroup:input_type -> octelium.api.main.core.v1.Group
-	69,  // 574: octelium.api.main.core.v1.MainService.ListGroup:input_type -> octelium.api.main.core.v1.ListGroupOptions
-	59,  // 575: octelium.api.main.core.v1.MainService.UpdateGroup:input_type -> octelium.api.main.core.v1.Group
-	379, // 576: octelium.api.main.core.v1.MainService.DeleteGroup:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 577: octelium.api.main.core.v1.MainService.GetGroup:input_type -> octelium.api.main.meta.v1.GetOptions
-	70,  // 578: octelium.api.main.core.v1.MainService.ListDevice:input_type -> octelium.api.main.core.v1.ListDeviceOptions
-	379, // 579: octelium.api.main.core.v1.MainService.DeleteDevice:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 580: octelium.api.main.core.v1.MainService.GetDevice:input_type -> octelium.api.main.meta.v1.GetOptions
-	61,  // 581: octelium.api.main.core.v1.MainService.UpdateDevice:input_type -> octelium.api.main.core.v1.Device
-	57,  // 582: octelium.api.main.core.v1.MainService.CreateCredential:input_type -> octelium.api.main.core.v1.Credential
-	57,  // 583: octelium.api.main.core.v1.MainService.UpdateCredential:input_type -> octelium.api.main.core.v1.Credential
-	379, // 584: octelium.api.main.core.v1.MainService.DeleteCredential:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	68,  // 585: octelium.api.main.core.v1.MainService.ListCredential:input_type -> octelium.api.main.core.v1.ListCredentialOptions
-	380, // 586: octelium.api.main.core.v1.MainService.GetCredential:input_type -> octelium.api.main.meta.v1.GetOptions
-	51,  // 587: octelium.api.main.core.v1.MainService.GenerateCredentialToken:input_type -> octelium.api.main.core.v1.GenerateCredentialTokenRequest
-	79,  // 588: octelium.api.main.core.v1.MainService.CreateIdentityProvider:input_type -> octelium.api.main.core.v1.IdentityProvider
-	380, // 589: octelium.api.main.core.v1.MainService.GetIdentityProvider:input_type -> octelium.api.main.meta.v1.GetOptions
-	78,  // 590: octelium.api.main.core.v1.MainService.ListIdentityProvider:input_type -> octelium.api.main.core.v1.ListIdentityProviderOptions
-	79,  // 591: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:input_type -> octelium.api.main.core.v1.IdentityProvider
-	379, // 592: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 593: octelium.api.main.core.v1.MainService.GetRegion:input_type -> octelium.api.main.meta.v1.GetOptions
-	86,  // 594: octelium.api.main.core.v1.MainService.ListRegion:input_type -> octelium.api.main.core.v1.ListRegionOptions
-	85,  // 595: octelium.api.main.core.v1.MainService.ListGateway:input_type -> octelium.api.main.core.v1.ListGatewayOptions
-	380, // 596: octelium.api.main.core.v1.MainService.GetGateway:input_type -> octelium.api.main.meta.v1.GetOptions
-	88,  // 597: octelium.api.main.core.v1.MainService.GetClusterConfig:input_type -> octelium.api.main.core.v1.GetClusterConfigRequest
-	89,  // 598: octelium.api.main.core.v1.MainService.UpdateClusterConfig:input_type -> octelium.api.main.core.v1.ClusterConfig
-	96,  // 599: octelium.api.main.core.v1.MainService.ListAuthenticator:input_type -> octelium.api.main.core.v1.ListAuthenticatorOptions
-	379, // 600: octelium.api.main.core.v1.MainService.DeleteAuthenticator:input_type -> octelium.api.main.meta.v1.DeleteOptions
-	380, // 601: octelium.api.main.core.v1.MainService.GetAuthenticator:input_type -> octelium.api.main.meta.v1.GetOptions
-	94,  // 602: octelium.api.main.core.v1.MainService.UpdateAuthenticator:input_type -> octelium.api.main.core.v1.Authenticator
-	74,  // 603: octelium.api.main.core.v1.MainService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	75,  // 604: octelium.api.main.core.v1.MainService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
-	74,  // 605: octelium.api.main.core.v1.MainService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
-	381, // 606: octelium.api.main.core.v1.MainService.DeletePolicy:output_type -> octelium.api.main.meta.v1.OperationResult
-	74,  // 607: octelium.api.main.core.v1.MainService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
-	47,  // 608: octelium.api.main.core.v1.MainService.CreateUser:output_type -> octelium.api.main.core.v1.User
-	48,  // 609: octelium.api.main.core.v1.MainService.ListUser:output_type -> octelium.api.main.core.v1.UserList
-	47,  // 610: octelium.api.main.core.v1.MainService.UpdateUser:output_type -> octelium.api.main.core.v1.User
-	381, // 611: octelium.api.main.core.v1.MainService.DeleteUser:output_type -> octelium.api.main.meta.v1.OperationResult
-	47,  // 612: octelium.api.main.core.v1.MainService.GetUser:output_type -> octelium.api.main.core.v1.User
-	44,  // 613: octelium.api.main.core.v1.MainService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	44,  // 614: octelium.api.main.core.v1.MainService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	45,  // 615: octelium.api.main.core.v1.MainService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
-	381, // 616: octelium.api.main.core.v1.MainService.DeleteNamespace:output_type -> octelium.api.main.meta.v1.OperationResult
-	44,  // 617: octelium.api.main.core.v1.MainService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
-	49,  // 618: octelium.api.main.core.v1.MainService.CreateService:output_type -> octelium.api.main.core.v1.Service
-	50,  // 619: octelium.api.main.core.v1.MainService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
-	49,  // 620: octelium.api.main.core.v1.MainService.UpdateService:output_type -> octelium.api.main.core.v1.Service
-	381, // 621: octelium.api.main.core.v1.MainService.DeleteService:output_type -> octelium.api.main.meta.v1.OperationResult
-	49,  // 622: octelium.api.main.core.v1.MainService.GetService:output_type -> octelium.api.main.core.v1.Service
-	54,  // 623: octelium.api.main.core.v1.MainService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
-	381, // 624: octelium.api.main.core.v1.MainService.DeleteSession:output_type -> octelium.api.main.meta.v1.OperationResult
-	53,  // 625: octelium.api.main.core.v1.MainService.GetSession:output_type -> octelium.api.main.core.v1.Session
-	53,  // 626: octelium.api.main.core.v1.MainService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
-	55,  // 627: octelium.api.main.core.v1.MainService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
-	56,  // 628: octelium.api.main.core.v1.MainService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
-	381, // 629: octelium.api.main.core.v1.MainService.DeleteSecret:output_type -> octelium.api.main.meta.v1.OperationResult
-	55,  // 630: octelium.api.main.core.v1.MainService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
-	55,  // 631: octelium.api.main.core.v1.MainService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
-	59,  // 632: octelium.api.main.core.v1.MainService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
-	60,  // 633: octelium.api.main.core.v1.MainService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
-	59,  // 634: octelium.api.main.core.v1.MainService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
-	381, // 635: octelium.api.main.core.v1.MainService.DeleteGroup:output_type -> octelium.api.main.meta.v1.OperationResult
-	59,  // 636: octelium.api.main.core.v1.MainService.GetGroup:output_type -> octelium.api.main.core.v1.Group
-	62,  // 637: octelium.api.main.core.v1.MainService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
-	381, // 638: octelium.api.main.core.v1.MainService.DeleteDevice:output_type -> octelium.api.main.meta.v1.OperationResult
-	61,  // 639: octelium.api.main.core.v1.MainService.GetDevice:output_type -> octelium.api.main.core.v1.Device
-	61,  // 640: octelium.api.main.core.v1.MainService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
-	57,  // 641: octelium.api.main.core.v1.MainService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
-	57,  // 642: octelium.api.main.core.v1.MainService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
-	381, // 643: octelium.api.main.core.v1.MainService.DeleteCredential:output_type -> octelium.api.main.meta.v1.OperationResult
-	58,  // 644: octelium.api.main.core.v1.MainService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
-	57,  // 645: octelium.api.main.core.v1.MainService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
-	52,  // 646: octelium.api.main.core.v1.MainService.GenerateCredentialToken:output_type -> octelium.api.main.core.v1.CredentialToken
-	79,  // 647: octelium.api.main.core.v1.MainService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	79,  // 648: octelium.api.main.core.v1.MainService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	80,  // 649: octelium.api.main.core.v1.MainService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
-	79,  // 650: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
-	381, // 651: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:output_type -> octelium.api.main.meta.v1.OperationResult
-	81,  // 652: octelium.api.main.core.v1.MainService.GetRegion:output_type -> octelium.api.main.core.v1.Region
-	82,  // 653: octelium.api.main.core.v1.MainService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
-	84,  // 654: octelium.api.main.core.v1.MainService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
-	83,  // 655: octelium.api.main.core.v1.MainService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
-	89,  // 656: octelium.api.main.core.v1.MainService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	89,  // 657: octelium.api.main.core.v1.MainService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
-	95,  // 658: octelium.api.main.core.v1.MainService.ListAuthenticator:output_type -> octelium.api.main.core.v1.AuthenticatorList
-	381, // 659: octelium.api.main.core.v1.MainService.DeleteAuthenticator:output_type -> octelium.api.main.meta.v1.OperationResult
-	94,  // 660: octelium.api.main.core.v1.MainService.GetAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
-	94,  // 661: octelium.api.main.core.v1.MainService.UpdateAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
-	603, // [603:662] is the sub-list for method output_type
-	544, // [544:603] is the sub-list for method input_type
-	544, // [544:544] is the sub-list for extension type_name
-	544, // [544:544] is the sub-list for extension extendee
-	0,   // [0:544] is the sub-list for field type_name
+	378, // 0: octelium.api.main.core.v1.Namespace.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	99,  // 1: octelium.api.main.core.v1.Namespace.spec:type_name -> octelium.api.main.core.v1.Namespace.Spec
+	100, // 2: octelium.api.main.core.v1.Namespace.status:type_name -> octelium.api.main.core.v1.Namespace.Status
+	45,  // 3: octelium.api.main.core.v1.NamespaceList.items:type_name -> octelium.api.main.core.v1.Namespace
+	379, // 4: octelium.api.main.core.v1.NamespaceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	255, // 5: octelium.api.main.core.v1.InlinePolicy.spec:type_name -> octelium.api.main.core.v1.Policy.Spec
+	378, // 6: octelium.api.main.core.v1.User.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	102, // 7: octelium.api.main.core.v1.User.spec:type_name -> octelium.api.main.core.v1.User.Spec
+	103, // 8: octelium.api.main.core.v1.User.status:type_name -> octelium.api.main.core.v1.User.Status
+	48,  // 9: octelium.api.main.core.v1.UserList.items:type_name -> octelium.api.main.core.v1.User
+	379, // 10: octelium.api.main.core.v1.UserList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 11: octelium.api.main.core.v1.Service.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	110, // 12: octelium.api.main.core.v1.Service.spec:type_name -> octelium.api.main.core.v1.Service.Spec
+	111, // 13: octelium.api.main.core.v1.Service.status:type_name -> octelium.api.main.core.v1.Service.Status
+	50,  // 14: octelium.api.main.core.v1.ServiceList.items:type_name -> octelium.api.main.core.v1.Service
+	379, // 15: octelium.api.main.core.v1.ServiceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	380, // 16: octelium.api.main.core.v1.GenerateCredentialTokenRequest.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	205, // 17: octelium.api.main.core.v1.CredentialToken.authenticationToken:type_name -> octelium.api.main.core.v1.CredentialToken.AuthenticationToken
+	206, // 18: octelium.api.main.core.v1.CredentialToken.oauth2Credentials:type_name -> octelium.api.main.core.v1.CredentialToken.OAuth2Credentials
+	207, // 19: octelium.api.main.core.v1.CredentialToken.accessToken:type_name -> octelium.api.main.core.v1.CredentialToken.AccessToken
+	378, // 20: octelium.api.main.core.v1.Session.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	208, // 21: octelium.api.main.core.v1.Session.spec:type_name -> octelium.api.main.core.v1.Session.Spec
+	209, // 22: octelium.api.main.core.v1.Session.status:type_name -> octelium.api.main.core.v1.Session.Status
+	54,  // 23: octelium.api.main.core.v1.SessionList.items:type_name -> octelium.api.main.core.v1.Session
+	379, // 24: octelium.api.main.core.v1.SessionList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 25: octelium.api.main.core.v1.Secret.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	228, // 26: octelium.api.main.core.v1.Secret.spec:type_name -> octelium.api.main.core.v1.Secret.Spec
+	229, // 27: octelium.api.main.core.v1.Secret.status:type_name -> octelium.api.main.core.v1.Secret.Status
+	230, // 28: octelium.api.main.core.v1.Secret.data:type_name -> octelium.api.main.core.v1.Secret.Data
+	56,  // 29: octelium.api.main.core.v1.SecretList.items:type_name -> octelium.api.main.core.v1.Secret
+	379, // 30: octelium.api.main.core.v1.SecretList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 31: octelium.api.main.core.v1.Credential.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	233, // 32: octelium.api.main.core.v1.Credential.spec:type_name -> octelium.api.main.core.v1.Credential.Spec
+	234, // 33: octelium.api.main.core.v1.Credential.status:type_name -> octelium.api.main.core.v1.Credential.Status
+	58,  // 34: octelium.api.main.core.v1.CredentialList.items:type_name -> octelium.api.main.core.v1.Credential
+	379, // 35: octelium.api.main.core.v1.CredentialList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 36: octelium.api.main.core.v1.Group.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	236, // 37: octelium.api.main.core.v1.Group.spec:type_name -> octelium.api.main.core.v1.Group.Spec
+	237, // 38: octelium.api.main.core.v1.Group.status:type_name -> octelium.api.main.core.v1.Group.Status
+	60,  // 39: octelium.api.main.core.v1.GroupList.items:type_name -> octelium.api.main.core.v1.Group
+	379, // 40: octelium.api.main.core.v1.GroupList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 41: octelium.api.main.core.v1.Device.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	240, // 42: octelium.api.main.core.v1.Device.spec:type_name -> octelium.api.main.core.v1.Device.Spec
+	241, // 43: octelium.api.main.core.v1.Device.status:type_name -> octelium.api.main.core.v1.Device.Status
+	62,  // 44: octelium.api.main.core.v1.DeviceList.items:type_name -> octelium.api.main.core.v1.Device
+	379, // 45: octelium.api.main.core.v1.DeviceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	381, // 46: octelium.api.main.core.v1.ListUserOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	381, // 47: octelium.api.main.core.v1.ListNamespaceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	381, // 48: octelium.api.main.core.v1.ListServiceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 49: octelium.api.main.core.v1.ListServiceOptions.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 50: octelium.api.main.core.v1.ListServiceOptions.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	381, // 51: octelium.api.main.core.v1.ListSessionOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 52: octelium.api.main.core.v1.ListSessionOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	381, // 53: octelium.api.main.core.v1.ListSecretOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	381, // 54: octelium.api.main.core.v1.ListCredentialOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 55: octelium.api.main.core.v1.ListCredentialOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	381, // 56: octelium.api.main.core.v1.ListGroupOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	381, // 57: octelium.api.main.core.v1.ListDeviceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 58: octelium.api.main.core.v1.ListDeviceOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	378, // 59: octelium.api.main.core.v1.Config.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	244, // 60: octelium.api.main.core.v1.Config.spec:type_name -> octelium.api.main.core.v1.Config.Spec
+	245, // 61: octelium.api.main.core.v1.Config.status:type_name -> octelium.api.main.core.v1.Config.Status
+	246, // 62: octelium.api.main.core.v1.Config.data:type_name -> octelium.api.main.core.v1.Config.Data
+	72,  // 63: octelium.api.main.core.v1.ConfigList.items:type_name -> octelium.api.main.core.v1.Config
+	379, // 64: octelium.api.main.core.v1.ConfigList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	249, // 65: octelium.api.main.core.v1.Scope.service:type_name -> octelium.api.main.core.v1.Scope.Service
+	250, // 66: octelium.api.main.core.v1.Scope.api:type_name -> octelium.api.main.core.v1.Scope.API
+	378, // 67: octelium.api.main.core.v1.Policy.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	255, // 68: octelium.api.main.core.v1.Policy.spec:type_name -> octelium.api.main.core.v1.Policy.Spec
+	256, // 69: octelium.api.main.core.v1.Policy.status:type_name -> octelium.api.main.core.v1.Policy.Status
+	75,  // 70: octelium.api.main.core.v1.PolicyList.items:type_name -> octelium.api.main.core.v1.Policy
+	379, // 71: octelium.api.main.core.v1.PolicyList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	381, // 72: octelium.api.main.core.v1.ListPolicyOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	382, // 73: octelium.api.main.core.v1.AccessLog.metadata:type_name -> octelium.api.main.meta.v1.LogMetadata
+	259, // 74: octelium.api.main.core.v1.AccessLog.entry:type_name -> octelium.api.main.core.v1.AccessLog.Entry
+	381, // 75: octelium.api.main.core.v1.ListIdentityProviderOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	378, // 76: octelium.api.main.core.v1.IdentityProvider.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	294, // 77: octelium.api.main.core.v1.IdentityProvider.spec:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec
+	295, // 78: octelium.api.main.core.v1.IdentityProvider.status:type_name -> octelium.api.main.core.v1.IdentityProvider.Status
+	80,  // 79: octelium.api.main.core.v1.IdentityProviderList.items:type_name -> octelium.api.main.core.v1.IdentityProvider
+	379, // 80: octelium.api.main.core.v1.IdentityProviderList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 81: octelium.api.main.core.v1.Region.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	304, // 82: octelium.api.main.core.v1.Region.spec:type_name -> octelium.api.main.core.v1.Region.Spec
+	305, // 83: octelium.api.main.core.v1.Region.status:type_name -> octelium.api.main.core.v1.Region.Status
+	82,  // 84: octelium.api.main.core.v1.RegionList.items:type_name -> octelium.api.main.core.v1.Region
+	379, // 85: octelium.api.main.core.v1.RegionList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	378, // 86: octelium.api.main.core.v1.Gateway.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	307, // 87: octelium.api.main.core.v1.Gateway.spec:type_name -> octelium.api.main.core.v1.Gateway.Spec
+	308, // 88: octelium.api.main.core.v1.Gateway.status:type_name -> octelium.api.main.core.v1.Gateway.Status
+	84,  // 89: octelium.api.main.core.v1.GatewayList.items:type_name -> octelium.api.main.core.v1.Gateway
+	379, // 90: octelium.api.main.core.v1.GatewayList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	381, // 91: octelium.api.main.core.v1.ListGatewayOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 92: octelium.api.main.core.v1.ListGatewayOptions.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	381, // 93: octelium.api.main.core.v1.ListRegionOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	311, // 94: octelium.api.main.core.v1.Condition.all:type_name -> octelium.api.main.core.v1.Condition.All
+	312, // 95: octelium.api.main.core.v1.Condition.any:type_name -> octelium.api.main.core.v1.Condition.Any
+	313, // 96: octelium.api.main.core.v1.Condition.none:type_name -> octelium.api.main.core.v1.Condition.None
+	314, // 97: octelium.api.main.core.v1.Condition.opa:type_name -> octelium.api.main.core.v1.Condition.OPA
+	378, // 98: octelium.api.main.core.v1.ClusterConfig.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	315, // 99: octelium.api.main.core.v1.ClusterConfig.spec:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec
+	316, // 100: octelium.api.main.core.v1.ClusterConfig.status:type_name -> octelium.api.main.core.v1.ClusterConfig.Status
+	339, // 101: octelium.api.main.core.v1.RequestContext.request:type_name -> octelium.api.main.core.v1.RequestContext.Request
+	54,  // 102: octelium.api.main.core.v1.RequestContext.session:type_name -> octelium.api.main.core.v1.Session
+	48,  // 103: octelium.api.main.core.v1.RequestContext.user:type_name -> octelium.api.main.core.v1.User
+	60,  // 104: octelium.api.main.core.v1.RequestContext.groups:type_name -> octelium.api.main.core.v1.Group
+	62,  // 105: octelium.api.main.core.v1.RequestContext.device:type_name -> octelium.api.main.core.v1.Device
+	50,  // 106: octelium.api.main.core.v1.RequestContext.service:type_name -> octelium.api.main.core.v1.Service
+	45,  // 107: octelium.api.main.core.v1.RequestContext.namespace:type_name -> octelium.api.main.core.v1.Namespace
+	378, // 108: octelium.api.main.core.v1.PolicyTrigger.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	352, // 109: octelium.api.main.core.v1.PolicyTrigger.spec:type_name -> octelium.api.main.core.v1.PolicyTrigger.Spec
+	353, // 110: octelium.api.main.core.v1.PolicyTrigger.status:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status
+	92,  // 111: octelium.api.main.core.v1.PolicyTriggerList.items:type_name -> octelium.api.main.core.v1.PolicyTrigger
+	379, // 112: octelium.api.main.core.v1.PolicyTriggerList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	382, // 113: octelium.api.main.core.v1.ComponentLog.metadata:type_name -> octelium.api.main.meta.v1.LogMetadata
+	357, // 114: octelium.api.main.core.v1.ComponentLog.entry:type_name -> octelium.api.main.core.v1.ComponentLog.Entry
+	378, // 115: octelium.api.main.core.v1.Authenticator.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	359, // 116: octelium.api.main.core.v1.Authenticator.spec:type_name -> octelium.api.main.core.v1.Authenticator.Spec
+	360, // 117: octelium.api.main.core.v1.Authenticator.status:type_name -> octelium.api.main.core.v1.Authenticator.Status
+	95,  // 118: octelium.api.main.core.v1.AuthenticatorList.items:type_name -> octelium.api.main.core.v1.Authenticator
+	379, // 119: octelium.api.main.core.v1.AuthenticatorList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	381, // 120: octelium.api.main.core.v1.ListAuthenticatorOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	380, // 121: octelium.api.main.core.v1.ListAuthenticatorOptions.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	44,  // 122: octelium.api.main.core.v1.GeoIP.ipVersion:type_name -> octelium.api.main.core.v1.GeoIP.IPVersion
+	371, // 123: octelium.api.main.core.v1.GeoIP.country:type_name -> octelium.api.main.core.v1.GeoIP.Country
+	373, // 124: octelium.api.main.core.v1.GeoIP.region:type_name -> octelium.api.main.core.v1.GeoIP.Region
+	374, // 125: octelium.api.main.core.v1.GeoIP.city:type_name -> octelium.api.main.core.v1.GeoIP.City
+	372, // 126: octelium.api.main.core.v1.GeoIP.continent:type_name -> octelium.api.main.core.v1.GeoIP.Continent
+	376, // 127: octelium.api.main.core.v1.GeoIP.network:type_name -> octelium.api.main.core.v1.GeoIP.Network
+	377, // 128: octelium.api.main.core.v1.GeoIP.timezone:type_name -> octelium.api.main.core.v1.GeoIP.Timezone
+	101, // 129: octelium.api.main.core.v1.Namespace.Spec.authorization:type_name -> octelium.api.main.core.v1.Namespace.Spec.Authorization
+	383, // 130: octelium.api.main.core.v1.Namespace.Spec.attrs:type_name -> google.protobuf.Struct
+	47,  // 131: octelium.api.main.core.v1.Namespace.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	0,   // 132: octelium.api.main.core.v1.User.Spec.type:type_name -> octelium.api.main.core.v1.User.Spec.Type
+	107, // 133: octelium.api.main.core.v1.User.Spec.info:type_name -> octelium.api.main.core.v1.User.Spec.Info
+	106, // 134: octelium.api.main.core.v1.User.Spec.session:type_name -> octelium.api.main.core.v1.User.Spec.Session
+	104, // 135: octelium.api.main.core.v1.User.Spec.authorization:type_name -> octelium.api.main.core.v1.User.Spec.Authorization
+	383, // 136: octelium.api.main.core.v1.User.Spec.attrs:type_name -> google.protobuf.Struct
+	105, // 137: octelium.api.main.core.v1.User.Spec.authentication:type_name -> octelium.api.main.core.v1.User.Spec.Authentication
+	109, // 138: octelium.api.main.core.v1.User.Status.ext:type_name -> octelium.api.main.core.v1.User.Status.ExtEntry
+	380, // 139: octelium.api.main.core.v1.User.Status.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	47,  // 140: octelium.api.main.core.v1.User.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	108, // 141: octelium.api.main.core.v1.User.Spec.Authentication.identities:type_name -> octelium.api.main.core.v1.User.Spec.Authentication.Identity
+	41,  // 142: octelium.api.main.core.v1.User.Spec.Authentication.authenticatorDefaultState:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
+	384, // 143: octelium.api.main.core.v1.User.Spec.Session.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 144: octelium.api.main.core.v1.User.Spec.Session.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 145: octelium.api.main.core.v1.User.Spec.Session.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 146: octelium.api.main.core.v1.User.Spec.Session.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	9,   // 147: octelium.api.main.core.v1.User.Spec.Session.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
+	383, // 148: octelium.api.main.core.v1.User.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	1,   // 149: octelium.api.main.core.v1.Service.Spec.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Mode
+	112, // 150: octelium.api.main.core.v1.Service.Spec.authorization:type_name -> octelium.api.main.core.v1.Service.Spec.Authorization
+	113, // 151: octelium.api.main.core.v1.Service.Spec.config:type_name -> octelium.api.main.core.v1.Service.Spec.Config
+	115, // 152: octelium.api.main.core.v1.Service.Spec.dynamicConfig:type_name -> octelium.api.main.core.v1.Service.Spec.DynamicConfig
+	114, // 153: octelium.api.main.core.v1.Service.Spec.deployment:type_name -> octelium.api.main.core.v1.Service.Spec.Deployment
+	383, // 154: octelium.api.main.core.v1.Service.Spec.attrs:type_name -> google.protobuf.Struct
+	197, // 155: octelium.api.main.core.v1.Service.Status.addresses:type_name -> octelium.api.main.core.v1.Service.Status.Address
+	380, // 156: octelium.api.main.core.v1.Service.Status.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	198, // 157: octelium.api.main.core.v1.Service.Status.managedService:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService
+	380, // 158: octelium.api.main.core.v1.Service.Status.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	47,  // 159: octelium.api.main.core.v1.Service.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	120, // 160: octelium.api.main.core.v1.Service.Spec.Config.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
+	123, // 161: octelium.api.main.core.v1.Service.Spec.Config.upstream:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream
+	121, // 162: octelium.api.main.core.v1.Service.Spec.Config.tls:type_name -> octelium.api.main.core.v1.Service.Spec.Config.TLS
+	116, // 163: octelium.api.main.core.v1.Service.Spec.Config.http:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP
+	117, // 164: octelium.api.main.core.v1.Service.Spec.Config.ssh:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH
+	118, // 165: octelium.api.main.core.v1.Service.Spec.Config.postgres:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres
+	119, // 166: octelium.api.main.core.v1.Service.Spec.Config.mysql:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL
+	122, // 167: octelium.api.main.core.v1.Service.Spec.Config.kubernetes:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes
+	113, // 168: octelium.api.main.core.v1.Service.Spec.DynamicConfig.configs:type_name -> octelium.api.main.core.v1.Service.Spec.Config
+	196, // 169: octelium.api.main.core.v1.Service.Spec.DynamicConfig.rules:type_name -> octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule
+	125, // 170: octelium.api.main.core.v1.Service.Spec.Config.HTTP.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth
+	128, // 171: octelium.api.main.core.v1.Service.Spec.Config.HTTP.header:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header
+	126, // 172: octelium.api.main.core.v1.Service.Spec.Config.HTTP.path:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Path
+	124, // 173: octelium.api.main.core.v1.Service.Spec.Config.HTTP.cors:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.CORS
+	127, // 174: octelium.api.main.core.v1.Service.Spec.Config.HTTP.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body
+	129, // 175: octelium.api.main.core.v1.Service.Spec.Config.HTTP.response:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response
+	131, // 176: octelium.api.main.core.v1.Service.Spec.Config.HTTP.plugins:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin
+	132, // 177: octelium.api.main.core.v1.Service.Spec.Config.HTTP.visibility:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Visibility
+	130, // 178: octelium.api.main.core.v1.Service.Spec.Config.HTTP.retry:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry
+	163, // 179: octelium.api.main.core.v1.Service.Spec.Config.SSH.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth
+	164, // 180: octelium.api.main.core.v1.Service.Spec.Config.SSH.upstreamHostKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.UpstreamHostKey
+	165, // 181: octelium.api.main.core.v1.Service.Spec.Config.SSH.visibility:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Visibility
+	168, // 182: octelium.api.main.core.v1.Service.Spec.Config.Postgres.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth
+	7,   // 183: octelium.api.main.core.v1.Service.Spec.Config.Postgres.sslMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.SSLMode
+	169, // 184: octelium.api.main.core.v1.Service.Spec.Config.Postgres.authorization:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization
+	171, // 185: octelium.api.main.core.v1.Service.Spec.Config.MySQL.auth:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth
+	173, // 186: octelium.api.main.core.v1.Service.Spec.Config.TLS.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.TLS.ClientCertificate
+	175, // 187: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.kubeconfig:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.Kubeconfig
+	174, // 188: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.bearerToken:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.BearerToken
+	120, // 189: octelium.api.main.core.v1.Service.Spec.Config.Kubernetes.clientCertificate:type_name -> octelium.api.main.core.v1.Service.Spec.Config.ClientCertificate
+	176, // 190: octelium.api.main.core.v1.Service.Spec.Config.Upstream.loadbalance:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance
+	177, // 191: octelium.api.main.core.v1.Service.Spec.Config.Upstream.container:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container
+	133, // 192: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.bearer:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Bearer
+	134, // 193: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.basic:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic
+	135, // 194: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.custom:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom
+	136, // 195: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.oauth2ClientCredentials:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials
+	137, // 196: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.sigv4:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4
+	2,   // 197: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Mode
+	142, // 198: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.validation:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation
+	144, // 199: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.addRequestHeaders:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
+	144, // 200: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.addResponseHeaders:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.KeyValue
+	3,   // 201: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.forwardedMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Header.ForwardedMode
+	145, // 202: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.direct:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Response.Direct
+	384, // 203: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.initialInterval:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 204: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.maxInterval:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 205: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Retry.maxElapsedTime:type_name -> octelium.api.main.meta.v1.Duration
+	4,   // 206: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.phase:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Phase
+	88,  // 207: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.condition:type_name -> octelium.api.main.core.v1.Condition
+	146, // 208: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.extProc:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc
+	147, // 209: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.lua:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Lua
+	148, // 210: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.direct:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct
+	149, // 211: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.rateLimit:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit
+	150, // 212: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.cache:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache
+	151, // 213: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.jsonSchema:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema
+	152, // 214: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.path:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Path
+	138, // 215: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Basic.Password
+	139, // 216: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.value:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Custom.Value
+	140, // 217: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.clientSecret:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.OAuth2ClientCredentials.ClientSecret
+	141, // 218: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.secretAccessKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Auth.Sigv4.SecretAccessKey
+	143, // 219: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.jsonSchema:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Body.Validation.JSONSchema
+	153, // 220: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.container:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.Container
+	154, // 221: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.processingMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode
+	384, // 222: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.messageTimeout:type_name -> octelium.api.main.meta.v1.Duration
+	155, // 223: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.Body
+	156, // 224: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Direct.HeadersEntry
+	157, // 225: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Body
+	158, // 226: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.key:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.Key
+	384, // 227: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.window:type_name -> octelium.api.main.meta.v1.Duration
+	159, // 228: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.RateLimit.HeadersEntry
+	160, // 229: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.key:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.Key
+	384, // 230: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.Cache.ttl:type_name -> octelium.api.main.meta.v1.Duration
+	161, // 231: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.body:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.Body
+	162, // 232: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.headers:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.JSONSchema.HeadersEntry
+	5,   // 233: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.requestHeaderMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.HeaderSendMode
+	5,   // 234: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.responseHeaderMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.HeaderSendMode
+	6,   // 235: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.requestBodyMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.BodySendMode
+	6,   // 236: octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.responseBodyMode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.HTTP.Plugin.ExtProc.ProcessingMode.BodySendMode
+	166, // 237: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.Password
+	167, // 238: octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.privateKey:type_name -> octelium.api.main.core.v1.Service.Spec.Config.SSH.Auth.PrivateKey
+	170, // 239: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Auth.Password
+	8,   // 240: octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Postgres.Authorization.Mode
+	172, // 241: octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.MySQL.Auth.Password
+	178, // 242: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.endpoints:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Loadbalance.Endpoint
+	179, // 243: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.env:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env
+	180, // 244: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.credentials:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials
+	181, // 245: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.resourceLimit:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit
+	182, // 246: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.securityContext:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.SecurityContext
+	183, // 247: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.volumes:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume
+	184, // 248: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.volumeMounts:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.VolumeMount
+	185, // 249: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.livenessProbe:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
+	185, // 250: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.readinessProbe:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe
+	186, // 251: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.kubernetesSecretRef:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Env.KubernetesSecretRef
+	187, // 252: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.usernamePassword:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword
+	189, // 253: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.cpu:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.CPU
+	190, // 254: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.memory:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.Memory
+	191, // 255: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ext:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.ResourceLimit.ExtEntry
+	192, // 256: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.persistentVolumeClaim:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Volume.PersistentVolumeClaim
+	193, // 257: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.httpGet:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.HTTPGet
+	194, // 258: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.tcpSocket:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.TCPSocket
+	195, // 259: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.grpc:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Probe.GRPC
+	188, // 260: octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.password:type_name -> octelium.api.main.core.v1.Service.Spec.Config.Upstream.Container.Credentials.UsernamePassword.Password
+	88,  // 261: octelium.api.main.core.v1.Service.Spec.DynamicConfig.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
+	385, // 262: octelium.api.main.core.v1.Service.Status.Address.dualStackIP:type_name -> octelium.api.main.meta.v1.DualStackIP
+	380, // 263: octelium.api.main.core.v1.Service.Status.Address.podRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	201, // 264: octelium.api.main.core.v1.Service.Status.ManagedService.k8sLabels:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.K8sLabelsEntry
+	199, // 265: octelium.api.main.core.v1.Service.Status.ManagedService.healthCheck:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck
+	200, // 266: octelium.api.main.core.v1.Service.Status.ManagedService.resourceLimit:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit
+	202, // 267: octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.grpc:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.HealthCheck.GRPC
+	203, // 268: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.cpu:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.CPU
+	204, // 269: octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.memory:type_name -> octelium.api.main.core.v1.Service.Status.ManagedService.ResourceLimit.Memory
+	386, // 270: octelium.api.main.core.v1.Session.Spec.expiresAt:type_name -> google.protobuf.Timestamp
+	9,   // 271: octelium.api.main.core.v1.Session.Spec.state:type_name -> octelium.api.main.core.v1.Session.Spec.State
+	210, // 272: octelium.api.main.core.v1.Session.Spec.authorization:type_name -> octelium.api.main.core.v1.Session.Spec.Authorization
+	380, // 273: octelium.api.main.core.v1.Session.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 274: octelium.api.main.core.v1.Session.Status.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	10,  // 275: octelium.api.main.core.v1.Session.Status.type:type_name -> octelium.api.main.core.v1.Session.Status.Type
+	212, // 276: octelium.api.main.core.v1.Session.Status.authentication:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
+	212, // 277: octelium.api.main.core.v1.Session.Status.lastAuthentications:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
+	212, // 278: octelium.api.main.core.v1.Session.Status.initialAuthentication:type_name -> octelium.api.main.core.v1.Session.Status.Authentication
+	211, // 279: octelium.api.main.core.v1.Session.Status.connection:type_name -> octelium.api.main.core.v1.Session.Status.Connection
+	380, // 280: octelium.api.main.core.v1.Session.Status.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	214, // 281: octelium.api.main.core.v1.Session.Status.ext:type_name -> octelium.api.main.core.v1.Session.Status.ExtEntry
+	74,  // 282: octelium.api.main.core.v1.Session.Status.scopes:type_name -> octelium.api.main.core.v1.Scope
+	213, // 283: octelium.api.main.core.v1.Session.Status.lastConnections:type_name -> octelium.api.main.core.v1.Session.Status.LastConnection
+	11,  // 284: octelium.api.main.core.v1.Session.Status.authenticatorAction:type_name -> octelium.api.main.core.v1.Session.Status.AuthenticatorAction
+	380, // 285: octelium.api.main.core.v1.Session.Status.requiredAuthenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	47,  // 286: octelium.api.main.core.v1.Session.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	386, // 287: octelium.api.main.core.v1.Session.Status.Connection.startedAt:type_name -> google.protobuf.Timestamp
+	386, // 288: octelium.api.main.core.v1.Session.Status.Connection.lastSeenAt:type_name -> google.protobuf.Timestamp
+	216, // 289: octelium.api.main.core.v1.Session.Status.Connection.upstreams:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream
+	387, // 290: octelium.api.main.core.v1.Session.Status.Connection.addresses:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	12,  // 291: octelium.api.main.core.v1.Session.Status.Connection.l3Mode:type_name -> octelium.api.main.core.v1.Session.Status.Connection.L3Mode
+	215, // 292: octelium.api.main.core.v1.Session.Status.Connection.serviceOptions:type_name -> octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions
+	13,  // 293: octelium.api.main.core.v1.Session.Status.Connection.type:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Type
+	217, // 294: octelium.api.main.core.v1.Session.Status.Connection.publishedServices:type_name -> octelium.api.main.core.v1.Session.Status.Connection.PublishedService
+	220, // 295: octelium.api.main.core.v1.Session.Status.Authentication.info:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info
+	386, // 296: octelium.api.main.core.v1.Session.Status.Authentication.setAt:type_name -> google.protobuf.Timestamp
+	384, // 297: octelium.api.main.core.v1.Session.Status.Authentication.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 298: octelium.api.main.core.v1.Session.Status.Authentication.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	386, // 299: octelium.api.main.core.v1.Session.Status.LastConnection.startedAt:type_name -> google.protobuf.Timestamp
+	386, // 300: octelium.api.main.core.v1.Session.Status.LastConnection.endedAt:type_name -> google.protobuf.Timestamp
+	383, // 301: octelium.api.main.core.v1.Session.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	218, // 302: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.requestedServices:type_name -> octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService
+	14,  // 303: octelium.api.main.core.v1.Session.Status.Connection.Upstream.l4Type:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.L4Type
+	380, // 304: octelium.api.main.core.v1.Session.Status.Connection.Upstream.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 305: octelium.api.main.core.v1.Session.Status.Connection.Upstream.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	219, // 306: octelium.api.main.core.v1.Session.Status.Connection.Upstream.backend:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.Backend
+	15,  // 307: octelium.api.main.core.v1.Session.Status.Connection.Upstream.mode:type_name -> octelium.api.main.core.v1.Session.Status.Connection.Upstream.Mode
+	380, // 308: octelium.api.main.core.v1.Session.Status.Connection.PublishedService.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 309: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 310: octelium.api.main.core.v1.Session.Status.Connection.ServiceOptions.RequestedService.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	16,  // 311: octelium.api.main.core.v1.Session.Status.Authentication.Info.type:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Type
+	223, // 312: octelium.api.main.core.v1.Session.Status.Authentication.Info.external:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.External
+	221, // 313: octelium.api.main.core.v1.Session.Status.Authentication.Info.identityProvider:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider
+	222, // 314: octelium.api.main.core.v1.Session.Status.Authentication.Info.credential:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential
+	224, // 315: octelium.api.main.core.v1.Session.Status.Authentication.Info.authenticator:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator
+	17,  // 316: octelium.api.main.core.v1.Session.Status.Authentication.Info.aal:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.AAL
+	225, // 317: octelium.api.main.core.v1.Session.Status.Authentication.Info.downstream:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Downstream
+	380, // 318: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider.identityProviderRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	36,  // 319: octelium.api.main.core.v1.Session.Status.Authentication.Info.IdentityProvider.type:type_name -> octelium.api.main.core.v1.IdentityProvider.Status.Type
+	380, // 320: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential.credentialRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	19,  // 321: octelium.api.main.core.v1.Session.Status.Authentication.Info.Credential.type:type_name -> octelium.api.main.core.v1.Credential.Spec.Type
+	380, // 322: octelium.api.main.core.v1.Session.Status.Authentication.Info.External.ownerRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	383, // 323: octelium.api.main.core.v1.Session.Status.Authentication.Info.External.attrs:type_name -> google.protobuf.Struct
+	380, // 324: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.authenticatorRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	42,  // 325: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Type
+	226, // 326: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.info:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info
+	18,  // 327: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.mode:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Mode
+	227, // 328: octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.fido:type_name -> octelium.api.main.core.v1.Session.Status.Authentication.Info.Authenticator.Info.FIDO
+	231, // 329: octelium.api.main.core.v1.Secret.Spec.data:type_name -> octelium.api.main.core.v1.Secret.Spec.Data
+	232, // 330: octelium.api.main.core.v1.Secret.Status.ext:type_name -> octelium.api.main.core.v1.Secret.Status.ExtEntry
+	383, // 331: octelium.api.main.core.v1.Secret.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	19,  // 332: octelium.api.main.core.v1.Credential.Spec.type:type_name -> octelium.api.main.core.v1.Credential.Spec.Type
+	386, // 333: octelium.api.main.core.v1.Credential.Spec.expiresAt:type_name -> google.protobuf.Timestamp
+	10,  // 334: octelium.api.main.core.v1.Credential.Spec.sessionType:type_name -> octelium.api.main.core.v1.Session.Status.Type
+	235, // 335: octelium.api.main.core.v1.Credential.Spec.authorization:type_name -> octelium.api.main.core.v1.Credential.Spec.Authorization
+	380, // 336: octelium.api.main.core.v1.Credential.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	386, // 337: octelium.api.main.core.v1.Credential.Status.lastRotationAt:type_name -> google.protobuf.Timestamp
+	47,  // 338: octelium.api.main.core.v1.Credential.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	238, // 339: octelium.api.main.core.v1.Group.Spec.authorization:type_name -> octelium.api.main.core.v1.Group.Spec.Authorization
+	383, // 340: octelium.api.main.core.v1.Group.Spec.attrs:type_name -> google.protobuf.Struct
+	239, // 341: octelium.api.main.core.v1.Group.Status.ext:type_name -> octelium.api.main.core.v1.Group.Status.ExtEntry
+	47,  // 342: octelium.api.main.core.v1.Group.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	383, // 343: octelium.api.main.core.v1.Group.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	20,  // 344: octelium.api.main.core.v1.Device.Spec.state:type_name -> octelium.api.main.core.v1.Device.Spec.State
+	242, // 345: octelium.api.main.core.v1.Device.Spec.authorization:type_name -> octelium.api.main.core.v1.Device.Spec.Authorization
+	243, // 346: octelium.api.main.core.v1.Device.Status.ext:type_name -> octelium.api.main.core.v1.Device.Status.ExtEntry
+	380, // 347: octelium.api.main.core.v1.Device.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	21,  // 348: octelium.api.main.core.v1.Device.Status.osType:type_name -> octelium.api.main.core.v1.Device.Status.OSType
+	47,  // 349: octelium.api.main.core.v1.Device.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	383, // 350: octelium.api.main.core.v1.Device.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	247, // 351: octelium.api.main.core.v1.Config.Data.dataMap:type_name -> octelium.api.main.core.v1.Config.Data.DataMap
+	383, // 352: octelium.api.main.core.v1.Config.Data.attrs:type_name -> google.protobuf.Struct
+	248, // 353: octelium.api.main.core.v1.Config.Data.DataMap.map:type_name -> octelium.api.main.core.v1.Config.Data.DataMap.MapEntry
+	251, // 354: octelium.api.main.core.v1.Scope.Service.all:type_name -> octelium.api.main.core.v1.Scope.Service.All
+	252, // 355: octelium.api.main.core.v1.Scope.Service.filter:type_name -> octelium.api.main.core.v1.Scope.Service.Filter
+	253, // 356: octelium.api.main.core.v1.Scope.API.all:type_name -> octelium.api.main.core.v1.Scope.API.All
+	254, // 357: octelium.api.main.core.v1.Scope.API.filter:type_name -> octelium.api.main.core.v1.Scope.API.Filter
+	257, // 358: octelium.api.main.core.v1.Policy.Spec.rules:type_name -> octelium.api.main.core.v1.Policy.Spec.Rule
+	258, // 359: octelium.api.main.core.v1.Policy.Spec.enforcementRules:type_name -> octelium.api.main.core.v1.Policy.Spec.EnforcementRule
+	383, // 360: octelium.api.main.core.v1.Policy.Spec.attrs:type_name -> google.protobuf.Struct
+	380, // 361: octelium.api.main.core.v1.Policy.Status.parentPolicyRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	88,  // 362: octelium.api.main.core.v1.Policy.Spec.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
+	22,  // 363: octelium.api.main.core.v1.Policy.Spec.Rule.effect:type_name -> octelium.api.main.core.v1.Policy.Spec.Rule.Effect
+	88,  // 364: octelium.api.main.core.v1.Policy.Spec.EnforcementRule.condition:type_name -> octelium.api.main.core.v1.Condition
+	23,  // 365: octelium.api.main.core.v1.Policy.Spec.EnforcementRule.effect:type_name -> octelium.api.main.core.v1.Policy.Spec.EnforcementRule.Effect
+	261, // 366: octelium.api.main.core.v1.AccessLog.Entry.common:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common
+	260, // 367: octelium.api.main.core.v1.AccessLog.Entry.info:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info
+	263, // 368: octelium.api.main.core.v1.AccessLog.Entry.Info.tcp:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.TCP
+	262, // 369: octelium.api.main.core.v1.AccessLog.Entry.Info.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
+	264, // 370: octelium.api.main.core.v1.AccessLog.Entry.Info.ssh:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH
+	265, // 371: octelium.api.main.core.v1.AccessLog.Entry.Info.udp:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.UDP
+	266, // 372: octelium.api.main.core.v1.AccessLog.Entry.Info.postgres:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres
+	268, // 373: octelium.api.main.core.v1.AccessLog.Entry.Info.kubernetes:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes
+	269, // 374: octelium.api.main.core.v1.AccessLog.Entry.Info.grpc:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC
+	267, // 375: octelium.api.main.core.v1.AccessLog.Entry.Info.mysql:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL
+	270, // 376: octelium.api.main.core.v1.AccessLog.Entry.Info.dns:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.DNS
+	386, // 377: octelium.api.main.core.v1.AccessLog.Entry.Common.startedAt:type_name -> google.protobuf.Timestamp
+	386, // 378: octelium.api.main.core.v1.AccessLog.Entry.Common.endedAt:type_name -> google.protobuf.Timestamp
+	32,  // 379: octelium.api.main.core.v1.AccessLog.Entry.Common.status:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Status
+	1,   // 380: octelium.api.main.core.v1.AccessLog.Entry.Common.mode:type_name -> octelium.api.main.core.v1.Service.Spec.Mode
+	288, // 381: octelium.api.main.core.v1.AccessLog.Entry.Common.reason:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason
+	380, // 382: octelium.api.main.core.v1.AccessLog.Entry.Common.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 383: octelium.api.main.core.v1.AccessLog.Entry.Common.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 384: octelium.api.main.core.v1.AccessLog.Entry.Common.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 385: octelium.api.main.core.v1.AccessLog.Entry.Common.serviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 386: octelium.api.main.core.v1.AccessLog.Entry.Common.namespaceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 387: octelium.api.main.core.v1.AccessLog.Entry.Common.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	271, // 388: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.request:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request
+	272, // 389: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.response:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response
+	24,  // 390: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.httpVersion:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.HTTPVersion
+	25,  // 391: octelium.api.main.core.v1.AccessLog.Entry.Info.TCP.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.TCP.Type
+	26,  // 392: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Type
+	275, // 393: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.start:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.Start
+	279, // 394: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.directTCPIPStart:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.DirectTCPIPStart
+	276, // 395: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRecording:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording
+	277, // 396: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRequestExec:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestExec
+	278, // 397: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.sessionRequestSubsystem:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRequestSubsystem
+	28,  // 398: octelium.api.main.core.v1.AccessLog.Entry.Info.UDP.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.UDP.Type
+	29,  // 399: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Type
+	280, // 400: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.start:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Start
+	281, // 401: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.query:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Query
+	282, // 402: octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.parse:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.Postgres.Parse
+	30,  // 403: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Type
+	283, // 404: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.query:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.Query
+	284, // 405: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.initDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.InitDB
+	285, // 406: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.createDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.CreateDB
+	286, // 407: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.dropDB:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.DropDB
+	287, // 408: octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.prepareStatement:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.MySQL.PrepareStatement
+	262, // 409: octelium.api.main.core.v1.AccessLog.Entry.Info.Kubernetes.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
+	262, // 410: octelium.api.main.core.v1.AccessLog.Entry.Info.GRPC.http:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP
+	31,  // 411: octelium.api.main.core.v1.AccessLog.Entry.Info.DNS.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.DNS.Type
+	383, // 412: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.bodyMap:type_name -> google.protobuf.Struct
+	273, // 413: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.headers:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Request.HeadersEntry
+	383, // 414: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.bodyMap:type_name -> google.protobuf.Struct
+	274, // 415: octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.headers:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.HTTP.Response.HeadersEntry
+	27,  // 416: octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Info.SSH.SessionRecording.Type
+	33,  // 417: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.type:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Type
+	289, // 418: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.details:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details
+	290, // 419: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.policyMatch:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch
+	291, // 420: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.sessionNotActive:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive
+	293, // 421: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.policy:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy
+	292, // 422: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.inlinePolicy:type_name -> octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy
+	9,   // 423: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.SessionNotActive.state:type_name -> octelium.api.main.core.v1.Session.Spec.State
+	380, // 424: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.InlinePolicy.resourceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 425: octelium.api.main.core.v1.AccessLog.Entry.Common.Reason.Details.PolicyMatch.Policy.policyRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	300, // 426: octelium.api.main.core.v1.IdentityProvider.Spec.aalRules:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.AALRule
+	301, // 427: octelium.api.main.core.v1.IdentityProvider.Spec.postAuthenticationRules:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule
+	296, // 428: octelium.api.main.core.v1.IdentityProvider.Spec.github:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.Github
+	297, // 429: octelium.api.main.core.v1.IdentityProvider.Spec.oidc:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDC
+	298, // 430: octelium.api.main.core.v1.IdentityProvider.Spec.saml:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.SAML
+	299, // 431: octelium.api.main.core.v1.IdentityProvider.Spec.oidcIdentityToken:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDCIdentityToken
+	36,  // 432: octelium.api.main.core.v1.IdentityProvider.Status.type:type_name -> octelium.api.main.core.v1.IdentityProvider.Status.Type
+	302, // 433: octelium.api.main.core.v1.IdentityProvider.Spec.Github.clientSecret:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.Github.ClientSecret
+	303, // 434: octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.clientSecret:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.OIDC.ClientSecret
+	88,  // 435: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.condition:type_name -> octelium.api.main.core.v1.Condition
+	34,  // 436: octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.aal:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.AALRule.AAL
+	88,  // 437: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.condition:type_name -> octelium.api.main.core.v1.Condition
+	35,  // 438: octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.effect:type_name -> octelium.api.main.core.v1.IdentityProvider.Spec.PostAuthenticationRule.Effect
+	306, // 439: octelium.api.main.core.v1.Region.Status.ext:type_name -> octelium.api.main.core.v1.Region.Status.ExtEntry
+	383, // 440: octelium.api.main.core.v1.Region.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	380, // 441: octelium.api.main.core.v1.Gateway.Status.regionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 442: octelium.api.main.core.v1.Gateway.Status.nodeRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	387, // 443: octelium.api.main.core.v1.Gateway.Status.cidr:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	309, // 444: octelium.api.main.core.v1.Gateway.Status.wireguard:type_name -> octelium.api.main.core.v1.Gateway.Status.WireGuard
+	310, // 445: octelium.api.main.core.v1.Gateway.Status.quicv0:type_name -> octelium.api.main.core.v1.Gateway.Status.QUICV0
+	386, // 446: octelium.api.main.core.v1.Gateway.Status.WireGuard.keyRotatedAt:type_name -> google.protobuf.Timestamp
+	88,  // 447: octelium.api.main.core.v1.Condition.All.of:type_name -> octelium.api.main.core.v1.Condition
+	88,  // 448: octelium.api.main.core.v1.Condition.Any.of:type_name -> octelium.api.main.core.v1.Condition
+	88,  // 449: octelium.api.main.core.v1.Condition.None.of:type_name -> octelium.api.main.core.v1.Condition
+	322, // 450: octelium.api.main.core.v1.ClusterConfig.Spec.authorization:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authorization
+	317, // 451: octelium.api.main.core.v1.ClusterConfig.Spec.ingress:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Ingress
+	318, // 452: octelium.api.main.core.v1.ClusterConfig.Spec.session:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session
+	319, // 453: octelium.api.main.core.v1.ClusterConfig.Spec.device:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device
+	320, // 454: octelium.api.main.core.v1.ClusterConfig.Spec.gateway:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Gateway
+	321, // 455: octelium.api.main.core.v1.ClusterConfig.Spec.dns:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.DNS
+	323, // 456: octelium.api.main.core.v1.ClusterConfig.Spec.authenticator:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator
+	332, // 457: octelium.api.main.core.v1.ClusterConfig.Status.network:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.Network
+	331, // 458: octelium.api.main.core.v1.ClusterConfig.Status.networkConfig:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig
+	333, // 459: octelium.api.main.core.v1.ClusterConfig.Status.secretManager:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.SecretManager
+	324, // 460: octelium.api.main.core.v1.ClusterConfig.Spec.Session.human:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human
+	325, // 461: octelium.api.main.core.v1.ClusterConfig.Spec.Session.workload:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload
+	326, // 462: octelium.api.main.core.v1.ClusterConfig.Spec.Device.human:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human
+	327, // 463: octelium.api.main.core.v1.ClusterConfig.Spec.Device.workload:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload
+	384, // 464: octelium.api.main.core.v1.ClusterConfig.Spec.Gateway.wireguardKeyRotationDuration:type_name -> octelium.api.main.meta.v1.Duration
+	328, // 465: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.fallbackZone:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone
+	47,  // 466: octelium.api.main.core.v1.ClusterConfig.Spec.Authorization.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	329, // 467: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.registrationEnforcementRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
+	329, // 468: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.authenticationEnforcementRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule
+	330, // 469: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.postAuthenticationRules:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule
+	41,  // 470: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.defaultState:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
+	384, // 471: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 472: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 473: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 474: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	9,   // 475: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Human.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
+	384, // 476: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.clientDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 477: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.clientlessDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 478: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.accessTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	384, // 479: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.refreshTokenDuration:type_name -> octelium.api.main.meta.v1.Duration
+	9,   // 480: octelium.api.main.core.v1.ClusterConfig.Spec.Session.Workload.defaultState:type_name -> octelium.api.main.core.v1.Session.Spec.State
+	20,  // 481: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Human.defaultState:type_name -> octelium.api.main.core.v1.Device.Spec.State
+	20,  // 482: octelium.api.main.core.v1.ClusterConfig.Spec.Device.Workload.defaultState:type_name -> octelium.api.main.core.v1.Device.Spec.State
+	384, // 483: octelium.api.main.core.v1.ClusterConfig.Spec.DNS.Zone.cacheDuration:type_name -> octelium.api.main.meta.v1.Duration
+	88,  // 484: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.condition:type_name -> octelium.api.main.core.v1.Condition
+	37,  // 485: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.effect:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.EnforcementRule.Effect
+	88,  // 486: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.condition:type_name -> octelium.api.main.core.v1.Condition
+	38,  // 487: octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.effect:type_name -> octelium.api.main.core.v1.ClusterConfig.Spec.Authenticator.Rule.Effect
+	39,  // 488: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.mode:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Mode
+	334, // 489: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.v4:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V4
+	335, // 490: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.v6:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.V6
+	336, // 491: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.wireguard:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.Wireguard
+	337, // 492: octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.quicv0:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.NetworkConfig.QUICV0
+	387, // 493: octelium.api.main.core.v1.ClusterConfig.Status.Network.clusterNetwork:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	387, // 494: octelium.api.main.core.v1.ClusterConfig.Status.Network.wgConnSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	387, // 495: octelium.api.main.core.v1.ClusterConfig.Status.Network.serviceSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	387, // 496: octelium.api.main.core.v1.ClusterConfig.Status.Network.quicConnSubnet:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	338, // 497: octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.tls:type_name -> octelium.api.main.core.v1.ClusterConfig.Status.SecretManager.TLS
+	340, // 498: octelium.api.main.core.v1.RequestContext.Request.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
+	341, // 499: octelium.api.main.core.v1.RequestContext.Request.ssh:type_name -> octelium.api.main.core.v1.RequestContext.Request.SSH
+	342, // 500: octelium.api.main.core.v1.RequestContext.Request.kubernetes:type_name -> octelium.api.main.core.v1.RequestContext.Request.Kubernetes
+	343, // 501: octelium.api.main.core.v1.RequestContext.Request.grpc:type_name -> octelium.api.main.core.v1.RequestContext.Request.GRPC
+	344, // 502: octelium.api.main.core.v1.RequestContext.Request.postgres:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres
+	345, // 503: octelium.api.main.core.v1.RequestContext.Request.dns:type_name -> octelium.api.main.core.v1.RequestContext.Request.DNS
+	346, // 504: octelium.api.main.core.v1.RequestContext.Request.HTTP.headers:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP.HeadersEntry
+	383, // 505: octelium.api.main.core.v1.RequestContext.Request.HTTP.bodyMap:type_name -> google.protobuf.Struct
+	347, // 506: octelium.api.main.core.v1.RequestContext.Request.HTTP.queryParams:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP.QueryParamsEntry
+	348, // 507: octelium.api.main.core.v1.RequestContext.Request.SSH.connect:type_name -> octelium.api.main.core.v1.RequestContext.Request.SSH.Connect
+	340, // 508: octelium.api.main.core.v1.RequestContext.Request.Kubernetes.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
+	340, // 509: octelium.api.main.core.v1.RequestContext.Request.GRPC.http:type_name -> octelium.api.main.core.v1.RequestContext.Request.HTTP
+	349, // 510: octelium.api.main.core.v1.RequestContext.Request.Postgres.connect:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Connect
+	350, // 511: octelium.api.main.core.v1.RequestContext.Request.Postgres.query:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Query
+	351, // 512: octelium.api.main.core.v1.RequestContext.Request.Postgres.parse:type_name -> octelium.api.main.core.v1.RequestContext.Request.Postgres.Parse
+	380, // 513: octelium.api.main.core.v1.PolicyTrigger.Status.ownerRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	354, // 514: octelium.api.main.core.v1.PolicyTrigger.Status.preCondition:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
+	47,  // 515: octelium.api.main.core.v1.PolicyTrigger.Status.inlinePolicies:type_name -> octelium.api.main.core.v1.InlinePolicy
+	386, // 516: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.notBefore:type_name -> google.protobuf.Timestamp
+	386, // 517: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.notAfter:type_name -> google.protobuf.Timestamp
+	380, // 518: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 519: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	88,  // 520: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.condition:type_name -> octelium.api.main.core.v1.Condition
+	355, // 521: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.any:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any
+	356, // 522: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.all:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All
+	354, // 523: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.Any.of:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
+	354, // 524: octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition.All.of:type_name -> octelium.api.main.core.v1.PolicyTrigger.Status.PreCondition
+	40,  // 525: octelium.api.main.core.v1.ComponentLog.Entry.level:type_name -> octelium.api.main.core.v1.ComponentLog.Entry.Level
+	358, // 526: octelium.api.main.core.v1.ComponentLog.Entry.component:type_name -> octelium.api.main.core.v1.ComponentLog.Entry.Component
+	383, // 527: octelium.api.main.core.v1.ComponentLog.Entry.fields:type_name -> google.protobuf.Struct
+	386, // 528: octelium.api.main.core.v1.ComponentLog.Entry.time:type_name -> google.protobuf.Timestamp
+	41,  // 529: octelium.api.main.core.v1.Authenticator.Spec.state:type_name -> octelium.api.main.core.v1.Authenticator.Spec.State
+	380, // 530: octelium.api.main.core.v1.Authenticator.Status.userRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	380, // 531: octelium.api.main.core.v1.Authenticator.Status.deviceRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	42,  // 532: octelium.api.main.core.v1.Authenticator.Status.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Type
+	362, // 533: octelium.api.main.core.v1.Authenticator.Status.info:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info
+	363, // 534: octelium.api.main.core.v1.Authenticator.Status.authenticationAttempt:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
+	363, // 535: octelium.api.main.core.v1.Authenticator.Status.lastAuthenticationAttempts:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt
+	364, // 536: octelium.api.main.core.v1.Authenticator.Status.ext:type_name -> octelium.api.main.core.v1.Authenticator.Status.ExtEntry
+	380, // 537: octelium.api.main.core.v1.Authenticator.Status.EncryptedData.keySecretRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	365, // 538: octelium.api.main.core.v1.Authenticator.Status.Info.fido:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.FIDO
+	366, // 539: octelium.api.main.core.v1.Authenticator.Status.Info.totp:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TOTP
+	367, // 540: octelium.api.main.core.v1.Authenticator.Status.Info.tpm:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TPM
+	386, // 541: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.createdAt:type_name -> google.protobuf.Timestamp
+	361, // 542: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.encryptedChallengeRequest:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
+	369, // 543: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.encryptedDataMap:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry
+	370, // 544: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.dataMap:type_name -> octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.DataMapEntry
+	380, // 545: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.sessionRef:type_name -> octelium.api.main.meta.v1.ObjectReference
+	383, // 546: octelium.api.main.core.v1.Authenticator.Status.ExtEntry.value:type_name -> google.protobuf.Struct
+	43,  // 547: octelium.api.main.core.v1.Authenticator.Status.Info.FIDO.type:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.FIDO.Type
+	361, // 548: octelium.api.main.core.v1.Authenticator.Status.Info.TOTP.sharedSecret:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
+	368, // 549: octelium.api.main.core.v1.Authenticator.Status.Info.TPM.attestationParameters:type_name -> octelium.api.main.core.v1.Authenticator.Status.Info.TPM.AttestationParameters
+	361, // 550: octelium.api.main.core.v1.Authenticator.Status.AuthenticationAttempt.EncryptedDataMapEntry.value:type_name -> octelium.api.main.core.v1.Authenticator.Status.EncryptedData
+	75,  // 551: octelium.api.main.core.v1.MainService.CreatePolicy:input_type -> octelium.api.main.core.v1.Policy
+	77,  // 552: octelium.api.main.core.v1.MainService.ListPolicy:input_type -> octelium.api.main.core.v1.ListPolicyOptions
+	75,  // 553: octelium.api.main.core.v1.MainService.UpdatePolicy:input_type -> octelium.api.main.core.v1.Policy
+	388, // 554: octelium.api.main.core.v1.MainService.DeletePolicy:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 555: octelium.api.main.core.v1.MainService.GetPolicy:input_type -> octelium.api.main.meta.v1.GetOptions
+	48,  // 556: octelium.api.main.core.v1.MainService.CreateUser:input_type -> octelium.api.main.core.v1.User
+	64,  // 557: octelium.api.main.core.v1.MainService.ListUser:input_type -> octelium.api.main.core.v1.ListUserOptions
+	48,  // 558: octelium.api.main.core.v1.MainService.UpdateUser:input_type -> octelium.api.main.core.v1.User
+	388, // 559: octelium.api.main.core.v1.MainService.DeleteUser:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 560: octelium.api.main.core.v1.MainService.GetUser:input_type -> octelium.api.main.meta.v1.GetOptions
+	45,  // 561: octelium.api.main.core.v1.MainService.CreateNamespace:input_type -> octelium.api.main.core.v1.Namespace
+	45,  // 562: octelium.api.main.core.v1.MainService.UpdateNamespace:input_type -> octelium.api.main.core.v1.Namespace
+	65,  // 563: octelium.api.main.core.v1.MainService.ListNamespace:input_type -> octelium.api.main.core.v1.ListNamespaceOptions
+	388, // 564: octelium.api.main.core.v1.MainService.DeleteNamespace:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 565: octelium.api.main.core.v1.MainService.GetNamespace:input_type -> octelium.api.main.meta.v1.GetOptions
+	50,  // 566: octelium.api.main.core.v1.MainService.CreateService:input_type -> octelium.api.main.core.v1.Service
+	66,  // 567: octelium.api.main.core.v1.MainService.ListService:input_type -> octelium.api.main.core.v1.ListServiceOptions
+	50,  // 568: octelium.api.main.core.v1.MainService.UpdateService:input_type -> octelium.api.main.core.v1.Service
+	388, // 569: octelium.api.main.core.v1.MainService.DeleteService:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 570: octelium.api.main.core.v1.MainService.GetService:input_type -> octelium.api.main.meta.v1.GetOptions
+	67,  // 571: octelium.api.main.core.v1.MainService.ListSession:input_type -> octelium.api.main.core.v1.ListSessionOptions
+	388, // 572: octelium.api.main.core.v1.MainService.DeleteSession:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 573: octelium.api.main.core.v1.MainService.GetSession:input_type -> octelium.api.main.meta.v1.GetOptions
+	54,  // 574: octelium.api.main.core.v1.MainService.UpdateSession:input_type -> octelium.api.main.core.v1.Session
+	56,  // 575: octelium.api.main.core.v1.MainService.CreateSecret:input_type -> octelium.api.main.core.v1.Secret
+	68,  // 576: octelium.api.main.core.v1.MainService.ListSecret:input_type -> octelium.api.main.core.v1.ListSecretOptions
+	388, // 577: octelium.api.main.core.v1.MainService.DeleteSecret:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 578: octelium.api.main.core.v1.MainService.GetSecret:input_type -> octelium.api.main.meta.v1.GetOptions
+	56,  // 579: octelium.api.main.core.v1.MainService.UpdateSecret:input_type -> octelium.api.main.core.v1.Secret
+	60,  // 580: octelium.api.main.core.v1.MainService.CreateGroup:input_type -> octelium.api.main.core.v1.Group
+	70,  // 581: octelium.api.main.core.v1.MainService.ListGroup:input_type -> octelium.api.main.core.v1.ListGroupOptions
+	60,  // 582: octelium.api.main.core.v1.MainService.UpdateGroup:input_type -> octelium.api.main.core.v1.Group
+	388, // 583: octelium.api.main.core.v1.MainService.DeleteGroup:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 584: octelium.api.main.core.v1.MainService.GetGroup:input_type -> octelium.api.main.meta.v1.GetOptions
+	71,  // 585: octelium.api.main.core.v1.MainService.ListDevice:input_type -> octelium.api.main.core.v1.ListDeviceOptions
+	388, // 586: octelium.api.main.core.v1.MainService.DeleteDevice:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 587: octelium.api.main.core.v1.MainService.GetDevice:input_type -> octelium.api.main.meta.v1.GetOptions
+	62,  // 588: octelium.api.main.core.v1.MainService.UpdateDevice:input_type -> octelium.api.main.core.v1.Device
+	58,  // 589: octelium.api.main.core.v1.MainService.CreateCredential:input_type -> octelium.api.main.core.v1.Credential
+	58,  // 590: octelium.api.main.core.v1.MainService.UpdateCredential:input_type -> octelium.api.main.core.v1.Credential
+	388, // 591: octelium.api.main.core.v1.MainService.DeleteCredential:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	69,  // 592: octelium.api.main.core.v1.MainService.ListCredential:input_type -> octelium.api.main.core.v1.ListCredentialOptions
+	389, // 593: octelium.api.main.core.v1.MainService.GetCredential:input_type -> octelium.api.main.meta.v1.GetOptions
+	52,  // 594: octelium.api.main.core.v1.MainService.GenerateCredentialToken:input_type -> octelium.api.main.core.v1.GenerateCredentialTokenRequest
+	80,  // 595: octelium.api.main.core.v1.MainService.CreateIdentityProvider:input_type -> octelium.api.main.core.v1.IdentityProvider
+	389, // 596: octelium.api.main.core.v1.MainService.GetIdentityProvider:input_type -> octelium.api.main.meta.v1.GetOptions
+	79,  // 597: octelium.api.main.core.v1.MainService.ListIdentityProvider:input_type -> octelium.api.main.core.v1.ListIdentityProviderOptions
+	80,  // 598: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:input_type -> octelium.api.main.core.v1.IdentityProvider
+	388, // 599: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 600: octelium.api.main.core.v1.MainService.GetRegion:input_type -> octelium.api.main.meta.v1.GetOptions
+	87,  // 601: octelium.api.main.core.v1.MainService.ListRegion:input_type -> octelium.api.main.core.v1.ListRegionOptions
+	86,  // 602: octelium.api.main.core.v1.MainService.ListGateway:input_type -> octelium.api.main.core.v1.ListGatewayOptions
+	389, // 603: octelium.api.main.core.v1.MainService.GetGateway:input_type -> octelium.api.main.meta.v1.GetOptions
+	89,  // 604: octelium.api.main.core.v1.MainService.GetClusterConfig:input_type -> octelium.api.main.core.v1.GetClusterConfigRequest
+	90,  // 605: octelium.api.main.core.v1.MainService.UpdateClusterConfig:input_type -> octelium.api.main.core.v1.ClusterConfig
+	97,  // 606: octelium.api.main.core.v1.MainService.ListAuthenticator:input_type -> octelium.api.main.core.v1.ListAuthenticatorOptions
+	388, // 607: octelium.api.main.core.v1.MainService.DeleteAuthenticator:input_type -> octelium.api.main.meta.v1.DeleteOptions
+	389, // 608: octelium.api.main.core.v1.MainService.GetAuthenticator:input_type -> octelium.api.main.meta.v1.GetOptions
+	95,  // 609: octelium.api.main.core.v1.MainService.UpdateAuthenticator:input_type -> octelium.api.main.core.v1.Authenticator
+	75,  // 610: octelium.api.main.core.v1.MainService.CreatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	76,  // 611: octelium.api.main.core.v1.MainService.ListPolicy:output_type -> octelium.api.main.core.v1.PolicyList
+	75,  // 612: octelium.api.main.core.v1.MainService.UpdatePolicy:output_type -> octelium.api.main.core.v1.Policy
+	390, // 613: octelium.api.main.core.v1.MainService.DeletePolicy:output_type -> octelium.api.main.meta.v1.OperationResult
+	75,  // 614: octelium.api.main.core.v1.MainService.GetPolicy:output_type -> octelium.api.main.core.v1.Policy
+	48,  // 615: octelium.api.main.core.v1.MainService.CreateUser:output_type -> octelium.api.main.core.v1.User
+	49,  // 616: octelium.api.main.core.v1.MainService.ListUser:output_type -> octelium.api.main.core.v1.UserList
+	48,  // 617: octelium.api.main.core.v1.MainService.UpdateUser:output_type -> octelium.api.main.core.v1.User
+	390, // 618: octelium.api.main.core.v1.MainService.DeleteUser:output_type -> octelium.api.main.meta.v1.OperationResult
+	48,  // 619: octelium.api.main.core.v1.MainService.GetUser:output_type -> octelium.api.main.core.v1.User
+	45,  // 620: octelium.api.main.core.v1.MainService.CreateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	45,  // 621: octelium.api.main.core.v1.MainService.UpdateNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	46,  // 622: octelium.api.main.core.v1.MainService.ListNamespace:output_type -> octelium.api.main.core.v1.NamespaceList
+	390, // 623: octelium.api.main.core.v1.MainService.DeleteNamespace:output_type -> octelium.api.main.meta.v1.OperationResult
+	45,  // 624: octelium.api.main.core.v1.MainService.GetNamespace:output_type -> octelium.api.main.core.v1.Namespace
+	50,  // 625: octelium.api.main.core.v1.MainService.CreateService:output_type -> octelium.api.main.core.v1.Service
+	51,  // 626: octelium.api.main.core.v1.MainService.ListService:output_type -> octelium.api.main.core.v1.ServiceList
+	50,  // 627: octelium.api.main.core.v1.MainService.UpdateService:output_type -> octelium.api.main.core.v1.Service
+	390, // 628: octelium.api.main.core.v1.MainService.DeleteService:output_type -> octelium.api.main.meta.v1.OperationResult
+	50,  // 629: octelium.api.main.core.v1.MainService.GetService:output_type -> octelium.api.main.core.v1.Service
+	55,  // 630: octelium.api.main.core.v1.MainService.ListSession:output_type -> octelium.api.main.core.v1.SessionList
+	390, // 631: octelium.api.main.core.v1.MainService.DeleteSession:output_type -> octelium.api.main.meta.v1.OperationResult
+	54,  // 632: octelium.api.main.core.v1.MainService.GetSession:output_type -> octelium.api.main.core.v1.Session
+	54,  // 633: octelium.api.main.core.v1.MainService.UpdateSession:output_type -> octelium.api.main.core.v1.Session
+	56,  // 634: octelium.api.main.core.v1.MainService.CreateSecret:output_type -> octelium.api.main.core.v1.Secret
+	57,  // 635: octelium.api.main.core.v1.MainService.ListSecret:output_type -> octelium.api.main.core.v1.SecretList
+	390, // 636: octelium.api.main.core.v1.MainService.DeleteSecret:output_type -> octelium.api.main.meta.v1.OperationResult
+	56,  // 637: octelium.api.main.core.v1.MainService.GetSecret:output_type -> octelium.api.main.core.v1.Secret
+	56,  // 638: octelium.api.main.core.v1.MainService.UpdateSecret:output_type -> octelium.api.main.core.v1.Secret
+	60,  // 639: octelium.api.main.core.v1.MainService.CreateGroup:output_type -> octelium.api.main.core.v1.Group
+	61,  // 640: octelium.api.main.core.v1.MainService.ListGroup:output_type -> octelium.api.main.core.v1.GroupList
+	60,  // 641: octelium.api.main.core.v1.MainService.UpdateGroup:output_type -> octelium.api.main.core.v1.Group
+	390, // 642: octelium.api.main.core.v1.MainService.DeleteGroup:output_type -> octelium.api.main.meta.v1.OperationResult
+	60,  // 643: octelium.api.main.core.v1.MainService.GetGroup:output_type -> octelium.api.main.core.v1.Group
+	63,  // 644: octelium.api.main.core.v1.MainService.ListDevice:output_type -> octelium.api.main.core.v1.DeviceList
+	390, // 645: octelium.api.main.core.v1.MainService.DeleteDevice:output_type -> octelium.api.main.meta.v1.OperationResult
+	62,  // 646: octelium.api.main.core.v1.MainService.GetDevice:output_type -> octelium.api.main.core.v1.Device
+	62,  // 647: octelium.api.main.core.v1.MainService.UpdateDevice:output_type -> octelium.api.main.core.v1.Device
+	58,  // 648: octelium.api.main.core.v1.MainService.CreateCredential:output_type -> octelium.api.main.core.v1.Credential
+	58,  // 649: octelium.api.main.core.v1.MainService.UpdateCredential:output_type -> octelium.api.main.core.v1.Credential
+	390, // 650: octelium.api.main.core.v1.MainService.DeleteCredential:output_type -> octelium.api.main.meta.v1.OperationResult
+	59,  // 651: octelium.api.main.core.v1.MainService.ListCredential:output_type -> octelium.api.main.core.v1.CredentialList
+	58,  // 652: octelium.api.main.core.v1.MainService.GetCredential:output_type -> octelium.api.main.core.v1.Credential
+	53,  // 653: octelium.api.main.core.v1.MainService.GenerateCredentialToken:output_type -> octelium.api.main.core.v1.CredentialToken
+	80,  // 654: octelium.api.main.core.v1.MainService.CreateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	80,  // 655: octelium.api.main.core.v1.MainService.GetIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	81,  // 656: octelium.api.main.core.v1.MainService.ListIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProviderList
+	80,  // 657: octelium.api.main.core.v1.MainService.UpdateIdentityProvider:output_type -> octelium.api.main.core.v1.IdentityProvider
+	390, // 658: octelium.api.main.core.v1.MainService.DeleteIdentityProvider:output_type -> octelium.api.main.meta.v1.OperationResult
+	82,  // 659: octelium.api.main.core.v1.MainService.GetRegion:output_type -> octelium.api.main.core.v1.Region
+	83,  // 660: octelium.api.main.core.v1.MainService.ListRegion:output_type -> octelium.api.main.core.v1.RegionList
+	85,  // 661: octelium.api.main.core.v1.MainService.ListGateway:output_type -> octelium.api.main.core.v1.GatewayList
+	84,  // 662: octelium.api.main.core.v1.MainService.GetGateway:output_type -> octelium.api.main.core.v1.Gateway
+	90,  // 663: octelium.api.main.core.v1.MainService.GetClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	90,  // 664: octelium.api.main.core.v1.MainService.UpdateClusterConfig:output_type -> octelium.api.main.core.v1.ClusterConfig
+	96,  // 665: octelium.api.main.core.v1.MainService.ListAuthenticator:output_type -> octelium.api.main.core.v1.AuthenticatorList
+	390, // 666: octelium.api.main.core.v1.MainService.DeleteAuthenticator:output_type -> octelium.api.main.meta.v1.OperationResult
+	95,  // 667: octelium.api.main.core.v1.MainService.GetAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	95,  // 668: octelium.api.main.core.v1.MainService.UpdateAuthenticator:output_type -> octelium.api.main.core.v1.Authenticator
+	610, // [610:669] is the sub-list for method output_type
+	551, // [551:610] is the sub-list for method input_type
+	551, // [551:551] is the sub-list for extension type_name
+	551, // [551:551] is the sub-list for extension extendee
+	0,   // [0:551] is the sub-list for field type_name
 }
 
 func init() { file_corev1_proto_init() }
@@ -30750,37 +31358,37 @@ func file_corev1_proto_init() {
 		(*Condition_None_)(nil),
 		(*Condition_Opa)(nil),
 	}
-	file_corev1_proto_msgTypes[67].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[68].OneofWrappers = []any{
 		(*Service_Spec_Config_Http)(nil),
 		(*Service_Spec_Config_Ssh)(nil),
 		(*Service_Spec_Config_Postgres_)(nil),
 		(*Service_Spec_Config_Mysql)(nil),
 		(*Service_Spec_Config_Kubernetes_)(nil),
 	}
-	file_corev1_proto_msgTypes[74].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[75].OneofWrappers = []any{
 		(*Service_Spec_Config_ClientCertificate_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[76].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[77].OneofWrappers = []any{
 		(*Service_Spec_Config_Kubernetes_Kubeconfig_)(nil),
 		(*Service_Spec_Config_Kubernetes_BearerToken_)(nil),
 		(*Service_Spec_Config_Kubernetes_ClientCertificate)(nil),
 	}
-	file_corev1_proto_msgTypes[77].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[78].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Url)(nil),
 		(*Service_Spec_Config_Upstream_Loadbalance_)(nil),
 		(*Service_Spec_Config_Upstream_Container_)(nil),
 	}
-	file_corev1_proto_msgTypes[79].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[80].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_Bearer_)(nil),
 		(*Service_Spec_Config_HTTP_Auth_Basic_)(nil),
 		(*Service_Spec_Config_HTTP_Auth_Custom_)(nil),
 		(*Service_Spec_Config_HTTP_Auth_Oauth2ClientCredentials)(nil),
 		(*Service_Spec_Config_HTTP_Auth_Sigv4_)(nil),
 	}
-	file_corev1_proto_msgTypes[83].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[84].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Response_Direct_)(nil),
 	}
-	file_corev1_proto_msgTypes[85].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[86].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_ExtProc_)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_Lua_)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_Direct_)(nil),
@@ -30789,159 +31397,159 @@ func file_corev1_proto_init() {
 		(*Service_Spec_Config_HTTP_Plugin_JsonSchema)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_Path_)(nil),
 	}
-	file_corev1_proto_msgTypes[87].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[88].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_Bearer_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[92].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[93].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_Basic_Password_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[93].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[94].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_Custom_Value_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[94].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[95].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[95].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[96].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[96].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[97].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Body_Validation_JsonSchema)(nil),
 	}
-	file_corev1_proto_msgTypes[97].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[98].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Body_Validation_JSONSchema_Inline)(nil),
 	}
-	file_corev1_proto_msgTypes[98].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[99].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Header_KeyValue_Value)(nil),
 		(*Service_Spec_Config_HTTP_Header_KeyValue_Eval)(nil),
 	}
-	file_corev1_proto_msgTypes[99].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[100].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Response_Direct_Inline)(nil),
 		(*Service_Spec_Config_HTTP_Response_Direct_InlineBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[100].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[101].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_ExtProc_Address)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_ExtProc_Container_)(nil),
 	}
-	file_corev1_proto_msgTypes[101].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[102].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_Lua_Inline)(nil),
 	}
-	file_corev1_proto_msgTypes[105].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[106].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline)(nil),
 	}
-	file_corev1_proto_msgTypes[109].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[110].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[111].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[112].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[112].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[113].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerSession)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerUser)(nil),
 	}
-	file_corev1_proto_msgTypes[114].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[115].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval)(nil),
 	}
-	file_corev1_proto_msgTypes[115].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[116].OneofWrappers = []any{
 		(*Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline)(nil),
 		(*Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[117].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[118].OneofWrappers = []any{
 		(*Service_Spec_Config_SSH_Auth_Password_)(nil),
 		(*Service_Spec_Config_SSH_Auth_PrivateKey_)(nil),
 	}
-	file_corev1_proto_msgTypes[118].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[119].OneofWrappers = []any{
 		(*Service_Spec_Config_SSH_UpstreamHostKey_InsecureIgnoreHostKey)(nil),
 		(*Service_Spec_Config_SSH_UpstreamHostKey_Key)(nil),
 	}
-	file_corev1_proto_msgTypes[120].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[121].OneofWrappers = []any{
 		(*Service_Spec_Config_SSH_Auth_Password_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[121].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[122].OneofWrappers = []any{
 		(*Service_Spec_Config_SSH_Auth_PrivateKey_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[122].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[123].OneofWrappers = []any{
 		(*Service_Spec_Config_Postgres_Auth_Password_)(nil),
 	}
-	file_corev1_proto_msgTypes[124].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[125].OneofWrappers = []any{
 		(*Service_Spec_Config_Postgres_Auth_Password_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[125].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[126].OneofWrappers = []any{
 		(*Service_Spec_Config_MySQL_Auth_Password_)(nil),
 	}
-	file_corev1_proto_msgTypes[126].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[127].OneofWrappers = []any{
 		(*Service_Spec_Config_MySQL_Auth_Password_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[127].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[128].OneofWrappers = []any{
 		(*Service_Spec_Config_TLS_ClientCertificate_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[128].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[129].OneofWrappers = []any{
 		(*Service_Spec_Config_Kubernetes_BearerToken_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[129].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[130].OneofWrappers = []any{
 		(*Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[133].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[134].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Container_Env_Value)(nil),
 		(*Service_Spec_Config_Upstream_Container_Env_FromSecret)(nil),
 		(*Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_)(nil),
 	}
-	file_corev1_proto_msgTypes[134].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[135].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_)(nil),
 	}
-	file_corev1_proto_msgTypes[137].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[138].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim_)(nil),
 	}
-	file_corev1_proto_msgTypes[139].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[140].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Container_Probe_HttpGet)(nil),
 		(*Service_Spec_Config_Upstream_Container_Probe_TcpSocket)(nil),
 		(*Service_Spec_Config_Upstream_Container_Probe_Grpc)(nil),
 	}
-	file_corev1_proto_msgTypes[142].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[143].OneofWrappers = []any{
 		(*Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[150].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[151].OneofWrappers = []any{
 		(*Service_Spec_DynamicConfig_Rule_ConfigName)(nil),
 		(*Service_Spec_DynamicConfig_Rule_Eval)(nil),
 		(*Service_Spec_DynamicConfig_Rule_Opa)(nil),
 	}
-	file_corev1_proto_msgTypes[153].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[154].OneofWrappers = []any{
 		(*Service_Status_ManagedService_HealthCheck_Grpc)(nil),
 	}
-	file_corev1_proto_msgTypes[174].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[175].OneofWrappers = []any{
 		(*Session_Status_Authentication_Info_External_)(nil),
 		(*Session_Status_Authentication_Info_IdentityProvider_)(nil),
 		(*Session_Status_Authentication_Info_Credential_)(nil),
 		(*Session_Status_Authentication_Info_Authenticator_)(nil),
 	}
-	file_corev1_proto_msgTypes[180].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[181].OneofWrappers = []any{
 		(*Session_Status_Authentication_Info_Authenticator_Info_Fido)(nil),
 	}
-	file_corev1_proto_msgTypes[184].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[185].OneofWrappers = []any{
 		(*Secret_Data_Value)(nil),
 		(*Secret_Data_ValueBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[185].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[186].OneofWrappers = []any{
 		(*Secret_Spec_Data_Value)(nil),
 		(*Secret_Spec_Data_ValueBytes)(nil),
 	}
-	file_corev1_proto_msgTypes[200].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[201].OneofWrappers = []any{
 		(*Config_Data_Value)(nil),
 		(*Config_Data_ValueBytes)(nil),
 		(*Config_Data_DataMap_)(nil),
 		(*Config_Data_Attrs)(nil),
 	}
-	file_corev1_proto_msgTypes[203].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[204].OneofWrappers = []any{
 		(*Scope_Service_All_)(nil),
 		(*Scope_Service_Filter_)(nil),
 	}
-	file_corev1_proto_msgTypes[204].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[205].OneofWrappers = []any{
 		(*Scope_API_All_)(nil),
 		(*Scope_API_Filter_)(nil),
 	}
-	file_corev1_proto_msgTypes[214].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[215].OneofWrappers = []any{
 		(*AccessLog_Entry_Info_Tcp)(nil),
 		(*AccessLog_Entry_Info_Http)(nil),
 		(*AccessLog_Entry_Info_Ssh)(nil),
@@ -30952,58 +31560,58 @@ func file_corev1_proto_init() {
 		(*AccessLog_Entry_Info_Mysql)(nil),
 		(*AccessLog_Entry_Info_Dns)(nil),
 	}
-	file_corev1_proto_msgTypes[218].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[219].OneofWrappers = []any{
 		(*AccessLog_Entry_Info_SSH_Start_)(nil),
 		(*AccessLog_Entry_Info_SSH_DirectTCPIPStart_)(nil),
 		(*AccessLog_Entry_Info_SSH_SessionRecording_)(nil),
 		(*AccessLog_Entry_Info_SSH_SessionRequestExec_)(nil),
 		(*AccessLog_Entry_Info_SSH_SessionRequestSubsystem_)(nil),
 	}
-	file_corev1_proto_msgTypes[220].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[221].OneofWrappers = []any{
 		(*AccessLog_Entry_Info_Postgres_Start_)(nil),
 		(*AccessLog_Entry_Info_Postgres_Query_)(nil),
 		(*AccessLog_Entry_Info_Postgres_Parse_)(nil),
 	}
-	file_corev1_proto_msgTypes[221].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[222].OneofWrappers = []any{
 		(*AccessLog_Entry_Info_MySQL_Query_)(nil),
 		(*AccessLog_Entry_Info_MySQL_InitDB_)(nil),
 		(*AccessLog_Entry_Info_MySQL_CreateDB_)(nil),
 		(*AccessLog_Entry_Info_MySQL_DropDB_)(nil),
 		(*AccessLog_Entry_Info_MySQL_PrepareStatement_)(nil),
 	}
-	file_corev1_proto_msgTypes[243].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[244].OneofWrappers = []any{
 		(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_)(nil),
 		(*AccessLog_Entry_Common_Reason_Details_SessionNotActive_)(nil),
 	}
-	file_corev1_proto_msgTypes[244].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[245].OneofWrappers = []any{
 		(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_Policy_)(nil),
 		(*AccessLog_Entry_Common_Reason_Details_PolicyMatch_InlinePolicy_)(nil),
 	}
-	file_corev1_proto_msgTypes[248].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[249].OneofWrappers = []any{
 		(*IdentityProvider_Spec_Github_)(nil),
 		(*IdentityProvider_Spec_Oidc)(nil),
 		(*IdentityProvider_Spec_Saml)(nil),
 		(*IdentityProvider_Spec_OidcIdentityToken)(nil),
 	}
-	file_corev1_proto_msgTypes[252].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[253].OneofWrappers = []any{
 		(*IdentityProvider_Spec_SAML_MetadataURL)(nil),
 		(*IdentityProvider_Spec_SAML_Metadata)(nil),
 	}
-	file_corev1_proto_msgTypes[253].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[254].OneofWrappers = []any{
 		(*IdentityProvider_Spec_OIDCIdentityToken_IssuerURL)(nil),
 		(*IdentityProvider_Spec_OIDCIdentityToken_JwksURL)(nil),
 		(*IdentityProvider_Spec_OIDCIdentityToken_JwksContent)(nil),
 	}
-	file_corev1_proto_msgTypes[256].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[257].OneofWrappers = []any{
 		(*IdentityProvider_Spec_Github_ClientSecret_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[257].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[258].OneofWrappers = []any{
 		(*IdentityProvider_Spec_OIDC_ClientSecret_FromSecret)(nil),
 	}
-	file_corev1_proto_msgTypes[268].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[269].OneofWrappers = []any{
 		(*Condition_OPA_Inline)(nil),
 	}
-	file_corev1_proto_msgTypes[293].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[294].OneofWrappers = []any{
 		(*RequestContext_Request_Http)(nil),
 		(*RequestContext_Request_Ssh)(nil),
 		(*RequestContext_Request_Kubernetes_)(nil),
@@ -31011,15 +31619,15 @@ func file_corev1_proto_init() {
 		(*RequestContext_Request_Postgres_)(nil),
 		(*RequestContext_Request_Dns)(nil),
 	}
-	file_corev1_proto_msgTypes[295].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[296].OneofWrappers = []any{
 		(*RequestContext_Request_SSH_Connect_)(nil),
 	}
-	file_corev1_proto_msgTypes[298].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[299].OneofWrappers = []any{
 		(*RequestContext_Request_Postgres_Connect_)(nil),
 		(*RequestContext_Request_Postgres_Query_)(nil),
 		(*RequestContext_Request_Postgres_Parse_)(nil),
 	}
-	file_corev1_proto_msgTypes[308].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[309].OneofWrappers = []any{
 		(*PolicyTrigger_Status_PreCondition_NotBefore)(nil),
 		(*PolicyTrigger_Status_PreCondition_NotAfter)(nil),
 		(*PolicyTrigger_Status_PreCondition_SessionRef)(nil),
@@ -31029,7 +31637,7 @@ func file_corev1_proto_init() {
 		(*PolicyTrigger_Status_PreCondition_Any_)(nil),
 		(*PolicyTrigger_Status_PreCondition_All_)(nil),
 	}
-	file_corev1_proto_msgTypes[316].OneofWrappers = []any{
+	file_corev1_proto_msgTypes[317].OneofWrappers = []any{
 		(*Authenticator_Status_Info_Fido)(nil),
 		(*Authenticator_Status_Info_Totp)(nil),
 		(*Authenticator_Status_Info_Tpm)(nil),
@@ -31039,8 +31647,8 @@ func file_corev1_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_corev1_proto_rawDesc,
-			NumEnums:      44,
-			NumMessages:   325,
+			NumEnums:      45,
+			NumMessages:   333,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
