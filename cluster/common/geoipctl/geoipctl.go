@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/oschwald/geoip2-golang/v2"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Opts struct {
@@ -63,6 +64,11 @@ func (c *Controller) Run(ctx context.Context) error {
 		}, func(ctx context.Context, new, old *corev1.Config) error {
 			return c.setConfig(ctx, new)
 		}, func(ctx context.Context, item *corev1.Config) error {
+			if item.Metadata.Name == c.name {
+				c.mu.Lock()
+				c.db = nil
+				c.mu.Unlock()
+			}
 			return nil
 		}); err != nil {
 		return err
@@ -73,11 +79,15 @@ func (c *Controller) Run(ctx context.Context) error {
 
 func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
 
+	if cfg == nil || cfg.Metadata == nil || cfg.Metadata.Name != c.name {
+		return nil
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var err error
 
-	if cfg == nil || cfg.Data == nil || len(cfg.Data.GetValueBytes()) == 0 {
+	if cfg.Data == nil || len(cfg.Data.GetValueBytes()) == 0 {
 		return errors.Errorf("Could not find config content")
 	}
 
@@ -86,5 +96,11 @@ func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
 		return err
 	}
 
+	zap.L().Debug("Loaded MMDB", zap.Any("metadata", c.db.Metadata()))
+
 	return nil
+}
+
+func (c *Controller) Close() error {
+	return c.db.Close()
 }
