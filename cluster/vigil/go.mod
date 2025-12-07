@@ -9,7 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/envoyproxy/go-control-plane/envoy v1.35.0
 	github.com/go-mysql-org/go-mysql v1.13.0
-	github.com/go-resty/resty/v2 v2.16.5
+	github.com/go-resty/resty/v2 v2.17.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgconn v1.14.3

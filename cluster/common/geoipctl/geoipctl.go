@@ -65,10 +65,11 @@ func (c *Controller) Run(ctx context.Context) error {
 		}, func(ctx context.Context, new, old *corev1.Config) error {
 			return c.setConfig(ctx, new)
 		}, func(ctx context.Context, item *corev1.Config) error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
 			if item.Metadata.Name == c.name {
-				c.mu.Lock()
 				c.db = nil
-				c.mu.Unlock()
 			}
 			return nil
 		}); err != nil {
@@ -80,13 +81,13 @@ func (c *Controller) Run(ctx context.Context) error {
 
 func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
 
-	if cfg == nil || cfg.Metadata == nil || cfg.Metadata.Name != c.name {
-		return nil
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var err error
+
+	if cfg == nil || cfg.Metadata == nil || cfg.Metadata.Name != c.name {
+		return nil
+	}
 
 	if cfg.Data == nil || len(cfg.Data.GetValueBytes()) == 0 {
 		return errors.Errorf("Could not find config content")
@@ -129,6 +130,7 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 	}
 
 	if val, err := c.db.Enterprise(addr); err == nil && val.HasData() {
+		zap.L().Debug("Found mmdb enterprise entry", zap.Any("val", val))
 		if val.Country.HasData() {
 			ret.Country = &corev1.GeoIP_Country{
 				Name: val.Country.Names.English,
@@ -159,6 +161,7 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 			}
 		}
 	} else if val, err := c.db.City(addr); err == nil && val.HasData() {
+		zap.L().Debug("Found mmdb city entry", zap.Any("val", val))
 		if val.Country.HasData() {
 			ret.Country = &corev1.GeoIP_Country{
 				Name: val.Country.Names.English,
@@ -189,6 +192,7 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 			}
 		}
 	} else if val, err := c.db.Country(addr); err == nil && val.HasData() {
+		zap.L().Debug("Found mmdb country entry", zap.Any("val", val))
 		if val.Country.HasData() {
 			ret.Country = &corev1.GeoIP_Country{
 				Name: val.Country.Names.English,
@@ -212,4 +216,10 @@ func (c *Controller) ResolveStr(addrStr string) *corev1.GeoIP {
 		return c.Resolve(addr)
 	}
 	return nil
+}
+
+func (c *Controller) SetConfigName(name string) {
+	c.mu.Lock()
+	c.name = name
+	c.mu.Unlock()
 }

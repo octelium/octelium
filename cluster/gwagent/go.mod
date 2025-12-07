@@ -3,7 +3,7 @@ module github.com/octelium/octelium/cluster/gwagent
 go 1.24.7
 
 require (
-	github.com/go-resty/resty/v2 v2.16.5
+	github.com/go-resty/resty/v2 v2.17.0
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
