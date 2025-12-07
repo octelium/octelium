@@ -48,6 +48,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/patrickmn/go-cache"
@@ -89,6 +90,14 @@ type server struct {
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
 	s.setTemplateGlobals(new)
+
+	if !pbutils.IsEqual(new.Spec.Authentication, old.Spec.Authentication) {
+		if new.Spec.Authentication != nil && new.Spec.Authentication.Geolocation != nil &&
+			new.Spec.Authentication.Geolocation.GetMmdb() != nil &&
+			new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig() != "" {
+			s.geoipCtl.SetConfigName(new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig())
+		}
+	}
 
 	return nil
 }
@@ -206,6 +215,14 @@ func initServer(ctx context.Context,
 
 	ret.geoipCtl, err = geoipctl.New(ctx, &geoipctl.Opts{
 		OcteliumC: octeliumC,
+		ConfigName: func() string {
+			if clusterCfg.Spec.Authentication == nil || clusterCfg.Spec.Authentication.Geolocation == nil ||
+				clusterCfg.Spec.Authentication.Geolocation.GetMmdb() == nil ||
+				clusterCfg.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig() == "" {
+				return ""
+			}
+			return clusterCfg.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig()
+		}(),
 	})
 	if err != nil {
 		return nil, err
