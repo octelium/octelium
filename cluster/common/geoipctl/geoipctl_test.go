@@ -26,7 +26,6 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func TestController(t *testing.T) {
@@ -47,8 +46,6 @@ func TestController(t *testing.T) {
 		assert.Nil(t, err)
 		return resp.Body()
 	}
-
-	zap.L().Debug("=====LEN===", zap.Int("len", len(getDB("GeoIP2-Enterprise-Test.mmdb"))))
 
 	cfg, err := fakeC.OcteliumC.CoreC().CreateConfig(ctx, &corev1.Config{
 		Metadata: &metav1.Metadata{

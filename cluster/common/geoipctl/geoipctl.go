@@ -160,6 +160,15 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 				Id: val.Location.TimeZone,
 			}
 		}
+
+		if val.Traits.HasData() {
+			ret.Network = &corev1.GeoIP_Network{
+				Asn:          int64(val.Traits.AutonomousSystemNumber),
+				Organization: val.Traits.Organization,
+				Domain:       val.Traits.Domain,
+				Isp:          val.Traits.ISP,
+			}
+		}
 	} else if val, err := c.db.City(addr); err == nil && val.HasData() {
 		zap.L().Debug("Found mmdb city entry", zap.Any("val", val))
 		if val.Country.HasData() {
