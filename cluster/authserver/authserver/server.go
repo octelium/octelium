@@ -41,6 +41,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/geoipctl"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -82,6 +83,8 @@ type server struct {
 	passkeyCtl  *webauthn.WebAuthn
 	rscCache    *rsccache.Cache
 	mdsProvider metadata.Provider
+
+	geoipCtl *geoipctl.Controller
 }
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
@@ -199,6 +202,13 @@ func initServer(ctx context.Context,
 	)
 	if err != nil {
 		zap.L().Warn("Could not create MDS provider", zap.Error(err))
+	}
+
+	ret.geoipCtl, err = geoipctl.New(ctx, &geoipctl.Opts{
+		OcteliumC: octeliumC,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	zap.L().Debug("initializing authServer completed")
@@ -321,6 +331,10 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 	}
 
 	if err := s.ccCtl.Run(ctx); err != nil {
+		return err
+	}
+
+	if err := s.geoipCtl.Run(ctx); err != nil {
 		return err
 	}
 

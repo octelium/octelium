@@ -148,8 +148,8 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		CredentialRef: umetav1.GetObjectReference(tkn),
 
 		SessType: sessType,
-
-		Scopes: scopes,
+		GeoIPCtl: s.geoipCtl,
+		Scopes:   scopes,
 		AuthenticationInfo: &corev1.Session_Status_Authentication_Info{
 			Type: corev1.Session_Status_Authentication_Info_CREDENTIAL,
 			Details: &corev1.Session_Status_Authentication_Info_Credential_{

@@ -111,6 +111,7 @@ func (s *server) createWebSession(ctx context.Context, usr *corev1.User,
 		IsBrowser:          true,
 		UserAgent:          userAgent,
 		XFF:                xff,
+		GeoIPCtl:           s.geoipCtl,
 		RequiredAuthenticatorRef: func() *metav1.ObjectReference {
 			if authRespInfo != nil &&
 				authRespInfo.GetAuthenticator() != nil &&

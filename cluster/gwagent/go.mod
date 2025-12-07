@@ -51,6 +51,8 @@ require (
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/mileusna/useragent v1.3.5 // indirect
 	github.com/open-policy-agent/opa v1.9.0 // indirect
+	github.com/oschwald/geoip2-golang/v2 v2.0.1 // indirect
+	github.com/oschwald/maxminddb-golang/v2 v2.1.1 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

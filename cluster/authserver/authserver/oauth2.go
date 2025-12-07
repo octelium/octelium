@@ -151,6 +151,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			Usr:           usr,
 			SessType:      corev1.Session_Status_CLIENTLESS,
 			Scopes:        scopes,
+			GeoIPCtl:      s.geoipCtl,
 			Authorization: func() *corev1.Session_Spec_Authorization {
 				if tkn.Spec.Authorization == nil {
 					return nil

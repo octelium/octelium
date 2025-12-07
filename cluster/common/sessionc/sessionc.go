@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/geoipctl"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/httputils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -61,6 +62,7 @@ type CreateSessionOpts struct {
 	CheckPerUserLimit        bool
 	AuthenticatorAction      corev1.Session_Status_AuthenticatorAction
 	RequiredAuthenticatorRef *metav1.ObjectReference
+	GeoIPCtl                 *geoipctl.Controller
 }
 
 func NewSession(ctx context.Context,
@@ -307,6 +309,9 @@ func NewSession(ctx context.Context,
 		if o.XFF != "" && clusterCfg.Spec.Ingress != nil && clusterCfg.Spec.Ingress.UseForwardedForHeader {
 			if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(o.XFF); ipAddr != "" {
 				sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
+				if o.GeoIPCtl != nil {
+					sess.Status.Authentication.Info.Geoip = o.GeoIPCtl.ResolveStr(ipAddr)
+				}
 			}
 		}
 
