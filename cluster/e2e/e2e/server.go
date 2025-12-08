@@ -221,6 +221,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runMiscServiceTests(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runOcteliumConnectQUIC(ctx); err != nil {
 		return err
 	}
@@ -339,6 +343,102 @@ func (s *server) runOcteliumctlEmbedded(ctx context.Context) error {
 			Name: "root-init",
 		})
 		assert.Nil(t, err)
+	}
+
+	return nil
+}
+
+func (s *server) runMiscServiceTests(ctx context.Context) error {
+	if err := cliutils.OpenDB(""); err != nil {
+		return err
+	}
+	defer cliutils.CloseDB()
+
+	t := s.t
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	c := corev1.NewMainServiceClient(conn)
+	{
+		upstreamPort := 17000
+
+		upstreamSrv := &tstSrvHTTP{
+			port: upstreamPort,
+		}
+
+		assert.Nil(t, upstreamSrv.run(ctx))
+
+		svc, err := c.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				IsPublic: true,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: fmt.Sprintf("http://localhost:%d", upstreamPort),
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
+			fmt.Sprintf("-p %s:17001", svc.Metadata.Name),
+			fmt.Sprintf("--serve %s", svc.Metadata.Name),
+		})
+		assert.Nil(t, err)
+		time.Sleep(4 * time.Second)
+		{
+			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
+				zap.L().Debug("New request", zap.Any("req", r))
+				assert.Equal(t, fmt.Sprintf("localhost:%d", upstreamPort), r.Host)
+				w.WriteHeader(http.StatusOK)
+			}
+
+			res, err := s.httpC().R().Get("http://localhost:17001")
+			assert.Nil(t, err)
+
+			assert.True(t, res.IsSuccess())
+		}
+		{
+			svc.Spec.Config.Type = &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Header: &corev1.Service_Spec_Config_HTTP_Header{
+						Host: &corev1.Service_Spec_Config_HTTP_Header_Host{
+							Type: &corev1.Service_Spec_Config_HTTP_Header_Host_Preserve{
+								Preserve: true,
+							},
+						},
+					},
+				},
+			}
+
+			svc, err = c.UpdateService(ctx, svc)
+			assert.Nil(t, err)
+
+			time.Sleep(2 * time.Second)
+
+			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
+				zap.L().Debug("New request", zap.Any("req", r))
+				assert.Equal(t, vutils.GetServicePublicFQDN(svc, s.domain), r.Host)
+				w.WriteHeader(http.StatusOK)
+			}
+
+			res, err := s.httpC().R().Get("http://localhost:17001")
+			assert.Nil(t, err)
+
+			assert.True(t, res.IsSuccess())
+
+		}
+
+		upstreamSrv.close()
+		assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
+		connCmd.Wait()
+		zap.L().Debug("octelium connect exited")
 	}
 
 	return nil

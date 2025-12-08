@@ -44,6 +44,7 @@ type tstSrvHTTP struct {
 	bearerToken string
 	caPool      *x509.CertPool
 	lis         net.Listener
+	serveFn     func(w http.ResponseWriter, r *http.Request)
 }
 
 type tstResp struct {
@@ -51,6 +52,10 @@ type tstResp struct {
 }
 
 func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.serveFn != nil {
+		s.serveFn(w, r)
+		return
+	}
 
 	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(r.Body)
