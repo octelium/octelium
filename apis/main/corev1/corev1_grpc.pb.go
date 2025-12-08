@@ -93,6 +93,11 @@ const (
 	MainService_DeleteAuthenticator_FullMethodName     = "/octelium.api.main.core.v1.MainService/DeleteAuthenticator"
 	MainService_GetAuthenticator_FullMethodName        = "/octelium.api.main.core.v1.MainService/GetAuthenticator"
 	MainService_UpdateAuthenticator_FullMethodName     = "/octelium.api.main.core.v1.MainService/UpdateAuthenticator"
+	MainService_CreateConfig_FullMethodName            = "/octelium.api.main.core.v1.MainService/CreateConfig"
+	MainService_ListConfig_FullMethodName              = "/octelium.api.main.core.v1.MainService/ListConfig"
+	MainService_UpdateConfig_FullMethodName            = "/octelium.api.main.core.v1.MainService/UpdateConfig"
+	MainService_DeleteConfig_FullMethodName            = "/octelium.api.main.core.v1.MainService/DeleteConfig"
+	MainService_GetConfig_FullMethodName               = "/octelium.api.main.core.v1.MainService/GetConfig"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -217,6 +222,16 @@ type MainServiceClient interface {
 	GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error)
 	// UpdateAuthenticator updates an Authenticator
 	UpdateAuthenticator(ctx context.Context, in *Authenticator, opts ...grpc.CallOption) (*Authenticator, error)
+	// CreateConfig creates a Config
+	CreateConfig(ctx context.Context, in *Config, opts ...grpc.CallOption) (*Config, error)
+	// ListConfig lists Configs
+	ListConfig(ctx context.Context, in *ListConfigOptions, opts ...grpc.CallOption) (*ConfigList, error)
+	// UpdateConfig updates a Config
+	UpdateConfig(ctx context.Context, in *Config, opts ...grpc.CallOption) (*Config, error)
+	// DeleteConfig deletes a Config
+	DeleteConfig(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
+	// GetConfig retrieves a specific Config
+	GetConfig(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Config, error)
 }
 
 type mainServiceClient struct {
@@ -817,6 +832,56 @@ func (c *mainServiceClient) UpdateAuthenticator(ctx context.Context, in *Authent
 	return out, nil
 }
 
+func (c *mainServiceClient) CreateConfig(ctx context.Context, in *Config, opts ...grpc.CallOption) (*Config, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Config)
+	err := c.cc.Invoke(ctx, MainService_CreateConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) ListConfig(ctx context.Context, in *ListConfigOptions, opts ...grpc.CallOption) (*ConfigList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfigList)
+	err := c.cc.Invoke(ctx, MainService_ListConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) UpdateConfig(ctx context.Context, in *Config, opts ...grpc.CallOption) (*Config, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Config)
+	err := c.cc.Invoke(ctx, MainService_UpdateConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) DeleteConfig(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(metav1.OperationResult)
+	err := c.cc.Invoke(ctx, MainService_DeleteConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) GetConfig(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Config, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Config)
+	err := c.cc.Invoke(ctx, MainService_GetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -939,6 +1004,16 @@ type MainServiceServer interface {
 	GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error)
 	// UpdateAuthenticator updates an Authenticator
 	UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error)
+	// CreateConfig creates a Config
+	CreateConfig(context.Context, *Config) (*Config, error)
+	// ListConfig lists Configs
+	ListConfig(context.Context, *ListConfigOptions) (*ConfigList, error)
+	// UpdateConfig updates a Config
+	UpdateConfig(context.Context, *Config) (*Config, error)
+	// DeleteConfig deletes a Config
+	DeleteConfig(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
+	// GetConfig retrieves a specific Config
+	GetConfig(context.Context, *metav1.GetOptions) (*Config, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -1125,6 +1200,21 @@ func (UnimplementedMainServiceServer) GetAuthenticator(context.Context, *metav1.
 }
 func (UnimplementedMainServiceServer) UpdateAuthenticator(context.Context, *Authenticator) (*Authenticator, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateAuthenticator not implemented")
+}
+func (UnimplementedMainServiceServer) CreateConfig(context.Context, *Config) (*Config, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateConfig not implemented")
+}
+func (UnimplementedMainServiceServer) ListConfig(context.Context, *ListConfigOptions) (*ConfigList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListConfig not implemented")
+}
+func (UnimplementedMainServiceServer) UpdateConfig(context.Context, *Config) (*Config, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateConfig not implemented")
+}
+func (UnimplementedMainServiceServer) DeleteConfig(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteConfig not implemented")
+}
+func (UnimplementedMainServiceServer) GetConfig(context.Context, *metav1.GetOptions) (*Config, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetConfig not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -2209,6 +2299,96 @@ func _MainService_UpdateAuthenticator_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_CreateConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Config)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).CreateConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_CreateConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).CreateConfig(ctx, req.(*Config))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_ListConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConfigOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).ListConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_ListConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).ListConfig(ctx, req.(*ListConfigOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_UpdateConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Config)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).UpdateConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_UpdateConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).UpdateConfig(ctx, req.(*Config))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_DeleteConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.DeleteOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).DeleteConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_DeleteConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).DeleteConfig(ctx, req.(*metav1.DeleteOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(metav1.GetOptions)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).GetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_GetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).GetConfig(ctx, req.(*metav1.GetOptions))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2451,6 +2631,26 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateAuthenticator",
 			Handler:    _MainService_UpdateAuthenticator_Handler,
+		},
+		{
+			MethodName: "CreateConfig",
+			Handler:    _MainService_CreateConfig_Handler,
+		},
+		{
+			MethodName: "ListConfig",
+			Handler:    _MainService_ListConfig_Handler,
+		},
+		{
+			MethodName: "UpdateConfig",
+			Handler:    _MainService_UpdateConfig_Handler,
+		},
+		{
+			MethodName: "DeleteConfig",
+			Handler:    _MainService_DeleteConfig_Handler,
+		},
+		{
+			MethodName: "GetConfig",
+			Handler:    _MainService_GetConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
