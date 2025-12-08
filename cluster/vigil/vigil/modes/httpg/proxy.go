@@ -143,7 +143,26 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				}
 			}
 
-			outReq.Host = upstream.URL.Host
+			if httpCfg != nil && httpCfg.Header != nil && httpCfg.Header.Host != nil {
+				hostCfg := httpCfg.Header.Host
+				if hostCfg.GetPreserve() {
+					outReq.Host = vutils.GetServicePublicFQDN(svc, s.domain)
+				} else if val := hostCfg.GetValue(); val != "" {
+					outReq.Host = val
+				} else if val := hostCfg.GetEval(); val != "" {
+					res, err := s.celEngine.EvalPolicyString(ctx, val, reqCtx.ReqCtxMap)
+					if err == nil && res != "" {
+						outReq.Host = res
+					} else {
+						outReq.Host = upstream.URL.Host
+					}
+				} else {
+					outReq.Host = upstream.URL.Host
+				}
+
+			} else {
+				outReq.Host = upstream.URL.Host
+			}
 
 			if upstream.IsUser {
 				outReq.URL.Host = upstream.HostPort
