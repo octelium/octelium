@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
 )
@@ -133,6 +135,47 @@ func TestController(t *testing.T) {
 			assert.NotEmpty(t, res.Ip)
 
 		}
+	}
 
+	{
+		ctl.Unset()
+		res := ctl.ResolveStr("214.78.120.1")
+		assert.Nil(t, res)
+		assert.Nil(t, ctl.db)
+		assert.Empty(t, ctl.name)
+	}
+
+	{
+		err = ctl.Run(ctx)
+		assert.Nil(t, err)
+
+		cfg, err := fakeC.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+			Name: cfg.Metadata.Name,
+		})
+		assert.Nil(t, err)
+
+		err = ctl.SetConfig(ctx, cfg)
+		assert.Nil(t, err)
+
+		res := ctl.ResolveStr("214.78.120.1")
+		assert.NotNil(t, res)
+		assert.Nil(t, res.City)
+
+		cfg.Data = &corev1.Config_Data{
+			Type: &corev1.Config_Data_ValueBytes{
+				ValueBytes: getDB("GeoIP2-City-Test.mmdb"),
+			},
+		}
+
+		cfg, err = fakeC.OcteliumC.CoreC().UpdateConfig(ctx, cfg)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+
+		{
+			res := ctl.ResolveStr("214.78.120.1")
+			assert.NotNil(t, res)
+			assert.NotNil(t, res.City)
+		}
 	}
 }

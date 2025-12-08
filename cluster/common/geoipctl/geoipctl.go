@@ -53,10 +53,15 @@ func New(ctx context.Context, o *Opts) (*Controller, error) {
 
 func (c *Controller) Run(ctx context.Context) error {
 
-	if cfg, err := c.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
-		Name: c.name,
-	}); err == nil {
-		return c.setConfig(ctx, cfg)
+	if c.name != "" {
+		if cfg, err := c.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+			Name: c.name,
+		}); err == nil {
+			if err := c.setConfig(ctx, cfg); err != nil {
+				zap.L().Warn("Could not set mmdb config",
+					zap.Error(err), zap.String("config", cfg.Metadata.Name))
+			}
+		}
 	}
 
 	if err := watchers.NewCoreV1(c.octeliumC).Config(ctx, nil,
@@ -66,11 +71,10 @@ func (c *Controller) Run(ctx context.Context) error {
 			return c.setConfig(ctx, new)
 		}, func(ctx context.Context, item *corev1.Config) error {
 			c.mu.Lock()
-			defer c.mu.Unlock()
-
 			if item.Metadata.Name == c.name {
 				c.db = nil
 			}
+			c.mu.Unlock()
 			return nil
 		}); err != nil {
 		return err
@@ -254,4 +258,11 @@ func (c *Controller) SetConfig(ctx context.Context, cfg *corev1.Config) error {
 	defer c.mu.Unlock()
 	c.name = cfg.Metadata.Name
 	return c.doSetConfig(ctx, cfg)
+}
+
+func (c *Controller) Unset() {
+	c.mu.Lock()
+	c.name = ""
+	c.db = nil
+	c.mu.Unlock()
 }
