@@ -95,7 +95,14 @@ func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.Clu
 		if new.Spec.Authentication != nil && new.Spec.Authentication.Geolocation != nil &&
 			new.Spec.Authentication.Geolocation.GetMmdb() != nil &&
 			new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig() != "" {
-			s.geoipCtl.SetConfigName(new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig())
+			if cfg, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+				Name: new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig(),
+			}); err == nil {
+				if err := s.geoipCtl.SetConfig(ctx, cfg); err != nil {
+					zap.L().Warn("Could not geoipCtl setConfig", zap.Error(err))
+				}
+			}
+
 		}
 	}
 

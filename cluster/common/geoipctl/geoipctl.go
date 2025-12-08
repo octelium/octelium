@@ -80,9 +80,13 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.doSetConfig(ctx, cfg)
+}
+
+func (c *Controller) doSetConfig(_ context.Context, cfg *corev1.Config) error {
+
 	var err error
 
 	if cfg == nil || cfg.Metadata == nil || cfg.Metadata.Name != c.name {
@@ -227,8 +231,9 @@ func (c *Controller) ResolveStr(addrStr string) *corev1.GeoIP {
 	return nil
 }
 
-func (c *Controller) SetConfigName(name string) {
+func (c *Controller) SetConfig(ctx context.Context, cfg *corev1.Config) error {
 	c.mu.Lock()
-	c.name = name
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	c.name = cfg.Metadata.Name
+	return c.doSetConfig(ctx, cfg)
 }
