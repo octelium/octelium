@@ -61,7 +61,7 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 	}
 
 	for i := range 10000 {
-		isDone, dep, err := doCheck()
+		isDone, _, err := doCheck()
 		if err != nil && !shouldRetry(err) {
 			return err
 		}
@@ -73,7 +73,7 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 		zap.L().Debug("Deployment is not ready",
 			zap.String("deployment", name),
 			zap.String("namespace", ns),
-			zap.Int("attempt", i+1), zap.Any("dep", dep))
+			zap.Int("attempt", i+1))
 
 		time.Sleep(2 * time.Second)
 	}
