@@ -102,7 +102,8 @@ func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.Clu
 					zap.L().Warn("Could not geoipCtl setConfig", zap.Error(err))
 				}
 			}
-
+		} else {
+			s.geoipCtl.Unset()
 		}
 	}
 
