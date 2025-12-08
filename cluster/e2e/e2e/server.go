@@ -209,6 +209,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runMiscServiceTests(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runOcteliumCommands(ctx); err != nil {
 		return err
 	}
@@ -218,10 +222,6 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlApplyCommands(ctx); err != nil {
-		return err
-	}
-
-	if err := s.runMiscServiceTests(ctx); err != nil {
 		return err
 	}
 
@@ -381,6 +381,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
 							Url: fmt.Sprintf("http://localhost:%d", upstreamPort),
 						},
+						User: "root",
 					},
 				},
 			},
@@ -401,7 +402,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 			}
 
 			res, err := s.httpC().R().Get("http://localhost:17001")
-			assert.Nil(t, err)
+			assert.Nil(t, err, "%+v", err)
 
 			assert.True(t, res.IsSuccess())
 		}
