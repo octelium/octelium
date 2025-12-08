@@ -375,6 +375,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 			},
 			Spec: &corev1.Service_Spec{
 				IsPublic: true,
+				Mode:     corev1.Service_Spec_HTTP,
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
