@@ -16,6 +16,7 @@ package delete
 
 import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/delete/authenticator"
+	"github.com/octelium/octelium/client/octeliumctl/commands/delete/config"
 	"github.com/octelium/octelium/client/octeliumctl/commands/delete/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/delete/device"
 	"github.com/octelium/octelium/client/octeliumctl/commands/delete/group"
@@ -47,4 +48,5 @@ func AddSubcommands() {
 	Cmd.AddCommand(device.Cmd)
 	Cmd.AddCommand(authenticator.Cmd)
 	Cmd.AddCommand(identityprovider.Cmd)
+	Cmd.AddCommand(config.Cmd)
 }

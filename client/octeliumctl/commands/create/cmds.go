@@ -15,6 +15,7 @@
 package create
 
 import (
+	"github.com/octelium/octelium/client/octeliumctl/commands/create/config"
 	"github.com/octelium/octelium/client/octeliumctl/commands/create/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/create/namespace"
 	"github.com/octelium/octelium/client/octeliumctl/commands/create/secret"
@@ -30,4 +31,5 @@ func AddSubcommands() {
 	Cmd.AddCommand(namespace.Cmd)
 	Cmd.AddCommand(secret.Cmd)
 	Cmd.AddCommand(credential.Cmd)
+	Cmd.AddCommand(config.Cmd)
 }

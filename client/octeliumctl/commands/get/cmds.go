@@ -17,6 +17,7 @@ package get
 import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/authenticator"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/clusterconfig"
+	"github.com/octelium/octelium/client/octeliumctl/commands/get/config"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/device"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get/gateway"
@@ -52,6 +53,7 @@ func AddSubcommands() {
 	Cmd.AddCommand(region.Cmd)
 	Cmd.AddCommand(gateway.Cmd)
 	Cmd.AddCommand(authenticator.Cmd)
+	Cmd.AddCommand(config.Cmd)
 }
 
 func init() {
