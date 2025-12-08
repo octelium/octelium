@@ -76,6 +76,8 @@ func TestController(t *testing.T) {
 		assert.NotNil(t, res.City)
 		assert.NotNil(t, res.Country)
 		assert.NotNil(t, res.Timezone)
+		assert.NotNil(t, res.Coordinates)
+		assert.NotNil(t, res.Network)
 		assert.NotEmpty(t, res.PostalCode)
 		assert.NotEmpty(t, res.Ip)
 
@@ -100,6 +102,7 @@ func TestController(t *testing.T) {
 			assert.NotNil(t, res.City)
 			assert.NotNil(t, res.Country)
 			assert.NotNil(t, res.Timezone)
+			assert.NotNil(t, res.Coordinates)
 			assert.NotEmpty(t, res.PostalCode)
 			assert.NotEmpty(t, res.Ip)
 

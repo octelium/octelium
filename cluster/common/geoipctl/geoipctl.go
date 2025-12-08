@@ -165,6 +165,14 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 			}
 		}
 
+		if val.Location.HasCoordinates() {
+			ret.Coordinates = &corev1.GeoIP_Coordinates{
+				Latitude:       *val.Location.Latitude,
+				Longitude:      *val.Location.Longitude,
+				AccuracyRadius: float64(val.Location.AccuracyRadius),
+			}
+		}
+
 		if val.Traits.HasData() {
 			ret.Network = &corev1.GeoIP_Network{
 				Asn:          int64(val.Traits.AutonomousSystemNumber),
@@ -203,7 +211,17 @@ func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
 			ret.Timezone = &corev1.GeoIP_Timezone{
 				Id: val.Location.TimeZone,
 			}
+
 		}
+
+		if val.Location.HasCoordinates() {
+			ret.Coordinates = &corev1.GeoIP_Coordinates{
+				Latitude:       *val.Location.Latitude,
+				Longitude:      *val.Location.Longitude,
+				AccuracyRadius: float64(val.Location.AccuracyRadius),
+			}
+		}
+
 	} else if val, err := c.db.Country(addr); err == nil && val.HasData() {
 		zap.L().Debug("Found mmdb country entry", zap.Any("val", val))
 		if val.Country.HasData() {
