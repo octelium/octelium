@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -45,26 +46,8 @@ func (w *Watcher) runSessions(ctx context.Context) {
 			return err
 		}
 		for _, sess := range sessList.Items {
-			if time.Now().After(sess.Spec.ExpiresAt.AsTime()) {
-				zap.L().Debug("Deleting expired Session", zap.Any("sess", sess))
-				if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
-					&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
-					zap.L().Warn("Could not delete expired Session", zap.Any("sess", sess), zap.Error(err))
-				} else {
-					continue
-				}
-			}
-
-			if sess.Status.Authentication != nil {
-				if expiresAt := sess.Status.Authentication.SetAt.AsTime().
-					Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()); !expiresAt.IsZero() && time.Now().After(expiresAt) {
-					zap.L().Debug("Deleting Session with expired refresh token", zap.Any("sess", sess))
-					if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
-						&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
-						zap.L().Warn("Could not delete Session by expired refresh token",
-							zap.Any("sess", sess), zap.Error(err))
-					}
-				}
+			if err := w.doCheckSession(ctx, sess); err != nil {
+				zap.L().Warn("Could not doCheckSession", zap.Error(err), zap.Any("sess", sess))
 			}
 		}
 		return nil
@@ -83,6 +66,32 @@ func (w *Watcher) runSessions(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (w *Watcher) doCheckSession(ctx context.Context, sess *corev1.Session) error {
+	if time.Now().After(sess.Spec.ExpiresAt.AsTime()) {
+		zap.L().Debug("Deleting expired Session", zap.Any("sess", sess))
+		if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
+			&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err == nil {
+			return nil
+		} else {
+			zap.L().Warn("Could not delete expired Session", zap.Any("sess", sess), zap.Error(err))
+		}
+	}
+
+	if sess.Status.Authentication != nil {
+		if expiresAt := sess.Status.Authentication.SetAt.AsTime().
+			Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()); !expiresAt.IsZero() && time.Now().After(expiresAt) {
+			zap.L().Debug("Deleting Session with expired refresh token", zap.Any("sess", sess))
+			if _, err := w.octeliumC.CoreC().DeleteSession(ctx,
+				&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
+				zap.L().Warn("Could not delete Session by expired refresh token",
+					zap.Any("sess", sess), zap.Error(err))
+			}
+		}
+	}
+
+	return nil
 }
 
 func (w *Watcher) runCredentials(ctx context.Context) {
