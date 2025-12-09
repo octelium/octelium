@@ -506,6 +506,30 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 
 	}
 
+	{
+		files := []string{
+			s.kubeConfigPath,
+			"/usr/local/bin/octeliumctl",
+			"/usr/local/bin/octops",
+		}
+
+		for _, arg := range files {
+			assert.Nil(t, s.runCmd(ctx,
+				fmt.Sprintf("octeliumctl create config %s --file %s",
+					utilrand.GetRandomStringCanonical(8), arg)))
+		}
+
+		{
+			name := utilrand.GetRandomStringCanonical(8)
+			assert.Nil(t, s.runCmd(ctx,
+				fmt.Sprintf("octeliumctl create cfg %s --value %s", name, utilrand.GetRandomStringCanonical(32))))
+
+			assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl get cfg %s", name)))
+
+			assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl del cfg %s", name)))
+		}
+	}
+
 	out, err := s.getCmd(ctx, "octeliumctl get svc -o json").CombinedOutput()
 	assert.Nil(t, err)
 
