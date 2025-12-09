@@ -18,31 +18,33 @@ package vcache
 
 import (
 	"context"
-	"time"
+	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/patrickmn/go-cache"
 )
 
 type Cache struct {
-	c *cache.Cache
+	// c   *cache.Cache
+	mu  sync.RWMutex
+	svc *corev1.Service
 }
 
 func NewCache(ctx context.Context) (*Cache, error) {
 	return &Cache{
-		c: cache.New(5*cache.NoExpiration, 10*time.Minute),
+		// c: cache.New(5*cache.NoExpiration, 10*time.Minute),
 	}, nil
 }
 
 func (c *Cache) SetService(svc *corev1.Service) {
-	c.c.Set("svc", svc, cache.NoExpiration)
+	// c.c.Set("svc", svc, cache.NoExpiration)
+	c.mu.Lock()
+	c.svc = svc
+	c.mu.Unlock()
 }
 
 func (c *Cache) GetService() *corev1.Service {
-	svc, found := c.c.Get("svc")
-	if !found {
-		return nil
-	}
-
-	return svc.(*corev1.Service)
+	c.mu.RLock()
+	ret := c.svc
+	c.mu.RUnlock()
+	return ret
 }
