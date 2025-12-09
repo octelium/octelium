@@ -38,26 +38,9 @@ import (
 	"go.uber.org/zap"
 )
 
-/*
-type lbUpstream struct {
-	host    string
-	port    int
-	sessUID string
-
-	url     *url.URL
-	isUser  bool
-	sniHost string
-	// preferences      *Preferences
-	isESSH           bool
-	ed25519PublicKey []byte
-}
-*/
-
 type LBManager struct {
 	octeliumC octeliumc.ClientInterface
-	// mu        sync.Mutex
-	// upstreams []*lbUpstream
-	// idx       int
+
 	cache  *cache
 	vCache *vcache.Cache
 }
@@ -69,14 +52,6 @@ func NewLbManager(octeliumC octeliumc.ClientInterface, vCache *vcache.Cache) *LB
 		vCache:    vCache,
 	}
 }
-
-/*
-func (l *LBManager) HasNoUpstreams() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.upstreams) == 0
-}
-*/
 
 type Upstream struct {
 	HostPort string
@@ -175,158 +150,12 @@ func (l *LBManager) GetUpstream(ctx context.Context, authResp *coctovigilv1.Auth
 	return l.getUpstreamFromSvc(ctx, authResp.RequestContext.Service, vigilutils.GetServiceConfig(ctx, authResp))
 }
 
-/*
-func (l *LBManager) dSet(ctx context.Context, svc *corev1.Service) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	zap.S().Debugf("Starting resetting lb upstreams")
-
-	var lbUpstreams []*lbUpstream
-
-	upstrs := ucorev1.ToService(svc).GetAllUpstreamEndpoints()
-	for _, u := range upstrs {
-		if u.User != "" {
-
-			if userRef, err := ucorev1.ToService(svc).GetHostUserRef(u.User); err == nil {
-				sesss, err := upstream.GetServiceHostConnsByUser(ctx, l.octeliumC, svc,
-					userRef)
-				if err != nil {
-					return err
-				}
-
-				for _, sess := range sesss {
-					l.doSetUpstreamSession(svc, sess)
-				}
-			}
-
-		} else {
-			url, err := url.Parse(u.Url)
-			if err != nil {
-				return err
-			}
-
-			lbUpstreams = append(lbUpstreams, &lbUpstream{
-				host:    url.Hostname(),
-				port:    ucorev1.EndpointRealPort(u),
-				url:     url,
-				sniHost: getSNIHost(url.Hostname()),
-			})
-		}
-	}
-
-	l.upstreams = lbUpstreams
-
-	zap.L().Debug("Setting lb upstreams is done", zap.Int("upstreamsLen", len(l.upstreams)))
-	return nil
-}
-*/
-
 func getSNIHost(arg string) string {
 	if govalidator.IsIP(arg) {
 		return ""
 	}
 	return arg
 }
-
-/*
-func (l *LBManager) SetUpstreamSession(svc *corev1.Service, sess *corev1.Session) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.doSetUpstreamSession(svc, sess)
-}
-*/
-
-/*
-func (l *LBManager) doSetUpstreamSession(svc *corev1.Service, sess *corev1.Session) {
-
-	zap.L().Debug("Setting upstreams for sess",
-		zap.String("sessUID", sess.Metadata.Uid),
-		zap.Int("upstreamsLen", len(l.upstreams)))
-
-	if !ucorev1.ToService(svc).IsServedBySession(ucorev1.ToSession(sess)) {
-		return
-	}
-
-	for idx := len(l.upstreams) - 1; idx >= 0; idx-- {
-		if l.upstreams[idx].sessUID == sess.Metadata.Uid {
-			l.upstreams = append(l.upstreams[0:idx], l.upstreams[idx+1:]...)
-		}
-	}
-
-	conn := sess.Status.Connection
-
-	connAddr := umetav1.ToDualStackNetwork(conn.Addresses[0]).ToIP()
-
-	upstream := ucorev1.ToService(svc).GetSessionUpstream(ucorev1.ToSession(sess))
-	if upstream == nil {
-		return
-	}
-
-	url := getUpstreamURL(svc, sess)
-
-	switch {
-	case ucorev1.ToSession(sess).HasV6():
-		l.upstreams = append(l.upstreams, &lbUpstream{
-			host:             connAddr.Ipv6,
-			port:             int(upstream.Port),
-			sessUID:          sess.Metadata.Uid,
-			url:              url,
-			isUser:           true,
-			sniHost:          getSNIHost(url.Hostname()),
-			isESSH:           ucorev1.ToService(svc).IsESSH(),
-			ed25519PublicKey: conn.Ed25519PublicKey,
-		})
-	case ucorev1.ToSession(sess).HasV4():
-		l.upstreams = append(l.upstreams, &lbUpstream{
-			host:             connAddr.Ipv4,
-			port:             int(upstream.Port),
-			sessUID:          sess.Metadata.Uid,
-			url:              url,
-			isUser:           true,
-			sniHost:          getSNIHost(url.Hostname()),
-			isESSH:           ucorev1.ToService(svc).IsESSH(),
-			ed25519PublicKey: conn.Ed25519PublicKey,
-		})
-	}
-
-	zap.L().Debug("lb upstreams using sess is complete", zap.Int("upstreamsLen", len(l.upstreams)))
-}
-*/
-
-func getUpstreamURL(svc *corev1.Service, sess *corev1.Session) *url.URL {
-	upstreams := ucorev1.ToService(svc).GetAllUpstreamEndpoints()
-	for _, u := range upstreams {
-		if u.User != "" {
-			if usrRef, err := ucorev1.ToService(svc).GetHostUserRef(u.User); err == nil &&
-				usrRef.Uid == sess.Status.UserRef.Uid {
-				url, _ := url.Parse(u.Url)
-				return url
-			}
-
-		}
-	}
-	return nil
-}
-
-/*
-func (l *LBManager) UnsetUpstreamSession(svc *corev1.Service, sess *corev1.Session) {
-
-	zap.L().Debug("Unsetting sess upstreams", zap.String("sessUID", sess.Metadata.Uid))
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	for idx := len(l.upstreams) - 1; idx >= 0; idx-- {
-		if l.upstreams[idx].sessUID == sess.Metadata.Uid {
-			l.upstreams = append(l.upstreams[0:idx], l.upstreams[idx+1:]...)
-		}
-	}
-
-}
-
-
-*/
 
 func (c *LBManager) onAdd(ctx context.Context, sess *corev1.Session) error {
 
