@@ -195,11 +195,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 					switch httpCfg.Header.ForwardedMode {
 					case corev1.Service_Spec_Config_HTTP_Header_DROP,
 						corev1.Service_Spec_Config_HTTP_Header_UNSET:
-						outReq.Header.Del("Forwarded")
-
-						outReq.Header.Del("X-Forwarded-For")
-						outReq.Header.Del("X-Forwarded-Host")
-						outReq.Header.Del("X-Forwarded-Proto")
+						removeAllForwardedHeaders(outReq)
 					case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
 					case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
 						forwardedHost := vutils.GetServicePublicFQDN(svc, s.domain)
@@ -215,19 +211,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 						outReq.Header.Set("X-Forwarded-For", "10.0.0.1")
 
 					default:
-						outReq.Header.Del("Forwarded")
-
-						outReq.Header.Del("X-Forwarded-For")
-						outReq.Header.Del("X-Forwarded-Host")
-						outReq.Header.Del("X-Forwarded-Proto")
+						removeAllForwardedHeaders(outReq)
 					}
 
 				} else {
-					outReq.Header.Del("Forwarded")
-
-					outReq.Header.Del("X-Forwarded-For")
-					outReq.Header.Del("X-Forwarded-Host")
-					outReq.Header.Del("X-Forwarded-Proto")
+					removeAllForwardedHeaders(outReq)
 				}
 			}
 
@@ -315,6 +303,16 @@ func isWebSocketUpgrade(req *http.Request) bool {
 	}
 
 	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket")
+}
+
+func removeAllForwardedHeaders(outReq *http.Request) {
+	hdr := outReq.Header
+
+	hdr.Del("Forwarded")
+
+	hdr.Del("X-Forwarded-For")
+	hdr.Del("X-Forwarded-Host")
+	hdr.Del("X-Forwarded-Proto")
 }
 
 func fixWebSocketHeaders(outReq *http.Request) {
