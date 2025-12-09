@@ -191,15 +191,15 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 			if !isManagedSvc {
 
-				outReq.Header.Del("X-Forwarded-For")
-				outReq.Header.Del("X-Forwarded-Host")
-				outReq.Header.Del("X-Forwarded-Proto")
-
 				if httpCfg != nil && httpCfg.Header != nil {
 					switch httpCfg.Header.ForwardedMode {
 					case corev1.Service_Spec_Config_HTTP_Header_DROP,
 						corev1.Service_Spec_Config_HTTP_Header_UNSET:
 						outReq.Header.Del("Forwarded")
+
+						outReq.Header.Del("X-Forwarded-For")
+						outReq.Header.Del("X-Forwarded-Host")
+						outReq.Header.Del("X-Forwarded-Proto")
 					case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
 					case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
 						forwardedHost := vutils.GetServicePublicFQDN(svc, s.domain)
@@ -209,11 +209,25 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 							scheme,
 							forwardedHost)
 						outReq.Header.Set("Forwarded", forwardedVal)
+
 						outReq.Header.Set("X-Forwarded-Proto", scheme)
 						outReq.Header.Set("X-Forwarded-Host", forwardedHost)
+						outReq.Header.Set("X-Forwarded-For", "10.0.0.1")
+
+					default:
+						outReq.Header.Del("Forwarded")
+
+						outReq.Header.Del("X-Forwarded-For")
+						outReq.Header.Del("X-Forwarded-Host")
+						outReq.Header.Del("X-Forwarded-Proto")
 					}
+
 				} else {
 					outReq.Header.Del("Forwarded")
+
+					outReq.Header.Del("X-Forwarded-For")
+					outReq.Header.Del("X-Forwarded-Host")
+					outReq.Header.Del("X-Forwarded-Proto")
 				}
 			}
 
