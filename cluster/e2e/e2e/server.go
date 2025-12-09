@@ -361,6 +361,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 
 	c := corev1.NewMainServiceClient(conn)
 	{
+		// Test host header
 		upstreamPort := 17000
 
 		upstreamSrv := &tstSrvHTTP{
@@ -396,7 +397,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 		time.Sleep(4 * time.Second)
 		{
 			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
-				zap.L().Debug("New request", zap.Any("req", r))
+				zap.L().Debug("New request", zap.Any("host", r.Host))
 				assert.Equal(t, fmt.Sprintf("localhost:%d", upstreamPort), r.Host)
 				w.WriteHeader(http.StatusOK)
 			}
@@ -425,8 +426,40 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 			time.Sleep(2 * time.Second)
 
 			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
-				zap.L().Debug("New request", zap.Any("req", r))
+				zap.L().Debug("New request", zap.Any("host", r.Host))
 				assert.Equal(t, vutils.GetServicePublicFQDN(svc, s.domain), r.Host)
+				w.WriteHeader(http.StatusOK)
+			}
+
+			res, err := s.httpC().R().Get("http://localhost:17001")
+			assert.Nil(t, err)
+
+			assert.True(t, res.IsSuccess())
+
+		}
+
+		{
+			hostVal := fmt.Sprintf("%s.localhost", utilrand.GetRandomStringCanonical(16))
+			svc.Spec.Config.Type = &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Header: &corev1.Service_Spec_Config_HTTP_Header{
+						Host: &corev1.Service_Spec_Config_HTTP_Header_Host{
+							Type: &corev1.Service_Spec_Config_HTTP_Header_Host_Value{
+								Value: hostVal,
+							},
+						},
+					},
+				},
+			}
+
+			svc, err = c.UpdateService(ctx, svc)
+			assert.Nil(t, err)
+
+			time.Sleep(2 * time.Second)
+
+			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
+				zap.L().Debug("New request", zap.Any("host", r.Host))
+				assert.Equal(t, hostVal, r.Host)
 				w.WriteHeader(http.StatusOK)
 			}
 
@@ -464,6 +497,7 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 			"device", "dev",
 			"identityprovider", "idp",
 			"region", "rgn",
+			"config", "cfg", "conf",
 		}
 
 		for _, arg := range args {
