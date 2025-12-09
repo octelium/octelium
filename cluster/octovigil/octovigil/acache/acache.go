@@ -78,10 +78,12 @@ func (c *Cache) setResource(key string, obj umetav1.ResourceObjectI, kind string
 		return err
 	}
 
-	zap.L().Debug("Setting resource",
+	zap.L().Debug("Setting resource in cache",
 		zap.String("kind", obj.GetKind()),
 		zap.String("apiVersion", obj.GetApiVersion()),
 		zap.String("uid", obj.GetMetadata().Uid),
+		zap.String("name", obj.GetMetadata().Name),
+		zap.String("resourceVersion", obj.GetMetadata().ResourceVersion),
 		zap.String("key", key))
 
 	if err := c.db.Update(func(tx *bbolt.Tx) error {
@@ -133,10 +135,17 @@ func (c *Cache) getResource(kind string, key string) (umetav1.ResourceObjectI, e
 	}); err != nil {
 		return nil, err
 	}
+
+	zap.L().Debug("Got cached resource",
+		zap.String("key", key))
+
 	return rsc, nil
 }
 
 func (c *Cache) deleteResource(kind string, key string) error {
+
+	zap.L().Debug("Deleting resource from cache",
+		zap.String("key", key))
 	if err := c.db.Update(func(tx *bbolt.Tx) error {
 
 		b := tx.Bucket([]byte(kind))
