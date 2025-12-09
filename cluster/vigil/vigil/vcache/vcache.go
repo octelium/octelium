@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 type Cache struct {
@@ -46,5 +47,5 @@ func (c *Cache) GetService() *corev1.Service {
 	c.mu.RLock()
 	ret := c.svc
 	c.mu.RUnlock()
-	return ret
+	return pbutils.Clone(ret).(*corev1.Service)
 }
