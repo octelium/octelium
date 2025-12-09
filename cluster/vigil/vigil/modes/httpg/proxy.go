@@ -202,12 +202,15 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 						outReq.Header.Del("Forwarded")
 					case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
 					case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
+						forwardedHost := vutils.GetServicePublicFQDN(svc, s.domain)
 						forwardedVal := fmt.Sprintf("for=_octelium-%s;by=%s;proto=%s;host=%s",
 							utilrand.GetRandomStringLowercase(8),
 							s.forwardedObfuscatedID,
 							scheme,
-							vutils.GetServicePublicFQDN(svc, s.domain))
+							forwardedHost)
 						outReq.Header.Set("Forwarded", forwardedVal)
+						outReq.Header.Set("X-Forwarded-Proto", scheme)
+						outReq.Header.Set("X-Forwarded-Host", forwardedHost)
 					}
 				} else {
 					outReq.Header.Del("Forwarded")
