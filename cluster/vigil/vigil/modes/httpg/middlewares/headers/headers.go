@@ -68,7 +68,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 	isAnonymous := svc.Spec.IsAnonymous
 
-	if !isAnonymous || !isManagedSvc {
+	switch {
+	case isAnonymous || isManagedSvc:
+	default:
 		req.Header.Del("Authorization")
 	}
 
