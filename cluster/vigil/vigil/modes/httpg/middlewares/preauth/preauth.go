@@ -46,19 +46,10 @@ type middleware struct {
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, domain string) (http.Handler, error) {
 
-	/*
-		celEngine, err := celengine.New(ctx, &celengine.Opts{})
-		if err != nil {
-			return nil, err
-		}
-
-	*/
-
 	return &middleware{
 		next:      next,
 		octeliumC: octeliumC,
 		domain:    domain,
-		// celEngine: celEngine,
 	}, nil
 }
 
@@ -133,6 +124,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	reqCtx.DownstreamRequest = downstreamReq
 
 	if httputils.IsAnonymousMode(req) {
+
+		// TODO: set Namespace
 		reqCtx.DownstreamInfo = &corev1.RequestContext{
 			Request: downstreamReq.Request,
 			Service: svc,
@@ -258,33 +251,3 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}, nil
 	}
 }
-
-/*
-func (s *middleware) getServiceConfigName(ctx context.Context, reqCtx *corev1.RequestContext) string {
-	svc := reqCtx.Service
-	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
-		return ""
-	}
-
-	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
-	if err != nil {
-		return ""
-	}
-
-	inputMap := map[string]any{
-		"ctx": reqCtxMap,
-	}
-
-	for _, rule := range svc.Spec.DynamicConfig.Rules {
-		isMatch, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
-		if err != nil {
-			continue
-		}
-		if isMatch {
-			return rule.ConfigName
-		}
-	}
-
-	return ""
-}
-*/

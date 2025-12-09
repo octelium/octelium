@@ -138,6 +138,11 @@ func TestMiddleware(t *testing.T) {
 
 		reqCtx := middlewares.GetCtxRequestContext(req.Context())
 		assert.Equal(t, reqPath, reqCtx.DownstreamRequest.Request.GetHttp().Path)
+		assert.True(t, pbutils.IsEqual(svc, reqCtx.DownstreamInfo.Service))
+		assert.True(t, pbutils.IsEqual(svc, reqCtx.Service))
+		assert.Nil(t, reqCtx.DownstreamInfo.Session)
+		assert.Nil(t, reqCtx.DownstreamInfo.User)
+		assert.Nil(t, reqCtx.DownstreamInfo.Device)
 		assert.True(t, reqCtx.IsAuthorized)
 		assert.False(t, reqCtx.IsAuthenticated)
 		assert.Nil(t, reqCtx.Body)
