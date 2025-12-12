@@ -131,6 +131,7 @@ func (s *tstSrv) serve(ctx context.Context) {
 			}
 		}
 
+		zap.L().Debug("New tstSrv conn")
 		go s.handleConn(conn)
 	}
 }
@@ -150,11 +151,14 @@ func (s *tstSrv) handleConn(c net.Conn) {
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
 	if err != nil {
+		zap.L().Debug("Could not do NewServerConn", zap.Error(err))
 		c.Close()
 		return
 	}
 
 	defer sshConn.Close()
+
+	zap.L().Debug("Starting tstSrv handleConn loop")
 
 	for {
 		select {
@@ -197,6 +201,7 @@ func (s *tstSrv) handleNewChannel(nch ssh.NewChannel) {
 }
 
 func (s *tstSrv) handleSessionRequests(newChannel ssh.NewChannel) {
+	zap.L().Debug("Starting tstSrv handleSessionRequests")
 
 	sesschan, reqs, err := newChannel.Accept()
 	if err != nil {
