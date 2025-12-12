@@ -191,7 +191,12 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
-	if authResp.IsAuthenticated && !authResp.IsAuthorized {
+	if !authResp.IsAuthenticated {
+		c.Close()
+		return
+	}
+
+	if !authResp.IsAuthorized {
 		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 			StartTime:       startTime,
 			IsAuthenticated: true,

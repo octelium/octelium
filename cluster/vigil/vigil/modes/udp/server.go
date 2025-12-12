@@ -252,6 +252,10 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		return err
 	}
 
+	if !authResp.IsAuthenticated {
+		return nil
+	}
+
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       time.Now(),
 		IsAuthenticated: authResp.IsAuthenticated,
