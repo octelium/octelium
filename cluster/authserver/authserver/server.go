@@ -263,6 +263,16 @@ func (s *server) getTemplateGlobals() *templateGlobals {
 
 func (s *server) setIdentityProviders(ctx context.Context) error {
 
+	clusterCfg, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	identityProviders, err := s.octeliumC.CoreC().ListIdentityProvider(ctx, &rmetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+
 	s.webProvidersC.Lock()
 	defer s.webProvidersC.Unlock()
 
@@ -274,18 +284,7 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 	s.webProvidersC.connectors = []utils.Provider{}
 	s.assertionProvidersC.connectors = []utils.Provider{}
 
-	clusterCfg, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-	if err != nil {
-		return err
-	}
-
-	identityProviders, err := s.octeliumC.CoreC().ListIdentityProvider(ctx, &rmetav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	for _, idp := range identityProviders.Items {
-
+	doAddWeb := func(idp *corev1.IdentityProvider) error {
 		var c utils.Provider
 
 		switch idp.Spec.Type.(type) {
@@ -321,14 +320,15 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 			}
 
 		default:
-			continue
+			return nil
 		}
 
 		s.webProvidersC.connectors = append(s.webProvidersC.connectors, c)
 		zap.L().Debug("Added web IdentityProvider", zap.String("name", c.Name()))
+		return nil
 	}
 
-	for _, idp := range identityProviders.Items {
+	doAddOIDCIdentityToken := func(idp *corev1.IdentityProvider) error {
 		switch idp.Spec.Type.(type) {
 		case *corev1.IdentityProvider_Spec_OidcIdentityToken:
 			c, err := oidcassertion.NewConnector(ctx, &utils.ProviderOpts{
@@ -342,6 +342,22 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 			}
 			s.assertionProvidersC.connectors = append(s.assertionProvidersC.connectors, c)
 			zap.L().Debug("Added assertion IdentityProvider", zap.String("name", c.Name()))
+		}
+
+		return nil
+	}
+
+	for _, idp := range identityProviders.Items {
+		if err := doAddWeb(idp); err != nil {
+			zap.L().Warn("Could not add web IdentityProvider",
+				zap.Any("idp", idp), zap.Error(err))
+		}
+	}
+
+	for _, idp := range identityProviders.Items {
+		if err := doAddOIDCIdentityToken(idp); err != nil {
+			zap.L().Warn("Could not add OIDCIdentityToken IdentityProvider",
+				zap.Any("idp", idp), zap.Error(err))
 		}
 	}
 
