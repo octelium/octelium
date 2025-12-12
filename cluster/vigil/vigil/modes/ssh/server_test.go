@@ -679,6 +679,11 @@ func TestServer(t *testing.T) {
 		})
 		assert.Nil(t, err)
 		upstreamSrv.close()
+
+		secret, err = fakeC.OcteliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+			Uid: secret.Metadata.Uid,
+		})
+		assert.Nil(t, err)
 		upstreamSrv, err = newTestServer(ctx, srv.octeliumC, false,
 			func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 				if utils.SecureBytesEqual([]byte(secret.Data.GetValue()), password) {
