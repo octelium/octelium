@@ -24,6 +24,8 @@ import (
 
 	"sync"
 
+	"context"
+
 	"github.com/jackc/pgproto3/v2"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -44,7 +46,6 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 type Server struct {

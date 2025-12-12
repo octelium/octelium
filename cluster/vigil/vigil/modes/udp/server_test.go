@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"github.com/octelium/octelium/apis/main/corev1"
 	v1 "github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -37,7 +39,6 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
 )
 
 type tstSrv struct {

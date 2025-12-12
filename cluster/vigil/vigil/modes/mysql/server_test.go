@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -37,7 +39,6 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 
 	_ "github.com/go-sql-driver/mysql"
 )

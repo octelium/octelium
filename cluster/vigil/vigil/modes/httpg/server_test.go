@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/gorilla/websocket"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -53,7 +55,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"

@@ -24,6 +24,8 @@ import (
 
 	"sync"
 
+	"context"
+
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/server"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -45,7 +47,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 type Server struct {
