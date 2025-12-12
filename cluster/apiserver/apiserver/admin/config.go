@@ -57,6 +57,8 @@ func (s *Server) CreateConfig(ctx context.Context, req *corev1.Config) (*corev1.
 		return nil, serr.InternalWithErr(err)
 	}
 
+	item.Data = nil
+
 	return item, nil
 }
 
