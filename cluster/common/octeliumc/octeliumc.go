@@ -51,6 +51,10 @@ func DefaultAddr() string {
 
 func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
 	return []grpc.DialOption{
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(200*1024*1024),
+			grpc.MaxCallSendMsgSize(200*1024*1024),
+		),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(middlewares.GetUnaryInterceptors()...)),
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(middlewares.GetStreamInterceptors()...)),
