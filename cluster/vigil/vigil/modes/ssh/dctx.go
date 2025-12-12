@@ -23,9 +23,10 @@ import (
 	"sync"
 	"time"
 
+	"context"
+
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/sshutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -38,7 +39,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/net/context"
 )
 
 type dctx struct {
@@ -60,8 +60,8 @@ type dctx struct {
 	isClosed    bool
 	keepAliveCh chan struct{}
 
-	i      *corev1.RequestContext
-	svcRef *metav1.ObjectReference
+	i *corev1.RequestContext
+	// svcRef *metav1.ObjectReference
 
 	upstreamSession *corev1.Session
 
@@ -78,14 +78,14 @@ func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn ne
 
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse, reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	ret := &dctx{
-		id:              vutils.GenerateLogID(),
-		svc:             svc,
-		conn:            conn,
-		sshConn:         sshConn,
-		createdAt:       time.Now(),
-		keepAliveCh:     make(chan struct{}),
-		i:               i,
-		svcRef:          umetav1.GetObjectReference(i.Service),
+		id:          vutils.GenerateLogID(),
+		svc:         svc,
+		conn:        conn,
+		sshConn:     sshConn,
+		createdAt:   time.Now(),
+		keepAliveCh: make(chan struct{}),
+		i:           i,
+		// svcRef:          umetav1.GetObjectReference(i.Service),
 		upstreamSession: upstreamSession,
 		authResp:        authResp,
 		svcConfig:       vigilutils.GetServiceConfig(ctx, authResp),
