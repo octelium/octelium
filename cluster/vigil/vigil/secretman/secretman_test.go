@@ -101,7 +101,7 @@ func TestSecretManager(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 0, len(secretMan.secretNames))
 
-	sec1, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+	sec1, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(6),
 		},
@@ -114,7 +114,7 @@ func TestSecretManager(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
-	sec2, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+	sec2, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(6),
 		},
