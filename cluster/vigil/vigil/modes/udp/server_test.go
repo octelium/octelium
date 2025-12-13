@@ -197,6 +197,30 @@ func TestServer(t *testing.T) {
 	err = srv.Run(ctx)
 	assert.Nil(t, err)
 
+	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", svc.Spec.Port))
+	assert.Nil(t, err)
+
+	{
+		time.Sleep(1 * time.Second)
+		c, err := net.DialUDP("udp", nil, udpAddr)
+		assert.Nil(t, err)
+
+		{
+
+			msg := utilrand.GetRandomBytesMust(32)
+
+			_, err = c.Write(msg)
+			assert.Nil(t, err)
+			err = c.SetDeadline(time.Now().Add(2 * time.Second))
+			assert.Nil(t, err)
+
+			buf := make([]byte, 4096)
+			n, err := c.Read(buf)
+			assert.NotNil(t, err)
+			assert.Equal(t, 0, n)
+		}
+	}
+
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
 	err = usr.Connect()
@@ -221,9 +245,6 @@ func TestServer(t *testing.T) {
 	usr.Resync()
 
 	time.Sleep(1 * time.Second)
-
-	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", svc.Spec.Port))
-	assert.Nil(t, err)
 
 	c, err := net.DialUDP("udp", nil, udpAddr)
 	assert.Nil(t, err)

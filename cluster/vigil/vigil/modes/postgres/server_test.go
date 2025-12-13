@@ -168,6 +168,16 @@ func TestServer(t *testing.T) {
 	err = srv.Run(ctx)
 	assert.Nil(t, err)
 
+	{
+		time.Sleep(1 * time.Second)
+		db, err := sql.Open("postgres", fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", svc.Spec.Port))
+		assert.Nil(t, err)
+
+		_, err = db.Exec("SELECT datname FROM pg_database LIMIT 5;")
+		assert.NotNil(t, err)
+
+	}
+
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
 	err = usr.Connect()

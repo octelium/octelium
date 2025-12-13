@@ -551,8 +551,24 @@ func TestServer(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
+	srvAddr := fmt.Sprintf("localhost:%d", ucorev1.ToService(svc).RealPort())
+
 	err = srv.Run(ctx)
 	assert.Nil(t, err)
+
+	{
+		time.Sleep(1 * time.Second)
+
+		c, err := net.Dial("tcp", srvAddr)
+		assert.Nil(t, err, "%+v", err)
+
+		clientConn, clientChans, clientReqs, err := ssh.NewClientConn(c, srvAddr, getClientConfig(t, fakeC.OcteliumC, "root"))
+		assert.Nil(t, err, "Could not create ssh client %+v", err)
+		sshC := ssh.NewClient(clientConn, clientChans, clientReqs)
+
+		_, err = sshC.NewSession()
+		assert.NotNil(t, err, "%+v", err)
+	}
 
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
@@ -578,8 +594,6 @@ func TestServer(t *testing.T) {
 	usr.Resync()
 
 	time.Sleep(1 * time.Second)
-
-	srvAddr := fmt.Sprintf("localhost:%d", ucorev1.ToService(svc).RealPort())
 
 	doConnect := func(srvAddr, sshUser string) {
 		c, err := net.Dial("tcp", srvAddr)

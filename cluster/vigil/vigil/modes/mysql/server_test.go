@@ -168,6 +168,15 @@ func TestServer(t *testing.T) {
 	err = srv.Run(ctx)
 	assert.Nil(t, err)
 
+	{
+		time.Sleep(1 * time.Second)
+		db, err := sql.Open("mysql", fmt.Sprintf("root:@tcp(127.0.0.1:%d)/mysql", svc.Spec.Port))
+		assert.Nil(t, err, "%+v", err)
+
+		_, err = db.Exec("SHOW TABLES;")
+		assert.NotNil(t, err)
+	}
+
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
 	err = usr.Connect()

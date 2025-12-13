@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -212,6 +213,19 @@ func TestServer(t *testing.T) {
 	assert.Nil(t, err)
 	err = srv.Run(ctx)
 	assert.Nil(t, err)
+	{
+		time.Sleep(1 * time.Second)
+		c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", svc.Spec.Port))
+		assert.Nil(t, err)
+
+		buf := make([]byte, 4096)
+		n, err := c.Read(buf)
+
+		assert.Equal(t, 0, n)
+		assert.Equal(t, io.EOF, err)
+
+		c.Close()
+	}
 
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
