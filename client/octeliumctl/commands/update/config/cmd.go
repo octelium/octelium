@@ -24,7 +24,6 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
 )
 
 type args struct {
@@ -79,8 +78,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	req, err := c.GetConfig(ctx, &metav1.GetOptions{
 		Name: i.FirstArg(),
-	}, grpc.MaxCallRecvMsgSize(200*1024*1024),
-		grpc.MaxCallSendMsgSize(200*1024*1024))
+	})
 	if err != nil {
 		return err
 	}
@@ -96,9 +94,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		},
 	}
 
-	if _, err := c.UpdateConfig(cmd.Context(), req,
-		grpc.MaxCallRecvMsgSize(200*1024*1024),
-		grpc.MaxCallSendMsgSize(200*1024*1024)); err != nil {
+	if _, err := c.UpdateConfig(cmd.Context(), req); err != nil {
 		return err
 	}
 
