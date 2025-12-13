@@ -138,6 +138,29 @@ func TestController(t *testing.T) {
 	}
 
 	{
+		err = ctl.Set(ctx, &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
+				Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
+					Url: fmt.Sprintf("%s/GeoIP2-City-Test.mmdb", prefixURL),
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		{
+			res := ctl.ResolveStr("214.78.120.1")
+			assert.NotNil(t, res)
+			assert.NotNil(t, res.City)
+			assert.NotNil(t, res.Country)
+			assert.NotNil(t, res.Timezone)
+			assert.NotNil(t, res.Coordinates)
+			assert.NotEmpty(t, res.PostalCode)
+			assert.NotEmpty(t, res.Ip)
+
+		}
+	}
+
+	{
 		ctl.Unset()
 		res := ctl.ResolveStr("214.78.120.1")
 		assert.Nil(t, res)

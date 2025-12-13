@@ -17,10 +17,16 @@
 package geoipctl
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"net/netip"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -265,4 +271,87 @@ func (c *Controller) Unset() {
 	c.name = ""
 	c.db = nil
 	c.mu.Unlock()
+}
+
+func (c *Controller) Set(ctx context.Context, cfg *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB) error {
+	if cfg == nil {
+		c.Unset()
+		return nil
+	}
+
+	switch cfg.Type.(type) {
+	case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_FromConfig:
+		res, err := c.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+			Name: cfg.GetFromConfig(),
+		})
+		if err != nil {
+			return err
+		}
+		return c.setConfig(ctx, res)
+	case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_:
+		return c.setUpstream(ctx, cfg.GetUpstream())
+	default:
+		c.Unset()
+	}
+
+	return nil
+}
+
+func (c *Controller) setUpstream(ctx context.Context,
+	upstream *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream) error {
+	httpC := resty.New().SetRetryCount(20).
+		SetRetryWaitTime(500 * time.Millisecond).SetRetryMaxWaitTime(2 * time.Second).
+		AddRetryCondition(func(r *resty.Response, err error) bool {
+			if r.StatusCode() >= 500 && r.StatusCode() < 600 {
+				return true
+			}
+			return false
+		}).
+		AddRetryHook(func(r *resty.Response, err error) {
+			zap.L().Debug("Retrying....", zap.Error(err))
+		}).SetTimeout(100 * time.Second).SetLogger(zap.S())
+
+	resp, err := httpC.R().SetContext(ctx).Get(upstream.Url)
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.Errorf("fetching mmdb is not successful: status code: %d", resp.StatusCode())
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	body := resp.Body()
+	contentType := resp.Header().Get("Content-Type")
+	var mmdbBytes []byte
+
+	switch {
+	case strings.HasSuffix(resp.Request.RawRequest.URL.Path, ".gz") ||
+		strings.HasSuffix(resp.Request.RawRequest.URL.Path, ".gzip") ||
+		strings.Contains(contentType, "gzip"):
+		mmdbBytes, err = decompress(body)
+		if err != nil {
+			mmdbBytes = body
+		}
+	default:
+		mmdbBytes = body
+	}
+
+	c.db, err = geoip2.OpenBytes(mmdbBytes)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func decompress(data []byte) ([]byte, error) {
+	gr, err := gzip.NewReader(io.Reader(bytes.NewReader(data)))
+	if err != nil {
+		return nil, err
+	}
+	defer gr.Close()
+
+	return io.ReadAll(gr)
 }
