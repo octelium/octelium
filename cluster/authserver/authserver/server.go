@@ -93,17 +93,10 @@ func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.Clu
 
 	if !pbutils.IsEqual(new.Spec.Authentication, old.Spec.Authentication) {
 		if new.Spec.Authentication != nil && new.Spec.Authentication.Geolocation != nil &&
-			new.Spec.Authentication.Geolocation.GetMmdb() != nil &&
-			new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig() != "" {
-			if cfg, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
-				Name: new.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig(),
-			}); err == nil {
-				if err := s.geoipCtl.SetConfig(ctx, cfg); err != nil {
-					zap.L().Warn("Could not geoipCtl setConfig", zap.Error(err))
-				}
+			new.Spec.Authentication.Geolocation.GetMmdb() != nil {
+			if err := s.geoipCtl.Set(ctx, new.Spec.Authentication.Geolocation.GetMmdb()); err != nil {
+				zap.L().Warn("Could not set geoipCtl", zap.Error(err))
 			}
-		} else {
-			s.geoipCtl.Unset()
 		}
 	}
 
@@ -223,17 +216,16 @@ func initServer(ctx context.Context,
 
 	ret.geoipCtl, err = geoipctl.New(ctx, &geoipctl.Opts{
 		OcteliumC: octeliumC,
-		ConfigName: func() string {
-			if clusterCfg.Spec.Authentication == nil || clusterCfg.Spec.Authentication.Geolocation == nil ||
-				clusterCfg.Spec.Authentication.Geolocation.GetMmdb() == nil ||
-				clusterCfg.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig() == "" {
-				return ""
-			}
-			return clusterCfg.Spec.Authentication.Geolocation.GetMmdb().GetFromConfig()
-		}(),
 	})
 	if err != nil {
 		return nil, err
+	}
+	if clusterCfg.Spec.Authentication != nil &&
+		clusterCfg.Spec.Authentication.Geolocation != nil &&
+		clusterCfg.Spec.Authentication.Geolocation.GetMmdb() != nil {
+		if err := ret.geoipCtl.Set(ctx, clusterCfg.Spec.Authentication.Geolocation.GetMmdb()); err != nil {
+			zap.L().Warn("Could not set geoipCtl", zap.Error(err))
+		}
 	}
 
 	zap.L().Debug("initializing authServer completed")
