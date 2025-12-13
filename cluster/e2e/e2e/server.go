@@ -1820,6 +1820,8 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	assert.Nil(t, err)
 
 	var accessToken string
+	var accessTokenUnauthorized string
+
 	{
 
 		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
@@ -1841,10 +1843,35 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	}
 
 	{
-		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
-			R().Get("/")
+
+		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+
+		conf := &clientcredentials.Config{
+			ClientID:     tkn.GetOauth2Credentials().ClientID,
+			ClientSecret: tkn.GetOauth2Credentials().ClientSecret,
+			TokenURL:     fmt.Sprintf("https://%s/oauth2/token", s.domain),
+		}
+
+		tkni, err := conf.Token(ctx)
+		assert.Nil(t, err)
+
+		accessTokenUnauthorized = tkni.AccessToken
+	}
+
+	{
+		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(usr),
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(sessList.Items))
+
+		sess := sessList.Items[0]
+		zap.L().Debug("xff Session", zap.Any("sess", sess))
+		assert.NotNil(t, sess.Status.Authentication.Info.Geoip)
+		assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
 	}
 
 	{
@@ -1852,6 +1879,20 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
+			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
 	}
 
 	{
