@@ -211,8 +211,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.grpcSrv = grpc.NewServer(
-		grpc.MaxRecvMsgSize(200*1024*1024),
-		grpc.MaxSendMsgSize(200*1024*1024),
 		grpc.ReadBufferSize(32*1024),
 		grpc.MaxConcurrentStreams(1000000),
 		grpc.StreamInterceptor(
