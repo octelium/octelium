@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/oschwald/geoip2-golang/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -97,22 +98,26 @@ func (c *Controller) setConfig(ctx context.Context, cfg *corev1.Config) error {
 
 func (c *Controller) doSetConfig(_ context.Context, cfg *corev1.Config) error {
 
-	var err error
-
 	if cfg == nil || cfg.Metadata == nil || cfg.Metadata.Name != c.name {
 		return nil
 	}
 
-	if cfg.Data == nil || len(cfg.Data.GetValueBytes()) == 0 {
+	data := ucorev1.ToConfig(cfg).GetValueBytes()
+	if len(data) == 0 {
 		return errors.Errorf("Could not find config content")
 	}
 
-	c.db, err = geoip2.OpenBytes(cfg.Data.GetValueBytes())
+	return c.doLoadDB(data)
+}
+
+func (c *Controller) doLoadDB(data []byte) error {
+	var err error
+	c.db, err = geoip2.OpenBytes(data)
 	if err != nil {
 		return err
 	}
 
-	zap.L().Debug("Loaded MMDB", zap.Any("metadata", c.db.Metadata()))
+	zap.L().Info("Loaded MMDB", zap.Any("metadata", c.db.Metadata()))
 
 	return nil
 }
@@ -338,12 +343,7 @@ func (c *Controller) setUpstream(ctx context.Context,
 		mmdbBytes = body
 	}
 
-	c.db, err = geoip2.OpenBytes(mmdbBytes)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return c.doLoadDB(mmdbBytes)
 }
 
 func decompress(data []byte) ([]byte, error) {
