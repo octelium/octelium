@@ -168,12 +168,12 @@ func (s *Server) validateConfig(ctx context.Context, itm *corev1.Config) error {
 	switch itm.Data.Type.(type) {
 	case *corev1.Config_Data_Value:
 		lenVal := len(itm.Data.GetValue())
-		if lenVal == 0 || lenVal > 512*1024*1024 {
+		if lenVal == 0 || lenVal > 3*1024*1024 {
 			return grpcutils.InvalidArg("Invalid Config size")
 		}
 	case *corev1.Config_Data_ValueBytes:
 		lenVal := len(itm.Data.GetValueBytes())
-		if lenVal == 0 || lenVal > 512*1024*1024 {
+		if lenVal == 0 || lenVal > 3*1024*1024 {
 			return grpcutils.InvalidArg("Invalid Config size")
 		}
 	default:
