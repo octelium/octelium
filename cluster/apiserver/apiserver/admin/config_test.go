@@ -39,9 +39,12 @@ func TestConfig(t *testing.T) {
 	})
 	srv := newFakeServer(tst.C)
 
-	{
+	sizes := []int{10, 10 * 1024, 2 * 1024 * 1024}
 
-		val := utilrand.GetRandomBytesMust(20 * 1024 * 1024)
+	for _, sz := range sizes {
+
+		val := utilrand.GetRandomBytesMust(sz)
+
 		cfg, err := srv.CreateConfig(ctx, &corev1.Config{
 			Metadata: &metav1.Metadata{
 				Name: fmt.Sprintf("cfg-%s", utilrand.GetRandomStringLowercase(4)),
@@ -74,6 +77,22 @@ func TestConfig(t *testing.T) {
 
 		_, err = srv.DeleteConfig(ctx, &metav1.DeleteOptions{Name: cfg.Metadata.Name})
 		assert.Nil(t, err)
+	}
+
+	{
+		val := utilrand.GetRandomBytesMust(4 * 1024 * 1024)
+		_, err := srv.CreateConfig(ctx, &corev1.Config{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("cfg-%s", utilrand.GetRandomStringLowercase(4)),
+			},
+			Spec: &corev1.Config_Spec{},
+			Data: &corev1.Config_Data{
+				Type: &corev1.Config_Data_ValueBytes{
+					ValueBytes: []byte(val),
+				},
+			},
+		})
+		assert.NotNil(t, err, "%+v", err)
 	}
 
 }
