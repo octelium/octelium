@@ -52,6 +52,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils"
@@ -66,6 +67,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -206,6 +208,10 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlCommands(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runGeoIP(ctx); err != nil {
 		return err
 	}
 
@@ -509,8 +515,6 @@ func (s *server) runOcteliumctlCommands(ctx context.Context) error {
 	{
 		files := []string{
 			s.kubeConfigPath,
-			"/usr/local/bin/octeliumctl",
-			"/usr/local/bin/octops",
 		}
 
 		for _, arg := range files {
@@ -1731,6 +1735,130 @@ func (s *server) installClusterCert(ctx context.Context) error {
 		s.domain, keyPath, certPath, s.kubeConfigPath)
 	if err := s.runCmd(ctx, cmdStr); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (s *server) runGeoIP(ctx context.Context) error {
+	t := s.t
+
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	c := corev1.NewMainServiceClient(conn)
+
+	cc, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+	assert.Nil(t, err)
+
+	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
+		UseForwardedForHeader: true,
+	}
+
+	const prefixURL = `https://raw.githubusercontent.com/maxmind/MaxMind-DB/refs/heads/main/test-data`
+
+	cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
+		Geolocation: &corev1.ClusterConfig_Spec_Authentication_Geolocation{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_Mmdb{
+				Mmdb: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
+						Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
+							Url: fmt.Sprintf("%s/GeoIP2-City-Test.mmdb", prefixURL),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cc, err = c.UpdateClusterConfig(ctx, cc)
+	assert.Nil(t, err)
+
+	time.Sleep(3 * time.Second)
+
+	usr, err := c.CreateUser(ctx, &corev1.User{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.User_Spec{
+			Type: corev1.User_Spec_WORKLOAD,
+			Authorization: &corev1.User_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Name: "geoip",
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.session.status.authentication.info.geoip.country.code == "US"`,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	cred, err := c.CreateCredential(ctx, &corev1.Credential{
+		Metadata: &metav1.Metadata{
+			Name: fmt.Sprintf("%s-at", usr.Metadata.Name),
+		},
+		Spec: &corev1.Credential_Spec{
+			Type:        corev1.Credential_Spec_OAUTH2,
+			User:        usr.Metadata.Name,
+			SessionType: corev1.Session_Status_CLIENTLESS,
+			ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+		},
+	})
+	assert.Nil(t, err)
+
+	var accessToken string
+	{
+
+		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		conf := &clientcredentials.Config{
+			ClientID:     tkn.GetOauth2Credentials().ClientID,
+			ClientSecret: tkn.GetOauth2Credentials().ClientSecret,
+			TokenURL:     fmt.Sprintf("https://%s/oauth2/token", s.domain),
+		}
+
+		httpC := s.httpC().SetHeader("X-Forwarded-For", "214.78.120.1").GetClient()
+		tkni, err := conf.Token(context.WithValue(ctx, oauth2.HTTPClient, httpC))
+		assert.Nil(t, err)
+
+		accessToken = tkni.AccessToken
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	{
+		cc.Spec.Authentication = nil
+		cc.Spec.Ingress = nil
+		_, err = c.UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
 	}
 
 	return nil
