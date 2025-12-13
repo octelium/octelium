@@ -203,6 +203,10 @@ type Region struct {
 	*corev1.Region
 }
 
+type Config struct {
+	*corev1.Config
+}
+
 func ToService(a *corev1.Service) *Service {
 	return &Service{
 		Service: a,
@@ -230,6 +234,12 @@ func ToUser(a *corev1.User) *User {
 func ToSecret(a *corev1.Secret) *Secret {
 	return &Secret{
 		Secret: a,
+	}
+}
+
+func ToConfig(a *corev1.Config) *Config {
+	return &Config{
+		Config: a,
 	}
 }
 
@@ -973,4 +983,22 @@ func ToAuthenticator(a *corev1.Authenticator) *Authenticator {
 	return &Authenticator{
 		Authenticator: a,
 	}
+}
+
+func (s *Config) GetValueStr() string {
+	if s.Data == nil {
+		return ""
+	}
+	switch s.Data.Type.(type) {
+	case *corev1.Config_Data_Value:
+		return s.Data.GetValue()
+	case *corev1.Config_Data_ValueBytes:
+		return string(s.Data.GetValueBytes())
+	default:
+		return ""
+	}
+}
+
+func (s *Config) GetValueBytes() []byte {
+	return []byte(s.GetValueStr())
 }
