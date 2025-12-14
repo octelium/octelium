@@ -37,7 +37,7 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	doCreate := func() (*corev1.Session, error) {
 		return s.createWebSession(ctx,
 			usr, authResp, cc, idp,
-			r.Header.Get("User-Agent"), r.Header.Get("X-Forwarded-For"))
+			r.Header.Get("User-Agent"), r.Header.Get("X-Envoy-External-Address"))
 	}
 
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)

@@ -84,7 +84,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	sess, err := s.createWebSession(ctx,
 		usr, authInfo, cc, nil,
 		grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		grpcutils.GetHeaderValueMust(ctx, "x-forwarded-for"))
+		grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"))
 	if err != nil {
 		return nil, s.errInternalErr(err)
 	}

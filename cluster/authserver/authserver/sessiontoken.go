@@ -172,7 +172,7 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		}(),
 
 		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, "x-forwarded-for"),
+		XFF:       grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"),
 	})
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
@@ -297,7 +297,7 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		AuthenticationInfo: info,
 
 		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, "X-Forwarded-For"),
+		XFF:       grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"),
 	})
 	if err != nil {
 		return nil, s.errInternalErr(err)

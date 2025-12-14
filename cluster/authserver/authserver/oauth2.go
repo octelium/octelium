@@ -173,7 +173,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			},
 			CredentialRef: umetav1.GetObjectReference(tkn),
 			UserAgent:     r.Header.Get("User-Agent"),
-			XFF:           r.Header.Get("X-Forwarded-For"),
+			XFF:           r.Header.Get("X-Envoy-External-Address"),
 		})
 		if err != nil {
 			s.returnOAuth2Err(w, "server_error", 500)

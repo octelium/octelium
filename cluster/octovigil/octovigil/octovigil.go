@@ -34,7 +34,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
-	"github.com/octelium/octelium/cluster/common/httputils"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/octovigilc"
@@ -602,7 +601,7 @@ func (s *Server) isAuthorized(ctx context.Context,
 	if req.Service.Spec.IsPublic && req.Session.Status.Type == corev1.Session_Status_CLIENTLESS {
 		if cc := s.ccCtl.Get(); cc != nil && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
 			if req.Request != nil && req.Request.GetHttp() != nil && req.Request.GetHttp().Headers != nil {
-				ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(req.Request.GetHttp().Headers["x-forwarded-for"])
+				ipAddr := req.Request.GetHttp().Headers["x-envoy-external-address"]
 				if ipAddr != "" && req.Session.Status.Authentication != nil &&
 					req.Session.Status.Authentication.Info != nil &&
 					req.Session.Status.Authentication.Info.Downstream != nil &&
