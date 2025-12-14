@@ -1762,6 +1762,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 
 	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
 		UseForwardedForHeader: true,
+		XffNumTrustedHops:     1,
 	}
 
 	const prefixURL = `https://raw.githubusercontent.com/maxmind/MaxMind-DB/refs/heads/main/test-data`
