@@ -169,6 +169,8 @@ func (s *server) run(ctx context.Context) error {
 			s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
 		*/
 		// s.startKubectlLog(ctx, "-l octelium.com/component=collector")
+		s.startKubectlLog(ctx, "-l octelium.com/svc=demo-nginx.default")
+		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
@@ -1755,6 +1757,8 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	assert.Nil(t, err)
 	defer conn.Close()
 
+	zap.L().Debug("Starting runGeoIP")
+
 	c := corev1.NewMainServiceClient(conn)
 
 	cc, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
@@ -1869,6 +1873,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 
 		sess := sessList.Items[0]
 		zap.L().Debug("xff Session", zap.Any("info", sess.Status.Authentication.Info))
+		zap.L().Debug("xff Session GeoIP info", zap.Any("geoip", sess.Status.Authentication.Info.Geoip))
 		assert.NotNil(t, sess.Status.Authentication.Info.Geoip)
 		assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
 	}
@@ -1919,6 +1924,8 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		_, err = c.UpdateClusterConfig(ctx, cc)
 		assert.Nil(t, err)
 	}
+
+	zap.L().Debug("Done runGeoIP")
 
 	return nil
 }
