@@ -353,6 +353,10 @@ func Sha256Sum(arg []byte) []byte {
 	return ret[:]
 }
 
+func GetDownstreamIPHeaderCanonical() string {
+	return "X-Octelium-Client-Address"
+}
+
 const UpgradeIDKey = "upgrade-id"
 const ManagedServiceAddr = "localhost:49999"
 const MaxPolicyParents = 5

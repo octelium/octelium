@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"strings"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	corsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3"
 	envoy_type_matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -260,7 +262,15 @@ func isAPIServer(svc *corev1.Service) bool {
 func getRouteMain(domain string, prefix string, isGRPC bool, cluster string) (*routev3.Route, error) {
 
 	route := &routev3.Route{
-
+		RequestHeadersToAdd: []*corev3.HeaderValueOption{
+			{
+				Header: &corev3.HeaderValue{
+					Key:   vutils.GetDownstreamIPHeaderCanonical(),
+					Value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+				},
+				KeepEmptyValue: true,
+			},
+		},
 		Match: &routev3.RouteMatch{
 			PathSpecifier: &routev3.RouteMatch_Prefix{
 				Prefix: prefix,
@@ -388,6 +398,15 @@ func getVirtualHostService(svc *corev1.Service, domain string) (*routev3.Virtual
 func getRoutesService(svc *corev1.Service, domain string) ([]*routev3.Route, error) {
 
 	route := &routev3.Route{
+		RequestHeadersToAdd: []*corev3.HeaderValueOption{
+			{
+				Header: &corev3.HeaderValue{
+					Key:   vutils.GetDownstreamIPHeaderCanonical(),
+					Value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+				},
+				KeepEmptyValue: true,
+			},
+		},
 		Match: &routev3.RouteMatch{
 			PathSpecifier: &routev3.RouteMatch_Prefix{
 				Prefix: "/",

@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/sessionc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -172,7 +173,7 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		}(),
 
 		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"),
+		XFF:       grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
 	})
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
@@ -297,7 +298,7 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		AuthenticationInfo: info,
 
 		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"),
+		XFF:       grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
 	})
 	if err != nil {
 		return nil, s.errInternalErr(err)

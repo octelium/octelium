@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -159,7 +160,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 
 	if !isManagedSvc {
 		req.Header.Del("X-Octelium-Auth")
-		req.Header.Del("X-Envoy-External-Address")
+		req.Header.Del(vutils.GetDownstreamIPHeaderCanonical())
 
 		for name, _ := range req.Header {
 			if strings.HasPrefix(name, "X-Octelium") {

@@ -420,7 +420,7 @@ func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 	{
 		// Router filter must be last filter
 		routerFilter := &routerv3.Router{
-			// SuppressEnvoyHeaders: true,
+			SuppressEnvoyHeaders: true,
 		}
 		pbFilter, err := anypb.New(routerFilter)
 		if err != nil {

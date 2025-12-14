@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -173,7 +174,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			},
 			CredentialRef: umetav1.GetObjectReference(tkn),
 			UserAgent:     r.Header.Get("User-Agent"),
-			XFF:           r.Header.Get("X-Envoy-External-Address"),
+			XFF:           r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
 		})
 		if err != nil {
 			s.returnOAuth2Err(w, "server_error", 500)

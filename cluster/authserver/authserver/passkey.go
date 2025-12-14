@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
@@ -84,7 +85,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	sess, err := s.createWebSession(ctx,
 		usr, authInfo, cc, nil,
 		grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		grpcutils.GetHeaderValueMust(ctx, "x-envoy-external-address"))
+		grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()))
 	if err != nil {
 		return nil, s.errInternalErr(err)
 	}

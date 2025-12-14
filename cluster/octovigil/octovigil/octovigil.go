@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octovigilc"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/rscutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -601,7 +602,7 @@ func (s *Server) isAuthorized(ctx context.Context,
 	if req.Service.Spec.IsPublic && req.Session.Status.Type == corev1.Session_Status_CLIENTLESS {
 		if cc := s.ccCtl.Get(); cc != nil && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
 			if req.Request != nil && req.Request.GetHttp() != nil && req.Request.GetHttp().Headers != nil {
-				ipAddr := req.Request.GetHttp().Headers["x-envoy-external-address"]
+				ipAddr := req.Request.GetHttp().Headers[strings.ToLower(vutils.GetDownstreamIPHeaderCanonical())]
 				if ipAddr != "" && req.Session.Status.Authentication != nil &&
 					req.Session.Status.Authentication.Info != nil &&
 					req.Session.Status.Authentication.Info.Downstream != nil &&

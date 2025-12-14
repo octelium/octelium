@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,7 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 	doCreate := func() (*corev1.Session, error) {
 		return s.createWebSession(ctx,
 			usr, authResp, cc, idp,
-			r.Header.Get("User-Agent"), r.Header.Get("X-Envoy-External-Address"))
+			r.Header.Get("User-Agent"), r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
 	}
 
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
