@@ -110,6 +110,9 @@ func initServer(ctx context.Context) (*server, error) {
 
 func (s *server) run(ctx context.Context) error {
 	t := s.t
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+
 	if err := s.installCluster(ctx); err != nil {
 		return err
 	}
