@@ -52,6 +52,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/octelium-go"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -208,6 +209,10 @@ func (s *server) run(ctx context.Context) error {
 	}
 
 	if err := s.runOcteliumctlCommands(ctx); err != nil {
+		return err
+	}
+
+	if err := s.runSDK(ctx); err != nil {
 		return err
 	}
 
@@ -1790,10 +1795,19 @@ func (s *server) runGeoIP(ctx context.Context) error {
 						Spec: &corev1.Policy_Spec{
 							Rules: []*corev1.Policy_Spec_Rule{
 								{
-									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Effect:   corev1.Policy_Spec_Rule_ALLOW,
+									Priority: -1,
 									Condition: &corev1.Condition{
 										Type: &corev1.Condition_Match{
 											Match: `ctx.session.status.authentication.info.geoip.country.code == "US"`,
+										},
+									},
+								},
+								{
+									Effect: corev1.Policy_Spec_Rule_DENY,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
 										},
 									},
 								},
@@ -1901,6 +1915,185 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		_, err = c.UpdateClusterConfig(ctx, cc)
 		assert.Nil(t, err)
 	}
+
+	return nil
+}
+
+func (s *server) runSDK(ctx context.Context) error {
+
+	t := s.t
+
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	c := corev1.NewMainServiceClient(conn)
+
+	usr, err := c.CreateUser(ctx, &corev1.User{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.User_Spec{
+			Type: corev1.User_Spec_WORKLOAD,
+		},
+	})
+	assert.Nil(t, err)
+
+	svc, err := c.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Service_Spec{
+			Mode:     corev1.Service_Spec_HTTP,
+			IsPublic: true,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_{
+						Container: &corev1.Service_Spec_Config_Upstream_Container{
+							Image: "nginx",
+							Port:  80,
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	cred, err := c.CreateCredential(ctx, &corev1.Credential{
+		Metadata: &metav1.Metadata{
+			Name: fmt.Sprintf("%s-tkn", usr.Metadata.Name),
+		},
+		Spec: &corev1.Credential_Spec{
+			Type:        corev1.Credential_Spec_AUTH_TOKEN,
+			User:        usr.Metadata.Name,
+			SessionType: corev1.Session_Status_CLIENTLESS,
+			ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+		},
+	})
+	assert.Nil(t, err)
+
+	{
+		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		oC, err := octelium.NewClient(ctx, &octelium.ClientConfig{
+			Domain:              s.domain,
+			AuthenticationToken: tkn.GetAuthenticationToken().AuthenticationToken,
+		})
+		assert.Nil(t, err)
+
+		grpcC, err := oC.GRPC().GetConn(ctx)
+		assert.Nil(t, err)
+
+		uC := corev1.NewMainServiceClient(grpcC)
+
+		_, err = uC.ListUser(ctx, &corev1.ListUserOptions{})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		usr.Spec.Authorization = &corev1.User_Spec_Authorization{
+			Policies: []string{"octelium-api-read-only"},
+		}
+
+		usr, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		time.Sleep(3 * time.Second)
+
+		_, err = uC.ListUser(ctx, &corev1.ListUserOptions{})
+		assert.Nil(t, err)
+
+		_, err = uC.CreateUser(ctx, &corev1.User{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.User_Spec{
+				Type: corev1.User_Spec_WORKLOAD,
+			},
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		usr.Spec.Authorization = &corev1.User_Spec_Authorization{
+			Policies: []string{"octelium-api-full-access"},
+		}
+
+		usr, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+
+		_, err = uC.CreateUser(ctx, &corev1.User{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.User_Spec{
+				Type: corev1.User_Spec_WORKLOAD,
+			},
+		})
+		assert.Nil(t, err)
+
+		usr.Spec.Authorization = &corev1.User_Spec_Authorization{
+			Policies: []string{"deny-all"},
+		}
+
+		usr, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+
+		_, err = uC.ListUser(ctx, &corev1.ListUserOptions{})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err))
+
+		usr.Spec.Authorization = &corev1.User_Spec_Authorization{
+			Policies: []string{"allow-all"},
+		}
+
+		usr, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+
+		accessToken, err := oC.GetAccessToken(ctx)
+		assert.Nil(t, err)
+		s.httpCPublicAccessTokenCheck(svc.Metadata.Name, accessToken)
+
+		usr.Spec.Authorization = &corev1.User_Spec_Authorization{
+			Policies: []string{"http-read-only"},
+		}
+
+		usr, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+
+		s.httpCPublicAccessTokenCheck(svc.Metadata.Name, accessToken)
+
+		{
+			resp, err := s.httpCPublicAccessToken(svc.Metadata.Name, accessToken).R().Post("/")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+		}
+		{
+			resp, err := s.httpCPublicAccessToken(svc.Metadata.Name, accessToken).R().Put("/")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+		}
+		{
+			resp, err := s.httpCPublicAccessToken(svc.Metadata.Name, accessToken).R().Delete("/")
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+		}
+	}
+
+	_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+		Name: svc.Metadata.Name,
+	})
+	assert.Nil(t, err)
 
 	return nil
 }
