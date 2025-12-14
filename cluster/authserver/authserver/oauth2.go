@@ -133,7 +133,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 					TokenID:       tkn.Status.TokenID,
 				},
 			},
-		}, r.Header.Get("User-Agent"), cc, r.Header.Get("X-Forwarded-For"))
+		}, r.Header.Get("User-Agent"), cc, r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
 
 		sess, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
 		if err != nil {

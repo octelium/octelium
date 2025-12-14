@@ -73,7 +73,8 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 
 	zap.L().Debug("Rotating the token for the Session",
 		zap.String("sess", sess.Metadata.Name))
-	s.setCurrAuthentication(sess, authResp, r.Header.Get("User-Agent"), cc, r.Header.Get("X-Forwarded-For"))
+	s.setCurrAuthentication(sess, authResp, r.Header.Get("User-Agent"), cc,
+		r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
 
 	if authResp.GetIdentityProvider() != nil && authResp.GetIdentityProvider().PicURL != "" {
 		sess.Metadata.PicURL = authResp.GetIdentityProvider().PicURL
@@ -211,7 +212,7 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 func (s *server) setCurrAuthenticationGRPC(ctx context.Context, sess *corev1.Session, cc *corev1.ClusterConfig, authInfo *corev1.Session_Status_Authentication_Info) {
 	s.setCurrAuthentication(sess, authInfo,
 		grpcutils.GetHeaderValueMust(ctx, "User-Agent"), cc,
-		grpcutils.GetHeaderValueMust(ctx, "X-Forwarded-For"))
+		grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()))
 }
 
 func (s *server) setCurrAuthentication(sess *corev1.Session, authInfo *corev1.Session_Status_Authentication_Info, userAgent string, cc *corev1.ClusterConfig, xff string) {
