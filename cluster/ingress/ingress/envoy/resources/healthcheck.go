@@ -97,7 +97,7 @@ func getHttpConnManagerFilterHealthCheck() (*listenerv3.Filter, error) {
 
 	{
 		routerFilter := &routerv3.Router{
-			SuppressEnvoyHeaders: true,
+			// SuppressEnvoyHeaders: true,
 		}
 		pbFilter, err := anypb.New(routerFilter)
 		if err != nil {
