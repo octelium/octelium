@@ -817,7 +817,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 
 				assert.Nil(t, s.runCmd(ctx,
-					fmt.Sprintf(`ssh -vvv -p 15004 %s@localhost 'echo hello world'`, res.Session.Metadata.Name)))
+					fmt.Sprintf(`ssh -p 15004 %s@localhost 'echo hello world'`, res.Session.Metadata.Name)))
 			}
 
 			{
@@ -1766,6 +1766,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 
 	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
 		UseForwardedForHeader: true,
+		UseRemoteAddress:      true,
 		XffNumTrustedHops:     1,
 	}
 
