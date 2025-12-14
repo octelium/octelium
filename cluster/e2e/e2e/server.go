@@ -1843,6 +1843,19 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	}
 
 	{
+		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(usr),
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(sessList.Items))
+
+		sess := sessList.Items[0]
+		zap.L().Debug("xff Session", zap.Any("info", sess.Status.Authentication.Info))
+		assert.NotNil(t, sess.Status.Authentication.Info.Geoip)
+		assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
+	}
+
+	{
 
 		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
 			CredentialRef: umetav1.GetObjectReference(cred),
@@ -1862,19 +1875,6 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	}
 
 	{
-		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
-			UserRef: umetav1.GetObjectReference(usr),
-		})
-		assert.Nil(t, err)
-		assert.Equal(t, 1, len(sessList.Items))
-
-		sess := sessList.Items[0]
-		zap.L().Debug("xff Session", zap.Any("sess", sess))
-		assert.NotNil(t, sess.Status.Authentication.Info.Geoip)
-		assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
-	}
-
-	{
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
@@ -1885,14 +1885,14 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
 			R().Get("/")
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
 	}
 
 	{
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusUnauthorized, res.StatusCode())
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
 	}
 
 	{
