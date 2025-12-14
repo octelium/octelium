@@ -157,7 +157,12 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 		return err
 	}
 
-	rscListeners, err := resources.GetListeners(s.domain, svcList.Items, crtList.Items)
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	rscListeners, err := resources.GetListeners(s.domain, cc, svcList.Items, crtList.Items)
 	if err != nil {
 		return err
 	}

@@ -44,10 +44,10 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
 
-func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Secret) ([]types.Resource, error) {
+func GetListeners(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service, crtList []*corev1.Secret) ([]types.Resource, error) {
 	ret := []types.Resource{}
 
-	mainListener, err := getListener(domain, svcList, crtList)
+	mainListener, err := getListener(domain, cc, svcList, crtList)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func GetListeners(domain string, svcList []*corev1.Service, crtList []*corev1.Se
 	return ret, nil
 }
 
-func getListener(domain string, svcList []*corev1.Service,
+func getListener(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service,
 	crtList []*corev1.Secret) (*listenerv3.Listener, error) {
 
 	ret := &listenerv3.Listener{
@@ -88,7 +88,7 @@ func getListener(domain string, svcList []*corev1.Service,
 		},
 	}}
 
-	filterChain, err := getFilterChainsMain(domain, crtList, svcList)
+	filterChain, err := getFilterChainsMain(domain, cc, crtList, svcList)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func getTLSInspector() (*listenerv3.ListenerFilter, error) {
 	}, nil
 }
 
-func getFilterChainsMain(domain string, crtList []*corev1.Secret, svcList []*corev1.Service) (*listenerv3.FilterChain, error) {
+func getFilterChainsMain(domain string, cc *corev1.ClusterConfig, crtList []*corev1.Secret, svcList []*corev1.Service) (*listenerv3.FilterChain, error) {
 
 	ret := &listenerv3.FilterChain{
 		FilterChainMatch: &listenerv3.FilterChainMatch{
@@ -131,7 +131,7 @@ func getFilterChainsMain(domain string, crtList []*corev1.Secret, svcList []*cor
 	}
 	ret.TransportSocket = ts
 
-	httpConnMan, err := getHttpConnManagerFilterMain(domain, svcList)
+	httpConnMan, err := getHttpConnManagerFilterMain(domain, cc, svcList)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 	}, nil
 }
 
-func getHttpConnManagerFilterMain(domain string, svcList []*corev1.Service) (*listenerv3.Filter, error) {
+func getHttpConnManagerFilterMain(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service) (*listenerv3.Filter, error) {
 
 	routeConfig, err := getRouteConfigMain(domain, svcList)
 	if err != nil {
@@ -243,8 +243,21 @@ func getHttpConnManagerFilterMain(domain string, svcList []*corev1.Service) (*li
 		},
 
 		UseRemoteAddress: &wrapperspb.BoolValue{
-			Value: true,
+			Value: func() bool {
+				if cc.Spec.Ingress != nil {
+					return cc.Spec.Ingress.UseRemoteAddress
+				}
+				return false
+			}(),
 		},
+		XffNumTrustedHops: func() uint32 {
+			if cc.Spec.Ingress != nil &&
+				cc.Spec.Ingress.XffNumTrustedHops > 0 &&
+				cc.Spec.Ingress.XffNumTrustedHops < 1000 {
+				return uint32(cc.Spec.Ingress.XffNumTrustedHops)
+			}
+			return 0
+		}(),
 
 		Http2ProtocolOptions: &core.Http2ProtocolOptions{
 			ConnectionKeepalive: &core.KeepaliveSettings{
