@@ -1765,7 +1765,6 @@ func (s *server) runGeoIP(ctx context.Context) error {
 
 	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
 		UseForwardedForHeader: true,
-		UseRemoteAddress:      true,
 		XffNumTrustedHops:     1,
 	}
 

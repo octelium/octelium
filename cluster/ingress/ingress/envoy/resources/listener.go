@@ -243,17 +243,12 @@ func getHttpConnManagerFilterMain(domain string, cc *corev1.ClusterConfig, svcLi
 		},
 
 		UseRemoteAddress: &wrapperspb.BoolValue{
-			Value: func() bool {
-				if cc.Spec.Ingress != nil {
-					return cc.Spec.Ingress.UseRemoteAddress
-				}
-				return false
-			}(),
+			Value: true,
 		},
 		XffNumTrustedHops: func() uint32 {
 			if cc.Spec.Ingress != nil &&
 				cc.Spec.Ingress.XffNumTrustedHops > 0 &&
-				cc.Spec.Ingress.XffNumTrustedHops < 1000 {
+				cc.Spec.Ingress.XffNumTrustedHops < 10000 {
 				return uint32(cc.Spec.Ingress.XffNumTrustedHops)
 			}
 			return 0
