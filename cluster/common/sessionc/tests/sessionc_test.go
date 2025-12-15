@@ -115,12 +115,12 @@ func TestCreateSession(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Nil(t, err)
 		sess, err := sessionc.NewSession(ctx, &sessionc.CreateSessionOpts{
-			OcteliumC: fakeC.OcteliumC,
-			Usr:       usr.Usr,
-			Device:    usr.Device,
-			SessType:  corev1.Session_Status_CLIENT,
-			XFF:       "214.78.120.1",
-			GeoIPCtl:  geoipCtl,
+			OcteliumC:  fakeC.OcteliumC,
+			Usr:        usr.Usr,
+			Device:     usr.Device,
+			SessType:   corev1.Session_Status_CLIENT,
+			ClientAddr: "214.78.120.1",
+			GeoIPCtl:   geoipCtl,
 		})
 		assert.Nil(t, err)
 

@@ -172,8 +172,8 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 			}
 		}(),
 
-		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
+		UserAgent:  grpcutils.GetHeaderValueMust(ctx, "user-agent"),
+		ClientAddr: grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
 	})
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
@@ -291,14 +291,14 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		OcteliumC:     s.octeliumC,
 		ClusterConfig: cc,
 		Usr:           usr,
-
-		SessType: sessType,
+		GeoIPCtl:      s.geoipCtl,
+		SessType:      sessType,
 
 		Scopes:             scopes,
 		AuthenticationInfo: info,
 
-		UserAgent: grpcutils.GetHeaderValueMust(ctx, "user-agent"),
-		XFF:       grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
+		UserAgent:  grpcutils.GetHeaderValueMust(ctx, "user-agent"),
+		ClientAddr: grpcutils.GetHeaderValueMust(ctx, vutils.GetDownstreamIPHeaderCanonical()),
 	})
 	if err != nil {
 		return nil, s.errInternalErr(err)

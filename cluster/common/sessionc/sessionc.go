@@ -22,12 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/geoipctl"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
-	"github.com/octelium/octelium/cluster/common/httputils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -54,8 +54,8 @@ type CreateSessionOpts struct {
 
 	ExpiresAt time.Time
 
-	UserAgent string
-	XFF       string
+	UserAgent  string
+	ClientAddr string
 
 	Ext map[string]*structpb.Struct
 
@@ -303,41 +303,36 @@ func NewSession(ctx context.Context,
 		sess.Status.Authentication.RefreshTokenDuration = sess.Status.Authentication.AccessTokenDuration
 	}
 
-	{
-
-		if o.XFF != "" && clusterCfg.Spec.Ingress != nil && clusterCfg.Spec.Ingress.UseForwardedForHeader {
-			if sess.Status.Authentication.Info == nil {
-				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
-			}
-			if sess.Status.Authentication.Info.Downstream == nil {
-				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
-			}
-
-			if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(o.XFF); ipAddr != "" {
-				sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
-				if o.GeoIPCtl != nil {
-					sess.Status.Authentication.Info.Geoip = o.GeoIPCtl.ResolveStr(ipAddr)
-				}
-			}
+	if o.ClientAddr != "" && govalidator.IsIP(o.ClientAddr) &&
+		clusterCfg.Spec.Ingress != nil && clusterCfg.Spec.Ingress.UseForwardedForHeader {
+		if sess.Status.Authentication.Info == nil {
+			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
+		}
+		if sess.Status.Authentication.Info.Downstream == nil {
+			sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
 		}
 
-		if o.UserAgent != "" && len(o.UserAgent) < 220 {
-			if sess.Status.Authentication.Info == nil {
-				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
-			}
-			if sess.Status.Authentication.Info.Downstream == nil {
-				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
-			}
+		sess.Status.Authentication.Info.Downstream.IpAddress = o.ClientAddr
+		if o.GeoIPCtl != nil {
+			sess.Status.Authentication.Info.Geoip = o.GeoIPCtl.ResolveStr(o.ClientAddr)
+		}
+	}
 
-			sess.Status.Authentication.Info.Downstream.UserAgent = o.UserAgent
-			uaParts := strings.Split(o.UserAgent, " ")
-			if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
-				if args := strings.Split(uaParts[0], "/"); len(args) == 2 {
-					sess.Status.Authentication.Info.Downstream.ClientVersion = args[1]
-				}
-			}
+	if o.UserAgent != "" && len(o.UserAgent) < 220 {
+		if sess.Status.Authentication.Info == nil {
+			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
+		}
+		if sess.Status.Authentication.Info.Downstream == nil {
+			sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
 		}
 
+		sess.Status.Authentication.Info.Downstream.UserAgent = o.UserAgent
+		uaParts := strings.Split(o.UserAgent, " ")
+		if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
+			if args := strings.Split(uaParts[0], "/"); len(args) == 2 {
+				sess.Status.Authentication.Info.Downstream.ClientVersion = args[1]
+			}
+		}
 	}
 
 	sess.Status.InitialAuthentication = sess.Status.Authentication
@@ -424,13 +419,14 @@ type SetCurrAuthenticationOpts struct {
 	AuthInfo      *corev1.Session_Status_Authentication_Info
 	UserAgent     string
 	ClusterConfig *corev1.ClusterConfig
-	XFF           string
+	ClientAddr    string
+	GeoIPCtl      *geoipctl.Controller
 }
 
 func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 	sess := o.Session
 	cc := o.ClusterConfig
-	xff := o.XFF
+
 	userAgent := o.UserAgent
 
 	resp := &corev1.Session_Status_Authentication{
@@ -447,7 +443,8 @@ func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 	sess.Status.Authentication = resp
 	sess.Status.TotalAuthentications = sess.Status.TotalAuthentications + 1
 
-	if xff != "" && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
+	if o.ClientAddr != "" && govalidator.IsIP(o.ClientAddr) &&
+		cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
 		if sess.Status.Authentication.Info == nil {
 			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
 		}
@@ -455,17 +452,12 @@ func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 			sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
 		}
 
-		if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(xff); ipAddr != "" {
-			if sess.Status.Authentication.Info == nil {
-				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
-			}
-			if sess.Status.Authentication.Info.Downstream == nil {
-				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
-			}
-
-			sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
+		sess.Status.Authentication.Info.Downstream.IpAddress = o.ClientAddr
+		if o.GeoIPCtl != nil {
+			sess.Status.Authentication.Info.Geoip = o.GeoIPCtl.ResolveStr(o.ClientAddr)
 		}
 	}
+
 	if userAgent != "" && len(userAgent) < 220 {
 		if sess.Status.Authentication.Info == nil {
 			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}

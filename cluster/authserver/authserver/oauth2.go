@@ -174,7 +174,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			},
 			CredentialRef: umetav1.GetObjectReference(tkn),
 			UserAgent:     r.Header.Get("User-Agent"),
-			XFF:           r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
+			ClientAddr:    r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
 		})
 		if err != nil {
 			s.returnOAuth2Err(w, "server_error", 500)

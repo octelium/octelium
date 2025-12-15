@@ -112,7 +112,7 @@ func (s *server) createWebSession(ctx context.Context, usr *corev1.User,
 		SessType:           corev1.Session_Status_CLIENTLESS,
 		IsBrowser:          true,
 		UserAgent:          userAgent,
-		XFF:                xff,
+		ClientAddr:         xff,
 		GeoIPCtl:           s.geoipCtl,
 		RequiredAuthenticatorRef: func() *metav1.ObjectReference {
 			if authRespInfo != nil &&
@@ -221,6 +221,7 @@ func (s *server) setCurrAuthentication(sess *corev1.Session, authInfo *corev1.Se
 		ClusterConfig: cc,
 		AuthInfo:      authInfo,
 		UserAgent:     userAgent,
-		XFF:           xff,
+		ClientAddr:    xff,
+		GeoIPCtl:      s.geoipCtl,
 	})
 }
