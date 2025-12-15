@@ -1829,23 +1829,22 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	})
 	assert.Nil(t, err)
 
-	cred, err := c.CreateCredential(ctx, &corev1.Credential{
-		Metadata: &metav1.Metadata{
-			Name: fmt.Sprintf("%s-at", usr.Metadata.Name),
-		},
-		Spec: &corev1.Credential_Spec{
-			Type:        corev1.Credential_Spec_OAUTH2,
-			User:        usr.Metadata.Name,
-			SessionType: corev1.Session_Status_CLIENTLESS,
-			ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
-		},
-	})
-	assert.Nil(t, err)
-
 	var accessToken string
 	var accessTokenUnauthorized string
 
 	{
+		cred, err := c.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s-%s", usr.Metadata.Name, utilrand.GetRandomStringCanonical(4)),
+			},
+			Spec: &corev1.Credential_Spec{
+				Type:        corev1.Credential_Spec_OAUTH2,
+				User:        usr.Metadata.Name,
+				SessionType: corev1.Session_Status_CLIENTLESS,
+				ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+			},
+		})
+		assert.Nil(t, err)
 
 		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
 			CredentialRef: umetav1.GetObjectReference(cred),
@@ -1880,6 +1879,19 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	}
 
 	{
+
+		cred, err := c.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s-%s", usr.Metadata.Name, utilrand.GetRandomStringCanonical(4)),
+			},
+			Spec: &corev1.Credential_Spec{
+				Type:        corev1.Credential_Spec_OAUTH2,
+				User:        usr.Metadata.Name,
+				SessionType: corev1.Session_Status_CLIENTLESS,
+				ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+			},
+		})
+		assert.Nil(t, err)
 
 		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
 			CredentialRef: umetav1.GetObjectReference(cred),
