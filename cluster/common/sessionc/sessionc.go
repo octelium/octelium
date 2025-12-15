@@ -303,10 +303,16 @@ func NewSession(ctx context.Context,
 		sess.Status.Authentication.RefreshTokenDuration = sess.Status.Authentication.AccessTokenDuration
 	}
 
-	if sess.Status.Authentication.Info != nil {
-		sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+	{
 
 		if o.XFF != "" && clusterCfg.Spec.Ingress != nil && clusterCfg.Spec.Ingress.UseForwardedForHeader {
+			if sess.Status.Authentication.Info == nil {
+				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
+			}
+			if sess.Status.Authentication.Info.Downstream == nil {
+				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+			}
+
 			if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(o.XFF); ipAddr != "" {
 				sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
 				if o.GeoIPCtl != nil {
@@ -316,6 +322,13 @@ func NewSession(ctx context.Context,
 		}
 
 		if o.UserAgent != "" && len(o.UserAgent) < 220 {
+			if sess.Status.Authentication.Info == nil {
+				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
+			}
+			if sess.Status.Authentication.Info.Downstream == nil {
+				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+			}
+
 			sess.Status.Authentication.Info.Downstream.UserAgent = o.UserAgent
 			uaParts := strings.Split(o.UserAgent, " ")
 			if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
@@ -434,17 +447,34 @@ func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 	sess.Status.Authentication = resp
 	sess.Status.TotalAuthentications = sess.Status.TotalAuthentications + 1
 
-	if resp.Info != nil {
-		resp.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+	if xff != "" && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
+		if sess.Status.Authentication.Info == nil {
+			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
+		}
+		if sess.Status.Authentication.Info.Downstream == nil {
+			sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+		}
 
-		if xff != "" && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
-			if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(xff); ipAddr != "" {
-				sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
+		if ipAddr := httputils.GetDownstreamPublicIPFromXFFHeader(xff); ipAddr != "" {
+			if sess.Status.Authentication.Info == nil {
+				sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
 			}
+			if sess.Status.Authentication.Info.Downstream == nil {
+				sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+			}
+
+			sess.Status.Authentication.Info.Downstream.IpAddress = ipAddr
 		}
-		if userAgent != "" && len(userAgent) < 220 {
-			sess.Status.Authentication.Info.Downstream.UserAgent = userAgent
+	}
+	if userAgent != "" && len(userAgent) < 220 {
+		if sess.Status.Authentication.Info == nil {
+			sess.Status.Authentication.Info = &corev1.Session_Status_Authentication_Info{}
 		}
+		if sess.Status.Authentication.Info.Downstream == nil {
+			sess.Status.Authentication.Info.Downstream = &corev1.Session_Status_Authentication_Info_Downstream{}
+		}
+
+		sess.Status.Authentication.Info.Downstream.UserAgent = userAgent
 	}
 
 }

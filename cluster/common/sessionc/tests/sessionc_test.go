@@ -18,6 +18,7 @@ package sessionc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
+	"github.com/octelium/octelium/cluster/common/geoipctl"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
@@ -86,6 +88,45 @@ func TestCreateSession(t *testing.T) {
 			assert.True(t, sess.Spec.ExpiresAt.AsTime().After(time.Now()))
 		}
 
+	}
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
+			UseForwardedForHeader: true,
+		}
+		cc, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+
+		geoipCtl, err := geoipctl.New(ctx, &geoipctl.Opts{
+			OcteliumC: fakeC.OcteliumC,
+		})
+		assert.Nil(t, err)
+		const prefixURL = `https://raw.githubusercontent.com/maxmind/MaxMind-DB/refs/heads/main/test-data`
+		err = geoipCtl.Set(ctx, &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
+				Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
+					Url: fmt.Sprintf("%s/GeoIP2-City-Test.mmdb", prefixURL),
+				},
+			},
+		})
+		assert.Nil(t, err)
+		assert.Nil(t, err)
+		sess, err := sessionc.NewSession(ctx, &sessionc.CreateSessionOpts{
+			OcteliumC: fakeC.OcteliumC,
+			Usr:       usr.Usr,
+			Device:    usr.Device,
+			SessType:  corev1.Session_Status_CLIENT,
+			XFF:       "214.78.120.1",
+			GeoIPCtl:  geoipCtl,
+		})
+		assert.Nil(t, err)
+
+		assert.NotNil(t, sess.Status.Authentication.Info)
+		assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
+		assert.Equal(t, "US", sess.Status.Authentication.Info.Geoip.Country.Code)
 	}
 
 }
