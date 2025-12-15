@@ -68,7 +68,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1829,6 +1828,34 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	})
 	assert.Nil(t, err)
 
+	doOAuth2 := func(tkn *corev1.CredentialToken, clientAddr string) string {
+		type TokenResponse struct {
+			AccessToken string `json:"access_token"`
+			TokenType   string `json:"token_type"`
+			ExpiresIn   int    `json:"expires_in"`
+			Scope       string `json:"scope,omitempty"`
+		}
+
+		tokenResponse := &TokenResponse{}
+
+		r := s.httpC().R().
+			SetHeader("Content-Type", "application/x-www-form-urlencoded").
+			SetFormData(map[string]string{
+				"grant_type":    "client_credentials",
+				"client_id":     tkn.GetOauth2Credentials().ClientID,
+				"client_secret": tkn.GetOauth2Credentials().ClientSecret,
+			}).
+			SetResult(tokenResponse)
+
+		if clientAddr != "" {
+			r = r.SetHeader("X-Forwarded-For", clientAddr)
+		}
+		resp, err := r.Post(fmt.Sprintf("https://%s/oauth2/token", s.domain))
+		assert.Nil(t, err)
+		assert.True(t, resp.IsSuccess())
+		return tokenResponse.AccessToken
+	}
+
 	var accessToken string
 	var accessTokenUnauthorized string
 
@@ -1851,17 +1878,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		})
 		assert.Nil(t, err)
 
-		conf := &clientcredentials.Config{
-			ClientID:     tkn.GetOauth2Credentials().ClientID,
-			ClientSecret: tkn.GetOauth2Credentials().ClientSecret,
-			TokenURL:     fmt.Sprintf("https://%s/oauth2/token", s.domain),
-		}
-
-		httpC := s.httpC().SetHeader("X-Forwarded-For", "214.78.120.1").GetClient()
-		tkni, err := conf.Token(context.WithValue(ctx, oauth2.HTTPClient, httpC))
-		assert.Nil(t, err)
-
-		accessToken = tkni.AccessToken
+		accessToken = doOAuth2(tkn, "214.78.120.1")
 	}
 
 	{
@@ -1898,16 +1915,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		})
 		assert.Nil(t, err)
 
-		conf := &clientcredentials.Config{
-			ClientID:     tkn.GetOauth2Credentials().ClientID,
-			ClientSecret: tkn.GetOauth2Credentials().ClientSecret,
-			TokenURL:     fmt.Sprintf("https://%s/oauth2/token", s.domain),
-		}
-
-		tkni, err := conf.Token(ctx)
-		assert.Nil(t, err)
-
-		accessTokenUnauthorized = tkni.AccessToken
+		accessTokenUnauthorized = doOAuth2(tkn, "")
 	}
 
 	{
