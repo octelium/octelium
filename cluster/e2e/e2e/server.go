@@ -169,6 +169,8 @@ func (s *server) run(ctx context.Context) error {
 		*/
 		// s.startKubectlLog(ctx, "-l octelium.com/component=collector")
 		s.startKubectlLog(ctx, "-l octelium.com/svc=demo-nginx.default")
+		s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
+		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api")
 		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
@@ -1756,38 +1758,12 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	assert.Nil(t, err)
 	defer conn.Close()
 
+	var accessToken string
+	var accessTokenUnauthorized string
+
 	zap.L().Debug("Starting runGeoIP")
 
 	c := corev1.NewMainServiceClient(conn)
-
-	cc, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
-	assert.Nil(t, err)
-
-	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
-		UseForwardedForHeader: true,
-		XffNumTrustedHops:     2,
-	}
-
-	const prefixURL = `https://raw.githubusercontent.com/maxmind/MaxMind-DB/refs/heads/main/test-data`
-
-	cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
-		Geolocation: &corev1.ClusterConfig_Spec_Authentication_Geolocation{
-			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_Mmdb{
-				Mmdb: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
-					Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
-						Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
-							Url: fmt.Sprintf("%s/GeoIP2-City-Test.mmdb", prefixURL),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	cc, err = c.UpdateClusterConfig(ctx, cc)
-	assert.Nil(t, err)
-
-	time.Sleep(3 * time.Second)
 
 	usr, err := c.CreateUser(ctx, &corev1.User{
 		Metadata: &metav1.Metadata{
@@ -1844,7 +1820,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 				"client_id":     tkn.GetOauth2Credentials().ClientID,
 				"client_secret": tkn.GetOauth2Credentials().ClientSecret,
 			}).
-			SetResult(tokenResponse)
+			SetResult(tokenResponse).SetDebug(true)
 
 		if clientAddr != "" {
 			r = r.SetHeader("X-Forwarded-For", clientAddr)
@@ -1855,8 +1831,89 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		return tokenResponse.AccessToken
 	}
 
-	var accessToken string
-	var accessTokenUnauthorized string
+	{
+		cred, err := c.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s-%s", usr.Metadata.Name, utilrand.GetRandomStringCanonical(4)),
+			},
+			Spec: &corev1.Credential_Spec{
+				Type:        corev1.Credential_Spec_OAUTH2,
+				User:        usr.Metadata.Name,
+				SessionType: corev1.Session_Status_CLIENTLESS,
+				ExpiresAt:   pbutils.Timestamp(time.Now().Add(24 * time.Hour)),
+			},
+		})
+		assert.Nil(t, err)
+
+		tkn, err := c.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		accessToken = doOAuth2(tkn, "214.78.120.1")
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(usr),
+			Common: &metav1.CommonListOptions{
+				OrderBy: &metav1.CommonListOptions_OrderBy{
+					Type: metav1.CommonListOptions_OrderBy_CREATED_AT,
+					Mode: metav1.CommonListOptions_OrderBy_ASC,
+				},
+			},
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 0, len(sessList.Items))
+
+		sess := sessList.Items[0]
+		zap.L().Debug("xff Session init", zap.Any("info", sess.Status.Authentication.Info))
+		assert.Nil(t, sess.Status.Authentication.Info.Geoip)
+		assert.Equal(t, "", sess.Status.Authentication.Info.Downstream.IpAddress)
+	}
+
+	cc, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+	assert.Nil(t, err)
+
+	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
+		UseForwardedForHeader: true,
+		XffNumTrustedHops:     1,
+	}
+
+	const prefixURL = `https://raw.githubusercontent.com/maxmind/MaxMind-DB/refs/heads/main/test-data`
+
+	cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
+		Geolocation: &corev1.ClusterConfig_Spec_Authentication_Geolocation{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_Mmdb{
+				Mmdb: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
+						Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
+							Url: fmt.Sprintf("%s/GeoIP2-City-Test.mmdb", prefixURL),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cc, err = c.UpdateClusterConfig(ctx, cc)
+	assert.Nil(t, err)
+
+	time.Sleep(3 * time.Second)
 
 	{
 		cred, err := c.CreateCredential(ctx, &corev1.Credential{
@@ -1883,6 +1940,12 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	{
 		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
 			UserRef: umetav1.GetObjectReference(usr),
+			Common: &metav1.CommonListOptions{
+				OrderBy: &metav1.CommonListOptions_OrderBy{
+					Type: metav1.CommonListOptions_OrderBy_CREATED_AT,
+					Mode: metav1.CommonListOptions_OrderBy_ASC,
+				},
+			},
 		})
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(sessList.Items))
@@ -1918,6 +1981,25 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	}
 
 	{
+		sessList, err := c.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(usr),
+			Common: &metav1.CommonListOptions{
+				OrderBy: &metav1.CommonListOptions_OrderBy{
+					Type: metav1.CommonListOptions_OrderBy_CREATED_AT,
+					Mode: metav1.CommonListOptions_OrderBy_ASC,
+				},
+			},
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(sessList.Items))
+
+		sess := sessList.Items[0]
+		zap.L().Debug("xff Session unauthorized", zap.Any("info", sess.Status.Authentication.Info))
+		// assert.Nil(t, sess.Status.Authentication.Info.Geoip)
+		// assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
+	}
+
+	{
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
@@ -1936,6 +2018,33 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
+			R().SetHeader("X-Forwarded-For", "1.1.1.1").Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		usr.Spec.Authorization = nil
+		_, err = c.UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
+			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
 	}
 
 	{
