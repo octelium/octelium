@@ -165,7 +165,7 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 
 	for _, crt := range crtList {
 		if !vutils.IsCertReady(crt) {
-			zap.L().Debug("Skipping the cert since it is not ready",
+			zap.L().Warn("Skipping the cert since it is not ready",
 				zap.String("name", crt.Metadata.Name))
 			continue
 		}

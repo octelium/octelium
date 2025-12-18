@@ -169,8 +169,8 @@ func (s *server) run(ctx context.Context) error {
 		*/
 		// s.startKubectlLog(ctx, "-l octelium.com/component=collector")
 		s.startKubectlLog(ctx, "-l octelium.com/svc=demo-nginx.default")
-		s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
-		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api")
+		// s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
+		// s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api")
 		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))

@@ -160,6 +160,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 
 	if !isManagedSvc {
 		req.Header.Del("X-Octelium-Auth")
+		req.Header.Del("X-Envoy-External-Address")
 		req.Header.Del(vutils.GetDownstreamIPHeaderCanonical())
 
 		for name, _ := range req.Header {

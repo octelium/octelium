@@ -266,9 +266,10 @@ func getRouteMain(domain string, prefix string, isGRPC bool, cluster string) (*r
 			{
 				Header: &corev3.HeaderValue{
 					Key:   vutils.GetDownstreamIPHeaderCanonical(),
-					Value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+					Value: "%REQ(x-envoy-external-address)%",
 				},
 				KeepEmptyValue: true,
+				AppendAction:   corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			},
 		},
 		Match: &routev3.RouteMatch{
@@ -402,9 +403,10 @@ func getRoutesService(svc *corev1.Service, domain string) ([]*routev3.Route, err
 			{
 				Header: &corev3.HeaderValue{
 					Key:   vutils.GetDownstreamIPHeaderCanonical(),
-					Value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%",
+					Value: "%REQ(x-envoy-external-address)%",
 				},
 				KeepEmptyValue: true,
+				AppendAction:   corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			},
 		},
 		Match: &routev3.RouteMatch{
