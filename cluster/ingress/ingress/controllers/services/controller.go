@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	envoyserver "github.com/octelium/octelium/cluster/ingress/ingress/envoy"
-	"go.uber.org/zap"
 )
 
 type Controller struct {
@@ -45,7 +44,7 @@ func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
-	zap.L().Debug("Adding Service", zap.String("svc", svc.Metadata.Name))
+	// zap.L().Debug("Adding Service", zap.String("svc", svc.Metadata.Name))
 
 	return c.envoyServer.DoSnapshot(ctx)
 }
@@ -55,7 +54,7 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Service) err
 		return nil
 	}
 
-	zap.L().Debug("Updating Service", zap.String("svc", new.Metadata.Name))
+	// zap.L().Debug("Updating Service", zap.String("svc", new.Metadata.Name))
 
 	return c.envoyServer.DoSnapshot(ctx)
 }
@@ -65,7 +64,7 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
-	zap.L().Debug("Deleting Service", zap.String("svc", svc.Metadata.Name))
+	// zap.L().Debug("Deleting Service", zap.String("svc", svc.Metadata.Name))
 
 	return c.envoyServer.DoSnapshot(ctx)
 }

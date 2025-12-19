@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	envoyserver "github.com/octelium/octelium/cluster/ingress/ingress/envoy"
-	"go.uber.org/zap"
 )
 
 type Controller struct {
@@ -46,7 +45,7 @@ func (c *Controller) OnAdd(ctx context.Context, crt *corev1.Secret) error {
 		return nil
 	}
 
-	zap.L().Debug("Cluster certificate added. Doing snapshot...")
+	// zap.L().Debug("Cluster certificate added. Doing snapshot...")
 
 	return c.envoyServer.DoSnapshot(ctx)
 }
@@ -57,7 +56,7 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Secret) erro
 		return nil
 	}
 
-	zap.L().Debug("Cluster certificate updated. Doing snapshot...")
+	// zap.L().Debug("Cluster certificate updated. Doing snapshot...")
 	return c.envoyServer.DoSnapshot(ctx)
 }
 
@@ -66,7 +65,7 @@ func (c *Controller) OnDelete(ctx context.Context, crt *corev1.Secret) error {
 		return nil
 	}
 
-	zap.L().Debug("Cluster certificate deleted. Doing snapshot...")
+	// zap.L().Debug("Cluster certificate deleted. Doing snapshot...")
 	return c.envoyServer.DoSnapshot(ctx)
 }
 

@@ -26,8 +26,10 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 func TestGetListeners(t *testing.T) {
@@ -103,8 +105,12 @@ func TestGetListeners(t *testing.T) {
 
 	_, err = GetListeners("example.com", cc, svcList, nil)
 	assert.Nil(t, err)
-	_, err = GetListeners("example.com", cc, svcList, []*corev1.Secret{
+	listeners, err := GetListeners("example.com", cc, svcList, []*corev1.Secret{
 		doCreateCrt("cluster"),
 	})
+
+	for _, lis := range listeners {
+		zap.L().Debug("Listener", zap.Any("lis", pbutils.MustConvertToMap(lis)))
+	}
 	assert.Nil(t, err)
 }
