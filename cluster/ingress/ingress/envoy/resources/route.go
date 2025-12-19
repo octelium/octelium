@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -237,9 +236,11 @@ func getRoutesMain(domain string, svcList []*corev1.Service) ([]*routev3.Route, 
 
 			paths := strings.Split(svc.Metadata.SystemLabels["apiserver-path"], ",")
 			for _, path := range paths {
-				zap.L().Debug("Adding API Server path",
-					zap.Any("service", svc.Metadata.Name),
-					zap.String("path", strings.TrimSpace(path)))
+				/*
+					zap.L().Debug("Adding API Server path",
+						zap.Any("service", svc.Metadata.Name),
+						zap.String("path", strings.TrimSpace(path)))
+				*/
 				routeAPIServer, err := getRouteMain(domain,
 					strings.TrimSpace(path), true, getClusterNameFromService(svc))
 				if err != nil {
@@ -346,8 +347,10 @@ func getRouteMain(domain string, prefix string, isGRPC bool, cluster string) (*r
 }
 
 func getVirtualHostService(svc *corev1.Service, domain string) (*routev3.VirtualHost, error) {
-	zap.L().Debug("Setting virtual host for Service",
-		zap.String("svc", svc.Metadata.Name))
+	/*
+		zap.L().Debug("Setting virtual host for Service",
+			zap.String("svc", svc.Metadata.Name))
+	*/
 
 	routes, err := getRoutesService(svc, domain)
 	if err != nil {

@@ -19,6 +19,7 @@ package ingress
 import (
 	"context"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -27,6 +28,7 @@ import (
 	certcontroller "github.com/octelium/octelium/cluster/ingress/ingress/controllers/certificates"
 	svccontroller "github.com/octelium/octelium/cluster/ingress/ingress/controllers/services"
 	"github.com/octelium/octelium/cluster/ingress/ingress/envoy"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +63,16 @@ func Run(ctx context.Context) error {
 
 	if err := watcher.Service(ctx, nil, svcCtl.OnAdd, svcCtl.OnUpdate, svcCtl.OnDelete); err != nil {
 		return err
+	}
+
+	if err := watcher.ClusterConfig(ctx, nil, func(ctx context.Context, new, old *corev1.ClusterConfig) error {
+		if pbutils.IsEqual(new.Spec.Ingress, old.Spec.Ingress) {
+			return nil
+		}
+
+		return envoyServer.DoSnapshot(ctx)
+	}); err != nil {
+
 	}
 
 	healthcheck.Run(vutils.HealthCheckPortMain)

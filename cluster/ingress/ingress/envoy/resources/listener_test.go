@@ -103,6 +103,11 @@ func TestGetListeners(t *testing.T) {
 		return ret
 	}
 
+	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
+		UseForwardedForHeader: true,
+		XffNumTrustedHops:     1,
+	}
+
 	_, err = GetListeners("example.com", cc, svcList, nil)
 	assert.Nil(t, err)
 	listeners, err := GetListeners("example.com", cc, svcList, []*corev1.Secret{

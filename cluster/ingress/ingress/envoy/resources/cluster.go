@@ -26,7 +26,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"go.uber.org/zap"
 
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -86,7 +85,8 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 		if err != nil {
 			return nil, err
 		}
-		zap.L().Debug("Adding Envoy cluster for Service", zap.String("name", svc.Metadata.Name))
+
+		// zap.L().Debug("Adding Envoy cluster for Service", zap.String("name", svc.Metadata.Name))
 		ret = append(ret, clstr)
 	}
 
@@ -103,10 +103,6 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 }
 
 func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sni string) (*clusterv3.Cluster, error) {
-	loadAssignments, err := getClusterLoadAssignment(name, host, port)
-	if err != nil {
-		return nil, err
-	}
 
 	cluster := &clusterv3.Cluster{
 		Name:           name,
@@ -132,7 +128,7 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 			return nil
 		}(),
 
-		LoadAssignment: loadAssignments,
+		LoadAssignment: getClusterLoadAssignment(name, host, port),
 	}
 
 	if isHTTP2 {
@@ -168,24 +164,18 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 	return cluster, nil
 }
 
-func getClusterLoadAssignment(cluster, host string, port int) (*endpoint.ClusterLoadAssignment, error) {
-	endpoints, err := getEndpoints(host, port)
-	if err != nil {
-		return nil, err
-	}
-	ret := &endpoint.ClusterLoadAssignment{
+func getClusterLoadAssignment(cluster, host string, port int) *endpoint.ClusterLoadAssignment {
+	return &endpoint.ClusterLoadAssignment{
 		ClusterName: cluster,
-		Endpoints:   []*endpoint.LocalityLbEndpoints{endpoints},
+		Endpoints:   []*endpoint.LocalityLbEndpoints{getEndpoints(host, port)},
 	}
-
-	return ret, nil
 }
 
-func getEndpoints(host string, port int) (*endpoint.LocalityLbEndpoints, error) {
+func getEndpoints(host string, port int) *endpoint.LocalityLbEndpoints {
 	return getEndpointsBackend(host, port)
 }
 
-func getEndpointsBackend(host string, port int) (*endpoint.LocalityLbEndpoints, error) {
+func getEndpointsBackend(host string, port int) *endpoint.LocalityLbEndpoints {
 	ret := &endpoint.LocalityLbEndpoints{
 		LbEndpoints: []*endpoint.LbEndpoint{},
 	}
@@ -206,7 +196,7 @@ func getEndpointsBackend(host string, port int) (*endpoint.LocalityLbEndpoints, 
 		},
 	})
 
-	return ret, nil
+	return ret
 }
 
 func getTransportSocket(hostname string) (*core.TransportSocket, error) {

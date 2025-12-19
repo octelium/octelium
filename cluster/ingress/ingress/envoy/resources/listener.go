@@ -170,11 +170,11 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 			continue
 		}
 
-		zap.L().Debug("Adding certificate for Secret", zap.String("name", crt.Metadata.Name))
+		// zap.L().Debug("Adding certificate for Secret", zap.String("name", crt.Metadata.Name))
 
 		chain, key, err := ucorev1.ToSecret(crt).GetCertificateChainAndKey()
 		if err != nil {
-			zap.L().Error("Could not find cert data. Skipping...",
+			zap.L().Warn("Could not find cert data. Skipping...",
 				zap.Error(err), zap.String("name", crt.Metadata.Name))
 			continue
 		}

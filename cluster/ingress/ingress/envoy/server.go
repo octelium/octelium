@@ -175,7 +175,7 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 	}
 
 	if ldflags.IsDev() {
-		zap.L().Debug("Setting a new snapshot")
+		zap.L().Debug("Setting a new snapshot", zap.Any("cc", cc))
 		for _, lis := range rscListeners {
 			zap.L().Debug("Setting Envoy listener", zap.Any("listener", pbutils.MustConvertToMap(lis)))
 		}
