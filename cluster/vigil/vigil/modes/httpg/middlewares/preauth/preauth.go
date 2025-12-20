@@ -63,8 +63,6 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	additional := &additionalInfo{}
 
-	zap.L().Debug("Request headers", zap.Any("hdr", req.Header))
-
 	cfg := svc.Spec.Config
 
 	if (cfg != nil &&
