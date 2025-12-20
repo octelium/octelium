@@ -2046,7 +2046,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
 			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode())
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
 	}
 
 	{
@@ -2061,6 +2061,13 @@ func (s *server) runGeoIP(ctx context.Context) error {
 	{
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
 			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessTokenUnauthorized).
+			R().SetHeader("X-Forwarded-For", "214.78.120.1").Get("/")
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode())
 	}
