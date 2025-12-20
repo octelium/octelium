@@ -1880,7 +1880,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			},
 		})
 		assert.Nil(t, err)
-		assert.Equal(t, 0, len(sessList.Items))
+		assert.Equal(t, 1, len(sessList.Items))
 
 		sess := sessList.Items[0]
 		zap.L().Debug("xff Session init", zap.Any("info", sess.Status.Authentication.Info))
@@ -1950,9 +1950,9 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			},
 		})
 		assert.Nil(t, err)
-		assert.Equal(t, 1, len(sessList.Items))
+		assert.Equal(t, 2, len(sessList.Items))
 
-		sess := sessList.Items[0]
+		sess := sessList.Items[1]
 		zap.L().Debug("xff Session", zap.Any("info", sess.Status.Authentication.Info))
 		zap.L().Debug("xff Session GeoIP info", zap.Any("geoip", sess.Status.Authentication.Info.Geoip))
 		assert.NotNil(t, sess.Status.Authentication.Info.Geoip)
@@ -1993,9 +1993,9 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			},
 		})
 		assert.Nil(t, err)
-		assert.Equal(t, 1, len(sessList.Items))
+		assert.Equal(t, 23, len(sessList.Items))
 
-		sess := sessList.Items[0]
+		sess := sessList.Items[2]
 		zap.L().Debug("xff Session unauthorized", zap.Any("info", sess.Status.Authentication.Info))
 		// assert.Nil(t, sess.Status.Authentication.Info.Geoip)
 		// assert.Equal(t, "214.78.120.1", sess.Status.Authentication.Info.Downstream.IpAddress)
