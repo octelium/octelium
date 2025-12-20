@@ -267,21 +267,30 @@ spec:
 ---
 kind: Service
 metadata:
-  name: ollama
+  name: llama
 spec:
-  port: 11434
+  port: 8080
   mode: HTTP
   isPublic: true
   config:
     upstream:
       container:
-        port: 11434
-        image: ollama/ollama:0.12.0
+        port: 8080
+        image: ghcr.io/ggml-org/llama.cpp:server
+        args:
+        - "--model-url"
+        - "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf"
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "8080"
+        - "-c"
+        - "2048"
         resourceLimit:
           cpu:
-            millicores: 6000
+            millicores: 2000
           memory:
-            megabytes: 12000
+            megabytes: 3000
 ---
 kind: Service
 metadata:

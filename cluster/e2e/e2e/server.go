@@ -168,12 +168,12 @@ func (s *server) run(ctx context.Context) error {
 			s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
 		*/
 		// s.startKubectlLog(ctx, "-l octelium.com/component=collector")
-		s.startKubectlLog(ctx, "-l octelium.com/svc=demo-nginx.default")
-		s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
+		// s.startKubectlLog(ctx, "-l octelium.com/svc=demo-nginx.default")
+		// s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
 		// s.startKubectlLog(ctx, "-l octelium.com/component=ingress-dataplane")
 		// s.startKubectlLog(ctx, "-l octelium.com/component=ingress")
 		// s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api")
-		s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
+		// s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
 
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
@@ -700,7 +700,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p opensearch:15011",
 				"-p mcp-echo:15012",
 				"-p clickhouse:15013",
-				"-p ollama:15014",
+				"-p llama:15014",
 				"-p mongo:15015",
 				"--essh",
 				"--serve-all",
@@ -1163,17 +1163,11 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 			{
 
-				for range 3 {
-					s.describeUpstreamPod(ctx, "ollama")
-					time.Sleep(6 * time.Second)
-				}
-
 				s.startKubectlLog(ctx, fmt.Sprintf(
 					`$(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,
-					vutils.GetServiceFullNameFromName("ollama")))
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "ollama"))
-				assert.Nil(t, s.waitDeploymentSvc(ctx, "ollama"))
-				s.execServiceUpstream(ctx, "ollama", "ollama run qwen3:0.6b")
+					vutils.GetServiceFullNameFromName("llama")))
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "llama"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "llama"))
 
 				time.Sleep(5 * time.Second)
 
@@ -1230,7 +1224,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					zap.L().Debug("Complete answer", zap.String("val", acc.Choices[0].Message.Content))
 				}
 
-				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc ollama"))
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc llama"))
 			}
 
 			assert.Nil(t, s.runCmd(ctx, "octelium disconnect"))
