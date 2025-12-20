@@ -72,7 +72,7 @@ func Run(ctx context.Context) error {
 
 		return envoyServer.DoSnapshot(ctx)
 	}); err != nil {
-
+		return err
 	}
 
 	healthcheck.Run(vutils.HealthCheckPortMain)
