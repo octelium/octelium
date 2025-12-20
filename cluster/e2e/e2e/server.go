@@ -1993,7 +1993,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 			},
 		})
 		assert.Nil(t, err)
-		assert.Equal(t, 23, len(sessList.Items))
+		assert.Equal(t, 3, len(sessList.Items))
 
 		sess := sessList.Items[2]
 		zap.L().Debug("xff Session unauthorized", zap.Any("info", sess.Status.Authentication.Info))
@@ -2039,7 +2039,7 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
 			R().Get("/")
 		assert.Nil(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode())
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
 	}
 
 	{
@@ -2054,6 +2054,15 @@ func (s *server) runGeoIP(ctx context.Context) error {
 		cc.Spec.Ingress = nil
 		_, err = c.UpdateClusterConfig(ctx, cc)
 		assert.Nil(t, err)
+
+		time.Sleep(2 * time.Second)
+	}
+
+	{
+		res, err := s.httpCPublicAccessToken("demo-nginx", accessToken).
+			R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
 	}
 
 	zap.L().Debug("Done runGeoIP")
