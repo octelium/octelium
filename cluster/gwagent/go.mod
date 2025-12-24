@@ -8,7 +8,7 @@ require (
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
-	github.com/quic-go/quic-go v0.55.0
+	github.com/quic-go/quic-go v0.58.0
 	github.com/stretchr/testify v1.11.1
 	github.com/vishvananda/netlink v1.3.1
 	go.uber.org/zap v1.27.0
@@ -83,8 +83,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f // indirect
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250825161204-c5933d9347a5 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250825161204-c5933d9347a5 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
