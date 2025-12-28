@@ -136,8 +136,10 @@ func (c *Cache) getResource(kind string, key string) (umetav1.ResourceObjectI, e
 		return nil, err
 	}
 
-	zap.L().Debug("Got cached resource",
-		zap.String("key", key))
+	/*
+		zap.L().Debug("Got cached resource",
+			zap.String("key", key))
+	*/
 
 	return rsc, nil
 }
@@ -145,6 +147,7 @@ func (c *Cache) getResource(kind string, key string) (umetav1.ResourceObjectI, e
 func (c *Cache) deleteResource(kind string, key string) error {
 
 	zap.L().Debug("Deleting resource from cache",
+		zap.String("kind", kind),
 		zap.String("key", key))
 	if err := c.db.Update(func(tx *bbolt.Tx) error {
 
