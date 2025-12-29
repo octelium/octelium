@@ -90,6 +90,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       const { response } = await c.authenticateAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
+          
         })
       );
 

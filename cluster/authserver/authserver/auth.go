@@ -675,6 +675,14 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ucorev1.ToSession(sess).ShouldRefresh() {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	redirectURL := r.URL.Query().Get("redirect")
+	zap.L().Debug("handleAuthSuccess req", zap.String("redirectURL", redirectURL))
+
 	if sess.Status.Authentication != nil &&
 		sess.Status.Authentication.Info != nil &&
 		sess.Status.Authentication.Info.GetAuthenticator() != nil {
@@ -703,7 +711,6 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	redirectURL := r.FormValue("redirect")
 	if redirectURL == "" {
 		s.redirectToPortal(w, r)
 		return
@@ -763,6 +770,11 @@ func (s *server) handleAuthenticatorAuthenticate(w http.ResponseWriter, r *http.
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		s.redirectToLogin(w, r)
+		return
+	}
+
+	if !ucorev1.ToSession(sess).ShouldRefresh() {
+		s.redirectToPortal(w, r)
 		return
 	}
 
