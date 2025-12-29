@@ -24,12 +24,14 @@ import { DeleteOptions } from "@/apis/metav1/metav1";
 import { MdEdit } from "react-icons/md";
 import { MdEditOff } from "react-icons/md";
 import { IoMdSend } from "react-icons/io";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
 
   const c = getClientAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  let [copy, setCopy] = React.useState<URLSearchParams | undefined>(undefined);
 
   const mutation = useMutation({
     mutationFn: async (otp: string) => {
@@ -54,10 +56,23 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       );
     },
     onSuccess: (r) => {
-      window.location.href = "/callback/success";
+      window.location.href = copy
+        ? `/callback/success?${copy.toString()}`
+        : "/callback/success";
     },
     onError: (resp) => {},
   });
+
+  React.useEffect(() => {
+    setCopy(new URLSearchParams(searchParams));
+
+    searchParams.forEach((val, key, parent) => {
+      searchParams.delete(key);
+    });
+    setSearchParams(searchParams);
+
+    
+  }, []);
 
   return (
     <div className="w-full flex flex-col items-center justify-center">
@@ -84,13 +99,14 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
 
   const c = getClientAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  let [copy, setCopy] = React.useState<URLSearchParams | undefined>(undefined);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const { response } = await c.authenticateAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
-          
         })
       );
 
@@ -123,12 +139,21 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       }
     },
     onSuccess: (r) => {
-      window.location.href = "/callback/success";
+      window.location.href = copy
+        ? `/callback/success?${copy.toString()}`
+        : "/callback/success";
     },
     onError: (resp) => {},
   });
 
   React.useEffect(() => {
+    setCopy(new URLSearchParams(searchParams));
+
+    searchParams.forEach((val, key, parent) => {
+      searchParams.delete(key);
+    });
+    setSearchParams(searchParams);
+
     mutation.mutate();
   }, []);
 
@@ -376,7 +401,11 @@ export const ListAvailableAuthenticators = (props: {
       <div className="w-full">
         <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
           You have no Available Authenticators{" "}
-          <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
+          <Button
+            className="ml-2 shadow-md"
+            component={Link}
+            to={`/authenticators/register`}
+          >
             Register
           </Button>
         </div>
@@ -399,7 +428,11 @@ export const ListAvailableAuthenticators = (props: {
         <div className="w-full">
           <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
             You have no Available Authenticators{" "}
-            <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
+            <Button
+              className="ml-2 shadow-md"
+              component={Link}
+              to={`/authenticators/register`}
+            >
               Register
             </Button>
           </div>
@@ -408,7 +441,11 @@ export const ListAvailableAuthenticators = (props: {
         <div>
           <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
             Your Available Authenticators{" "}
-            <Button className="ml-2 shadow-md" component={Link} to={`/authenticators/register`}>
+            <Button
+              className="ml-2 shadow-md"
+              component={Link}
+              to={`/authenticators/register`}
+            >
               Register
             </Button>
           </h2>

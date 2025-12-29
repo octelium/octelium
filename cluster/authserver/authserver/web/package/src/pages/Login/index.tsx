@@ -121,6 +121,7 @@ const Page = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
+  
   React.useEffect(() => {
     setReqCommon({
       query: searchParams.toString() ?? undefined,
