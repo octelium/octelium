@@ -31,8 +31,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/ingress/ingress/envoy/resources"
 	"github.com/octelium/octelium/cluster/ingress/ingress/xdscb"
-	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
@@ -174,15 +172,17 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 		return err
 	}
 
-	if ldflags.IsDev() {
-		zap.L().Debug("Setting a new snapshot", zap.Any("cc", cc))
-		for _, lis := range rscListeners {
-			zap.L().Debug("Setting Envoy listener", zap.Any("listener", pbutils.MustConvertToMap(lis)))
+	/*
+		if ldflags.IsDev() {
+			zap.L().Debug("Setting a new snapshot", zap.Any("cc", cc))
+			for _, lis := range rscListeners {
+				zap.L().Debug("Setting Envoy listener", zap.Any("listener", pbutils.MustConvertToMap(lis)))
+			}
+			for _, cluster := range rscClusters {
+				zap.L().Debug("Setting Envoy cluster", zap.Any("cluster", pbutils.MustConvertToMap(cluster)))
+			}
 		}
-		for _, cluster := range rscClusters {
-			zap.L().Debug("Setting Envoy cluster", zap.Any("cluster", pbutils.MustConvertToMap(cluster)))
-		}
-	}
+	*/
 
 	snap, err := cache.NewSnapshot(fmt.Sprintf("octelium-%s", utilrand.GetRandomStringLowercase(10)),
 		map[string][]types.Resource{
