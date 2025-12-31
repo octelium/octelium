@@ -28,7 +28,7 @@ import (
 func tpmAuthenticate(ctx context.Context, req *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest) (*authv1.ChallengeResponse, error) {
 
 	tpm, err := attest.OpenTPM(&attest.OpenConfig{
-		TPMVersion: attest.TPMVersion20,
+		// TPMVersion: attest.TPMVersion20,
 	})
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func tpmAuthenticate(ctx context.Context, req *authv1.AuthenticateAuthenticatorB
 func tpmRegister(ctx context.Context, req *authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest) (*authv1.ChallengeResponse, error) {
 
 	tpm, err := attest.OpenTPM(&attest.OpenConfig{
-		TPMVersion: attest.TPMVersion20,
+		// TPMVersion: attest.TPMVersion20,
 	})
 	if err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func tpmRegister(ctx context.Context, req *authv1.RegisterAuthenticatorBeginResp
 
 func tpmGetPreChallenge(ctx context.Context) (*authv1.RegisterAuthenticatorBeginRequest_PreChallenge, error) {
 	tpm, err := attest.OpenTPM(&attest.OpenConfig{
-		TPMVersion: attest.TPMVersion20,
+		// TPMVersion: attest.TPMVersion20,
 	})
 	if err != nil {
 		return nil, err

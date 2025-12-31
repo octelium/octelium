@@ -141,8 +141,8 @@ func (c *TPMFactor) Begin(ctx context.Context, req *authenticators.BeginReq) (*a
 	}
 
 	activationParams := &attest.ActivationParameters{
-		TPMVersion: attest.TPMVersion20,
-		EK:         ek,
+		// TPMVersion: attest.TPMVersion20,
+		EK: ek,
 		AK: attest.AttestationParameters{
 			Public:            info.AttestationParameters.Public,
 			CreateData:        info.AttestationParameters.CreateData,
@@ -293,8 +293,8 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 	}
 
 	activationParams := &attest.ActivationParameters{
-		TPMVersion: attest.TPMVersion20,
-		EK:         ek,
+		// TPMVersion: attest.TPMVersion20,
+		EK: ek,
 		AK: attest.AttestationParameters{
 			Public:            info.AttestationParameters.Public,
 			CreateData:        info.AttestationParameters.CreateData,
