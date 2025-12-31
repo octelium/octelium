@@ -3,7 +3,7 @@ module github.com/octelium/octelium/cluster/ingress
 go 1.25.5
 
 require (
-	github.com/envoyproxy/go-control-plane v0.13.5-0.20251024222203-75eaa193e329
+	github.com/envoyproxy/go-control-plane v0.14.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
@@ -15,7 +15,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require github.com/envoyproxy/go-control-plane/envoy v1.35.0
+require github.com/envoyproxy/go-control-plane/envoy v1.36.0
 
 require (
 	cel.dev/expr v0.24.0 // indirect
