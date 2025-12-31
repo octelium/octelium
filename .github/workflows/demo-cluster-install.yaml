@@ -41,6 +41,7 @@ jobs:
           curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
 
           export OCTELIUM_INSECURE_TLS=true
+          export OCTELIUM_DOMAIN=localhost
           AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
           USER_NAME="$(id -un)"
           sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
