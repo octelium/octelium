@@ -42,6 +42,8 @@ jobs:
 
           export OCTELIUM_INSECURE_TLS=true
           AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
+          USER_NAME="$(id -un)"
+          sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
           octelium login --domain localhost --auth-token $AUTH_TOKEN
           octelium status
 
