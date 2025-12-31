@@ -22,3 +22,28 @@ jobs:
           kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
           curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
+
+          ./install-demo-cluster.sh --uninstall
+      - name: Run NAT
+        run: |
+          curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
+          sudo chmod +x install-demo-cluster.sh
+          export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
+          # export OCTELIUM_SKIP_MESSAGES="true"
+          sudo -E ./install-demo-cluster.sh --domain localhost --nat
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+          export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+          kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
+          kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
+          curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
+
+          export OCTELIUM_INSECURE_TLS=true
+          AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
+          octelium login --domain localhost --auth-token $AUTH_TOKEN
+          octelium status
+
+          octelium connect -p demo-nginx:9090 &
+          sleep 3
+          curl --fail --retry 10 --retry-delay 1 --max-time 2 http://localhost:9090
