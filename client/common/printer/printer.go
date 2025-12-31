@@ -17,32 +17,58 @@ package printer
 import (
 	"os"
 
+	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/renderer"
 )
 
+/*
 func Print(headers []string, rows [][]string) {
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader(headers)
-	table.SetBorder(false)
-	table.AppendBulk(rows)
+	table.Header(headers)
+
+	table.Bulk(rows)
 	table.Render()
 }
+*/
 
 type Printer struct {
 	table *tablewriter.Table
 }
 
 func NewPrinter(headers ...string) *Printer {
-	ret := &Printer{
-		table: tablewriter.NewWriter(os.Stdout),
+	ret := &Printer{}
+
+	{
+
+		colorCfg := renderer.ColorizedConfig{
+			Header: renderer.Tint{
+				FG: renderer.Colors{color.FgWhite, color.Bold},
+			},
+			Column: renderer.Tint{
+				FG: renderer.Colors{color.FgWhite},
+			},
+
+			Border:    renderer.Tint{FG: renderer.Colors{color.FgWhite}},
+			Separator: renderer.Tint{FG: renderer.Colors{color.FgWhite}},
+		}
+
+		ret.table = tablewriter.NewTable(os.Stdout,
+			tablewriter.WithRenderer(renderer.NewColorized(colorCfg))) // tablewriter.WithRenderer(renderer.NewColorized(colorCfg)),
+
 	}
-	ret.table.SetHeader(headers)
-	hdrColor := []tablewriter.Colors{}
-	for i := 0; i < len(headers); i++ {
-		hdrColor = append(hdrColor, tablewriter.Colors{tablewriter.Bold})
-	}
-	ret.table.SetHeaderColor(hdrColor...)
-	ret.table.SetBorder(false)
+
+	/*
+		ret.table.Header(headers)
+		hdrColor := []tablewriter.Colors{}
+		for i := 0; i < len(headers); i++ {
+			hdrColor = append(hdrColor, tablewriter.Colors{tablewriter.Bold})
+		}
+		ret.table.SetHeaderColor(hdrColor...)
+		ret.table.SetBorder(false)
+	*/
+
+	ret.table.Header(headers)
 
 	return ret
 }
