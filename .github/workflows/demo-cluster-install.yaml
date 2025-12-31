@@ -32,6 +32,7 @@ jobs:
           # export OCTELIUM_SKIP_MESSAGES="true"
           sudo -E ./install-demo-cluster.sh --domain localhost --nat
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+          sudo chmod 644 $OCTELIUM_AUTH_TOKEN_SAVE_PATH
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
