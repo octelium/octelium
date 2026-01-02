@@ -29,9 +29,9 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/octeliumc/middlewares"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Client struct {
@@ -50,11 +50,12 @@ func DefaultAddr() string {
 }
 
 func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
-	return []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	opts := []grpc.DialOption{
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(middlewares.GetUnaryInterceptors()...)),
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(middlewares.GetStreamInterceptors()...)),
-	}, nil
+	}
+
+	return spiffec.GetGRPCClientOpts(ctx, opts)
 }
 
 func NewClient(ctx context.Context) (*Client, error) {
