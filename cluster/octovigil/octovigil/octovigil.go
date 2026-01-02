@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octovigilc"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/rscutils"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
@@ -726,7 +727,13 @@ func (s *Server) run(ctx context.Context) error {
 		return err
 	}
 
+	cred, err := spiffec.GetGRPCServerCred(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.grpcSrv = grpc.NewServer(
+		cred,
 		grpc.MaxConcurrentStreams(100*1000),
 		grpc.MaxRecvMsgSize(33*1024*1024),
 		grpc.MaxSendMsgSize(33*1024*1024),

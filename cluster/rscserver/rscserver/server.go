@@ -210,7 +210,13 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 
+	cred, err := spiffec.GetGRPCServerCred(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.grpcSrv = grpc.NewServer(
+		cred,
 		grpc.ReadBufferSize(32*1024),
 		grpc.MaxConcurrentStreams(1000000),
 		grpc.StreamInterceptor(

@@ -60,3 +60,15 @@ func GetGRPCClientOpts(ctx context.Context, opts []grpc.DialOption) ([]grpc.Dial
 
 	return ret, nil
 }
+
+func GetGRPCServerCred(ctx context.Context) (grpc.ServerOption, error) {
+	if source, err := GetSPIFFESource(ctx); err == nil {
+		defer source.Close()
+		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
+	} else if errors.Is(err, ErrNotFound) {
+		return grpc.Creds(insecure.NewCredentials()), nil
+	} else {
+		return nil, err
+	}
+}
