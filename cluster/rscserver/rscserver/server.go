@@ -36,7 +36,6 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
-	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/spiffec"
@@ -48,7 +47,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
@@ -225,7 +223,7 @@ func (s *Server) Run(ctx context.Context) error {
 			grpc_middleware.ChainUnaryServer(s.handleUnaryRequest)),
 	)
 
-	grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
+	// grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
 
 	{
 		cacheSrv := &srvCache{

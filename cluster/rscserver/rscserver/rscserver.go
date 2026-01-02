@@ -20,6 +20,8 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/healthcheck"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +43,8 @@ func Run(ctx context.Context) error {
 	if err := srv.Run(ctx); err != nil {
 		return err
 	}
+
+	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Resource Server is now running...")
 
 	<-ctx.Done()
