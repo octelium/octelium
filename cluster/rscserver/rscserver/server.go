@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/redisutils"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -47,7 +48,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -331,8 +331,9 @@ func (s *Server) setSecretManager(ctx context.Context) error {
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
 	}
 
-	if cc.Status.SecretManager.Tls == nil {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	opts, err = spiffec.GetGRPCClientOpts(ctx, opts)
+	if err != nil {
+		return err
 	}
 
 	grpcConn, err := grpc.NewClient(addr, opts...)
