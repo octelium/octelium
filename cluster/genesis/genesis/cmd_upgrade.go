@@ -70,7 +70,10 @@ func (g *Genesis) RunUpgrade(ctx context.Context) error {
 
 	zap.L().Debug("upgrading rscServer")
 
-	if err := components.CreateRscServer(ctx, g.k8sC, clusterCfg); err != nil {
+	if err := components.CreateRscServer(ctx, &components.CommonOpts{
+		K8sC:          g.k8sC,
+		ClusterConfig: clusterCfg,
+	}); err != nil {
 		return err
 	}
 

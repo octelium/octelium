@@ -38,8 +38,15 @@ func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) 
 		return err
 	}
 
+	opts := &components.CommonOpts{
+		OcteliumC:     g.octeliumC,
+		K8sC:          g.k8sC,
+		ClusterConfig: clusterCfg,
+		Region:        region,
+	}
+
 	{
-		err = components.CreateGatewayAgent(ctx, g.k8sC, clusterCfg, region)
+		err = components.CreateGatewayAgent(ctx, opts)
 		if err != nil {
 			return err
 		}
@@ -50,7 +57,7 @@ func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) 
 	}
 
 	{
-		err = components.CreateNocturne(ctx, g.k8sC, clusterCfg, region)
+		err = components.CreateNocturne(ctx, opts)
 		if err != nil {
 			return err
 		}
@@ -60,7 +67,7 @@ func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) 
 		}
 	}
 	{
-		if err := components.CreateOctovigil(ctx, g.k8sC, clusterCfg); err != nil {
+		if err := components.CreateOctovigil(ctx, opts); err != nil {
 			return err
 		}
 
@@ -69,7 +76,7 @@ func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) 
 		}
 	}
 
-	if err := components.CreateIngress(ctx, g.k8sC, clusterCfg, region); err != nil {
+	if err := components.CreateIngress(ctx, opts); err != nil {
 		return err
 	}
 

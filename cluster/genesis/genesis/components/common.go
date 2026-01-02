@@ -22,6 +22,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -353,4 +354,11 @@ func getDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 
 func GetDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 	return getDefaultResourceRequirements()
+}
+
+type CommonOpts struct {
+	OcteliumC     octeliumc.ClientInterface
+	K8sC          kubernetes.Interface
+	ClusterConfig *corev1.ClusterConfig
+	Region        *corev1.Region
 }

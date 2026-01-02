@@ -28,7 +28,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Deployment {
@@ -158,26 +157,25 @@ func getNocturneNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPoli
 	}
 }
 
-func CreateNocturne(ctx context.Context, c kubernetes.Interface,
-	clusterCfg *corev1.ClusterConfig, r *corev1.Region) error {
+func CreateNocturne(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, c, getNocturneServiceAccount()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, o.K8sC, getNocturneServiceAccount()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, c, getNocturneRole()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, o.K8sC, getNocturneRole()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, c, getNocturneRoleBinding()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, o.K8sC, getNocturneRoleBinding()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c, getNocturneDeployment(clusterCfg, r)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getNocturneDeployment(o.ClusterConfig, o.Region)); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getNocturneNetworkPolicy(clusterCfg)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, o.K8sC, getNocturneNetworkPolicy(o.ClusterConfig)); err != nil {
 		return err
 	}
 

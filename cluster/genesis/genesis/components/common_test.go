@@ -53,18 +53,23 @@ func TestComponents(t *testing.T) {
 	}
 
 	doInstall := func() {
+		opts := &CommonOpts{
+			K8sC:          fakeC.K8sC,
+			ClusterConfig: clusterCfg,
+			Region:        region,
+		}
 		{
-			err := CreateGatewayAgent(ctx, fakeC.K8sC, clusterCfg, region)
+			err := CreateGatewayAgent(ctx, opts)
 			assert.Nil(t, err)
 		}
 
 		{
-			err := CreateNocturne(ctx, fakeC.K8sC, clusterCfg, region)
+			err := CreateNocturne(ctx, opts)
 			assert.Nil(t, err)
 		}
 
 		{
-			err := CreateIngress(ctx, fakeC.K8sC, clusterCfg, region)
+			err := CreateIngress(ctx, opts)
 			assert.Nil(t, err)
 		}
 	}

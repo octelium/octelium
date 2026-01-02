@@ -28,7 +28,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *appsv1.DaemonSet {
@@ -260,22 +259,21 @@ func getGatewayAgentRoleBinding() *rbacv1.ClusterRoleBinding {
 	}
 }
 
-func CreateGatewayAgent(ctx context.Context, c kubernetes.Interface,
-	clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
+func CreateGatewayAgent(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, c, getGatewayAgentServiceAccount()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, o.K8sC, getGatewayAgentServiceAccount()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, c, getGatewayAgentRole()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, o.K8sC, getGatewayAgentRole()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, c, getGatewayAgentRoleBinding()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, o.K8sC, getGatewayAgentRoleBinding()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDaemonset(ctx, c, getGatewayAgentDaemonSet(clusterCfg, region)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDaemonset(ctx, o.K8sC, getGatewayAgentDaemonSet(o.ClusterConfig, o.Region)); err != nil {
 		return err
 	}
 

@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/kubernetes"
 )
 
 func getRscServerService() *k8scorev1.Service {
@@ -190,17 +189,17 @@ func getRscServerNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPol
 	}
 }
 
-func CreateRscServer(ctx context.Context, c kubernetes.Interface, clusterCfg *corev1.ClusterConfig) error {
+func CreateRscServer(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c, getRscServerDeployment(clusterCfg)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getRscServerDeployment(o.ClusterConfig)); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateService(ctx, c, getRscServerService()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateService(ctx, o.K8sC, getRscServerService()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getRscServerNetworkPolicy(clusterCfg)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, o.K8sC, getRscServerNetworkPolicy(o.ClusterConfig)); err != nil {
 		return err
 	}
 

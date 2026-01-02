@@ -159,7 +159,10 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 			return err
 		}
 	} else {
-		if err := components.CreateRscServer(ctx, g.k8sC, clusterCfg); err != nil {
+		if err := components.CreateRscServer(ctx, &components.CommonOpts{
+			K8sC:          g.k8sC,
+			ClusterConfig: clusterCfg,
+		}); err != nil {
 			return err
 		}
 

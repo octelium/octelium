@@ -29,7 +29,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/kubernetes"
 )
 
 func getOctovigilService() *k8scorev1.Service {
@@ -172,17 +171,17 @@ func getOctovigilNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPol
 	}
 }
 
-func CreateOctovigil(ctx context.Context, c kubernetes.Interface, clusterCfg *corev1.ClusterConfig) error {
+func CreateOctovigil(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, c, getOctovigilDeployment(clusterCfg)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getOctovigilDeployment(o.ClusterConfig)); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateService(ctx, c, getOctovigilService()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateService(ctx, o.K8sC, getOctovigilService()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getOctovigilNetworkPolicy(clusterCfg)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, o.K8sC, getOctovigilNetworkPolicy(o.ClusterConfig)); err != nil {
 		return err
 	}
 
