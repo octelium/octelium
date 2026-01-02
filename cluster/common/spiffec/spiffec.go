@@ -45,23 +45,25 @@ func GetSPIFFESource(ctx context.Context) (r *workloadapi.X509Source, err error)
 	return workloadapi.NewX509Source(ctx, workloadapi.WithClient(c))
 }
 
-func GetGRPCClientOpts(ctx context.Context, opts []grpc.DialOption) ([]grpc.DialOption, error) {
+type GetGRPCClientCredOpts struct {
+}
 
-	var ret = opts
+func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		defer source.Close()
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
-		ret = append(ret, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
-		ret = append(ret, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	} else {
 		return nil, err
 	}
-
-	return ret, nil
 }
 
-func GetGRPCServerCred(ctx context.Context) (grpc.ServerOption, error) {
+type GetGRPCServerCredOpts struct {
+}
+
+func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		defer source.Close()
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())

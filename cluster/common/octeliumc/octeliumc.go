@@ -55,7 +55,12 @@ func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(middlewares.GetStreamInterceptors()...)),
 	}
 
-	return spiffec.GetGRPCClientOpts(ctx, opts)
+	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, cred)
+	return opts, nil
 }
 
 func NewClient(ctx context.Context) (*Client, error) {

@@ -77,10 +77,12 @@ func NewClient(ctx context.Context) (*Client, error) {
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
 	}
 
-	opts, err := spiffec.GetGRPCClientOpts(ctx, opts)
+	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+
+	opts = append(opts, cred)
 
 	grpcConn, err := grpc.NewClient(
 		host,

@@ -727,7 +727,7 @@ func (s *Server) run(ctx context.Context) error {
 		return err
 	}
 
-	cred, err := spiffec.GetGRPCServerCred(ctx)
+	cred, err := spiffec.GetGRPCServerCred(ctx, nil)
 	if err != nil {
 		return err
 	}

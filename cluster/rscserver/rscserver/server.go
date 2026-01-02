@@ -210,7 +210,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 
-	cred, err := spiffec.GetGRPCServerCred(ctx)
+	cred, err := spiffec.GetGRPCServerCred(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -337,10 +337,12 @@ func (s *Server) setSecretManager(ctx context.Context) error {
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
 	}
 
-	opts, err = spiffec.GetGRPCClientOpts(ctx, opts)
+	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
 	if err != nil {
 		return err
 	}
+
+	opts = append(opts, cred)
 
 	grpcConn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
