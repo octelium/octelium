@@ -25,10 +25,10 @@ import (
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Client struct {
@@ -68,15 +68,23 @@ func NewClient(ctx context.Context) (*Client, error) {
 			grpc_retry.WithCodes(retryCodes...)),
 	}
 
-	grpcConn, err := grpc.NewClient(
-		host,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	opts := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(16*1024*1024),
 			grpc.MaxCallSendMsgSize(16*1024*1024),
 		),
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
+	}
+
+	opts, err := spiffec.GetGRPCClientOpts(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	grpcConn, err := grpc.NewClient(
+		host,
+		opts...,
 	)
 	if err != nil {
 		return nil, err
