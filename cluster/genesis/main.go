@@ -82,6 +82,7 @@ func init() {
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 }
 
+
 func init() {
 	components.SetComponentNamespace(components.ComponentNamespaceOctelium)
 	components.SetComponentType(components.Genesis)

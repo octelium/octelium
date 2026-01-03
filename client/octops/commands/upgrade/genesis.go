@@ -17,6 +17,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -76,7 +77,18 @@ func getGenesisJob(domain, version string) *batchv1.Job {
 								}
 							}(),
 							ImagePullPolicy: corev1.PullAlways,
-							Args:            []string{"upgrade"},
+							Args: func() []string {
+								ret := []string{"upgrade"}
+
+								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+									ret = append(ret, "--enable-spiffe-csi")
+								}
+								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+									ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
+								}
+
+								return ret
+							}(),
 							Env: func() []corev1.EnvVar {
 								ret := []corev1.EnvVar{
 									{

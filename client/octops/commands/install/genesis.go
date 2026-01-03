@@ -16,6 +16,8 @@ package install
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -95,21 +97,6 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "octelium-genesis",
 					RestartPolicy:      corev1.RestartPolicyNever,
-					ImagePullSecrets: func() []corev1.LocalObjectReference {
-
-						return nil
-						/*
-							if ldflags.IsPrivateRegistry() {
-								return []corev1.LocalObjectReference{
-									{
-										Name: "octelium-regcred",
-									},
-								}
-							} else {
-								return nil
-							}
-						*/
-					}(),
 
 					Containers: []corev1.Container{
 						{
@@ -125,7 +112,18 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 								}
 							}(),
 							ImagePullPolicy: corev1.PullAlways,
-							Args:            []string{"init"},
+							Args: func() []string {
+								ret := []string{"init"}
+
+								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+									ret = append(ret, "--enable-spiffe-csi")
+								}
+								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+									ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
+								}
+
+								return ret
+							}(),
 							/*
 								Env: func() []corev1.EnvVar {
 									ret := []corev1.EnvVar{

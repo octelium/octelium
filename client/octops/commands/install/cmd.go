@@ -127,7 +127,6 @@ func printClusterMsgs() {
 	cliutils.LineNotify("For more information, you might want to visit the docs at https://octelium.com/docs \n")
 	cliutils.LineNotify(`You can also interact with the Cluster before setting the Cluster TLS certificate by setting the "OCTELIUM_INSECURE_TLS" environment variable to "true" (i.e. via the "export OCTELIUM_INSECURE_TLS=true" command) before running "octelium" and "octeliumctl" commands`)
 	cliutils.LineInfo("\n")
-	// cliutils.LineNotify("Also you might need to flush your machine's local DNS cache if your machine is using one so that you do not have to wait for too long until the newly set Cluster domain's public DNS entry is synchronized with your local machine\n\n\n")
 }
 
 func setClusterResources(ctx context.Context, o *Opts) error {
@@ -165,47 +164,3 @@ func setClusterResources(ctx context.Context, o *Opts) error {
 
 	return nil
 }
-
-/*
-func setRegcred(ctx context.Context, k8sC kubernetes.Interface) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	dockerJsonBytes, err := os.ReadFile(path.Join(homeDir, ".docker", "config.json"))
-	if err != nil {
-		return err
-	}
-
-	if secret, err := k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-regcred", k8smetav1.GetOptions{}); err == nil {
-		secret.StringData = map[string]string{
-			".dockerconfigjson": string(dockerJsonBytes),
-		}
-		secret.Type = k8scorev1.SecretTypeDockerConfigJson
-
-		_, err := k8sC.CoreV1().Secrets("default").Update(ctx, secret, k8smetav1.UpdateOptions{})
-		if err != nil {
-			return err
-		}
-	} else if k8serr.IsNotFound(err) {
-		_, err := k8sC.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{
-			ObjectMeta: k8smetav1.ObjectMeta{
-				Name: "octelium-regcred",
-			},
-			StringData: map[string]string{
-				".dockerconfigjson": string(dockerJsonBytes),
-			},
-
-			Type: k8scorev1.SecretTypeDockerConfigJson,
-		}, k8smetav1.CreateOptions{})
-		if err != nil {
-			return err
-		}
-	} else {
-		return err
-	}
-
-	return nil
-
-}
-*/
