@@ -83,6 +83,13 @@ func getNocturneDeployment(o *CommonOpts) *appsv1.Deployment {
 										Value: o.Region.Metadata.Uid,
 									},
 								}
+
+								if o.EnableSPIFFECSI {
+									ret = append(ret, k8scorev1.EnvVar{
+										Name:  "OCTELIUM_ENABLE_SPIFFE_CSI",
+										Value: "true",
+									})
+								}
 								if o.EnableSPIFFECSI && o.SPIFFECSIDriver != "" {
 									ret = append(ret, k8scorev1.EnvVar{
 										Name:  "OCTELIUM_SPIFFE_CSI_DRIVER",

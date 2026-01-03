@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
@@ -39,16 +40,20 @@ import (
 )
 
 type Controller struct {
-	octeliumC octeliumc.ClientInterface
-	k8sC      kubernetes.Interface
+	octeliumC       octeliumc.ClientInterface
+	k8sC            kubernetes.Interface
+	hasSPIFFE       bool
+	spiffeCSIDriver string
 }
 
 const ns = vutils.K8sNS
 
 func NewController(octeliumC octeliumc.ClientInterface, k8sC kubernetes.Interface) *Controller {
 	return &Controller{
-		octeliumC: octeliumC,
-		k8sC:      k8sC,
+		octeliumC:       octeliumC,
+		k8sC:            k8sC,
+		hasSPIFFE:       os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true",
+		spiffeCSIDriver: os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"),
 	}
 }
 
@@ -145,6 +150,16 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 			},
 		},
 
+		Volumes: func() []k8scorev1.Volume {
+			var ret []k8scorev1.Volume
+
+			if c.hasSPIFFE {
+				ret = append(ret, k8sutils.GetSPIFFEVolume(c.spiffeCSIDriver))
+			}
+
+			return ret
+		}(),
+
 		Containers: []k8scorev1.Container{
 
 			{
@@ -215,6 +230,13 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 						},
 					},
 				},
+				VolumeMounts: func() []k8scorev1.VolumeMount {
+					var ret []k8scorev1.VolumeMount
+					if c.hasSPIFFE {
+						ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
+					}
+					return ret
+				}(),
 			},
 		},
 	}
@@ -335,6 +357,14 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 								},
 							},
 						}
+					}(),
+					VolumeMounts: func() []k8scorev1.VolumeMount {
+						var ret []k8scorev1.VolumeMount
+						if c.hasSPIFFE {
+							ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
+						}
+
+						return ret
 					}(),
 				})
 			}
