@@ -53,8 +53,16 @@ import (
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (g *Genesis) RunInit(ctx context.Context) error {
+type InitOpts struct {
+	EnableSPIFFECSI bool
+	SPIFFECSIDriver string
+}
+
+func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	zap.L().Info("Starting initializing the Cluster")
+	if o == nil {
+		o = &InitOpts{}
+	}
 
 	if err := waitForNodesReadiness(ctx, g.k8sC); err != nil {
 		return err
@@ -63,12 +71,6 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 	if err := g.setNamespace(ctx); err != nil {
 		return err
 	}
-
-	/*
-		if err := g.moveRegcred(ctx); err != nil {
-			return err
-		}
-	*/
 
 	initResources, err := g.loadClusterInitResources(ctx, "default")
 	if err != nil {
@@ -83,7 +85,6 @@ func (g *Genesis) RunInit(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Loaded Cluster resources",
-		//zap.Any("bootstrap", bootstrap),
 		zap.Any("region", region))
 
 	clusterCfg, err := g.initClusterConfig(ctx, bootstrap, initResources.Domain)

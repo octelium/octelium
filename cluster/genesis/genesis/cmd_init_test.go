@@ -189,7 +189,7 @@ func TestRunInit(t *testing.T) {
 		err := setClusterConfigRegion(ctx, g.k8sC, region, dbName)
 		assert.Nil(t, err)
 
-		err = g.RunInit(ctx)
+		err = g.RunInit(ctx, nil)
 		assert.Nil(t, err, "%+v", err)
 
 		{
@@ -213,12 +213,12 @@ func TestRunInit(t *testing.T) {
 		}
 
 		{
-			err = g.RunUpgrade(ctx)
+			err = g.RunUpgrade(ctx, nil)
 			assert.Nil(t, err, "%+v", err)
 		}
 
 		{
-			err = g.RunUpgrade(ctx)
+			err = g.RunUpgrade(ctx, nil)
 			assert.Nil(t, err, "%+v", err)
 		}
 	}

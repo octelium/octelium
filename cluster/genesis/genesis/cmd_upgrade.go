@@ -33,9 +33,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func (g *Genesis) RunUpgrade(ctx context.Context) error {
+type UpgradeOpts struct {
+	EnableSPIFFECSI bool
+	SPIFFECSIDriver string
+}
+
+func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 
 	zap.L().Info("Starting upgrade...")
+	if o == nil {
+		o = &UpgradeOpts{}
+	}
+
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
 		return err

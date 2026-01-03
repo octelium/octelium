@@ -39,7 +39,9 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		if err := g.RunInit(context.Background()); err != nil {
+		if err := g.RunInit(context.Background(), &genesis.InitOpts{
+			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
+		}); err != nil {
 			return err
 		}
 
@@ -55,12 +57,29 @@ var upgradeCmd = &cobra.Command{
 			return err
 		}
 
-		if err := g.RunUpgrade(context.Background()); err != nil {
+		if err := g.RunUpgrade(context.Background(), &genesis.UpgradeOpts{
+			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
+		}); err != nil {
 			return err
 		}
 
 		return nil
 	},
+}
+
+var cmdArgs args
+
+type args struct {
+	EnableSPIFFECSIDriver bool
+	SPIFFECSIDriver       string
+}
+
+func init() {
+	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
+	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
+
+	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
+	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 }
 
 func init() {
