@@ -175,6 +175,9 @@ func (s *server) run(ctx context.Context) error {
 		// s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api")
 		// s.startKubectlLog(ctx, "-l octelium.com/svc=auth.octelium-api -c managed")
 
+		s.startKubectlLog(ctx, "-l octelium.com/component=nocturne")
+		s.startKubectlLog(ctx, "-l octelium.com/component=octovigil")
+
 		assert.Nil(t, s.runCmd(ctx, "kubectl get pods -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get deployment -A"))
 		assert.Nil(t, s.runCmd(ctx, "kubectl get svc -A"))

@@ -153,9 +153,16 @@ helm install --wait --timeout 30m0s octelium-pg oci://registry-1.docker.io/bitna
 	--set primary.networkPolicy.enabled=false --version 16.4.14 \
 	--set image.repository=bitnamilegacy/postgresql --set global.security.allowInsecureImages=true &>/dev/null
 
+helm upgrade --install spire-crds spire/spire-crds --namespace spire --create-namespace
+helm upgrade --install spire spire/spire --namespace spire
+
+
 export OCTELIUM_REGION_EXTERNAL_IP=${EXTERNAL_IP}
 export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
 export OCTELIUM_SKIP_MESSAGES="true"
+
+export OCTELIUM_ENABLE_SPIFFE_CSI="true"
+
 octops init ${DOMAIN} --version ${VERSION} --bootstrap - <<EOF
 spec:
   primaryStorage:
@@ -237,6 +244,7 @@ config:
         receivers:
           - otlp
 EOF
+
 
 kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
 kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
