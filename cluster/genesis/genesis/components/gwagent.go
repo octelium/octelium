@@ -65,28 +65,34 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							},
 						}
 					}(),
-					Volumes: []k8scorev1.Volume{
-						{
-							Name: "debian-modules",
-							VolumeSource: k8scorev1.VolumeSource{
-								HostPath: &k8scorev1.HostPathVolumeSource{
-									Path: "/lib/modules",
-									Type: &hostPathDirectoryOrCreate,
+					Volumes: func() []k8scorev1.Volume {
+						ret := []k8scorev1.Volume{
+							{
+								Name: "debian-modules",
+								VolumeSource: k8scorev1.VolumeSource{
+									HostPath: &k8scorev1.HostPathVolumeSource{
+										Path: "/lib/modules",
+										Type: &hostPathDirectoryOrCreate,
+									},
 								},
 							},
-						},
-						{
-							Name: "etc-cni",
-							VolumeSource: k8scorev1.VolumeSource{
-								HostPath: &k8scorev1.HostPathVolumeSource{
-									Path: "/etc/cni",
-									Type: &hostPathDirectoryOrCreate,
+							{
+								Name: "etc-cni",
+								VolumeSource: k8scorev1.VolumeSource{
+									HostPath: &k8scorev1.HostPathVolumeSource{
+										Path: "/etc/cni",
+										Type: &hostPathDirectoryOrCreate,
+									},
 								},
 							},
-						},
+						}
 
-						k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver),
-					},
+						if o.EnableSPIFFECSI {
+							ret = append(ret, k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
+						}
+
+						return ret
+					}(),
 					InitContainers: []k8scorev1.Container{
 						{
 							Name:            "octelium-node-init",
@@ -131,14 +137,22 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							},
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							Env:             *envVars,
-							VolumeMounts: []k8scorev1.VolumeMount{
-								{
-									Name:      "etc-cni",
-									ReadOnly:  false,
-									MountPath: "/etc/cni",
-								},
-								k8sutils.GetSPIFFEVolumeMount(),
-							},
+							VolumeMounts: func() []k8scorev1.VolumeMount {
+								ret := []k8scorev1.VolumeMount{
+									{
+										Name:      "etc-cni",
+										ReadOnly:  false,
+										MountPath: "/etc/cni",
+									},
+								}
+
+								if o.EnableSPIFFECSI {
+									ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
+								}
+
+								return ret
+
+							}(),
 							LivenessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 60,
 								TimeoutSeconds:      4,
