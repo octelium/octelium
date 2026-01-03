@@ -153,6 +153,8 @@ helm install --wait --timeout 30m0s octelium-pg oci://registry-1.docker.io/bitna
 	--set primary.networkPolicy.enabled=false --version 16.4.14 \
 	--set image.repository=bitnamilegacy/postgresql --set global.security.allowInsecureImages=true &>/dev/null
 
+helm repo add spire https://spiffe.github.io/helm-charts-hardened/
+helm repo update
 helm upgrade --install spire-crds spire/spire-crds --namespace spire --create-namespace
 helm upgrade --install spire spire/spire --namespace spire
 
