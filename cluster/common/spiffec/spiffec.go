@@ -7,6 +7,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -51,6 +52,7 @@ type GetGRPCClientCredOpts struct {
 func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		defer source.Close()
+		zap.L().Debug("SPIFFE is enabled. Setting client cred")
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
 		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
@@ -66,6 +68,7 @@ type GetGRPCServerCredOpts struct {
 func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		defer source.Close()
+		zap.L().Debug("SPIFFE is enabled. Setting server cred")
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
