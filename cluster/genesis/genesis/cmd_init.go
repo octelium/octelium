@@ -199,7 +199,9 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
-	if err := g.installComponents(ctx, region); err != nil {
+	if err := g.installComponents(ctx,
+		region,
+		o.EnableSPIFFECSI, o.SPIFFECSIDriver); err != nil {
 		return err
 	}
 

@@ -23,10 +23,15 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
+	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 )
 
-func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) error {
+func (g *Genesis) installComponents(ctx context.Context,
+	region *corev1.Region,
+	enableSPIFFECSI bool,
+	spiffeCSIDriver string,
+) error {
 	regionName := region.Metadata.Name
 	clusterCfg, err := g.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
@@ -39,11 +44,15 @@ func (g *Genesis) installComponents(ctx context.Context, region *corev1.Region) 
 	}
 
 	opts := &components.CommonOpts{
-		OcteliumC:     g.octeliumC,
-		K8sC:          g.k8sC,
-		ClusterConfig: clusterCfg,
-		Region:        region,
+		OcteliumC:       g.octeliumC,
+		K8sC:            g.k8sC,
+		ClusterConfig:   clusterCfg,
+		Region:          region,
+		EnableSPIFFECSI: enableSPIFFECSI,
+		SPIFFECSIDriver: spiffeCSIDriver,
 	}
+
+	zap.L().Debug("Starting installComponents", zap.Bool("spiffe", enableSPIFFECSI))
 
 	{
 		err = components.CreateGatewayAgent(ctx, opts)

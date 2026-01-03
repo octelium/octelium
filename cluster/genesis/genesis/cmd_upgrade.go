@@ -94,7 +94,9 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 
 	zap.L().Debug("Installing components")
 
-	if err := g.installComponents(ctx, regionV); err != nil {
+	if err := g.installComponents(ctx,
+		regionV,
+		o.EnableSPIFFECSI, o.SPIFFECSIDriver); err != nil {
 		return err
 	}
 

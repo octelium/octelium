@@ -79,7 +79,7 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 sudo cp kubectl /usr/local/bin
 sudo chmod 755 /usr/local/bin/kubectl
 
-curl -fsSL https://octelium.com/install.sh | bash
+# curl -fsSL https://octelium.com/install.sh | bash
 
 
 export INSTALL_K3S_SKIP_START=true
@@ -165,6 +165,7 @@ export OCTELIUM_SKIP_MESSAGES="true"
 
 export OCTELIUM_ENABLE_SPIFFE_CSI="true"
 
+octops version
 octops init ${DOMAIN} --version ${VERSION} --bootstrap - <<EOF
 spec:
   primaryStorage:

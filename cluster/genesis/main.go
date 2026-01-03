@@ -41,6 +41,7 @@ var initCmd = &cobra.Command{
 
 		if err := g.RunInit(context.Background(), &genesis.InitOpts{
 			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
+			SPIFFECSIDriver: cmdArgs.SPIFFECSIDriver,
 		}); err != nil {
 			return err
 		}
@@ -59,6 +60,7 @@ var upgradeCmd = &cobra.Command{
 
 		if err := g.RunUpgrade(context.Background(), &genesis.UpgradeOpts{
 			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
+			SPIFFECSIDriver: cmdArgs.SPIFFECSIDriver,
 		}); err != nil {
 			return err
 		}
@@ -81,7 +83,6 @@ func init() {
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 }
-
 
 func init() {
 	components.SetComponentNamespace(components.ComponentNamespaceOctelium)
