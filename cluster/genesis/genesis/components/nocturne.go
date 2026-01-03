@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Deployment {
+func getNocturneDeployment(o *CommonOpts) *appsv1.Deployment {
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -51,7 +51,7 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 					Annotations: getAnnotations(),
 				},
 				Spec: k8scorev1.PodSpec{
-					NodeSelector:       getNodeSelectorControlPlane(c),
+					NodeSelector:       getNodeSelectorControlPlane(o.ClusterConfig),
 					ServiceAccountName: getComponentName(componentNocturne),
 
 					Containers: []k8scorev1.Container{
@@ -76,12 +76,18 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 								ret := []k8scorev1.EnvVar{
 									{
 										Name:  "OCTELIUM_REGION_NAME",
-										Value: r.Metadata.Name,
+										Value: o.Region.Metadata.Name,
 									},
 									{
 										Name:  "OCTELIUM_REGION_UID",
-										Value: r.Metadata.Uid,
+										Value: o.Region.Metadata.Uid,
 									},
+								}
+								if o.EnableSPIFFECSI && o.SPIFFECSIDriver != "" {
+									ret = append(ret, k8scorev1.EnvVar{
+										Name:  "OCTELIUM_SPIFFE_CSI_DRIVER",
+										Value: o.SPIFFECSIDriver,
+									})
 								}
 								// ret = append(ret, getRedisEnv()...)
 								return ret
@@ -92,6 +98,7 @@ func getNocturneDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.De
 			},
 		},
 	}
+	SetDeploymentSPIFFEVolume(deployment, o)
 	return deployment
 }
 
@@ -171,7 +178,7 @@ func CreateNocturne(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getNocturneDeployment(o.ClusterConfig, o.Region)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getNocturneDeployment(o)); err != nil {
 		return err
 	}
 

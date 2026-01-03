@@ -58,7 +58,7 @@ func getOctovigilService() *k8scorev1.Service {
 	return ret
 }
 
-func getOctovigilDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
+func getOctovigilDeployment(o *CommonOpts) *appsv1.Deployment {
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -77,7 +77,7 @@ func getOctovigilDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 				},
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
-					NodeSelector:                 getNodeSelectorDataPlane(c),
+					NodeSelector:                 getNodeSelectorDataPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{
 						{
@@ -124,6 +124,7 @@ func getOctovigilDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 			},
 		},
 	}
+	SetDeploymentSPIFFEVolume(deployment, o)
 	return deployment
 }
 
@@ -173,7 +174,7 @@ func getOctovigilNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPol
 
 func CreateOctovigil(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getOctovigilDeployment(o.ClusterConfig)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getOctovigilDeployment(o)); err != nil {
 		return err
 	}
 

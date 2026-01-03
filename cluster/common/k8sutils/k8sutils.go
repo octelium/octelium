@@ -24,6 +24,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	k8scorev1 "k8s.io/api/core/v1"
 )
 
@@ -63,4 +64,24 @@ func GetGatewayName(node *k8scorev1.Node) string {
 
 func GetImagePullPolicy() k8scorev1.PullPolicy {
 	return k8scorev1.PullIfNotPresent
+}
+
+func GetSPIFFEVolume(csiName string) k8scorev1.Volume {
+	if csiName == "" {
+		csiName = "csi.spiffe.io"
+	}
+	return k8scorev1.Volume{
+		Name: "spiffe-agent",
+		VolumeSource: k8scorev1.VolumeSource{
+			CSI: &k8scorev1.CSIVolumeSource{Driver: csiName, ReadOnly: utils_types.BoolToPtr(true)},
+		},
+	}
+}
+
+func GetSPIFFEVolumeMount() k8scorev1.VolumeMount {
+	return k8scorev1.VolumeMount{
+		Name:      "spiffe-agent",
+		MountPath: "/run/spire/sockets",
+		ReadOnly:  true,
+	}
 }

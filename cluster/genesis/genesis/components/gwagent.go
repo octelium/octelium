@@ -30,9 +30,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *appsv1.DaemonSet {
+func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 
-	envVars := getGatewayAgentEnvVars(region)
+	envVars := getGatewayAgentEnvVars(o.Region)
 	hostPathDirectoryOrCreate := k8scorev1.HostPathDirectoryOrCreate
 
 	return &appsv1.DaemonSet{
@@ -52,7 +52,7 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 				},
 				Spec: k8scorev1.PodSpec{
 					ServiceAccountName: getComponentName(componentGWAgent),
-					NodeSelector:       getNodeSelectorDataPlane(c),
+					NodeSelector:       getNodeSelectorDataPlane(o.ClusterConfig),
 					HostNetwork:        true,
 					DNSPolicy:          k8scorev1.DNSClusterFirstWithHostNet,
 					Tolerations: func() []k8scorev1.Toleration {
@@ -84,6 +84,8 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 								},
 							},
 						},
+
+						k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver),
 					},
 					InitContainers: []k8scorev1.Container{
 						{
@@ -129,11 +131,14 @@ func getGatewayAgentDaemonSet(c *corev1.ClusterConfig, region *corev1.Region) *a
 							},
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							Env:             *envVars,
-							VolumeMounts: []k8scorev1.VolumeMount{{
-								Name:      "etc-cni",
-								ReadOnly:  false,
-								MountPath: "/etc/cni",
-							}},
+							VolumeMounts: []k8scorev1.VolumeMount{
+								{
+									Name:      "etc-cni",
+									ReadOnly:  false,
+									MountPath: "/etc/cni",
+								},
+								k8sutils.GetSPIFFEVolumeMount(),
+							},
 							LivenessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 60,
 								TimeoutSeconds:      4,
@@ -273,7 +278,7 @@ func CreateGatewayAgent(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDaemonset(ctx, o.K8sC, getGatewayAgentDaemonSet(o.ClusterConfig, o.Region)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDaemonset(ctx, o.K8sC, getGatewayAgentDaemonSet(o)); err != nil {
 		return err
 	}
 

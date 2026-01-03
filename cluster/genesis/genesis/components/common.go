@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -357,8 +358,20 @@ func GetDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 }
 
 type CommonOpts struct {
-	OcteliumC     octeliumc.ClientInterface
-	K8sC          kubernetes.Interface
-	ClusterConfig *corev1.ClusterConfig
-	Region        *corev1.Region
+	OcteliumC       octeliumc.ClientInterface
+	K8sC            kubernetes.Interface
+	ClusterConfig   *corev1.ClusterConfig
+	Region          *corev1.Region
+	EnableSPIFFECSI bool
+	SPIFFECSIDriver string
+}
+
+func SetDeploymentSPIFFEVolume(dep *appsv1.Deployment, o *CommonOpts) {
+	if o == nil || !o.EnableSPIFFECSI {
+		return
+	}
+
+	spec := dep.Spec.Template.Spec
+	spec.Volumes = append(spec.Volumes, k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
+	spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, k8sutils.GetSPIFFEVolumeMount())
 }

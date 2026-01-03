@@ -59,7 +59,7 @@ func getRscServerService() *k8scorev1.Service {
 	return ret
 }
 
-func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
+func getRscServerDeployment(o *CommonOpts) *appsv1.Deployment {
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -79,7 +79,7 @@ func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 				},
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
-					NodeSelector:                 getNodeSelectorControlPlane(c),
+					NodeSelector:                 getNodeSelectorControlPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{
 						{
@@ -132,6 +132,7 @@ func getRscServerDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 			},
 		},
 	}
+	SetDeploymentSPIFFEVolume(deployment, o)
 	return deployment
 }
 
@@ -191,7 +192,7 @@ func getRscServerNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPol
 
 func CreateRscServer(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getRscServerDeployment(o.ClusterConfig)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getRscServerDeployment(o)); err != nil {
 		return err
 	}
 

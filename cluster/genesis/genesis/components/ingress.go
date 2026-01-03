@@ -163,7 +163,7 @@ func getIngressService(c *corev1.ClusterConfig) *k8scorev1.Service {
 	return ret
 }
 
-func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Deployment {
+func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -182,7 +182,7 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 				},
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
-					NodeSelector:                 getNodeSelectorControlPlane(c),
+					NodeSelector:                 getNodeSelectorControlPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{
 						{
@@ -204,7 +204,7 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 							Env: []k8scorev1.EnvVar{
 								{
 									Name:  "OCTELIUM_REGION_NAME",
-									Value: r.Metadata.Name,
+									Value: o.Region.Metadata.Name,
 								},
 							},
 						},
@@ -213,6 +213,9 @@ func getIngressDeployment(c *corev1.ClusterConfig, r *corev1.Region) *appsv1.Dep
 			},
 		},
 	}
+
+	SetDeploymentSPIFFEVolume(deployment, o)
+
 	return deployment
 }
 
@@ -319,6 +322,7 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 			},
 		},
 	}
+
 	return deployment
 }
 
@@ -381,7 +385,7 @@ func CreateIngress(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getIngressDeployment(o.ClusterConfig, o.Region)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getIngressDeployment(o)); err != nil {
 		return err
 	}
 
