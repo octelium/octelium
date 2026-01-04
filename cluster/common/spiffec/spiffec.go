@@ -78,6 +78,9 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 		if ldflags.IsDev() {
 			tlsConfig.InsecureSkipVerify = true
 			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+
+				zap.L().Debug("Starting VerifyPeerCertificate",
+					zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
 				var certs []*x509.Certificate
 				for _, rawCert := range rawCerts {
 					cert, err := x509.ParseCertificate(rawCert)
@@ -150,6 +153,8 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 			}
 			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 				var certs []*x509.Certificate
+				zap.L().Debug("Starting VerifyPeerCertificate",
+					zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
 				for _, rawCert := range rawCerts {
 					cert, err := x509.ParseCertificate(rawCert)
 					if err != nil {
