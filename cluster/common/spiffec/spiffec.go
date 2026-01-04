@@ -3,7 +3,6 @@ package spiffec
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"os"
 
@@ -70,32 +69,37 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 
 		zap.L().Debug("SPIFFE is enabled. Setting client cred", zap.Any("crt", svid.Certificates[0]))
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
-		tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
-			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
-			return nil, nil
-		}
+
+		/*
+			tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+				zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
+				return nil, nil
+			}
+		*/
 		tlsConfig.ServerName = ""
 		if ldflags.IsDev() {
 			// tlsConfig.InsecureSkipVerify = true
-			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			/*
+				tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 
-				zap.L().Debug("Starting VerifyPeerCertificate",
-					zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
-				var certs []*x509.Certificate
-				for _, rawCert := range rawCerts {
-					cert, err := x509.ParseCertificate(rawCert)
-					if err != nil {
-						return err
+					zap.L().Debug("Starting VerifyPeerCertificate",
+						zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
+					var certs []*x509.Certificate
+					for _, rawCert := range rawCerts {
+						cert, err := x509.ParseCertificate(rawCert)
+						if err != nil {
+							return err
+						}
+						certs = append(certs, cert)
 					}
-					certs = append(certs, cert)
-				}
 
-				for _, crt := range certs {
-					zap.L().Debug("Got peer crt",
-						zap.Any("crt", crt), zap.Any("subject", crt.Subject), zap.Any("issuer", crt.Issuer))
+					for _, crt := range certs {
+						zap.L().Debug("Got peer crt",
+							zap.Any("crt", crt), zap.Any("subject", crt.Subject), zap.Any("issuer", crt.Issuer))
+					}
+					return nil
 				}
-				return nil
-			}
+			*/
 
 			tlsConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				svid, err := source.GetX509SVID()
@@ -132,10 +136,13 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 
 		zap.L().Debug("SPIFFE is enabled. Setting server cred", zap.Any("crt", svid.Certificates[0]))
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
-		tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
-			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
-			return nil, nil
-		}
+
+		/*
+			tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+				zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
+				return nil, nil
+			}
+		*/
 		if ldflags.IsDev() {
 			// tlsConfig.InsecureSkipVerify = true
 			tlsConfig.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -151,24 +158,27 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 					Leaf:        svid.Certificates[0],
 				}, nil
 			}
-			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-				var certs []*x509.Certificate
-				zap.L().Debug("Starting VerifyPeerCertificate",
-					zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
-				for _, rawCert := range rawCerts {
-					cert, err := x509.ParseCertificate(rawCert)
-					if err != nil {
-						return err
-					}
-					certs = append(certs, cert)
-				}
 
-				for _, crt := range certs {
-					zap.L().Debug("Got crt",
-						zap.Any("crt", crt), zap.Any("subject", crt.Subject), zap.Any("issuer", crt.Issuer))
+			/*
+				tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+					var certs []*x509.Certificate
+					zap.L().Debug("Starting VerifyPeerCertificate",
+						zap.Any("rawCerts", rawCerts), zap.Any("chains", verifiedChains))
+					for _, rawCert := range rawCerts {
+						cert, err := x509.ParseCertificate(rawCert)
+						if err != nil {
+							return err
+						}
+						certs = append(certs, cert)
+					}
+
+					for _, crt := range certs {
+						zap.L().Debug("Got crt",
+							zap.Any("crt", crt), zap.Any("subject", crt.Subject), zap.Any("issuer", crt.Issuer))
+					}
+					return nil
 				}
-				return nil
-			}
+			*/
 		}
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
