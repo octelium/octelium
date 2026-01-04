@@ -644,15 +644,13 @@ func (s *Server) isAuthorized(ctx context.Context,
 }
 
 func Run(ctx context.Context) error {
-
+	if err := commoninit.Run(ctx, nil); err != nil {
+		return err
+	}
 	zap.L().Debug("Starting running Octovigil")
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
-		return err
-	}
-
-	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
 	}
 

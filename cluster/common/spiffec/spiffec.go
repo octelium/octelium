@@ -18,9 +18,15 @@ func GetSPIFFEEndpointSocket() string {
 		return val
 	}
 
-	csiPath := "/run/spire/sockets/agent.sock"
-	if _, err := os.Stat(csiPath); err == nil {
-		return "unix://" + csiPath
+	csiPaths := []string{
+		"/run/spire/sockets/spire-agent.sock",
+		"/run/spire/sockets/agent.sock",
+	}
+
+	for _, csiPath := range csiPaths {
+		if _, err := os.Stat(csiPath); err == nil {
+			return "unix://" + csiPath
+		}
 	}
 
 	return ""

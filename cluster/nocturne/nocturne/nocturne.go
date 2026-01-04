@@ -42,6 +42,11 @@ import (
 )
 
 func Run(ctx context.Context) error {
+
+	if err := commoninit.Run(ctx, nil); err != nil {
+		return err
+	}
+
 	k8sC, err := k8sutils.NewClient(ctx, nil)
 	if err != nil {
 		return err
@@ -49,10 +54,6 @@ func Run(ctx context.Context) error {
 
 	octeliumC, err := octeliumc.NewClient(ctx)
 	if err != nil {
-		return err
-	}
-
-	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
 	}
 
