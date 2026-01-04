@@ -135,6 +135,19 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 		}
 		if ldflags.IsDev() {
 			tlsConfig.InsecureSkipVerify = true
+			tlsConfig.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				zap.L().Debug("new getCertificate", zap.Any("chi", chi))
+				svid, err := source.GetX509SVID()
+				if err != nil {
+					return nil, err
+				}
+
+				return &tls.Certificate{
+					Certificate: [][]byte{svid.Certificates[0].Raw},
+					PrivateKey:  svid.PrivateKey,
+					Leaf:        svid.Certificates[0],
+				}, nil
+			}
 			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 				var certs []*x509.Certificate
 				for _, rawCert := range rawCerts {
