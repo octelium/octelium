@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/components"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/metric"
@@ -41,9 +42,15 @@ func CreateMetricsProvider(ctx context.Context, addr string) (*sdkmetric.MeterPr
 		addr = defaultAddr
 	}
 
+	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	opts := []otlpmetricgrpc.Option{
 		otlpmetricgrpc.WithEndpoint(addr),
-		otlpmetricgrpc.WithInsecure(),
+		// otlpmetricgrpc.WithInsecure(),
+		otlpmetricgrpc.WithDialOption(cred),
 	}
 
 	exporter, err := otlpmetricgrpc.New(ctx, opts...)

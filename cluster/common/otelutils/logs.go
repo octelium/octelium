@@ -21,6 +21,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -57,9 +58,15 @@ func CreateLoggerProvider(ctx context.Context, addr string) (*sdklog.LoggerProvi
 		addr = defaultAddr
 	}
 
+	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	opts := []otlploggrpc.Option{
 		otlploggrpc.WithEndpoint(addr),
-		otlploggrpc.WithInsecure(),
+		// otlploggrpc.WithInsecure(),
+		otlploggrpc.WithDialOption(cred),
 	}
 
 	exporter, err := otlploggrpc.New(ctx, opts...)
