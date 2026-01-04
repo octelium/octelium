@@ -50,7 +50,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/health/grpc_health_v1"
 
 	devicecontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/devices"
 	groupcontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/groups"
@@ -706,6 +705,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Octovigil is now running")
 
 	<-ctx.Done()
@@ -739,7 +739,7 @@ func (s *Server) run(ctx context.Context) error {
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,
 	})
-	grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
+	// grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", octovigilc.GetPort()))
 	if err != nil {

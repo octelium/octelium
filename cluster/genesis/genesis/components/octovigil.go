@@ -22,7 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
-	"github.com/octelium/octelium/cluster/common/octovigilc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -92,7 +92,7 @@ func getOctovigilDeployment(o *CommonOpts) *appsv1.Deployment {
 								FailureThreshold:    3,
 								ProbeHandler: k8scorev1.ProbeHandler{
 									GRPC: &k8scorev1.GRPCAction{
-										Port: int32(octovigilc.GetPort()),
+										Port: int32(vutils.HealthCheckPortMain),
 									},
 								},
 							},
