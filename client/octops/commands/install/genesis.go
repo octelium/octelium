@@ -21,6 +21,7 @@ import (
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
@@ -97,6 +98,27 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "octelium-genesis",
 					RestartPolicy:      corev1.RestartPolicyNever,
+					Volumes: func() []corev1.Volume {
+						var ret []corev1.Volume
+						if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+
+							csiName := func() string {
+								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+									return val
+								}
+
+								return "csi.spiffe.io"
+							}()
+							ret = append(ret, corev1.Volume{
+								Name: "spiffe-agent",
+								VolumeSource: corev1.VolumeSource{
+									CSI: &corev1.CSIVolumeSource{Driver: csiName, ReadOnly: utils_types.BoolToPtr(true)},
+								},
+							})
+						}
+
+						return ret
+					}(),
 
 					Containers: []corev1.Container{
 						{
@@ -124,22 +146,17 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 
 								return ret
 							}(),
-							/*
-								Env: func() []corev1.EnvVar {
-									ret := []corev1.EnvVar{
-										{
-											Name:  "OCTELIUM_DOMAIN",
-											Value: domain,
-										},
-										{
-											Name:  "OCTELIUM_REGION_NAME",
-											Value: regionName,
-										},
-									}
-
-									return ret
-								}(),
-							*/
+							VolumeMounts: func() []corev1.VolumeMount {
+								var ret []corev1.VolumeMount
+								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+									ret = append(ret, corev1.VolumeMount{
+										Name:      "spiffe-agent",
+										MountPath: "/run/spire/sockets",
+										ReadOnly:  true,
+									})
+								}
+								return ret
+							}(),
 						},
 					},
 				},
