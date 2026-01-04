@@ -214,7 +214,7 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 		},
 	}
 
-	SetDeploymentSPIFFEVolume(deployment, o)
+	SetDeploymentSPIFFE(deployment, o)
 
 	return deployment
 }

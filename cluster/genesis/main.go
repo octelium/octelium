@@ -40,8 +40,9 @@ var initCmd = &cobra.Command{
 		}
 
 		if err := g.RunInit(context.Background(), &genesis.InitOpts{
-			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
-			SPIFFECSIDriver: cmdArgs.SPIFFECSIDriver,
+			EnableSPIFFECSI:   cmdArgs.EnableSPIFFECSIDriver,
+			SPIFFECSIDriver:   cmdArgs.SPIFFECSIDriver,
+			SPIFFETrustDomain: cmdArgs.SPIFFETrustDomain,
 		}); err != nil {
 			return err
 		}
@@ -74,14 +75,19 @@ var cmdArgs args
 type args struct {
 	EnableSPIFFECSIDriver bool
 	SPIFFECSIDriver       string
+	SPIFFETrustDomain     string
 }
 
 func init() {
 	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
-	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
-
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
+	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
+}
+
+func init() {
+	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
+	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
 }
 
 func init() {

@@ -31,6 +31,7 @@ func (g *Genesis) installComponents(ctx context.Context,
 	region *corev1.Region,
 	enableSPIFFECSI bool,
 	spiffeCSIDriver string,
+	spiffeTrustDomain string,
 ) error {
 	regionName := region.Metadata.Name
 	clusterCfg, err := g.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
@@ -44,12 +45,13 @@ func (g *Genesis) installComponents(ctx context.Context,
 	}
 
 	opts := &components.CommonOpts{
-		OcteliumC:       g.octeliumC,
-		K8sC:            g.k8sC,
-		ClusterConfig:   clusterCfg,
-		Region:          region,
-		EnableSPIFFECSI: enableSPIFFECSI,
-		SPIFFECSIDriver: spiffeCSIDriver,
+		OcteliumC:         g.octeliumC,
+		K8sC:              g.k8sC,
+		ClusterConfig:     clusterCfg,
+		Region:            region,
+		EnableSPIFFECSI:   enableSPIFFECSI,
+		SPIFFECSIDriver:   spiffeCSIDriver,
+		SPIFFETrustDomain: spiffeTrustDomain,
 	}
 
 	zap.L().Debug("Starting installComponents", zap.Bool("spiffe", enableSPIFFECSI))

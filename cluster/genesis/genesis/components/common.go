@@ -358,15 +358,16 @@ func GetDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 }
 
 type CommonOpts struct {
-	OcteliumC       octeliumc.ClientInterface
-	K8sC            kubernetes.Interface
-	ClusterConfig   *corev1.ClusterConfig
-	Region          *corev1.Region
-	EnableSPIFFECSI bool
-	SPIFFECSIDriver string
+	OcteliumC         octeliumc.ClientInterface
+	K8sC              kubernetes.Interface
+	ClusterConfig     *corev1.ClusterConfig
+	Region            *corev1.Region
+	EnableSPIFFECSI   bool
+	SPIFFECSIDriver   string
+	SPIFFETrustDomain string
 }
 
-func SetDeploymentSPIFFEVolume(dep *appsv1.Deployment, o *CommonOpts) {
+func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {
 	if o == nil || !o.EnableSPIFFECSI {
 		return
 	}
@@ -375,4 +376,12 @@ func SetDeploymentSPIFFEVolume(dep *appsv1.Deployment, o *CommonOpts) {
 		k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
 	dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(dep.Spec.Template.Spec.Containers[0].VolumeMounts,
 		k8sutils.GetSPIFFEVolumeMount())
+
+	if o.SPIFFETrustDomain != "" {
+		dep.Spec.Template.Spec.Containers[0].Env = append(dep.Spec.Template.Spec.Containers[0].Env,
+			k8scorev1.EnvVar{
+				Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+				Value: o.SPIFFETrustDomain,
+			})
+	}
 }
