@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"go.uber.org/zap"
@@ -66,6 +67,10 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 			return nil, nil
 		}
 		tlsConfig.ServerName = ""
+		if ldflags.IsDev() {
+			tlsConfig.InsecureSkipVerify = true
+		}
+
 		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
@@ -82,7 +87,10 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 		defer source.Close()
 		zap.L().Debug("SPIFFE is enabled. Setting server cred")
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
-
+		tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
+			return nil, nil
+		}
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.Creds(insecure.NewCredentials()), nil
