@@ -371,7 +371,8 @@ func SetDeploymentSPIFFEVolume(dep *appsv1.Deployment, o *CommonOpts) {
 		return
 	}
 
-	spec := dep.Spec.Template.Spec
-	spec.Volumes = append(spec.Volumes, k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
-	spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, k8sutils.GetSPIFFEVolumeMount())
+	dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes,
+		k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
+	dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+		k8sutils.GetSPIFFEVolumeMount())
 }
