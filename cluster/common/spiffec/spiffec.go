@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"go.uber.org/zap"
@@ -65,7 +66,7 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 		}
 
 		zap.L().Debug("SPIFFE is enabled. Setting client cred", zap.Any("crt", svid.Certificates[0]))
-		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+		tlsConfig := tlsconfig.MTLSClientConfig(source, source, GetAuthorizer())
 
 		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
@@ -78,6 +79,16 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 type GetGRPCServerCredOpts struct {
 }
 
+func GetAuthorizer() tlsconfig.Authorizer {
+	if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+		if authorizer, err := spiffeid.TrustDomainFromString(val); err == nil {
+			return tlsconfig.AuthorizeMemberOf(authorizer)
+		}
+	}
+
+	return tlsconfig.AuthorizeAny()
+}
+
 func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		svid, err := source.GetX509SVID()
@@ -86,7 +97,7 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 		}
 
 		zap.L().Debug("SPIFFE is enabled. Setting server cred", zap.Any("crt", svid.Certificates[0]))
-		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+		tlsConfig := tlsconfig.MTLSClientConfig(source, source, GetAuthorizer())
 		tlsConfig.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			zap.L().Debug("new getCertificate", zap.Any("chi", chi))
 			svid, err := source.GetX509SVID()
