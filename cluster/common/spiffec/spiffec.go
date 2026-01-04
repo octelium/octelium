@@ -61,6 +61,11 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 		defer source.Close()
 		zap.L().Debug("SPIFFE is enabled. Setting client cred")
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+		tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
+			return nil, nil
+		}
+		tlsConfig.ServerName = ""
 		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
@@ -77,11 +82,7 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 		defer source.Close()
 		zap.L().Debug("SPIFFE is enabled. Setting server cred")
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
-		tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
-			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
-			return nil, nil
-		}
-		tlsConfig.ServerName = ""
+
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.Creds(insecure.NewCredentials()), nil
