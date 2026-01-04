@@ -91,6 +91,9 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 			zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
 			return nil, nil
 		}
+		if ldflags.IsDev() {
+			tlsConfig.InsecureSkipVerify = true
+		}
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.Creds(insecure.NewCredentials()), nil
