@@ -59,6 +59,7 @@ type GetGRPCClientCredOpts struct {
 }
 
 func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
+
 	if source, err := GetSPIFFESource(ctx); err == nil {
 		defer source.Close()
 
@@ -87,10 +88,23 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 				}
 
 				for _, crt := range certs {
-					zap.L().Debug("Got crt",
+					zap.L().Debug("Got peer crt",
 						zap.Any("crt", crt), zap.Any("subject", crt.Subject), zap.Any("issuer", crt.Issuer))
 				}
 				return nil
+			}
+
+			tlsConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				svid, err := source.GetX509SVID()
+				if err != nil {
+					return nil, err
+				}
+				zap.L().Debug("Got svid cert", zap.Any("crt", svid.Certificates[0]))
+				return &tls.Certificate{
+					Certificate: [][]byte{svid.Certificates[0].Raw},
+					PrivateKey:  svid.PrivateKey,
+					Leaf:        svid.Certificates[0],
+				}, nil
 			}
 		}
 
