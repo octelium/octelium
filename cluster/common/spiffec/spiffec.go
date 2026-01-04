@@ -2,6 +2,7 @@ package spiffec
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"os"
 
@@ -75,7 +76,7 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 				return nil, nil
 			}
 		*/
-		tlsConfig.ServerName = ""
+		// tlsConfig.ServerName = ""
 		if ldflags.IsDev() {
 			// tlsConfig.InsecureSkipVerify = true
 			/*
@@ -137,7 +138,19 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 
 		zap.L().Debug("SPIFFE is enabled. Setting server cred", zap.Any("crt", svid.Certificates[0]))
 		tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeAny())
+		tlsConfig.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			zap.L().Debug("new getCertificate", zap.Any("chi", chi))
+			svid, err := source.GetX509SVID()
+			if err != nil {
+				return nil, err
+			}
 
+			return &tls.Certificate{
+				Certificate: [][]byte{svid.Certificates[0].Raw},
+				PrivateKey:  svid.PrivateKey,
+				Leaf:        svid.Certificates[0],
+			}, nil
+		}
 		/*
 			tlsConfig.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
 				zap.L().Debug("SNI RECEIVED", zap.String("sni", chi.ServerName))
