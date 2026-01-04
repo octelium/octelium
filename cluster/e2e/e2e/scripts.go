@@ -162,8 +162,8 @@ helm upgrade --install spire spire/spire --namespace spire --wait --timeout 10m
 export OCTELIUM_REGION_EXTERNAL_IP=${EXTERNAL_IP}
 export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
 export OCTELIUM_SKIP_MESSAGES="true"
-
 export OCTELIUM_ENABLE_SPIFFE_CSI="true"
+
 
 octops version
 octops init ${DOMAIN} --version ${VERSION} --bootstrap - <<EOF
