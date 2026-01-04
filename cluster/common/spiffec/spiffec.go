@@ -61,7 +61,7 @@ type GetGRPCClientCredOpts struct {
 func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
 
 	if source, err := GetSPIFFESource(ctx); err == nil {
-		defer source.Close()
+		// defer source.Close()
 
 		svid, err := source.GetX509SVID()
 		if err != nil {
@@ -124,7 +124,7 @@ type GetGRPCServerCredOpts struct {
 
 func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
 	if source, err := GetSPIFFESource(ctx); err == nil {
-		defer source.Close()
+		// defer source.Close()
 		svid, err := source.GetX509SVID()
 		if err != nil {
 			return nil, err
