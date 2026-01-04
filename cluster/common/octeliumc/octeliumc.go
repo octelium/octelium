@@ -59,7 +59,7 @@ func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts = append(opts, cred) // grpc.WithAuthority("")
+	opts = append(opts, cred)
 
 	return opts, nil
 }

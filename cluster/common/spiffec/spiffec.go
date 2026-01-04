@@ -101,18 +101,20 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 				}
 			*/
 
-			tlsConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				svid, err := source.GetX509SVID()
-				if err != nil {
-					return nil, err
+			/*
+				tlsConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+					svid, err := source.GetX509SVID()
+					if err != nil {
+						return nil, err
+					}
+					zap.L().Debug("Got svid cert", zap.Any("crt", svid.Certificates[0]))
+					return &tls.Certificate{
+						Certificate: [][]byte{svid.Certificates[0].Raw},
+						PrivateKey:  svid.PrivateKey,
+						Leaf:        svid.Certificates[0],
+					}, nil
 				}
-				zap.L().Debug("Got svid cert", zap.Any("crt", svid.Certificates[0]))
-				return &tls.Certificate{
-					Certificate: [][]byte{svid.Certificates[0].Raw},
-					PrivateKey:  svid.PrivateKey,
-					Leaf:        svid.Certificates[0],
-				}, nil
-			}
+			*/
 		}
 
 		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
