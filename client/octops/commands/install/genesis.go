@@ -143,6 +143,9 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
 									ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
 								}
+								if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+									ret = append(ret, fmt.Sprintf("--spiffe-trust-domain=%s", val))
+								}
 
 								return ret
 							}(),
