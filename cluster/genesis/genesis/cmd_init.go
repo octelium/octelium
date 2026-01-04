@@ -161,8 +161,10 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		}
 	} else {
 		if err := components.CreateRscServer(ctx, &components.CommonOpts{
-			K8sC:          g.k8sC,
-			ClusterConfig: clusterCfg,
+			K8sC:            g.k8sC,
+			ClusterConfig:   clusterCfg,
+			EnableSPIFFECSI: o.EnableSPIFFECSI,
+			SPIFFECSIDriver: o.SPIFFECSIDriver,
 		}); err != nil {
 			return err
 		}

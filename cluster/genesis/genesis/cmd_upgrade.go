@@ -80,8 +80,10 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	zap.L().Debug("upgrading rscServer")
 
 	if err := components.CreateRscServer(ctx, &components.CommonOpts{
-		K8sC:          g.k8sC,
-		ClusterConfig: clusterCfg,
+		K8sC:            g.k8sC,
+		ClusterConfig:   clusterCfg,
+		EnableSPIFFECSI: o.EnableSPIFFECSI,
+		SPIFFECSIDriver: o.SPIFFECSIDriver,
 	}); err != nil {
 		return err
 	}
