@@ -19,7 +19,6 @@ package components
 import (
 	"context"
 
-	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
@@ -32,7 +31,7 @@ import (
 
 func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 
-	envVars := getGatewayAgentEnvVars(o.Region)
+	envVars := getGatewayAgentEnvVars(o)
 	hostPathDirectoryOrCreate := k8scorev1.HostPathDirectoryOrCreate
 
 	return &appsv1.DaemonSet{
@@ -98,7 +97,7 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							Name:            "octelium-node-init",
 							Image:           components.GetImage(components.NodeInit, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
-							Env:             *envVars,
+							Env:             envVars,
 							VolumeMounts: []k8scorev1.VolumeMount{{
 								Name:      "debian-modules",
 								ReadOnly:  false,
@@ -136,7 +135,7 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 								},
 							},
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
-							Env:             *envVars,
+							Env:             envVars,
 							VolumeMounts: func() []k8scorev1.VolumeMount {
 								ret := []k8scorev1.VolumeMount{
 									{
@@ -197,7 +196,7 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 	}
 }
 
-func getGatewayAgentEnvVars(r *corev1.Region) *[]k8scorev1.EnvVar {
+func getGatewayAgentEnvVars(o *CommonOpts) []k8scorev1.EnvVar {
 	ret := []k8scorev1.EnvVar{
 		{
 			Name: "OCTELIUM_NODE",
@@ -209,7 +208,7 @@ func getGatewayAgentEnvVars(r *corev1.Region) *[]k8scorev1.EnvVar {
 		},
 		{
 			Name:  "OCTELIUM_REGION_NAME",
-			Value: r.Metadata.Name,
+			Value: o.Region.Metadata.Name,
 		},
 		{
 			Name: "OCTELIUM_NAMESPACE",
@@ -230,7 +229,14 @@ func getGatewayAgentEnvVars(r *corev1.Region) *[]k8scorev1.EnvVar {
 		},
 	}
 
-	return &ret
+	if o.SPIFFETrustDomain != "" {
+		ret = append(ret, k8scorev1.EnvVar{
+			Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+			Value: o.SPIFFETrustDomain,
+		})
+	}
+
+	return ret
 }
 
 func getGatewayAgentRole() *rbacv1.ClusterRole {

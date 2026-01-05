@@ -160,6 +160,18 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 								}
 								return ret
 							}(),
+							Env: func() []corev1.EnvVar {
+								var ret []corev1.EnvVar
+
+								if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+									ret = append(ret, corev1.EnvVar{
+										Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+										Value: val,
+									})
+								}
+
+								return ret
+							}(),
 						},
 					},
 				},
