@@ -46,7 +46,7 @@ type CoreV1Utils interface {
 }
 
 func DefaultAddr() string {
-	return fmt.Sprintf("%s.octelium.svc.cluster.local:8080", components.OcteliumComponent(components.RscServer))
+	return fmt.Sprintf("%s.octelium.svc:8080", components.OcteliumComponent(components.RscServer))
 }
 
 func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {

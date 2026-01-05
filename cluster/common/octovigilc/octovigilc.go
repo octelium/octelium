@@ -39,7 +39,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	unaryTries := uint(32)
 
-	host := fmt.Sprintf("octelium-octovigil.octelium.svc.cluster.local:%d", GetPort())
+	host := fmt.Sprintf("octelium-octovigil.octelium.svc:%d", GetPort())
 	if ldflags.IsTest() {
 		host = fmt.Sprintf("localhost:%d", GetPort())
 	}
