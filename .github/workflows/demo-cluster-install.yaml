@@ -30,7 +30,7 @@ jobs:
           sudo chmod +x install-demo-cluster.sh
           export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
           # export OCTELIUM_SKIP_MESSAGES="true"
-          sudo -E ./install-demo-cluster.sh --domain localhost --nat
+          sudo -E ./install-demo-cluster.sh --domain localhost --nat --force-machine-ip
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
           sudo chmod 644 $OCTELIUM_AUTH_TOKEN_SAVE_PATH
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
