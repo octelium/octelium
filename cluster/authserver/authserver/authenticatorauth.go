@@ -154,7 +154,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		authn.Status.FailedAuthentications = authn.Status.FailedAuthentications + 1
 		nullifyCurrAndUpdate()
 		if authenticators.IsErrInvalidAuth(err) {
-			return nil, s.errPermissionDenied("Invalid authentication")
+			return nil, s.errPermissionDenied("Invalid authentication: %+v", err)
 		}
 		return nil, s.errInternalErr(err)
 	}
@@ -750,7 +750,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	}); err != nil {
 		nullifyCurrAndUpdate()
 		if authenticators.IsErrInvalidAuth(err) {
-			return nil, s.errPermissionDenied("Invalid registration")
+			return nil, s.errPermissionDenied("Invalid registration: %+v", err)
 		}
 		return nil, s.errInternalErr(err)
 	}
