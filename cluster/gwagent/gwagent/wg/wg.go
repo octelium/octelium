@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -294,13 +295,55 @@ func (wg *Wg) doUpdateGatewayKey(ctx context.Context) error {
 	}
 
 	if time.Now().After(gw.Status.Wireguard.KeyRotatedAt.AsTime().Add(rotationDuration)) {
-		zap.L().Debug("Rotating wg key for Gateway", zap.String("gw", gw.Metadata.Name))
-
-		_, err := wg.octeliumC.CoreC().UpdateGateway(ctx, gw)
-		if err != nil {
+		if err := wg.doRotateKey(ctx, gw); err != nil {
 			return err
 		}
 	}
+
+	return nil
+}
+
+func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
+
+	zap.L().Debug("starting to rotate wg key for Gateway", zap.String("gw", gw.Metadata.Name))
+
+	privateKey, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		return err
+	}
+
+	dev, err := wg.client.Device(devName)
+	if err != nil {
+		return err
+	}
+
+	if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
+		PrivateKey:   &privateKey,
+		ListenPort:   &dev.ListenPort,
+		ReplacePeers: false,
+	}); err != nil {
+		return err
+	}
+
+	gw.Status.Wireguard.PublicKey = privateKey.PublicKey().String()
+	gw.Status.Wireguard.KeyRotatedAt = pbutils.Now()
+
+	_, err = wg.octeliumC.CoreC().UpdateGateway(ctx, gw)
+	if err != nil {
+		zap.L().Warn("Could not updateGateway after rotating wg key",
+			zap.String("gw", gw.Metadata.Name), zap.Error(err))
+		if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
+			PrivateKey:   &dev.PrivateKey,
+			ListenPort:   &dev.ListenPort,
+			ReplacePeers: false,
+		}); err != nil {
+			return err
+		}
+
+		return err
+	}
+
+	zap.L().Debug("Rotating wg key for Gateway is complete", zap.String("gw", gw.Metadata.Name))
 
 	return nil
 }
