@@ -95,86 +95,95 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: "octelium-genesis",
-					RestartPolicy:      corev1.RestartPolicyNever,
-					Volumes: func() []corev1.Volume {
-						var ret []corev1.Volume
-						if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis"),
+			},
+		},
+	}
+}
 
-							csiName := func() string {
-								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
-									return val
-								}
+func GetGenesisPodSpec(domain, cmd, version, svcAccount string) corev1.PodSpec {
+	return corev1.PodSpec{
+		ServiceAccountName: svcAccount,
+		RestartPolicy:      corev1.RestartPolicyNever,
+		Volumes: func() []corev1.Volume {
+			var ret []corev1.Volume
+			if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
 
-								return "csi.spiffe.io"
-							}()
-							ret = append(ret, corev1.Volume{
-								Name: "spiffe-agent",
-								VolumeSource: corev1.VolumeSource{
-									CSI: &corev1.CSIVolumeSource{Driver: csiName, ReadOnly: utils_types.BoolToPtr(true)},
-								},
-							})
-						}
+				csiName := func() string {
+					if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+						return val
+					}
 
-						return ret
-					}(),
-
-					Containers: []corev1.Container{
-						{
-							Name: "octelium-genesis",
-							Image: func() string {
-								if version != "" {
-									return cliutils.GetGenesisImage(version)
-								}
-								if ldflags.IsDev() {
-									return cliutils.GetGenesisImage("")
-								} else {
-									return cliutils.GetGenesisImage("latest")
-								}
-							}(),
-							ImagePullPolicy: corev1.PullAlways,
-							Args: func() []string {
-								ret := []string{"init"}
-
-								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
-									ret = append(ret, "--enable-spiffe-csi")
-								}
-								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
-									ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
-								}
-								if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
-									ret = append(ret, fmt.Sprintf("--spiffe-trust-domain=%s", val))
-								}
-
-								return ret
-							}(),
-							VolumeMounts: func() []corev1.VolumeMount {
-								var ret []corev1.VolumeMount
-								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
-									ret = append(ret, corev1.VolumeMount{
-										Name:      "spiffe-agent",
-										MountPath: "/run/spire/sockets",
-										ReadOnly:  true,
-									})
-								}
-								return ret
-							}(),
-							Env: func() []corev1.EnvVar {
-								var ret []corev1.EnvVar
-
-								if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
-									ret = append(ret, corev1.EnvVar{
-										Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
-										Value: val,
-									})
-								}
-
-								return ret
-							}(),
-						},
+					return "csi.spiffe.io"
+				}()
+				ret = append(ret, corev1.Volume{
+					Name: "spiffe-agent",
+					VolumeSource: corev1.VolumeSource{
+						CSI: &corev1.CSIVolumeSource{Driver: csiName, ReadOnly: utils_types.BoolToPtr(true)},
 					},
-				},
+				})
+			}
+
+			return ret
+		}(),
+
+		Containers: []corev1.Container{
+			{
+				Name: "octelium-genesis",
+				Image: func() string {
+					if version != "" {
+						return cliutils.GetGenesisImage(version)
+					}
+					if ldflags.IsDev() {
+						return cliutils.GetGenesisImage("")
+					} else {
+						return cliutils.GetGenesisImage("latest")
+					}
+				}(),
+				ImagePullPolicy: corev1.PullAlways,
+				Args: func() []string {
+					ret := []string{cmd}
+
+					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+						ret = append(ret, "--enable-spiffe-csi")
+					}
+					if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+						ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
+					}
+					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+						ret = append(ret, fmt.Sprintf("--spiffe-trust-domain=%s", val))
+					}
+
+					return ret
+				}(),
+				VolumeMounts: func() []corev1.VolumeMount {
+					var ret []corev1.VolumeMount
+					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+						ret = append(ret, corev1.VolumeMount{
+							Name:      "spiffe-agent",
+							MountPath: "/run/spire/sockets",
+							ReadOnly:  true,
+						})
+					}
+					return ret
+				}(),
+				Env: func() []corev1.EnvVar {
+					ret := []corev1.EnvVar{
+						{
+							Name:  "OCTELIUM_DOMAIN",
+							Value: domain,
+						},
+					}
+
+					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+						ret = append(ret, corev1.EnvVar{
+							Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+							Value: val,
+						})
+					}
+
+					return ret
+				}(),
 			},
 		},
 	}

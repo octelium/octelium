@@ -17,10 +17,8 @@ package upgrade
 import (
 	"context"
 	"fmt"
-	"os"
 
-	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -59,49 +57,7 @@ func getGenesisJob(domain, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: "octelium-nocturne",
-					RestartPolicy:      corev1.RestartPolicyNever,
-
-					Containers: []corev1.Container{
-						{
-							Name: "octelium-genesis",
-							Image: func() string {
-								if version != "" {
-									return cliutils.GetGenesisImage(version)
-								}
-								if ldflags.IsDev() {
-									return cliutils.GetGenesisImage("")
-								} else {
-									return cliutils.GetGenesisImage("latest")
-								}
-							}(),
-							ImagePullPolicy: corev1.PullAlways,
-							Args: func() []string {
-								ret := []string{"upgrade"}
-
-								if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
-									ret = append(ret, "--enable-spiffe-csi")
-								}
-								if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
-									ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
-								}
-
-								return ret
-							}(),
-							Env: func() []corev1.EnvVar {
-								ret := []corev1.EnvVar{
-									{
-										Name:  "OCTELIUM_DOMAIN",
-										Value: domain,
-									},
-								}
-
-								return ret
-							}(),
-						},
-					},
-				},
+				Spec: install.GetGenesisPodSpec(domain, "upgrade", version, "octelium-nocturne"),
 			},
 		},
 	}
