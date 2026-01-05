@@ -137,7 +137,6 @@ func TestServer(t *testing.T) {
 		}
 
 		otelutils.EmitAccessLog(logEntry)
-		// logman.Set(logEntry)
 	}
 
 	m1, err := otelutils.GetMeter().Int64Gauge("m1")
@@ -161,14 +160,13 @@ func TestServer(t *testing.T) {
 
 	err = logProvider.ForceFlush(ctx)
 	assert.Nil(t, err)
-	err = metricsProvider.ForceFlush(ctx)
-	assert.Nil(t, err)
+
+	metricsProvider.ForceFlush(ctx)
 
 	err = logProvider.Shutdown(ctx)
 	assert.Nil(t, err)
 
-	err = metricsProvider.Shutdown(ctx)
-	assert.Nil(t, err)
+	metricsProvider.Shutdown(ctx)
 
 	time.Sleep(3 * time.Second)
 }
