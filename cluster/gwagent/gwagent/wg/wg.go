@@ -288,7 +288,7 @@ func (wg *Wg) doUpdateGatewayKey(ctx context.Context) error {
 	var rotationDuration time.Duration
 
 	if cc.Spec.Gateway != nil && cc.Spec.Gateway.WireguardKeyRotationDuration != nil &&
-		cc.Spec.Gateway.WireguardKeyRotationDuration.GetSeconds() >= 300 {
+		int(umetav1.ToDuration(cc.Spec.Gateway.WireguardKeyRotationDuration).ToGo().Seconds()) >= 30 {
 		rotationDuration = umetav1.ToDuration(cc.Spec.Gateway.WireguardKeyRotationDuration).ToGo()
 	} else {
 		rotationDuration = time.Hour * 12
