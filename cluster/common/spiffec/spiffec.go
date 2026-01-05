@@ -98,22 +98,6 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 		zap.L().Debug("SPIFFE is enabled. Setting server cred", zap.Any("crt", svid.Certificates[0]))
 		tlsConfig := tlsconfig.MTLSServerConfig(source, source, GetAuthorizer())
 
-		/*
-			tlsConfig.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				zap.L().Debug("new getCertificate", zap.Any("chi", chi))
-				svid, err := source.GetX509SVID()
-				if err != nil {
-					return nil, err
-				}
-
-				return &tls.Certificate{
-					Certificate: [][]byte{svid.Certificates[0].Raw},
-					PrivateKey:  svid.PrivateKey,
-					Leaf:        svid.Certificates[0],
-				}, nil
-			}
-		*/
-
 		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 	} else if errors.Is(err, ErrNotFound) {
 		return grpc.Creds(insecure.NewCredentials()), nil
