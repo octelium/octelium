@@ -109,14 +109,14 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 
 						u := fmt.Sprintf("https://%s%s",
 							req.Header.Get("X-Forwarded-Host"),
-							req.URL.Path)
+							getDecodedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
 						q.Set("redirect", u)
 						loginURL.RawQuery = q.Encode()
 					} else {
 						u := fmt.Sprintf("https://%s%s",
 							vutils.GetServicePublicFQDN(svc, m.domain),
-							req.URL.Path)
+							getDecodedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
 						q.Set("redirect", u)
 						loginURL.RawQuery = q.Encode()
@@ -136,77 +136,9 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 
 }
 
-/*
-const deniedPage = `
-<!DOCTYPE html>
-<html>
-<head>
-<style type=text/css>
-
-
-.hdr1 {    color: #333;
-font-weight: 700;
-font-size: 28px;
-font-family: Helvetica, Arial, sans-serif;
-text-align: center;
-margin: 0;
+func getDecodedPathWithQuery(u *url.URL) string {
+	if u.RawQuery == "" {
+		return u.Path
+	}
+	return fmt.Sprintf("%s?%s", u.Path, u.RawQuery)
 }
-
-
-.hdr2 {    color: #666;
-font-weight: 700;
-font-size: 18px;
-font-family: Helvetica, Arial, sans-serif;
-text-align: center;
-margin: 0;
-}
-
-.hdr3 {    color: #333;
-font-weight: 700;
-font-size: 14px;
-font-family: Helvetica, Arial, sans-serif;
-text-align: center;
-margin: 20px 0;
-}
-
-body {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.logowrp {
-    margin: 40px 0;
-}
-
-.link {
-    color: rgb(17, 107, 190);
-    text-decoration: none;
-}
-
-
-</style>
-</head>
-
-
-<body>
-
-<div class="logowrp">
-<svg width="114" height="114" viewBox="0 0 114 114" fill="none" xmlns="http://www.w3.org/2000/svg">
-<circle cx="57" cy="57" r="57" fill="black"/>
-<path d="M60 36L45.1069 60.44" stroke="white" stroke-width="10" stroke-linecap="round"/>
-<path d="M89 36L57 84.5" stroke="white" stroke-width="10" stroke-linecap="round"/>
-<path d="M25 36L57 84.5" stroke="white" stroke-width="10" stroke-linecap="round"/>
-</svg>
-</div>
-
-
-<p class="hdr1">Permission Denied</p>
-<p class="hdr2">Please contact the Network administrators</p>
-<p class="hdr3">©2021-present <a class="link" href="https://octelium.com/">Octelium</a>, All rights reserved</p>
-
-
-</body>
-</html>
-`
-*/
