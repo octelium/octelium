@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 )
 
@@ -133,8 +134,56 @@ func (w *Watcher) runCredentials(ctx context.Context) {
 	}
 }
 
+func (w *Watcher) runAuthenticator(ctx context.Context) {
+	zap.L().Debug("Starting Authenticator watcher")
+
+	doRun := func() error {
+		authnList, err := w.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+		for _, authn := range authnList.Items {
+			if err := w.doCheckAuthenticator(ctx, authn); err != nil {
+				zap.L().Warn("Could not doCheckAuthenticator", zap.Error(err), zap.Any("authn", authn))
+			}
+		}
+		return nil
+	}
+
+	tickerCh := time.NewTicker(15 * time.Minute)
+	defer tickerCh.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tickerCh.C:
+			if err := doRun(); err != nil {
+				zap.L().Error("Could not run Authenticator watcher doFn", zap.Error(err))
+			}
+		}
+	}
+}
+
+func (w *Watcher) doCheckAuthenticator(ctx context.Context, authn *corev1.Authenticator) error {
+	if !authn.Status.IsRegistered && time.Now().After(authn.Metadata.CreatedAt.AsTime().Add(1*time.Hour)) {
+		zap.L().Debug("Cleaning up unregistered Authenticator", zap.Any("authn", authn))
+		_, err := w.octeliumC.CoreC().DeleteAuthenticator(ctx, &rmetav1.DeleteOptions{
+			Uid: authn.Metadata.Uid,
+		})
+		if err != nil {
+			if !grpcerr.IsNotFound(err) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func (w *Watcher) Run(ctx context.Context) {
 	go w.runSessions(ctx)
 	go w.runCredentials(ctx)
 	go w.runJWKSecret(ctx)
+	go w.runAuthenticator(ctx)
 }
