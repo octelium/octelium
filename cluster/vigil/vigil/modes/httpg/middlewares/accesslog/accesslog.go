@@ -57,7 +57,6 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	if reqCtx.DownstreamInfo == nil {
-		zap.L().Debug("No downstreamInfo. Skipping setting the log entry", zap.Any("reqCtx", reqCtx))
 		return
 	}
 
