@@ -33,7 +33,7 @@
     "react-dom": "^19.1.0",
     "react-icons": "^5.5.0",
     "react-redux": "^9.2.0",
-    "react-router-dom": "^7.6.0",
+    "react-router-dom": "^7.12.0",
     "react-spinners": "^0.17.0",
     "tailwind-merge": "^3.3.0",
     "ts-pattern": "^5.7.0",
