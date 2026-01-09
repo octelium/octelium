@@ -166,6 +166,15 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	startTime := time.Now()
 
 	svc := s.vCache.GetService()
+	if svc == nil {
+		c.Close()
+		return
+	}
+
+	if svc.Spec.IsDisabled {
+		c.Close()
+		return
+	}
 
 	ctx, cancelFn := context.WithCancel(ctx)
 	defer cancelFn()

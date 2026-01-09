@@ -164,6 +164,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	if svc.Spec.IsDisabled {
+		c.Close()
+		return
+	}
+
 	startupMessage, pgBackend, err := s.getStartupMessage(ctx, svc, c)
 	if err != nil {
 		zap.L().Debug("Could not get startup msg", zap.Error(err))

@@ -161,6 +161,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	if svc.Spec.IsDisabled {
+		c.Close()
+		return
+	}
+
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: s.getDownstreamReq(ctx, c),
 	})

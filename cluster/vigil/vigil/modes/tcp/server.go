@@ -164,6 +164,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	if svc.Spec.IsDisabled {
+		c.Close()
+		return
+	}
+
 	if err := setKeepAlive(c); err != nil {
 		zap.S().Debugf("Could not set keepAlive: %+v", err)
 		c.Close()

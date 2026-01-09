@@ -59,6 +59,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	svc := reqCtx.Service
 
+	if svc.Spec.IsDisabled {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
 	var err error
 
 	additional := &additionalInfo{}

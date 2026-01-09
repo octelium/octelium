@@ -236,6 +236,10 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		return errors.Errorf("Cannot find svc in cache")
 	}
 
+	if svc.Spec.IsDisabled {
+		return nil
+	}
+
 	req := &coctovigilv1.DownstreamRequest{
 		Source: &coctovigilv1.DownstreamRequest_Source{
 			Address: addr.IP.String(),

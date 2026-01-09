@@ -168,6 +168,12 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	if svc.Spec.IsDisabled {
+		msg.SetRcode(r, dns.RcodeServerFailure)
+		w.WriteMsg(&msg)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
