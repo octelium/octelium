@@ -220,10 +220,12 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 
 		w.WriteMsg(&msg)
-		zap.L().Debug("Successfully resolved for domain",
-			zap.String("domain", domain),
-			zap.String("hostname", hostname),
-			zap.String("addr", address.String()))
+		/*
+			zap.L().Debug("Successfully resolved for domain",
+				zap.String("domain", domain),
+				zap.String("hostname", hostname),
+				zap.String("addr", address.String()))
+		*/
 	}
 
 	switch r.Question[0].Qtype {
@@ -406,9 +408,9 @@ func (s *DNSServer) Run(ctx context.Context) error {
 
 func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error) {
 
-	zap.L().Debug("Getting proxied answer", zap.String("domain", domain), zap.Uint16("type", typ))
+	// zap.L().Debug("Getting proxied answer", zap.String("domain", domain), zap.Uint16("type", typ))
 	if cached := s.fallbackZoneCache.get(domain, typ); cached != nil {
-		zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", cached))
+		// zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", cached))
 		return cached, nil
 	}
 
@@ -428,7 +430,7 @@ func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error
 
 	s.fallbackZoneCache.set(domain, typ, r)
 
-	zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", r))
+	// zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", r))
 	return r, nil
 }
 
@@ -520,13 +522,13 @@ func (s *DNSServer) setReservedNamespaces(ctx context.Context) {
 		Get("https://data.iana.org/TLD/tlds-alpha-by-domain.txt")
 	if err != nil {
 		s.reservedNamespaces = wellKnownTLDs
-		zap.L().Debug("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs")
+		zap.L().Warn("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs")
 		return
 	}
 
 	if !resp.IsSuccess() {
 		s.reservedNamespaces = wellKnownTLDs
-		zap.L().Debug("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs...",
+		zap.L().Warn("Could not fetch iana list of TLDs. Falling back to wellKnownTLDs...",
 			zap.Int("statusCode", resp.StatusCode()))
 		return
 	}
@@ -552,7 +554,7 @@ func (s *DNSServer) setReservedNamespaces(ctx context.Context) {
 		s.reservedNamespaces = wellKnownTLDs
 	} else {
 		zap.L().Debug("Successfully fetched the iana list of TLDs",
-			zap.Int("len", len(s.reservedNamespaces)), zap.Strings("k", s.reservedNamespaces))
+			zap.Int("len", len(s.reservedNamespaces)))
 	}
 }
 
