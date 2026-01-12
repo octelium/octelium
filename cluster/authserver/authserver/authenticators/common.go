@@ -41,7 +41,8 @@ type Opts struct {
 }
 
 type BeginReq struct {
-	Req *authv1.AuthenticateAuthenticatorBeginRequest
+	Req           *authv1.AuthenticateAuthenticatorBeginRequest
+	ClusterConfig *corev1.ClusterConfig
 }
 
 type BeginResp struct {
@@ -51,10 +52,12 @@ type BeginResp struct {
 type FinishReq struct {
 	Resp             *authv1.AuthenticateWithAuthenticatorRequest
 	ChallengeRequest *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest
+	ClusterConfig    *corev1.ClusterConfig
 }
 
 type BeginRegistrationReq struct {
-	Req *authv1.RegisterAuthenticatorBeginRequest
+	Req           *authv1.RegisterAuthenticatorBeginRequest
+	ClusterConfig *corev1.ClusterConfig
 }
 
 type BeginRegistrationResp struct {
@@ -64,6 +67,7 @@ type BeginRegistrationResp struct {
 type FinishRegistrationReq struct {
 	Resp             *authv1.RegisterAuthenticatorFinishRequest
 	ChallengeRequest *authv1.RegisterAuthenticatorBeginResponse_ChallengeRequest
+	ClusterConfig    *corev1.ClusterConfig
 }
 
 type FinishResp struct {

@@ -148,6 +148,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	finishResp, err := factor.Finish(ctx, &authenticators.FinishReq{
 		Resp:             resp,
 		ChallengeRequest: challengeReq,
+		ClusterConfig:    cc,
 	})
 	if err != nil {
 		zap.L().Debug("Could not do Authenticator finish", zap.Any("authn", authn), zap.Error(err))
@@ -377,7 +378,8 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 	}
 
 	ret, err := fac.Begin(ctx, &authenticators.BeginReq{
-		Req: req,
+		Req:           req,
+		ClusterConfig: cc,
 	})
 	if err != nil {
 		return nil, s.errInternalErr(err)
@@ -520,7 +522,8 @@ func (s *server) doRegisterAuthenticatorBegin(ctx context.Context,
 	}
 
 	ret, err := fac.BeginRegistration(ctx, &authenticators.BeginRegistrationReq{
-		Req: req,
+		Req:           req,
+		ClusterConfig: cc,
 	})
 	if err != nil {
 		return nil, s.errInternalErr(err)
@@ -747,6 +750,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	if _, err := factor.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
 		Resp:             req,
 		ChallengeRequest: challengeReq,
+		ClusterConfig:    cc,
 	}); err != nil {
 		nullifyCurrAndUpdate()
 		if authenticators.IsErrInvalidAuth(err) {

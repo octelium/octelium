@@ -63,7 +63,7 @@ func NewFactor(ctx context.Context, o *factors.Opts, mds metadata.Provider) (*We
 
 func (c *WebAuthNFactor) Begin(ctx context.Context, req *factors.BeginReq) (*factors.BeginResp, error) {
 
-	webauthnctl, err := c.getWebauthnCtl(c.opts.Authenticator)
+	webauthnctl, err := c.getWebauthnCtl(c.opts.Authenticator, req.ClusterConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (c *WebAuthNFactor) Begin(ctx context.Context, req *factors.BeginReq) (*fac
 	}, nil
 }
 
-func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator) (*webauthn.WebAuthn, error) {
+func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator, cc *corev1.ClusterConfig) (*webauthn.WebAuthn, error) {
 	var authenticatorAttachment protocol.AuthenticatorAttachment
 
 	if authn.Status.IsRegistered && authn.Status.GetInfo() != nil &&
@@ -133,8 +133,27 @@ func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator) (*webauthn.
 
 			UserVerification: protocol.VerificationPreferred,
 		},
-		AttestationPreference: protocol.PreferDirectAttestation,
-		MDS:                   c.mds,
+		AttestationPreference: func() protocol.ConveyancePreference {
+			if cc == nil || cc.Spec.Authenticator == nil || cc.Spec.Authenticator.Fido == nil {
+				return protocol.PreferDirectAttestation
+			}
+
+			switch cc.Spec.Authenticator.Fido.AttestationConveyancePreference {
+			case corev1.ClusterConfig_Spec_Authenticator_FIDO_ATTESTATION_CONVEYANCE_PREFERENCE_UNSET:
+				return protocol.PreferDirectAttestation
+			case corev1.ClusterConfig_Spec_Authenticator_FIDO_DIRECT:
+				return protocol.PreferDirectAttestation
+			case corev1.ClusterConfig_Spec_Authenticator_FIDO_ENTERPRISE:
+				return protocol.PreferEnterpriseAttestation
+			case corev1.ClusterConfig_Spec_Authenticator_FIDO_INDIRECT:
+				return protocol.PreferIndirectAttestation
+			case corev1.ClusterConfig_Spec_Authenticator_FIDO_NONE:
+				return protocol.PreferNoAttestation
+			default:
+				return protocol.PreferDirectAttestation
+			}
+		}(),
+		MDS: c.mds,
 	})
 }
 
@@ -150,7 +169,7 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 		return nil, authenticators.ErrInvalidAuthMsg("Invalid Response")
 	}
 
-	webauthnctl, err := c.getWebauthnCtl(authn)
+	webauthnctl, err := c.getWebauthnCtl(authn, reqCtx.ClusterConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +280,7 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 
 func (c *WebAuthNFactor) BeginRegistration(ctx context.Context,
 	req *factors.BeginRegistrationReq) (*factors.BeginRegistrationResp, error) {
-	webauthnctl, err := c.getWebauthnCtl(c.opts.Authenticator)
+	webauthnctl, err := c.getWebauthnCtl(c.opts.Authenticator, req.ClusterConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +352,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 		return nil, authenticators.ErrInvalidAuthMsg("Invalid Response")
 	}
 
-	webauthnctl, err := c.getWebauthnCtl(authn)
+	webauthnctl, err := c.getWebauthnCtl(authn, reqCtx.ClusterConfig)
 	if err != nil {
 		return nil, err
 	}
