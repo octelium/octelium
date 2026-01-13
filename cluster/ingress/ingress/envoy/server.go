@@ -83,13 +83,24 @@ type Server struct {
 
 	domain    string
 	octeliumC octeliumc.ClientInterface
+
+	hasFrontProxy bool
 }
 
-func NewServer(domain string, octeliumC octeliumc.ClientInterface) (*Server, error) {
+type Opts struct {
+	HasFrontProxy bool
+}
+
+func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Server, error) {
+
+	if o == nil {
+		o = &Opts{}
+	}
 
 	server := &Server{
-		domain:    domain,
-		octeliumC: octeliumC,
+		domain:        domain,
+		octeliumC:     octeliumC,
+		hasFrontProxy: o.HasFrontProxy,
 	}
 
 	l, err := net.Listen("tcp", ":8080")
@@ -162,7 +173,13 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 		return err
 	}
 
-	rscListeners, err := resources.GetListeners(s.domain, cc, svcList.Items, crtList.Items)
+	rscListeners, err := resources.GetListeners(ctx, &resources.GetListenersReq{
+		Domain:        s.domain,
+		ClusterConfig: cc,
+		ServiceList:   svcList.Items,
+		CertList:      crtList.Items,
+		HasFrontProxy: s.hasFrontProxy,
+	})
 	if err != nil {
 		return err
 	}

@@ -66,9 +66,15 @@ func TestGetListeners(t *testing.T) {
 	cc, err := adminSrv.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
 	assert.Nil(t, err)
 
-	_, err = GetListeners("example.com", cc, nil, nil)
+	_, err = GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+	})
 	assert.Nil(t, err)
-	_, err = GetListeners("example.com", cc, nil, nil)
+	_, err = GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+	})
 	assert.Nil(t, err)
 
 	var svcList []*corev1.Service
@@ -76,9 +82,17 @@ func TestGetListeners(t *testing.T) {
 		svcList = append(svcList, doCreateSvc())
 	}
 
-	_, err = GetListeners("example.com", cc, svcList, nil)
+	_, err = GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+		ServiceList:   svcList,
+	})
 	assert.Nil(t, err)
-	_, err = GetListeners("example.com", cc, svcList, nil)
+	_, err = GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+		ServiceList:   svcList,
+	})
 	assert.Nil(t, err)
 
 	doCreateCrt := func(name string) *corev1.Secret {
@@ -108,10 +122,19 @@ func TestGetListeners(t *testing.T) {
 		XffNumTrustedHops:     1,
 	}
 
-	_, err = GetListeners("example.com", cc, svcList, nil)
+	_, err = GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+		ServiceList:   svcList,
+	})
 	assert.Nil(t, err)
-	listeners, err := GetListeners("example.com", cc, svcList, []*corev1.Secret{
-		doCreateCrt("cluster"),
+	listeners, err := GetListeners(ctx, &GetListenersReq{
+		Domain:        "example.com",
+		ClusterConfig: cc,
+		ServiceList:   svcList,
+		CertList: []*corev1.Secret{
+			doCreateCrt("cluster"),
+		},
 	})
 
 	for _, lis := range listeners {

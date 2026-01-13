@@ -17,6 +17,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -44,10 +45,18 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
 
-func GetListeners(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service, crtList []*corev1.Secret) ([]types.Resource, error) {
+type GetListenersReq struct {
+	Domain        string
+	ClusterConfig *corev1.ClusterConfig
+	ServiceList   []*corev1.Service
+	CertList      []*corev1.Secret
+	HasFrontProxy bool
+}
+
+func GetListeners(ctx context.Context, r *GetListenersReq) ([]types.Resource, error) {
 	ret := []types.Resource{}
 
-	mainListener, err := getListener(domain, cc, svcList, crtList)
+	mainListener, err := getListener(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -64,19 +73,20 @@ func GetListeners(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Ser
 	return ret, nil
 }
 
-func getListener(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service,
-	crtList []*corev1.Secret) (*listenerv3.Listener, error) {
+func getListener(ctx context.Context, r *GetListenersReq) (*listenerv3.Listener, error) {
 
 	ret := &listenerv3.Listener{
 		Name: "https-listener",
 	}
 
-	tlsInspectorFilter, err := getTLSInspector()
-	if err != nil {
-		return nil, err
-	}
+	if !r.HasFrontProxy {
+		tlsInspectorFilter, err := getTLSInspector()
+		if err != nil {
+			return nil, err
+		}
 
-	ret.ListenerFilters = append(ret.ListenerFilters, tlsInspectorFilter)
+		ret.ListenerFilters = append(ret.ListenerFilters, tlsInspectorFilter)
+	}
 
 	ret.Address = &core.Address{Address: &core.Address_SocketAddress{
 		SocketAddress: &core.SocketAddress{
@@ -88,7 +98,7 @@ func getListener(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Serv
 		},
 	}}
 
-	filterChain, err := getFilterChainsMain(domain, cc, crtList, svcList)
+	filterChain, err := getFilterChainsMain(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +123,9 @@ func getTLSInspector() (*listenerv3.ListenerFilter, error) {
 	}, nil
 }
 
-func getFilterChainsMain(domain string, cc *corev1.ClusterConfig, crtList []*corev1.Secret, svcList []*corev1.Service) (*listenerv3.FilterChain, error) {
+func getFilterChainsMain(ctx context.Context, r *GetListenersReq) (*listenerv3.FilterChain, error) {
+
+	domain := r.Domain
 
 	ret := &listenerv3.FilterChain{
 		FilterChainMatch: &listenerv3.FilterChainMatch{
@@ -125,13 +137,15 @@ func getFilterChainsMain(domain string, cc *corev1.ClusterConfig, crtList []*cor
 		},
 	}
 
-	ts, err := getListenerTransportSocket(crtList, []string{"h2", "http/1.1"})
-	if err != nil {
-		return nil, err
+	if !r.HasFrontProxy {
+		ts, err := getListenerTransportSocket(r.CertList, []string{"h2", "http/1.1"})
+		if err != nil {
+			return nil, err
+		}
+		ret.TransportSocket = ts
 	}
-	ret.TransportSocket = ts
 
-	httpConnMan, err := getHttpConnManagerFilterMain(domain, cc, svcList)
+	httpConnMan, err := getHttpConnManagerFilterMain(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -211,12 +225,14 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 	}, nil
 }
 
-func getHttpConnManagerFilterMain(domain string, cc *corev1.ClusterConfig, svcList []*corev1.Service) (*listenerv3.Filter, error) {
+func getHttpConnManagerFilterMain(ctx context.Context, r *GetListenersReq) (*listenerv3.Filter, error) {
 
-	routeConfig, err := getRouteConfigMain(domain, svcList)
+	routeConfig, err := getRouteConfigMain(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+
+	cc := r.ClusterConfig
 
 	filter := &envoyhcm.HttpConnectionManager{
 		CodecType:             envoyhcm.HttpConnectionManager_AUTO,

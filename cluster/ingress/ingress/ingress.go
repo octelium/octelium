@@ -18,6 +18,7 @@ package ingress
 
 import (
 	"context"
+	"os"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -47,7 +48,9 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	envoyServer, err := envoy.NewServer(cc.Status.Domain, octeliumC)
+	envoyServer, err := envoy.NewServer(cc.Status.Domain, octeliumC, &envoy.Opts{
+		HasFrontProxy: os.Getenv("OCTELIUM_FRONT_PROXY_MODE") == "true",
+	})
 	if err != nil {
 		return err
 	}

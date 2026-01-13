@@ -17,6 +17,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -34,12 +35,12 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-func getRouteConfigMain(domain string, svcList []*corev1.Service) (*routev3.RouteConfiguration, error) {
+func getRouteConfigMain(ctx context.Context, r *GetListenersReq) (*routev3.RouteConfiguration, error) {
 
 	routeConfig := &routev3.RouteConfiguration{}
 
 	{
-		vh, err := getVirtualHostAPI(domain, svcList)
+		vh, err := getVirtualHostAPI(ctx, r)
 		if err != nil {
 			return nil, err
 		}
@@ -48,11 +49,13 @@ func getRouteConfigMain(domain string, svcList []*corev1.Service) (*routev3.Rout
 		}
 	}
 
+	svcList := r.ServiceList
+
 	for _, svc := range svcList {
 		if isAPIServer(svc) {
 			continue
 		}
-		vh, err := getVirtualHostService(svc, domain)
+		vh, err := getVirtualHostService(svc, r)
 		if err != nil {
 			return nil, err
 		}
@@ -62,94 +65,10 @@ func getRouteConfigMain(domain string, svcList []*corev1.Service) (*routev3.Rout
 	return routeConfig, nil
 }
 
-/*
-func getRouteConfigService(domain string, svc *corev1.Service) (*routev3.RouteConfiguration, error) {
+func getVirtualHostAPI(ctx context.Context, r *GetListenersReq) (*routev3.VirtualHost, error) {
 
-	vh, err := getVirtualHostService(svc, domain)
-	if err != nil {
-		return nil, err
-	}
-
-	routeConfig := &routev3.RouteConfiguration{
-		VirtualHosts: []*routev3.VirtualHost{vh},
-		ValidateClusters: &wrapperspb.BoolValue{
-			Value: true,
-		},
-	}
-
-	return routeConfig, nil
-}
-*/
-
-/*
-func defaultResponseHeaders() []*core.HeaderValueOption {
-	return []*core.HeaderValueOption{
-		{
-			Header: &core.HeaderValue{
-				Key:   "X-Content-Type-Options",
-				Value: "nosniff",
-			},
-		},
-		{
-			Header: &core.HeaderValue{
-				Key:   "X-Frame-Options",
-				Value: "DENY",
-			},
-		},
-	}
-}
-*/
-
-/*
-func getVirtualHostMain(domain string, svcList []*corev1.Service) (*routev3.VirtualHost, error) {
-
-	routes, err := getRoutesMain(domain, svcList)
-	if err != nil {
-		return nil, err
-	}
-
-	vh := &routev3.VirtualHost{
-		Name:       "vh-main",
-		Domains:    []string{domain, fmt.Sprintf("%s:443", domain)},
-		Routes:     routes,
-		RequireTls: routev3.VirtualHost_ALL,
-		// ResponseHeadersToAdd: defaultResponseHeaders(),
-
-	}
-
-	{
-		filter := &corsv3.CorsPolicy{
-			AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
-				{
-					MatchPattern: &envoy_type_matcher.StringMatcher_Suffix{
-						Suffix: domain,
-					},
-				},
-			},
-			AllowMethods:     "GET, PUT, DELETE, POST, OPTIONS",
-			AllowHeaders:     "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
-			MaxAge:           "1728000",
-			ExposeHeaders:    "set-cookie,grpc-status,grpc-message",
-			AllowCredentials: wrapperspb.Bool(true),
-		}
-		pbFilter, err := anypb.New(filter)
-		if err != nil {
-			return nil, err
-		}
-
-		if vh.TypedPerFilterConfig == nil {
-			vh.TypedPerFilterConfig = make(map[string]*anypb.Any)
-		}
-
-		vh.TypedPerFilterConfig[wellknown.CORS] = pbFilter
-	}
-
-	return vh, nil
-}
-*/
-
-func getVirtualHostAPI(domain string, svcList []*corev1.Service) (*routev3.VirtualHost, error) {
-
+	domain := r.Domain
+	svcList := r.ServiceList
 	routes, err := getRoutesMain(domain, svcList)
 	if err != nil {
 		return nil, err
@@ -165,8 +84,14 @@ func getVirtualHostAPI(domain string, svcList []*corev1.Service) (*routev3.Virtu
 			fmt.Sprintf("octelium-api.%s", domain),
 			fmt.Sprintf("octelium-api.%s:443", domain),
 		},
-		Routes:     routes,
-		RequireTls: routev3.VirtualHost_ALL,
+		Routes: routes,
+		RequireTls: func() routev3.VirtualHost_TlsRequirementType {
+			if r.HasFrontProxy {
+				return routev3.VirtualHost_NONE
+			}
+
+			return routev3.VirtualHost_ALL
+		}(),
 	}
 
 	{
@@ -195,23 +120,6 @@ func getVirtualHostAPI(domain string, svcList []*corev1.Service) (*routev3.Virtu
 
 		vh.TypedPerFilterConfig[wellknown.CORS] = pbFilter
 	}
-
-	/*
-		{
-			filter := &grpcweb.GrpcWeb{}
-			pbFilter, err := anypb.New(filter)
-			if err != nil {
-				return nil, err
-			}
-
-			if vh.TypedPerFilterConfig == nil {
-				vh.TypedPerFilterConfig = make(map[string]*anypb.Any)
-			}
-
-			vh.TypedPerFilterConfig["envoy.filters.http.grpc_web"] = pbFilter
-
-		}
-	*/
 
 	return vh, nil
 }
@@ -277,49 +185,11 @@ func getRouteMain(domain string, prefix string, isGRPC bool, cluster string) (*r
 			PathSpecifier: &routev3.RouteMatch_Prefix{
 				Prefix: prefix,
 			},
-
-			/*
-				Headers: func() []*routev3.HeaderMatcher {
-					if !isGRPC {
-						return nil
-					}
-
-					return []*routev3.HeaderMatcher{
-						{
-							Name: "Content-Type",
-							HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{
-								StringMatch: &envoy_type_matcher.StringMatcher{
-									MatchPattern: &envoy_type_matcher.StringMatcher_Prefix{
-										Prefix: "application/grpc",
-									},
-								},
-							},
-						},
-					}
-				}(),
-			*/
 		},
 
 		Action: &routev3.Route_Route{
 
 			Route: &routev3.RouteAction{
-				/*
-					Cors: &routev3.CorsPolicy{
-						AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
-							{
-								MatchPattern: &envoy_type_matcher.StringMatcher_Suffix{
-									Suffix: domain,
-								},
-							},
-						},
-						AllowMethods:     "GET, PUT, DELETE, POST, OPTIONS",
-						AllowHeaders:     "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
-						MaxAge:           "1728000",
-						ExposeHeaders:    "set-cookie,grpc-status,grpc-message",
-						AllowCredentials: wrapperspb.Bool(true),
-					},
-				*/
-
 				Timeout: &durationpb.Duration{
 					Seconds: 0,
 					Nanos:   0,
@@ -346,11 +216,9 @@ func getRouteMain(domain string, prefix string, isGRPC bool, cluster string) (*r
 	return route, nil
 }
 
-func getVirtualHostService(svc *corev1.Service, domain string) (*routev3.VirtualHost, error) {
-	/*
-		zap.L().Debug("Setting virtual host for Service",
-			zap.String("svc", svc.Metadata.Name))
-	*/
+func getVirtualHostService(svc *corev1.Service, r *GetListenersReq) (*routev3.VirtualHost, error) {
+
+	domain := r.Domain
 
 	routes, err := getRoutesService(svc, domain)
 	if err != nil {
@@ -358,44 +226,18 @@ func getVirtualHostService(svc *corev1.Service, domain string) (*routev3.Virtual
 	}
 
 	vh := &routev3.VirtualHost{
-		Name:       fmt.Sprintf("vh-%s", k8sutils.GetSvcHostname(svc)),
-		Domains:    getSvcFQDNs(svc, domain),
-		Routes:     routes,
-		RequireTls: routev3.VirtualHost_ALL,
+		Name:    fmt.Sprintf("vh-%s", k8sutils.GetSvcHostname(svc)),
+		Domains: getSvcFQDNs(svc, domain),
+		Routes:  routes,
+		RequireTls: func() routev3.VirtualHost_TlsRequirementType {
+			if r.HasFrontProxy {
+				return routev3.VirtualHost_NONE
+			}
+
+			return routev3.VirtualHost_ALL
+		}(),
 	}
 
-	/*
-		{
-			filter := &corsv3.Cors{}
-			pbFilter, err := anypb.New(filter)
-			if err != nil {
-				return nil, err
-			}
-
-			if vh.TypedPerFilterConfig == nil {
-				vh.TypedPerFilterConfig = make(map[string]*anypb.Any)
-			}
-
-			vh.TypedPerFilterConfig[wellknown.CORS] = pbFilter
-		}
-	*/
-
-	/*
-		if svc.IsGRPC() {
-			filter := &grpcweb.GrpcWeb{}
-			pbFilter, err := anypb.New(filter)
-			if err != nil {
-				return nil, err
-			}
-
-			if vh.TypedPerFilterConfig == nil {
-				vh.TypedPerFilterConfig = make(map[string]*anypb.Any)
-			}
-
-			vh.TypedPerFilterConfig["envoy.filters.http.grpc_web"] = pbFilter
-
-		}
-	*/
 	return vh, nil
 }
 
@@ -420,22 +262,6 @@ func getRoutesService(svc *corev1.Service, domain string) ([]*routev3.Route, err
 
 		Action: &routev3.Route_Route{
 			Route: &routev3.RouteAction{
-				/*
-					Cors: &routev3.CorsPolicy{
-						AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
-							{
-								MatchPattern: &envoy_type_matcher.StringMatcher_Suffix{
-									Suffix: domain,
-								},
-							},
-						},
-						AllowMethods:     "GET, PUT, DELETE, POST, OPTIONS",
-						AllowHeaders:     "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
-						MaxAge:           "1728000",
-						ExposeHeaders:    "set-cookie,grpc-status,grpc-message",
-						AllowCredentials: wrapperspb.Bool(true),
-					},
-				*/
 				AppendXForwardedHost: ucorev1.ToService(svc).IsManagedService() &&
 					svc.Status.ManagedService != nil && svc.Status.ManagedService.ForwardHost,
 				UpgradeConfigs: []*routev3.RouteAction_UpgradeConfig{
