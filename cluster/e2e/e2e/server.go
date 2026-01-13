@@ -1114,8 +1114,9 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				files := []string{
 					s.kubeConfigPath,
-					"/usr/local/bin/octeliumctl",
-					"/usr/local/bin/octops",
+					"/app/octelium-e2e",
+					// "/usr/local/bin/octeliumctl",
+					// "/usr/local/bin/octops",
 				}
 
 				for _, f := range files {
