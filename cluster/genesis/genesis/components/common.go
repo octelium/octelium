@@ -358,13 +358,14 @@ func GetDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 }
 
 type CommonOpts struct {
-	OcteliumC         octeliumc.ClientInterface
-	K8sC              kubernetes.Interface
-	ClusterConfig     *corev1.ClusterConfig
-	Region            *corev1.Region
-	EnableSPIFFECSI   bool
-	SPIFFECSIDriver   string
-	SPIFFETrustDomain string
+	OcteliumC               octeliumc.ClientInterface
+	K8sC                    kubernetes.Interface
+	ClusterConfig           *corev1.ClusterConfig
+	Region                  *corev1.Region
+	EnableSPIFFECSI         bool
+	SPIFFECSIDriver         string
+	SPIFFETrustDomain       string
+	EnableIngressFrontProxy bool
 }
 
 func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {

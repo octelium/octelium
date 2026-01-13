@@ -73,21 +73,24 @@ var upgradeCmd = &cobra.Command{
 var cmdArgs args
 
 type args struct {
-	EnableSPIFFECSIDriver bool
-	SPIFFECSIDriver       string
-	SPIFFETrustDomain     string
+	EnableSPIFFECSIDriver   bool
+	SPIFFECSIDriver         string
+	SPIFFETrustDomain       string
+	EnableIngressFrontProxy bool
 }
 
 func init() {
 	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
+	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
 }
 
 func init() {
 	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableSPIFFECSIDriver, "enable-spiffe-csi", false, "Enable SPIFFE CSI Driver")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
+	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
 }
 
 func init() {

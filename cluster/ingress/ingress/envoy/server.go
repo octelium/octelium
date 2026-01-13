@@ -128,6 +128,10 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Se
 
 func (s *Server) Run() error {
 	zap.L().Debug("Starting the Envoy server")
+	if s.hasFrontProxy {
+		zap.L().Info("Front proxy mode is enabled")
+	}
+
 	if err := s.DoSnapshot(context.Background()); err != nil {
 		return err
 	}

@@ -201,12 +201,21 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 									},
 								},
 							},
-							Env: []k8scorev1.EnvVar{
-								{
-									Name:  "OCTELIUM_REGION_NAME",
-									Value: o.Region.Metadata.Name,
-								},
-							},
+							Env: func() []k8scorev1.EnvVar {
+								ret := []k8scorev1.EnvVar{
+									{
+										Name:  "OCTELIUM_REGION_NAME",
+										Value: o.Region.Metadata.Name,
+									},
+								}
+								if o.EnableIngressFrontProxy {
+									ret = append(ret, k8scorev1.EnvVar{
+										Name:  "OCTELIUM_FRONT_PROXY_MODE",
+										Value: "true",
+									})
+								}
+								return ret
+							}(),
 						},
 					},
 				},

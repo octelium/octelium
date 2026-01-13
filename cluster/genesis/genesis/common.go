@@ -28,10 +28,7 @@ import (
 )
 
 func (g *Genesis) installComponents(ctx context.Context,
-	region *corev1.Region,
-	enableSPIFFECSI bool,
-	spiffeCSIDriver string,
-	spiffeTrustDomain string,
+	region *corev1.Region, opts *components.CommonOpts,
 ) error {
 	regionName := region.Metadata.Name
 	clusterCfg, err := g.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
@@ -44,17 +41,18 @@ func (g *Genesis) installComponents(ctx context.Context,
 		return err
 	}
 
-	opts := &components.CommonOpts{
-		OcteliumC:         g.octeliumC,
-		K8sC:              g.k8sC,
-		ClusterConfig:     clusterCfg,
-		Region:            region,
-		EnableSPIFFECSI:   enableSPIFFECSI,
-		SPIFFECSIDriver:   spiffeCSIDriver,
-		SPIFFETrustDomain: spiffeTrustDomain,
+	if opts == nil {
+		opts = &components.CommonOpts{}
 	}
 
-	zap.L().Debug("Starting installComponents", zap.Bool("spiffe", enableSPIFFECSI))
+	opts.OcteliumC = g.octeliumC
+	opts.K8sC = g.k8sC
+	opts.ClusterConfig = clusterCfg
+	opts.Region = opts.Region
+
+	zap.L().Debug("Starting installComponents",
+		zap.Bool("spiffe", opts.EnableSPIFFECSI),
+		zap.Bool("ingressProxyMode", opts.EnableIngressFrontProxy))
 
 	{
 		err = components.CreateGatewayAgent(ctx, opts)

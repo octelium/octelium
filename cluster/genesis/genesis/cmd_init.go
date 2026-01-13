@@ -54,9 +54,10 @@ import (
 )
 
 type InitOpts struct {
-	EnableSPIFFECSI   bool
-	SPIFFECSIDriver   string
-	SPIFFETrustDomain string
+	EnableSPIFFECSI         bool
+	SPIFFECSIDriver         string
+	SPIFFETrustDomain       string
+	EnableIngressFrontProxy bool
 }
 
 func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
@@ -162,11 +163,12 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		}
 	} else {
 		if err := components.CreateRscServer(ctx, &components.CommonOpts{
-			K8sC:              g.k8sC,
-			ClusterConfig:     clusterCfg,
-			EnableSPIFFECSI:   o.EnableSPIFFECSI,
-			SPIFFECSIDriver:   o.SPIFFECSIDriver,
-			SPIFFETrustDomain: o.SPIFFETrustDomain,
+			K8sC:                    g.k8sC,
+			ClusterConfig:           clusterCfg,
+			EnableSPIFFECSI:         o.EnableSPIFFECSI,
+			SPIFFECSIDriver:         o.SPIFFECSIDriver,
+			SPIFFETrustDomain:       o.SPIFFETrustDomain,
+			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
 		}); err != nil {
 			return err
 		}
@@ -204,8 +206,14 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	}
 
 	if err := g.installComponents(ctx,
-		region,
-		o.EnableSPIFFECSI, o.SPIFFECSIDriver, o.SPIFFETrustDomain); err != nil {
+		region, &components.CommonOpts{
+			K8sC:                    g.k8sC,
+			ClusterConfig:           clusterCfg,
+			EnableSPIFFECSI:         o.EnableSPIFFECSI,
+			SPIFFECSIDriver:         o.SPIFFECSIDriver,
+			SPIFFETrustDomain:       o.SPIFFETrustDomain,
+			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+		}); err != nil {
 		return err
 	}
 

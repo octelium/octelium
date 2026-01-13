@@ -34,9 +34,10 @@ import (
 )
 
 type UpgradeOpts struct {
-	EnableSPIFFECSI   bool
-	SPIFFECSIDriver   string
-	SPIFFETrustDomain string
+	EnableSPIFFECSI         bool
+	SPIFFECSIDriver         string
+	SPIFFETrustDomain       string
+	EnableIngressFrontProxy bool
 }
 
 func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
@@ -81,11 +82,12 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	zap.L().Debug("upgrading rscServer")
 
 	if err := components.CreateRscServer(ctx, &components.CommonOpts{
-		K8sC:              g.k8sC,
-		ClusterConfig:     clusterCfg,
-		EnableSPIFFECSI:   o.EnableSPIFFECSI,
-		SPIFFECSIDriver:   o.SPIFFECSIDriver,
-		SPIFFETrustDomain: o.SPIFFETrustDomain,
+		K8sC:                    g.k8sC,
+		ClusterConfig:           clusterCfg,
+		EnableSPIFFECSI:         o.EnableSPIFFECSI,
+		SPIFFECSIDriver:         o.SPIFFECSIDriver,
+		SPIFFETrustDomain:       o.SPIFFETrustDomain,
+		EnableIngressFrontProxy: o.EnableIngressFrontProxy,
 	}); err != nil {
 		return err
 	}
@@ -99,8 +101,14 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	zap.L().Debug("Installing components")
 
 	if err := g.installComponents(ctx,
-		regionV,
-		o.EnableSPIFFECSI, o.SPIFFECSIDriver, o.SPIFFETrustDomain); err != nil {
+		regionV, &components.CommonOpts{
+			K8sC:                    g.k8sC,
+			ClusterConfig:           clusterCfg,
+			EnableSPIFFECSI:         o.EnableSPIFFECSI,
+			SPIFFECSIDriver:         o.SPIFFECSIDriver,
+			SPIFFETrustDomain:       o.SPIFFETrustDomain,
+			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+		}); err != nil {
 		return err
 	}
 
