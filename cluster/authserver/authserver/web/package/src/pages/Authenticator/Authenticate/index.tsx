@@ -25,6 +25,7 @@ import { MdEdit } from "react-icons/md";
 import { MdEditOff } from "react-icons/md";
 import { IoMdSend } from "react-icons/io";
 import { Link, useSearchParams } from "react-router-dom";
+import { ReturnToPortal } from "../Register";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
@@ -503,6 +504,7 @@ const Page = () => {
 
         {!data.mainAuthenticator && <ListAvailableAuthenticators resp={data} />}
       </div>
+      <ReturnToPortal />
     </div>
   );
 };

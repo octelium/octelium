@@ -1,7 +1,7 @@
 import OtpInput from "react-otp-input";
 import * as React from "react";
 
-import { isDev } from "@/utils";
+import { getDomain, isDev } from "@/utils";
 
 import * as Auth from "@/apis/authv1/authv1";
 import { getClientAuth } from "@/utils/client";
@@ -294,6 +294,21 @@ const Page = () => {
           </div>
         )}
       </div>
+
+      <ReturnToPortal />
+    </div>
+  );
+};
+
+export const ReturnToPortal = () => {
+  return (
+    <div className="w-full flex items-center mt-8 text-center justify-center">
+      <a
+        className="text-center font-bold text-gray-700 hover:text-gray-900 transition-all duration-500 text-shadow-2xs"
+        href={`https://portal.${getDomain()}`}
+      >
+        Return to Portal
+      </a>
     </div>
   );
 };

@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Timestamp } from "@/apis/google/protobuf/timestamp";
 import { ListAvailableAuthenticators } from "../Authenticate";
+import { ReturnToPortal } from "../Register";
 
 const devList = Auth.AuthenticatorList.create({
   items: [
@@ -70,6 +71,8 @@ const Page = () => {
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
         <ListAvailableAuthenticators resp={data} />
       </div>
+
+      <ReturnToPortal />
     </div>
   );
 };
