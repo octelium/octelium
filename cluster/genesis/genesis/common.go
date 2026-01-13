@@ -48,7 +48,7 @@ func (g *Genesis) installComponents(ctx context.Context,
 	opts.OcteliumC = g.octeliumC
 	opts.K8sC = g.k8sC
 	opts.ClusterConfig = clusterCfg
-	opts.Region = opts.Region
+	opts.Region = region
 
 	zap.L().Debug("Starting installComponents",
 		zap.Bool("spiffe", opts.EnableSPIFFECSI),
