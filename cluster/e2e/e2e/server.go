@@ -699,7 +699,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p ws-echo:15007",
 				"-p nats:15008",
 				"-p mariadb:15009",
-				"-p minio:15010",
+				"-p s3:15010",
 				"-p opensearch:15011",
 				"-p mcp-echo:15012",
 				"-p clickhouse:15013",
@@ -1055,10 +1055,10 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 				defer os.RemoveAll(tmpDir)
 
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "minio"))
-				assert.Nil(t, s.waitDeploymentSvc(ctx, "minio"))
-				s.logServiceUpstream(ctx, "minio")
-				// s.logVigil(ctx, "minio")
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "s3"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "s3"))
+				s.logServiceUpstream(ctx, "s3")
+				// s.logVigil(ctx, "s3")
 
 				c, err := minio.New("localhost:15010", &minio.Options{
 					Creds:  credentials.NewStaticV4("wrong", "identity", ""),
@@ -1122,8 +1122,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 					doFn(f)
 				}
 
-				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
-				assert.NotNil(t, s.runCmd(ctx, "octeliumctl del svc minio"))
+				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc s3"))
+				assert.NotNil(t, s.runCmd(ctx, "octeliumctl del svc s3"))
 			}
 
 			{

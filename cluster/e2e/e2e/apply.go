@@ -198,24 +198,23 @@ spec:
 ---
 kind: Service
 metadata:
-  name: minio
+  name: s3
 spec:
   mode: HTTP
   config:
     upstream:
       container:
-        image: minio/minio
+        image: rustfs/rustfs
         port: 9000
-        args: ["server", "/data"]
         env:
-          - name: MINIO_ROOT_USER
-            value: octelium_minio
-          - name: MINIO_ROOT_PASSWORD
+          - name: RUSTFS_ACCESS_KEY
+            value: octelium
+          - name: RUSTFS_SECRET_KEY
             value: password
     http:
       auth:
         sigv4:
-          accessKeyID: octelium_minio
+          accessKeyID: octelium
           secretAccessKey:
             fromSecret: password
           service: s3
