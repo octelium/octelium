@@ -29,6 +29,7 @@ import (
 	"github.com/asaskevich/govalidator"
 	ua "github.com/mileusna/useragent"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -534,12 +535,33 @@ func ObjectReferenceToGetOptions(arg *metav1.ObjectReference) *metav1.GetOptions
 	}
 }
 
+func ObjectReferenceToRGetOptions(arg *metav1.ObjectReference) *rmetav1.GetOptions {
+	if arg == nil {
+		return &rmetav1.GetOptions{}
+	}
+	return &rmetav1.GetOptions{
+		Name: arg.Name,
+		Uid:  arg.Uid,
+	}
+}
+
 func ObjectReferenceToDeleteOptions(arg *metav1.ObjectReference) *metav1.DeleteOptions {
 	if arg == nil {
 		return &metav1.DeleteOptions{}
 	}
 
 	return &metav1.DeleteOptions{
+		Name: arg.Name,
+		Uid:  arg.Uid,
+	}
+}
+
+func ObjectReferenceToRDeleteOptions(arg *metav1.ObjectReference) *rmetav1.DeleteOptions {
+	if arg == nil {
+		return &rmetav1.DeleteOptions{}
+	}
+
+	return &rmetav1.DeleteOptions{
 		Name: arg.Name,
 		Uid:  arg.Uid,
 	}
