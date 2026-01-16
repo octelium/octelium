@@ -11,7 +11,7 @@ COPY --from=builder-web /build/dist /build/cluster/authserver/authserver/web
 RUN ls -la /build
 RUN ls -la /build/cluster/authserver/authserver/web
 RUN make build-authserver
-FROM alpine:3.22
+FROM alpine:3.23
 RUN apk --no-cache add ca-certificates
 RUN adduser -S -D -H -u 3454 -h /app octelium
 USER octelium

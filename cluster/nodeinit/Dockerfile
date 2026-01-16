@@ -3,7 +3,7 @@ RUN mkdir /build
 ADD . /build/
 WORKDIR /build
 RUN make build-nodeinit
-FROM alpine:3.22
+FROM alpine:3.23
 RUN apk --no-cache add ca-certificates kmod
 COPY --from=builder /build/bin/octelium-nodeinit /app/
 ENTRYPOINT ["/app/octelium-nodeinit"]
