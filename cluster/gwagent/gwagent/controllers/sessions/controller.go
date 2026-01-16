@@ -68,20 +68,26 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 	newConn := new.Status.Connection
 	oldConn := old.Status.Connection
 
-	if newConn == nil && oldConn == nil {
+	switch {
+	case newConn == nil && oldConn == nil:
 		return nil
-	} else if newConn != nil && oldConn == nil {
-		return c.wgC.AddConnection(new)
-	} else if newConn != nil && oldConn != nil &&
+	case newConn != nil && oldConn == nil:
+		if err := c.wgC.AddConnection(new); err != nil {
+			return err
+		}
+	case newConn != nil && oldConn != nil &&
 		!pbutils.IsEqual(&corev1.Session_Status_Connection{
 			X25519PublicKey: newConn.X25519PublicKey,
 			Addresses:       newConn.Addresses,
 		}, &corev1.Session_Status_Connection{
 			X25519PublicKey: oldConn.X25519PublicKey,
 			Addresses:       oldConn.Addresses,
-		}) {
-		return c.wgC.UpdateConnection(new)
-	} else if newConn == nil && oldConn != nil {
+		}):
+
+		if err := c.wgC.UpdateConnection(new); err != nil {
+			return err
+		}
+	case newConn == nil && oldConn != nil:
 		if err := c.wgC.RemoveConnection(old); err != nil {
 			return err
 		}
@@ -94,7 +100,6 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 	}
 
 	return nil
-
 }
 
 func (c *Controller) OnDelete(ctx context.Context, n *corev1.Session) error {
