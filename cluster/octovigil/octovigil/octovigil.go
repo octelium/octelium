@@ -166,6 +166,15 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Server, err
 	return ret, nil
 }
 
+type PolicyTriggerCtlI interface {
+	SetPolicyTrigger(i *corev1.PolicyTrigger) error
+	DeletePolicyTrigger(i *corev1.PolicyTrigger) error
+}
+
+func (s *Server) GetPolicyTriggerCtl() PolicyTriggerCtlI {
+	return s.policyTriggerCtl
+}
+
 func (s *Server) GetCache() *acache.Cache {
 	return s.cache
 }
