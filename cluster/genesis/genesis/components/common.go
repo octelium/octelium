@@ -386,3 +386,17 @@ func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {
 			})
 	}
 }
+
+func MainLivenessProbe() *k8scorev1.Probe {
+	return &k8scorev1.Probe{
+		InitialDelaySeconds: 60,
+		TimeoutSeconds:      4,
+		PeriodSeconds:       30,
+		FailureThreshold:    3,
+		ProbeHandler: k8scorev1.ProbeHandler{
+			GRPC: &k8scorev1.GRPCAction{
+				Port: int32(vutils.HealthCheckPortMain),
+			},
+		},
+	}
+}

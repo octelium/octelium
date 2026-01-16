@@ -190,17 +190,7 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 							Resources:       getDefaultResourceRequirements(),
 							Image:           components.GetImage(components.Ingress, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
-							LivenessProbe: &k8scorev1.Probe{
-								InitialDelaySeconds: 60,
-								TimeoutSeconds:      4,
-								PeriodSeconds:       30,
-								FailureThreshold:    3,
-								ProbeHandler: k8scorev1.ProbeHandler{
-									GRPC: &k8scorev1.GRPCAction{
-										Port: int32(vutils.HealthCheckPortMain),
-									},
-								},
-							},
+							LivenessProbe:   MainLivenessProbe(),
 							Env: func() []k8scorev1.EnvVar {
 								ret := []k8scorev1.EnvVar{
 									{

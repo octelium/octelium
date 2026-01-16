@@ -103,18 +103,7 @@ func getRscServerDeployment(o *CommonOpts) *appsv1.Deployment {
 								},
 							},
 
-							LivenessProbe: &k8scorev1.Probe{
-								InitialDelaySeconds: 60,
-								TimeoutSeconds:      4,
-								PeriodSeconds:       30,
-								FailureThreshold:    3,
-
-								ProbeHandler: k8scorev1.ProbeHandler{
-									GRPC: &k8scorev1.GRPCAction{
-										Port: int32(vutils.HealthCheckPortMain),
-									},
-								},
-							},
+							LivenessProbe: MainLivenessProbe(),
 
 							Image:           components.GetImage(components.RscServer, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
