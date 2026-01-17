@@ -27,6 +27,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/user"
 	"path"
 	"slices"
@@ -1114,9 +1115,17 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				files := []string{
 					s.kubeConfigPath,
-					"/app/octelium-e2e",
-					// "/usr/local/bin/octeliumctl",
-					// "/usr/local/bin/octops",
+				}
+
+				bins := []string{
+					"octelium",
+					"octops",
+				}
+
+				for _, bin := range bins {
+					if pth, err := exec.LookPath(bin); err == nil {
+						files = append(files, pth)
+					}
 				}
 
 				for _, f := range files {
