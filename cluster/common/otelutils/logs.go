@@ -32,6 +32,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"google.golang.org/grpc"
 )
 
 type LogManagerV2 struct {
@@ -53,23 +54,30 @@ func getResource(ctx context.Context) (*resource.Resource, error) {
 	return ret, nil
 }
 
-func CreateLoggerProvider(ctx context.Context, addr string) (*sdklog.LoggerProvider, error) {
+func getGRPCConn(ctx context.Context, addr string) (*grpc.ClientConn, error) {
 	if addr == "" {
 		addr = defaultAddr
 	}
+
+	opts := []grpc.DialOption{}
 
 	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	opts = append(opts, cred)
 
-	opts := []otlploggrpc.Option{
-		otlploggrpc.WithEndpoint(addr),
-		// otlploggrpc.WithInsecure(),
-		otlploggrpc.WithDialOption(cred),
+	return grpc.NewClient(addr, opts...)
+}
+
+func CreateLoggerProvider(ctx context.Context, addr string) (*sdklog.LoggerProvider, error) {
+
+	conn, err := getGRPCConn(ctx, addr)
+	if err != nil {
+		return nil, err
 	}
 
-	exporter, err := otlploggrpc.New(ctx, opts...)
+	exporter, err := otlploggrpc.New(ctx, otlploggrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, err
 	}

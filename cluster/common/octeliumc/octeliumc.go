@@ -83,6 +83,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	
 
 	ret := &Client{
 		coreC:           rcorev1.NewResourceServiceClient(grpcConn),
