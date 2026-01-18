@@ -3142,3 +3142,152 @@ func TestRetry(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode())
 }
+
+func TestIsDisabled(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	upstreamPort := tests.GetPort()
+
+	upstreamSrv := newSrvHTTP(t, upstreamPort, true, nil)
+	upstreamSrv.run(t)
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:   true,
+			IsDisabled: true,
+			Port:       uint32(tests.GetPort()),
+			Mode:       corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("http://localhost:%d", upstreamSrv.port),
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.lbManager.Run(ctx)
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	srv.octovigilC.GetCache().SetSession(usr.Session)
+	usr.Resync()
+
+	time.Sleep(1 * time.Second)
+
+	resp, err := resty.New().SetDebug(true).R().
+		Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsError())
+
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode())
+
+	svcV.Spec.IsDisabled = false
+	svcV, err = srv.octeliumC.CoreC().UpdateService(ctx, svcV)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	time.Sleep(1 * time.Second)
+	{
+		resp, err := resty.New().SetDebug(true).R().
+			Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode())
+	}
+}
