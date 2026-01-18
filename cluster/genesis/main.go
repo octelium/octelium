@@ -40,9 +40,10 @@ var initCmd = &cobra.Command{
 		}
 
 		if err := g.RunInit(context.Background(), &genesis.InitOpts{
-			EnableSPIFFECSI:   cmdArgs.EnableSPIFFECSIDriver,
-			SPIFFECSIDriver:   cmdArgs.SPIFFECSIDriver,
-			SPIFFETrustDomain: cmdArgs.SPIFFETrustDomain,
+			EnableSPIFFECSI:         cmdArgs.EnableSPIFFECSIDriver,
+			SPIFFECSIDriver:         cmdArgs.SPIFFECSIDriver,
+			SPIFFETrustDomain:       cmdArgs.SPIFFETrustDomain,
+			EnableIngressFrontProxy: cmdArgs.EnableIngressFrontProxy,
 		}); err != nil {
 			return err
 		}
@@ -60,8 +61,10 @@ var upgradeCmd = &cobra.Command{
 		}
 
 		if err := g.RunUpgrade(context.Background(), &genesis.UpgradeOpts{
-			EnableSPIFFECSI: cmdArgs.EnableSPIFFECSIDriver,
-			SPIFFECSIDriver: cmdArgs.SPIFFECSIDriver,
+			EnableSPIFFECSI:         cmdArgs.EnableSPIFFECSIDriver,
+			SPIFFECSIDriver:         cmdArgs.SPIFFECSIDriver,
+			SPIFFETrustDomain:       cmdArgs.SPIFFETrustDomain,
+			EnableIngressFrontProxy: cmdArgs.EnableIngressFrontProxy,
 		}); err != nil {
 			return err
 		}
