@@ -281,6 +281,21 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 					Args:            svc.Status.ManagedService.Args,
 					ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 					Env:             envVars,
+					SecurityContext: &k8scorev1.SecurityContext{
+						Privileged:               utils_types.BoolToPtr(false),
+						AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+						ReadOnlyRootFilesystem: func() *bool {
+							if svc.Status.ManagedService.ReadOnlyFileSystem {
+								return utils_types.BoolToPtr(true)
+							}
+							return nil
+						}(),
+						Capabilities: &k8scorev1.Capabilities{
+							Add: []k8scorev1.Capability{
+								"NET_BIND_SERVICE",
+							},
+						},
+					},
 					Resources: func() k8scorev1.ResourceRequirements {
 
 						ret := k8scorev1.ResourceRequirements{
