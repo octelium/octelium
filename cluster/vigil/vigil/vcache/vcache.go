@@ -25,21 +25,18 @@ import (
 )
 
 type Cache struct {
-	// c   *cache.Cache
 	mu  sync.RWMutex
 	svc *corev1.Service
 }
 
 func NewCache(ctx context.Context) (*Cache, error) {
-	return &Cache{
-		// c: cache.New(5*cache.NoExpiration, 10*time.Minute),
-	}, nil
+	return &Cache{}, nil
 }
 
 func (c *Cache) SetService(svc *corev1.Service) {
-	// c.c.Set("svc", svc, cache.NoExpiration)
+	clone := pbutils.Clone(svc).(*corev1.Service)
 	c.mu.Lock()
-	c.svc = svc
+	c.svc = clone
 	c.mu.Unlock()
 }
 
