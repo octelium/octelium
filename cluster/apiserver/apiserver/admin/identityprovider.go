@@ -18,9 +18,11 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-jose/go-jose/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -145,12 +147,6 @@ func (s *Server) UpdateIdentityProvider(ctx context.Context, req *corev1.Identit
 		return nil, err
 	}
 
-	/*
-		if item.Status.Type != req.Status.Type {
-			return nil, grpcutils.InvalidArg("Cannot change the IdentityProvider type after creation.")
-		}
-	*/
-
 	apisrvcommon.MetadataUpdate(item.Metadata, req.Metadata)
 	item.Spec = req.Spec
 	item.Status.Type = req.Status.Type
@@ -229,13 +225,29 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 			if !govalidator.IsURL(typ.GetIssuerURL()) {
 				return grpcutils.InvalidArg("Invalid issuer URL")
 			}
+
+			if typ.Issuer != "" {
+				return grpcutils.InvalidArg("You cannot define an issuer for issuerURL type")
+			}
 		case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent:
+			var jwks jose.JSONWebKeySet
+			if err := json.Unmarshal([]byte(typ.GetJwksContent()), &jwks); err != nil {
+				return grpcutils.InvalidArg("Cannot unmarshal jwks content: %+v", err)
+			}
 		case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL:
 			if !govalidator.IsURL(typ.GetJwksURL()) {
 				return grpcutils.InvalidArg("Invalid issuer URL")
 			}
 		default:
 			return grpcutils.InvalidArg("You must set either an issuerURL, JWKS Content or JWKS URL")
+		}
+
+		if err := s.validateGenStr(spec.GetOidcIdentityToken().Issuer, false, "issuer"); err != nil {
+			return err
+		}
+
+		if err := s.validateGenStr(spec.GetOidcIdentityToken().Audience, false, "audience"); err != nil {
+			return err
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN
