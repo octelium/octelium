@@ -104,36 +104,6 @@ func (u *upstream) getAddr() string {
 	return net.JoinHostPort(u.host, fmt.Sprintf("%d", u.port))
 }
 
-/*
-func (s *DNSServer) Resolve(arg string, isIPv6 bool) net.IP {
-	zap.S().Debugf("resolving dns for svc: %s", arg)
-	res, found := s.cache.Get(fmt.Sprintf("svc:%s", arg))
-	if !found {
-		return nil
-	}
-
-	svcInfo := res.(SvcInfo)
-	if len(svcInfo.Addresses) == 0 {
-		return nil
-	}
-
-	addr := svcInfo.Addresses[svcInfo.CurIdx]
-
-	var ret net.IP
-	if isIPv6 {
-		ret = net.ParseIP(addr.DualStackIP.Ipv6)
-	} else {
-		ret = net.ParseIP(addr.DualStackIP.Ipv4)
-	}
-
-	svcInfo.CurIdx = uint32((int(svcInfo.CurIdx) + 1) % len(svcInfo.Addresses))
-
-	s.cache.Set(fmt.Sprintf("svc:%s", arg), svcInfo, 0)
-
-	return ret
-}
-*/
-
 type SvcInfo struct {
 	Addresses []*corev1.Service_Status_Address
 	CurIdx    uint32
@@ -241,14 +211,6 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 }
 
-/*
-	type svcNs struct {
-		svc       string
-		namespace string
-	}
-
-var rgx = regexp.MustCompile(`^(((?P<svc>[a-z][a-z0-9-]{0,62}[a-z0-9])(\.|_)(?P<ns>[a-z][a-z0-9-]{0,62}[a-z0-9]))|(?P<svc_default>[a-z][a-z0-9-]{0,62}[a-z0-9]))$`)
-*/
 func (s *DNSServer) getHostname(arg string) (string, error) {
 	domainLen := len(arg)
 	if domainLen < 1 || domainLen > 256 {
@@ -258,7 +220,6 @@ func (s *DNSServer) getHostname(arg string) (string, error) {
 	suffixList := []string{
 		fmt.Sprintf(".local.%s.", s.domain),
 		fmt.Sprintf(".%s.local.", s.domain),
-		// fmt.Sprintf(".%s.", s.domain),
 		".local.",
 	}
 
@@ -297,76 +258,6 @@ func (s *DNSServer) getHostnameFromPossibleHostname(arg string) (string, error) 
 }
 
 var errNotFound = errors.Errorf("not found")
-
-/*
-func (s *DNSServer) parseSvcNs(arg string) *svcNs {
-
-	if !govalidator.IsASCII(arg) {
-		return nil
-	}
-
-	suffixList := []string{
-		".local.",
-		fmt.Sprintf(".local.%s.", s.domain),
-		fmt.Sprintf(".%s.local.", s.domain),
-		fmt.Sprintf(".%s.", s.domain),
-	}
-
-	idx := slices.IndexFunc(suffixList, func(suffix string) bool {
-		return strings.HasSuffix(arg, suffix)
-	})
-	if idx < 0 {
-		return nil
-	}
-	arg = suffixList[idx]
-	if arg == "" {
-		return &svcNs{
-			svc:       "default",
-			namespace: "default",
-		}
-	}
-
-	for _, suffix := range suffixList {
-		if strings.HasSuffix(arg, suffix) {
-			str := strings.TrimSuffix(arg, suffix)
-
-			match := rgx.FindStringSubmatch(str)
-
-			if len(match) == 0 {
-				continue
-			}
-
-			var svc, ns, svcDefault string
-
-			for i, name := range rgx.SubexpNames() {
-				switch name {
-				case "svc":
-					svc = match[i]
-				case "ns":
-					ns = match[i]
-				case "svc_default":
-					svcDefault = match[i]
-				}
-			}
-
-			if svcDefault != "" {
-				return &svcNs{
-					svc:       svcDefault,
-					namespace: "default",
-				}
-			} else if svc != "" && ns != "" {
-				return &svcNs{
-					svc:       svc,
-					namespace: ns,
-				}
-			}
-
-		}
-	}
-
-	return nil
-}
-*/
 
 func (s *DNSServer) Run(ctx context.Context) error {
 
