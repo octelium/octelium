@@ -21,7 +21,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/dnsserver/dnsserver/dnsserver"
-	"go.uber.org/zap"
 )
 
 type Controller struct {
@@ -35,20 +34,15 @@ func NewController(dnsServer *dnsserver.DNSServer) *Controller {
 }
 
 func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
-
-	zap.S().Debugf("setting addresses for Service %s", svc.Metadata.Name)
 	c.dnsServer.Set(svc)
 	return nil
 }
 func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Service) error {
-
-	zap.S().Debugf("updating addresses for Service %s", new.Metadata.Name)
 	c.dnsServer.Set(new)
 	return nil
 }
 
 func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
-	zap.S().Debugf("Deleting addresses for svc %s", svc.Metadata.Name)
 	c.dnsServer.Unset(svc)
 	return nil
 }
