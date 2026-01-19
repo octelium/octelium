@@ -89,11 +89,11 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 Read this quick guide [here](https://octelium.com/docs/octelium/latest/overview/quick-install) to install a single-node Octelium _Cluster_ on top of any cheap cloud VM/VPS instance (e.g. DigitalOcean Droplet, Hetzner server, AWS EC2, Vultr, etc...) or a local Linux machine/Linux VM inside a MacOS/Windows machine with at least 2GB of RAM and 20GB of disk storage running a recent Linux distribution (Ubuntu 24.04 LTS or later, Debian 12+, etc...), which is good enough for most development, personal or undemanding production use cases that do not require highly available multi-node _Clusters_. Once you SSH into your VPS/VM as root, you can install the _Cluster_ as follows:
 
 ```bash
-curl -o install-demo-cluster.sh https://octelium.com/install-demo-cluster.sh
-chmod +x install-demo-cluster.sh
+curl -o install-cluster.sh https://octelium.com/install-cluster.sh
+chmod +x install-cluster.sh
 
 # Replace <DOMAIN> with your actual domain
-./install-demo-cluster.sh --domain <DOMAIN>
+./install-cluster.sh --domain <DOMAIN>
 ```
 
 Once the _Cluster_ is installed. You can start managing it as shown in the guide [here](https://octelium.com/docs/octelium/latest/overview/management).
