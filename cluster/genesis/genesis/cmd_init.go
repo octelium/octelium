@@ -473,8 +473,9 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 			Status: &corev1.Service_Status{
 				ManagedService: &corev1.Service_Status_ManagedService{
-					Image: oc.GetImage(oc.DNSServer, ""),
-					Type:  "dnsserver",
+					Image:              oc.GetImage(oc.DNSServer, ""),
+					Type:               "dnsserver",
+					ReadOnlyFileSystem: true,
 					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
 						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
 							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
@@ -657,7 +658,8 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 			Status: &corev1.Service_Status{
 				ManagedService: &corev1.Service_Status_ManagedService{
-					Image: oc.GetImage(oc.Portal, ""),
+					Image:              oc.GetImage(oc.Portal, ""),
+					ReadOnlyFileSystem: true,
 					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
 						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
 							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
