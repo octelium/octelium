@@ -39,6 +39,7 @@ import (
 	compressv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/compressor/v3"
 
 	corsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3"
+	http_inspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/http_inspector/v3"
 	tls_inspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -76,7 +77,7 @@ func GetListeners(ctx context.Context, r *GetListenersReq) ([]types.Resource, er
 func getListener(ctx context.Context, r *GetListenersReq) (*listenerv3.Listener, error) {
 
 	ret := &listenerv3.Listener{
-		Name: "https-listener",
+		Name: "main-listener",
 	}
 
 	if !r.HasFrontProxy {
@@ -86,6 +87,13 @@ func getListener(ctx context.Context, r *GetListenersReq) (*listenerv3.Listener,
 		}
 
 		ret.ListenerFilters = append(ret.ListenerFilters, tlsInspectorFilter)
+	} else {
+		httpInspectorFilter, err := getHTTPInspector()
+		if err != nil {
+			return nil, err
+		}
+
+		ret.ListenerFilters = append(ret.ListenerFilters, httpInspectorFilter)
 	}
 
 	ret.Address = &core.Address{Address: &core.Address_SocketAddress{
@@ -117,6 +125,22 @@ func getTLSInspector() (*listenerv3.ListenerFilter, error) {
 
 	return &listenerv3.ListenerFilter{
 		Name: "envoy.filters.listener.tls_inspector",
+		ConfigType: &listenerv3.ListenerFilter_TypedConfig{
+			TypedConfig: toPB,
+		},
+	}, nil
+}
+
+func getHTTPInspector() (*listenerv3.ListenerFilter, error) {
+	filter := &http_inspector.HttpInspector{}
+
+	toPB, err := anypb.New(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listenerv3.ListenerFilter{
+		Name: "envoy.filters.listener.http_inspector",
 		ConfigType: &listenerv3.ListenerFilter_TypedConfig{
 			TypedConfig: toPB,
 		},
