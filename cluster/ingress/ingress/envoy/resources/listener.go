@@ -129,7 +129,13 @@ func getFilterChainsMain(ctx context.Context, r *GetListenersReq) (*listenerv3.F
 
 	ret := &listenerv3.FilterChain{
 		FilterChainMatch: &listenerv3.FilterChainMatch{
-			ServerNames: []string{domain, fmt.Sprintf("*.%s", domain)},
+			ServerNames: func() []string {
+				if !r.HasFrontProxy {
+					return []string{domain, fmt.Sprintf("*.%s", domain)}
+				}
+
+				return nil
+			}(),
 		},
 
 		TransportSocketConnectTimeout: &durationpb.Duration{
