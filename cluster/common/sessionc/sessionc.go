@@ -286,7 +286,7 @@ func NewSession(ctx context.Context,
 		case corev1.User_Spec_HUMAN:
 			sess.Status.Authentication.RefreshTokenDuration = &metav1.Duration{
 				Type: &metav1.Duration_Hours{
-					Hours: 18,
+					Hours: 21,
 				},
 			}
 		case corev1.User_Spec_WORKLOAD:
