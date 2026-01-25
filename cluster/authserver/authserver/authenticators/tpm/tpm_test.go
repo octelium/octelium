@@ -69,7 +69,6 @@ func TestTPM(t *testing.T) {
 			State: corev1.Authenticator_Spec_ACTIVE,
 		},
 		Status: &corev1.Authenticator_Status{
-			// IdentityProviderRef: umetav1.GetObjectReference(factor),
 			UserRef: umetav1.GetObjectReference(usr.Usr),
 			Type:    corev1.Authenticator_Status_TPM,
 		},
@@ -158,6 +157,51 @@ func TestTPM(t *testing.T) {
 
 		assert.Nil(t, err)
 
+		_, err = fctr.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+		assert.Nil(t, err)
+	}
+
+	{
+		authn, err := tst.C.OcteliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
+			Status: &corev1.Authenticator_Status{
+				UserRef: umetav1.GetObjectReference(usr.Usr),
+				Type:    corev1.Authenticator_Status_TPM,
+			},
+		})
+		assert.Nil(t, err)
+
+		authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{
+			CreatedAt: pbutils.Now(),
+		}
+
+		_, err = fctr.BeginRegistration(ctx, &authenticators.BeginRegistrationReq{
+
+			Req: &authv1.RegisterAuthenticatorBeginRequest{
+				PreChallenge: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge{
+					Type: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_Tpm{
+						Tpm: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM{
+							EkType: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_EkPublicKey{
+								EkPublicKey: ekBytes,
+							},
+							AkBytes: akBytes,
+							AttestationParameters: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_AttestationParameters{
+								Public:            attestParams.Public,
+								CreateData:        attestParams.CreateData,
+								CreateAttestation: attestParams.CreateAttestation,
+								CreateSignature:   attestParams.CreateSignature,
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.NotNil(t, err)
 	}
 
 }

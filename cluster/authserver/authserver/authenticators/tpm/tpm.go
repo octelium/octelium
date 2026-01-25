@@ -20,12 +20,15 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 
 	"github.com/google/go-attestation/attest"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -61,74 +64,6 @@ func (c *TPMFactor) Begin(ctx context.Context, req *authenticators.BeginReq) (*a
 		authn.Status.AuthenticationAttempt.EncryptedDataMap = make(map[string]*corev1.Authenticator_Status_EncryptedData)
 	}
 
-	/*
-		if authn.Status.SuccessfulAuthentications < 1 || authn.Status.GetInfo().GetTpm() == nil {
-			if req.Req.PreChallenge == nil || req.Req.PreChallenge.GetTpm() == nil ||
-				len(req.Req.PreChallenge.GetTpm().AkBytes) == 0 ||
-				(len(req.Req.PreChallenge.GetTpm().GetEkCertificateDER()) == 0 && len(req.Req.PreChallenge.GetTpm().GetEkPublicKey()) == 0) ||
-				req.Req.PreChallenge.GetTpm().AttestationParameters == nil {
-				return nil, errors.Errorf("preChallenge must be set")
-			}
-
-			var ekBytes []byte
-			if req.Req.PreChallenge.GetTpm().GetEkCertificateDER() != nil {
-				ekCert, err := attest.ParseEKCertificate(req.Req.PreChallenge.GetTpm().GetEkCertificateDER())
-				if err != nil {
-					return nil, err
-				}
-				zap.L().Debug("ekCert successfully parsed", zap.Any("ekCert", ekCert))
-
-				if _, ok := ekCert.PublicKey.(*rsa.PublicKey); !ok {
-					return nil, errors.Errorf("publicKey must be RSA")
-				}
-
-				if err := c.verifyEKCert(ekCert); err != nil {
-					return nil, errors.Errorf("Could not verify ekCert: %+v", err)
-				}
-
-				ekBytes, err = x509.MarshalPKIXPublicKey(ekCert.PublicKey)
-				if err != nil {
-					return nil, err
-				}
-
-			} else {
-				if c.factor.Spec.GetTpm() != nil && c.factor.Spec.GetTpm().OnlyAllowEKCertificates {
-					return nil, errors.Errorf("only ekCertificates not publicKeys are allowed")
-				}
-
-				pubKey, err := x509.ParsePKIXPublicKey(req.Req.PreChallenge.GetTpm().GetEkPublicKey())
-				if err != nil {
-					return nil, err
-				}
-
-				if _, ok := pubKey.(*rsa.PublicKey); !ok {
-					return nil, errors.Errorf("publicKey must be RSA")
-				}
-
-				ekBytes, err = x509.MarshalPKIXPublicKey(pubKey)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			authn.Status.Info = &corev1.Authenticator_Status_Info{
-				Type: &corev1.Authenticator_Status_Info_Tpm{
-					Tpm: &corev1.Authenticator_Status_Info_TPM{
-						EkPublicKey: ekBytes,
-						AkBytes:     req.Req.PreChallenge.GetTpm().AkBytes,
-						AttestationParameters: &corev1.Authenticator_Status_Info_TPM_AttestationParameters{
-							Public:            req.Req.PreChallenge.GetTpm().AttestationParameters.Public,
-							CreateData:        req.Req.PreChallenge.GetTpm().AttestationParameters.CreateData,
-							CreateAttestation: req.Req.PreChallenge.GetTpm().AttestationParameters.CreateAttestation,
-							CreateSignature:   req.Req.PreChallenge.GetTpm().AttestationParameters.CreateSignature,
-						},
-					},
-				},
-			}
-
-		}
-	*/
-
 	if authn.Status.GetInfo() == nil || authn.Status.GetInfo().GetTpm() == nil {
 		return nil, errors.Errorf("TPM info not set")
 	}
@@ -141,7 +76,6 @@ func (c *TPMFactor) Begin(ctx context.Context, req *authenticators.BeginReq) (*a
 	}
 
 	activationParams := &attest.ActivationParameters{
-		// TPMVersion: attest.TPMVersion20,
 		EK: ek,
 		AK: attest.AttestationParameters{
 			Public:            info.AttestationParameters.Public,
@@ -266,6 +200,23 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 			if err != nil {
 				return nil, err
 			}
+
+		}
+
+		{
+			authnList, err := c.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+				Filters: []*rmetav1.ListOptions_Filter{
+					urscsrv.FilterFieldEQValStr("status.info.tpm.ekPublicKey",
+						base64.StdEncoding.EncodeToString(ekBytes)),
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			if len(authnList.Items) > 0 {
+				return nil, errors.Errorf("This ekPublicKey already exists")
+			}
 		}
 
 		authn.Status.Info = &corev1.Authenticator_Status_Info{
@@ -293,7 +244,6 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 	}
 
 	activationParams := &attest.ActivationParameters{
-		// TPMVersion: attest.TPMVersion20,
 		EK: ek,
 		AK: attest.AttestationParameters{
 			Public:            info.AttestationParameters.Public,
