@@ -41,7 +41,7 @@ var Cmd = &cobra.Command{
 	Short: "Create an Authenticator",
 	Example: `
   octelium auth create authn --type tpm
-  octelium auth create authenticator --totp --display-name Phone Authenticator
+  octelium auth create authenticator --type totp --display-name Phone Authenticator
 	  `,
 	Aliases: []string{"authn"},
 	Args:    cobra.NoArgs,
