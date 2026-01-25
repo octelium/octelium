@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/client/common/commands/auth/delete"
 	"github.com/octelium/octelium/client/common/commands/auth/device"
 	"github.com/octelium/octelium/client/common/commands/auth/get"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -46,14 +45,13 @@ var Cmd = &cobra.Command{
 
 func AddSubcommands() {
 	Cmd.AddCommand(device.Cmd)
-	if ldflags.IsDev() {
-		Cmd.AddCommand(create.Cmd)
-		Cmd.AddCommand(delete.Cmd)
-		Cmd.AddCommand(get.Cmd)
-		Cmd.AddCommand(authenticator.Cmd)
 
-		create.AddSubcommands()
-		delete.AddSubcommands()
-		get.AddSubcommands()
-	}
+	Cmd.AddCommand(create.Cmd)
+	Cmd.AddCommand(delete.Cmd)
+	Cmd.AddCommand(get.Cmd)
+	Cmd.AddCommand(authenticator.Cmd)
+
+	create.AddSubcommands()
+	delete.AddSubcommands()
+	get.AddSubcommands()
 }
