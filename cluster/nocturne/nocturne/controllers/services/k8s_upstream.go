@@ -301,6 +301,18 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 							ClaimName: vol.GetPersistentVolumeClaim().Name,
 						},
 					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_:
+					volume.VolumeSource = k8scorev1.VolumeSource{
+						EmptyDir: &k8scorev1.EmptyDirVolumeSource{
+							SizeLimit: func() *resource.Quantity {
+								if vol.GetEmptyDir().SizeLimitMegabytes > 0 {
+									return k8sutils.GetResourceQuantityMust(
+										fmt.Sprintf("%dMi", vol.GetEmptyDir().SizeLimitMegabytes))
+								}
+								return nil
+							}(),
+						},
+					}
 				default:
 					continue
 				}

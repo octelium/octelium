@@ -32,3 +32,8 @@ func GetDefaultLimits() k8scorev1.ResourceList {
 		k8scorev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", DefaultLimitCPUMillicores)),
 	}
 }
+
+func GetResourceQuantityMust(arg string) *resource.Quantity {
+	ret := resource.MustParse(arg)
+	return &ret
+}
