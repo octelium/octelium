@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -31,7 +32,6 @@ import (
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 type Genesis struct {
@@ -43,13 +43,10 @@ type Genesis struct {
 func NewGenesis() (*Genesis, error) {
 	ret := &Genesis{}
 
-	cfg, err := rest.InClusterConfig()
+	cfg, err := k8sutils.GetInClusterConfig()
 	if err != nil {
 		return nil, err
 	}
-
-	cfg.QPS = 100
-	cfg.Burst = 200
 
 	k8sClientSet, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -126,17 +123,6 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 		},
 	}
 	vutils.SetRegionPublicHostName(ret)
-
-	/*
-		if cr.Bootstrap.Spec.Kubernetes != nil && len(cr.Bootstrap.Spec.Kubernetes.ExternalIPs) > 0 {
-			ret.Metadata.SystemLabels = make(map[string]string)
-			externalIPBytes, err := json.Marshal(cr.Bootstrap.Spec.Kubernetes.ExternalIPs)
-			if err != nil {
-				return nil, err
-			}
-			ret.Metadata.SystemLabels["external-ips"] = string(externalIPBytes)
-		}
-	*/
 
 	zap.L().Debug("Initialized Region", zap.Any("region", ret))
 

@@ -26,7 +26,7 @@ import (
 type K8sClientOpts struct {
 }
 
-func NewClient(ctx context.Context, o *K8sClientOpts) (*kubernetes.Clientset, error) {
+func GetInClusterConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
@@ -34,6 +34,14 @@ func NewClient(ctx context.Context, o *K8sClientOpts) (*kubernetes.Clientset, er
 
 	cfg.QPS = 100
 	cfg.Burst = 200
+	return cfg, nil
+}
+
+func NewClient(ctx context.Context, o *K8sClientOpts) (*kubernetes.Clientset, error) {
+	cfg, err := GetInClusterConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	k8sC, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
