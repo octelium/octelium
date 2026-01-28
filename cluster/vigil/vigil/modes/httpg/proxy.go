@@ -93,8 +93,9 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
+	svc := reqCtx.Service
 
-	isManagedSvc := ucorev1.ToService(reqCtx.Service).IsManagedService()
+	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 
 	cfg := reqCtx.ServiceConfig
 	var httpCfg *corev1.Service_Spec_Config_HTTP
@@ -123,8 +124,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		Transport:  roundTripper,
 		ErrorLog:   s.reverseProxyErrLogger,
 		Director: func(outReq *http.Request) {
-			svc := reqCtx.Service
-			scheme := outReq.URL.Scheme
+			forwardedScheme := outReq.URL.Scheme
+			if svc.Spec.IsPublic {
+				forwardedScheme = "https"
+			}
+
 			switch upstream.URL.Scheme {
 			case "https", "http":
 				outReq.URL.Scheme = upstream.URL.Scheme
@@ -202,11 +206,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 						forwardedVal := fmt.Sprintf("for=_octelium-%s;by=%s;proto=%s;host=%s",
 							utilrand.GetRandomStringLowercase(8),
 							s.forwardedObfuscatedID,
-							scheme,
+							forwardedScheme,
 							forwardedHost)
 						outReq.Header.Set("Forwarded", forwardedVal)
 
-						outReq.Header.Set("X-Forwarded-Proto", scheme)
+						outReq.Header.Set("X-Forwarded-Proto", forwardedScheme)
 						outReq.Header.Set("X-Forwarded-Host", forwardedHost)
 						outReq.Header.Set("X-Forwarded-For", "10.0.0.1")
 
