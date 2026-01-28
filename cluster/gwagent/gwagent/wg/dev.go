@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
-	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/conn"
@@ -188,12 +187,7 @@ func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 		return err
 	}
 
-	defaultLink, err := getDefaultLink()
-	if err != nil {
-		return err
-	}
-
-	if err := ipt.OnAdd(gw, cc, defaultLink.Attrs().Name); err != nil {
+	if err := ipt.OnAdd(gw, cc); err != nil {
 		return err
 	}
 
@@ -258,6 +252,7 @@ func (wg *Wg) createDevUserspace(interfaceName string, mtu int) error {
 	return nil
 }
 
+/*
 func getDefaultLink() (netlink.Link, error) {
 	routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
 	if err != nil {
@@ -275,6 +270,7 @@ func getDefaultLink() (netlink.Link, error) {
 	}
 	return nil, errors.Errorf("Could not find the default network interface")
 }
+*/
 
 type iptablesCtl struct {
 	iptv4 *iptables.IPTables
@@ -298,7 +294,7 @@ func newIPTables() (*iptablesCtl, error) {
 // ugly solution to mitigate `iptables: Resource temporarily unavailable` error
 var xtablesMtx sync.Mutex
 
-func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig, defaultLink string) error {
+func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 	xtablesMtx.Lock()
 	defer xtablesMtx.Unlock()
 
