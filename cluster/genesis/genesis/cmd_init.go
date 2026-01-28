@@ -836,8 +836,30 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 
 		info := i.Bootstrap.Spec.PrimaryStorage.GetPostgresql()
 
+		var password string
+		if info.PasswordFromSecret != nil && info.PasswordFromSecret.Name != "" {
+			sec, err := g.k8sC.CoreV1().
+				Secrets(info.PasswordFromSecret.Namespace).
+				Get(ctx, info.PasswordFromSecret.Name, k8smetav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+
+			if info.PasswordFromSecret.Key != "" {
+				password = sec.StringData[info.PasswordFromSecret.Key]
+			}
+			if password == "" {
+				password = sec.StringData["password"]
+			}
+			if password == "" {
+				password = sec.StringData["data"]
+			}
+		} else {
+			password = info.Password
+		}
+
 		dataMap := map[string][]byte{
-			"postgres-password": []byte(info.Password),
+			"postgres-password": []byte(password),
 			"username":          []byte(info.Username),
 			"host":              []byte(info.Host),
 			"database":          []byte(info.Database),
@@ -853,8 +875,30 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 
 	{
 		info := i.Bootstrap.Spec.SecondaryStorage.GetRedis()
+		var password string
+		if info.PasswordFromSecret != nil && info.PasswordFromSecret.Name != "" {
+			sec, err := g.k8sC.CoreV1().
+				Secrets(info.PasswordFromSecret.Namespace).
+				Get(ctx, info.PasswordFromSecret.Name, k8smetav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+
+			if info.PasswordFromSecret.Key != "" {
+				password = sec.StringData[info.PasswordFromSecret.Key]
+			}
+			if password == "" {
+				password = sec.StringData["password"]
+			}
+			if password == "" {
+				password = sec.StringData["data"]
+			}
+		} else {
+			password = info.Password
+		}
+
 		dataMap := map[string][]byte{
-			"password": []byte(info.Password),
+			"password": []byte(password),
 			"username": []byte(info.Username),
 			"host":     []byte(info.Host),
 			"database": []byte(fmt.Sprintf("%d", info.Database)),
