@@ -317,10 +317,9 @@ func getServiceUpstreamNetworkPolicy() *networkingv1.NetworkPolicy {
 	}
 }
 
-func InstallCommon(ctx context.Context, c kubernetes.Interface,
-	clusterCfg *corev1.ClusterConfig, r *corev1.Region) error {
+func InstallCommon(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, c, getServiceUpstreamNetworkPolicy()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, o.K8sC, getServiceUpstreamNetworkPolicy()); err != nil {
 		return err
 	}
 

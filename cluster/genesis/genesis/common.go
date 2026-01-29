@@ -89,7 +89,7 @@ func (g *Genesis) installComponents(ctx context.Context,
 		return err
 	}
 
-	if err := components.InstallCommon(ctx, g.k8sC, clusterCfg, region); err != nil {
+	if err := components.InstallCommon(ctx, opts); err != nil {
 		return err
 	}
 

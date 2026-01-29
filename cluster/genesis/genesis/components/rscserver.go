@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -189,8 +190,8 @@ func CreateRscServer(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx, o.K8sC, getRscServerNetworkPolicy(o.ClusterConfig)); err != nil {
-		return err
+	if err := setRscServerNetworkPolicy(ctx, o); err != nil {
+		zap.L().Warn("Could not setRscServerNetworkPolicy", zap.Error(err))
 	}
 
 	return nil
