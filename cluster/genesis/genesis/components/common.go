@@ -365,6 +365,7 @@ type CommonOpts struct {
 	SPIFFECSIDriver         string
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
+	CNIConfDir              string
 }
 
 func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {

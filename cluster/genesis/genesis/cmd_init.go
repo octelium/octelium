@@ -58,6 +58,7 @@ type InitOpts struct {
 	SPIFFECSIDriver         string
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
+	CNIConfDir              string
 }
 
 func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {

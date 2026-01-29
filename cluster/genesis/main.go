@@ -44,6 +44,7 @@ var initCmd = &cobra.Command{
 			SPIFFECSIDriver:         cmdArgs.SPIFFECSIDriver,
 			SPIFFETrustDomain:       cmdArgs.SPIFFETrustDomain,
 			EnableIngressFrontProxy: cmdArgs.EnableIngressFrontProxy,
+			CNIConfDir:              cmdArgs.CNIConfDir,
 		}); err != nil {
 			return err
 		}
@@ -65,6 +66,7 @@ var upgradeCmd = &cobra.Command{
 			SPIFFECSIDriver:         cmdArgs.SPIFFECSIDriver,
 			SPIFFETrustDomain:       cmdArgs.SPIFFETrustDomain,
 			EnableIngressFrontProxy: cmdArgs.EnableIngressFrontProxy,
+			CNIConfDir:              cmdArgs.CNIConfDir,
 		}); err != nil {
 			return err
 		}
@@ -80,6 +82,7 @@ type args struct {
 	SPIFFECSIDriver         string
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
+	CNIConfDir              string
 }
 
 func init() {
@@ -87,6 +90,7 @@ func init() {
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
 	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
+	initCmd.PersistentFlags().StringVar(&cmdArgs.CNIConfDir, "cni-conf-dir", "", "CNI config directory")
 }
 
 func init() {
@@ -94,6 +98,7 @@ func init() {
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFECSIDriver, "spiffe-csi-driver", "", "SPIFFE CSI Driver name")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
 	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
+	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.CNIConfDir, "cni-conf-dir", "", "CNI config directory")
 }
 
 func init() {

@@ -153,6 +153,9 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount string) corev1.PodSpec {
 					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
 						ret = append(ret, fmt.Sprintf("--spiffe-trust-domain=%s", val))
 					}
+					if val := os.Getenv("OCTELIUM_CNI_CONF_DIR"); val != "" {
+						ret = append(ret, fmt.Sprintf("--cni-conf-dir=%s", val))
+					}
 
 					if os.Getenv("OCTELIUM_INGRESS_FRONT_PROXY") == "true" {
 						ret = append(ret, "--ingress-front-proxy")

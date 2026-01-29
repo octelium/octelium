@@ -38,6 +38,7 @@ type UpgradeOpts struct {
 	SPIFFECSIDriver         string
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
+	CNIConfDir              string
 }
 
 func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {

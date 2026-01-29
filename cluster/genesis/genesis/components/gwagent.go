@@ -79,7 +79,12 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 								Name: "etc-cni",
 								VolumeSource: k8scorev1.VolumeSource{
 									HostPath: &k8scorev1.HostPathVolumeSource{
-										Path: "/etc/cni",
+										Path: func() string {
+											if o.CNIConfDir != "" {
+												return o.CNIConfDir
+											}
+											return "/etc/cni"
+										}(),
 										Type: &hostPathDirectoryOrCreate,
 									},
 								},
