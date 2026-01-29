@@ -43,7 +43,7 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 	mode := ucorev1.ToClusterConfig(cc).GetNetworkMode()
 
 	cni := map[string]any{
-		"cniVersion":   "0.3.1",
+		"cniVersion":   "1.0.0",
 		"name":         "octelium",
 		"type":         "bridge",
 		"bridge":       "octelium-bridge",
