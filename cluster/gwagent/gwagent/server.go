@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -113,10 +112,6 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	*/
 
-	if err := untaintNode(ctx, s.k8sC, node); err != nil {
-		zap.L().Warn("Could not untaint node", zap.Error(err))
-	}
-
 	if _, err := os.Stat("/dev/net/tun"); err != nil && os.IsNotExist(err) {
 		cmds := []string{
 			"mkdir -p /dev/net",
@@ -162,6 +157,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := gw.InitGateway(ctx,
 		s.publicIPs, node, s.octeliumC, s.regionIndex, s.regionRef, initWGPrivateKey); err != nil {
 		return errors.Errorf("Could not init Gateway: %+v", err)
+	}
+
+	if err := untaintNode(ctx, s.k8sC, node); err != nil {
+		zap.L().Warn("Could not untaint node", zap.Error(err))
 	}
 
 	wgC, err := wg.New(ctx, node, s.octeliumC, initWGPrivateKey)
@@ -225,9 +224,12 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.No
 	for i, taint := range n.Spec.Taints {
 		if taint.Key == "octelium.com/gateway-init" {
 			zap.L().Info("Found gateway-init taint. Removing it")
-			if err := waitForMultusPod(ctx, k8sC, n); err != nil {
-				return err
-			}
+
+			/*
+				if err := waitForMultusPod(ctx, k8sC, n); err != nil {
+					return err
+				}
+			*/
 
 			node, err := k8sC.CoreV1().Nodes().Get(ctx, n.Name, k8smetav1.GetOptions{})
 			if err != nil {
@@ -248,6 +250,7 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.No
 	return nil
 }
 
+/*
 func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.Node) error {
 	doFn := func() error {
 		pods, err := k8sC.CoreV1().Pods("kube-system").List(ctx, k8smetav1.ListOptions{
@@ -296,6 +299,7 @@ func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8score
 
 	return errors.Errorf("Could not check for multus pod readiness on the Node: %s", n.Name)
 }
+*/
 
 func Run(ctx context.Context) error {
 
