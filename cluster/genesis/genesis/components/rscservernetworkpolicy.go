@@ -69,9 +69,7 @@ func setNetworkPolicyCilium(
 		Spec: &api.Rule{
 			EndpointSelector: api.EndpointSelector{
 				LabelSelector: &v1.LabelSelector{
-					MatchLabels: map[string]string{
-						"app": "octelium",
-					},
+					MatchLabels: getComponentLabels(componentRscServer),
 				},
 			},
 			Ingress: []api.IngressRule{
@@ -79,11 +77,9 @@ func setNetworkPolicyCilium(
 					IngressCommonRule: api.IngressCommonRule{
 						FromEndpoints: []api.EndpointSelector{
 							{
-
 								LabelSelector: &v1.LabelSelector{
 									MatchLabels: map[string]string{
-										"k8s:io.kubernetes.pod.namespace": "octelium",
-										"k8s:app":                         "octelium",
+										"app": "octelium",
 									},
 								},
 							},
@@ -122,13 +118,13 @@ func setNetworkPolicyCalico(
 			Namespace: vutils.K8sNS,
 		},
 		Spec: calicoapi.NetworkPolicySpec{
-			Selector: "app == 'octelium'",
+			Selector: "app == 'octelium' && octelium.com/component == 'rscserver'",
 			Types:    []calicoapi.PolicyType{calicoapi.PolicyTypeIngress},
 			Ingress: []calicoapi.Rule{
 				{
 					Action: calicoapi.Allow,
 					Source: calicoapi.EntityRule{
-						Selector: "app == 'octelium' && projectcalico.org/namespace == 'octelium'",
+						Selector: "app == 'octelium'",
 					},
 				},
 			},
@@ -159,8 +155,6 @@ func setRscServerNetworkPolicy(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	var doSet bool
-
 	if cniType != "" {
 		zap.L().Debug("Found CNI installed", zap.String("cniType", cniType))
 	}
@@ -171,20 +165,11 @@ func setRscServerNetworkPolicy(ctx context.Context, o *CommonOpts) error {
 			return err
 		}
 
-		doSet = true
 	case "calico":
 		if err := setNetworkPolicyCalico(ctx, config); err != nil {
 			return err
 		}
 
-		doSet = true
-	}
-
-	if doSet {
-		if _, err := k8sutils.CreateOrUpdateNetworkPolicy(ctx,
-			o.K8sC, getRscServerNetworkPolicy(o.ClusterConfig)); err != nil {
-			return err
-		}
 	}
 
 	return nil
