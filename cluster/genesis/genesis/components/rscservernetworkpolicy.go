@@ -84,8 +84,27 @@ func setNetworkPolicyCilium(
 							{
 								LabelSelector: &v1.LabelSelector{
 									MatchLabels: map[string]string{
-										"app": "octelium",
+										"app":                         "octelium",
+										"io.kubernetes.pod.namespace": vutils.K8sNS,
 									},
+								},
+							},
+							{
+								LabelSelector: &v1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app":                         "octelium",
+										"io.kubernetes.pod.namespace": "default",
+									},
+								},
+							},
+						},
+					},
+					ToPorts: []api.PortRule{
+						{
+							Ports: []api.PortProtocol{
+								{
+									Port:     "8080",
+									Protocol: api.ProtoTCP,
 								},
 							},
 						},
