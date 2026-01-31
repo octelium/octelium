@@ -265,10 +265,12 @@ func getHttpConnManagerFilterMain(ctx context.Context, r *GetListenersReq) (*lis
 	cc := r.ClusterConfig
 
 	filter := &envoyhcm.HttpConnectionManager{
-		CodecType:             envoyhcm.HttpConnectionManager_AUTO,
-		StatPrefix:            "hcm-main",
-		ServerName:            "octelium",
-		StripMatchingHostPort: true,
+		CodecType:  envoyhcm.HttpConnectionManager_AUTO,
+		StatPrefix: "hcm-main",
+		ServerName: "octelium",
+		StripPortMode: &envoyhcm.HttpConnectionManager_StripAnyHostPort{
+			StripAnyHostPort: true,
+		},
 		RouteSpecifier: &envoyhcm.HttpConnectionManager_RouteConfig{
 			RouteConfig: routeConfig,
 		},
