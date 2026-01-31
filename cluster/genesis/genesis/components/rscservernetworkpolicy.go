@@ -18,6 +18,7 @@ package components
 
 import (
 	"context"
+	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -27,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	calicoapi "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	calicoclient "github.com/projectcalico/api/pkg/client/clientset_generated/clientset"
+	"github.com/projectcalico/api/pkg/lib/numorstring"
 	"go.uber.org/zap"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,16 +37,19 @@ import (
 
 func detectCNI(ctx context.Context, o *CommonOpts) (string, error) {
 
-	dsList, err := o.K8sC.AppsV1().DaemonSets("kube-system").List(ctx, metav1.ListOptions{})
+	dsList, err := o.K8sC.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", err
 	}
 
 	for _, ds := range dsList.Items {
-		if ds.Name == "cilium" {
+		if strings.Contains(ds.Name, "cilium") &&
+			(ds.Namespace == "kube-system" ||
+				strings.Contains(ds.Namespace, "cilium")) {
 			return "cilium", nil
 		}
-		if ds.Name == "calico-node" {
+		if strings.Contains(ds.Name, "calico") && (ds.Namespace == "kube-system" ||
+			strings.Contains(ds.Namespace, "calico") || strings.Contains(ds.Namespace, "tigera")) {
 			return "calico", nil
 		}
 	}
@@ -126,6 +131,11 @@ func setNetworkPolicyCalico(
 					Source: calicoapi.EntityRule{
 						Selector: "app == 'octelium'",
 					},
+					Destination: calicoapi.EntityRule{
+						Ports: []numorstring.Port{
+							numorstring.SinglePort(8080),
+						},
+					},
 				},
 			},
 		},
@@ -155,9 +165,12 @@ func setRscServerNetworkPolicy(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if cniType != "" {
-		zap.L().Debug("Found CNI installed", zap.String("cniType", cniType))
+	if cniType == "" {
+		zap.L().Debug("Could not detect CNI. Skipping setting octelium-rscserver networkPolicy")
+		return nil
 	}
+
+	zap.L().Debug("Found CNI installed", zap.String("cniType", cniType))
 
 	switch cniType {
 	case "cilium":
