@@ -76,9 +76,9 @@ kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3/manifests/tigera-operator.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3/manifests/custom-resources.yaml
 
-
+kubectl get ds -A
 kubectl rollout status daemonset/calico-node -n kube-system --timeout=300s
-sleep 20
+sleep 60
 
 mkdir -p /opt/cni/bin
 wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
