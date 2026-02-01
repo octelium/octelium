@@ -19,7 +19,8 @@ jobs:
       - name: Run
         run: |
           sudo chmod +x ./.github/scripts/cluster-install/k3s-cilium.sh
-          sudo ./.github/scripts/cluster-install/k3s-cilium.sh
+          export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
+          sudo -E ./.github/scripts/cluster-install/k3s-cilium.sh
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
@@ -27,3 +28,15 @@ jobs:
           kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
           curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
+
+          export OCTELIUM_INSECURE_TLS=true
+          export OCTELIUM_DOMAIN=localhost
+          AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
+          USER_NAME="$(id -un)"
+          sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
+          octelium login --domain localhost --auth-token $AUTH_TOKEN
+          octelium status
+
+          octelium connect -p demo-nginx:9090 &
+          sleep 3
+          curl --fail --retry 10 --retry-delay 1 --max-time 2 http://localhost:9090

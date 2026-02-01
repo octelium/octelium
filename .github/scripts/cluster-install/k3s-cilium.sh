@@ -196,3 +196,9 @@ $(if [ "$IS_QUIC" = true ]; then
 EOT
 fi)
 EOF
+
+
+for i in {1..30}; do
+  kubectl get pods -A
+  sleep 1
+done
