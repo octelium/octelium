@@ -18,8 +18,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Run
         run: |
-          sudo chmod +x ./.github/scripts/cluster/install/k3s-cilium.sh
-          sudo ./.github/scripts/cluster/install/k3s-cilium.sh
+          sudo chmod +x ./.github/scripts/cluster-install/k3s-cilium.sh
+          sudo ./.github/scripts/cluster-install/k3s-cilium.sh
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
