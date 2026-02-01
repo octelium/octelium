@@ -205,7 +205,5 @@ kubectl get svc -A
 kubectl get ds -A
 kubectl get deployment -A
 
-echo "${EXTERNAL_IP}  localhost" | tee -a /etc/hosts
-echo "${EXTERNAL_IP}  octelium-api.localhost" | tee -a /etc/hosts
-
-cat /etc/hosts
+kubectl port-forward svc/octelium-ingress-dataplane 443:443 -n octelium &
+sleep 3
