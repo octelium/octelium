@@ -3,8 +3,11 @@ permissions:
   contents: read
 on: workflow_dispatch
 jobs:
-  cilium:
+  test:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        script: [k3s-cilium, k3s-calico]
     steps:
       - name: Install deps
         run: |
@@ -18,9 +21,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Run
         run: |
-          sudo chmod +x ./.github/scripts/cluster-install/k3s-cilium.sh
+          sudo chmod +x ./.github/scripts/cluster-install/${{ matrix.script }}.sh
           export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
-          sudo -E ./.github/scripts/cluster-install/k3s-cilium.sh
+          sudo -E ./.github/scripts/cluster-install/${{ matrix.script }}.sh
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml
           export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
