@@ -78,7 +78,9 @@ kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3
 
 
 kubectl rollout status daemonset/calico-node -n kube-system --timeout=300s
+sleep 20
 
+mkdir -p /opt/cni/bin
 wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
 tar -C /opt/cni/bin -xzf cni-plugins-linux-amd64-v1.3.0.tgz
 
