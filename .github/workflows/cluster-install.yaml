@@ -33,6 +33,7 @@ jobs:
 
           export OCTELIUM_INSECURE_TLS=true
           export OCTELIUM_DOMAIN=localhost
+          sudo chmod 644 $OCTELIUM_AUTH_TOKEN_SAVE_PATH
           AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
           USER_NAME="$(id -un)"
           sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
