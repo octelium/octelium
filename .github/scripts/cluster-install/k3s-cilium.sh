@@ -200,3 +200,7 @@ for i in {1..30}; do
   kubectl get pods -A
   sleep 1
 done
+
+kubectl get svc -A
+kubectl get ds -A
+kubectl get deployment -A

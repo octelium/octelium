@@ -27,6 +27,8 @@ jobs:
           kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress --namespace octelium --timeout=600s
+
+          echo "kubectl wait cmds done"
           curl -k --fail --retry 10 --retry-delay 1 --max-time 2 https://localhost
 
           export OCTELIUM_INSECURE_TLS=true
