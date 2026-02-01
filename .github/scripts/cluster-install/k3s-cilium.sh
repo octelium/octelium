@@ -196,7 +196,7 @@ fi)
 EOF
 
 
-for i in {1..30}; do
+for i in {1..10}; do
   kubectl get pods -A
   sleep 1
 done
@@ -204,3 +204,8 @@ done
 kubectl get svc -A
 kubectl get ds -A
 kubectl get deployment -A
+
+echo "${EXTERNAL_IP}  localhost" | tee -a /etc/hosts
+echo "${EXTERNAL_IP}  octelium-api.localhost" | tee -a /etc/hosts
+
+cat /etc/hosts
