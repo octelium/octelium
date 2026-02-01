@@ -95,7 +95,7 @@ func getEnvoyIngressDataPlaneConfigMap() *k8scorev1.ConfigMap {
 	}
 }
 
-func getIngressDataPlaneService(c *corev1.ClusterConfig, r *corev1.Region) *k8scorev1.Service {
+func getIngressDataPlaneService(o *CommonOpts) *k8scorev1.Service {
 
 	ret := &k8scorev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -107,10 +107,10 @@ func getIngressDataPlaneService(c *corev1.ClusterConfig, r *corev1.Region) *k8sc
 			Type:     k8scorev1.ServiceTypeLoadBalancer,
 			Selector: getComponentLabels(componentIngressDataPlane),
 			ExternalIPs: func() []string {
-				if r.Metadata.SystemLabels == nil {
+				if o.Region.Metadata.SystemLabels == nil {
 					return nil
 				}
-				externalIPsStr, ok := r.Metadata.SystemLabels["external-ips"]
+				externalIPsStr, ok := o.Region.Metadata.SystemLabels["external-ips"]
 				if !ok || len(externalIPsStr) == 0 {
 					return nil
 				}
@@ -123,7 +123,12 @@ func getIngressDataPlaneService(c *corev1.ClusterConfig, r *corev1.Region) *k8sc
 			Ports: []k8scorev1.ServicePort{
 				{
 					Protocol: k8scorev1.ProtocolTCP,
-					Port:     443,
+					Port: func() int32 {
+						if o.EnableIngressFrontProxy {
+							return 8080
+						}
+						return 443
+					}(),
 					TargetPort: intstr.IntOrString{
 						Type:   intstr.Int,
 						IntVal: 8080,
@@ -380,7 +385,7 @@ func CreateIngress(ctx context.Context, o *CommonOpts) error {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateService(ctx, o.K8sC, getIngressDataPlaneService(o.ClusterConfig, o.Region)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateService(ctx, o.K8sC, getIngressDataPlaneService(o)); err != nil {
 		return err
 	}
 
