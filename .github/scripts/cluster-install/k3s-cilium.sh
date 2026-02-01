@@ -21,8 +21,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
-    --nat) IS_NAT=true; shift ;;
-    --force-machine-ip) FORCE_VM_IP=true; shift ;;
     --quicv0) IS_QUIC=true; shift ;;
     --uninstall) IS_UNINSTALL=true; shift ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
@@ -115,11 +113,8 @@ kubectl wait --for=condition=Ready nodes --all --timeout=600s
 NODE_NAME=$(kubectl get nodes --no-headers -o jsonpath='{.items[0].metadata.name}')
 
 
-if $FORCE_VM_IP; then
-  kubectl annotate node ${NODE_NAME} octelium.com/public-ip-test=${DEFAULT_LINK_ADDR}
-else
-  kubectl annotate node ${NODE_NAME} octelium.com/public-ip=${EXTERNAL_IP}
-fi
+kubectl annotate node ${NODE_NAME} octelium.com/public-ip-test=${DEFAULT_LINK_ADDR}
+
 
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
