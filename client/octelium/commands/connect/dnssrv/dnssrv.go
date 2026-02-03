@@ -191,7 +191,7 @@ func (s *Server) isClusterDomain(domain string) bool {
 }
 
 func (s *Server) Run() error {
-	zap.L().Debug("Starting running local DNS server")
+	zap.L().Debug("Starting running local DNS server", zap.String("addr", s.listenAddr))
 	go func() {
 		if err := s.doRun(); err != nil {
 			zap.L().Warn("Could not run local DNS server", zap.Error(err))

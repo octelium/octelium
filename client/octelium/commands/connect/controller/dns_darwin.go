@@ -256,6 +256,7 @@ func (c *Controller) doRunScutil(arg string) error {
 	cmd.Stdin = strings.NewReader(arg)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	zap.L().Debug("Running scutil command", zap.String("input", arg))
 	if err := cmd.Run(); err != nil {
 		return errors.Errorf("Could not run scutil command: %s: stderr: %s", arg, stderr.String())
 	}

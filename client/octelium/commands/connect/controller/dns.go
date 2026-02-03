@@ -28,43 +28,6 @@ import (
 	"go.uber.org/zap"
 )
 
-/*
-const resolvConfTemplate = `
-{{range .Servers}}
-nameserver {{.}}
-{{end}}
-nameserver 8.8.8.8
-
-search {{range .Domains}}{{.}} {{end}}
-`
-
-type resolvConfArgs struct {
-	Servers []string
-	Domains []string
-}
-
-func (c *Controller) getResolvConf() ([]byte, error) {
-	t, err := template.New("resolvconf").Parse(resolvConfTemplate)
-	if err != nil {
-		return nil, err
-	}
-
-	var tpl bytes.Buffer
-
-	args := &resolvConfArgs{
-		Servers: c.getDNSServers(),
-		Domains: c.getDNSSearchDomains(),
-	}
-
-	if err := t.Execute(&tpl, args); err != nil {
-		return nil, err
-	}
-
-	return tpl.Bytes(), nil
-
-}
-*/
-
 func (c *Controller) getCurrentDNS() net.IP {
 	c.dnsServers.Lock()
 	defer c.dnsServers.Unlock()
@@ -77,7 +40,7 @@ func (c *Controller) getCurrentDNS() net.IP {
 func (c *Controller) SetDNS() error {
 
 	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
-		zap.S().Debugf("Container mode. Not setting DNS")
+		zap.L().Debug("Container mode. Not setting DNS")
 		return nil
 	}
 
@@ -92,37 +55,43 @@ func (c *Controller) SetDNS() error {
 	c.dnsServers.Unlock()
 
 	if c.isNetstack || c.c.Preferences.IgnoreDNS || len(dnsServers) == 0 {
-		zap.S().Debugf("Ignoring setting DNS")
+		zap.L().Debug("Ignoring setting DNS")
 		return nil
 	}
 
+	zap.L().Debug("Setting DNS servers", zap.Strings("servers", dnsServers))
+
 	if err := c.doSetDNS(); err != nil {
-		zap.S().Errorf("Could not set DNS: %s", err)
+		zap.L().Warn("Could not set DNS", zap.Error(err))
 	}
+
 	return nil
 }
 
 func (c *Controller) UnsetDNS() error {
-	zap.S().Debugf("Unsetting DNS")
+	zap.L().Debug("Unsetting DNS")
 	if c.isNetstack || c.c.Preferences.IgnoreDNS {
 		return nil
 	}
 	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
-		zap.S().Debugf("Container mode. Not unsetting DNS")
+		zap.L().Debug("Container mode. Not unsetting DNS")
 		return nil
 	}
 
 	if err := c.doUnsetDNS(); err != nil {
-		zap.S().Errorf("Could not unset DNS: %s", err)
+		zap.L().Warn("Could not unset DNS", zap.Error(err))
 	}
+
 	return nil
 }
 
 func (c *Controller) getDNSServers() []string {
 	if c.c.Preferences.LocalDNS.IsEnabled {
-		host, _, _ := net.SplitHostPort(c.c.Preferences.LocalDNS.ListenAddress)
-		return []string{
-			host,
+		if addr := c.getLocalDNSServerAddr(); addr != "" {
+			host, _, _ := net.SplitHostPort(addr)
+			return []string{
+				host,
+			}
 		}
 	}
 
@@ -261,4 +230,22 @@ func generateResolvConf(config *resolvConfOpts) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+func (c *Controller) getLocalDNSServerAddr() string {
+	if c.c.Preferences.LocalDNS.ListenAddress != "" {
+		return c.c.Preferences.LocalDNS.ListenAddress
+	}
+	if len(c.c.Connection.Addresses) > 0 {
+		if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {
+			addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V6)
+			return net.JoinHostPort(addr.String(), "53")
+		}
+		if c.ipv4Supported && c.c.Connection.Addresses[0].V4 != "" {
+			addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V4)
+			return net.JoinHostPort(addr.String(), "53")
+		}
+	}
+
+	return ""
 }

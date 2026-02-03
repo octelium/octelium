@@ -68,10 +68,12 @@ func (c *Controller) doDeleteDev() error {
 		c.dev.Down()
 	}
 
-	zap.S().Debugf("setting dev down")
-	if o, err := exec.Command("ifconfig", c.c.Preferences.DeviceName, "down").CombinedOutput(); err != nil {
-		zap.S().Warnf("Could not set dev down: %s", string(o))
-	}
+	/*
+		zap.S().Debugf("setting dev down")
+		if o, err := exec.Command("ifconfig", c.c.Preferences.DeviceName, "down").CombinedOutput(); err != nil {
+			zap.S().Warnf("Could not set dev down: %s", string(o))
+		}
+	*/
 
 	return nil
 }

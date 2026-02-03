@@ -144,14 +144,6 @@ func (c *Controller) Close() error {
 		zap.L().Debug("Could not doDisconnect", zap.Error(err))
 	}
 
-	/*
-		if c.eSSHWSSrv != nil {
-			if err := c.eSSHWSSrv.Close(); err != nil {
-				zap.L().Warn("Could not close Worskpace eSSH server", zap.Error(err))
-			}
-		}
-	*/
-
 	if c.eSSHHMainSrv != nil {
 		if err := c.eSSHHMainSrv.Close(); err != nil {
 			zap.L().Warn("Could not close main eSSH server", zap.Error(err))
@@ -194,23 +186,7 @@ func (c *Controller) Start(ctx context.Context) error {
 			HasV4:         c.ipv4Supported,
 			HasV6:         c.ipv6Supported,
 			DNSGetter:     c,
-			ListenAddr: func() string {
-				if c.c.Preferences.LocalDNS.ListenAddress != "" {
-					return c.c.Preferences.LocalDNS.ListenAddress
-				}
-				if len(c.c.Connection.Addresses) > 0 {
-					if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {
-						addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V6)
-						return net.JoinHostPort(addr.String(), "53")
-					}
-					if c.ipv4Supported && c.c.Connection.Addresses[0].V4 != "" {
-						addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V4)
-						return net.JoinHostPort(addr.String(), "53")
-					}
-				}
-
-				return ""
-			}(),
+			ListenAddr:    c.getLocalDNSServerAddr(),
 		})
 		if err != nil {
 			zap.L().Warn("Could not initialize local DNS server", zap.Error(err))
