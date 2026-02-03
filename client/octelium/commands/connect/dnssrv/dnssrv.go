@@ -76,38 +76,10 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 		return nil, errors.Errorf("Local DNS: invalid listen address: %s", opts.ListenAddr)
 	}
 	return &Server{
-		domain:    opts.ClusterDomain,
-		hasV4:     opts.HasV4,
-		hasV6:     opts.HasV6,
-		dnsGetter: opts.DNSGetter,
-
-		/*
-			useFallback: opts.UseFallback,
-			fallbackServerAddrs: func() []string {
-
-				if len(opts.FallbackServers) == 0 {
-					return []string{"8.8.8.8:53"}
-				}
-
-				var ret []string
-				for _, addr := range opts.FallbackServers {
-					if govalidator.IsIP(addr) {
-						ret = append(ret, net.JoinHostPort(addr, "53"))
-					}
-					if _, _, err := net.SplitHostPort(addr); err == nil {
-						ret = append(ret, addr)
-					}
-
-					zap.L().Warn("Skipping invalid fallback DNS server", zap.String("addr", addr))
-				}
-
-				if len(ret) == 0 {
-					return []string{"8.8.8.8:53"}
-				}
-
-				return ret
-			}(),
-		*/
+		domain:     opts.ClusterDomain,
+		hasV4:      opts.HasV4,
+		hasV6:      opts.HasV6,
+		dnsGetter:  opts.DNSGetter,
 		cache:      newCache(),
 		listenAddr: listenAddr,
 	}, nil
@@ -143,25 +115,6 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		msg.Ns = ret.Ns
 		w.WriteMsg(&msg)
 		return
-		/*
-			if !s.useFallback {
-				msg.SetRcode(r, dns.RcodeRefused)
-				w.WriteMsg(&msg)
-				return
-			}
-			ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, s.fallbackServerAddrs[0])
-			if err != nil {
-				zap.L().Debug("Local DNS: Could not exchange answer for external zone", zap.Error(err))
-				msg.SetRcode(r, dns.RcodeServerFailure)
-				w.WriteMsg(&msg)
-				return
-			}
-			msg.Answer = ret.Answer
-			msg.Extra = ret.Extra
-			msg.Ns = ret.Ns
-			w.WriteMsg(&msg)
-			return
-		*/
 	}
 
 	switch {

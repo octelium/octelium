@@ -285,15 +285,17 @@ func getConnectionConfig(ctx context.Context,
 						}
 						return ""
 					}
-					return "127.0.0.100:53"
+					return ""
 				}(),
 			},
 		},
 	}
 
-	if connCfg.Preferences.LocalDNS.IsEnabled && connCfg.Preferences.LocalDNS.ListenAddress == "" {
-		return nil, nil, errors.Errorf("Invalid local DNS server listen address: %s", cmdArgs.LocalDNSListenAddr)
-	}
+	/*
+		if connCfg.Preferences.LocalDNS.IsEnabled && connCfg.Preferences.LocalDNS.ListenAddress == "" {
+			return nil, nil, errors.Errorf("Invalid local DNS server listen address: %s", cmdArgs.LocalDNSListenAddr)
+		}
+	*/
 
 	if connCfg.Preferences.KeepAliveSeconds == 0 {
 		connCfg.Preferences.KeepAliveSeconds = 30

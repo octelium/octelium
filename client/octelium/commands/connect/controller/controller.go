@@ -169,7 +169,7 @@ func (c *Controller) Close() error {
 }
 
 func (c *Controller) Start(ctx context.Context) error {
-	zap.S().Debugf("Starting controller...")
+	zap.L().Debug("Starting controller...")
 
 	if err := c.setServiceConfigs(); err != nil {
 		return err
@@ -194,11 +194,23 @@ func (c *Controller) Start(ctx context.Context) error {
 			HasV4:         c.ipv4Supported,
 			HasV6:         c.ipv6Supported,
 			DNSGetter:     c,
-			ListenAddr:    c.c.Preferences.LocalDNS.ListenAddress,
-			/*
-				FallbackServers: c.c.Preferences.LocalDNS.FallbackServers,
-				UseFallback:     c.c.Preferences.LocalDNS.UseFallback,
-			*/
+			ListenAddr: func() string {
+				if c.c.Preferences.LocalDNS.ListenAddress != "" {
+					return c.c.Preferences.LocalDNS.ListenAddress
+				}
+				if len(c.c.Connection.Addresses) > 0 {
+					if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {
+						addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V6)
+						return net.JoinHostPort(addr.String(), "53")
+					}
+					if c.ipv4Supported && c.c.Connection.Addresses[0].V4 != "" {
+						addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V4)
+						return net.JoinHostPort(addr.String(), "53")
+					}
+				}
+
+				return ""
+			}(),
 		})
 		if err != nil {
 			zap.L().Warn("Could not initialize local DNS server", zap.Error(err))
@@ -209,21 +221,6 @@ func (c *Controller) Start(ctx context.Context) error {
 			zap.L().Warn("Could not run local DNS server", zap.Error(err))
 		}
 	}
-
-	/*
-		if os.Getenv("OCTELIUM_WS_ESSH") == "true" {
-			zap.L().Debug("Creating Workspace eSSH server")
-			c.eSSHWSSrv, err = esshws.New(c.c, c)
-			if err != nil {
-				zap.L().Warn("Could not create a new Workspace eSSH server", zap.Error(err))
-			} else {
-				zap.L().Debug("Running Workspace eSSH server")
-				if err := c.eSSHWSSrv.Run(ctx); err != nil {
-					zap.L().Warn("Could not run the Workspace eSSH server", zap.Error(err))
-				}
-			}
-		}
-	*/
 
 	if c.c.Preferences.ESSH != nil && c.c.Preferences.ESSH.IsEnabled {
 		zap.L().Debug("Creating eSSH main server")
