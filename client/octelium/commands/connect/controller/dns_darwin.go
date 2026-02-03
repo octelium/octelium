@@ -28,22 +28,26 @@ import (
 )
 
 func (c *Controller) doSetDNS() error {
-	if err := c.doSetDNSNetworkSetup(); err != nil {
-		zap.S().Errorf("Could not set DNS via networksetup: %+v. Fallback to setting resolv.conf", err)
-		return c.doSetDNSResolvConf()
+
+	if err := c.doSetDNSScutil(); err != nil {
+		zap.L().Warn("Could not doSetDNSScutil", zap.Error(err))
+		if err := c.doSetDNSNetworkSetup(); err != nil {
+			zap.L().Warn("Could not doSetDNSNetworkSetup", zap.Error(err))
+			return c.doSetDNSResolvConf()
+		}
 	}
 
 	return nil
 }
 
 func (c *Controller) doSetDNSNetworkSetup() error {
-	zap.S().Debugf("Setting DNS via networksetup")
+	zap.L().Debug("Setting DNS via networksetup")
 	netServices, err := getNetworkSetupServices()
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Found network services: %+q", netServices)
+	zap.L().Debug("Found network services", zap.Strings("svcList", netServices))
 
 	c.c.Preferences.MacosPrefs.NetworkSetupConfig = &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig{}
 	networkSetupConfig := c.c.Preferences.MacosPrefs.NetworkSetupConfig
@@ -55,14 +59,14 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 				return errors.Errorf("Could not get list network services: %+v. %s", err, string(outServers))
 			}
 
-			zap.S().Debugf("dns servers of svc: %s = %s", svc, string(outServers))
+			zap.L().Debug("Got search domains", zap.String("svc", svc), zap.String("domains", string(outServers)))
 
 			outDomains, err := exec.Command("networksetup", "-getsearchdomains", svc).CombinedOutput()
 			if err != nil {
 				return errors.Errorf("Could not get list network services: %+v. %s", err, string(outServers))
 			}
 
-			zap.S().Debugf("search domains of svc: %s = %s", svc, string(outDomains))
+			zap.L().Debug("Got search domains", zap.String("svc", svc), zap.String("domains", string(outDomains)))
 
 			var dnsServers []string
 			var dnsDomains []string
@@ -93,7 +97,7 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 			})
 		}
 
-		zap.S().Debugf("Stored networksetup config: %+v", networkSetupConfig)
+		zap.L().Debug("Stored networksetup config", zap.Any("cfg", networkSetupConfig))
 
 		c.dnsConfigSaved = true
 	}
@@ -134,12 +138,16 @@ func (c *Controller) doSetDNSResolvConf() error {
 
 func (c *Controller) doUnsetDNS() error {
 
-	zap.S().Debugf("Unsetting DNS")
+	zap.L().Debug("Unsetting DNS")
 	if c.c.Preferences.MacosPrefs == nil {
 		return nil
 	}
 
 	switch c.c.Preferences.MacosPrefs.DnsMode {
+	case pbconfig.Connection_Preferences_MacOS_SCUTIL:
+		if err := c.doUnsetDNSScutil(); err != nil {
+			return err
+		}
 	case pbconfig.Connection_Preferences_MacOS_RESOLVCONF:
 		if len(c.c.Preferences.MacosPrefs.ResolvConf) > 0 {
 			if err := os.WriteFile("/etc/resolv.conf", c.c.Preferences.MacosPrefs.ResolvConf, 0644); err != nil {
@@ -199,7 +207,7 @@ func setNetworkSetupDNSServers(svc string, dnsServers []string, networkDomains [
 }
 
 func (c *Controller) doUnSetDNSNetworkSetup() error {
-	zap.S().Debugf("Unsetting DNS using networksetup")
+	zap.L().Debug("Unsetting DNS using networksetup")
 	if c.c.Preferences.MacosPrefs.NetworkSetupConfig != nil {
 		for _, svc := range c.c.Preferences.MacosPrefs.NetworkSetupConfig.Services {
 			if err := setNetworkSetupDNSServers(svc.Name, svc.DnsServers, svc.DnsDomains); err != nil {
@@ -208,5 +216,48 @@ func (c *Controller) doUnSetDNSNetworkSetup() error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Controller) doSetDNSScutil() error {
+	arg := fmt.Sprintf(`
+open
+d.init
+d.add ServerAddresses * %s
+d.add SearchDomains * %s
+d.add SupplementalMatchDomains * %s
+d.add InterfaceName %s
+set State:/Network/Service/octelium/DNS
+quit
+`, strings.Join(c.getClusterDNSServers(), " "),
+		strings.Join(c.getDNSSearchDomains(), " "),
+		strings.Join(c.getDNSSearchDomains(), " "),
+		c.c.Preferences.DeviceName)
+
+	if err := c.doRunScutil(arg); err != nil {
+		return err
+	}
+
+	c.c.Preferences.MacosPrefs.DnsMode = pbconfig.Connection_Preferences_MacOS_SCUTIL
+	return nil
+}
+
+func (c *Controller) doUnsetDNSScutil() error {
+	arg := `
+open
+remove State:/Network/Service/octelium/DNS
+quit
+`
+	return c.doRunScutil(arg)
+}
+
+func (c *Controller) doRunScutil(arg string) error {
+	cmd := exec.Command("scutil")
+	cmd.Stdin = strings.NewReader(arg)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return errors.Errorf("Could not run scutil command: %s: stderr: %s", arg, stderr.String())
+	}
 	return nil
 }
