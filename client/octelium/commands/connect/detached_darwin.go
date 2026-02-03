@@ -15,86 +15,34 @@
 package connect
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
-	"text/template"
 
-	"github.com/manifoldco/promptui"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 func doRunDetached(args []string) error {
-
-	if ldflags.IsProduction() {
-		return errors.Errorf(`Detached mode is not available for MacOS. Use "sudo -E octelium connect" instead.`)
-	}
-
 	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
 
-	shellCommand := fmt.Sprintf(
-		"nohup sudo -S %s %s > /dev/null 2>&1 &",
+	innerCommand := fmt.Sprintf("%s %s > /dev/null 2>&1 &",
 		executable,
 		strings.Join(args, " "),
 	)
 
-	cmd := exec.Command("bash", "-c", shellCommand)
+	script := fmt.Sprintf("do shell script %q with administrator privileges", innerCommand)
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	defer stdin.Close()
+	zap.L().Debug("detached cmd", zap.String("cmd", script))
 
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	cmd := exec.Command("osascript", "-e", script)
 
-	prompt := promptui.Prompt{
-		Label:       "Enter root password",
-		HideEntered: true,
-		Mask:        '*',
-	}
-
-	res, err := prompt.Run()
-	if err != nil {
-		return err
-	}
-
-	if _, err := stdin.Write([]byte(res)); err != nil {
+	if err := cmd.Run(); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-var tmplScript = `
-#!/bin/bash
-cmd="{{.Cmd}}"
-eval "${cmd}" &>/dev/null & disown;
-`
-
-type tmplArgs struct {
-	Cmd string
-}
-
-func getScript(args *tmplArgs) ([]byte, error) {
-	t, err := template.New("macos-detached").Parse(tmplScript)
-	if err != nil {
-		return nil, err
-	}
-
-	var tpl bytes.Buffer
-
-	if err := t.Execute(&tpl, args); err != nil {
-		return nil, err
-	}
-
-	return tpl.Bytes(), nil
 }
