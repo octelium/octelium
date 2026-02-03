@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,10 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 			}
 			return ""
 		}
+		if runtime.GOOS == "darwin" {
+			return "127.0.0.1:53"
+		}
+
 		return "127.0.0.100:53"
 	}()
 	if listenAddr == "" {

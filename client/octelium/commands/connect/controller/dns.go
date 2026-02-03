@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -235,6 +236,9 @@ func generateResolvConf(config *resolvConfOpts) (string, error) {
 func (c *Controller) getLocalDNSServerAddr() string {
 	if c.c.Preferences.LocalDNS.ListenAddress != "" {
 		return c.c.Preferences.LocalDNS.ListenAddress
+	}
+	if runtime.GOOS == "darwin" {
+		return "127.0.0.1:53"
 	}
 	if len(c.c.Connection.Addresses) > 0 {
 		if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {

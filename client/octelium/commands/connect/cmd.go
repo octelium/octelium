@@ -136,7 +136,7 @@ You can also use multiple scopes in the same command as follows "--scope service
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseLocalDNS, "localdns", false, "Enable local DNS server")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.LocalDNSListenAddr, "localdns-addr", "",
-		`Local DNS server listen address. By default it is set to "127.0.0.100:53"`)
+		`Local DNS server listen address.`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.TunnelMode, "tunnel-mode", "",
 		`
 	The tunneling mode for the  connection. The current available values are "wg", "wireguard" which use WireGuard (i.e. the default tunneling mode)

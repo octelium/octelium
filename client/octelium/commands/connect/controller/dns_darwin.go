@@ -229,7 +229,7 @@ d.add SupplementalMatchDomains * %s
 d.add InterfaceName %s
 set State:/Network/Service/octelium/DNS
 quit
-`, strings.Join(c.getClusterDNSServers(), " "),
+`, strings.Join(c.getDNSServers(), " "),
 		strings.Join(c.getDNSSearchDomains(), " "),
 		strings.Join(c.getDNSSearchDomains(), " "),
 		c.c.Preferences.DeviceName)
