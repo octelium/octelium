@@ -834,20 +834,24 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 	zap.L().Debug("Initializing storage secrets")
 
 	{
-
 		info := i.Bootstrap.Spec.PrimaryStorage.GetPostgresql()
 
 		var password string
-		if info.PasswordFromSecret != nil && info.PasswordFromSecret.Name != "" {
+
+		switch info.PasswordType.(type) {
+		case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password:
+			password = info.GetPassword()
+		case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
+			secSpec := info.GetPasswordFromSecret()
 			sec, err := g.k8sC.CoreV1().
-				Secrets(info.PasswordFromSecret.Namespace).
-				Get(ctx, info.PasswordFromSecret.Name, k8smetav1.GetOptions{})
+				Secrets(secSpec.Namespace).
+				Get(ctx, secSpec.Name, k8smetav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 
-			if info.PasswordFromSecret.Key != "" {
-				password = sec.StringData[info.PasswordFromSecret.Key]
+			if secSpec.Key != "" {
+				password = sec.StringData[secSpec.Key]
 			}
 			if password == "" {
 				password = sec.StringData["password"]
@@ -855,8 +859,6 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			if password == "" {
 				password = sec.StringData["data"]
 			}
-		} else {
-			password = info.Password
 		}
 
 		dataMap := map[string][]byte{
@@ -872,21 +874,57 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			return err
 		}
 
+		if ldflags.IsTest() {
+			os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
+			os.Setenv("OCTELIUM_POSTGRES_HOST", "localhost")
+			os.Setenv("OCTELIUM_POSTGRES_USERNAME", "postgres")
+			os.Setenv("OCTELIUM_POSTGRES_PASSWORD", "postgres")
+
+		} else {
+			if info.Database != "" {
+				os.Setenv("OCTELIUM_POSTGRES_DATABASE", info.Database)
+			}
+
+			if info.Username != "" {
+				os.Setenv("OCTELIUM_POSTGRES_USERNAME", info.Username)
+			}
+
+			if password != "" {
+				os.Setenv("OCTELIUM_POSTGRES_PASSWORD", password)
+			}
+
+			if !info.IsTLS {
+				os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
+			}
+
+			if info.Host != "" {
+				os.Setenv("OCTELIUM_POSTGRES_HOST", info.Host)
+			}
+
+			if info.Port != 0 {
+				os.Setenv("OCTELIUM_POSTGRES_PORT", fmt.Sprintf("%d", info.Port))
+			}
+		}
 	}
 
 	{
 		info := i.Bootstrap.Spec.SecondaryStorage.GetRedis()
 		var password string
-		if info.PasswordFromSecret != nil && info.PasswordFromSecret.Name != "" {
+
+		switch info.PasswordType.(type) {
+		case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password:
+			password = info.GetPassword()
+		case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
+			secSpec := info.GetPasswordFromSecret()
 			sec, err := g.k8sC.CoreV1().
-				Secrets(info.PasswordFromSecret.Namespace).
-				Get(ctx, info.PasswordFromSecret.Name, k8smetav1.GetOptions{})
+				Secrets(secSpec.Namespace).
+				Get(ctx, secSpec.Name, k8smetav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 
-			if info.PasswordFromSecret.Key != "" {
-				password = sec.StringData[info.PasswordFromSecret.Key]
+			if secSpec.Key != "" {
+				password = sec.StringData[secSpec.Key]
 			}
 			if password == "" {
 				password = sec.StringData["password"]
@@ -894,8 +932,6 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			if password == "" {
 				password = sec.StringData["data"]
 			}
-		} else {
-			password = info.Password
 		}
 
 		dataMap := map[string][]byte{
@@ -910,9 +946,35 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 		if err := g.createRedisSecret(ctx, dataMap); err != nil {
 			return err
 		}
+
+		{
+			if info.Database != 0 {
+				os.Setenv("OCTELIUM_REDIS_DATABASE", fmt.Sprintf("%d", info.Database))
+			}
+
+			if info.Username != "" {
+				os.Setenv("OCTELIUM_REDIS_USERNAME", info.Username)
+			}
+
+			if password != "" {
+				os.Setenv("OCTELIUM_REDIS_PASSWORD", password)
+			}
+
+			if info.Host != "" {
+				os.Setenv("OCTELIUM_REDIS_HOST", info.Host)
+			}
+
+			if info.Port != 0 {
+				os.Setenv("OCTELIUM_REDIS_PORT", fmt.Sprintf("%d", info.Port))
+			}
+
+			if info.IsTLS {
+				os.Setenv("OCTELIUM_REDIS_USE_TLS", "true")
+			}
+		}
 	}
 
-	g.setDBEnvVars(i)
+	// g.setDBEnvVars(i)
 
 	return nil
 }
@@ -1157,6 +1219,7 @@ func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.Clus
 	return nil
 }
 
+/*
 func (g *Genesis) setDBEnvVars(i *genesisutils.InstallCtx) {
 	zap.L().Debug("Setting postgres and redis env vars")
 
@@ -1219,6 +1282,7 @@ func (g *Genesis) setDBEnvVars(i *genesisutils.InstallCtx) {
 		os.Setenv("OCTELIUM_REDIS_USE_TLS", "true")
 	}
 }
+*/
 
 func (g *Genesis) loadClusterInitResources(ctx context.Context, ns string) (*LoadedClusterResource, error) {
 	if ns == "" {

@@ -210,9 +210,17 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 	if pgSpec.Username == "" {
 		return errors.Errorf("Empty postgres user")
 	}
-	if pgSpec.Password == "" {
-		return errors.Errorf("Empty postgres password")
+
+	switch pgSpec.PasswordType.(type) {
+	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password:
+		if pgSpec.GetPassword() == "" {
+			return errors.Errorf("Empty postgres password")
+		}
+	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
+	default:
+		return errors.Errorf("either password or passwordFromSecret must be set")
 	}
+
 	if pgSpec.Port != 0 && !govalidator.IsPort(fmt.Sprintf("%d", pgSpec.Port)) {
 		return errors.Errorf("Invalid postgres port")
 	}
@@ -231,9 +239,17 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 	if redisSpec.Host == "" {
 		return errors.Errorf("Empty redis host")
 	}
-	if redisSpec.Password == "" {
-		return errors.Errorf("Empty redis password")
+
+	switch redisSpec.PasswordType.(type) {
+	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password:
+		if redisSpec.GetPassword() == "" {
+			return errors.Errorf("Empty redis password")
+		}
+	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
+	default:
+		return errors.Errorf("either password or passwordFromSecret must be set")
 	}
+
 	if redisSpec.Port != 0 && !govalidator.IsPort(fmt.Sprintf("%d", redisSpec.Port)) {
 		return errors.Errorf("Invalid redis port")
 	}
