@@ -174,19 +174,18 @@ jobs:
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
           
-          # Convert labels to annotations
-          ANNOTATIONS=""
-          while IFS= read -r label; do
-            if [ -n "$label" ]; then
-              ANNOTATIONS="$ANNOTATIONS --annotation index:$label"
+          ANNOTATIONS=()
+          while IFS='=' read -r key value; do
+            if [ -n "$key" ] && [ -n "$value" ]; then
+              ANNOTATIONS+=("--annotation" "index:${key}=${value}")
             fi
           done <<< "$LABELS"
           
           for TAG in $TAGS; do
             echo "Creating manifest for $TAG"
             docker buildx imagetools create \
-              $ANNOTATIONS \
-              -t $TAG \
-              ${TAG}-amd64 \
-              ${TAG}-arm64
+              "${ANNOTATIONS[@]}" \
+              -t "$TAG" \
+              "${TAG}-amd64" \
+              "${TAG}-arm64"
           done
