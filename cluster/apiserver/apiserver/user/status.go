@@ -19,6 +19,7 @@ package user
 import (
 	"context"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
@@ -57,6 +58,16 @@ func (s *Server) GetStatus(ctx context.Context, req *userv1.GetStatusRequest) (*
 			},
 			Spec: &userv1.GetStatusResponse_User_Spec{
 				Email: user.Spec.Email,
+				Type: func() userv1.GetStatusResponse_User_Spec_Type {
+					switch user.Spec.Type {
+					case corev1.User_Spec_HUMAN:
+						return userv1.GetStatusResponse_User_Spec_HUMAN
+					case corev1.User_Spec_WORKLOAD:
+						return userv1.GetStatusResponse_User_Spec_WORKLOAD
+					default:
+						return userv1.GetStatusResponse_User_Spec_TYPE_UNKNOWN
+					}
+				}(),
 			},
 			Status: &userv1.GetStatusResponse_User_Status{},
 		},
