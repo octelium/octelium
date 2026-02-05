@@ -13,7 +13,7 @@ on:
 jobs:
   build:
     name: Build ARM64
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         component:
@@ -61,15 +61,12 @@ jobs:
           flavor: |
             latest=${{env.V_IS_LATEST}}
             prefix=
-            suffix=
+            suffix=-arm64
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
