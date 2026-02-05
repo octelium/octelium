@@ -22,8 +22,11 @@ import (
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/commands/auth/device/register"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 type args struct {
@@ -110,6 +113,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
 	st, err := userv1.NewMainServiceClient(conn).GetStatus(ctx, &userv1.GetStatusRequest{})
 	if err != nil {
@@ -122,6 +126,14 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	cliutils.LineInfo("You are now authenticated as %s\n", arg)
+
+	if ldflags.IsDev() {
+		if st.User.Spec != nil && st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN {
+			if err := register.DoRegister(ctx, i.Domain); err != nil {
+				zap.L().Debug("Could not register Device", zap.Error(err))
+			}
+		}
+	}
 
 	return nil
 }
