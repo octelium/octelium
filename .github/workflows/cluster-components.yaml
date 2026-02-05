@@ -13,7 +13,7 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.component }} (${{ matrix.arch }})
+    name: Build ${{ matrix.component }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -168,13 +168,25 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push manifest
+      - name: Create and push manifest with annotations
+        env:
+          LABELS: ${{ steps.meta.outputs.labels }}
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
           
+          # Convert labels to annotations
+          ANNOTATIONS=""
+          while IFS= read -r label; do
+            if [ -n "$label" ]; then
+              ANNOTATIONS="$ANNOTATIONS --annotation index:$label"
+            fi
+          done <<< "$LABELS"
+          
           for TAG in $TAGS; do
             echo "Creating manifest for $TAG"
-            docker buildx imagetools create -t $TAG \
+            docker buildx imagetools create \
+              $ANNOTATIONS \
+              -t $TAG \
               ${TAG}-amd64 \
               ${TAG}-arm64
           done
