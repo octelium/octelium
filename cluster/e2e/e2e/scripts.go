@@ -74,8 +74,14 @@ sudo rm -rf /mnt/octelium/db
 sudo mkdir -p /mnt/octelium/db
 sudo chmod -R 777 /mnt/octelium/db
 
+case "$(uname -m)" in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) ARCH="unknown" ;;
+esac
 
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
 sudo cp kubectl /usr/local/bin
 sudo chmod 755 /usr/local/bin/kubectl
 

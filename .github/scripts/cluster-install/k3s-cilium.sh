@@ -56,11 +56,16 @@ DEFAULT_LINK_ADDR=$(ip addr show "$DEVICE" | grep "inet " | awk '{print $2}' | c
 
 EXTERNAL_IP=$DEFAULT_LINK_ADDR
 
+case "$(uname -m)" in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) ARCH="unknown" ;;
+esac
 
 
 curl -fsSL https://octelium.com/install.sh | bash
 
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
 cp kubectl /usr/local/bin
 chmod 755 /usr/local/bin/kubectl
 
@@ -78,8 +83,8 @@ curl -sfL https://get.k3s.io | sh -s - \
 
 export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
-curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-amd64.tar.gz
-tar xzf cilium-linux-amd64.tar.gz
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-${ARCH}.tar.gz
+tar xzf cilium-linux-${ARCH}.tar.gz
 sudo mv cilium /usr/local/bin/
 
 cilium install \
@@ -92,8 +97,8 @@ cilium install \
 cilium status --wait
 
 
-wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
-tar -C /opt/cni/bin -xzf cni-plugins-linux-amd64-v1.3.0.tgz
+wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
+tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.3.0.tgz
 
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh

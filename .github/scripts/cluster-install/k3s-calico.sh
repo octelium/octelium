@@ -56,11 +56,15 @@ DEFAULT_LINK_ADDR=$(ip addr show "$DEVICE" | grep "inet " | awk '{print $2}' | c
 
 EXTERNAL_IP=$DEFAULT_LINK_ADDR
 
-
+case "$(uname -m)" in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) ARCH="unknown" ;;
+esac
 
 curl -fsSL https://octelium.com/install.sh | bash
 
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
 cp kubectl /usr/local/bin
 chmod 755 /usr/local/bin/kubectl
 
@@ -81,8 +85,8 @@ kubectl rollout status daemonset/calico-node -n kube-system --timeout=300s
 sleep 60
 
 mkdir -p /opt/cni/bin
-wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz
-tar -C /opt/cni/bin -xzf cni-plugins-linux-amd64-v1.3.0.tgz
+wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
+tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.3.0.tgz
 
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
