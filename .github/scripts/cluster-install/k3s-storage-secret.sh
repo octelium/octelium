@@ -63,7 +63,7 @@ case "$(uname -m)" in
 esac
 
 
-make bin-cli
+make build-cli
 cp bin/octops /usr/local/bin
 cp bin/octelium /usr/local/bin
 cp bin/octeliumctl /usr/local/bin
