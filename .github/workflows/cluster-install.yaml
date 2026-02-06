@@ -5,10 +5,13 @@ on: workflow_dispatch
 jobs:
   test:
     runs-on: ${{ matrix.runner }}
-    name: test-${{ matrix.script }}-${{ matrix.runner }}
+    name: ${{ matrix.script }}-${{ matrix.runner }}
     strategy:
       matrix:
-        script: [k3s-cilium, k3s-calico]
+        script:
+         - k3s-cilium
+         - k3s-calico
+         - k3s-storage-secret
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - name: Install deps
