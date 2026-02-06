@@ -12,6 +12,7 @@ jobs:
          - k3s-cilium
          - k3s-calico
          - k3s-storage-secret
+         - rke2
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - name: Install deps
@@ -29,8 +30,15 @@ jobs:
           sudo chmod +x ./.github/scripts/cluster-install/${{ matrix.script }}.sh
           export OCTELIUM_AUTH_TOKEN_SAVE_PATH="/tmp/octelium-auth-token"
           sudo -E ./.github/scripts/cluster-install/${{ matrix.script }}.sh
-          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-          export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+          
+
+          if [ "${{ matrix.script }}" == "rke2" ]; then
+            sudo chmod 644 /etc/rancher/rke2/rke2.yaml
+            export KUBECONFIG="/etc/rancher/rke2/rke2.yaml"
+          else
+            sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+            export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+          fi
           kubectl wait --for=condition=available deployment/svc-default-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/svc-auth-octelium-api --namespace octelium --timeout=600s
           kubectl wait --for=condition=available deployment/octelium-ingress-dataplane --namespace octelium --timeout=600s

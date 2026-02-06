@@ -28,12 +28,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 
-if $IS_UNINSTALL; then
-  /usr/local/bin/k3s-uninstall.sh
-  rm -rf /mnt/octelium/db
-  exit 0
-fi
-
 if [ -z "$DOMAIN" ]; then
   echo "Usage: $0 --domain "example.com"(REQUIRED) --public-ip "1.2.3.4"(OPTIONAL) --version "latest"(OPTIONAL) --nat (OPTIONAL)"
   exit 1
@@ -63,45 +57,20 @@ case "$(uname -m)" in
 esac
 
 
-make bin-cli
-cp bin/octops /usr/local/bin
-cp bin/octelium /usr/local/bin
-cp bin/octeliumctl /usr/local/bin
-
-chmod 755 /usr/local/bin/octops
-chmod 755 /usr/local/bin/octelium
-chmod 755 /usr/local/bin/octeliumctl
+curl -fsSL https://octelium.com/install.sh | bash
 
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl"
 cp kubectl /usr/local/bin
 chmod 755 /usr/local/bin/kubectl
 
 
-echo -e "\e[1mInstalling k3s\e[0m"
+
+curl -sfL https://get.rke2.io | sh -
+systemctl start rke2-server.service
+
+export KUBECONFIG="/etc/rancher/rke2/rke2.yaml"
 
 
-curl -sfL https://get.k3s.io | sh -s - \
-  --flannel-backend=none \
-  --disable-kube-proxy \
-  --disable servicelb \
-  --disable-network-policy \
-  --disable traefik \
-  --cluster-init
-
-export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
-
-curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-${ARCH}.tar.gz
-tar xzf cilium-linux-${ARCH}.tar.gz
-sudo mv cilium /usr/local/bin/
-
-cilium install \
-  --set k8sServiceHost=${EXTERNAL_IP} \
-  --set k8sServicePort=6443 \
-  --set kubeProxyReplacement=true \
-  --set cni.exclusive=false
-
-
-cilium status --wait
 
 
 wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
@@ -189,19 +158,13 @@ spec:
   primaryStorage:
     postgresql:
       username: octelium
-      passwordFromSecret:
-        name: octelium-pg
-        namespace: default
-        key: password
+      password: ${PG_PASSWORD}
       host: octelium-pg-postgresql.default.svc
       database: octelium
       port: 5432
   secondaryStorage:
     redis:
-      passwordFromSecret:
-        name: octelium-redis
-        namespace: default
-        key: password
+      password: ${REDIS_PASSWORD}
       host: octelium-redis-master.default.svc
       port: 6379
 $(if [ "$IS_QUIC" = true ]; then
