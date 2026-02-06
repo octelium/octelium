@@ -19,6 +19,7 @@ package authserver
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -407,6 +408,24 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 		return nil, s.errInternalErr(err)
 	}
 
+	if sess.Status.Type == corev1.Session_Status_CLIENT && sess.Status.DeviceRef != nil {
+		if idx := slices.IndexFunc(itmList.Items, func(itm *corev1.Authenticator) bool {
+			return itm.Status.IsRegistered &&
+				itm.Status.Type == corev1.Authenticator_Status_TPM &&
+				itm.Status.DeviceRef != nil &&
+				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid
+		}); idx >= 0 {
+			authn := itmList.Items[idx]
+
+			ret.MainAuthenticator = authn
+			ret.AvailableAuthenticators = []*corev1.Authenticator{
+				authn,
+			}
+
+			return ret, nil
+		}
+	}
+
 	for _, itm := range itmList.Items {
 		if !itm.Status.IsRegistered {
 			continue
@@ -419,13 +438,16 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 			default:
 				continue
 			}
-			if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
-				itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
-				ret.MainAuthenticator = itm
-				ret.AvailableAuthenticators = []*corev1.Authenticator{itm}
 
-				return ret, nil
-			}
+			/*
+				if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
+					itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
+					ret.MainAuthenticator = itm
+					ret.AvailableAuthenticators = []*corev1.Authenticator{itm}
+
+					return ret, nil
+				}
+			*/
 		case corev1.Session_Status_CLIENTLESS:
 			if !sess.Status.IsBrowser {
 				continue
