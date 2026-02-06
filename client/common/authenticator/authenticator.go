@@ -105,7 +105,7 @@ func StartGetAccessToken(ctx context.Context, domain string) {
 			case <-tickerCh.C:
 				_, err := GetAccessToken(ctx, domain)
 				if err != nil {
-					zap.S().Warnf("Could not get access token: %+v", err)
+					zap.L().Warn("Could not get access token", zap.Error(err))
 				}
 			}
 
@@ -129,6 +129,7 @@ func GetAccessToken(ctx context.Context, domain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer authC.c.Close()
 
 	return authC.doGetAccessToken(ctx)
 }
@@ -146,7 +147,6 @@ type authenticator struct {
 }
 
 func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticator, error) {
-	// zap.L().Debug("Creating a new CLI authenticator", zap.Any("opts", opts))
 	if opts == nil {
 		opts = &AuthenticateOpts{}
 	}
@@ -182,7 +182,6 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 			case os.Getenv("OCTELIUM_AUTH_ASSERTION") != "":
 				ret.opts.Assertion = &AuthenticateOptsAssertion{
 					Arg: os.Getenv("OCTELIUM_AUTH_ASSERTION"),
-					// IdentityProvider: os.Getenv("OCTELIUM_AUTH_ASSERTION_PROVIDER"),
 				}
 			}
 		}
@@ -223,7 +222,6 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 	switch {
 	case a.isRefresh:
 		if !needsNewAccessToken(a.at) {
-			// zap.L().Debug("No need to fetch a new access token. The current one is still new")
 			return a.at.SessionToken.AccessToken, nil
 		}
 
@@ -526,7 +524,6 @@ func (a *authenticator) getAssertionAzure(aud string) (string, error) {
 	identityParameters := identityEndpoint.Query()
 	identityParameters.Add(apiVersionQueryParam, metadataAPIVersion)
 	identityParameters.Add(resourceQueryParam, aud)
-	// identityParameters.Add(resourceQueryParam, defaultResourceURL)
 	identityEndpoint.RawQuery = identityParameters.Encode()
 
 	req, err := http.NewRequest(http.MethodGet, identityEndpoint.String(), nil)
@@ -640,7 +637,7 @@ func isWorkloadHost() bool {
 		return true
 	}
 
-	zap.L().Debug("Looks like the process is not running inside a very known workload host environment. Treating it as a HUMAN host")
+	zap.L().Debug("Looks like Octelium is not running inside a well known workload host environment. Treating it as a HUMAN-owned host")
 
 	return false
 }
