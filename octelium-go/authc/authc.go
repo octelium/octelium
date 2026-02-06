@@ -39,9 +39,10 @@ type Opts struct {
 }
 
 type Client struct {
-	c      authv1.MainServiceClient
-	domain string
-	opts   *Opts
+	c        authv1.MainServiceClient
+	domain   string
+	opts     *Opts
+	grpcConn *grpc.ClientConn
 }
 
 func NewClient(ctx context.Context, domain string, opts *Opts) (*Client, error) {
@@ -56,12 +57,12 @@ func NewClient(ctx context.Context, domain string, opts *Opts) (*Client, error) 
 		opts:   opts,
 	}
 
-	grpcConn, err := ret.doGetGRPCClientConn(ctx, domain)
+	ret.grpcConn, err = ret.doGetGRPCClientConn(ctx, domain)
 	if err != nil {
 		return nil, err
 	}
 
-	ret.c = authv1.NewMainServiceClient(grpcConn)
+	ret.c = authv1.NewMainServiceClient(ret.grpcConn)
 
 	return ret, nil
 }
@@ -164,6 +165,14 @@ func (c *Client) streamClientInterceptor() grpc.StreamClientInterceptor {
 
 func (c *Client) C() authv1.MainServiceClient {
 	return c.c
+}
+
+func (c *Client) Close() error {
+	if c.grpcConn != nil {
+		c.grpcConn.Close()
+	}
+
+	return nil
 }
 
 func GetAPIServerAddr(domain string) string {
