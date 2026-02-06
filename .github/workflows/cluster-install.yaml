@@ -5,17 +5,11 @@ on: workflow_dispatch
 jobs:
   test:
     runs-on: ${{ matrix.runner }}
-    name: test-${{ matrix.runner }}
+    name: test-${{ matrix.script }}-${{ matrix.runner }}
     strategy:
       matrix:
         script: [k3s-cilium, k3s-calico]
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - name: Install deps
         run: |
