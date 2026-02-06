@@ -53,10 +53,13 @@ jobs:
           sudo chmod 644 $OCTELIUM_AUTH_TOKEN_SAVE_PATH
           AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
           USER_NAME="$(id -un)"
-          sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
+          # sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
+          echo "Logging in"
           octelium login --domain localhost --auth-token $AUTH_TOKEN
+          echo "getting status"
           octelium status
-
+          echo "connecting"
           octelium connect -p demo-nginx:9090 &
           sleep 3
+          echo "curl'ing demo-nginx"
           curl --fail --retry 10 --retry-delay 1 --max-time 2 http://localhost:9090

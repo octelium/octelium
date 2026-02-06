@@ -104,8 +104,8 @@ cilium install \
 cilium status --wait
 
 mkdir -p /opt/cni/bin
-wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
-tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.3.0.tgz
+wget https://github.com/containernetworking/plugins/releases/download/v1.9.0/cni-plugins-linux-${ARCH}-v1.9.0.tgz
+tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.9.0.tgz
 
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
