@@ -53,7 +53,7 @@ jobs:
           sudo chmod 644 $OCTELIUM_AUTH_TOKEN_SAVE_PATH
           AUTH_TOKEN=$(cat $OCTELIUM_AUTH_TOKEN_SAVE_PATH)
           USER_NAME="$(id -un)"
-          # sudo chown -R "$USER_NAME":"$USER_NAME" /home/$USER_NAME
+          sudo chown -R "$USER_NAME" /home/$USER_NAME
           echo "Logging in"
           octelium login --domain localhost --auth-token $AUTH_TOKEN
           echo "getting status"
