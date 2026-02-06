@@ -4,10 +4,18 @@ permissions:
 on: workflow_dispatch
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    name: test-${{ matrix.runner }}
     strategy:
       matrix:
         script: [k3s-cilium, k3s-calico]
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Install deps
         run: |
