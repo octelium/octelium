@@ -9,6 +9,7 @@ jobs:
     strategy:
       matrix:
         script:
+         - k3s
          - k3s-cilium
          - k3s-calico
          - k3s-storage-secret

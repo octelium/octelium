@@ -28,6 +28,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 
+if $IS_UNINSTALL; then
+  /usr/local/bin/k3s-uninstall.sh
+  rm -rf /mnt/octelium/db
+  exit 0
+fi
+
 if [ -z "$DOMAIN" ]; then
   echo "Usage: $0 --domain "example.com"(REQUIRED) --public-ip "1.2.3.4"(OPTIONAL) --version "latest"(OPTIONAL) --nat (OPTIONAL)"
   exit 1
@@ -64,17 +70,13 @@ cp kubectl /usr/local/bin
 chmod 755 /usr/local/bin/kubectl
 
 
-
-curl -sfL https://get.rke2.io | sh -
-systemctl start rke2-server.service
-
-export KUBECONFIG="/etc/rancher/rke2/rke2.yaml"
+echo -e "\e[1mInstalling k3s\e[0m"
 
 
+export INSTALL_K3S_EXEC="--disable traefik"
+curl -sfL https://get.k3s.io | sh -
 
-mkdir -p /opt/cni/bin
-wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
-tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.3.0.tgz
+export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
 
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
@@ -185,6 +187,3 @@ done
 kubectl get svc -A
 kubectl get ds -A
 kubectl get deployment -A
-
-kubectl port-forward svc/octelium-ingress-dataplane 443:443 -n octelium &
-sleep 3

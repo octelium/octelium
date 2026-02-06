@@ -103,7 +103,7 @@ cilium install \
 
 cilium status --wait
 
-
+mkdir -p /opt/cni/bin
 wget https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-${ARCH}-v1.3.0.tgz
 tar -C /opt/cni/bin -xzf cni-plugins-linux-${ARCH}-v1.3.0.tgz
 
