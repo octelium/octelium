@@ -22,10 +22,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/client/middleware/auth"
-	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -76,7 +74,7 @@ func getTLSConfig() (*tls.Config, error) {
 	return ret, nil
 }
 
-func doGetGRPCClientConn(domain string, s *authv1.SessionToken) (*grpc.ClientConn, error) {
+func doGetGRPCClientConn(domain string) (*grpc.ClientConn, error) {
 
 	tlsConfig, err := getTLSConfig()
 	if err != nil {
@@ -154,7 +152,7 @@ func GetGRPCClientConn(ctx context.Context, clusterDomain string) (*grpc.ClientC
 func getGRPCClientConnFromClientInfo(ctx context.Context, i *ClientInfo) (*grpc.ClientConn, error) {
 
 	if os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET") != "" {
-		return doGetGRPCClientConn(i.ClusterDomain, nil)
+		return doGetGRPCClientConn(i.ClusterDomain)
 	}
 
 	if err := authenticator.Authenticate(ctx, &authenticator.AuthenticateOpts{
@@ -163,11 +161,5 @@ func getGRPCClientConnFromClientInfo(ctx context.Context, i *ClientInfo) (*grpc.
 		return nil, err
 	}
 
-	d := cliutils.GetDB()
-	at, err := d.GetSessionToken(i.ClusterDomain)
-	if err != nil {
-		return nil, err
-	}
-
-	return doGetGRPCClientConn(i.ClusterDomain, at)
+	return doGetGRPCClientConn(i.ClusterDomain)
 }

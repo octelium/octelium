@@ -78,6 +78,7 @@ func Authenticate(ctx context.Context, opts *AuthenticateOpts) error {
 	if err != nil {
 		return err
 	}
+	defer authC.c.Close()
 	return authC.run(ctx)
 }
 
