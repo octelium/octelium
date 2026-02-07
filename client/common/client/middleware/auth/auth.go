@@ -33,11 +33,10 @@ func UnaryClientInterceptor(domain string, opts ...grpc.CallOption) grpc.UnaryCl
 		}
 
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-octelium-auth", token)
-		// ctx = metadata.AppendToOutgoingContext(ctx, "user-agent", fmt.Sprintf("octelium-cli/%s", ldflags.GetVersion()))
 
 		err = invoker(ctx, method, req, reply, cc, opts...)
 		if err != nil {
-			zap.S().Debugf("invoker error: %+v", err)
+			zap.L().Debug("invoker error", zap.Error(err))
 		}
 		return err
 	}
@@ -53,7 +52,6 @@ func StreamClientInterceptor(domain string, opts ...grpc.CallOption) grpc.Stream
 		}
 
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-octelium-auth", token)
-		// ctx = metadata.AppendToOutgoingContext(ctx, "user-agent", fmt.Sprintf("octelium-cli/%s", ldflags.GetVersion()))
 
 		clientStream, err := streamer(ctx, desc, cc, method, opts...)
 		return clientStream, err

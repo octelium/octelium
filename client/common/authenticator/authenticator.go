@@ -78,7 +78,7 @@ func Authenticate(ctx context.Context, opts *AuthenticateOpts) error {
 	if err != nil {
 		return err
 	}
-	defer authC.c.Close()
+
 	return authC.run(ctx)
 }
 
@@ -205,8 +205,13 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 }
 
 func (a *authenticator) run(ctx context.Context) error {
-	_, err := a.doGetAccessToken(ctx)
-	return err
+	defer a.c.Close()
+
+	if _, err := a.doGetAccessToken(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {

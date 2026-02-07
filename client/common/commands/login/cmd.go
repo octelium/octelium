@@ -15,15 +15,11 @@
 package login
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/authenticator"
-	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/client/common/commands/auth/device/register"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/octelium/octelium/client/common/postauth"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -44,14 +40,7 @@ func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Token, "auth-token", "", "Authentication Token")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.IsWeb, "web", false, "Authenticate using the web Portal")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Assertion, "assertion", "", "Authenticate using an assertion. Refer to the docs for more details.")
-	/*
-		Cmd.PersistentFlags().StringVar(&cmdArgs.AssertionProvider, "assertion-provider", "",
-			"The name of the IdentityProvider used to authenticate the assertion")
-	*/
-
 	Cmd.MarkFlagsMutuallyExclusive("auth-token", "web", "assertion")
-	// Cmd.MarkFlagsRequiredTogether("assertion", "assertion-provider")
-
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
 		`
 Scope is a way to limit the access to certain Services and Octelium APIs that works similarly to OAuth2.
@@ -109,31 +98,39 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	st, err := userv1.NewMainServiceClient(conn).GetStatus(ctx, &userv1.GetStatusRequest{})
-	if err != nil {
-		return nil
+	if _, err := postauth.DoPostAuth(ctx, &postauth.DoPostAuthReq{
+		Domain: i.Domain,
+	}); err != nil {
+		zap.L().Debug("Could not doPostAuth", zap.Error(err))
 	}
 
-	arg := st.User.Metadata.Name
-	if st.User.Metadata.DisplayName != "" {
-		arg = fmt.Sprintf("%s (%s)", arg, st.User.Metadata.DisplayName)
-	}
+	/*
+		conn, err := client.GetGRPCClientConn(ctx, i.Domain)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
 
-	cliutils.LineInfo("You are now authenticated as %s\n", arg)
+		st, err := userv1.NewMainServiceClient(conn).GetStatus(ctx, &userv1.GetStatusRequest{})
+		if err != nil {
+			return nil
+		}
 
-	if ldflags.IsDev() {
-		if st.User.Spec != nil && st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN {
-			if err := register.DoRegister(ctx, i.Domain); err != nil {
-				zap.L().Debug("Could not register Device", zap.Error(err))
+		arg := st.User.Metadata.Name
+		if st.User.Metadata.DisplayName != "" {
+			arg = fmt.Sprintf("%s (%s)", arg, st.User.Metadata.DisplayName)
+		}
+
+		cliutils.LineInfo("You are now authenticated as %s\n", arg)
+
+		if ldflags.IsDev() {
+			if st.User.Spec != nil && st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN {
+				if err := register.DoRegister(ctx, i.Domain); err != nil {
+					zap.L().Debug("Could not register Device", zap.Error(err))
+				}
 			}
 		}
-	}
+	*/
 
 	return nil
 }

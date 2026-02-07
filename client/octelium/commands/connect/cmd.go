@@ -23,8 +23,10 @@ import (
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
+	"github.com/octelium/octelium/client/common/postauth"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 type args struct {
@@ -166,6 +168,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	if err := authenticator.Authenticate(ctx, authOpts); err != nil {
 		return err
+	}
+
+	if _, err := postauth.DoPostAuth(ctx, &postauth.DoPostAuthReq{
+		Domain: i.Domain,
+	}); err != nil {
+		zap.L().Debug("Could not doPostAuth", zap.Error(err))
 	}
 
 	if cmdArgs.Detached {

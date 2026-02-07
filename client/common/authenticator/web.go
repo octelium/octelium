@@ -160,7 +160,7 @@ func (s *webAuthenticator) getLoginURL() string {
 	return u.String()
 }
 
-func (s *webAuthenticator) run(ctx context.Context) error {
+func (s *webAuthenticator) run(_ context.Context) error {
 	go func() error {
 		http.Handle(s.successCallbackPath, s)
 		return http.ListenAndServe(fmt.Sprintf("%s:%d", s.addr, s.port), nil)
@@ -173,27 +173,16 @@ func (s *webAuthenticator) run(ctx context.Context) error {
 		return err
 	}
 
-	// errCh := make(chan error)
-
 	go func() {
-		zap.S().Debugf("running the browser to authenticate user")
+		zap.L().Debug("running the browser to authenticate user")
 		if err := cmd.Run(); err != nil {
 			zap.L().Warn("Could not run browser command", zap.Error(err))
-			// errCh <- err
 		}
 	}()
 
 	cliutils.LineNotify("Please authenticate yourself using Octelium web Portal\n")
 
 	select {
-
-	/*
-		case err := <-errCh:
-			if err == nil {
-				return nil
-			}
-			return errors.Errorf("Could not run browser command: %s", err.Error())
-	*/
 	case <-time.After(10 * time.Minute):
 		return errors.Errorf("You have not authenticated yourself after 10 minutes. Please authenticate yourself again.")
 	case <-s.ch:
