@@ -532,8 +532,9 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Status: &corev1.Service_Status{
 
 				ManagedService: &corev1.Service_Status_ManagedService{
-					Type:  "apiserver",
-					Image: oc.GetImage(oc.APIServer, ""),
+					Type:               "apiserver",
+					Image:              oc.GetImage(oc.APIServer, ""),
+					ReadOnlyFileSystem: true,
 					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
 						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
 							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
@@ -570,9 +571,10 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 			Status: &corev1.Service_Status{
 				ManagedService: &corev1.Service_Status_ManagedService{
-					Type:  "apiserver",
-					Image: oc.GetImage(oc.AuthServer, ""),
-					Args:  []string{"grpc"},
+					Type:               "apiserver",
+					Image:              oc.GetImage(oc.AuthServer, ""),
+					Args:               []string{"grpc"},
+					ReadOnlyFileSystem: true,
 					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
 						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
 							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
@@ -605,9 +607,10 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 			Status: &corev1.Service_Status{
 				ManagedService: &corev1.Service_Status_ManagedService{
-					Image: oc.GetImage(oc.AuthServer, ""),
-					Args:  []string{"http"},
-					Type:  "authserver",
+					Image:              oc.GetImage(oc.AuthServer, ""),
+					Args:               []string{"http"},
+					ReadOnlyFileSystem: true,
+					Type:               "authserver",
 					HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
 						Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
 							Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
