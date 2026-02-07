@@ -35,12 +35,19 @@ jobs:
           tar -czvf octelium-${{matrix.os}}-${{matrix.arch}}.tar.gz octelium
           tar -czvf octeliumctl-${{matrix.os}}-${{matrix.arch}}.tar.gz octeliumctl
           tar -czvf octops-${{matrix.os}}-${{matrix.arch}}.tar.gz octops
+      - name: Generate checksums (non-Windows)
+        if: ${{ matrix.os != 'windows' }}
+        run: |
+          cd bin
+          sha256sum *.tar.gz > checksums-${{matrix.os}}-${{matrix.arch}}.txt
       - name: save artifacts
         if: ${{ matrix.os != 'windows' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-artifact-${{matrix.os}}-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
-          path: bin/*.tar.gz
+          path: |
+            bin/*.tar.gz
+            bin/checksums-${{matrix.os}}-${{matrix.arch}}.txt
           retention-days: 1
       - name: zip for Windows
         if: ${{ matrix.os == 'windows' }}
@@ -53,12 +60,19 @@ jobs:
           zip octelium-${{matrix.os}}-${{matrix.arch}}.zip octelium.exe wireguard.dll
           zip octeliumctl-${{matrix.os}}-${{matrix.arch}}.zip octeliumctl.exe
           zip octops-${{matrix.os}}-${{matrix.arch}}.zip octops.exe
+      - name: Generate checksums (Windows)
+        if: ${{ matrix.os == 'windows' }}
+        run: |
+          cd bin
+          sha256sum *.zip > checksums-${{matrix.os}}-${{matrix.arch}}.txt
       - name: save Windows artifacts
         if: ${{ matrix.os == 'windows' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-artifact-${{matrix.os}}-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
-          path: bin/*.zip
+          path: |
+            bin/*.zip
+            bin/checksums-${{matrix.os}}-${{matrix.arch}}.txt
           retention-days: 1
 
   release:
@@ -74,8 +88,11 @@ jobs:
         uses: rlespinasse/github-slug-action@v4
       - uses: actions/download-artifact@v4
         with:
-          # name: release-artifact-${{ env.GITHUB_REF_SLUG }}
           pattern: release-artifact-*
+      - name: Combine checksums
+        run: |
+          cat release-artifact-*/checksums-*.txt > SHA256SUMS
+          rm release-artifact-*/checksums-*.txt
       - name: ls
         run: ls -la
       - name: Release
@@ -83,3 +100,4 @@ jobs:
         with:
           files: |
             release-artifact-*/*
+            SHA256SUMS
