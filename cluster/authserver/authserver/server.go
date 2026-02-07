@@ -32,12 +32,12 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authncache"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/github"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/oidc"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/oidcassertion"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/saml"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
-	"github.com/octelium/octelium/cluster/authserver/authserver/rsccache"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -82,7 +82,7 @@ type server struct {
 	celEngine *celengine.CELEngine
 
 	passkeyCtl  *webauthn.WebAuthn
-	rscCache    *rsccache.Cache
+	authnCache  *authncache.Cache
 	mdsProvider metadata.Provider
 
 	geoipCtl *geoipctl.Controller
@@ -200,7 +200,7 @@ func initServer(ctx context.Context,
 		return nil, err
 	}
 
-	ret.rscCache, err = rsccache.NewCache()
+	ret.authnCache, err = authncache.NewCache()
 	if err != nil {
 		return nil, err
 	}
@@ -373,13 +373,13 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 
 	if err := watchers.NewCoreV1(s.octeliumC).Authenticator(ctx, nil,
 		func(ctx context.Context, item *corev1.Authenticator) error {
-			return s.rscCache.SetAuthenticator(item)
+			return s.authnCache.SetAuthenticator(item)
 		},
 		func(ctx context.Context, new, old *corev1.Authenticator) error {
-			return s.rscCache.SetAuthenticator(new)
+			return s.authnCache.SetAuthenticator(new)
 		},
 		func(ctx context.Context, item *corev1.Authenticator) error {
-			return s.rscCache.DeleteAuthenticator(item)
+			return s.authnCache.DeleteAuthenticator(item)
 		}); err != nil {
 		return err
 	}

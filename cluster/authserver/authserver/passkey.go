@@ -193,7 +193,7 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 	var usr *corev1.User
 
 	getWebauthnUser := func(rawID, userHandle []byte) (user webauthn.User, err error) {
-		authn, err = s.rscCache.GetAuthenticatorByCredID(rawID)
+		authn, err = s.authnCache.GetAuthenticatorByCredID(rawID)
 		if err != nil {
 			return nil, err
 		}
