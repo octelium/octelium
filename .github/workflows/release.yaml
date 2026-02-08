@@ -1,10 +1,12 @@
 name: release
 permissions:
   contents: read
+
 on:
   push:
     tags:
       - "v*.*.*"
+
 jobs:
   build:
     name: Build
@@ -14,20 +16,24 @@ jobs:
         arch: [amd64, arm64]
         os: [linux, darwin, windows]
     steps:
-      - name: Check out code into the Go module directory
+      - name: Check out code
         uses: actions/checkout@v4
+
       - name: GitHub vars
         uses: rlespinasse/github-slug-action@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "${{env.GO_VERSION}}"
         id: go
+
       - name: Build
         env:
           GOARCH: ${{matrix.arch}}
           GOOS: ${{matrix.os}}
         run: make build-cli
+
       - name: Tarball
         if: ${{ matrix.os != 'windows' }}
         run: |
@@ -35,12 +41,14 @@ jobs:
           tar -czvf octelium-${{matrix.os}}-${{matrix.arch}}.tar.gz octelium
           tar -czvf octeliumctl-${{matrix.os}}-${{matrix.arch}}.tar.gz octeliumctl
           tar -czvf octops-${{matrix.os}}-${{matrix.arch}}.tar.gz octops
-      - name: Generate checksums (non-Windows)
+
+      - name: Generate checksums (Unix)
         if: ${{ matrix.os != 'windows' }}
         run: |
           cd bin
           sha256sum *.tar.gz > checksums-${{matrix.os}}-${{matrix.arch}}.txt
-      - name: save artifacts
+
+      - name: Save artifacts
         if: ${{ matrix.os != 'windows' }}
         uses: actions/upload-artifact@v4
         with:
@@ -49,7 +57,8 @@ jobs:
             bin/*.tar.gz
             bin/checksums-${{matrix.os}}-${{matrix.arch}}.txt
           retention-days: 1
-      - name: zip for Windows
+
+      - name: Zip for Windows
         if: ${{ matrix.os == 'windows' }}
         run: |
           curl -L -o wireguard.zip https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
@@ -60,12 +69,14 @@ jobs:
           zip octelium-${{matrix.os}}-${{matrix.arch}}.zip octelium.exe wireguard.dll
           zip octeliumctl-${{matrix.os}}-${{matrix.arch}}.zip octeliumctl.exe
           zip octops-${{matrix.os}}-${{matrix.arch}}.zip octops.exe
+
       - name: Generate checksums (Windows)
         if: ${{ matrix.os == 'windows' }}
         run: |
           cd bin
           sha256sum *.zip > checksums-${{matrix.os}}-${{matrix.arch}}.txt
-      - name: save Windows artifacts
+
+      - name: Save Windows artifacts
         if: ${{ matrix.os == 'windows' }}
         uses: actions/upload-artifact@v4
         with:
@@ -75,29 +86,226 @@ jobs:
             bin/checksums-${{matrix.os}}-${{matrix.arch}}.txt
           retention-days: 1
 
+  package-linux:
+    name: Package Linux
+    runs-on: ubuntu-24.04
+    needs: build
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: GitHub vars
+        uses: rlespinasse/github-slug-action@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact-linux-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: artifacts
+
+      - name: Extract binaries
+        run: |
+          mkdir -p bin
+          cd artifacts
+          tar -xzf octelium-linux-${{matrix.arch}}.tar.gz -C ../bin
+          tar -xzf octeliumctl-linux-${{matrix.arch}}.tar.gz -C ../bin
+          tar -xzf octops-linux-${{matrix.arch}}.tar.gz -C ../bin
+          cd ..
+          chmod +x bin/*
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release=1" >> $GITHUB_OUTPUT
+
+      - name: Create DEB packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE: ${{ steps.version.outputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          DEB_ARCH=$ARCH
+          if [ "$ARCH" = "amd64" ]; then
+            DEB_ARCH="amd64"
+          elif [ "$ARCH" = "arm64" ]; then
+            DEB_ARCH="arm64"
+          fi
+          
+          create_deb() {
+            local PKG_NAME=$1
+            local PKG_DIR="packaging/deb/${PKG_NAME}_${VERSION}-${RELEASE}_${DEB_ARCH}"
+            
+            mkdir -p ${PKG_DIR}/usr/bin
+            mkdir -p ${PKG_DIR}/usr/share/doc/${PKG_NAME}
+            mkdir -p ${PKG_DIR}/DEBIAN
+            
+            cp bin/${PKG_NAME} ${PKG_DIR}/usr/bin/
+            cp LICENSE-APACHE ${PKG_DIR}/usr/share/doc/${PKG_NAME}/copyright
+            
+            cat > ${PKG_DIR}/DEBIAN/control <<EOF
+          Package: ${PKG_NAME}
+          Version: ${VERSION}-${RELEASE}
+          Section: net
+          Priority: optional
+          Architecture: ${DEB_ARCH}
+          Maintainer: George Badawi <contact@octelium.com>
+          Description: ${PKG_NAME} - A unified zero trust secure access platform that
+           can operate as a remote access VPN, a ZTNA platform, API/AI/MCP gateway,
+           a PaaS, an ngrok-alternative and a homelab infrastructure.
+          Homepage: https://octelium.com
+          License: Apache-2.0
+          EOF
+            
+            dpkg-deb --build ${PKG_DIR}
+            mv ${PKG_DIR}.deb packaging/
+          }
+          
+          mkdir -p packaging/deb
+          create_deb "octelium"
+          create_deb "octeliumctl"
+          create_deb "octops"
+
+      - name: Create RPM packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE: ${{ steps.version.outputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          RPM_ARCH=$ARCH
+          if [ "$ARCH" = "amd64" ]; then
+            RPM_ARCH="x86_64"
+          elif [ "$ARCH" = "arm64" ]; then
+            RPM_ARCH="aarch64"
+          fi
+          
+          create_rpm() {
+            local PKG_NAME=$1
+            local BASE_DIR="packaging/rpm/build/${PKG_NAME}"
+            
+            mkdir -p ${BASE_DIR}/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+            
+            cp bin/${PKG_NAME} ${BASE_DIR}/SOURCES/
+            cp LICENSE-APACHE ${BASE_DIR}/SOURCES/LICENSE
+            
+            cat > ${BASE_DIR}/SPECS/${PKG_NAME}.spec <<EOF
+          Name:           ${PKG_NAME}
+          Version:        ${VERSION}
+          Release:        ${RELEASE}%{?dist}
+          Summary:        ${PKG_NAME} - Octelium is a unified zero trust secure access platform
+          License:        Apache-2.0
+          URL:            https://octelium.com
+          Source0:        ${PKG_NAME}
+          Source1:        LICENSE
+          
+          %define debug_package %{nil}
+          %define __strip /bin/true
+          
+          %description
+          A unified zero trust secure access platform that can operate as a remote access VPN,
+          a ZTNA platform, API/AI/MCP gateway, a PaaS, an ngrok-alternative and a homelab infrastructure.
+          
+          %install
+          mkdir -p %{buildroot}/usr/bin
+          mkdir -p %{buildroot}/usr/share/licenses/${PKG_NAME}
+          
+          install -m 755 %{_sourcedir}/${PKG_NAME} %{buildroot}/usr/bin/${PKG_NAME}
+          install -m 644 %{_sourcedir}/LICENSE %{buildroot}/usr/share/licenses/${PKG_NAME}/LICENSE
+          
+          %files
+          %license /usr/share/licenses/${PKG_NAME}/LICENSE
+          %dir /usr/share/licenses/${PKG_NAME}
+          /usr/bin/${PKG_NAME}
+          
+          %changelog
+          * $(date '+%a %b %d %Y') George Badawi <contact@octelium.com> - ${VERSION}-${RELEASE}
+          - Release ${VERSION}-${RELEASE}
+          EOF
+            
+            rpmbuild --target ${RPM_ARCH} \
+              --define "_topdir $(pwd)/${BASE_DIR}" \
+              --define "_rpmdir $(pwd)/packaging/rpm" \
+              -bb ${BASE_DIR}/SPECS/${PKG_NAME}.spec
+          }
+          
+          mkdir -p packaging/rpm
+          create_rpm "octelium"
+          create_rpm "octeliumctl"
+          create_rpm "octops"
+          
+          # Move RPMs to flat structure
+          find packaging/rpm -type f -name "*.rpm" -exec mv {} packaging/ \;
+
+      - name: List created packages
+        run: |
+          echo "Contents of packaging directory:"
+          ls -la packaging/
+
+      - name: Upload DEB/RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-linux-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: |
+            packaging/*.deb
+            packaging/*.rpm
+          retention-days: 1
+
   release:
     name: Release
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [build, package-linux]
     permissions:
       contents: write
     steps:
-      - name: Check out code into the Go module directory
+      - name: Check out code
         uses: actions/checkout@v4
+
       - name: GitHub vars
         uses: rlespinasse/github-slug-action@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: release-artifact-*
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-linux-*
+
       - name: Combine checksums
         run: |
           cat release-artifact-*/checksums-*.txt > SHA256SUMS
           rm release-artifact-*/checksums-*.txt
-      - name: ls
-        run: ls -la
+
+      - name: Generate package checksums
+        run: |
+          if [ -d "packages-linux-amd64-${{ env.GITHUB_REF_SLUG }}" ]; then
+            (cd packages-linux-amd64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
+          fi
+          
+          if [ -d "packages-linux-arm64-${{ env.GITHUB_REF_SLUG }}" ]; then
+            (cd packages-linux-arm64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
+          fi
+
+      - name: List all files
+        run: |
+          echo "All downloaded artifacts:"
+          ls -laR
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-artifact-*/*
+            release-artifact-*/*.tar.gz
+            release-artifact-*/*.zip
+            packages-linux-*/*.deb
+            packages-linux-*/*.rpm
             SHA256SUMS
