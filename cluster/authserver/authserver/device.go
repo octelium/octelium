@@ -94,7 +94,7 @@ func (s *server) doBuildDevice(ctx context.Context,
 func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
 
 	if err := s.validateRegisterDeviceBeginRequest(req); err != nil {
-		return nil, err
+		return nil, s.errInvalidArgErr(err)
 	}
 
 	sess, err := s.getSessionFromGRPCCtx(ctx)
@@ -289,11 +289,11 @@ var rgxDeviceRegistrationUID = regexp.MustCompile(`^[a-z0-9]{10}$`)
 
 func (s *server) validateRegisterDeviceBeginRequest(req *authv1.RegisterDeviceBeginRequest) error {
 	if req == nil {
-		return s.errInvalidArg("Nil req")
+		return errors.Errorf("Nil req")
 	}
 
 	if req.Info == nil {
-		return s.errInvalidArg("Nil info")
+		return errors.Errorf("Nil info")
 	}
 
 	info := req.Info
