@@ -6,7 +6,7 @@ jobs:
   test:
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-24.04]
     runs-on: ${{ matrix.runner }}
     name: test-${{ matrix.runner }}
     steps:
