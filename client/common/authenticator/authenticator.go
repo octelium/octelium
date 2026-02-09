@@ -310,7 +310,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 
 			return sessTkn.AccessToken, nil
 		default:
-			if !isWorkloadHost() {
+			if !cliutils.IsSuggestedWorkloadHost() {
 				return a.doWebAuthentication(ctx)
 			} else {
 				return "",
@@ -610,39 +610,4 @@ func (a *authenticator) getAssertionGithubActions(aud string) (string, error) {
 		return "", err
 	}
 	return response.Value, nil
-}
-
-func isWorkloadHost() bool {
-
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		return true
-	}
-
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-
-	if _, err := os.Stat("/run/.containerenv"); err == nil {
-		return true
-	}
-
-	if os.Getenv("container") == "podman" {
-		return true
-	}
-
-	if os.Getenv("CI") == "true" {
-		return true
-	}
-
-	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
-		return true
-	}
-
-	if os.Getenv("AWS_EXECUTION_ENV") != "" {
-		return true
-	}
-
-	zap.L().Debug("Looks like Octelium is not running inside a well known workload host environment. Treating it as a HUMAN-owned host")
-
-	return false
 }

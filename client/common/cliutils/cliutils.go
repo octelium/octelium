@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/status"
 )
 
@@ -233,4 +234,42 @@ func IsLinux() bool {
 
 func IsDarwin() bool {
 	return runtime.GOOS == "darwin"
+}
+
+func IsSuggestedWorkloadHost() bool {
+	if os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
+		return true
+	}
+
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return true
+	}
+
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+
+	if os.Getenv("container") == "podman" {
+		return true
+	}
+
+	if IsLinux() && os.Getenv("CI") == "true" {
+		return true
+	}
+
+	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+		return true
+	}
+
+	if os.Getenv("AWS_EXECUTION_ENV") != "" {
+		return true
+	}
+
+	zap.L().Debug("Looks like Octelium is not running inside a well known workload host environment. Treating it as a HUMAN-owned host")
+
+	return false
 }

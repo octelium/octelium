@@ -69,7 +69,7 @@ func DoPostAuth(ctx context.Context, r *DoPostAuthReq) (*DoPostAuthResp, error) 
 
 	if !r.DoNotRegisterDevice &&
 		st.User.Spec != nil &&
-		st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN {
+		st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN && !cliutils.IsSuggestedWorkloadHost() {
 		if err := register.DoRegister(ctx, r.Domain); err != nil {
 			zap.L().Debug("Could not register Device", zap.Error(err))
 		}
