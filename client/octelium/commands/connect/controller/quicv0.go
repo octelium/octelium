@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"runtime"
 	"sync"
 	"time"
 
@@ -52,9 +51,9 @@ const (
 
 func (c *Controller) doInitDevQUICV0(ctx context.Context) error {
 
-	switch runtime.GOOS {
-	case "linux":
-	case "darwin":
+	switch {
+	case cliutils.IsLinux():
+	case cliutils.IsDarwin():
 		tunPacketOffset = 4
 	default:
 		tunPacketOffset = 4

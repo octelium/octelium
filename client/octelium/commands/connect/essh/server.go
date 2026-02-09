@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -23,10 +22,10 @@ import (
 	"fmt"
 	"net"
 	"os/user"
-	"runtime"
 	"sync"
 	"time"
 
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
@@ -202,7 +201,7 @@ type Opts struct {
 
 func NewServer(opts *Opts) (*Server, error) {
 
-	if runtime.GOOS == "windows" {
+	if cliutils.IsWindows() {
 		return nil, errors.Errorf("eSSH is not currently supported on Windows")
 	}
 

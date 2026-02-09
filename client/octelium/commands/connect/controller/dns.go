@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -237,7 +237,7 @@ func (c *Controller) getLocalDNSServerAddr() string {
 	if c.c.Preferences.LocalDNS.ListenAddress != "" {
 		return c.c.Preferences.LocalDNS.ListenAddress
 	}
-	if runtime.GOOS == "darwin" {
+	if cliutils.IsDarwin() {
 		return "127.0.0.1:53"
 	}
 	if len(c.c.Connection.Addresses) > 0 {

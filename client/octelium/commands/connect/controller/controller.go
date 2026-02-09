@@ -17,11 +17,11 @@ package controller
 import (
 	"context"
 	"net"
-	"runtime"
 	"sync"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller/esshmain"
 	"github.com/octelium/octelium/client/octelium/commands/connect/dnssrv"
 	"github.com/pkg/errors"
@@ -32,19 +32,10 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-type OSType int
-
-const (
-	OSTypeLinux OSType = iota
-	OSTypeWindows
-	OSTypeMacOS
-)
-
 type Controller struct {
 	c             *cliconfigv1.Connection
 	ipv4Supported bool
 	ipv6Supported bool
-	OSType        OSType
 	wgC           *wgctrl.Client
 	wgPrivateKey  wgtypes.Key
 
@@ -91,18 +82,8 @@ func NewController(c *cliconfigv1.Connection) (*Controller, error) {
 		isQUIC:        c.Preferences.ConnectionType == cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0,
 	}
 
-	switch runtime.GOOS {
-	case "linux":
-		ret.OSType = OSTypeLinux
-	case "darwin":
-		ret.OSType = OSTypeMacOS
-	case "windows":
-		ret.OSType = OSTypeWindows
-		/*
-			if ret.isQUIC {
-				return nil, errors.Errorf("QUIC mode is not currently supported on Windows")
-			}
-		*/
+	switch {
+	case cliutils.IsLinux(), cliutils.IsWindows(), cliutils.IsDarwin():
 	default:
 		return nil, errors.Errorf("Could not initialize controller, invalid runtime OS")
 	}

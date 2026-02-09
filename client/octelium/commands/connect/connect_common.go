@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -295,8 +294,8 @@ func getConnectionConfig(ctx context.Context,
 		connCfg.Preferences.KeepAliveSeconds = 30
 	}
 
-	switch runtime.GOOS {
-	case "linux":
+	switch {
+	case cliutils.IsLinux():
 		connCfg.Preferences.LinuxPrefs = &cliconfigv1.Connection_Preferences_Linux{
 			ImplementationMode: func() cliconfigv1.Connection_Preferences_Linux_ImplementationMode {
 				switch cmdArgs.ImplementationMode {
@@ -312,19 +311,19 @@ func getConnectionConfig(ctx context.Context,
 			}(),
 			EnforceImplementationMode: cmdArgs.ImplementationMode != "",
 		}
-	case "windows":
+	case cliutils.IsWindows():
 		connCfg.Preferences.WindowsPrefs = &cliconfigv1.Connection_Preferences_Windows{}
 		connCfg.Preferences.DeviceName = "octelium"
-	case "darwin":
+	case cliutils.IsDarwin():
 		connCfg.Preferences.MacosPrefs = &cliconfigv1.Connection_Preferences_MacOS{}
 		connCfg.Preferences.DeviceName = "utun"
 	}
 
-	if runtime.GOOS == "linux" && os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
+	if cliutils.IsLinux() && os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
 		connCfg.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
 	}
 
-	if connCfg.Preferences.ESSH.IsEnabled && runtime.GOOS == "windows" {
+	if connCfg.Preferences.ESSH.IsEnabled && cliutils.IsWindows() {
 		cliutils.LineWarn("eSSH is not current supported on Windows. Ignoring using eSSH\n")
 		connCfg.Preferences.ESSH.IsEnabled = false
 	}

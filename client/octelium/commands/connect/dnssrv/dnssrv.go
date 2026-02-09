@@ -18,13 +18,13 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/miekg/dns"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -71,7 +71,7 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 			}
 			return ""
 		}
-		if runtime.GOOS == "darwin" {
+		if cliutils.IsDarwin() {
 			return "127.0.0.1:53"
 		}
 

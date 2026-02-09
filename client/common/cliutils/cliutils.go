@@ -140,12 +140,12 @@ func GetRefreshToken(ctx context.Context, domain string) (string, error) {
 
 func OpenFileByDefaultAppCmd(url string) (*exec.Cmd, error) {
 
-	switch runtime.GOOS {
-	case "linux":
+	switch {
+	case IsLinux():
 		return exec.Command("xdg-open", url), nil
-	case "windows":
+	case IsWindows():
 		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil
-	case "darwin":
+	case IsDarwin():
 		return exec.Command("open", url), nil
 	default:
 		return nil, errors.Errorf("This OS is not supported currently")
@@ -221,4 +221,16 @@ func GrpcErr(err error) error {
 	}
 
 	return errors.Errorf("gRPC error %s: %s", st.Code(), st.Message())
+}
+
+func IsWindows() bool {
+	return runtime.GOOS == "windows"
+}
+
+func IsLinux() bool {
+	return runtime.GOOS == "linux"
+}
+
+func IsDarwin() bool {
+	return runtime.GOOS == "darwin"
 }

@@ -21,8 +21,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -67,20 +65,6 @@ func newWebAuthenticator(domain string, scopes []string) (*webAuthenticator, err
 		loginURL:            fmt.Sprintf("https://%s/login", domain),
 		scopes:              scopes,
 	}, nil
-}
-
-func getBrowserCmd(url string) (*exec.Cmd, error) {
-
-	switch runtime.GOOS {
-	case "linux":
-		return exec.Command("xdg-open", url), nil
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil
-	case "darwin":
-		return exec.Command("open", url), nil
-	default:
-		return nil, errors.Errorf("This OS is not supported currently")
-	}
 }
 
 func (s *webAuthenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +152,7 @@ func (s *webAuthenticator) run(_ context.Context) error {
 
 	time.Sleep(200 * time.Millisecond)
 
-	cmd, err := getBrowserCmd(s.getLoginURL())
+	cmd, err := cliutils.OpenFileByDefaultAppCmd(s.getLoginURL())
 	if err != nil {
 		return err
 	}

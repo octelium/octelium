@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 
 	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
@@ -111,10 +110,10 @@ func doCheckClient(ctx context.Context) error {
 
 	cliutils.LineNotify("Your Octelium CLIs can be upgraded using the following command:\n")
 
-	switch runtime.GOOS {
-	case "linux", "darwin":
+	switch {
+	case cliutils.IsLinux(), cliutils.IsDarwin():
 		cliutils.LineNotify("curl -fsSL https://octelium.com/install.sh | bash\n")
-	case "windows":
+	case cliutils.IsWindows():
 		cliutils.LineNotify("iwr https://octelium.com/install.ps1 -useb | iex\n")
 	default:
 		return errors.Errorf("Unsupported OS platform")

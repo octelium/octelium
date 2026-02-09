@@ -253,7 +253,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		} else if grpcerr.IsUnimplemented(err) {
 			zap.L().Debug("GetAvailableAuthenticator is not implemented at the Cluster.")
 		} else {
-			zap.L().Warn("Could not getAvailableAuthenticator", zap.Error(err))
+			zap.L().Debug("Could not getAvailableAuthenticator", zap.Error(err))
 		}
 
 		sessTkn, err := a.c.C().AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})

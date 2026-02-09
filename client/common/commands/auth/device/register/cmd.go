@@ -18,7 +18,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"runtime"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -92,12 +91,12 @@ func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.R
 			Id:           info.ID,
 			SerialNumber: info.SerialNumber,
 			OsType: func() authv1.RegisterDeviceBeginRequest_Info_OSType {
-				switch runtime.GOOS {
-				case "windows":
+				switch {
+				case cliutils.IsWindows():
 					return authv1.RegisterDeviceBeginRequest_Info_WINDOWS
-				case "linux":
+				case cliutils.IsLinux():
 					return authv1.RegisterDeviceBeginRequest_Info_LINUX
-				case "darwin":
+				case cliutils.IsDarwin():
 					return authv1.RegisterDeviceBeginRequest_Info_MAC
 				default:
 					return authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN

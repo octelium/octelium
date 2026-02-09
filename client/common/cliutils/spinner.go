@@ -17,7 +17,6 @@ package cliutils
 import (
 	"fmt"
 	"io"
-	"runtime"
 	"sync"
 	"time"
 
@@ -56,7 +55,7 @@ type Spinner struct {
 func NewSpinner(w io.Writer) *Spinner {
 	frameFormat := "\x1b[?7l\r%s %s %s (%s)\x1b[?7h"
 
-	if runtime.GOOS == "windows" {
+	if IsWindows() {
 		frameFormat = "\r%s %s %s (%s)"
 	}
 	return &Spinner{
