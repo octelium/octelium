@@ -86,6 +86,14 @@ jobs:
             bin/checksums-${{matrix.os}}-${{matrix.arch}}.txt
           retention-days: 1
 
+      - name: Save Windows binaries for MSI
+        if: ${{ matrix.os == 'windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: bin/*.exe
+          retention-days: 1
+
   package-linux:
     name: Package Linux
     runs-on: ubuntu-24.04
@@ -259,10 +267,94 @@ jobs:
             packaging/*.rpm
           retention-days: 1
 
+  package-windows:
+    name: Package Windows
+    runs-on: windows-2022
+    needs: build
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: GitHub vars
+        uses: rlespinasse/github-slug-action@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: bin
+
+      - name: Download WireGuard DLL
+        run: |
+          curl -L -o wireguard.zip https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
+          Expand-Archive -Path wireguard.zip -DestinationPath .
+          Copy-Item -Path "wireguard-nt/bin/${{matrix.arch}}/wireguard.dll" -Destination "bin/"
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install WiX Toolset
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix --version
+
+      - name: Create MSI for octelium (with WireGuard)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/windows/build-msi.ps1 `
+            -PackageName "octelium" `
+            -Version $env:VERSION `
+            -Arch $env:ARCH `
+            -IncludeWireGuard
+
+      - name: Create MSI for octeliumctl
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/windows/build-msi.ps1 `
+            -PackageName "octeliumctl" `
+            -Version $env:VERSION `
+            -Arch $env:ARCH
+
+      - name: Create MSI for octops
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/windows/build-msi.ps1 `
+            -PackageName "octops" `
+            -Version $env:VERSION `
+            -Arch $env:ARCH
+
+      - name: List created packages
+        run: |
+          Write-Host "Contents of packaging directory:"
+          Get-ChildItem -Path packaging -Recurse
+
+      - name: Upload MSI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-windows-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: packaging/*.msi
+          retention-days: 1
+
   release:
     name: Release
     runs-on: ubuntu-24.04
-    needs: [build, package-linux]
+    needs: [build, package-linux, package-windows]
     permissions:
       contents: write
     steps:
@@ -280,6 +372,10 @@ jobs:
         with:
           pattern: packages-linux-*
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-windows-*
+
       - name: Combine checksums
         run: |
           cat release-artifact-*/checksums-*.txt > SHA256SUMS
@@ -287,12 +383,22 @@ jobs:
 
       - name: Generate package checksums
         run: |
+          # Linux packages
           if [ -d "packages-linux-amd64-${{ env.GITHUB_REF_SLUG }}" ]; then
             (cd packages-linux-amd64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
           fi
           
           if [ -d "packages-linux-arm64-${{ env.GITHUB_REF_SLUG }}" ]; then
             (cd packages-linux-arm64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
+          fi
+          
+          # Windows packages
+          if [ -d "packages-windows-amd64-${{ env.GITHUB_REF_SLUG }}" ]; then
+            (cd packages-windows-amd64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.msi) >> SHA256SUMS
+          fi
+          
+          if [ -d "packages-windows-arm64-${{ env.GITHUB_REF_SLUG }}" ]; then
+            (cd packages-windows-arm64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.msi) >> SHA256SUMS
           fi
 
       - name: List all files
@@ -308,4 +414,5 @@ jobs:
             release-artifact-*/*.zip
             packages-linux-*/*.deb
             packages-linux-*/*.rpm
+            packages-windows-*/*.msi
             SHA256SUMS

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package 
+    Name="${PACKAGE_NAME}"
+    Version="${VERSION}.0"
+    Manufacturer="Octelium"
+    UpgradeCode="${UPGRADE_CODE}"
+    Language="1033"
+    Codepage="1252">
+    
+    <SummaryInformation
+      Description="${DESCRIPTION}"
+      Manufacturer="Octelium"
+      Keywords="Installer" />
+    
+    <MajorUpgrade 
+      DowngradeErrorMessage="A newer version of [${PACKAGE_NAME}] is already installed."
+      AllowSameVersionUpgrades="yes" />
+    
+    <Media Id="1" Cabinet="${PACKAGE_NAME}.cab" EmbedCab="yes" />
+    
+    <Feature Id="ProductFeature" Title="${PACKAGE_NAME}" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="PATH" />
+    </Feature>
+    
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Octelium">
+        <Directory Id="BIN_FOLDER" Name="${PACKAGE_NAME}" />
+      </Directory>
+    </StandardDirectory>
+  </Package>
+  
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="BIN_FOLDER">
+      <Component Id="MainExecutable" Guid="${COMPONENT_GUID_1}">
+        <File Id="MainExe" Source="bin\${PACKAGE_NAME}.exe" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Octelium\${PACKAGE_NAME}" Name="Version" Type="string" Value="${VERSION}" KeyPath="no" />
+      </Component>
+    </ComponentGroup>
+    
+    <Component Id="PATH" Guid="${PATH_GUID}" Directory="BIN_FOLDER">
+      <Environment 
+        Id="PATH" 
+        Name="PATH" 
+        Value="[BIN_FOLDER]" 
+        Permanent="no" 
+        Part="last" 
+        Action="set" 
+        System="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Octelium\${PACKAGE_NAME}" Name="Path" Type="string" Value="[BIN_FOLDER]" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>
