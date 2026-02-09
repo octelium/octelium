@@ -351,10 +351,91 @@ jobs:
           path: packaging/*.msi
           retention-days: 1
 
+  package-macos:
+    name: Package macOS
+    runs-on: macos-14
+    needs: build
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: GitHub vars
+        uses: rlespinasse/github-slug-action@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact-darwin-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: artifacts
+
+      - name: Extract binaries
+        run: |
+          mkdir -p bin
+          cd artifacts
+          tar -xzf octelium-darwin-${{matrix.arch}}.tar.gz -C ../bin
+          tar -xzf octeliumctl-darwin-${{matrix.arch}}.tar.gz -C ../bin
+          tar -xzf octops-darwin-${{matrix.arch}}.tar.gz -C ../bin
+          cd ..
+          chmod +x bin/*
+
+      - name: Make build script executable
+        run: chmod +x .github/scripts/macos/build-pkg.sh
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create PKG for octelium
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/macos/build-pkg.sh \
+            --package-name octelium \
+            --version $VERSION \
+            --arch $ARCH
+
+      - name: Create PKG for octeliumctl
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/macos/build-pkg.sh \
+            --package-name octeliumctl \
+            --version $VERSION \
+            --arch $ARCH
+
+      - name: Create PKG for octops
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          .github/scripts/macos/build-pkg.sh \
+            --package-name octops \
+            --version $VERSION \
+            --arch $ARCH
+
+      - name: List created packages
+        run: |
+          echo "Contents of packaging directory:"
+          ls -la packaging/
+
+      - name: Upload PKG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-macos-${{matrix.arch}}-${{ env.GITHUB_REF_SLUG }}
+          path: packaging/*.pkg
+          retention-days: 1
+
   release:
     name: Release
     runs-on: ubuntu-24.04
-    needs: [build, package-linux, package-windows]
+    needs: [build, package-linux, package-macos, package-windows]
     permissions:
       contents: write
     steps:
@@ -364,55 +445,69 @@ jobs:
       - name: GitHub vars
         uses: rlespinasse/github-slug-action@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
           pattern: release-artifact-*
+          path: artifacts
 
-      - uses: actions/download-artifact@v4
+      - name: Download Linux packages
+        uses: actions/download-artifact@v4
         with:
           pattern: packages-linux-*
+          path: artifacts
 
-      - uses: actions/download-artifact@v4
+      - name: Download macOS packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-macos-*
+          path: artifacts
+
+      - name: Download Windows packages
+        uses: actions/download-artifact@v4
         with:
           pattern: packages-windows-*
+          path: artifacts
 
-      - name: Combine checksums
+      - name: Organize files for release
         run: |
-          cat release-artifact-*/checksums-*.txt > SHA256SUMS
-          rm release-artifact-*/checksums-*.txt
+          mkdir -p release-files
+          
+          # Copy all release artifacts (tarballs and zips)
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-files/ \;
+          
+          # Copy all package files (avoiding duplicates by using -n flag)
+          find artifacts -type f -name "*.deb" -exec cp -n {} release-files/ \;
+          find artifacts -type f -name "*.rpm" -exec cp -n {} release-files/ \;
+          find artifacts -type f -name "*.pkg" -exec cp -n {} release-files/ \;
+          find artifacts -type f -name "*.msi" -exec cp -n {} release-files/ \;
+          
+          echo "=== Files prepared for release ==="
+          ls -lh release-files/ | wc -l
+          echo "files ready"
 
-      - name: Generate package checksums
+      - name: Generate checksums
         run: |
-          # Linux packages
-          if [ -d "packages-linux-amd64-${{ env.GITHUB_REF_SLUG }}" ]; then
-            (cd packages-linux-amd64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
-          fi
+          cd release-files
+          sha256sum * > ../SHA256SUMS
+          cd ..
           
-          if [ -d "packages-linux-arm64-${{ env.GITHUB_REF_SLUG }}" ]; then
-            (cd packages-linux-arm64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.deb *.rpm) >> SHA256SUMS
-          fi
+          echo "=== SHA256SUMS content ==="
+          cat SHA256SUMS
           
-          # Windows packages
-          if [ -d "packages-windows-amd64-${{ env.GITHUB_REF_SLUG }}" ]; then
-            (cd packages-windows-amd64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.msi) >> SHA256SUMS
-          fi
-          
-          if [ -d "packages-windows-arm64-${{ env.GITHUB_REF_SLUG }}" ]; then
-            (cd packages-windows-arm64-${{ env.GITHUB_REF_SLUG }} && sha256sum *.msi) >> SHA256SUMS
-          fi
+          # Move SHA256SUMS to release-files
+          mv SHA256SUMS release-files/
 
-      - name: List all files
+      - name: Verify release files
         run: |
-          echo "All downloaded artifacts:"
-          ls -laR
+          echo "=== Final release file count ==="
+          ls -1 release-files/ | wc -l
+          echo ""
+          echo "=== Release files ==="
+          ls -lh release-files/
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release-artifact-*/*.tar.gz
-            release-artifact-*/*.zip
-            packages-linux-*/*.deb
-            packages-linux-*/*.rpm
-            packages-windows-*/*.msi
-            SHA256SUMS
+          files: release-files/*
+          fail_on_unmatched_files: true
