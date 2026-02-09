@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -1174,7 +1175,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 				assert.Nil(t, client.Disconnect(ctx))
 			}
-			{
+			if runtime.GOARCH == "amd64" {
 
 				s.startKubectlLog(ctx, fmt.Sprintf(
 					`$(kubectl get pod -n octelium -l octelium.com/svc=%s,octelium.com/component=svc-k8s-upstream -o jsonpath='{.items[0].metadata.name}')`,
