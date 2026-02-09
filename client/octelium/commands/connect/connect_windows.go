@@ -63,7 +63,7 @@ func doConnect(ctx context.Context, domain string) error {
 	ctx, cancelFn := context.WithCancel(ctx)
 	go func() {
 		<-signalCh
-		zap.S().Debugf("Received shutdown signal")
+		zap.L().Debug("Received shutdown signal")
 		cancelFn()
 	}()
 
@@ -98,7 +98,8 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 
 	if m, err := mgr.Connect(); err == nil {
 		if lockStatus, err := m.LockStatus(); err == nil && lockStatus.IsLocked {
-			zap.S().Debugf("SCM locked for %v by %s, marking service as started", lockStatus.Age, lockStatus.Owner)
+			zap.L().Debug("SCM locked, marking service as started",
+				zap.Duration("age", lockStatus.Age), zap.String("owner", lockStatus.Owner))
 			changes <- svc.Status{State: svc.Running}
 		}
 		m.Disconnect()
@@ -114,7 +115,7 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 			case cr := <-r:
 				switch cr.Cmd {
 				case svc.Stop, svc.Shutdown:
-					zap.S().Debugf("Received shutdown signal")
+					zap.L().Debug("Received shutdown signal")
 					cancelFn()
 					return
 				case svc.Interrogate:

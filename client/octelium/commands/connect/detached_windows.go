@@ -38,10 +38,10 @@ func doRunDetached(args []string) error {
 		return nil
 	}
 
-	zap.S().Debugf("opening service...")
+	zap.L().Debug("opening service...")
 	service, err := m.OpenService(windowsServiceName)
 	if err == nil {
-		zap.S().Debugf("querying service")
+		zap.L().Debug("querying service")
 		status, err := service.Query()
 		if err != nil && err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
 			service.Close()
@@ -53,14 +53,14 @@ func doRunDetached(args []string) error {
 		}
 		err = service.Delete()
 
-		zap.S().Debugf("Closing service")
+		zap.L().Debug("Closing service")
 		service.Close()
 		if err != nil && err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
 			return err
 		}
 
 		for {
-			zap.S().Debugf("service loop")
+			zap.L().Debug("service loop")
 			service, err = m.OpenService(windowsServiceName)
 			if err != nil && err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
 				break
@@ -79,14 +79,14 @@ func doRunDetached(args []string) error {
 		SidType:      windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 
-	zap.S().Debugf("Creating service")
+	zap.L().Debug("Creating service")
 
 	service, err = m.CreateService(windowsServiceName, path, config, args...)
 	if err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Starting service")
+	zap.L().Debug("Starting service")
 
 	return service.Start()
 

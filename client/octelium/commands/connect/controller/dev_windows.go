@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net/netip"
 	"sync"
 	"time"
@@ -52,18 +51,16 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 
 	var err error
 
-	zap.S().Debugf("getting conf")
+	// zap.S().Debugf("getting conf")
 	conf, err := c.getWgConf()
 	if err != nil {
 		return err
 	}
 
-	logPrefix := fmt.Sprintf("[%s] ", conf.Name)
-	log.SetPrefix(logPrefix)
+	// logPrefix := fmt.Sprintf("[%s] ", conf.Name)
+	// log.SetPrefix(logPrefix)
 
-	zap.S().Debugf("Starting", version.UserAgent())
-
-	zap.S().Debugf("Watching network interfaces")
+	zap.L().Debug("Stating watching network interface", zap.String("userAgent", version.UserAgent()))
 
 	if err := c.watchInterface(); err != nil {
 		return err
@@ -78,11 +75,12 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 		return err
 	}
 
-	log.Println("Creating network adapter")
+	zap.L().Debug("Creating network adapter")
 	for i := 0; i < 15; i++ {
 		if i > 0 {
 			time.Sleep(time.Second)
-			log.Printf("Retrying adapter creation after failure because system just booted (T+%v): %v", windows.DurationSinceBoot(), err)
+			zap.L().Debug("Retrying adapter creation after failure because system just booted",
+				zap.Duration("sinceBoot", windows.DurationSinceBoot()), zap.Error(err))
 		}
 		c.opts.adapter, err = driver.CreateAdapter("octelium", "WireGuard", guid)
 		if err == nil || !services.StartedAtBoot() {
@@ -95,9 +93,10 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 
 	driverVersion, err := driver.RunningVersion()
 	if err != nil {
-		log.Printf("Warning: unable to determine driver version: %v", err)
+		zap.L().Warn("Could not determine driver version", zap.Error(err))
 	} else {
-		log.Printf("Using WireGuardNT/%d.%d", (driverVersion>>16)&0xffff, driverVersion&0xffff)
+		zap.L().Debug("Using WireGuardNT",
+			zap.String("version", fmt.Sprintf("%d.%d", (driverVersion>>16)&0xffff, driverVersion&0xffff)))
 	}
 
 	err = c.opts.adapter.SetLogging(driver.AdapterLogOn)
@@ -257,7 +256,7 @@ func (c *Controller) watchInterface() error {
 		}
 
 		if err := c.doConfigureIface(); err != nil {
-			zap.S().Errorf("Could not configure interface: %+v", err)
+			zap.L().Error("Could not configure interface", zap.Error(err))
 		}
 	})
 	if err != nil {
@@ -268,24 +267,24 @@ func (c *Controller) watchInterface() error {
 
 func (c *Controller) doConfigureIface() error {
 
-	zap.S().Debugf("Configuring the interface.....")
+	zap.L().Debug("Configuring the interface.....")
 
 	if err := c.doSetDevAddrs(); err != nil {
-		zap.S().Debugf("Could not set addresses at cb: %+v", err)
+		zap.L().Warn("Could not set addresses at cb", zap.Error(err))
 		return err
 	}
 
 	if err := c.doSetRoutes(); err != nil {
-		zap.S().Debugf("Could not set routes at cb: %+v", err)
+		zap.L().Warn("Could not set routes at cb: %+v", zap.Error(err))
 		return err
 	}
 
 	if err := c.doSetDNS(); err != nil {
-		zap.S().Debugf("Could not set DNS at cb: %+v", err)
+		zap.L().Warn("Could not set DNS", zap.Error(err))
 		return err
 	}
 
-	zap.S().Debugf("Successfully configured the interface")
+	zap.L().Debug("Successfully configured the interface")
 	return nil
 }
 
@@ -297,7 +296,7 @@ func (c *Controller) configureIface() {
 	for _, event := range iw.storedEvents {
 		if event.luid == c.opts.adapter.LUID() {
 			if err := c.doConfigureIface(); err != nil {
-				zap.S().Errorf("Could not configure interface: %+v", err)
+				zap.L().Error("Could not configure interface", zap.Error(err))
 			}
 		}
 	}

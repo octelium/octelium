@@ -72,7 +72,7 @@ func (c *Controller) doSetRoutes() error {
 }
 
 func (c *Controller) setIPIF() error {
-	zap.S().Debugf("Setting IPIF")
+	zap.L().Debug("Setting IPIF")
 	luid := c.opts.adapter.LUID()
 
 	if c.ipv4Supported {
