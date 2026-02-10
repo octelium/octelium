@@ -29,9 +29,14 @@ func doRunDetached(args []string) error {
 		return err
 	}
 
+	escapedArgs := make([]string, len(args))
+	for i, arg := range args {
+		escapedArgs[i] = shellEscape(arg)
+	}
+
 	innerCommand := fmt.Sprintf("%s %s > /dev/null 2>&1 &",
-		executable,
-		strings.Join(args, " "),
+		shellEscape(executable),
+		strings.Join(escapedArgs, " "),
 	)
 
 	script := fmt.Sprintf("do shell script %q with administrator privileges", innerCommand)
@@ -39,10 +44,9 @@ func doRunDetached(args []string) error {
 	zap.L().Debug("detached cmd", zap.String("cmd", script))
 
 	cmd := exec.Command("osascript", "-e", script)
+	return cmd.Run()
+}
 
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	return nil
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
