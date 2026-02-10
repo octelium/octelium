@@ -836,6 +836,36 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 	}
 	zap.L().Debug("Initializing storage secrets")
 
+	var err error
+
+	getPassword := func(name, namespace, key string) (string, error) {
+		if namespace == "" {
+			namespace = "default"
+		}
+		if name == "" {
+			return "", errors.Errorf("name of passwordFromSecret is empty")
+		}
+		var password string
+		sec, err := g.k8sC.CoreV1().
+			Secrets(namespace).
+			Get(ctx, name, k8smetav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+
+		if key != "" {
+			password = string(sec.Data[key])
+		}
+		if password == "" {
+			password = string(sec.Data["password"])
+		}
+		if password == "" {
+			password = string(sec.Data["data"])
+		}
+
+		return password, nil
+	}
+
 	{
 		info := i.Bootstrap.Spec.PrimaryStorage.GetPostgresql()
 
@@ -846,21 +876,10 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			password = info.GetPassword()
 		case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
 			secSpec := info.GetPasswordFromSecret()
-			sec, err := g.k8sC.CoreV1().
-				Secrets(secSpec.Namespace).
-				Get(ctx, secSpec.Name, k8smetav1.GetOptions{})
+
+			password, err = getPassword(secSpec.Name, secSpec.Namespace, secSpec.Key)
 			if err != nil {
 				return err
-			}
-
-			if secSpec.Key != "" {
-				password = sec.StringData[secSpec.Key]
-			}
-			if password == "" {
-				password = sec.StringData["password"]
-			}
-			if password == "" {
-				password = sec.StringData["data"]
 			}
 		}
 
@@ -919,21 +938,9 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			password = info.GetPassword()
 		case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
 			secSpec := info.GetPasswordFromSecret()
-			sec, err := g.k8sC.CoreV1().
-				Secrets(secSpec.Namespace).
-				Get(ctx, secSpec.Name, k8smetav1.GetOptions{})
+			password, err = getPassword(secSpec.Name, secSpec.Namespace, secSpec.Key)
 			if err != nil {
 				return err
-			}
-
-			if secSpec.Key != "" {
-				password = sec.StringData[secSpec.Key]
-			}
-			if password == "" {
-				password = sec.StringData["password"]
-			}
-			if password == "" {
-				password = sec.StringData["data"]
 			}
 		}
 
