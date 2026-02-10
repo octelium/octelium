@@ -213,13 +213,13 @@ func runDetached(cmd *cobra.Command, domain string) error {
 	})
 
 	if cmd.Flags() != nil && cmd.Flags().Lookup("homedir") != nil && cmd.Flags().Lookup("homedir").Value.String() != "" {
-		args = append(args, "--homedir", fmt.Sprintf("'%s'", cmd.Flags().Lookup("homedir").Value.String()))
+		args = append(args, fmt.Sprintf("--homedir=%s", cmd.Flags().Lookup("homedir").Value.String()))
 	} else {
 		vHome, err := vhome.GetOcteliumHome()
 		if err != nil {
 			return err
 		}
-		args = append(args, "--homedir", fmt.Sprintf("'%s'", vHome))
+		args = append(args, fmt.Sprintf("--homedir=%s", vHome))
 	}
 
 	if err := doRunDetached(args); err != nil {
