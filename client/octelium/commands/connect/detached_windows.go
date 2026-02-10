@@ -15,7 +15,9 @@
 package connect
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -25,9 +27,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-var windowsServiceName = "octelium-io"
-
-func doRunDetached(args []string) error {
+func doRunDetached(domain string, args []string) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -38,8 +38,9 @@ func doRunDetached(args []string) error {
 		return nil
 	}
 
+	svcName := getWindowSvcName(domain)
 	zap.L().Debug("opening service...")
-	service, err := m.OpenService(windowsServiceName)
+	service, err := m.OpenService(svcName)
 	if err == nil {
 		zap.L().Debug("querying service")
 		status, err := service.Query()
@@ -61,7 +62,7 @@ func doRunDetached(args []string) error {
 
 		for {
 			zap.L().Debug("service loop")
-			service, err = m.OpenService(windowsServiceName)
+			service, err = m.OpenService(svcName)
 			if err != nil && err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
 				break
 			}
@@ -75,7 +76,8 @@ func doRunDetached(args []string) error {
 		StartType:    mgr.StartManual,
 		ErrorControl: mgr.ErrorNormal,
 		Dependencies: []string{"Nsi", "TcpIp"},
-		DisplayName:  windowsServiceName,
+		DisplayName:  fmt.Sprintf("Octelium (%s)", domain),
+		Description:  fmt.Sprintf("Octelium connection for %s", domain),
 		SidType:      windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 
@@ -83,7 +85,7 @@ func doRunDetached(args []string) error {
 		zap.String("path", path),
 		zap.Strings("args", args))
 
-	service, err = m.CreateService(windowsServiceName, path, config, args...)
+	service, err = m.CreateService(svcName, path, config, args...)
 	if err != nil {
 		return err
 	}
@@ -115,4 +117,8 @@ func doRunDetached(args []string) error {
 	}
 
 	return errors.Errorf("timeout waiting for service to start")
+}
+
+func getWindowSvcName(domain string) string {
+	return fmt.Sprintf("octelium-%s", strings.ReplaceAll(domain, ".", "-"))
 }

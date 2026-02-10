@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func doRunDetached(args []string) error {
+func doRunDetached(domain string, args []string) error {
 
 	executable, err := os.Executable()
 	if err != nil {

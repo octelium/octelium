@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,7 +83,9 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 			zap.L().Debug("Retrying adapter creation after failure because system just booted",
 				zap.Duration("sinceBoot", windows.DurationSinceBoot()), zap.Error(err))
 		}
-		c.opts.adapter, err = driver.CreateAdapter("octelium", "WireGuard", guid)
+		c.opts.adapter, err = driver.CreateAdapter(
+			strings.ReplaceAll(fmt.Sprintf("octelium-%s", c.c.Info.Cluster.Domain), ".", "-"),
+			"WireGuard", guid)
 		if err == nil || !services.StartedAtBoot() {
 			break
 		}
@@ -189,7 +192,7 @@ func (c *Controller) doSetDevAddrs() error {
 
 func (c *Controller) getGUID() (*windows.GUID, error) {
 
-	arg := "octelium.com"
+	arg := fmt.Sprintf("octelium-%s", c.c.Info.Cluster.Domain)
 	h := sha256.New()
 	_, err := h.Write([]byte(arg))
 	if err != nil {
@@ -208,7 +211,7 @@ func (c *Controller) getGUID() (*windows.GUID, error) {
 		Data4: data4,
 	}
 
-	zap.S().Debugf("GUID of %s = %s", arg, ret.String())
+	zap.L().Debug("Got adapter GUID", zap.String("guid", ret.String()))
 
 	return ret, nil
 }

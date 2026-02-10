@@ -44,8 +44,9 @@ func doConnect(ctx context.Context, domain string) error {
 			}
 			defer f.Close()
 
-			mw := io.MultiWriter(os.Stdout, f)
-
+			os.Stdout = f
+			os.Stderr = f
+			zap.L().Debug("Log set to debug")
 		}
 	*/
 
@@ -54,7 +55,7 @@ func doConnect(ctx context.Context, domain string) error {
 		svcController := &serviceController{
 			domain: domain,
 		}
-		return svc.Run(windowsServiceName, svcController)
+		return svc.Run(getWindowSvcName(domain), svcController)
 	}
 
 	signalCh := make(chan os.Signal, 1)

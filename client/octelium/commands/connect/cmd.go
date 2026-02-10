@@ -222,7 +222,7 @@ func runDetached(cmd *cobra.Command, domain string) error {
 		args = append(args, fmt.Sprintf("--homedir=%s", vHome))
 	}
 
-	if err := doRunDetached(args); err != nil {
+	if err := doRunDetached(domain, args); err != nil {
 		return err
 	}
 
