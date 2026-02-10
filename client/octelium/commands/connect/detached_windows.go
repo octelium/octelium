@@ -79,7 +79,9 @@ func doRunDetached(args []string) error {
 		SidType:      windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 
-	zap.L().Debug("Creating service")
+	zap.L().Debug("Creating service",
+		zap.String("path", path),
+		zap.Strings("args", args))
 
 	service, err = m.CreateService(windowsServiceName, path, config, args...)
 	if err != nil {
@@ -88,6 +90,29 @@ func doRunDetached(args []string) error {
 
 	zap.L().Debug("Starting service")
 
-	return service.Start()
+	if err := service.Start(); err != nil {
+		return err
+	}
 
+	zap.L().Debug("Waiting for service to start...")
+	timeout := time.Now().Add(30 * time.Second)
+	for time.Now().Before(timeout) {
+		status, err := service.Query()
+		if err != nil {
+			return err
+		}
+
+		if status.State == svc.Running {
+			zap.L().Debug("Service started successfully")
+			return nil
+		}
+
+		if status.State == svc.Stopped {
+			return errors.Errorf("service stopped unexpectedly during startup")
+		}
+
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	return errors.Errorf("timeout waiting for service to start")
 }

@@ -47,7 +47,7 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) doInitDevTUN(ctx context.Context) error {
+func (c *Controller) doInitDevTUN(_ context.Context) error {
 
 	var err error
 
@@ -99,7 +99,7 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 			zap.String("version", fmt.Sprintf("%d.%d", (driverVersion>>16)&0xffff, driverVersion&0xffff)))
 	}
 
-	err = c.opts.adapter.SetLogging(driver.AdapterLogOn)
+	err = c.opts.adapter.SetLogging(driver.AdapterLogOff)
 	if err != nil {
 		return err
 	}
