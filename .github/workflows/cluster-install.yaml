@@ -14,6 +14,7 @@ jobs:
          - k3s-calico
          - k3s-storage-secret
          - rke2
+         - rke2-cilium
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - name: Install deps
