@@ -134,7 +134,7 @@ kubectl create secret generic octelium-redis --from-literal=password=${REDIS_PAS
 echo -e "\e[1mInstalling PostgreSQL, Redis and Multus. This can take a while to finish...\e[0m"
 
 helm install --namespace kube-system octelium-multus oci://registry-1.docker.io/bitnamicharts/multus-cni --version 2.2.7 \
-    --set hostCNIBinDir=/opt/cni/bin/ --set hostCNINetDir=/etc/cni/net.d \
+    --set hostCNIBinDir=/var/lib/rancher/k3s/data/cni/ --set hostCNINetDir=/var/lib/rancher/k3s/agent/etc/cni/net.d \
     --set image.repository=bitnamilegacy/multus-cni --set global.security.allowInsecureImages=true &>/dev/null
 
 helm install octelium-redis oci://registry-1.docker.io/bitnamicharts/redis \
