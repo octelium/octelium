@@ -136,7 +136,7 @@ func (s *Server) Close() error {
 	s.isClosed = true
 	s.cancelFn()
 
-	zap.S().Debugf("Closing Postgres server")
+	zap.L().Debug("Closing Postgres server")
 	s.dctxMap.mu.Lock()
 	for _, dctx := range s.dctxMap.dctxMap {
 		dctx.close()
@@ -147,19 +147,19 @@ func (s *Server) Close() error {
 		s.lis.Close()
 	}
 
-	zap.S().Debugf("Postgres server closed")
+	zap.L().Debug("Postgres server closed")
 	close(s.doneComplete)
 
 	return nil
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
-	zap.S().Debugf("Started handling a new conn for: %s", c.RemoteAddr().String())
+	zap.L().Debug("Started handling a new conn", zap.String("addr", c.RemoteAddr().String()))
 
 	startTime := time.Now()
 	svc := s.svc()
 	if svc == nil {
-		zap.S().Warnf("Could not get the Service from cache")
+		zap.L().Warn("Could not get the Service from cache")
 		c.Close()
 		return
 	}
@@ -184,7 +184,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		Request: s.getDownstreamReq(ctx, c, startupMessage),
 	})
 	if err != nil {
-		zap.S().Debugf("Could not auth conn: %+v", err)
+		zap.L().Warn("Could not auth conn", zap.Error(err))
 		c.Close()
 		return
 	}
@@ -374,55 +374,6 @@ func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn, startupMessag
 	}
 }
 
-/*
-func (s *Server) authConn(ctx context.Context, c net.Conn, svc *corev1.Service) (*corev1.RequestContext, bool, error) {
-
-	req := &pbmeta.DownstreamRequest{
-		Source: &pbmeta.DownstreamRequest_Source{
-			Address: func() string {
-				switch addr := c.RemoteAddr().(type) {
-				case *net.UDPAddr:
-					return addr.IP.String()
-				case *net.TCPAddr:
-					return addr.IP.String()
-				default:
-					return ""
-				}
-			}(),
-			Port: func() int32 {
-				switch addr := c.RemoteAddr().(type) {
-				case *net.UDPAddr:
-					return int32(addr.Port)
-				case *net.TCPAddr:
-					return int32(addr.Port)
-				default:
-					return 0
-				}
-			}(),
-		},
-	}
-
-	zap.S().Debugf("Authenticating downstream req: %+v", req)
-
-	i, err := s.vigil.Authenticate(ctx, svc, req)
-	if err != nil {
-		return nil, false, errors.Errorf("Could not authenticate conn: %+v", err)
-	}
-
-	zap.S().Debugf("Authorizing downstream: %+v", i)
-
-	isAuthorized, err := s.vigil.IsAuthorized(ctx, i)
-	if err != nil {
-		return nil, true, errors.Errorf("Could not authorize conn: %+v", err)
-	}
-
-	if !isAuthorized {
-		return nil, true, errors.Errorf("Conn is not authorized")
-	}
-	return i, true, nil
-}
-*/
-
 func (s *Server) setTLSConfig(ctx context.Context) error {
 
 	crt, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
@@ -481,28 +432,26 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) serve(ctx context.Context) {
-	zap.S().Debugf("Starting serving connections")
+	zap.L().Debug("Starting serving connections")
 
 	for {
 		conn, err := s.lis.Accept()
-
 		if err != nil {
-			zap.S().Debugf("Could not accept conn: %+v", err)
+			zap.L().Warn("Could not accept conn", zap.Error(err))
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.S().Debugf("Timeout err")
+				zap.L().Debug("Timeout err")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			select {
 			case <-ctx.Done():
-				zap.S().Debugf("shutting down server")
+				zap.L().Debug("shutting down server")
 				return
 			default:
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-
 		}
 
 		go s.handleConn(ctx, conn)

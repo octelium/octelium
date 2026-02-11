@@ -168,7 +168,7 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 }
 
 func (c *dctx) handleSessionDownstreamReq(req *ssh.Request, ch ssh.Channel, sessionID string) error {
-	zap.S().Debugf("New session req: %s for dctx: %s", req.Type, c.id)
+	zap.L().Debug("New session req", zap.String("type", req.Type), zap.String("dctxID", c.id))
 
 	switch req.Type {
 	case "keepalive@openssh.com":
@@ -200,7 +200,7 @@ func (c *dctx) handleSessionDownstreamReq(req *ssh.Request, ch ssh.Channel, sess
 			req.Reply(ok, nil)
 		}
 	default:
-		zap.S().Debugf("Unsupported session req: %s", req.Type)
+		zap.L().Debug("Unsupported session req", zap.String("type", req.Type))
 		return req.Reply(false, nil)
 	}
 
@@ -224,7 +224,7 @@ func (c *dctx) handleSessionUpstreamReq(req *ssh.Request, ch ssh.Channel) error 
 			return req.Reply(true, nil)
 		}
 	default:
-		zap.S().Debugf("Unsupported session req: %s", req.Type)
+		zap.L().Debug("Unsupported session req", zap.String("type", req.Type))
 		return req.Reply(false, nil)
 	}
 

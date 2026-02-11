@@ -133,7 +133,7 @@ func (s *Server) Close() error {
 	s.isClosed = true
 	s.cancelFn()
 
-	zap.S().Debugf("Closing MySQL server")
+	zap.L().Debug("Closing MySQL server")
 	s.dctxMap.mu.Lock()
 	for _, dctx := range s.dctxMap.dctxMap {
 		dctx.close()
@@ -144,19 +144,19 @@ func (s *Server) Close() error {
 		s.lis.Close()
 	}
 
-	zap.S().Debugf("MySQL server closed")
+	zap.L().Debug("MySQL server closed")
 	close(s.doneComplete)
 
 	return nil
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
-	zap.S().Debugf("Started handling a new conn for: %s", c.RemoteAddr().String())
+	zap.L().Debug("Started handling a new conn", zap.String("addr", c.RemoteAddr().String()))
 
 	startTime := time.Now()
 	svc := s.svc()
 	if svc == nil {
-		zap.S().Warnf("Could not get the Service from cache")
+		zap.L().Warn("Could not get the Service from cache")
 		c.Close()
 		return
 	}
@@ -170,7 +170,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		Request: s.getDownstreamReq(ctx, c),
 	})
 	if err != nil {
-		zap.S().Debugf("Could not auth conn: %+v", err)
+		zap.L().Warn("Could not auth conn", zap.Error(err))
 		c.Close()
 		return
 	}
@@ -347,22 +347,22 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) serve(ctx context.Context) {
-	zap.S().Debugf("Starting serving connections")
+	zap.L().Debug("Starting serving connections")
 
 	for {
 		conn, err := s.lis.Accept()
 
 		if err != nil {
-			zap.S().Debugf("Could not accept conn: %+v", err)
+			zap.L().Warn("Could not accept conn:", zap.Error(err))
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.S().Debugf("Timeout err")
+				zap.L().Debug("Timeout err")
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
 			select {
 			case <-ctx.Done():
-				zap.S().Debugf("shutting down server")
+				zap.L().Debug("shutting down server")
 				return
 			default:
 				time.Sleep(100 * time.Millisecond)

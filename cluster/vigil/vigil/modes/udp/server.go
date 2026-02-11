@@ -126,7 +126,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Port: ucorev1.ToService(svc).RealPort(),
 	}
 
-	zap.S().Debugf("Listening to addr: %s", addr.String())
+	zap.L().Debug("Listening to addr", zap.String("addr", addr.String()))
 
 	s.lis, err = net.ListenUDP("udp", addr)
 	if err != nil {
@@ -207,7 +207,7 @@ func (s *Server) replyLoop(dctx *dctx) {
 }
 
 func (s *Server) doRun(ctx context.Context) {
-	zap.S().Debugf("Starting running the run loop")
+	zap.L().Debug("Starting running the run loop")
 	for {
 		select {
 		case <-ctx.Done():
@@ -221,7 +221,7 @@ func (s *Server) doRun(ctx context.Context) {
 			}
 
 			if err := s.handlePacket(ctx, readBuf, n, addr); err != nil {
-				zap.S().Debugf("Could not handle packet: %+v", err)
+				zap.L().Warn("Could not handle packet", zap.Error(err))
 			}
 		}
 
@@ -247,7 +247,7 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		},
 	}
 
-	zap.S().Debugf("Authenticating downstream req: %+v", req)
+	zap.L().Debug("Authenticating downstream", zap.Any("req", req))
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: req,
@@ -304,9 +304,9 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		}
 
 		go s.replyLoop(dctx)
-		zap.S().Debugf("Successfully built new dctx for: %s", dctx.addr.String())
+		zap.L().Debug("Successfully built new dctx", zap.String("addr", dctx.addr.String()))
 	} else {
-		zap.S().Debugf("Got stored dctx for: %s", dctx.addr.String())
+		zap.L().Debug("Got stored dctx", zap.String("addr", dctx.addr.String()))
 	}
 
 	for i := 0; i != n; {

@@ -385,69 +385,6 @@ func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn, sshConn *ssh.
 	}
 }
 
-/*
-func (s *Server) authConn(ctx context.Context, c net.Conn, sshConn *ssh.ServerConn, svc *corev1.Service) (*corev1.RequestContext, bool, error) {
-
-	if svc == nil {
-		zap.S().Warnf("Could not get the Service from cache")
-		return nil, false, errors.Errorf("Cannot find svc in cache")
-	}
-
-	req := &pbmeta.DownstreamRequest{
-		Source: &pbmeta.DownstreamRequest_Source{
-			Address: func() string {
-				switch addr := c.RemoteAddr().(type) {
-				case *net.UDPAddr:
-					return addr.IP.String()
-				case *net.TCPAddr:
-					return addr.IP.String()
-				default:
-					return ""
-				}
-			}(),
-			Port: func() int32 {
-				switch addr := c.RemoteAddr().(type) {
-				case *net.UDPAddr:
-					return int32(addr.Port)
-				case *net.TCPAddr:
-					return int32(addr.Port)
-				default:
-					return 0
-				}
-			}(),
-		},
-		Type: &pbmeta.DownstreamRequest_Ssh{
-			Ssh: &pbmeta.DownstreamRequest_SSH{
-				User: sshConn.User(),
-			},
-		},
-	}
-
-	zap.S().Debugf("Authenticating downstream req: %+v", req)
-
-	i, err := s.vigil.Authenticate(ctx, svc, req)
-	if err != nil {
-		zap.S().Debugf("Could not authenticate downstream: %+v", err)
-		return nil, false, err
-	}
-
-	zap.S().Debugf("Authorizing downstream: %+v", i)
-
-	isAuthorized, err := s.vigil.IsAuthorized(ctx, i)
-	if err != nil {
-		zap.S().Debugf("Could not authorize downstream: %+v", err)
-		return nil, true, err
-	}
-
-	if !isAuthorized {
-		zap.S().Debugf("Downstream is not authorized: %+v", i)
-		return nil, true, errors.Errorf("Unauthorized User")
-	}
-
-	return i, true, nil
-}
-*/
-
 func (s *Server) Run(ctx context.Context) error {
 	var err error
 	zap.L().Debug("Starting running SSH server")

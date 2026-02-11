@@ -126,10 +126,10 @@ func (s *SecretManager) isInSecretNames(name string) bool {
 }
 
 func (s *SecretManager) ApplyService(ctx context.Context) error {
-	zap.S().Debugf("Apply Service Secrets")
+	zap.L().Debug("Apply Service Secrets")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	zap.S().Debugf("Initial secret names: %+v", s.secretNames)
+	zap.L().Debug("Initial secret names", zap.Strings("names", s.secretNames))
 	s.secretNames = nil
 
 	s.c.Flush()
