@@ -109,9 +109,11 @@ func doRunDetached(domain string, args []string) error {
 			return nil
 		}
 
-		if status.State == svc.Stopped {
-			return errors.Errorf("service stopped unexpectedly during startup")
-		}
+		/*
+			if status.State == svc.Stopped {
+				return errors.Errorf("service stopped unexpectedly during startup")
+			}
+		*/
 
 		time.Sleep(300 * time.Millisecond)
 	}

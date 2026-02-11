@@ -32,21 +32,23 @@ import (
 func doConnect(ctx context.Context, domain string) error {
 
 	/*
-		if ldflags.IsDev() {
-			home, err := os.UserHomeDir()
+		{
+
+			logPath := "C:/oct-01.txt"
+
+			_ = os.MkdirAll(filepath.Dir(logPath), 0755)
+
+			cfg := zap.NewDevelopmentConfig()
+			cfg.OutputPaths = []string{logPath}
+			cfg.ErrorOutputPaths = []string{logPath}
+
+			logger, err := cfg.Build()
 			if err != nil {
 				return err
 			}
 
-			f, err := os.OpenFile(path.Join(home, "octelium-logs"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			os.Stdout = f
-			os.Stderr = f
-			zap.L().Debug("Log set to debug")
+			zap.ReplaceGlobals(logger)
+			zap.L().Info("Service logger initialized", zap.String("path", logPath))
 		}
 	*/
 
@@ -90,10 +92,12 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 
 	logFile, err := conf.LogFile(true)
 	if err != nil {
+		zap.L().Error("Could not get LogFile", zap.Error(err))
 		return
 	}
 
-	if err := ringlogger.InitGlobalLogger(logFile, "octelium"); err != nil {
+	if err := ringlogger.InitGlobalLogger(logFile, "OCT"); err != nil {
+		zap.L().Error("Could not InitGlobalLogger", zap.Error(err))
 		return
 	}
 
