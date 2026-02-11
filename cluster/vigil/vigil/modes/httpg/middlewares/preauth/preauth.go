@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
@@ -38,10 +39,8 @@ import (
 
 type middleware struct {
 	octeliumC octeliumc.ClientInterface
-
-	next   http.Handler
-	domain string
-	// celEngine *celengine.CELEngine
+	next      http.Handler
+	domain    string
 }
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, domain string) (http.Handler, error) {
@@ -201,6 +200,8 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}
 	}
 
+	ip := req.Header.Get(vutils.GetDownstreamIPHeaderCanonical())
+
 	switch {
 	case ucorev1.ToService(svc).IsKubernetes():
 		k8sReq, err := httputils.ParseKubernetesRequest(req)
@@ -211,6 +212,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		return &coctovigilv1.DownstreamRequest{
 			Source: vigilutils.GetDownstreamRequestSource(c),
 			Request: &corev1.RequestContext_Request{
+				Ip: ip,
 				Type: &corev1.RequestContext_Request_Kubernetes_{
 					Kubernetes: &corev1.RequestContext_Request_Kubernetes{
 						Http:        httpC,
@@ -234,6 +236,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		return &coctovigilv1.DownstreamRequest{
 			Source: vigilutils.GetDownstreamRequestSource(c),
 			Request: &corev1.RequestContext_Request{
+				Ip: ip,
 				Type: &corev1.RequestContext_Request_Grpc{
 					Grpc: &corev1.RequestContext_Request_GRPC{
 						Http:            httpC,
@@ -249,6 +252,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		return &coctovigilv1.DownstreamRequest{
 			Source: vigilutils.GetDownstreamRequestSource(c),
 			Request: &corev1.RequestContext_Request{
+				Ip: ip,
 				Type: &corev1.RequestContext_Request_Http{
 					Http: httpC,
 				},

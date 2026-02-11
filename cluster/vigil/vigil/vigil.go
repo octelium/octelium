@@ -53,17 +53,11 @@ type Server struct {
 	octeliumC  octeliumc.ClientInterface
 	octovigilC *octovigilc.Client
 	svcUID     string
-
-	server modes.Server
-
-	svcCtl *controllers.ServiceController
-
-	secretMan *secretman.SecretManager
-	// logManager   *logmanager.LogManager
-	lbManager *loadbalancer.LBManager
-	// metricsStore *metricsstore.MetricsStore
-
-	vCache *vcache.Cache
+	server     modes.Server
+	svcCtl     *controllers.ServiceController
+	secretMan  *secretman.SecretManager
+	lbManager  *loadbalancer.LBManager
+	vCache     *vcache.Cache
 }
 
 type Opts struct {
