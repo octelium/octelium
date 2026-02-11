@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -167,6 +168,56 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 
 	req.Status = &corev1.IdentityProvider_Status{}
 
+	validateIssuerUniqueness := func(issuer string, typ corev1.IdentityProvider_Status_Type) error {
+		issuer = strings.TrimSuffix(issuer, "/")
+		if issuer == "" {
+			return grpcutils.InvalidArg("Issuer cannot be empty")
+		}
+
+		idpList, err := s.octeliumC.CoreC().ListIdentityProvider(ctx, &rmetav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+
+		for _, idp := range idpList.Items {
+			if idp.Metadata.Name == req.Metadata.Name {
+				continue
+			}
+
+			switch idp.Status.Type {
+			case corev1.IdentityProvider_Status_OIDC,
+				corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN:
+			default:
+				continue
+			}
+
+			if idp.Status.Type != typ {
+				continue
+			}
+
+			switch idp.Status.Type {
+			case corev1.IdentityProvider_Status_OIDC:
+				if strings.TrimSuffix(idp.Spec.GetOidc().IssuerURL, "/") == issuer {
+					return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
+				}
+			case corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN:
+				spec := idp.Spec.GetOidcIdentityToken()
+				switch spec.Type.(type) {
+				case *corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL:
+					if strings.TrimSuffix(spec.GetIssuerURL(), "/") == issuer {
+						return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
+					}
+				default:
+					if strings.TrimSuffix(spec.Issuer, "/") == issuer {
+						return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
+					}
+				}
+			}
+		}
+
+		return nil
+	}
+
 	switch spec.Type.(type) {
 	case *corev1.IdentityProvider_Spec_Github_:
 		typ := spec.GetGithub()
@@ -217,6 +268,10 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 			}
 		}
 
+		if err := validateIssuerUniqueness(typ.IssuerURL, corev1.IdentityProvider_Status_OIDC); err != nil {
+			return err
+		}
+
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC
 	case *corev1.IdentityProvider_Spec_OidcIdentityToken:
 		typ := spec.GetOidcIdentityToken()
@@ -247,6 +302,22 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		}
 
 		if err := s.validateGenStr(spec.GetOidcIdentityToken().Audience, false, "audience"); err != nil {
+			return err
+		}
+
+		if err := validateIssuerUniqueness(func() string {
+			switch typ.Type.(type) {
+			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL:
+				return typ.GetIssuerURL()
+			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent:
+				return typ.Issuer
+			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL:
+				return typ.Issuer
+			default:
+				return ""
+			}
+		}(),
+			corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN); err != nil {
 			return err
 		}
 
