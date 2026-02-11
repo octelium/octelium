@@ -34,7 +34,7 @@ func doConnect(ctx context.Context, domain string) error {
 	/*
 		{
 
-			logPath := "C:/oct-01.txt"
+			logPath := fmt.Sprintf("C:/oct-%d.txt", time.Now().Unix())
 
 			_ = os.MkdirAll(filepath.Dir(logPath), 0755)
 

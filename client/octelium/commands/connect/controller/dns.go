@@ -89,6 +89,11 @@ func (c *Controller) UnsetDNS() error {
 func (c *Controller) getDNSServers() []string {
 	if c.c.Preferences.LocalDNS.IsEnabled {
 		if addr := c.getLocalDNSServerAddr(); addr != "" {
+			if govalidator.IsIP(addr) {
+				return []string{
+					addr,
+				}
+			}
 			host, _, _ := net.SplitHostPort(addr)
 			return []string{
 				host,
@@ -240,16 +245,23 @@ func (c *Controller) getLocalDNSServerAddr() string {
 	if cliutils.IsDarwin() {
 		return "127.0.0.1:53"
 	}
-	if len(c.c.Connection.Addresses) > 0 {
-		if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {
-			addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V6)
-			return net.JoinHostPort(addr.String(), "53")
-		}
-		if c.ipv4Supported && c.c.Connection.Addresses[0].V4 != "" {
-			addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V4)
-			return net.JoinHostPort(addr.String(), "53")
-		}
-	}
 
-	return ""
+	return "127.0.0.100:53"
+
+	/*
+		if len(c.c.Connection.Addresses) > 0 {
+			if c.ipv6Supported && c.c.Connection.Addresses[0].V6 != "" {
+				addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V6)
+				return net.JoinHostPort(addr.String(), "53")
+			}
+			if c.ipv4Supported && c.c.Connection.Addresses[0].V4 != "" {
+				addr, _, _ := net.ParseCIDR(c.c.Connection.Addresses[0].V4)
+				return net.JoinHostPort(addr.String(), "53")
+			}
+		}
+
+
+
+		return ""
+	*/
 }

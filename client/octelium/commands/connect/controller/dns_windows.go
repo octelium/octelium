@@ -30,6 +30,43 @@ func (c *Controller) doSetDNS() error {
 
 	dnsServers := c.getDNSServers()
 
+	if c.c.Preferences.LocalDNS.IsEnabled {
+
+		{
+			dnsAddrs := []netip.Addr{}
+			for _, addr := range dnsServers {
+				if govalidator.IsIPv4(addr) {
+					netaddr, err := netip.ParseAddr(addr)
+					if err != nil {
+						return err
+					}
+					dnsAddrs = append(dnsAddrs, netaddr)
+				}
+			}
+			if err := luid.SetDNS(windows.AF_INET, dnsAddrs, c.getDNSSearchDomains()); err != nil {
+				return err
+			}
+		}
+
+		{
+			dnsAddrs := []netip.Addr{}
+			for _, addr := range dnsServers {
+				if govalidator.IsIPv6(addr) {
+					netaddr, err := netip.ParseAddr(addr)
+					if err != nil {
+						return err
+					}
+					dnsAddrs = append(dnsAddrs, netaddr)
+				}
+			}
+			if err := luid.SetDNS(windows.AF_INET6, dnsAddrs, c.getDNSSearchDomains()); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	if c.ipv4Supported {
 		dnsAddrs := []netip.Addr{}
 
@@ -80,17 +117,21 @@ func (c *Controller) doUnsetDNS() error {
 
 	luid := c.opts.adapter.LUID()
 
-	if c.ipv4Supported {
-		if err := luid.FlushDNS(windows.AF_INET); err != nil {
-			return err
+	luid.FlushDNS(windows.AF_INET)
+	luid.FlushDNS(windows.AF_INET6)
+	/*
+		if c.ipv4Supported {
+			if err := luid.FlushDNS(windows.AF_INET); err != nil {
+				return err
+			}
 		}
-	}
 
-	if c.ipv6Supported {
-		if err := luid.FlushDNS(windows.AF_INET6); err != nil {
-			return err
+		if c.ipv6Supported {
+			if err := luid.FlushDNS(windows.AF_INET6); err != nil {
+				return err
+			}
 		}
-	}
+	*/
 
 	return nil
 }
