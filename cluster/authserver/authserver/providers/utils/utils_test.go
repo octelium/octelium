@@ -18,11 +18,17 @@ package utils
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -106,5 +112,114 @@ func TestGetAAL(t *testing.T) {
 			},
 		})
 		assert.Equal(t, corev1.Session_Status_Authentication_Info_AAL2, out)
+	}
+}
+
+func TestPeekAssertionIssuer(t *testing.T) {
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	type tknClaims struct {
+		jwt.RegisteredClaims
+	}
+
+	{
+		_, err := peekAssertionIssuer("")
+		assert.NotNil(t, err)
+
+		_, err = peekAssertionIssuer(utilrand.GetRandomString(200))
+		assert.NotNil(t, err)
+	}
+
+	{
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.Nil(t, err)
+		issuer := fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8))
+
+		tkn := jwt.NewWithClaims(jwt.SigningMethodRS256, &tknClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Subject:   utilrand.GetRandomStringCanonical(8),
+				Issuer:    issuer,
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			},
+		})
+
+		tknStr, err := tkn.SignedString(priv)
+		assert.Nil(t, err)
+
+		res, err := peekAssertionIssuer(tknStr)
+		assert.Nil(t, err)
+		assert.Equal(t, issuer, res)
+	}
+}
+
+func TestIsAssertionIssuerForIdentityProvider(t *testing.T) {
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	type tknClaims struct {
+		jwt.RegisteredClaims
+	}
+
+	{
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.Nil(t, err)
+		issuer := fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8))
+
+		tkn := jwt.NewWithClaims(jwt.SigningMethodRS256, &tknClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Subject:   utilrand.GetRandomStringCanonical(8),
+				Issuer:    issuer,
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			},
+		})
+
+		tknStr, err := tkn.SignedString(priv)
+		assert.Nil(t, err)
+
+		{
+			assert.True(t, IsAssertionIssuerForIdentityProvider(&corev1.IdentityProvider{
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+						OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+							Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL{
+								IssuerURL: issuer,
+							},
+						},
+					},
+				},
+				Status: &corev1.IdentityProvider_Status{
+					Type: corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
+				},
+			}, tknStr))
+		}
+
+		{
+			assert.True(t, IsAssertionIssuerForIdentityProvider(&corev1.IdentityProvider{
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+						OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+							Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL{
+								IssuerURL: issuer + "/",
+							},
+						},
+					},
+				},
+				Status: &corev1.IdentityProvider_Status{
+					Type: corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
+				},
+			}, tknStr))
+		}
 	}
 }

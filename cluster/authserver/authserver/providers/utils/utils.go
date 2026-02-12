@@ -167,6 +167,10 @@ func GetAAL(ctx context.Context, req *GetAALReq) corev1.Session_Status_Authentic
 }
 
 func peekAssertionIssuer(idToken string) (string, error) {
+	if idToken == "" || len(idToken) > 15000 {
+		return "", errors.Errorf("Invalid idToken")
+	}
+
 	tok, err := jwt.ParseSigned(idToken)
 	if err != nil {
 		return "", err
