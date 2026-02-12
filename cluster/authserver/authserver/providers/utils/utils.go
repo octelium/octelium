@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/gosimple/slug"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -162,4 +164,44 @@ func GetAAL(ctx context.Context, req *GetAALReq) corev1.Session_Status_Authentic
 	}
 
 	return corev1.Session_Status_Authentication_Info_AAL_UNSET
+}
+
+func peekAssertionIssuer(idToken string) (string, error) {
+	tok, err := jwt.ParseSigned(idToken)
+	if err != nil {
+		return "", err
+	}
+
+	var claims struct {
+		Issuer string `json:"iss"`
+	}
+
+	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
+		return "", err
+	}
+
+	return claims.Issuer, nil
+}
+
+func IsAssertionIssuerForIdentityProvider(idp *corev1.IdentityProvider, assertion string) bool {
+	if idp.Status.Type != corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN ||
+		idp.Spec.GetOidcIdentityToken() == nil {
+		return false
+	}
+
+	idpIssuer := func() string {
+		spec := idp.Spec.GetOidcIdentityToken()
+		if spec.GetIssuerURL() != "" {
+			return spec.GetIssuerURL()
+		}
+
+		return spec.Issuer
+	}()
+
+	iss, err := peekAssertionIssuer(assertion)
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSuffix(idpIssuer, "/") == strings.TrimSuffix(iss, "/")
 }

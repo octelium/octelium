@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/oscope"
@@ -50,6 +51,12 @@ func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *http.Request) {
+
+	if r.Form.Get("client_assertion_type") == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+		s.handleOAuth2TokenClientCredentialsOIDC(w, r)
+		return
+	}
+
 	var err error
 	ctx := r.Context()
 	w.Header().Set("Content-Type", "application/json")
@@ -274,4 +281,79 @@ func (s *server) handleOAuth2Metadata(w http.ResponseWriter, r *http.Request) {
 			"client_secret_post",
 		},
 	})
+}
+
+func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	w.Header().Set("Content-Type", "application/json")
+	assertion := r.Form.Get("client_assertion")
+
+	provider, err := s.getAssertionProviderFromAssertion(assertion)
+	if err != nil {
+		zap.L().Debug("Credential is not OAUTH2")
+		s.returnOAuth2Err(w, "invalid_client", 401)
+		return
+	}
+
+	usr, info, err := provider.AuthenticateAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{
+		Assertion: assertion,
+	})
+	if err != nil {
+		zap.L().Debug("Could not get authentication Token", zap.Error(err))
+		s.returnOAuth2Err(w, "invalid_client", 401)
+		return
+	}
+
+	scopeStr := r.Form.Get("scope")
+	scopes, err := checkAndGetOAuthScopeStr(scopeStr)
+	if err != nil {
+		s.returnOAuth2Err(w, "invalid_scope", 401)
+		return
+	}
+
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		s.returnOAuth2Err(w, "server_error", 500)
+		return
+	}
+
+	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
+		s.returnOAuth2Err(w, "invalid_request", 400)
+		return
+	}
+	sess, err := sessionc.CreateSession(ctx, &sessionc.CreateSessionOpts{
+		OcteliumC:          s.octeliumC,
+		ClusterConfig:      cc,
+		Usr:                usr,
+		SessType:           corev1.Session_Status_CLIENTLESS,
+		Scopes:             scopes,
+		GeoIPCtl:           s.geoipCtl,
+		AuthenticationInfo: info,
+		UserAgent:          r.Header.Get("User-Agent"),
+		ClientAddr:         r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
+	})
+	if err != nil {
+		s.returnOAuth2Err(w, "server_error", 500)
+		return
+	}
+
+	accessToken, err := s.generateAccessToken(sess)
+	if err != nil {
+		s.returnOAuth2Err(w, "server_error", 500)
+		return
+	}
+
+	resp := &oauthAccessTokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   int(umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToSeconds()),
+	}
+
+	respBytes, err := json.Marshal(resp)
+	if err != nil {
+		s.returnOAuth2Err(w, "server_error", 500)
+		return
+	}
+
+	w.Write(respBytes)
 }

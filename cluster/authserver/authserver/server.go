@@ -519,11 +519,41 @@ func (s *server) getAssertionProviderFromName(name string) (utils.Provider, erro
 	defer s.assertionProvidersC.RUnlock()
 	for _, itm := range s.assertionProvidersC.connectors {
 		if itm.Name() == name {
+			if itm.Provider().Spec.IsDisabled {
+				return nil, s.errPermissionDenied("IdentityProvider is disabled")
+			}
+
+			if itm.Provider().Status.IsLocked {
+				return nil, s.errPermissionDenied("IdentityProvider is locked")
+			}
+
 			return itm, nil
 		}
 	}
 
 	return nil, errors.Errorf("Could not find IdentityProvider: %s in the cached list", name)
+}
+
+func (s *server) getAssertionProviderFromAssertion(assertion string) (utils.Provider, error) {
+	s.assertionProvidersC.RLock()
+	defer s.assertionProvidersC.RUnlock()
+	for _, itm := range s.assertionProvidersC.connectors {
+		idp := itm.Provider()
+
+		if idp.Spec.IsDisabled {
+			continue
+		}
+
+		if idp.Status.IsLocked {
+			continue
+		}
+
+		if utils.IsAssertionIssuerForIdentityProvider(idp, assertion) {
+			return itm, nil
+		}
+	}
+
+	return nil, errors.Errorf("Could not find IdentityProvider for assertion")
 }
 
 func (s *server) checkMaxSessionsPerUser(ctx context.Context, usr *corev1.User, cc *corev1.ClusterConfig) error {

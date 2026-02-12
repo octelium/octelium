@@ -247,13 +247,6 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		return nil, s.errUnauthenticated("Invalid IdentityProvider")
 	}
 
-	if provider.Provider().Spec.IsDisabled {
-		return nil, s.errUnauthenticated("IdentityProvider is disabled")
-	}
-	if provider.Provider().Status.IsLocked {
-		return nil, s.errUnauthenticated("IdentityProvider is locked")
-	}
-
 	usr, info, err := provider.AuthenticateAssertion(ctx, req)
 	if err != nil {
 		return nil, s.errUnauthenticatedErr(err)

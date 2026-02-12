@@ -23,11 +23,9 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v3"
-	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
@@ -97,13 +95,8 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 			}
 		}
 	} else {
-		iss, err := peekIssuer(req.Assertion)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if strings.TrimSuffix(c.GetIssuer(), "/") != strings.TrimSuffix(iss, "/") {
-			return nil, nil, errors.Errorf("invalid issuer")
+		if !utils.IsAssertionIssuerForIdentityProvider(c.c, req.Assertion) {
+			return nil, nil, errors.Errorf("Invalid assertion")
 		}
 	}
 
@@ -212,30 +205,4 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 			AssertionMap: claims,
 		}),
 	}, nil
-}
-
-func (c *Connector) GetIssuer() string {
-	spec := c.c.Spec.GetOidcIdentityToken()
-	if spec.GetIssuerURL() != "" {
-		return spec.GetIssuerURL()
-	}
-
-	return spec.Issuer
-}
-
-func peekIssuer(idToken string) (string, error) {
-	tok, err := jwt.ParseSigned(idToken)
-	if err != nil {
-		return "", err
-	}
-
-	var claims struct {
-		Issuer string `json:"iss"`
-	}
-
-	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
-		return "", err
-	}
-
-	return claims.Issuer, nil
 }
