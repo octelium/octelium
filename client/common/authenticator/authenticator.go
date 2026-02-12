@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -397,31 +398,14 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		return nil, errors.Errorf("No assertion argument found")
 	}
 
-	args := strings.SplitN(a.opts.Assertion.Arg, ":", 2)
-	if len(args) < 2 {
-		return nil, errors.Errorf("Invalid assertion argument: %s", a.opts.Assertion.Arg)
+	ret := &assertionArgs{}
+
+	assertion, err := parseAssertion(a.opts.Assertion.Arg)
+	if err != nil {
+		return nil, err
 	}
 
-	hasArgsMap := len(args) == 3
-	var argsMap string
-	if hasArgsMap {
-		argsMap = args[2]
-	}
-
-	ret := &assertionArgs{
-		identityProviderRef: func() *metav1.ObjectReference {
-			if govalidator.IsUUIDv4(args[0]) {
-				return &metav1.ObjectReference{
-					Uid: args[0],
-				}
-			}
-			return &metav1.ObjectReference{
-				Name: args[0],
-			}
-		}(),
-	}
-
-	switch args[1] {
+	switch assertion.typ {
 	case "k8s", "kubernetes":
 		filePath := "/var/run/secrets/kubernetes.io/serviceaccount/token"
 		tknBytes, err := os.ReadFile(filePath)
@@ -432,8 +416,8 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		return ret, nil
 	case "azure":
 		var audience string
-		if hasArgsMap {
-			audience = getArgMap(argsMap)["audience"]
+		if len(assertion.argMap) > 0 {
+			audience = assertion.argMap["audience"]
 		}
 		ret.assertion, err = a.getAssertionAzure(audience)
 		if err != nil {
@@ -442,8 +426,8 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		return ret, nil
 	case "github-actions":
 		var audience string
-		if hasArgsMap {
-			audience = getArgMap(argsMap)["audience"]
+		if len(assertion.argMap) > 0 {
+			audience = assertion.argMap["audience"]
 		}
 		ret.assertion, err = a.getAssertionGithubActions(audience)
 		if err != nil {
@@ -451,14 +435,14 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		}
 		return ret, nil
 	case "jwt":
-		if !hasArgsMap {
+		if len(assertion.argMap) == 0 {
 			return nil, errors.Errorf("No JWT option")
 		}
-		argMap := getArgMap(argsMap)
-		if env, ok := argMap["env"]; ok {
+
+		if env, ok := assertion.argMap["env"]; ok {
 			ret.assertion = os.Getenv(env)
 			return ret, nil
-		} else if filePath, ok := argMap["file"]; ok {
+		} else if filePath, ok := assertion.argMap["file"]; ok {
 			b, err := os.ReadFile(filePath)
 			if err != nil {
 				return nil, err
@@ -469,9 +453,56 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 			return nil, errors.Errorf("Neither env nor file path is set for the jwt assertion option")
 		}
 	default:
-		return nil, errors.Errorf("Unknown assertion type: %s", args[0])
+		return nil, errors.Errorf("Unknown assertion type: %s", assertion.typ)
+	}
+}
+
+type parseAssertionRes struct {
+	typ                 string
+	argMap              map[string]string
+	identityProviderRef *metav1.ObjectReference
+}
+
+func parseAssertion(arg string) (*parseAssertionRes, error) {
+	args := strings.SplitN(arg, ":", 3)
+	if len(args) < 1 {
+		return nil, errors.Errorf("Invalid assertion argument: %s", arg)
 	}
 
+	var hasArgsMap bool
+
+	ret := &parseAssertionRes{}
+
+	availableTypes := []string{"k8s", "kubernetes", "azure", "github-actions", "jwt"}
+
+	if len(args) > 1 && slices.Contains(availableTypes, args[1]) {
+		ret.typ = args[1]
+		ret.identityProviderRef = func() *metav1.ObjectReference {
+			if govalidator.IsUUIDv4(args[0]) {
+				return &metav1.ObjectReference{
+					Uid: args[0],
+				}
+			}
+			return &metav1.ObjectReference{
+				Name: args[0],
+			}
+		}()
+
+		hasArgsMap = len(args) == 3
+		if hasArgsMap && len(args[2]) > 0 {
+			ret.argMap = getArgMap(args[2])
+		}
+	} else if slices.Contains(availableTypes, args[0]) {
+		ret.typ = args[0]
+		hasArgsMap = len(args) == 2
+		if hasArgsMap {
+			ret.argMap = getArgMap(args[1])
+		}
+	} else {
+		return nil, errors.Errorf("Could not get assertion type")
+	}
+
+	return ret, nil
 }
 
 func getArgMap(arg string) map[string]string {

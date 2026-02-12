@@ -30,3 +30,36 @@ func TestGetArgMap(t *testing.T) {
 		assert.Equal(t, "https://example.com", res["audience"])
 	}
 }
+
+func TestParseAssertion(t *testing.T) {
+	{
+		res, err := parseAssertion("k8s")
+		assert.Nil(t, err)
+		assert.Equal(t, "k8s", res.typ)
+	}
+	{
+		res, err := parseAssertion("github-actions")
+		assert.Nil(t, err)
+		assert.Equal(t, "github-actions", res.typ)
+	}
+	{
+		res, err := parseAssertion("gh01:github-actions")
+		assert.Nil(t, err)
+		assert.Equal(t, "github-actions", res.typ)
+		assert.Equal(t, "gh01", res.identityProviderRef.Name)
+	}
+	{
+		res, err := parseAssertion("github-actions:audience=custom-aud")
+		assert.Nil(t, err)
+		assert.Equal(t, "github-actions", res.typ)
+		assert.Equal(t, "custom-aud", res.argMap["audience"])
+	}
+	{
+		res, err := parseAssertion("gh01:github-actions:audience=custom-aud,extra=val")
+		assert.Nil(t, err)
+		assert.Equal(t, "github-actions", res.typ)
+		assert.Equal(t, "gh01", res.identityProviderRef.Name)
+		assert.Equal(t, "custom-aud", res.argMap["audience"])
+		assert.Equal(t, "val", res.argMap["extra"])
+	}
+}
