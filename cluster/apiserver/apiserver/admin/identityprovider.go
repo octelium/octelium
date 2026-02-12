@@ -268,9 +268,11 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 			}
 		}
 
-		if err := validateIssuerUniqueness(typ.IssuerURL, corev1.IdentityProvider_Status_OIDC); err != nil {
-			return err
-		}
+		/*
+			if err := validateIssuerUniqueness(typ.IssuerURL, corev1.IdentityProvider_Status_OIDC); err != nil {
+				return err
+			}
+		*/
 
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC
 	case *corev1.IdentityProvider_Spec_OidcIdentityToken:
