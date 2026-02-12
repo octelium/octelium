@@ -19,6 +19,8 @@ package authserver
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -26,7 +28,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-jose/go-jose/v3"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -37,6 +42,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 func TestHandleOAuth2(t *testing.T) {
@@ -284,5 +290,140 @@ func TestHandleOAuth2Metadata(t *testing.T) {
 		assert.Nil(t, err)
 
 		assert.Equal(t, srv.rootURL, oauth2Metadata.Issuer)
+	}
+}
+
+func TestHandleOAuth2Assertion(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	type tknClaims struct {
+		jwt.RegisteredClaims
+	}
+
+	{
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.Nil(t, err)
+		k1 := jose.JSONWebKey{
+			Key:       priv,
+			KeyID:     utilrand.GetRandomStringCanonical(6),
+			Algorithm: string(jose.RS256),
+		}
+		jwks := jose.JSONWebKeySet{}
+		jwks.Keys = append(jwks.Keys, k1)
+
+		jwksJSON, err := json.Marshal(jwks)
+		assert.Nil(t, err, "%+v", err)
+
+		zap.L().Debug("JWKS", zap.String("jwks", string(jwksJSON)))
+
+		issuer := "https://auth-issuer.example.com"
+
+		idp, err := fakeC.OcteliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+					OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+						Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent{
+							JwksContent: string(jwksJSON),
+						},
+						Issuer:   issuer,
+						Audience: clusterCfg.Status.Domain,
+					},
+				},
+			},
+			Status: &corev1.IdentityProvider_Status{
+				Type: corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
+			},
+		})
+		assert.Nil(t, err)
+
+		err = srv.setIdentityProviders(ctx)
+		assert.Nil(t, err)
+
+		{
+
+			usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, nil, nil)
+			assert.Nil(t, err)
+
+			usr.Usr.Spec.Type = corev1.User_Spec_WORKLOAD
+			usr.Usr.Spec.Authentication = &corev1.User_Spec_Authentication{
+				Identities: []*corev1.User_Spec_Authentication_Identity{
+					{
+						IdentityProvider: idp.Metadata.Name,
+						Identifier:       utilrand.GetRandomStringCanonical(8),
+					},
+				},
+			}
+			usr.Usr, err = adminSrv.UpdateUser(ctx, usr.Usr)
+			assert.Nil(t, err, "%+v", err)
+
+			{
+				tkn := jwt.NewWithClaims(jwt.SigningMethodRS256, &tknClaims{
+					RegisteredClaims: jwt.RegisteredClaims{
+						Subject:   usr.Usr.Spec.Authentication.Identities[0].Identifier,
+						Issuer:    issuer,
+						IssuedAt:  jwt.NewNumericDate(time.Now()),
+						ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+						Audience:  jwt.ClaimStrings{clusterCfg.Status.Domain},
+					},
+				})
+				tkn.Header["kid"] = k1.KeyID
+
+				tknStr, err := tkn.SignedString(priv)
+				assert.Nil(t, err)
+
+				data := url.Values{}
+				data.Set("client_assertion_type", assertionTypeJWTBearer)
+				data.Set("client_assertion", tknStr)
+				data.Set("grant_type", "client_credentials")
+
+				{
+					reqHTTP := httptest.NewRequest("POST", "http://localhost/auth/v1/oauth2/token", strings.NewReader(data.Encode()))
+					reqHTTP.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+					w := httptest.NewRecorder()
+					srv.handleOAuth2Token(w, reqHTTP)
+					resp := w.Result()
+					assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+					bb, err := io.ReadAll(resp.Body)
+					assert.Nil(t, err)
+					resp.Body.Close()
+
+					ret := &oauthAccessTokenResponse{}
+					err = json.Unmarshal(bb, ret)
+					assert.Nil(t, err)
+
+					claims, err := srv.jwkCtl.VerifyAccessToken(ret.AccessToken)
+					assert.Nil(t, err)
+
+					sess, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: claims.SessionUID})
+					assert.Nil(t, err)
+
+					assert.Equal(t, usr.Usr.Metadata.Uid, sess.Status.UserRef.Uid)
+					assert.NotEqual(t, 0, ret.ExpiresIn)
+					assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+					assert.Equal(t, 0, len(sess.Status.LastAuthentications))
+				}
+			}
+		}
 	}
 }

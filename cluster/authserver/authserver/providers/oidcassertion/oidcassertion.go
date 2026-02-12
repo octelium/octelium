@@ -81,9 +81,7 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 }
 
 func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error) {
-	if req.IdentityProviderRef == nil || req.IdentityProviderRef.Name != c.Name() {
-		return nil, nil, errors.Errorf("Invalid Identity Provider name")
-	}
+
 	if req.IdentityProviderRef != nil {
 		if req.IdentityProviderRef.Name != "" {
 			if req.IdentityProviderRef.Name != c.c.Metadata.Name {

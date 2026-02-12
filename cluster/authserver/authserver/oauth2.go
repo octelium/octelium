@@ -36,6 +36,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const assertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
 func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 
 	grantType := r.FormValue("grant_type")
@@ -52,7 +54,7 @@ func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *http.Request) {
 
-	if r.Form.Get("client_assertion_type") == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+	if r.Form.Get("client_assertion_type") == assertionTypeJWTBearer {
 		s.handleOAuth2TokenClientCredentialsOIDC(w, r)
 		return
 	}
@@ -290,7 +292,7 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 
 	provider, err := s.getAssertionProviderFromAssertion(assertion)
 	if err != nil {
-		zap.L().Debug("Credential is not OAUTH2")
+		zap.L().Debug("Could not getAssertionProviderFromAssertion", zap.Error(err))
 		s.returnOAuth2Err(w, "invalid_client", 401)
 		return
 	}
@@ -299,7 +301,7 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		Assertion: assertion,
 	})
 	if err != nil {
-		zap.L().Debug("Could not get authentication Token", zap.Error(err))
+		zap.L().Debug("Could not authenticateAssertion", zap.Error(err))
 		s.returnOAuth2Err(w, "invalid_client", 401)
 		return
 	}
