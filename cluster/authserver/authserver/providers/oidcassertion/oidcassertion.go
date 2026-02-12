@@ -23,9 +23,11 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
@@ -84,6 +86,27 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 	if req.IdentityProviderRef == nil || req.IdentityProviderRef.Name != c.Name() {
 		return nil, nil, errors.Errorf("Invalid Identity Provider name")
 	}
+	if req.IdentityProviderRef != nil {
+		if req.IdentityProviderRef.Name != "" {
+			if req.IdentityProviderRef.Name != c.c.Metadata.Name {
+				return nil, nil, errors.Errorf("Invalid Identity Provider name")
+			}
+		} else if req.IdentityProviderRef.Uid != "" {
+			if req.IdentityProviderRef.Uid != c.c.Metadata.Uid {
+				return nil, nil, errors.Errorf("Invalid Identity Provider UID")
+			}
+		}
+	} else {
+		iss, err := peekIssuer(req.Assertion)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if strings.TrimSuffix(c.GetIssuer(), "/") != strings.TrimSuffix(iss, "/") {
+			return nil, nil, errors.Errorf("invalid issuer")
+		}
+	}
+
 	idToken := req.Assertion
 	spec := c.c.Spec.GetOidcIdentityToken()
 
@@ -162,18 +185,6 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 		return nil, nil, err
 	}
 
-	/*
-		if len(spec.Conditions) > 0 {
-			isAuthorized, err := isConditionMatchedAll(claims, spec.Conditions)
-			if err != nil {
-				return nil, nil, err
-			}
-			if !isAuthorized {
-				return nil, nil, errors.Errorf("Conditions have not been matched")
-			}
-		}
-	*/
-
 	usr, err := utils.GetUserFromIdentifier(ctx, &utils.GetUserFromIdentifierOpts{
 		OcteliumC:            c.octeliumC,
 		IdentityProviderName: c.c.Metadata.Name,
@@ -203,59 +214,28 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 	}, nil
 }
 
-/*
-func isInList(lst []string, arg string) bool {
-	for _, itm := range lst {
-		if itm == arg {
-			return true
-		}
+func (c *Connector) GetIssuer() string {
+	spec := c.c.Spec.GetOidcIdentityToken()
+	if spec.GetIssuerURL() != "" {
+		return spec.GetIssuerURL()
 	}
-	return false
+
+	return spec.Issuer
 }
-*/
-/*
-func isConditionMatchedAll(reqCtxMap map[string]any, all []string) (bool, error) {
 
-	if len(all) == 0 {
-		return false, nil
-	}
-
-	env, err := cel.NewEnv(
-		cel.Declarations(
-			decls.NewVar("claims", decls.Any),
-		),
-	)
+func peekIssuer(idToken string) (string, error) {
+	tok, err := jwt.ParseSigned(idToken)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 
-	for _, exp := range all {
-		ast, iss := env.Compile(exp)
-		if iss.Err() != nil {
-			return false, iss.Err()
-		}
-
-		if !reflect.DeepEqual(ast.OutputType(), cel.BoolType) {
-			return false, errors.Errorf("Invalid CEL expression result type. Must be boolean")
-		}
-
-		prg, err := env.Program(ast)
-		if err != nil {
-			return false, err
-		}
-
-		out, _, err := prg.Eval(map[string]any{
-			"claims": reqCtxMap,
-		})
-		if err != nil {
-			return false, nil
-		}
-
-		if !out.Value().(bool) {
-			return false, nil
-		}
+	var claims struct {
+		Issuer string `json:"iss"`
 	}
 
-	return true, nil
+	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
+		return "", err
+	}
+
+	return claims.Issuer, nil
 }
-*/
