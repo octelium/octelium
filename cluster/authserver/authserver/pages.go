@@ -48,22 +48,39 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !ucorev1.ToSession(sess).ShouldRefresh() {
 		zap.L().Debug("No need to re-authenticate Session in handleLogin",
 			zap.String("sess", sess.Metadata.Name))
-		if vReq := r.URL.Query().Get("octelium_req"); vReq == "" {
-			if redirect := r.URL.Query().Get("redirect"); redirect != "" && s.isURLSameClusterOrigin(redirect) {
-				http.Redirect(w, r, redirect, http.StatusSeeOther)
-				return
-			}
 
+		if referer := r.Header.Get("referer"); referer != "" && !s.isURLSameClusterOrigin(referer) {
 			http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 			return
 		}
 
-		// There should not be a referer if there is a octelium_req parameter
-		if referer := r.Header.Get("referer"); referer != "" && !s.isURLSameClusterOrigin(referer) {
-			http.Redirect(w, r, s.rootURL, http.StatusSeeOther)
+		if vReq := r.URL.Query().Get("octelium_req"); vReq != "" {
+
+			loginReq, err := getLoginReq(vReq)
+			if err != nil {
+				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
+				return
+			}
+			callbackURL := fmt.Sprintf("http://localhost:%d/callback/success/%s",
+				loginReq.CallbackPort, loginReq.CallbackSuffix)
+
+			u, err := s.generateClientCallbackURL(ctx, sess, callbackURL)
+			if err != nil {
+				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
+				return
+			}
+
+			s.redirectToCallbackSuccess(w, r, u.String())
+			return
+		} else if redirect := r.URL.Query().Get("redirect"); redirect != "" {
+			if s.isURLSameClusterOrigin(redirect) {
+				http.Redirect(w, r, redirect, http.StatusSeeOther)
+				return
+			}
+		} else {
+			http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 			return
 		}
-		// We still go for a login to create a token for the client
 	}
 
 	zap.L().Debug("Session needs an authentication in handleLogin",
