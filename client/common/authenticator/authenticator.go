@@ -280,15 +280,20 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		case a.opts.IsWeb:
 			return a.doWebAuthentication(ctx)
 		case a.opts.AuthToken != "":
-			sessTkn, err := a.c.C().AuthenticateWithAuthenticationToken(ctx, &authv1.AuthenticateWithAuthenticationTokenRequest{
-				AuthenticationToken: a.opts.AuthToken,
-				Scopes:              a.opts.Scopes,
-			})
+			sessTkn, err := a.c.C().AuthenticateWithAuthenticationToken(ctx,
+				&authv1.AuthenticateWithAuthenticationTokenRequest{
+					AuthenticationToken: a.opts.AuthToken,
+					Scopes:              a.opts.Scopes,
+				})
 			if err != nil {
 				return "", err
 			}
 			if err := cliutils.GetDB().SetSessionToken(a.domain, sessTkn); err != nil {
 				return "", err
+			}
+
+			if err := a.doPostAuth(ctx); err != nil {
+				zap.L().Debug("Could not doPostAuth", zap.Error(err))
 			}
 
 			return sessTkn.AccessToken, nil

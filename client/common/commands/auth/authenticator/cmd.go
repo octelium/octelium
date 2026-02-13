@@ -62,6 +62,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	return DoAuthenticate(ctx, i.Domain, c, &metav1.ObjectReference{
 		Name: i.FirstArg(),

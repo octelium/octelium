@@ -63,6 +63,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	defer func() {
 		if err := cliutils.GetDB().Delete(i.Domain); err != nil {

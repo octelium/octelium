@@ -59,6 +59,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	itmList, err := c.C().ListAuthenticator(ctx, &authv1.ListAuthenticatorOptions{})
 	if err != nil {

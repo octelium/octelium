@@ -62,6 +62,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	typ := func() authv1.Authenticator_Status_Type {
 		switch cmdArgs.Type {

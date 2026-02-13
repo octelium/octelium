@@ -49,14 +49,15 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return DoRegister(ctx, i.Domain)
+	return DoRegisterDevice(ctx, i.Domain)
 }
 
-func DoRegister(ctx context.Context, domain string) error {
+func DoRegisterDevice(ctx context.Context, domain string) error {
 	c, err := cliutils.NewAuthClient(ctx, domain, nil)
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	req, err := doRegisterBegin(ctx, c.C())
 	if err != nil {

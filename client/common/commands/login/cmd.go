@@ -19,10 +19,8 @@ import (
 
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/octelium/octelium/client/common/postauth"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 type args struct {
@@ -98,11 +96,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if _, err := postauth.DoPostAuth(ctx, &postauth.DoPostAuthReq{
-		Domain: i.Domain,
-	}); err != nil {
-		zap.L().Debug("Could not doPostAuth", zap.Error(err))
-	}
+	/*
+		if _, err := postauth.DoPostAuth(ctx, &postauth.DoPostAuthReq{
+			Domain: i.Domain,
+		}); err != nil {
+			zap.L().Debug("Could not doPostAuth", zap.Error(err))
+		}
+	*/
 
 	/*
 		conn, err := client.GetGRPCClientConn(ctx, i.Domain)
@@ -125,7 +125,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 		if ldflags.IsDev() {
 			if st.User.Spec != nil && st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN {
-				if err := register.DoRegister(ctx, i.Domain); err != nil {
+				if err := register.DoRegisterDevice(ctx, i.Domain); err != nil {
 					zap.L().Debug("Could not register Device", zap.Error(err))
 				}
 			}

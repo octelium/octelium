@@ -45,6 +45,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 
 	if _, err := c.C().DeleteAuthenticator(ctx, &metav1.DeleteOptions{
 		Name: i.FirstArg(),

@@ -14,18 +14,18 @@
 
 package postauth
 
+/*
 import (
 	"context"
 	"fmt"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/userv1"
-	"github.com/octelium/octelium/client/common/client"
+	"github.com/octelium/octelium/client/common/client/grpcconn"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/commands/auth/authenticator"
 	"github.com/octelium/octelium/client/common/commands/auth/device/register"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
 )
 
@@ -41,11 +41,7 @@ func DoPostAuth(ctx context.Context, r *DoPostAuthReq) (*DoPostAuthResp, error) 
 
 	ret := &DoPostAuthResp{}
 
-	if ldflags.IsProduction() {
-		return ret, nil
-	}
-
-	conn, err := client.GetGRPCClientConn(ctx, r.Domain)
+	conn, err := grpcconn.DoGetGRPCClientConn(r.Domain)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +66,7 @@ func DoPostAuth(ctx context.Context, r *DoPostAuthReq) (*DoPostAuthResp, error) 
 	if !r.DoNotRegisterDevice &&
 		st.User.Spec != nil &&
 		st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN && !cliutils.IsSuggestedWorkloadHost() {
-		if err := register.DoRegister(ctx, r.Domain); err != nil {
+		if err := register.DoRegisterDevice(ctx, r.Domain); err != nil {
 			zap.L().Debug("Could not register Device", zap.Error(err))
 		}
 
@@ -94,3 +90,4 @@ func DoPostAuth(ctx context.Context, r *DoPostAuthReq) (*DoPostAuthResp, error) 
 
 	return ret, nil
 }
+*/

@@ -41,7 +41,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return register.DoRegister(ctx, i.Domain)
+	return register.DoRegisterDevice(ctx, i.Domain)
 }
 
 func AddSubcommands() {
