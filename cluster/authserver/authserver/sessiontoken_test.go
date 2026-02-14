@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -345,6 +346,105 @@ func TestAuthenticateWithAssertion(t *testing.T) {
 				IdentityProviderRef: &metav1.ObjectReference{
 					Name: idp.Metadata.Name,
 				},
+				Assertion: assertionStr,
+			})
+			assert.Nil(t, err)
+
+			claims, err := srv.jwkCtl.VerifyAccessToken(resp.AccessToken)
+			assert.Nil(t, err)
+
+			sess, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+				Uid: claims.SessionUID,
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, usr.Usr.Metadata.Uid, sess.Status.UserRef.Uid)
+
+		}
+
+	}
+
+	{
+		// IdentityProviderRef-less test
+		type tknClaims struct {
+			jwt.RegisteredClaims
+			ClaimA string `json:"cla,omitempty"`
+		}
+
+		cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.Nil(t, err)
+		k1 := jose.JSONWebKey{
+			Key:       priv,
+			KeyID:     utilrand.GetRandomStringCanonical(6),
+			Algorithm: string(jose.RS256),
+		}
+		jwks := jose.JSONWebKeySet{}
+		jwks.Keys = append(jwks.Keys, k1)
+
+		jwksJSON, err := json.Marshal(jwks)
+		assert.Nil(t, err, "%+v", err)
+
+		issuer := fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8))
+
+		idp, err := fakeC.OcteliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.IdentityProvider_Spec{
+
+				Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+					OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+						Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent{
+							JwksContent: string(jwksJSON),
+						},
+						Issuer:   issuer,
+						Audience: cc.Status.Domain,
+					},
+				},
+			},
+			Status: &corev1.IdentityProvider_Status{
+				Type: corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
+			},
+		})
+		assert.Nil(t, err)
+
+		err = srv.setIdentityProviders(ctx)
+		assert.Nil(t, err)
+
+		usr, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		usr.Usr.Spec.Type = corev1.User_Spec_WORKLOAD
+		usr.Usr.Spec.Authentication = &corev1.User_Spec_Authentication{
+			Identities: []*corev1.User_Spec_Authentication_Identity{
+				{
+					IdentityProvider: idp.Metadata.Name,
+					Identifier:       utilrand.GetRandomStringCanonical(8),
+				},
+			},
+		}
+		usr.Usr, err = adminSrv.UpdateUser(ctx, usr.Usr)
+		assert.Nil(t, err, "%+v", err)
+
+		{
+
+			tkn := jwt.NewWithClaims(jwt.SigningMethodRS256, &tknClaims{
+				RegisteredClaims: jwt.RegisteredClaims{
+					Subject:   usr.Usr.Spec.Authentication.Identities[0].Identifier,
+					Issuer:    issuer,
+					IssuedAt:  jwt.NewNumericDate(time.Now()),
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+					Audience:  jwt.ClaimStrings{cc.Status.Domain},
+				},
+			})
+			tkn.Header["kid"] = k1.KeyID
+
+			assertionStr, err := tkn.SignedString(priv)
+			assert.Nil(t, err)
+
+			resp, err := srv.doAuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{
 				Assertion: assertionStr,
 			})
 			assert.Nil(t, err)

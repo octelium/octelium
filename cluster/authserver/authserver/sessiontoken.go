@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/oscope"
@@ -218,14 +219,6 @@ func (s *server) updateAndAutoDeleteCredential(ctx context.Context, tkn *corev1.
 
 func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*authv1.SessionToken, error) {
 
-	if req.IdentityProviderRef == nil {
-		return nil, s.errUnauthenticated("No IdentityProviderRef")
-	}
-
-	if err := apivalidation.CheckObjectRef(req.IdentityProviderRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
-		return nil, s.errUnauthenticatedErr(err)
-	}
-
 	if req.Assertion == "" {
 		return nil, s.errUnauthenticated("Empty assertion")
 	}
@@ -242,9 +235,25 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
-	provider, err := s.getAssertionProviderFromName(req.IdentityProviderRef.Name)
-	if err != nil {
-		return nil, s.errUnauthenticated("Invalid IdentityProvider")
+	var provider utils.Provider
+	var err error
+
+	if req.IdentityProviderRef != nil {
+		if err := apivalidation.CheckObjectRef(req.IdentityProviderRef,
+			&apivalidation.CheckGetOptionsOpts{}); err != nil {
+			return nil, s.errUnauthenticatedErr(err)
+		}
+
+		provider, err = s.getAssertionProviderFromName(req.IdentityProviderRef.Name)
+		if err != nil {
+			return nil, s.errUnauthenticated("Invalid IdentityProvider")
+		}
+	} else {
+		provider, err = s.getAssertionProviderFromAssertion(req.Assertion)
+		if err != nil {
+			zap.L().Debug("Could not getAssertionProviderFromAssertion", zap.Error(err))
+			return nil, s.errUnauthenticated("Invalid IdentityProvider")
+		}
 	}
 
 	usr, info, err := provider.AuthenticateAssertion(ctx, req)
