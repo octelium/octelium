@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -225,6 +226,41 @@ func TestIdentityProvider(t *testing.T) {
 	for _, valid := range valids {
 		_, err = srv.CreateIdentityProvider(ctx, valid)
 		assert.Nil(t, err)
+	}
+
+	{
+
+		issuer := fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8))
+		_, err = srv.CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+					OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+						Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL{
+							JwksURL: fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8)),
+						},
+						Issuer: issuer,
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.CreateIdentityProvider(ctx, &corev1.IdentityProvider{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+					OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+						Type: &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL{
+							JwksURL: fmt.Sprintf("https://%s.example.com", utilrand.GetRandomStringCanonical(8)),
+						},
+						Issuer: issuer,
+					},
+				},
+			},
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err))
 	}
 
 }
