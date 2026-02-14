@@ -1,87 +1,85 @@
-name: Cleanup Untagged OCI Images
+name: cleanup-untagged-images
 
 on:
   workflow_dispatch:
     inputs:
+      days_old:
+        description: 'Delete images older than (days)'
+        required: true
+        default: '90'
+        type: string
       dry_run:
-        description: "Dry run"
+        description: 'Dry run'
         required: true
         default: true
         type: boolean
-      retention_days:
-        description: "Delete untagged images older than X days"
-        required: true
-        default: "90"
-        type: string
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     permissions:
       packages: write
-      contents: read
 
     steps:
-      - name: Delete Untagged Images
-        uses: actions/github-script@v7
+      - name: Clean Images
         env:
-          DRY_RUN: "${{ inputs.dry_run }}"
-          RETENTION_DAYS: "${{ inputs.retention_days }}"
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const org = context.repo.owner;
-            const dryRun = process.env.DRY_RUN === "true";
-            const retentionDays = parseInt(process.env.RETENTION_DAYS, 10);
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS: ${{ inputs.days_old }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "| Package | Image ID | Created At | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
 
-            if (isNaN(retentionDays) || retentionDays < 0) {
-              core.setFailed(`Invalid retention_days: ${process.env.RETENTION_DAYS}`);
-              return;
-            }
+          CUTOFF_DATE=$(date -d "$DAYS days ago" +%Y-%m-%d)
+          CUTOFF_TS=$(date -d "$CUTOFF_DATE" +%s)
+          echo "Targeting images older than: $CUTOFF_DATE"
 
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+          echo "Fetching packages list..."
+          PACKAGES=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/orgs/$OWNER/packages?package_type=container&per_page=100" \
+            --jq '.[].name')
 
-            console.log(`Mode: ${dryRun ? "DRY RUN" : "DELETION"}`);
-            console.log(`Cutoff: ${cutoffDate.toISOString()}`);
+          if [ -z "$PACKAGES" ]; then
+            echo "No packages found or accessible."
+            exit 0
+          fi
 
-            try {
-              const packages = await github.paginate(
-                github.rest.packages.listPackagesForOrganization,
-                { org, package_type: "container" }
-              );
+          for PKG in $PACKAGES; do
+            echo "Checking package: $PKG"
+            
+            versions=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/orgs/$OWNER/packages/container/$PKG/versions?per_page=100")
 
-              for (const pkg of packages) {
-                console.log(`\nChecking: ${pkg.name}`);
+            echo "$versions" | jq -r --argjson cutoff "$CUTOFF_TS" '.[] | select((.metadata.container.tags | length) == 0) | select((.created_at | fromdateiso8601) < $cutoff) | "\(.id) \(.created_at)"' | \
+            while read -r version_id created_at; do
+              
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "DRY RUN: Would delete $PKG : $version_id"
+                echo "| $PKG | $version_id | $created_at | Dry Run |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "DELETING: $PKG : $version_id"
+                
+                set +e
+                gh api \
+                  --method DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "/orgs/$OWNER/packages/container/$PKG/versions/$version_id"
+                
+                exit_code=$?
+                set -e 
 
-                const versions = await github.paginate(
-                  github.rest.packages.getAllPackageVersionsForPackageForOrg,
-                  { org, package_type: "container", package_name: pkg.name }
-                );
-
-                for (const version of versions) {
-                  const tags = version.metadata?.container?.tags ?? [];
-                  const createdAt = new Date(version.created_at);
-
-                  if (tags.length === 0 && createdAt < cutoffDate) {
-                    if (dryRun) {
-                      console.log(`  [WOULD DELETE] ID: ${version.id} | Created: ${version.created_at}`);
-                    } else {
-                      try {
-                        await github.rest.packages.deletePackageVersionForOrg({
-                          org,
-                          package_type: "container",
-                          package_name: pkg.name,
-                          package_version_id: version.id
-                        });
-                        console.log(`  [DELETED] ID: ${version.id}`);
-                      } catch (err) {
-                        console.error(`  [ERROR] Failed to delete ${version.id}: ${err.message}`);
-                      }
-                    }
-                  }
-                }
-              }
-            } catch (error) {
-              core.setFailed(`API Error: ${error.message}`);
-            }
+                if [ $exit_code -eq 0 ]; then
+                  echo "| $PKG | $version_id | $created_at | Deleted |" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "Error deleting. Token might lack scope for this specific package."
+                  echo "| $PKG | $version_id | $created_at | Forbidden (403) |" >> $GITHUB_STEP_SUMMARY
+                fi
+              fi
+            done
+          done
