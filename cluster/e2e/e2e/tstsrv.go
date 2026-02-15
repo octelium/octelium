@@ -52,6 +52,12 @@ type tstResp struct {
 }
 
 func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	zap.L().Debug("New tstSrvHTTP req",
+		zap.Any("req", r.Header),
+		zap.String("path", r.RequestURI),
+		zap.String("method", r.Method),
+		zap.String("host", r.Host),
+		zap.String("url", r.URL.String()))
 	if s.serveFn != nil {
 		s.serveFn(w, r)
 		return

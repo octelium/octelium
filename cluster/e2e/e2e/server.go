@@ -391,6 +391,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 		upstreamSrv := &tstSrvHTTP{
 			port: upstreamPort,
 		}
+		defer upstreamSrv.close()
 
 		assert.Nil(t, upstreamSrv.run(ctx))
 
@@ -413,12 +414,14 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 		})
 		assert.Nil(t, err)
 
+		assert.Nil(t, s.waitDeploymentSvc(ctx, svc.Metadata.Name))
+
 		connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
 			fmt.Sprintf("-p %s:17001", svc.Metadata.Name),
 			fmt.Sprintf("--serve %s", svc.Metadata.Name),
 		})
 		assert.Nil(t, err)
-		time.Sleep(4 * time.Second)
+		time.Sleep(8 * time.Second)
 		{
 			upstreamSrv.serveFn = func(w http.ResponseWriter, r *http.Request) {
 				zap.L().Debug("New request", zap.Any("host", r.Host))
