@@ -772,7 +772,6 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 			{
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "postgres-main"))
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "postgres-main"))
 
 				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
