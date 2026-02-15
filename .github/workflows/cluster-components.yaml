@@ -70,7 +70,7 @@ jobs:
         with:
           images: ${{env.V_CONTAINER_REGISTRY}}/${{env.V_ORG}}/octelium-${{matrix.component}}
           flavor: |
-            latest=false
+            latest=${{env.V_IS_LATEST}}
             prefix=
             suffix=-${{ matrix.arch }}
           tags: |
