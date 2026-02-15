@@ -55,7 +55,7 @@ jobs:
         with:
           images: ${{env.V_CONTAINER_REGISTRY}}/${{env.V_ORG}}/${{matrix.component}}
           flavor: |
-            latest=${{env.V_IS_LATEST}}
+            latest=false
             prefix=
             suffix=-${{ matrix.arch }}
           tags: |
@@ -142,10 +142,11 @@ jobs:
       - name: Create and push manifest with annotations
         env:
           LABELS: ${{ steps.meta.outputs.labels }}
+          BASE_IMAGE: ${{env.V_CONTAINER_REGISTRY}}/${{env.V_ORG}}/${{matrix.component}}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
           
-          # Convert labels to annotations with proper quoting
           ANNOTATIONS=()
           while IFS='=' read -r key value; do
             if [ -n "$key" ] && [ -n "$value" ]; then
@@ -158,6 +159,6 @@ jobs:
             docker buildx imagetools create \
               "${ANNOTATIONS[@]}" \
               -t "$TAG" \
-              "${TAG}-amd64" \
-              "${TAG}-arm64"
+              "${BASE_IMAGE}:${VERSION}-amd64" \
+              "${BASE_IMAGE}:${VERSION}-arm64"
           done
