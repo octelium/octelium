@@ -186,6 +186,7 @@ func (s *server) run(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, "kubectl get daemonset -A"))
 
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "demo-nginx"))
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "nginx-anonymous"))
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "portal"))
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "default"))
 	}
@@ -414,6 +415,7 @@ func (s *server) runMiscServiceTests(ctx context.Context) error {
 		})
 		assert.Nil(t, err)
 
+		time.Sleep(3 * time.Second)
 		assert.Nil(t, s.waitDeploymentSvc(ctx, svc.Metadata.Name))
 
 		connCmd, err := s.startOcteliumConnectRootless(ctx, []string{
@@ -2128,6 +2130,9 @@ func (s *server) runSDK(ctx context.Context) error {
 		},
 	})
 	assert.Nil(t, err)
+
+	time.Sleep(3 * time.Second)
+	assert.Nil(t, s.waitDeploymentSvc(ctx, svc.Metadata.Name))
 
 	cred, err := c.CreateCredential(ctx, &corev1.Credential{
 		Metadata: &metav1.Metadata{
