@@ -761,6 +761,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			*/
 
 			{
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "google"))
 				res, err := s.httpC().R().Get("http://localhost:15002")
 				assert.Nil(t, err)
 				assert.Equal(t, http.StatusOK, res.StatusCode())
@@ -770,6 +771,9 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "postgres-main"))
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "postgres-main"))
+
 				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:  "localhost",
@@ -784,6 +788,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.Nil(t, err)
 			}
 
+			assert.Nil(t, s.waitDeploymentSvc(ctx, "pg.production"))
+			assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "pg.production"))
 			{
 				db, err := sql.Open("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
@@ -822,7 +828,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
-
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "essh"))
 				out, err := s.getCmd(ctx,
 					"octelium status -o json").CombinedOutput()
 				assert.Nil(t, err)
@@ -866,6 +872,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "ws-echo"))
 				wsClient := websocket.Dialer{
 					ReadBufferSize:  1024,
 					WriteBufferSize: 1024,
@@ -918,6 +925,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 			}
 
 			{
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "mcp-echo"))
 				client := mcp.NewClient(&mcp.Implementation{
 					Name:    "echo-client",
 					Version: "1.0.0",
@@ -1147,7 +1155,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 			{
 				uri := "mongodb://octelium:password@localhost:15015"
-
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mongo"))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, "mongo"))
 				type mongoUser struct {
 					Name      string    `bson:"name"`
 					Email     string    `bson:"email"`
