@@ -186,7 +186,6 @@ func (s *server) run(ctx context.Context) error {
 		assert.Nil(t, s.runCmd(ctx, "kubectl get daemonset -A"))
 
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "demo-nginx"))
-		assert.Nil(t, s.waitDeploymentSvc(ctx, "nginx-anonymous"))
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "portal"))
 		assert.Nil(t, s.waitDeploymentSvc(ctx, "default"))
 	}
@@ -683,6 +682,10 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 		assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl apply %s", rootDir)))
 		assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl apply %s/cfg.yaml", rootDir)))
+
+		time.Sleep(5 * time.Second)
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "nginx-anonymous"))
+		assert.Nil(t, s.waitDeploymentSvc(ctx, "nginx"))
 
 		{
 			res, err := s.httpCPublic("nginx-anonymous").R().Get("/")
