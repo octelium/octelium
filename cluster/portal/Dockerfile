@@ -4,7 +4,7 @@ COPY cluster/portal/portal/web/package /build
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN cd /build && npm ci && npm run build
 
-FROM golang:1.25.5 as builder
+FROM golang:1.25.7 as builder
 RUN mkdir /build
 ADD . /build/
 WORKDIR /build

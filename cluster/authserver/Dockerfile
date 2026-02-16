@@ -3,7 +3,7 @@ FROM node:24 as builder-web
 COPY cluster/authserver/authserver/web/package /build
 RUN cd /build && npm install && npm run build
 
-FROM golang:1.25.5 as builder
+FROM golang:1.25.7 as builder
 RUN mkdir /build
 ADD . /build/
 WORKDIR /build
