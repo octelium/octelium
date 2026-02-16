@@ -13,6 +13,7 @@ jobs:
          - k3s-cilium
          - k3s-calico
          - k3s-storage-secret
+         - k3s-spiffe
          - rke2
          - rke2-cilium
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
