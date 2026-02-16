@@ -27,6 +27,7 @@ jobs:
           DAYS: ${{ inputs.days_old }}
           DRY_RUN: ${{ inputs.dry_run }}
           OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
         run: |
           echo "| Package | Image ID | Created At | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
@@ -35,12 +36,19 @@ jobs:
           CUTOFF_TS=$(date -d "$CUTOFF_DATE" +%s)
           echo "Targeting images older than: $CUTOFF_DATE"
 
-          echo "Fetching packages list..."
-          PACKAGES=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/orgs/$OWNER/packages?package_type=container&per_page=100" \
-            --jq '.[].name')
+          echo "Fetching packages list for repo: $REPO..."
+
+          PACKAGES=$(gh api graphql -F owner=$OWNER -F repo=$REPO -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                packages(first: 100, packageType: CONTAINER) {
+                  nodes {
+                    name
+                  }
+                }
+              }
+            }
+          ' --jq '.data.repository.packages.nodes[].name')
 
           if [ -z "$PACKAGES" ]; then
             echo "No packages found or accessible."
