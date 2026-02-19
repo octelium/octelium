@@ -35,7 +35,7 @@ jobs:
           sudo -E ./.github/scripts/cluster-install/${{ matrix.script }}.sh
           
 
-          if [ "${{ matrix.script }}" == "rke2" ]; then
+          if [ "${{ matrix.script }}" == *"rke2"* ]; then
             sudo chmod 644 /etc/rancher/rke2/rke2.yaml
             export KUBECONFIG="/etc/rancher/rke2/rke2.yaml"
           else
