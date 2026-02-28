@@ -9,14 +9,14 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0
 	github.com/go-mysql-org/go-mysql v1.13.0
-	github.com/go-resty/resty/v2 v2.17.1
+	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgconn v1.14.3
 	github.com/jackc/pgproto3/v2 v2.3.3
 	github.com/kaptinlin/jsonschema v0.6.5
 	github.com/klauspost/compress v1.18.2
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.2
 	github.com/miekg/dns v1.1.69
 	github.com/moby/term v0.5.2
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
