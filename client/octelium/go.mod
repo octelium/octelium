@@ -7,21 +7,21 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
-	github.com/miekg/dns v1.1.69
+	github.com/miekg/dns v1.1.72
 	github.com/moby/term v0.5.2
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/client/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
-	github.com/quic-go/quic-go v0.58.0
+	github.com/quic-go/quic-go v0.59.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/vishvananda/netlink v1.3.1
 	go.uber.org/zap v1.27.1
-	golang.org/x/crypto v0.46.0
-	golang.org/x/net v0.48.0
-	golang.org/x/sys v0.39.0
+	golang.org/x/crypto v0.48.0
+	golang.org/x/net v0.51.0
+	golang.org/x/sys v0.41.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	golang.zx2c4.com/wireguard/windows v0.5.3
@@ -66,11 +66,11 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zcalusic/sysinfo v1.1.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	golang.org/x/tools v0.39.0 // indirect
+	golang.org/x/tools v0.41.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
