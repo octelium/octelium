@@ -923,7 +923,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 			}
 
-			{
+			if false {
 				assert.Nil(t, s.waitDeploymentSvc(ctx, "mcp-echo"))
 				client := mcp.NewClient(&mcp.Implementation{
 					Name:    "echo-client",

@@ -25,6 +25,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type params struct {
@@ -32,6 +33,9 @@ type params struct {
 }
 
 func (s *mcpServer) doEcho(ctx context.Context, req *mcp.CallToolRequest, params *params) (*mcp.CallToolResult, any, error) {
+
+	zap.L().Debug("New mcp doEcho req",
+		zap.Any("req", req), zap.Any("params", params))
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -87,6 +91,8 @@ func (s *mcpServer) run(ctx context.Context) error {
 	go s.srv.Serve(s.lis)
 
 	time.Sleep(1 * time.Second)
+
+	zap.L().Debug("Started running mcp server", zap.String("addr", addr))
 
 	return nil
 }
