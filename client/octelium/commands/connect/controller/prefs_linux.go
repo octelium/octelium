@@ -22,7 +22,7 @@ import (
 func (c *Controller) doSetPrefs() error {
 
 	mainTableIdx, err := func() (int, error) {
-		routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
+		routes, err := netlink.RouteList(nil, c.getNetlinkFamily())
 		if err != nil {
 			return 0, err
 		}

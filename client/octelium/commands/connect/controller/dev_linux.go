@@ -191,7 +191,7 @@ func (c *Controller) doSetDevAddrs() error {
 		return errors.Errorf("No addresses found for the connection")
 	}
 
-	oldAddrs, err := netlink.AddrList(l, netlink.FAMILY_ALL)
+	oldAddrs, err := netlink.AddrList(l, c.getNetlinkFamily())
 	if err != nil {
 		return err
 	}
@@ -400,4 +400,17 @@ func (c *Controller) doSetTunDev() error {
 
 	c.tundev = tundev
 	return nil
+}
+
+func (c *Controller) getNetlinkFamily() int {
+	switch {
+	case c.ipv6Supported && c.ipv4Supported:
+		return netlink.FAMILY_ALL
+	case c.ipv6Supported:
+		return netlink.FAMILY_V6
+	case c.ipv4Supported:
+		return netlink.FAMILY_V4
+	default:
+		return netlink.FAMILY_V6
+	}
 }
