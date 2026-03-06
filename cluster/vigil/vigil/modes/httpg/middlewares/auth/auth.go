@@ -69,20 +69,49 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := req.Context()
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
+	svc := reqCtx.Service
 
 	var err error
 
 	if httputils.IsAnonymousMode(req) {
-		if reqCtx.AuthResponse == nil {
-			// AuthResponse is already set by preauth
-			reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
-				IsAuthorized: true,
-			}
-		}
-		m.setServiceConfig(ctx, reqCtx)
+
 		// reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
 		// Already set by preauth
 		// reqCtx.IsAuthorized = true
+		// m.next.ServeHTTP(w, req)
+
+		if svc.Spec.Authorization != nil && svc.Spec.Authorization.EnableAnonymous {
+			resp, err := m.octovigilC.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
+				ServiceUID: svc.Metadata.Uid,
+				Request:    reqCtx.DownstreamInfo.Request,
+			})
+			if err != nil {
+				if grpcerr.IsCanceled(err) ||
+					grpcerr.IsDeadlineExceeded(err) ||
+					grpcerr.IsResourceChanged(err) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+
+				zap.L().Error("Could not do Authorize", zap.Error(err))
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			if !resp.IsAuthorized {
+				m.handleUnauthorized(w, req, reqCtx)
+				return
+			}
+		} else {
+			if reqCtx.AuthResponse == nil {
+				// AuthResponse is already set by preauth
+				reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
+					IsAuthorized: true,
+				}
+			}
+			m.setServiceConfig(ctx, reqCtx)
+		}
+
 		m.next.ServeHTTP(w, req)
 		return
 	}

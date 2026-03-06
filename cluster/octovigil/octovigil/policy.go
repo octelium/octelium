@@ -69,10 +69,10 @@ func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDeci
 		return nil, err
 	}
 
-	return s.doGetDecision(ctx, reqCtxMap, allRules)
+	return s.doGetDecision(ctx, req.i, reqCtxMap, allRules)
 }
 
-func (s *Server) doGetDecision(ctx context.Context, reqCtxMap map[string]any, allRules []*policyRule) (*getDecisionResp, error) {
+func (s *Server) doGetDecision(ctx context.Context, i *corev1.RequestContext, reqCtxMap map[string]any, allRules []*policyRule) (*getDecisionResp, error) {
 
 	slices.SortFunc(allRules, func(a, b *policyRule) int {
 		if diff := a.rule.Priority - b.rule.Priority; diff < 0 {
@@ -110,9 +110,16 @@ func (s *Server) doGetDecision(ctx context.Context, reqCtxMap map[string]any, al
 		}
 	}
 
+	var noMatchEffect corev1.Policy_Spec_Rule_Effect
+	if s.isAnonymousAuthorizationEnabled(i.Service) {
+		noMatchEffect = corev1.Policy_Spec_Rule_ALLOW
+	} else {
+		noMatchEffect = corev1.Policy_Spec_Rule_DENY
+	}
+
 	return &getDecisionResp{
 		decision: matchDecisionMATCH_NO,
-		effect:   corev1.Policy_Spec_Rule_DENY,
+		effect:   noMatchEffect,
 	}, nil
 }
 
@@ -344,32 +351,6 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 
 	var usedPolicies []string
 
-	if i.User.Spec.Authorization != nil {
-		rules, err := s.getResourcePolicyRules(ctx,
-			req.i, reqCtxMap,
-			i.User.Spec.Authorization.Policies,
-			i.User.Spec.Authorization.InlinePolicies,
-			umetav1.GetObjectReference(i.User), &usedPolicies)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, rules...)
-	}
-
-	for _, grp := range i.Groups {
-		if grp.Spec.Authorization != nil {
-			rules, err := s.getResourcePolicyRules(ctx,
-				req.i, reqCtxMap,
-				grp.Spec.Authorization.Policies,
-				grp.Spec.Authorization.InlinePolicies,
-				umetav1.GetObjectReference(grp), &usedPolicies)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, rules...)
-		}
-	}
-
 	if i.Service.Spec.Authorization != nil {
 		rules, err := s.getResourcePolicyRules(ctx,
 			req.i, reqCtxMap,
@@ -397,28 +378,56 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 		}
 	}
 
-	if i.Session.Spec.Authorization != nil {
-		rules, err := s.getResourcePolicyRules(ctx,
-			req.i, reqCtxMap,
-			i.Session.Spec.Authorization.Policies,
-			i.Session.Spec.Authorization.InlinePolicies,
-			umetav1.GetObjectReference(i.Session), &usedPolicies)
-		if err != nil {
-			return nil, err
+	if !s.isAnonymousAuthorizationEnabled(i.Service) {
+		if i.User.Spec.Authorization != nil {
+			rules, err := s.getResourcePolicyRules(ctx,
+				req.i, reqCtxMap,
+				i.User.Spec.Authorization.Policies,
+				i.User.Spec.Authorization.InlinePolicies,
+				umetav1.GetObjectReference(i.User), &usedPolicies)
+			if err != nil {
+				return nil, err
+			}
+			ret = append(ret, rules...)
 		}
-		ret = append(ret, rules...)
-	}
 
-	if i.Device != nil && i.Device.Spec.Authorization != nil {
-		rules, err := s.getResourcePolicyRules(ctx,
-			req.i, reqCtxMap,
-			i.Device.Spec.Authorization.Policies,
-			i.Device.Spec.Authorization.InlinePolicies,
-			umetav1.GetObjectReference(i.Device), &usedPolicies)
-		if err != nil {
-			return nil, err
+		for _, grp := range i.Groups {
+			if grp.Spec.Authorization != nil {
+				rules, err := s.getResourcePolicyRules(ctx,
+					req.i, reqCtxMap,
+					grp.Spec.Authorization.Policies,
+					grp.Spec.Authorization.InlinePolicies,
+					umetav1.GetObjectReference(grp), &usedPolicies)
+				if err != nil {
+					return nil, err
+				}
+				ret = append(ret, rules...)
+			}
 		}
-		ret = append(ret, rules...)
+
+		if i.Session.Spec.Authorization != nil {
+			rules, err := s.getResourcePolicyRules(ctx,
+				req.i, reqCtxMap,
+				i.Session.Spec.Authorization.Policies,
+				i.Session.Spec.Authorization.InlinePolicies,
+				umetav1.GetObjectReference(i.Session), &usedPolicies)
+			if err != nil {
+				return nil, err
+			}
+			ret = append(ret, rules...)
+		}
+
+		if i.Device != nil && i.Device.Spec.Authorization != nil {
+			rules, err := s.getResourcePolicyRules(ctx,
+				req.i, reqCtxMap,
+				i.Device.Spec.Authorization.Policies,
+				i.Device.Spec.Authorization.InlinePolicies,
+				umetav1.GetObjectReference(i.Device), &usedPolicies)
+			if err != nil {
+				return nil, err
+			}
+			ret = append(ret, rules...)
+		}
 	}
 
 	if rules, err := s.getRulesFromPolicyTriggers(ctx, req.i, reqCtxMap, &usedPolicies); err == nil {

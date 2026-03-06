@@ -188,13 +188,23 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) getReqCtx(di *acache.DownstreamInfo, req *corev1.RequestContext_Request, svc *corev1.Service) *corev1.RequestContext {
-	reqCtx := &corev1.RequestContext{
-		User:    di.User,
-		Device:  di.Device,
-		Service: svc,
-		Session: di.Session,
-		Groups:  di.Groups,
-		Request: req,
+
+	var reqCtx *corev1.RequestContext
+
+	if s.isAnonymousAuthorizationEnabled(svc) {
+		reqCtx = &corev1.RequestContext{
+			Service: svc,
+			Request: req,
+		}
+	} else {
+		reqCtx = &corev1.RequestContext{
+			User:    di.User,
+			Device:  di.Device,
+			Service: svc,
+			Session: di.Session,
+			Groups:  di.Groups,
+			Request: req,
+		}
 	}
 
 	reqCtx.Namespace, _ = s.cache.GetNamespace(svc.Status.NamespaceRef.Uid)
@@ -522,6 +532,10 @@ func (s *Server) DoAuthorize(ctx context.Context,
 func (s *Server) isAuthorized(ctx context.Context,
 	req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 
+	if s.isAnonymousAuthorizationEnabled(req.Service) {
+		return s.isAuthorizedAnonymous(ctx, req)
+	}
+
 	reason := &corev1.AccessLog_Entry_Common_Reason{}
 	if req == nil {
 		return false, nil, errors.Errorf("Nil request")
@@ -651,6 +665,38 @@ func (s *Server) isAuthorized(ctx context.Context,
 
 }
 
+func (s *Server) isAnonymousAuthorizationEnabled(svc *corev1.Service) bool {
+	return svc != nil &&
+		svc.Spec.IsAnonymous &&
+		svc.Spec.Authorization != nil &&
+		svc.Spec.Authorization.EnableAnonymous
+}
+
+func (s *Server) isAuthorizedAnonymous(ctx context.Context,
+	req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+	ctx, cancelFn := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelFn()
+
+	reason := &corev1.AccessLog_Entry_Common_Reason{}
+
+	resp, err := s.getDecision(ctx, &getDecisionReq{
+		i: req,
+	})
+	if err != nil {
+		return false, reason, err
+	}
+
+	if resp.decision == matchDecisionMATCH_YES {
+		return resp.effect == corev1.Policy_Spec_Rule_ALLOW,
+			resp.reason, nil
+	}
+
+	reason = &corev1.AccessLog_Entry_Common_Reason{
+		Type: corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH,
+	}
+	return false, reason, nil
+}
+
 func Run(ctx context.Context) error {
 	if err := commoninit.Run(ctx, nil); err != nil {
 		return err
@@ -748,7 +794,6 @@ func (s *Server) run(ctx context.Context) error {
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,
 	})
-	// grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", octovigilc.GetPort()))
 	if err != nil {

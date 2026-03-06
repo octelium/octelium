@@ -144,7 +144,8 @@ func (s *internalService) Evaluate(
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
-	resp, err := s.s.doGetDecision(ctx, reqCtxMap, allRules)
+	// TODO
+	resp, err := s.s.doGetDecision(ctx, nil, reqCtxMap, allRules)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
