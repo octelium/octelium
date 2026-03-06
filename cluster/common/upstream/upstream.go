@@ -48,8 +48,6 @@ func setConnectionUpstreamsListener(ctx context.Context,
 		return errors.Errorf("Connection is not set in the Session")
 	}
 
-	// l := svc.Spec
-
 	upstreamBackend := func() *url.URL {
 
 		eps := ucorev1.ToService(svc).GetAllUpstreamEndpoints()
@@ -62,12 +60,6 @@ func setConnectionUpstreamsListener(ctx context.Context,
 					return u
 				}
 			}
-			/*
-				if b.User != "" && umetav1.ToMetadata(svc.Metadata).GetCoreUserUID(b.User) == sess.Status.UserRef.Uid {
-					u, _ := url.Parse(b.Url)
-					return u
-				}
-			*/
 		}
 		return nil
 	}()
@@ -170,7 +162,7 @@ func AddAddressToConnection(ctx context.Context,
 	}
 
 	idx, err := func() (uint32, error) {
-		for range 10000 {
+		for range 1000000 {
 			curIdx, err := utilrand.GetRandomIPIndex()
 			if err != nil {
 				return 0, err
@@ -325,19 +317,13 @@ func removeConnIndex(network *cclusterv1.ClusterConnInfo, arg uint32, typ corev1
 
 	switch typ {
 	case corev1.Session_Status_Connection_WIREGUARD:
-		for i, itm := range network.ActiveIndexesWG {
-			if itm == arg {
-				network.ActiveIndexesWG = append(network.ActiveIndexesWG[:i], network.ActiveIndexesWG[i+1:]...)
-				return
-			}
-		}
+		network.ActiveIndexesWG = slices.DeleteFunc(network.ActiveIndexesWG, func(itm uint32) bool {
+			return itm == arg
+		})
 	case corev1.Session_Status_Connection_QUICV0:
-		for i, itm := range network.ActiveIndexesQUIC {
-			if itm == arg {
-				network.ActiveIndexesQUIC = append(network.ActiveIndexesQUIC[:i], network.ActiveIndexesQUIC[i+1:]...)
-				return
-			}
-		}
+		network.ActiveIndexesQUIC = slices.DeleteFunc(network.ActiveIndexesQUIC, func(itm uint32) bool {
+			return itm == arg
+		})
 	}
 }
 
@@ -347,29 +333,19 @@ func getListenerPort(sess *corev1.Session) (int, error) {
 		return 0, errors.Errorf("Connection is not set in the Session")
 	}
 
-	curPorts := []int32{}
-
-	for _, l := range sess.Status.Connection.Upstreams {
-		curPorts = append(curPorts, l.Port)
-	}
-
-	isInList := func(arg int32) bool {
-		for _, cur := range curPorts {
-			if cur == arg {
-				return true
-			}
-		}
-		return false
-	}
-
 	if conn.ServiceOptions == nil {
 		return 0, errors.Errorf("Nil ServiceOptions of Conn %s. THIS SHOULD NOT HAPPEN", sess.Metadata.Name)
 	}
 
 	for i := conn.ServiceOptions.PortStart; i < conn.ServiceOptions.PortStart+10000; i++ {
-		if !isInList(i) {
+
+		if !slices.ContainsFunc(sess.Status.Connection.Upstreams,
+			func(itm *corev1.Session_Status_Connection_Upstream) bool {
+				return itm.Port == i
+			}) {
 			return int(i), nil
 		}
+
 	}
 
 	return 0, errors.Errorf("Could not choose port for Session: %s", sess.Metadata.Name)
