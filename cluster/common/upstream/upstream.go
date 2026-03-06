@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -30,6 +32,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -146,8 +149,6 @@ func AddAddressToConnection(ctx context.Context,
 		return err
 	}
 
-	var idx uint32
-
 	networkInfo := &cclusterv1.ClusterConnInfo{}
 	if err := pbutils.StructToMessage(cfg.Data.GetAttrs(), networkInfo); err != nil {
 		return err
@@ -156,30 +157,32 @@ func AddAddressToConnection(ctx context.Context,
 	hasIndex := func(arg uint32) bool {
 		switch conn.Type {
 		case corev1.Session_Status_Connection_WIREGUARD:
-			for _, itm := range networkInfo.ActiveIndexesWG {
-				if itm == arg {
-					return true
-				}
+			if slices.Contains(networkInfo.ActiveIndexesWG, arg) {
+				return true
 			}
 		case corev1.Session_Status_Connection_QUICV0:
-			for _, itm := range networkInfo.ActiveIndexesQUIC {
-				if itm == arg {
-					return true
-				}
+			if slices.Contains(networkInfo.ActiveIndexesQUIC, arg) {
+				return true
 			}
 		}
 
 		return false
 	}
 
-	for i := 0; i < 100000; i++ {
-		curIdx, err := utilrand.GetRandomIPIndex()
-		if err != nil {
-			return err
+	idx, err := func() (uint32, error) {
+		for range 10000 {
+			curIdx, err := utilrand.GetRandomIPIndex()
+			if err != nil {
+				return 0, err
+			}
+			if !hasIndex(uint32(curIdx)) {
+				return curIdx, nil
+			}
 		}
-		if !hasIndex(uint32(curIdx)) {
-			idx = curIdx
-		}
+		return 0, errors.Errorf("Could not find conn idx")
+	}()
+	if err != nil {
+		return err
 	}
 
 	if idx == 0 {
@@ -204,6 +207,11 @@ func AddAddressToConnection(ctx context.Context,
 
 	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
 	if err != nil {
+		if grpcerr.IsResourceChanged(err) {
+			time.Sleep(time.Duration(utilrand.GetRandomRangeMath(10, 50)) * time.Millisecond)
+			return AddAddressToConnection(ctx, octeliumC, sess)
+		}
+
 		return err
 	}
 
@@ -283,6 +291,10 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 
 	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
 	if err != nil {
+		if grpcerr.IsResourceChanged(err) {
+			time.Sleep(time.Duration(utilrand.GetRandomRangeMath(10, 50)) * time.Millisecond)
+			return removeAddressFromConnection(ctx, octeliumC, sess, idx)
+		}
 		return err
 	}
 
