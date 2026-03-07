@@ -1862,3 +1862,118 @@ result := {
 		assert.Equal(t, fmt.Sprintf("https://%s.example.com", svc.Metadata.Uid), req.Config.Upstream.GetUrl())
 	}
 }
+
+func TestIsAuthorizedAnonymous(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	network, err := adminSrv.CreateNamespace(ctx, tests.GenNamespace())
+	assert.Nil(t, err)
+
+	networkK8s, err := fakeC.OcteliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: network.Metadata.Name})
+	assert.Nil(t, err)
+
+	_, err = fakeC.OcteliumC.CoreC().UpdateNamespace(ctx, networkK8s)
+	assert.Nil(t, err)
+
+	testIsAuthorized := func(srv *Server, svc *corev1.Service, req *coctovigilv1.DownstreamRequest) *coctovigilv1.AuthenticateAndAuthorizeResponse {
+
+		i, err := srv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: svc,
+			Request: req,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, i.IsAuthenticated)
+		assert.True(t, i.IsAuthorized)
+
+		return i
+	}
+
+	testIsUnauthorized := func(srv *Server, svc *corev1.Service, req *coctovigilv1.DownstreamRequest) *coctovigilv1.AuthenticateAndAuthorizeResponse {
+
+		i, err := srv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: svc,
+			Request: req,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, i.IsAuthenticated)
+		assert.False(t, i.IsAuthorized)
+
+		return i
+	}
+
+	{
+		svc, err := adminSrv.CreateService(ctx, tests.GenService(network.Metadata.Name))
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svc)
+
+		svc.Spec.IsAnonymous = true
+		svc.Spec.IsPublic = true
+		svc.Spec.Mode = corev1.Service_Spec_HTTP
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			EnableAnonymous: true,
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_DENY,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `ctx.request.http.path.startsWith("/v1")`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err = adminSrv.UpdateService(ctx, svc)
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetService(svc)
+
+		testIsUnauthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+			Request: &corev1.RequestContext_Request{
+				Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{
+						Path: `/v1/my/path`,
+					},
+				},
+			},
+		})
+
+		{
+			res := testIsAuthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Path: `/v2/my/path`,
+						},
+					},
+				},
+			})
+
+			assert.Equal(t,
+				corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH, res.AuthorizationDecisionReason.Type)
+		}
+
+	}
+
+}
