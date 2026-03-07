@@ -440,6 +440,10 @@ func (s *Server) validateService(ctx context.Context,
 		}
 	}
 
+	if svc.Spec.Authorization != nil && svc.Spec.Authorization.EnableAnonymous && !svc.Spec.IsAnonymous {
+		return grpcutils.InvalidArg("Only anonymous Services can enable anonymous authorization")
+	}
+
 	return nil
 }
 
