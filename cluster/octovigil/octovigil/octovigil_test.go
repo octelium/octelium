@@ -1932,7 +1932,7 @@ func TestIsAuthorizedAnonymous(t *testing.T) {
 					Spec: &corev1.Policy_Spec{
 						Rules: []*corev1.Policy_Spec_Rule{
 							{
-								Effect: corev1.Policy_Spec_Rule_DENY,
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
 								Condition: &corev1.Condition{
 									Type: &corev1.Condition_Match{
 										Match: `ctx.request.http.path.startsWith("/v1")`,
@@ -1949,7 +1949,7 @@ func TestIsAuthorizedAnonymous(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		srv.cache.SetService(svc)
 
-		testIsUnauthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+		testIsAuthorized(srv, svc, &coctovigilv1.DownstreamRequest{
 			Request: &corev1.RequestContext_Request{
 				Type: &corev1.RequestContext_Request_Http{
 					Http: &corev1.RequestContext_Request_HTTP{
@@ -1960,7 +1960,7 @@ func TestIsAuthorizedAnonymous(t *testing.T) {
 		})
 
 		{
-			res := testIsAuthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+			res := testIsUnauthorized(srv, svc, &coctovigilv1.DownstreamRequest{
 				Request: &corev1.RequestContext_Request{
 					Type: &corev1.RequestContext_Request_Http{
 						Http: &corev1.RequestContext_Request_HTTP{

@@ -3358,6 +3358,14 @@ func TestAnonymousAuthorization(t *testing.T) {
 									},
 									Effect: corev1.Policy_Spec_Rule_DENY,
 								},
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+								},
 							},
 						},
 					},
