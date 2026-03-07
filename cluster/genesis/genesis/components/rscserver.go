@@ -104,7 +104,8 @@ func getRscServerDeployment(o *CommonOpts) *appsv1.Deployment {
 								},
 							},
 
-							LivenessProbe: MainLivenessProbe(),
+							LivenessProbe:   MainLivenessProbe(),
+							SecurityContext: MainSecurityContext(),
 
 							Image:           components.GetImage(components.RscServer, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),

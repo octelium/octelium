@@ -196,6 +196,7 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 							Image:           components.GetImage(components.Ingress, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 							LivenessProbe:   MainLivenessProbe(),
+							SecurityContext: MainSecurityContext(),
 							Env: func() []k8scorev1.EnvVar {
 								ret := []k8scorev1.EnvVar{
 									{
