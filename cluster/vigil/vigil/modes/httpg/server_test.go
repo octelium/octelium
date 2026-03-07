@@ -3291,3 +3291,123 @@ func TestIsDisabled(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode())
 	}
 }
+
+func TestAnonymousAuthorization(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamPort := tests.GetPort()
+
+	upstreamSrv := newSrvHTTP(t, upstreamPort, false, nil)
+
+	upstreamSrv.run(t)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Port:        uint32(tests.GetPort()),
+			Mode:        corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://www.google.com",
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				EnableAnonymous: true,
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Name: "deny-api",
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.request.http.path.startsWith("/api")`,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_DENY,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/api/v1", ucorev1.ToService(svcV).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsError())
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode())
+	}
+}

@@ -434,8 +434,9 @@ func (s *Server) validateService(ctx context.Context,
 		default:
 			return grpcutils.InvalidArg("Anonymous access mode requires HTTP or WEB modes")
 		}
-		if svc.Spec.Authorization != nil {
-			return grpcutils.InvalidArg("Anonymous access mode requires no authorization configuration")
+		if svc.Spec.Authorization != nil && !svc.Spec.Authorization.EnableAnonymous {
+			return grpcutils.InvalidArg(
+				"Anonymous access mode requires no authorization configuration or enabling EnableAnonymous")
 		}
 	}
 
