@@ -80,40 +80,18 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// reqCtx.IsAuthorized = true
 		// m.next.ServeHTTP(w, req)
 
-		if svc.Spec.Authorization != nil && svc.Spec.Authorization.EnableAnonymous {
-			resp, err := m.octovigilC.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
-				ServiceUID: svc.Metadata.Uid,
-				Request:    reqCtx.DownstreamInfo.Request,
-			})
-			if err != nil {
-				if grpcerr.IsCanceled(err) ||
-					grpcerr.IsDeadlineExceeded(err) ||
-					grpcerr.IsResourceChanged(err) {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-
-				zap.L().Error("Could not do Authorize", zap.Error(err))
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			if !resp.IsAuthorized {
-				m.handleUnauthorized(w, req, reqCtx)
-				return
-			}
-		} else {
+		if svc.Spec.Authorization == nil || !svc.Spec.Authorization.EnableAnonymous {
 			if reqCtx.AuthResponse == nil {
 				// AuthResponse is already set by preauth
-				reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
-					IsAuthorized: true,
-				}
+				reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{}
 			}
-			m.setServiceConfig(ctx, reqCtx)
-		}
 
-		m.next.ServeHTTP(w, req)
-		return
+			reqCtx.AuthResponse.IsAuthorized = true
+			m.setServiceConfig(ctx, reqCtx)
+
+			m.next.ServeHTTP(w, req)
+			return
+		}
 	}
 
 	auth, err := m.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
@@ -148,102 +126,6 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	m.next.ServeHTTP(w, req)
 }
-
-/*
-type additionalInfo struct {
-	Body       []byte
-	IsBodyJSON bool
-	bodyMap    map[string]any
-}
-
-func (m *middleware) getDownstreamReq(req *http.Request,
-	reqCtx *middlewares.RequestContext,
-	additional *additionalInfo) (*coctovigilv1.DownstreamRequest, error) {
-
-	c := reqCtx.Conn
-	svc := reqCtx.Service
-
-	httpC := &corev1.RequestContext_Request_HTTP{
-		Headers: httputils.GetHeaders(req.Header),
-		Host:    req.Host,
-		Method:  req.Method,
-		Scheme:  req.URL.Scheme,
-		Size:    req.ContentLength,
-		Path:    req.URL.Path,
-		Uri:     req.URL.RequestURI(),
-		Body:    additional.Body,
-	}
-
-	if additional.bodyMap != nil {
-		httpC.BodyMap, _ = pbutils.MapToStruct(additional.bodyMap)
-	}
-
-	if qry := req.URL.Query(); len(qry) > 0 {
-		httpC.QueryParams = make(map[string]string)
-		for k, v := range qry {
-			if len(v) > 0 {
-				httpC.QueryParams[k] = v[0]
-			}
-		}
-	}
-
-	switch {
-	case ucorev1.ToService(svc).IsKubernetes():
-		k8sReq, err := httputils.ParseKubernetesRequest(req)
-		if err != nil {
-			return nil, err
-		}
-
-		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
-			Request: &corev1.RequestContext_Request{
-				Type: &corev1.RequestContext_Request_Kubernetes_{
-					Kubernetes: &corev1.RequestContext_Request_Kubernetes{
-						Http:        httpC,
-						Verb:        k8sReq.Verb,
-						ApiPrefix:   k8sReq.APIPrefix,
-						ApiGroup:    k8sReq.APIGroup,
-						ApiVersion:  k8sReq.APIVersion,
-						Namespace:   k8sReq.Namespace,
-						Resource:    k8sReq.Resource,
-						Subresource: k8sReq.Subresource,
-						Name:        k8sReq.Name,
-					},
-				},
-			},
-		}, nil
-	case ucorev1.ToService(svc).IsGRPC():
-		info, err := httputils.GetGRPCInfo(req.URL.Path)
-		if err != nil {
-			return nil, err
-		}
-		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
-			Request: &corev1.RequestContext_Request{
-				Type: &corev1.RequestContext_Request_Grpc{
-					Grpc: &corev1.RequestContext_Request_GRPC{
-						Http:            httpC,
-						Service:         info.Service,
-						ServiceFullName: info.FullServiceName,
-						Method:          info.Method,
-						Package:         info.Package,
-					},
-				},
-			},
-		}, nil
-	default:
-		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
-			Request: &corev1.RequestContext_Request{
-				Type: &corev1.RequestContext_Request_Http{
-					Http: httpC,
-				},
-			},
-		}, nil
-	}
-}
-
-*/
 
 func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.RequestContext) {
 

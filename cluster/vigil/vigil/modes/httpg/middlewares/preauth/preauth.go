@@ -136,11 +136,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
 			RequestContext: reqCtx.DownstreamInfo,
-			IsAuthorized:   true,
+			// IsAuthorized:   true,
 			// ServiceConfigName: m.getServiceConfigName(ctx, reqCtx.DownstreamInfo),
 		}
 
-		reqCtx.IsAuthorized = true
+		// reqCtx.IsAuthorized = true
 		// reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, reqCtx.AuthResponse)
 
 		m.next.ServeHTTP(w, req)

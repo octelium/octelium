@@ -409,17 +409,21 @@ type AuthenticateAndAuthorizeResponse struct {
 func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1.DoAuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
 	ret := &coctovigilv1.AuthenticateAndAuthorizeResponse{}
 
-	downstreamInfo, err := s.authenticate(ctx, req)
-	if err != nil {
-		zap.L().Debug("Could not authenticate", zap.Error(err))
-		if errors.Is(err, UnauthenticatedErr) {
-			return ret, nil
+	if s.isAnonymousAuthorizationEnabled(req.Service) {
+		ret.RequestContext = s.getReqCtx(nil, req.Request.Request, req.Service)
+	} else {
+		downstreamInfo, err := s.authenticate(ctx, req)
+		if err != nil {
+			zap.L().Debug("Could not authenticate", zap.Error(err))
+			if errors.Is(err, UnauthenticatedErr) {
+				return ret, nil
+			}
+			return nil, err
 		}
-		return nil, err
-	}
 
-	ret.IsAuthenticated = true
-	ret.RequestContext = s.getReqCtx(downstreamInfo, req.Request.Request, req.Service)
+		ret.IsAuthenticated = true
+		ret.RequestContext = s.getReqCtx(downstreamInfo, req.Request.Request, req.Service)
+	}
 
 	isAuthorized, reason, err := s.isAuthorizedWithMetrics(ctx, ret.RequestContext)
 	if err != nil {
@@ -694,7 +698,8 @@ func (s *Server) isAuthorizedAnonymous(ctx context.Context,
 	reason = &corev1.AccessLog_Entry_Common_Reason{
 		Type: corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH,
 	}
-	return false, reason, nil
+
+	return resp.effect == corev1.Policy_Spec_Rule_ALLOW, reason, nil
 }
 
 func Run(ctx context.Context) error {

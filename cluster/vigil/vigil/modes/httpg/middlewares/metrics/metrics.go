@@ -23,7 +23,6 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
-	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
@@ -57,12 +56,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	state := func() string {
 		switch {
-		case reqCtx.IsAuthorized || httputils.IsAnonymousMode(req):
+		case reqCtx.IsAuthorized:
 			return "ALLOWED"
-		case reqCtx.IsAuthenticated:
-			return "DENIED"
 		default:
-			return "DENIED_UNKNOWN"
+			return "DENIED"
 		}
 	}()
 

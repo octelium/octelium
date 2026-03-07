@@ -110,7 +110,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	opts := &logentry.InitializeLogEntryOpts{
 		StartTime:       reqCtx.CreatedAt,
 		IsAuthenticated: reqCtx.IsAuthenticated,
-		IsAuthorized:    reqCtx.IsAuthorized || httputils.IsAnonymousMode(req),
+		IsAuthorized:    reqCtx.IsAuthorized,
 		ReqCtx:          reqCtx.DownstreamInfo,
 		Reason:          reqCtx.DecisionReason,
 	}
