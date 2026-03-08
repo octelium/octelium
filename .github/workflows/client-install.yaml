@@ -1,0 +1,51 @@
+name: client-install
+permissions:
+  contents: read
+on: workflow_dispatch
+
+jobs:
+  test-install:
+    name: ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          
+          - os: macos
+            arch: amd64
+            runner: macos-26-intel
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+            
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Bash Installer (Linux/macOS)
+        if: matrix.os != 'windows'
+        run: |
+          curl -fsSL https://octelium.com/install.sh | bash
+
+      - name: Run PowerShell Installer (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          iwr https://octelium.com/install.ps1 -useb | iex
+
+      - name: Verify Version Output
+        run: |
+          octelium version
+          octeliumctl version
+          octops version
