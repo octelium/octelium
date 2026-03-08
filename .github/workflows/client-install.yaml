@@ -37,24 +37,34 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           curl -fsSL https://octelium.com/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run PowerShell Installer (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           iwr https://octelium.com/install.ps1 -useb | iex
+          $binDir = Join-Path $HOME ".local\bin"
+          echo $binDir >> $env:GITHUB_PATH
 
-      - name: Verify Version Output
+      - name: Verify Version and Files (Linux/macOS)
         if: matrix.os != 'windows'
         run: |
           octelium version
           octeliumctl version
           octops version
 
-      - name: Verify Version Output (Windows)
+      - name: Verify Version and Files (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           octelium version
           octeliumctl version
           octops version
+          $dllPath = Join-Path $HOME ".local\bin\wireguard.dll"
+          if (Test-Path $dllPath) {
+              Write-Host "wireguard.dll found in bin directory."
+          } else {
+              Write-Error "wireguard.dll is missing from installation directory!"
+              exit 1
+          }
