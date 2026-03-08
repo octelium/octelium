@@ -45,6 +45,15 @@ jobs:
           iwr https://octelium.com/install.ps1 -useb | iex
 
       - name: Verify Version Output
+        if: matrix.os != 'windows'
+        run: |
+          octelium version
+          octeliumctl version
+          octops version
+
+      - name: Verify Version Output (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
         run: |
           octelium version
           octeliumctl version
