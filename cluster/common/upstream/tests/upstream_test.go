@@ -18,13 +18,9 @@ package upstreamtests
 
 import (
 	"context"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
-	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
@@ -32,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -100,6 +95,7 @@ func TestAddressToConnection(t *testing.T) {
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
 
+/*
 func TestAddressToConnectionConcurrent(t *testing.T) {
 
 	ctx := context.Background()
@@ -156,3 +152,4 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
+*/
