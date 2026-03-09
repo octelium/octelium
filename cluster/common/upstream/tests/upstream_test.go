@@ -18,9 +18,13 @@ package upstreamtests
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
@@ -28,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/upstream"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -95,7 +100,6 @@ func TestAddressToConnection(t *testing.T) {
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
 
-/*
 func TestAddressToConnectionConcurrent(t *testing.T) {
 
 	ctx := context.Background()
@@ -111,20 +115,21 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 	getConnInfo := func() *cclusterv1.ClusterConnInfo {
 		cfg, err := fakeC.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
 		assert.Nil(t, err)
-
 		ret := &cclusterv1.ClusterConnInfo{}
-
 		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
 		return ret
 	}
 
+	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
+
 	var wg sync.WaitGroup
 	var sessList []*corev1.Session
-	for range 100 {
+
+	sessLen := 20
+	for range sessLen {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-
 			sess := &corev1.Session{
 				Metadata: &metav1.Metadata{
 					Name: utilrand.GetRandomStringCanonical(8),
@@ -138,18 +143,26 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 			sessList = append(sessList, sess)
 			err = upstream.AddAddressToConnection(ctx, fakeC.OcteliumC, sess)
 			assert.Nil(t, err, "%+v", err)
+
 		}()
 	}
 
 	wg.Wait()
-
+	assert.Equal(t, sessLen, len(getConnInfo().ActiveIndexesWG))
 	time.Sleep(3 * time.Second)
 
+	var wg2 sync.WaitGroup
 	for _, sess := range sessList {
-		err = upstream.RemoveAllAddressFromConnection(ctx, fakeC.OcteliumC, sess)
-		assert.Nil(t, err, "%+v", err)
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			err = upstream.RemoveAllAddressFromConnection(ctx, fakeC.OcteliumC, sess)
+			assert.Nil(t, err, "%+v", err)
+		}()
 	}
+
+	wg2.Wait()
+	time.Sleep(1 * time.Second)
 
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
-*/

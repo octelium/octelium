@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
@@ -32,11 +33,12 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+var sysConnMutex sync.Mutex
 
 func setConnectionUpstreamsListener(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
@@ -121,6 +123,12 @@ func AddAddressToConnection(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session) error {
 
+	ctx, cancel := context.WithTimeout(ctx, sysConnTimeout)
+	defer cancel()
+
+	sysConnMutex.Lock()
+	defer sysConnMutex.Unlock()
+
 	conn := sess.Status.Connection
 	if conn == nil {
 		return errors.Errorf("Connection is not set in the Session")
@@ -199,11 +207,6 @@ func AddAddressToConnection(ctx context.Context,
 
 	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
 	if err != nil {
-		if grpcerr.IsResourceChanged(err) {
-			time.Sleep(time.Duration(utilrand.GetRandomRangeMath(10, 50)) * time.Millisecond)
-			return AddAddressToConnection(ctx, octeliumC, sess)
-		}
-
 		return err
 	}
 
@@ -247,16 +250,24 @@ func AddAddressToConnection(ctx context.Context,
 	return nil
 }
 
+const sysConnTimeout = 30 * time.Second
+
 func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session, idx int) error {
-
 	if sess.Status.Connection == nil || len(sess.Status.Connection.Addresses) == 0 {
 		return nil
 	}
 
-	zap.L().Debug("Removing an address from Session",
-		zap.Any("addr", sess.Status.Connection.Addresses[idx]), zap.Any("sess", sess))
+	ctx, cancel := context.WithTimeout(ctx, sysConnTimeout)
+	defer cancel()
 
+	sysConnMutex.Lock()
+	defer sysConnMutex.Unlock()
+
+	/*
+		zap.L().Debug("Removing an address from Session",
+			zap.Any("addr", sess.Status.Connection.Addresses[idx]), zap.Any("sess", sess))
+	*/
 	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
 	if err != nil {
 		return err
@@ -283,10 +294,6 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 
 	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
 	if err != nil {
-		if grpcerr.IsResourceChanged(err) {
-			time.Sleep(time.Duration(utilrand.GetRandomRangeMath(10, 50)) * time.Millisecond)
-			return removeAddressFromConnection(ctx, octeliumC, sess, idx)
-		}
 		return err
 	}
 
@@ -299,9 +306,10 @@ func RemoveAllAddressFromConnection(ctx context.Context, octeliumC octeliumc.Cli
 		return nil
 	}
 
-	zap.L().Debug("Removing all addresses from the Session",
-		zap.String("sessName", sess.Metadata.Name), zap.Any("connection", sess.Status.Connection))
-
+	/*
+		zap.L().Debug("Removing all addresses from the Session",
+			zap.String("sessName", sess.Metadata.Name), zap.Any("connection", sess.Status.Connection))
+	*/
 	for i := 0; i < len(sess.Status.Connection.Addresses); i++ {
 		if err := removeAddressFromConnection(ctx, octeliumC, sess, i); err != nil {
 			return err
