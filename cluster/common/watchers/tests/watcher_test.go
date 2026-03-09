@@ -31,7 +31,7 @@ import (
 )
 
 func TestWatcherCore(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
@@ -90,7 +90,7 @@ func TestWatcherCore(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 	_, err = fakeC.OcteliumC.CoreC().DeleteService(ctx, &rmetav1.DeleteOptions{Uid: svc.Metadata.Uid})
-	assert.Nil(t, err)
+	assert.Nil(t, err, "%+v", err)
 	time.Sleep(3 * time.Second)
 
 	assert.True(t, didCreate && didUpdate && didDelete)
