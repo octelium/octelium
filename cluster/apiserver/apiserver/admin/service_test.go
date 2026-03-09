@@ -624,6 +624,31 @@ func TestCreateService(t *testing.T) {
 
 		assert.Nil(t, err)
 	}
+
+	{
+		_, err := srv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode:        corev1.Service_Spec_HTTP,
+				IsAnonymous: true,
+				IsPublic:    true,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: "https://example.com",
+						},
+					},
+				},
+				Authorization: &corev1.Service_Spec_Authorization{
+					EnableAnonymous: true,
+				},
+			},
+		})
+
+		assert.Nil(t, err)
+	}
 }
 
 func TestServiceMode(t *testing.T) {
