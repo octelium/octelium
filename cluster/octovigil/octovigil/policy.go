@@ -110,15 +110,6 @@ func (s *Server) doGetDecision(ctx context.Context, i *corev1.RequestContext, re
 		}
 	}
 
-	/*
-		var noMatchEffect corev1.Policy_Spec_Rule_Effect
-		if s.isAnonymousAuthorizationEnabled(i.Service) {
-			noMatchEffect = corev1.Policy_Spec_Rule_ALLOW
-		} else {
-			noMatchEffect = corev1.Policy_Spec_Rule_DENY
-		}
-	*/
-
 	return &getDecisionResp{
 		decision: matchDecisionMATCH_NO,
 		effect:   corev1.Policy_Spec_Rule_DENY,

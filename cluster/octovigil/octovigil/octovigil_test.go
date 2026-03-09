@@ -1974,6 +1974,43 @@ func TestIsAuthorizedAnonymous(t *testing.T) {
 				corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH, res.AuthorizationDecisionReason.Type)
 		}
 
+		svc.Spec.Authorization.InlinePolicies = nil
+		svc.Spec.Authorization.Policies = nil
+		svc.Spec.Authorization.EnableAnonymous = true
+
+		svc, err = adminSrv.UpdateService(ctx, svc)
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetService(svc)
+
+		{
+			res := testIsUnauthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Path: `/v1/my/path`,
+						},
+					},
+				},
+			})
+
+			assert.Equal(t,
+				corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH, res.AuthorizationDecisionReason.Type)
+		}
+
+		{
+			res := testIsUnauthorized(srv, svc, &coctovigilv1.DownstreamRequest{
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Path: `/v2/my/path`,
+						},
+					},
+				},
+			})
+
+			assert.Equal(t,
+				corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH, res.AuthorizationDecisionReason.Type)
+		}
 	}
 
 }
