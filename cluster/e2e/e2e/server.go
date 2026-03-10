@@ -2319,6 +2319,7 @@ func (s *server) runAnonymousAuthorization(ctx context.Context) error {
 	})
 	assert.Nil(t, err)
 
+	time.Sleep(3 * time.Second)
 	assert.Nil(t, s.waitDeploymentSvc(ctx, svc.Metadata.Name))
 
 	time.Sleep(3 * time.Second)
@@ -2336,7 +2337,7 @@ func (s *server) runAnonymousAuthorization(ctx context.Context) error {
 		svc, err = c.UpdateService(ctx, svc)
 		assert.Nil(t, err)
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 	{
@@ -2369,7 +2370,7 @@ func (s *server) runAnonymousAuthorization(ctx context.Context) error {
 		svc, err = c.UpdateService(ctx, svc)
 		assert.Nil(t, err)
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 	{
