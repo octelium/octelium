@@ -3416,6 +3416,6 @@ func TestAnonymousAuthorization(t *testing.T) {
 			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/api/v1", ucorev1.ToService(svcV).RealPort()))
 		assert.Nil(t, err, "%+v", err)
 		assert.True(t, resp.IsError())
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode())
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode())
 	}
 }
