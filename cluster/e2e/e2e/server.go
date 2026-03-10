@@ -233,6 +233,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runAnonymousAuthorization(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runMiscServiceTests(ctx); err != nil {
 		return err
 	}
@@ -2279,6 +2283,113 @@ func (s *server) runSDK(ctx context.Context) error {
 		Name: svc.Metadata.Name,
 	})
 	assert.Nil(t, err)
+
+	return nil
+}
+
+func (s *server) runAnonymousAuthorization(ctx context.Context) error {
+	t := s.t
+
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	zap.L().Debug("Starting runAnonymousAuthorization")
+
+	c := corev1.NewMainServiceClient(conn)
+
+	assert.Nil(t, err)
+
+	svc, err := c.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Mode:        corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://github.com",
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	assert.Nil(t, s.waitDeploymentSvc(ctx, svc.Metadata.Name))
+
+	time.Sleep(3 * time.Second)
+	{
+		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	{
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			EnableAnonymous: true,
+		}
+
+		svc, err = c.UpdateService(ctx, svc)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+	}
+
+	{
+		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			EnableAnonymous: true,
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `ctx.request.http.path.startsWith("/about")`,
+									},
+								},
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err = c.UpdateService(ctx, svc)
+		assert.Nil(t, err)
+
+		time.Sleep(1 * time.Second)
+	}
+
+	{
+		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode())
+	}
+
+	{
+		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/about")
+		assert.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+	}
+
+	_, err = c.DeleteService(ctx, &metav1.DeleteOptions{
+		Uid: svc.Metadata.Uid,
+	})
+	assert.Nil(t, err)
+
+	zap.L().Debug("runAnonymousAuthorization")
 
 	return nil
 }
