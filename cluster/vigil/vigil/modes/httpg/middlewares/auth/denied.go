@@ -38,7 +38,15 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 	w.Header().Set("X-Octelium-Unauthorized", "true")
 	svc := reqCtx.Service
 
+	isAnonymousAuthorizationMode := svc.Spec.IsAnonymous &&
+		svc.Spec.Authorization != nil &&
+		svc.Spec.Authorization.EnableAnonymous
+
 	httpStatusCode := func() int {
+		if isAnonymousAuthorizationMode {
+			return http.StatusForbidden
+		}
+
 		if !reqCtx.IsAuthenticated {
 			return http.StatusUnauthorized
 		}
@@ -48,10 +56,15 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 	switch {
 	case ucorev1.ToService(svc).IsGRPC():
 		w.Header().Set("Content-Type", "application/grpc")
-		if !reqCtx.IsAuthenticated {
+
+		switch {
+		case isAnonymousAuthorizationMode:
+			w.Header().Set("Grpc-Status", fmt.Sprintf("%d", codes.PermissionDenied))
+			w.Header().Set("Grpc-Message", "Octelium: Unauthorized")
+		case !reqCtx.IsAuthenticated:
 			w.Header().Set("Grpc-Status", fmt.Sprintf("%d", codes.Unauthenticated))
 			w.Header().Set("Grpc-Message", "Octelium: Unauthenticated")
-		} else {
+		default:
 			w.Header().Set("Grpc-Status", fmt.Sprintf("%d", codes.PermissionDenied))
 			w.Header().Set("Grpc-Message", "Octelium: Unauthorized")
 		}
@@ -60,7 +73,10 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 	case ucorev1.ToService(svc).IsKubernetes():
 		w.WriteHeader(httpStatusCode)
 		reason := k8smetav1.StatusReasonForbidden
-		if !reqCtx.IsAuthenticated {
+
+		switch {
+		case isAnonymousAuthorizationMode:
+		case !reqCtx.IsAuthenticated:
 			reason = k8smetav1.StatusReasonUnauthorized
 		}
 
@@ -74,18 +90,13 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 		return
 	}
 
-	if httputils.IsHTMLPage(req) {
-		// w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		// w.Write([]byte(deniedPage))
+	if !isAnonymousAuthorizationMode && httputils.IsHTMLPage(req) {
 
 		if reqCtx.IsAuthenticated &&
 			reqCtx.DownstreamInfo != nil &&
 			reqCtx.DownstreamInfo.User != nil &&
 			reqCtx.DownstreamInfo.User.Spec.Type == corev1.User_Spec_HUMAN {
-			/*
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.Write([]byte(deniedPage))
-			*/
+
 			http.Redirect(w, req, fmt.Sprintf("https://%s/denied", m.domain), http.StatusSeeOther)
 			return
 		}
