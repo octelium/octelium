@@ -3339,7 +3339,7 @@ func TestAnonymousAuthorization(t *testing.T) {
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{
-						Url: "https://www.google.com",
+						Url: "https://github.com",
 					},
 				},
 			},
@@ -3347,13 +3347,13 @@ func TestAnonymousAuthorization(t *testing.T) {
 				EnableAnonymous: true,
 				InlinePolicies: []*corev1.InlinePolicy{
 					{
-						Name: "deny-api",
+						Name: "deny-about",
 						Spec: &corev1.Policy_Spec{
 							Rules: []*corev1.Policy_Spec_Rule{
 								{
 									Condition: &corev1.Condition{
 										Type: &corev1.Condition_Match{
-											Match: `ctx.request.http.path.startsWith("/api")`,
+											Match: `ctx.request.http.path.startsWith("/about")`,
 										},
 									},
 									Effect: corev1.Policy_Spec_Rule_DENY,
@@ -3375,12 +3375,12 @@ func TestAnonymousAuthorization(t *testing.T) {
 	})
 	assert.Nil(t, err, "%+v", err)
 
-	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	svc, err = fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
 	assert.Nil(t, err)
 
 	vCache, err := vcache.NewCache(ctx)
 	assert.Nil(t, err)
-	vCache.SetService(svcV)
+	vCache.SetService(svc)
 
 	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
 		VCache:    vCache,
@@ -3405,7 +3405,7 @@ func TestAnonymousAuthorization(t *testing.T) {
 	{
 		time.Sleep(1 * time.Second)
 		resp, err := resty.New().SetDebug(true).
-			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort()))
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svc).RealPort()))
 		assert.Nil(t, err, "%+v", err)
 		assert.True(t, resp.IsSuccess())
 	}
@@ -3413,9 +3413,63 @@ func TestAnonymousAuthorization(t *testing.T) {
 	{
 		time.Sleep(1 * time.Second)
 		resp, err := resty.New().SetDebug(true).
-			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/api/v1", ucorev1.ToService(svcV).RealPort()))
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/about", ucorev1.ToService(svc).RealPort()))
 		assert.Nil(t, err, "%+v", err)
 		assert.True(t, resp.IsError())
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+	}
+
+	{
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			EnableAnonymous: true,
+		}
+		svc, err = srv.octeliumC.CoreC().UpdateService(ctx, svc)
+		assert.Nil(t, err)
+		vCache.SetService(svc)
+
+		time.Sleep(1 * time.Second)
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/", ucorev1.ToService(svc).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsError())
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/about", ucorev1.ToService(svc).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsError())
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode())
+	}
+
+	{
+		svc.Spec.Authorization = nil
+		svc, err = srv.octeliumC.CoreC().UpdateService(ctx, svc)
+		assert.Nil(t, err)
+		vCache.SetService(svc)
+
+		time.Sleep(1 * time.Second)
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svc).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+	}
+
+	{
+		time.Sleep(1 * time.Second)
+		resp, err := resty.New().SetDebug(true).
+			R().SetResult(&tstResp{}).Get(fmt.Sprintf("http://localhost:%d/about", ucorev1.ToService(svc).RealPort()))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
 	}
 }

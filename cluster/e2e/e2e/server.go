@@ -2340,6 +2340,7 @@ func (s *server) runAnonymousAuthorization(ctx context.Context) error {
 		time.Sleep(3 * time.Second)
 	}
 
+	
 	{
 		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/")
 		assert.Nil(t, err)
