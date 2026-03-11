@@ -188,6 +188,31 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		}
 	}
 
+	if ucorev1.ToService(svc).IsKubernetes() && svcCfg != nil && svcCfg.GetKubernetes() != nil {
+		kCfg := svcCfg.GetKubernetes()
+		switch {
+		case kCfg.GetBearerToken() != nil && kCfg.GetBearerToken().GetFromSecret() != "":
+			if tknSecret, err := m.secretMan.GetByName(ctx,
+				kCfg.GetBearerToken().GetFromSecret()); err == nil {
+				req.Header.Set("Authorization",
+					fmt.Sprintf("Bearer %s", ucorev1.ToSecret(tknSecret).GetValueStr()))
+			}
+		case kCfg.GetKubeconfig() != nil && kCfg.GetKubeconfig().GetFromSecret() != "":
+			if kubeConfigSecret, err := m.secretMan.GetByName(ctx, kCfg.GetKubeconfig().GetFromSecret()); err == nil {
+
+				if kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(
+					ucorev1.ToSecret(kubeConfigSecret).GetValueBytes()); err == nil {
+
+					if usr := kubeconfig.GetUser(
+						kCfg.GetKubeconfig().Context); usr != nil && usr.User.Token != "" {
+						req.Header.Set("Authorization",
+							fmt.Sprintf("Bearer %s", usr.User.Token))
+					}
+				}
+			}
+		}
+	}
+
 	if ucorev1.ToService(svc).IsKubernetes() && svcCfg != nil && svcCfg.GetKubernetes() != nil &&
 		svcCfg.GetKubernetes().GetBearerToken() != nil &&
 		svcCfg.GetKubernetes().GetBearerToken().GetFromSecret() != "" {
@@ -199,19 +224,16 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ucorev1.ToSecret(tknSecret).GetValueStr()))
 		}
 	} else if ucorev1.ToService(svc).IsKubernetes() && svcCfg != nil && svcCfg.GetKubernetes() != nil &&
-		svc.Metadata.SpecLabels["k8s-kubeconfig-has-token"] == "true" &&
 		svcCfg.GetKubernetes().GetKubeconfig() != nil &&
 		svcCfg.GetKubernetes().GetKubeconfig().GetFromSecret() != "" {
-		kubeConfigSecret, err := m.secretMan.GetByName(ctx,
-			svcCfg.GetKubernetes().GetKubeconfig().GetFromSecret())
-		if err != nil {
-			zap.L().Debug("Could not get kubeconfig secret", zap.Error(err))
-		} else {
-			kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(ucorev1.ToSecret(kubeConfigSecret).GetValueBytes())
-			if err != nil {
-				zap.L().Warn("Could not unmarshal kubeconfig", zap.Error(err))
-			} else {
-				if usr := kubeconfig.GetUser(svcCfg.GetKubernetes().GetKubeconfig().Context); usr != nil {
+		if kubeConfigSecret, err := m.secretMan.GetByName(ctx,
+			svcCfg.GetKubernetes().GetKubeconfig().GetFromSecret()); err == nil {
+
+			if kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(
+				ucorev1.ToSecret(kubeConfigSecret).GetValueBytes()); err == nil {
+
+				if usr := kubeconfig.GetUser(
+					svcCfg.GetKubernetes().GetKubeconfig().Context); usr != nil && usr.User.Token != "" {
 					req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", usr.User.Token))
 				}
 			}

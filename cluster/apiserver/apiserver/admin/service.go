@@ -1507,9 +1507,12 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 		if usr := kubeconfig.GetUser(k8s.GetKubeconfig().Context); usr == nil {
 			return serr.InvalidArg("No User found in the Kubeconfig")
 		} else {
-			if usr.User.Token != "" {
-				specLabels[fmt.Sprintf("k8s-kubeconfig-has-token-%s", ucorev1.ToServiceConfig(cfg).GetRealName())] = "true"
-			}
+
+			/*
+				if usr.User.Token != "" {
+					specLabels[fmt.Sprintf("k8s-kubeconfig-has-token-%s", ucorev1.ToServiceConfig(cfg).GetRealName())] = "true"
+				}
+			*/
 		}
 		return nil
 	}
