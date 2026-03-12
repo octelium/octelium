@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/go-mysql-org/go-mysql/client"
+	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/packet"
 	"github.com/go-mysql-org/go-mysql/server"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -130,6 +131,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	}
 
 	optTLS := func(c *client.Conn) error {
+		c.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
 		if cfg.IsTLS {
 			zap.L().Debug("Setting TLS....")
 			c.SetTLSConfig(&tls.Config{

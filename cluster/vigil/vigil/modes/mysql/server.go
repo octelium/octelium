@@ -276,10 +276,16 @@ func (s *Server) getDownstreamConn(c net.Conn) (*server.Conn, error) {
 	defer s.tlsCfgMan.mu.RUnlock()
 	zap.L().Debug("Getting downstream conn")
 
-	mysqlSrv := server.NewServer(serverVersion,
-		mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, s.tlsCfgMan.tlsCfg)
+	mysqlSrv := server.NewServerWithAuth(serverVersion,
+		mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, s.tlsCfgMan.tlsCfg,
+		&server.DefaultAuthenticationProvider{})
 
-	return server.NewCustomizedConn(c, mysqlSrv, &credProvider{}, server.EmptyHandler{})
+	conn, err := mysqlSrv.NewCustomizedConn(c, &authHandler{}, server.EmptyHandler{})
+	if err != nil {
+		return nil, err
+	}
+	conn.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
+	return conn, nil
 }
 
 func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn) *coctovigilv1.DownstreamRequest {
@@ -397,3 +403,20 @@ func setKeepAlive(conn net.Conn) error {
 	return nil
 }
 */
+
+type authHandler struct {
+}
+
+func (a *authHandler) GetCredential(username string) (credential server.Credential, found bool, err error) {
+	return server.Credential{
+		Passwords:      []string{"password", ""},
+		AuthPluginName: mysql.AUTH_NATIVE_PASSWORD,
+	}, true, nil
+}
+
+func (a *authHandler) OnAuthSuccess(conn *server.Conn) error {
+	return nil
+}
+
+func (a *authHandler) OnAuthFailure(conn *server.Conn, err error) {
+}
