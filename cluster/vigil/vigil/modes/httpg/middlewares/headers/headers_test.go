@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/celengine"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -458,5 +459,88 @@ func TestMiddleware(t *testing.T) {
 		vals := strings.Split(string(valBytes), ":")
 		assert.Equal(t, svc.Spec.Config.GetHttp().Auth.GetBasic().Username, vals[0])
 		assert.Equal(t, sec.Data.GetValue(), vals[1])
+	}
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
+
+		kubeCfg := &k8sutils.KubeConfig{
+			Clusters: []k8sutils.KubeConfigCluster{
+				{
+					Name: "cluster-1",
+				},
+			},
+			Users: []k8sutils.KubeConfigUser{
+				{
+					Name: "user-1",
+					User: k8sutils.KubeConfigUserConfig{
+						Token: utilrand.GetRandomString(32),
+					},
+				},
+			},
+			Contexts: []k8sutils.KubeConfigContext{
+				{
+					Name: "ctx-1",
+					Context: k8sutils.KubeConfigContextConfig{
+						Cluster: "cluster-1",
+						User:    "user-1",
+					},
+				},
+			},
+		}
+
+		kubeCfgYAML, err := kubeCfg.MarshalToYAML()
+		assert.Nil(t, err)
+
+		sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec:   &corev1.Secret_Spec{},
+			Status: &corev1.Secret_Status{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: string(kubeCfgYAML),
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_KUBERNETES,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Kubernetes_{
+						Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+							Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+								Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+									Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+										FromSecret: sec.Metadata.Name,
+									},
+									Context: "ctx-1",
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}))
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t,
+			kubeCfg.Users[0].User.Token,
+			strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
 	}
 }

@@ -199,10 +199,8 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			}
 		case kCfg.GetKubeconfig() != nil && kCfg.GetKubeconfig().GetFromSecret() != "":
 			if kubeConfigSecret, err := m.secretMan.GetByName(ctx, kCfg.GetKubeconfig().GetFromSecret()); err == nil {
-
 				if kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(
 					ucorev1.ToSecret(kubeConfigSecret).GetValueBytes()); err == nil {
-
 					if usr := kubeconfig.GetUser(
 						kCfg.GetKubeconfig().Context); usr != nil && usr.User.Token != "" {
 						req.Header.Set("Authorization",
