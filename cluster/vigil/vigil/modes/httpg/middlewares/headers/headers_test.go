@@ -476,6 +476,12 @@ func TestMiddleware(t *testing.T) {
 						Token: utilrand.GetRandomString(32),
 					},
 				},
+				{
+					Name: "user-2",
+					User: k8sutils.KubeConfigUserConfig{
+						Token: utilrand.GetRandomString(32),
+					},
+				},
 			},
 			Contexts: []k8sutils.KubeConfigContext{
 				{
@@ -483,6 +489,13 @@ func TestMiddleware(t *testing.T) {
 					Context: k8sutils.KubeConfigContextConfig{
 						Cluster: "cluster-1",
 						User:    "user-1",
+					},
+				},
+				{
+					Name: "ctx-2",
+					Context: k8sutils.KubeConfigContextConfig{
+						Cluster: "cluster-1",
+						User:    "user-2",
 					},
 				},
 			},
@@ -542,5 +555,76 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t,
 			kubeCfg.Users[0].User.Token,
 			strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+
+		{
+			svc.Spec.Config.GetKubernetes().GetKubeconfig().Context = "ctx-2"
+			req = req.WithContext(context.WithValue(context.Background(),
+				middlewares.CtxRequestContext,
+				&middlewares.RequestContext{
+					CreatedAt:     time.Now(),
+					Service:       svc,
+					ServiceConfig: svc.Spec.Config,
+				}))
+			rw := httptest.NewRecorder()
+			mdlwr.ServeHTTP(rw, req)
+
+			assert.Equal(t,
+				kubeCfg.Users[1].User.Token,
+				strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+		}
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+
+		sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec:   &corev1.Secret_Spec{},
+			Status: &corev1.Secret_Status{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(32),
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_KUBERNETES,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Kubernetes_{
+						Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+							Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_{
+								BearerToken: &corev1.Service_Spec_Config_Kubernetes_BearerToken{
+
+									Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_FromSecret{
+										FromSecret: sec.Metadata.Name,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}))
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t, sec.Data.GetValue(), strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
 	}
 }
