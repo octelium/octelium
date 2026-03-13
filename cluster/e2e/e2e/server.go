@@ -1110,8 +1110,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 
 			{
 				tstMysQL("mariadb", 15009)
-				tstMysQL("mysql8", 150016)
-				tstMysQL("mysql9", 150017)
+				tstMysQL("mysql8", 15016)
+				tstMysQL("mysql9", 15017)
 			}
 
 			{
