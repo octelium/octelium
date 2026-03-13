@@ -812,24 +812,68 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.NotNil(t, err)
 			}
 
-			{
-
+			tstPostgres := func(port int) {
 				db, err := connectWithRetry("postgres",
 					postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
 						Host:     "localhost",
 						NoSSL:    true,
 						Username: "postgres",
 						Password: "password",
-						Port:     15005,
+						Port:     port,
 					}))
 				assert.Nil(t, err)
-
 				defer db.Close()
 
 				_, err = db.Exec("SELECT current_database();")
 				assert.Nil(t, err)
 
+				createTableSQL := `
+	CREATE TABLE users (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		status VARCHAR(50) NOT NULL
+	);`
+				_, err = db.Exec(createTableSQL)
+				assert.Nil(t, err)
+
+				var insertedID int
+				insertSQL := "INSERT INTO users (name, status) VALUES ($1, $2) RETURNING id"
+				err = db.QueryRow(insertSQL, "john doe", "active").Scan(&insertedID)
+				assert.Nil(t, err)
+				assert.True(t, insertedID > 0)
+
+				var name, status string
+				querySQL := "SELECT name, status FROM users WHERE id = $1"
+
+				err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+				assert.Nil(t, err)
+				assert.Equal(t, "john doe", name)
+				assert.Equal(t, "active", status)
+
+				updateSQL := "UPDATE users SET status = $1 WHERE id = $2"
+				res, err := db.Exec(updateSQL, "inactive", insertedID)
+				assert.Nil(t, err)
+
+				rowsAffected, err := res.RowsAffected()
+				assert.Nil(t, err)
+				assert.Equal(t, int64(1), rowsAffected)
+
+				deleteSQL := "DELETE FROM users WHERE id = $1"
+				res, err = db.Exec(deleteSQL, insertedID)
+				assert.Nil(t, err)
+
+				rowsAffected, err = res.RowsAffected()
+				assert.Nil(t, err)
+				assert.Equal(t, int64(1), rowsAffected)
+
+				err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+				assert.ErrorIs(t, err, sql.ErrNoRows)
+
 				assert.Nil(t, postgresutils.Migrate(ctx, db))
+			}
+
+			{
+				tstPostgres(15005)
 			}
 
 			{
