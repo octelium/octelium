@@ -198,6 +198,46 @@ spec:
 ---
 kind: Service
 metadata:
+  name: mysql9
+spec:
+  mode: MYSQL
+  config:
+    upstream:
+      container:
+        image: mysql:9
+        port: 3306
+        env:
+          - name: MYSQL_ROOT_PASSWORD
+            value: password
+    mysql:
+      user: root
+      database: mysql
+      auth:
+        password:
+          fromSecret: password
+---
+kind: Service
+metadata:
+  name: mysql8
+spec:
+  mode: MYSQL
+  config:
+    upstream:
+      container:
+        image: mysql:8
+        port: 3306
+        env:
+          - name: MYSQL_ROOT_PASSWORD
+            value: password
+    mysql:
+      user: root
+      database: mysql
+      auth:
+        password:
+          fromSecret: password
+---
+kind: Service
+metadata:
   name: s3
 spec:
   mode: HTTP

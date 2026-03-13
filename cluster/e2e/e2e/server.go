@@ -719,6 +719,8 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				"-p clickhouse:15013",
 				"-p llama:15014",
 				"-p mongo:15015",
+				"-p mysql8:15016",
+				"-p mysql9:15017",
 				"--essh",
 				"--serve-all",
 			})
@@ -1044,11 +1046,30 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				assert.NotNil(t, s.runCmd(ctx, "octeliumctl del svc clickhouse"))
 			}
 
-			{
-				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
-				assert.Nil(t, s.waitDeploymentSvc(ctx, "mariadb"))
+			/*
+				{
+					assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, "mariadb"))
+					assert.Nil(t, s.waitDeploymentSvc(ctx, "mariadb"))
 
-				db, err := connectWithRetry("mysql", "root:@tcp(localhost:15009)/mysql")
+					db, err := connectWithRetry("mysql", "root:@tcp(localhost:15009)/mysql")
+					assert.Nil(t, err)
+					defer db.Close()
+
+					_, err = db.Exec("CREATE DATABASE IF NOT EXISTS mydb")
+					assert.Nil(t, err)
+
+					_, err = db.Query("SHOW DATABASES")
+					assert.Nil(t, err)
+
+					assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc mariadb"))
+				}
+			*/
+
+			tstMysQL := func(svc string, port int) {
+				assert.Nil(t, s.waitDeploymentSvcUpstream(ctx, svc))
+				assert.Nil(t, s.waitDeploymentSvc(ctx, svc))
+
+				db, err := connectWithRetry("mysql", fmt.Sprintf("root:@tcp(localhost:%d)/mysql", port))
 				assert.Nil(t, err)
 				defer db.Close()
 
@@ -1058,17 +1079,39 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 				_, err = db.Query("SHOW DATABASES")
 				assert.Nil(t, err)
 
-				/*
-					defer rows.Close()
+				createTableSQL := `
+			CREATE TABLE users (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) NOT NULL,
+				status VARCHAR(50) NOT NULL
+			);`
+				_, err = db.Exec(createTableSQL)
+				assert.Nil(t, err)
 
-					for rows.Next() {
-						var name string
-						assert.Nil(t, rows.Scan(&name))
-					}
+				res, err := db.Exec("INSERT INTO users (name, status) VALUES (?, ?)", "john doe", "active")
+				assert.Nil(t, err)
+				insertedID, _ := res.LastInsertId()
 
-					assert.Nil(t, rows.Err())
-				*/
-				assert.Nil(t, s.runCmd(ctx, "octeliumctl del svc mariadb"))
+				var name, status string
+				err = db.QueryRow("SELECT name, status FROM users WHERE id = ?", insertedID).Scan(&name, &status)
+				assert.Nil(t, err)
+				assert.Equal(t, "john doe", name)
+
+				res, err = db.Exec("UPDATE users SET status = ? WHERE id = ?", "inactive", insertedID)
+				assert.Nil(t, err)
+				rowsAffected, _ := res.RowsAffected()
+				assert.Equal(t, int64(1), rowsAffected)
+
+				_, err = db.Exec("DELETE FROM users WHERE id = ?", insertedID)
+				assert.Nil(t, err)
+
+				assert.Nil(t, s.runCmd(ctx, fmt.Sprintf("octeliumctl del svc %s", svc)))
+			}
+
+			{
+				tstMysQL("mariadb", 15009)
+				tstMysQL("mysql8", 150016)
+				tstMysQL("mysql9", 150017)
 			}
 
 			{
@@ -2340,7 +2383,6 @@ func (s *server) runAnonymousAuthorization(ctx context.Context) error {
 		time.Sleep(3 * time.Second)
 	}
 
-	
 	{
 		res, err := s.httpCPublic(svc.Metadata.Name).R().Get("/")
 		assert.Nil(t, err)
