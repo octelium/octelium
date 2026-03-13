@@ -19,7 +19,6 @@ package mysql
 import (
 	"context"
 	"crypto/tls"
-	"math"
 	"net"
 	"time"
 
@@ -132,27 +131,28 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		return ret.DialContext(ctx, network, address)
 	}
 
-	optTLS := func(c *client.Conn) error {
-		c.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
-		if cfg.IsTLS {
-			zap.L().Debug("Setting TLS....")
-			c.SetTLSConfig(&tls.Config{
-				MinVersion: tls.VersionTLS12,
-				MaxVersion: tls.VersionTLS13,
-				ServerName: upstream.SNIHost,
-			})
-		}
-		return nil
-	}
-
 	upstreamConn, err := client.ConnectWithDialer(ctx, "tcp", upstream.HostPort,
 		cfg.User, ucorev1.ToSecret(passwordSecret).GetValueStr(),
-		cfg.Database, dialer, optTLS)
+		cfg.Database, dialer,
+		func(conn *client.Conn) error {
+			conn.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
+			if c.downstreamConnSQL.HasCapability(mysql.CLIENT_DEPRECATE_EOF) {
+				conn.SetCapability(mysql.CLIENT_DEPRECATE_EOF)
+			}
+
+			if cfg.IsTLS {
+				zap.L().Debug("Setting TLS....")
+				conn.SetTLSConfig(&tls.Config{
+					MinVersion: tls.VersionTLS12,
+					MaxVersion: tls.VersionTLS13,
+					ServerName: upstream.SNIHost,
+				})
+			}
+			return nil
+		})
 	if err != nil {
 		return errors.Errorf("Could not connect to upstream: %+v", err)
 	}
-	upstreamConn.UnsetCapability(math.MaxUint32)
-	upstreamConn.SetCapability(c.downstreamConnSQL.Capability())
 
 	c.upstreamConnSQL = packet.NewConn(upstreamConn)
 	zap.L().Debug("Connecting is successful", zap.String("id", c.id))
