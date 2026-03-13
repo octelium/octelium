@@ -284,7 +284,7 @@ func (s *Server) getDownstreamConn(c net.Conn) (*server.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
+
 	return conn, nil
 }
 

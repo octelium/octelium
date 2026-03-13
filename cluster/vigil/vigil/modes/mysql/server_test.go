@@ -94,7 +94,6 @@ func TestServer(t *testing.T) {
 		Spec: &corev1.Service_Spec{
 			Port: 3307,
 			Mode: corev1.Service_Spec_MYSQL,
-
 			Authorization: &corev1.Service_Spec_Authorization{
 				InlinePolicies: []*corev1.InlinePolicy{
 					{

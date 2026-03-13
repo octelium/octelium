@@ -19,6 +19,7 @@ package mysql
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"net"
 	"time"
 
@@ -102,7 +103,8 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 
 	zap.L().Debug("Downstream info",
 		zap.String("user", c.downstreamConnSQL.GetUser()),
-		zap.Any("attrs", c.downstreamConnSQL.Attributes()))
+		zap.Any("attrs", c.downstreamConnSQL.Attributes()),
+		zap.Uint32("capabilities", c.downstreamConnSQL.Capability()))
 
 	if c.svcConfig == nil || c.svcConfig.GetMysql() == nil {
 		return errors.Errorf("No mySQL config")
@@ -149,6 +151,8 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	if err != nil {
 		return errors.Errorf("Could not connect to upstream: %+v", err)
 	}
+	upstreamConn.UnsetCapability(math.MaxUint32)
+	upstreamConn.SetCapability(c.downstreamConnSQL.Capability())
 
 	c.upstreamConnSQL = packet.NewConn(upstreamConn)
 	zap.L().Debug("Connecting is successful", zap.String("id", c.id))
