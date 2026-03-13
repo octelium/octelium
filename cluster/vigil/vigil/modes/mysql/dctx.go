@@ -135,10 +135,33 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		cfg.User, ucorev1.ToSecret(passwordSecret).GetValueStr(),
 		cfg.Database, dialer,
 		func(conn *client.Conn) error {
-			conn.UnsetCapability(mysql.CLIENT_DEPRECATE_EOF)
-			if c.downstreamConnSQL.HasCapability(mysql.CLIENT_DEPRECATE_EOF) {
-				conn.SetCapability(mysql.CLIENT_DEPRECATE_EOF)
-			}
+			downstreamCaps := c.downstreamConnSQL.Capability()
+
+			const mirrorCaps uint32 = mysql.CLIENT_DEPRECATE_EOF |
+				mysql.CLIENT_SESSION_TRACK |
+				mysql.CLIENT_QUERY_ATTRIBUTES |
+				mysql.CLIENT_OPTIONAL_RESULTSET_METADATA |
+				mysql.CLIENT_MULTI_RESULTS |
+				mysql.CLIENT_PS_MULTI_RESULTS
+
+			const forcedOnCaps uint32 = mysql.CLIENT_PROTOCOL_41 |
+				mysql.CLIENT_SECURE_CONNECTION |
+				mysql.CLIENT_PLUGIN_AUTH |
+				mysql.CLIENT_LONG_PASSWORD |
+				mysql.CLIENT_TRANSACTIONS
+
+			const proxyCaps uint32 = mysql.CLIENT_SSL |
+				mysql.CLIENT_COMPRESS |
+				mysql.CLIENT_ZSTD_COMPRESSION_ALGORITHM |
+				mysql.CLIENT_CONNECT_WITH_DB |
+				mysql.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+
+			conn.UnsetCapability(mirrorCaps)
+			conn.SetCapability(downstreamCaps & mirrorCaps)
+
+			conn.SetCapability(forcedOnCaps)
+
+			conn.UnsetCapability(proxyCaps)
 
 			if cfg.IsTLS {
 				zap.L().Debug("Setting TLS....")
