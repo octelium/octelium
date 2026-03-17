@@ -60,6 +60,12 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx))
+}
+
+func (m *middleware) getAccessLog(
+	req *http.Request, crw *responseWriter, reqCtx *middlewares.RequestContext) *corev1.AccessLog {
+
 	svcCfg := reqCtx.ServiceConfig
 	var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Visibility != nil {
@@ -107,15 +113,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		respHeaders = getResponseHeaderMap(crw, visibilityCfg)
 	}
 
-	opts := &logentry.InitializeLogEntryOpts{
+	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       reqCtx.CreatedAt,
 		IsAuthenticated: reqCtx.IsAuthenticated,
 		IsAuthorized:    reqCtx.IsAuthorized,
 		ReqCtx:          reqCtx.DownstreamInfo,
 		Reason:          reqCtx.DecisionReason,
-	}
-
-	logE := logentry.InitializeLogEntry(opts)
+	})
 
 	crwHeader := crw.Header()
 
@@ -213,7 +217,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	otelutils.EmitAccessLog(logE)
+	return logE
 }
 
 func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP_Visibility) map[string]string {

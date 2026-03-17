@@ -166,3 +166,89 @@ func TestMiddleware(t *testing.T) {
 	}
 
 }
+
+func TestGetAccessLog(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Port:        uint32(tests.GetPort()),
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://www.google.com",
+					},
+				},
+			},
+			Mode: corev1.Service_Spec_HTTP,
+		},
+	})
+	assert.Nil(t, err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	{
+		md := &middleware{}
+
+		reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		jsn, err := pbutils.MarshalJSON(usrT.Usr, false)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodPost, reqPath, bytes.NewBuffer(jsn))
+		rw := httptest.NewRecorder()
+		logE := md.getAccessLog(req, newResponseWriter(rw), &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			Service:   svc,
+			DownstreamInfo: &corev1.RequestContext{
+				User:    usrT.Usr,
+				Session: usrT.Session,
+				Service: svc,
+			},
+			ServiceConfig: svc.Spec.Config,
+			Body:          jsn,
+			DownstreamRequest: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{
+					Address: "127.0.0.1",
+					Port:    12345,
+				},
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{},
+					},
+				},
+			},
+		})
+
+		assert.NotNil(t, logE)
+
+		assert.True(t, svc.Spec.IsPublic, logE.Entry.Common.IsPublic)
+		assert.True(t, svc.Spec.IsAnonymous, logE.Entry.Common.IsAnonymous)
+		assert.Equal(t, reqPath, logE.Entry.Info.GetHttp().Request.Path)
+	}
+}
