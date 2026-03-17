@@ -247,5 +247,9 @@ func getDetachedModeEnvVars() map[string]string {
 		}
 	}
 
+	if val, err := vhome.GetOcteliumUserHome(); err == nil {
+		ret["OCTELIUM_USER_HOME"] = val
+	}
+
 	return ret
 }
