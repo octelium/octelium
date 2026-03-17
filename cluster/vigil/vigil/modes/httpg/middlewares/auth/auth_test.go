@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
@@ -93,12 +92,9 @@ func TestMiddleware(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
-	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
-	assert.Nil(t, err)
-
 	vCache, err := vcache.NewCache(ctx)
 	assert.Nil(t, err)
-	vCache.SetService(svcV)
+	vCache.SetService(svc)
 
 	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
 		VCache:    vCache,
@@ -187,4 +183,234 @@ func TestMiddleware(t *testing.T) {
 		svc.Spec.IsAnonymous = false
 	}
 
+}
+
+func TestAnonymous(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Port:        uint32(tests.GetPort()),
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://www.google.com",
+					},
+				},
+			},
+			Mode: corev1.Service_Spec_HTTP,
+		},
+	})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svc)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+
+	mdlwr, err := New(ctx, next, tst.C.OcteliumC, octovigilC, "example.com")
+	assert.Nil(t, err)
+
+	{
+		reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+
+		usrT, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		jsn, err := pbutils.MarshalJSON(usrT.Usr, false)
+		assert.Nil(t, err)
+		req := httptest.NewRequest(http.MethodGet, reqPath, bytes.NewBuffer(jsn))
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service:   svc,
+				DownstreamRequest: &coctovigilv1.DownstreamRequest{
+					Source: &coctovigilv1.DownstreamRequest_Source{
+						Address: "127.0.0.1",
+						Port:    12345,
+					},
+					Request: &corev1.RequestContext_Request{
+						Type: &corev1.RequestContext_Request_Http{
+							Http: &corev1.RequestContext_Request_HTTP{},
+						},
+					},
+				},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		assert.Equal(t, http.StatusOK, rw.Code)
+		assert.True(t, reqCtx.IsAuthorized)
+		assert.False(t, reqCtx.IsAuthenticated)
+	}
+
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+		EnableAnonymous: true,
+	}
+
+	svc, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svc)
+	assert.Nil(t, err)
+	vCache.SetService(svc)
+
+	{
+		reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+
+		req := httptest.NewRequest(http.MethodGet, reqPath, nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service:   svc,
+				DownstreamRequest: &coctovigilv1.DownstreamRequest{
+					Source: &coctovigilv1.DownstreamRequest_Source{
+						Address: "127.0.0.1",
+						Port:    12345,
+					},
+					Request: &corev1.RequestContext_Request{
+						Type: &corev1.RequestContext_Request_Http{
+							Http: &corev1.RequestContext_Request_HTTP{},
+						},
+					},
+				},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		assert.Equal(t, http.StatusForbidden, rw.Code)
+		assert.False(t, reqCtx.IsAuthorized)
+		assert.False(t, reqCtx.IsAuthenticated)
+	}
+
+	reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+		EnableAnonymous: true,
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: fmt.Sprintf(`ctx.request.http.path == "%s"`, reqPath),
+								},
+							},
+							Effect: corev1.Policy_Spec_Rule_ALLOW,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	svc, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svc)
+	assert.Nil(t, err)
+	vCache.SetService(svc)
+
+	{
+
+		req := httptest.NewRequest(http.MethodGet, reqPath, nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service:   svc,
+				DownstreamRequest: &coctovigilv1.DownstreamRequest{
+					Source: &coctovigilv1.DownstreamRequest_Source{
+						Address: "127.0.0.1",
+						Port:    12345,
+					},
+					Request: &corev1.RequestContext_Request{
+						Type: &corev1.RequestContext_Request_Http{
+							Http: &corev1.RequestContext_Request_HTTP{
+								Path: reqPath,
+							},
+						},
+					},
+				},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		assert.Equal(t, http.StatusOK, rw.Code)
+		assert.True(t, reqCtx.IsAuthorized)
+		assert.False(t, reqCtx.IsAuthenticated)
+	}
+
+	{
+		reqPath := fmt.Sprintf("/prefix/%s", utilrand.GetRandomStringCanonical(12))
+
+		req := httptest.NewRequest(http.MethodGet, reqPath, nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service:   svc,
+				DownstreamRequest: &coctovigilv1.DownstreamRequest{
+					Source: &coctovigilv1.DownstreamRequest_Source{
+						Address: "127.0.0.1",
+						Port:    12345,
+					},
+					Request: &corev1.RequestContext_Request{
+						Type: &corev1.RequestContext_Request_Http{
+							Http: &corev1.RequestContext_Request_HTTP{
+								Path: reqPath,
+							},
+						},
+					},
+				},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		assert.Equal(t, http.StatusForbidden, rw.Code)
+		assert.False(t, reqCtx.IsAuthorized)
+		assert.False(t, reqCtx.IsAuthenticated)
+	}
 }
