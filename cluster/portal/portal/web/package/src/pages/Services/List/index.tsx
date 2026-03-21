@@ -1,48 +1,39 @@
 import { getClientUser } from "@/utils/client";
 import { useAppSelector } from "@/utils/hooks";
 import * as React from "react";
-import Meta from "@/components/Meta";
 
 import {
   ListNamespaceOptions,
   ListServiceOptions,
   Service_Spec_Type,
-} from "@/apis/userv1/userv1";
+} from "@octelium/apis/main/userv1/userv1";
 import { useQuery } from "@tanstack/react-query";
 
+import CopyText from "@/components/CopyText";
+import EmptyList from "@/components/EmptyList";
+import InfoItem from "@/components/InfoItem";
+import Paginator from "@/components/Paginator";
 import {
   ResourceListItem,
   ResourceListLabel,
   ResourceListWrapper,
 } from "@/components/ResourceList";
-import EmptyList from "@/components/EmptyList";
-import { Service, ServiceList } from "@/apis/userv1/userv1";
 import { getDomain, printResourceNameWithDisplay, toNumOrZero } from "@/utils";
-import Label from "@/components/Label";
-import { match } from "ts-pattern";
-import Paginator from "@/components/Paginator";
+import { Service, ServiceList } from "@octelium/apis/main/userv1/userv1";
+import { BiLinkExternal } from "react-icons/bi";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
-import InfoItem from "@/components/InfoItem";
-import CopyText from "@/components/CopyText";
-import { BiLinkExternal } from "react-icons/bi";
+import { match } from "ts-pattern";
 
 import { getServicePrivateFQDN, getServicePublicFQDN } from "@/utils/octelium";
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
 
-import { GoBrowser } from "react-icons/go";
 import { BiLogoPostgresql } from "react-icons/bi";
 import { HiMiniCommandLine } from "react-icons/hi2";
-import { TbApi } from "react-icons/tb";
-import { SiKubernetes } from "react-icons/si";
-import { SiMysql } from "react-icons/si";
-import { MdHttp } from "react-icons/md";
-import { FaGlobe } from "react-icons/fa";
+import { SiKubernetes, SiMysql } from "react-icons/si";
 
-import { IoIosDesktop } from "react-icons/io";
-import { Button, Text } from "@mantine/core";
-import { Collapse } from "@mantine/core";
 import parseQuery from "@/utils/parseQuery";
+import { Button, Collapse, Text } from "@mantine/core";
+import { IoIosDesktop } from "react-icons/io";
 
 const getTypeIcon = (svc: Service) => {
   return match(svc.spec?.type)
@@ -80,13 +71,13 @@ const SvcLabel = (props: { children?: React.ReactNode; label?: string }) => {
     <span
       className={twMerge(
         "p-0 rounded-full font-bold text-xs flex-none mx-1 my-1 flex flex-row flex-shrink",
-        "border-[1px] border-gray-400 shadow-md"
+        "border-[1px] border-gray-400 shadow-md",
       )}
     >
       {props.label && (
         <span
           className={twMerge(
-            `bg-gray-800 text-white shadow-lg px-2 py-1 rounded-s-full`
+            `bg-gray-800 text-white shadow-lg px-2 py-1 rounded-s-full`,
           )}
         >
           {props.label}
@@ -155,7 +146,9 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
         <div className="flex flex-col flex-1">
           <div className="flex items-center font-bold">
             <Text className="mr-2 flex flex-row" size="sm" fw={"bold"}>
-              <CopyText value={item.status?.primaryHostname ?? item.metadata!.name} />
+              <CopyText
+                value={item.status?.primaryHostname ?? item.metadata!.name}
+              />
 
               {md.displayName && (
                 <Text className="ml-3" c="gray.7" inherit>
@@ -167,9 +160,14 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
           <div className="w-full mt-1 flex flex-row">
             <ResourceListLabel label="Type">{getType(item)}</ResourceListLabel>
             {!props.skipNS && (
-              <ResourceListLabel label="Namespace"> {item.status?.namespace}</ResourceListLabel>
+              <ResourceListLabel label="Namespace">
+                {" "}
+                {item.status?.namespace}
+              </ResourceListLabel>
             )}
-            <ResourceListLabel label="Port">{item.spec?.port}</ResourceListLabel>
+            <ResourceListLabel label="Port">
+              {item.spec?.port}
+            </ResourceListLabel>
             {/*
             <SvcLabel label="Namespace"> {item.metadata?.namespace}</SvcLabel>
             <SvcLabel label="Hostname">{getHostName(item)}</SvcLabel>
@@ -187,7 +185,7 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
               className={twMerge(
                 "bg-gray-800 text-white py-2 px-4 ml-2 font-bold shadow-lg text-sm rounded-lg",
                 "hover:bg-black transition-all duration-200 shadow-xl",
-                "flex flex-row items-center justify-center"
+                "flex flex-row items-center justify-center",
               )}
               href={`https://${getServicePublicFQDN(item, props.domain)}`}
               target="_blank"
@@ -243,7 +241,7 @@ const Page = () => {
   const navigate = useNavigate();
 
   let opts = parseQuery<{ common: { page: number; itemsPerPage?: number } }>(
-    searchParams.toString()
+    searchParams.toString(),
   );
   if (opts.common && opts.common.page && opts.common.page > 0) {
     opts.common.page = opts.common.page - 1;

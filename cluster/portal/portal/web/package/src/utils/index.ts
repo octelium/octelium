@@ -1,5 +1,5 @@
 const isDevVal = import.meta.env.MODE === "development";
-import { Metadata } from "@/apis/metav1/metav1";
+import { Metadata } from "@octelium/apis/main/metav1/metav1";
 import type { RpcError } from "@protobuf-ts/runtime-rpc";
 
 import { QueryClient } from "@tanstack/react-query";

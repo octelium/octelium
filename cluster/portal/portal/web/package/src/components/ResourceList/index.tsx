@@ -1,7 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { twJoin, twMerge } from "tailwind-merge";
-import TimeAgo from "../TimeAgo";
-import { Button } from "@mantine/core";
+import { twMerge } from "tailwind-merge";
 import Label from "../Label";
 
 export const ResourceListWrapper = (props: { children?: React.ReactNode }) => {
@@ -27,7 +25,7 @@ export const ResourceListItem = (props: {
         "rounded-xl",
         "shadow-sm shadow-slate-200",
         "border-[2px] border-slate-300",
-        "mb-4"
+        "mb-4",
       )}
       onClick={() => {
         if (hasPath) {

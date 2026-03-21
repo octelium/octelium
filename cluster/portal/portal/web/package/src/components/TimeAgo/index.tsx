@@ -1,5 +1,3 @@
-import * as isLeapYear from "dayjs/plugin/isLeapYear";
-
 import React from "react";
 
 import dayjs from "dayjs";
@@ -17,7 +15,7 @@ const TimeAgo = (props: { rfc3339?: string }) => {
 
     const interval = setInterval(
       () => setTime(dayjs(props.rfc3339).fromNow()),
-      10000
+      10000,
     );
     return () => {
       clearInterval(interval);

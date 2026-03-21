@@ -1,4 +1,4 @@
-import { ListResponseMeta } from "@/apis/metav1/metav1";
+import { ListResponseMeta } from "@octelium/apis/main/metav1/metav1";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import * as React from "react";
 import { twMerge } from "tailwind-merge";

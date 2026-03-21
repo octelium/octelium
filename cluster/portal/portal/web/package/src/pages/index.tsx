@@ -1,15 +1,14 @@
-import * as React from "react";
-import { Outlet } from "react-router-dom";
 import Footer from "@/components/Footer";
 import TopBar from "@/components/TopBar";
+import { Outlet } from "react-router-dom";
 
-import { getClientUser } from "@/utils/client";
-import { useQuery } from "@tanstack/react-query";
-import { useAppDispatch, useAppSelector } from "@/utils/hooks";
+import Sidebar from "@/components/Sidebar";
 import { setStatus } from "@/features/settings/slice";
+import { getClientUser } from "@/utils/client";
+import { useAppDispatch } from "@/utils/hooks";
 import { AppShell, Burger } from "@mantine/core";
 import { useDisclosure, useHeadroom } from "@mantine/hooks";
-import Sidebar from "@/components/Sidebar";
+import { useQuery } from "@tanstack/react-query";
 import Links from "./Links";
 
 export default () => {

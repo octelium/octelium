@@ -1,10 +1,8 @@
-import * as React from "react";
-
-import { MdOutlineContentCopy } from "react-icons/md";
-import { FaCheckDouble } from "react-icons/fa6";
-import { motion, AnimatePresence } from "framer-motion";
-import { useState } from "react";
 import { truncateUtf8 } from "@/utils";
+import { AnimatePresence, motion } from "framer-motion";
+import { useState } from "react";
+import { FaCheckDouble } from "react-icons/fa6";
+import { MdOutlineContentCopy } from "react-icons/md";
 
 const CopyText = (props: {
   value?: string;

@@ -1,8 +1,8 @@
 import { RouteObject } from "react-router-dom";
-import Root from "./index";
-import routerServices from "./Services/router";
-import routerNamespaces from './Namespaces/router'
 import Home from "./Home";
+import Root from "./index";
+import routerNamespaces from "./Namespaces/router";
+import routerServices from "./Services/router";
 
 export default (): RouteObject => {
   return {

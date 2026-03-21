@@ -1,50 +1,28 @@
 import { getClientUser } from "@/utils/client";
 import { useAppSelector } from "@/utils/hooks";
-import * as React from "react";
-import Meta from "@/components/Meta";
 
 import {
   ListNamespaceOptions,
   ListServiceOptions,
   Namespace,
   NamespaceList,
-  Service_Spec_Type,
-} from "@/apis/userv1/userv1";
+} from "@octelium/apis/main/userv1/userv1";
 import { useQuery } from "@tanstack/react-query";
 
+import CopyText from "@/components/CopyText";
+import EmptyList from "@/components/EmptyList";
+import Paginator from "@/components/Paginator";
 import {
   ResourceListItem,
   ResourceListLabel,
   ResourceListWrapper,
 } from "@/components/ResourceList";
-import EmptyList from "@/components/EmptyList";
-import { Service, ServiceList } from "@/apis/userv1/userv1";
-import { getDomain, printResourceNameWithDisplay, toNumOrZero } from "@/utils";
-import Label from "@/components/Label";
-import { match } from "ts-pattern";
-import Paginator from "@/components/Paginator";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { getDomain } from "@/utils";
+import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
-import InfoItem from "@/components/InfoItem";
-import CopyText from "@/components/CopyText";
-import { BiLinkExternal } from "react-icons/bi";
 
-import { getServicePrivateFQDN, getServicePublicFQDN } from "@/utils/octelium";
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
-
-import { GoBrowser } from "react-icons/go";
-import { BiLogoPostgresql } from "react-icons/bi";
-import { HiMiniCommandLine } from "react-icons/hi2";
-import { TbApi } from "react-icons/tb";
-import { SiKubernetes } from "react-icons/si";
-import { SiMysql } from "react-icons/si";
-import { MdHttp } from "react-icons/md";
-import { FaGlobe } from "react-icons/fa";
-
-import { IoIosDesktop } from "react-icons/io";
-import { Button, Text } from "@mantine/core";
-import { Collapse } from "@mantine/core";
 import parseQuery from "@/utils/parseQuery";
+import { Text } from "@mantine/core";
 
 const Item = (props: { item: Namespace; domain: string; skipNS?: boolean }) => {
   const { item } = props;
@@ -53,9 +31,11 @@ const Item = (props: { item: Namespace; domain: string; skipNS?: boolean }) => {
   const qry = useQuery({
     queryKey: ["user/main.listSvcByNamespace", item.metadata?.name],
     queryFn: async () => {
-      return await getClientUser().listService(ListServiceOptions.create({
-        namespace: item.metadata!.name,
-      }));
+      return await getClientUser().listService(
+        ListServiceOptions.create({
+          namespace: item.metadata!.name,
+        }),
+      );
     },
   });
 
@@ -128,7 +108,7 @@ const Page = () => {
   let [searchParams, _] = useSearchParams();
 
   let opts = parseQuery<{ common: { page: number; itemsPerPage?: number } }>(
-    searchParams.toString()
+    searchParams.toString(),
   );
   if (opts.common && opts.common.page && opts.common.page > 0) {
     opts.common.page = opts.common.page - 1;

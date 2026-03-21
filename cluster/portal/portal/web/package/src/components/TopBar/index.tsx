@@ -1,9 +1,8 @@
 /// <reference types="vite-plugin-svgr/client" />
 
-import * as React from "react";
 import Logo from "@/assets/l03.svg?react";
-import { useNavigate } from "react-router-dom";
 import { useAppSelector } from "@/utils/hooks";
+import { useNavigate } from "react-router-dom";
 
 const TopBar = () => {
   const navigate = useNavigate();

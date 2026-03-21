@@ -8,7 +8,7 @@ import { Modal } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useMutation } from "@tanstack/react-query";
 import { getClientAuth } from "@/utils/client";
-import { LogoutRequest } from "@/apis/userv1/userv1";
+import { LogoutRequest } from "@octelium/apis/main/userv1/userv1";
 import { getDomain } from "@/utils";
 
 const items = [
@@ -53,7 +53,7 @@ export default function () {
                     "text-sm",
                     loc.pathname.startsWith(item.url)
                       ? `!text-white bg-zinc-800 hover:bg-black shadow-md`
-                      : `text-zinc-600 hover:text-zinc-800`
+                      : `text-zinc-600 hover:text-zinc-800`,
                   )}
                   to={item.url}
                 >

@@ -1,4 +1,4 @@
-import * as UserPB from "../../apis/userv1/userv1";
+import * as UserPB from "@octelium/apis/main/userv1/userv1";
 
 export const getServicePrivateFQDN = (
   arg: UserPB.Service,

@@ -1,6 +1,5 @@
-import * as React from "react";
-import { twMerge } from "tailwind-merge";
 import { BsGithub } from "react-icons/bs";
+import { twMerge } from "tailwind-merge";
 
 const Footer = () => {
   return (
@@ -19,7 +18,7 @@ const Footer = () => {
                   "font-extrabold text-sm md:text-xl",
                   "mx-4 my-1",
                   "transition-all duration-500",
-                  "text-slate-600 hover:text-slate-900"
+                  "text-slate-600 hover:text-slate-900",
                 )}
                 href="https://github.com/octelium/octelium"
               >

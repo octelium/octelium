@@ -24,7 +24,7 @@ function parseSingleValue(value: string): QueryValue {
 function setQueryValue(
   obj: QueryObject,
   path: string,
-  value: QueryValue
+  value: QueryValue,
 ): void {
   const [baseKey, ...rest] = path.split(/[\[\].]/).filter(Boolean);
 
