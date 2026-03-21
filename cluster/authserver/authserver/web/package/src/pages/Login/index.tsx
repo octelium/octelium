@@ -1,16 +1,15 @@
 import * as React from "react";
-import { Outlet } from "react-router-dom";
 
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 
-import { toast } from "react-hot-toast";
-import { isDev } from "@/utils";
-import * as Auth from "@/apis/authv1/authv1";
-import { getClientAuth } from "@/utils/client";
-import { useMutation } from "@tanstack/react-query";
-import { Divider } from "@mantine/core";
 import LogoMain from "@/components/LogoMain";
+import { isDev } from "@/utils";
+import { getClientAuth } from "@/utils/client";
+import { Divider } from "@mantine/core";
+import * as Auth from "@octelium/apis/main/authv1/authv1";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "react-hot-toast";
 
 interface authResponse {
   loginURL: string;
@@ -66,12 +65,12 @@ const Passkey = (props: { query?: string }) => {
       const { response } = await c.authenticateWithPasskeyBegin(
         Auth.AuthenticateWithPasskeyBeginRequest.create({
           query: props.query,
-        })
+        }),
       );
 
       try {
         const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
-          JSON.parse(response.request)
+          JSON.parse(response.request),
         );
         const credential = (await navigator.credentials.get({
           publicKey,
@@ -80,7 +79,7 @@ const Passkey = (props: { query?: string }) => {
         return await c.authenticateWithPasskey(
           Auth.AuthenticateWithPasskeyRequest.create({
             response: JSON.stringify(credential.toJSON()),
-          })
+          }),
         );
       } catch (err) {
         console.log("fido get err", err);
@@ -101,7 +100,7 @@ const Passkey = (props: { query?: string }) => {
           "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
           "shadow-2xl rounded-lg cursor-pointer font-bold",
           "bg-[#242323] hover:bg-black text-white text-lg",
-          mutation.isPending ? "!bg-[#777] shadow-none" : undefined
+          mutation.isPending ? "!bg-[#777] shadow-none" : undefined,
         )}
         onClick={() => {
           mutation.mutate();
@@ -121,7 +120,6 @@ const Page = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  
   React.useEffect(() => {
     setReqCommon({
       query: searchParams.toString() ?? undefined,
@@ -181,7 +179,7 @@ const Page = () => {
                     "w-full px-2 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
                     "shadow-2xl rounded-lg cursor-pointer font-bold",
                     "bg-[#242323] hover:bg-black text-white text-lg",
-                    loginActive ? "!bg-[#777] shadow-none" : undefined
+                    loginActive ? "!bg-[#777] shadow-none" : undefined,
                   )}
                   disabled={loginActive}
                   key={c.uid}

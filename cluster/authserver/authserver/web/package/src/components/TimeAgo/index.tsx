@@ -1,6 +1,6 @@
 import React from "react";
 
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
+import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import utc from "dayjs/plugin/utc";

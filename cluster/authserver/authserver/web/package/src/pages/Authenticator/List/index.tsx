@@ -1,13 +1,10 @@
-import OtpInput from "react-otp-input";
-import * as React from "react";
-
 import { isDev } from "@/utils";
 
-import * as Auth from "@/apis/authv1/authv1";
 import { getClientAuth } from "@/utils/client";
+import * as Auth from "@octelium/apis/main/authv1/authv1";
 import { useQuery } from "@tanstack/react-query";
 
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
+import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import { ListAvailableAuthenticators } from "../Authenticate";
 import { ReturnToPortal } from "../Register";
 

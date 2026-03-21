@@ -20,6 +20,7 @@
   "dependencies": {
     "@mantine/core": "^8.3.15",
     "@mantine/hooks": "^8.3.15",
+    "@octelium/apis": "^1.0.0-pre.20260321.1",
     "@protobuf-ts/grpcweb-transport": "2.11",
     "@protobuf-ts/plugin": "2.11",
     "@tailwindcss/postcss": "^4.2.1",

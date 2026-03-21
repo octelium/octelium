@@ -1,12 +1,9 @@
-import OtpInput from "react-otp-input";
 import * as React from "react";
 
 import { isDev, queryClient } from "@/utils";
 
-import * as Auth from "@/apis/authv1/authv1";
-import { getClientAuth } from "@/utils/client";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import TimeAgo from "@/components/TimeAgo";
+import { getClientAuth } from "@/utils/client";
 import { getResourceRef } from "@/utils/pb";
 import {
   ActionIcon,
@@ -17,14 +14,15 @@ import {
   PinInput,
   Tooltip,
 } from "@mantine/core";
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
-import { twMerge } from "tailwind-merge";
-import { useClickOutside, useDisclosure } from "@mantine/hooks";
-import { DeleteOptions } from "@/apis/metav1/metav1";
-import { MdEdit } from "react-icons/md";
-import { MdEditOff } from "react-icons/md";
+import { useDisclosure } from "@mantine/hooks";
+import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
+import * as Auth from "@octelium/apis/main/authv1/authv1";
+import { DeleteOptions } from "@octelium/apis/main/metav1/metav1";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { IoMdSend } from "react-icons/io";
+import { MdEdit, MdEditOff } from "react-icons/md";
 import { Link, useSearchParams } from "react-router-dom";
+import { twMerge } from "tailwind-merge";
 import { ReturnToPortal } from "../Register";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
@@ -39,7 +37,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       await c.authenticateAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
-        })
+        }),
       );
 
       return await c.authenticateWithAuthenticator(
@@ -53,7 +51,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
               },
             },
           },
-        })
+        }),
       );
     },
     onSuccess: (r) => {
@@ -71,8 +69,6 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       searchParams.delete(key);
     });
     setSearchParams(searchParams);
-
-    
   }, []);
 
   return (
@@ -108,13 +104,13 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       const { response } = await c.authenticateAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
-        })
+        }),
       );
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
         try {
           const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
-            JSON.parse(response.challengeRequest.type.fido.request)
+            JSON.parse(response.challengeRequest.type.fido.request),
           );
           const credential = (await navigator.credentials.get({
             publicKey,
@@ -131,7 +127,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
                   },
                 },
               },
-            })
+            }),
           );
         } catch (err) {
           console.log("fido get err", err);
@@ -166,7 +162,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
   let [open, setOpen] = React.useState(false);
   let [isEdit, setIsEdit] = React.useState(false);
   let [displayName, setDisplayName] = React.useState<string>(
-    authn.spec!.displayName
+    authn.spec!.displayName,
   );
 
   const isDelete = useDisclosure(false);
@@ -178,7 +174,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
         DeleteOptions.create({
           uid: authn.metadata?.uid,
           name: authn.metadata?.name,
-        })
+        }),
       );
     },
     onSuccess: (r) => {
@@ -222,7 +218,7 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
         "rounded-xl",
         "shadow-sm shadow-slate-200",
         "border-[2px] border-slate-300",
-        "mb-4"
+        "mb-4",
       )}
     >
       <div className="flex items-center">

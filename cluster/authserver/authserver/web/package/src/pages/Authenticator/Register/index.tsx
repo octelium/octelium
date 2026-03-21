@@ -1,24 +1,15 @@
-import OtpInput from "react-otp-input";
 import * as React from "react";
 
 import { getDomain, isDev } from "@/utils";
 
-import * as Auth from "@/apis/authv1/authv1";
 import { getClientAuth } from "@/utils/client";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import TimeAgo from "@/components/TimeAgo";
 import { getResourceRef } from "@/utils/pb";
-import {
-  Button,
-  Collapse,
-  Input,
-  PinInput,
-  TextInput,
-  UnstyledButton,
-} from "@mantine/core";
-import { Timestamp } from "@/apis/google/protobuf/timestamp";
-import { twMerge } from "tailwind-merge";
+import { PinInput, TextInput } from "@mantine/core";
+import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
+import * as Auth from "@octelium/apis/main/authv1/authv1";
+import { useMutation } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
+import { twMerge } from "tailwind-merge";
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
@@ -35,7 +26,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       const { response } = await c.registerAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
-        })
+        }),
       );
 
       if (response.challengeRequest?.type.oneofKind === `totp`) {
@@ -59,7 +50,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
               },
             },
           },
-        })
+        }),
       );
     },
     onSuccess: (r) => {
@@ -121,12 +112,12 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       const { response } = await c.registerAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
-        })
+        }),
       );
 
       if (response.challengeRequest?.type.oneofKind === `fido`) {
         const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(
-          JSON.parse(response.challengeRequest.type.fido.request)
+          JSON.parse(response.challengeRequest.type.fido.request),
         );
 
         try {
@@ -145,7 +136,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
                   },
                 },
               },
-            })
+            }),
           );
         } catch (err) {
           console.log("fido create err", err);
@@ -169,11 +160,11 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
 const Page = () => {
   const c = getClientAuth();
   let [displayName, setDisplayName] = React.useState<string | undefined>(
-    undefined
+    undefined,
   );
 
   let [authn, setAuthn] = React.useState<Auth.Authenticator | undefined>(
-    undefined
+    undefined,
   );
 
   const mutation = useMutation({
@@ -197,7 +188,7 @@ const Page = () => {
         Auth.CreateAuthenticatorRequest.create({
           type: props.type,
           displayName,
-        })
+        }),
       );
 
       return response;
@@ -263,7 +254,7 @@ const Page = () => {
                     "w-full px-3 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
                     "shadow-2xl rounded-lg cursor-pointer font-bold",
                     "bg-[#242323] hover:bg-black text-white text-lg",
-                    mutation.isPending ? "!bg-[#777] shadow-none" : undefined
+                    mutation.isPending ? "!bg-[#777] shadow-none" : undefined,
                   )}
                   onClick={() => {
                     mutation.mutate({

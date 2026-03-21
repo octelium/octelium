@@ -1,15 +1,14 @@
 import {
-  createTheme,
-  MantineProvider,
   Button,
-  TextInput,
-  NumberInput,
-  Switch,
-  Select,
+  createTheme,
   MultiSelect,
-  Textarea,
-  Tooltip,
+  NumberInput,
   PinInput,
+  Select,
+  Switch,
+  Textarea,
+  TextInput,
+  Tooltip,
 } from "@mantine/core";
 // import { fontFamily } from ".";
 

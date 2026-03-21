@@ -1,5 +1,5 @@
+import * as AuthGRPC from "@octelium/apis/main/authv1/authv1.client";
 import * as grpcWeb from "@protobuf-ts/grpcweb-transport";
-import * as AuthGRPC from "../../apis/authv1/authv1.client";
 import { getDomain, isDev } from "..";
 
 export const getTransport = () => {

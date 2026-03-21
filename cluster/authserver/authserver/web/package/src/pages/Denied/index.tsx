@@ -1,16 +1,5 @@
-import * as React from "react";
-import { Outlet } from "react-router-dom";
-
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
-
-import { toast } from "react-hot-toast";
-import { getDomain, isDev } from "@/utils";
-import * as Auth from "@/apis/authv1/authv1";
-import { getClientAuth } from "@/utils/client";
-import { useMutation } from "@tanstack/react-query";
-import { Divider } from "@mantine/core";
 import LogoMain from "@/components/LogoMain";
+import { getDomain } from "@/utils";
 
 const Page = () => {
   return (

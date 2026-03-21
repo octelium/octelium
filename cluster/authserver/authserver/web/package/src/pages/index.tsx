@@ -1,7 +1,6 @@
-import * as React from "react";
-import { Outlet } from "react-router-dom";
 import Footer from "@/components/Footer";
 import TopBar from "@/components/TopBar";
+import { Outlet } from "react-router-dom";
 
 import { Toaster } from "react-hot-toast";
 
