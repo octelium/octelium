@@ -15,18 +15,12 @@
 package device
 
 import (
-	"context"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/spf13/cobra"
 )
-
-type args struct {
-	Name string
-}
 
 var Cmd = &cobra.Command{
 	Use:   "device",
@@ -43,19 +37,13 @@ octeliumctl del dev usr1-linux-p4wbr
 	},
 }
 
-var cmdArgs args
-
-func init() {
-
-}
-
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {

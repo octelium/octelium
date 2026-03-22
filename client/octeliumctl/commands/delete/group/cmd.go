@@ -15,18 +15,12 @@
 package group
 
 import (
-	"context"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/spf13/cobra"
 )
-
-type args struct {
-	Name string
-}
 
 var Cmd = &cobra.Command{
 	Use:   "group",
@@ -43,21 +37,13 @@ octeliumctl del grp friends
 	},
 }
 
-var cmdArgs args
-
-func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Name, "name", "n", "", "User name")
-
-}
-
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
-
+	ctx := cmd.Context()
 	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err

@@ -15,19 +15,12 @@
 package config
 
 import (
-	"context"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/spf13/cobra"
 )
-
-type args struct {
-	Name        string
-	ClusterAddr string
-}
 
 var Cmd = &cobra.Command{
 	Use:   "config",
@@ -44,26 +37,20 @@ octeliumctl del cfg cfg-2
 	},
 }
 
-var cmdArgs args
-
-func init() {
-}
-
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
 	}
+	ctx := cmd.Context()
 
-	conn, err := client.GetGRPCClientConn(context.Background(), i.Domain)
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
 
 	defer conn.Close()
 	c := corev1.NewMainServiceClient(conn)
-
-	ctx := context.Background()
 
 	if _, err := c.DeleteConfig(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
 		return err

@@ -15,8 +15,6 @@
 package identityprovider
 
 import (
-	"context"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
@@ -29,8 +27,8 @@ type args struct {
 }
 
 var Cmd = &cobra.Command{
-	Use:   "group",
-	Short: "Delete a Group",
+	Use:   "identityprovider",
+	Short: "Delete an IdentityProvider",
 	Example: `
 octeliumctl delete identityprovider my-idp
 octeliumctl del idp oidc
@@ -55,15 +53,15 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(context.Background(), i.Domain)
+	ctx := cmd.Context()
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
 
 	defer conn.Close()
 	c := corev1.NewMainServiceClient(conn)
-
-	ctx := context.Background()
 
 	if _, err := c.DeleteIdentityProvider(ctx, &metav1.DeleteOptions{Name: i.FirstArg()}); err != nil {
 		return err

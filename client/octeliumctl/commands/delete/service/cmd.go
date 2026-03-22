@@ -44,8 +44,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx := cmd.Context()
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -63,7 +64,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		fqdn = fmt.Sprintf("%s.%s", svcNs.Service, svcNs.Namespace)
 	}
 
-	if _, err := c.DeleteService(cmd.Context(), &metav1.DeleteOptions{Name: fqdn}); err != nil {
+	if _, err := c.DeleteService(ctx, &metav1.DeleteOptions{Name: fqdn}); err != nil {
 		return err
 	}
 
