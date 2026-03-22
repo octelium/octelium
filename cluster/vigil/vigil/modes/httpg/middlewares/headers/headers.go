@@ -69,12 +69,6 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 	isAnonymous := svc.Spec.IsAnonymous
 
-	switch {
-	case isAnonymous || isManagedSvc:
-	default:
-		req.Header.Del("Authorization")
-	}
-
 	req.Header.Del("X-Envoy-Internal")
 	req.Header.Del("X-Request-Id")
 
@@ -82,6 +76,19 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 
 	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
 		cfg := svcCfg.GetHttp().Header
+
+		switch cfg.AuthorizationMode {
+		case corev1.Service_Spec_Config_HTTP_Header_AUTHORIZATION_MODE_UNSET:
+			switch {
+			case isAnonymous || isManagedSvc:
+			default:
+				req.Header.Del("Authorization")
+			}
+		case corev1.Service_Spec_Config_HTTP_Header_PASS:
+		case corev1.Service_Spec_Config_HTTP_Header_DELETE:
+			req.Header.Del("Authorization")
+		}
+
 		for _, hdr := range cfg.AddRequestHeaders {
 			if hdr.Append {
 				switch hdr.Type.(type) {
@@ -105,6 +112,12 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 
 		for _, hdr := range cfg.RemoveRequestHeaders {
 			req.Header.Del(hdr)
+		}
+	} else {
+		switch {
+		case isAnonymous || isManagedSvc:
+		default:
+			req.Header.Del("Authorization")
 		}
 	}
 

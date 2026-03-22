@@ -148,6 +148,82 @@ func TestMiddleware(t *testing.T) {
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
 
+		authHdr := fmt.Sprintf("Bearer %s", utilrand.GetRandomString(32))
+		req.Header.Set("Authorization", authHdr)
+		req.Header.Set("X-Octelium-Auth", utilrand.GetRandomString(32))
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Header: &corev1.Service_Spec_Config_HTTP_Header{
+								AuthorizationMode: corev1.Service_Spec_Config_HTTP_Header_PASS,
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}))
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t, authHdr, req.Header.Get("Authorization"))
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+
+		authHdr := fmt.Sprintf("Bearer %s", utilrand.GetRandomString(32))
+		req.Header.Set("Authorization", authHdr)
+		req.Header.Set("X-Octelium-Auth", utilrand.GetRandomString(32))
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Header: &corev1.Service_Spec_Config_HTTP_Header{
+								AuthorizationMode: corev1.Service_Spec_Config_HTTP_Header_DELETE,
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}))
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.Equal(t, "", req.Header.Get("Authorization"))
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", utilrand.GetRandomString(32)))
 		req.AddCookie(&http.Cookie{
 			Name:  "octelium_auth",
