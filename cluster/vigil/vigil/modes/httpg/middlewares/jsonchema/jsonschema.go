@@ -95,8 +95,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			body := jsonSchemaC.Body
 
-			for k, v := range jsonSchemaC.Headers {
-				rw.Header().Set(k, v)
+			for _, hdr := range jsonSchemaC.Headers {
+				rw.Header().Set(hdr.Key, hdr.Value)
 			}
 			rw.Header().Set("Server", "octelium")
 

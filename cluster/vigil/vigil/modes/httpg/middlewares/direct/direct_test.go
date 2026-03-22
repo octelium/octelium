@@ -90,9 +90,10 @@ func TestMiddleware(t *testing.T) {
 											Inline: utilrand.GetRandomString(100),
 										},
 									},
-									Headers: map[string]string{
-										"X-Octelium-1": utilrand.GetRandomString(32),
-									},
+									Headers: []*corev1.Service_Spec_Config_HTTP_Plugin_Direct_KeyValue{{
+										Key:   "X-Octelium-1",
+										Value: utilrand.GetRandomString(32),
+									}},
 								},
 							},
 						},
@@ -117,7 +118,7 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, "", rw.Body.String())
 		assert.Equal(t, svcCfg.GetHttp().Plugins[0].GetDirect().StatusCode, int32(rw.Code))
 		assert.Equal(t, svcCfg.GetHttp().Plugins[0].GetDirect().Body.GetInline(), string(body))
-		assert.Equal(t, svcCfg.GetHttp().Plugins[0].GetDirect().Headers["X-Octelium-1"], rw.Header().Get("X-Octelium-1"))
+		assert.Equal(t, svcCfg.GetHttp().Plugins[0].GetDirect().Headers[0].Value, rw.Header().Get("X-Octelium-1"))
 	}
 
 	{

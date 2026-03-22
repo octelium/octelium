@@ -99,8 +99,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				continue
 			}
 
-			for k, v := range rateLimit.Headers {
-				rw.Header().Set(k, v)
+			for _, hdr := range rateLimit.Headers {
+				rw.Header().Set(hdr.Key, hdr.Value)
 			}
 			rw.Header().Set("Server", "octelium")
 

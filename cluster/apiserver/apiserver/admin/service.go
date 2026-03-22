@@ -1107,12 +1107,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 						return grpcutils.InvalidArg("Too many headers")
 					}
 
-					for k, v := range plugin.GetDirect().Headers {
-						if err := s.validateGenStr(k, true, "key"); err != nil {
+					for _, hdr := range plugin.GetDirect().Headers {
+						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
 							return err
 						}
 
-						if err := s.validateGenStr(v, true, "value"); err != nil {
+						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
 							return err
 						}
 					}
@@ -1195,12 +1195,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 						return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
 					}
 
-					for k, v := range conf.Headers {
-						if err := s.validateGenStr(k, true, "key"); err != nil {
+					for _, hdr := range conf.Headers {
+						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
 							return err
 						}
 
-						if err := s.validateGenStr(v, true, "value"); err != nil {
+						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
 							return err
 						}
 					}
@@ -1262,12 +1262,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 						return err
 					}
 
-					for k, v := range conf.Headers {
-						if err := s.validateGenStr(k, true, "key"); err != nil {
+					for _, hdr := range conf.Headers {
+						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
 							return err
 						}
 
-						if err := s.validateGenStr(v, true, "value"); err != nil {
+						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
 							return err
 						}
 					}
