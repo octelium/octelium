@@ -19,6 +19,8 @@ import (
 	"os/user"
 	"path"
 	"runtime"
+
+	"github.com/pkg/errors"
 )
 
 func GetOcteliumHome() (string, error) {
@@ -46,10 +48,25 @@ func GetOcteliumUserHome() (string, error) {
 	if ret := os.Getenv("OCTELIUM_USER_HOME"); ret != "" {
 		return ret, nil
 	}
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
+
+	if os.Getuid() != 0 {
+		return os.UserHomeDir()
 	}
 
-	return usr.HomeDir, nil
+	if usr, err := func() (*user.User, error) {
+		if uid := os.Getenv("SUDO_UID"); uid != "" {
+			return user.LookupId(uid)
+		}
+		if u := os.Getenv("SUDO_USER"); u != "" {
+			return user.Lookup(u)
+		}
+		if uid := os.Getenv("PKEXEC_UID"); uid != "" {
+			return user.LookupId(uid)
+		}
+		return nil, errors.Errorf("Could not find initial user")
+	}(); err == nil {
+		return usr.HomeDir, nil
+	}
+
+	return os.UserHomeDir()
 }
