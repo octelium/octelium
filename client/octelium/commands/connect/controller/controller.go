@@ -61,8 +61,7 @@ type Controller struct {
 
 	isClosed bool
 
-	quicEngine *quicEngine
-	// eSSHWSSrv    *esshws.ESSHWS
+	quicEngine   *quicEngine
 	eSSHHMainSrv *esshmain.ESSHMain
 
 	localDNSSrv *dnssrv.Server

@@ -93,13 +93,13 @@ func New(c *cliconfigv1.Connection, goNetCtl ccommon.GoNetCtl,
 }
 
 func (s *ESSHMain) Run(ctx context.Context) error {
-	zap.L().Debug("Running Workspace eSSH server")
+	zap.L().Debug("Running eSSH server")
 
 	return s.srv.Start(ctx)
 }
 
 func (s *ESSHMain) Close() error {
-	zap.L().Debug("Closing Workspace eSSH server")
+	zap.L().Debug("Closing eSSH server")
 	if s.srv == nil {
 		return nil
 	}
