@@ -34,7 +34,19 @@ func doRunDetached(domain string, args []string) error {
 		escapedArgs[i] = shellEscape(arg)
 	}
 
-	innerCommand := fmt.Sprintf("%s %s > /dev/null 2>&1 &",
+	envVars := getDetachedModeEnvVars()
+	var envList []string
+	for k, v := range envVars {
+		envList = append(envList, fmt.Sprintf("%s=%s", k, shellEscape(v)))
+	}
+
+	envPrefix := ""
+	if len(envList) > 0 {
+		envPrefix = strings.Join(envList, " ") + " "
+	}
+
+	innerCommand := fmt.Sprintf("%s%s %s > /dev/null 2>&1 &",
+		envPrefix,
 		shellEscape(executable),
 		strings.Join(escapedArgs, " "),
 	)
