@@ -61,10 +61,7 @@ func (s *Server) GetGateway(ctx context.Context, req *metav1.GetOptions) (*corev
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetGateway(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetGateway(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

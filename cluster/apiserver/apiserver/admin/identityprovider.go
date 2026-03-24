@@ -51,7 +51,7 @@ func (s *Server) CreateIdentityProvider(ctx context.Context, req *corev1.Identit
 	}
 
 	{
-		_, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+		_, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, apivalidation.ObjectToRGetOptions(req))
 		if err == nil {
 			return nil, grpcutils.AlreadyExists("The IdentityProvider %s already exists", req.Metadata.Name)
 		}
@@ -81,10 +81,7 @@ func (s *Server) GetIdentityProvider(ctx context.Context, req *metav1.GetOptions
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -104,7 +101,7 @@ func (s *Server) ListIdentityProvider(ctx context.Context, req *corev1.ListIdent
 
 func (s *Server) DeleteIdentityProvider(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
 
-	g, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	g, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +114,7 @@ func (s *Server) DeleteIdentityProvider(ctx context.Context, req *metav1.DeleteO
 		return nil, serr.K8sInternal(err)
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteIdentityProvider(ctx, &rmetav1.DeleteOptions{Uid: g.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteIdentityProvider(ctx, apivalidation.ObjectToRDeleteOptions(g))
 	if err != nil {
 		return nil, serr.K8sInternal(err)
 	}
@@ -139,7 +136,7 @@ func (s *Server) UpdateIdentityProvider(ctx context.Context, req *corev1.Identit
 		return nil, err
 	}
 
-	item, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, err
 	}
@@ -267,12 +264,6 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 				return err
 			}
 		}
-
-		/*
-			if err := validateIssuerUniqueness(typ.IssuerURL, corev1.IdentityProvider_Status_OIDC); err != nil {
-				return err
-			}
-		*/
 
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC
 	case *corev1.IdentityProvider_Spec_OidcIdentityToken:

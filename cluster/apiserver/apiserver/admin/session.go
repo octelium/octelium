@@ -39,10 +39,7 @@ func (s *Server) ListSession(ctx context.Context, req *corev1.ListSessionOptions
 		if err := apivalidation.CheckObjectRef(req.UserRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid:  req.UserRef.Uid,
-			Name: req.UserRef.Name,
-		})
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(req.UserRef))
 		if err != nil {
 			return nil, err
 		}
@@ -62,10 +59,7 @@ func (s *Server) DeleteSession(ctx context.Context, req *metav1.DeleteOptions) (
 		return nil, err
 	}
 
-	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
-		Name: req.Name,
-		Uid:  req.Uid,
-	})
+	sess, err := s.octeliumC.CoreC().GetSession(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -97,10 +91,7 @@ func (s *Server) GetSession(ctx context.Context, req *metav1.GetOptions) (*corev
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetSession(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -119,10 +110,7 @@ func (s *Server) UpdateSession(ctx context.Context, req *corev1.Session) (*corev
 		return nil, grpcutils.InvalidArgWithErr(err)
 	}
 
-	ret, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
-		Uid:  req.Metadata.Uid,
-		Name: req.Metadata.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetSession(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

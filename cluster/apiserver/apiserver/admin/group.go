@@ -36,7 +36,7 @@ func (s *Server) CreateGroup(ctx context.Context, req *corev1.Group) (*corev1.Gr
 		return nil, grpcutils.InvalidArgWithErr(err)
 	}
 
-	_, err := s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	_, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err == nil {
 		return nil, grpcutils.AlreadyExists("The Group %s already exists", req.Metadata.Name)
 	}
@@ -65,7 +65,7 @@ func (s *Server) UpdateGroup(ctx context.Context, req *corev1.Group) (*corev1.Gr
 		return nil, grpcutils.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req *metav1.DeleteOptions) (*m
 		return nil, err
 	}
 
-	g, err := s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	g, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req *metav1.DeleteOptions) (*m
 		return nil, serr.InvalidArg("There are Users belonging to this Group. You must delete all its Users first.")
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteGroup(ctx, &rmetav1.DeleteOptions{Uid: g.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteGroup(ctx, apivalidation.ObjectToRDeleteOptions(g))
 	if err != nil {
 		return nil, serr.K8sInternal(err)
 	}
@@ -135,10 +135,7 @@ func (s *Server) GetGroup(ctx context.Context, req *metav1.GetOptions) (*corev1.
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

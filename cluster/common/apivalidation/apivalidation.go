@@ -545,6 +545,50 @@ func ObjectReferenceToRGetOptions(arg *metav1.ObjectReference) *rmetav1.GetOptio
 	}
 }
 
+func ObjectToRGetOptions(arg umetav1.ResourceObjectI) *rmetav1.GetOptions {
+	if arg == nil || arg.GetMetadata() == nil {
+		return &rmetav1.GetOptions{}
+	}
+
+	md := arg.GetMetadata()
+	return &rmetav1.GetOptions{
+		Name: md.Name,
+		Uid:  md.Uid,
+	}
+}
+
+func ObjectToRDeleteOptions(arg umetav1.ResourceObjectI) *rmetav1.DeleteOptions {
+	if arg == nil || arg.GetMetadata() == nil {
+		return &rmetav1.DeleteOptions{}
+	}
+
+	md := arg.GetMetadata()
+	return &rmetav1.DeleteOptions{
+		Name: md.Name,
+		Uid:  md.Uid,
+	}
+}
+
+func DeleteOptionsToRGetOptions(arg *metav1.DeleteOptions) *rmetav1.GetOptions {
+	if arg == nil {
+		return &rmetav1.GetOptions{}
+	}
+	return &rmetav1.GetOptions{
+		Name: arg.Name,
+		Uid:  arg.Uid,
+	}
+}
+
+func GetOptionsToRGetOptions(arg *metav1.GetOptions) *rmetav1.GetOptions {
+	if arg == nil {
+		return &rmetav1.GetOptions{}
+	}
+	return &rmetav1.GetOptions{
+		Name: arg.Name,
+		Uid:  arg.Uid,
+	}
+}
+
 func ObjectReferenceToDeleteOptions(arg *metav1.ObjectReference) *metav1.DeleteOptions {
 	if arg == nil {
 		return &metav1.DeleteOptions{}

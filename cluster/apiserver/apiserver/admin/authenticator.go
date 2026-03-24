@@ -37,10 +37,7 @@ func (s *Server) ListAuthenticator(ctx context.Context, req *corev1.ListAuthenti
 		if err := apivalidation.CheckObjectRef(req.UserRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid:  req.UserRef.Uid,
-			Name: req.UserRef.Name,
-		})
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(req.UserRef))
 		if err != nil {
 			return nil, err
 		}
@@ -60,15 +57,12 @@ func (s *Server) DeleteAuthenticator(ctx context.Context, req *metav1.DeleteOpti
 		return nil, err
 	}
 
-	dev, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Name: req.Name,
-		Uid:  req.Uid,
-	})
+	dev, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
-	if _, err := s.octeliumC.CoreC().DeleteAuthenticator(ctx, &rmetav1.DeleteOptions{Uid: dev.Metadata.Uid}); err != nil {
+	if _, err := s.octeliumC.CoreC().DeleteAuthenticator(ctx, apivalidation.ObjectToRDeleteOptions(dev)); err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
 
@@ -80,10 +74,7 @@ func (s *Server) GetAuthenticator(ctx context.Context, req *metav1.GetOptions) (
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -96,10 +87,7 @@ func (s *Server) UpdateAuthenticator(ctx context.Context, req *corev1.Authentica
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Uid:  req.Metadata.Uid,
-		Name: req.Metadata.Name,
-	})
+	item, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

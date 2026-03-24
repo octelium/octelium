@@ -21,7 +21,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
@@ -36,7 +35,7 @@ func (s *Server) CreateConfig(ctx context.Context, req *corev1.Config) (*corev1.
 	}
 
 	{
-		_, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+		_, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.ObjectToRGetOptions(req))
 		if err == nil {
 			return nil, grpcutils.AlreadyExists("The Config %s already exists", req.Metadata.Name)
 		}
@@ -81,7 +80,7 @@ func (s *Server) DeleteConfig(ctx context.Context, req *metav1.DeleteOptions) (*
 		return nil, err
 	}
 
-	sec, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	sec, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -90,7 +89,7 @@ func (s *Server) DeleteConfig(ctx context.Context, req *metav1.DeleteOptions) (*
 		return nil, err
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteConfig(ctx, &rmetav1.DeleteOptions{Uid: sec.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteConfig(ctx, apivalidation.ObjectToRDeleteOptions(sec))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -103,10 +102,7 @@ func (s *Server) GetConfig(ctx context.Context, req *metav1.GetOptions) (*corev1
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -125,21 +121,19 @@ func (s *Server) UpdateConfig(ctx context.Context, req *corev1.Config) (*corev1.
 		return nil, grpcutils.InvalidArgWithErr(err)
 	}
 
-	sec, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
-		Name: req.Metadata.Name,
-	})
+	itm, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
-	if err := apivalidation.CheckIsSystem(sec); err != nil {
+	if err := apivalidation.CheckIsSystem(itm); err != nil {
 		return nil, err
 	}
 
-	sec.Spec = req.Spec
-	sec.Data = req.Data
+	itm.Spec = req.Spec
+	itm.Data = req.Data
 
-	item, err := s.octeliumC.CoreC().UpdateConfig(ctx, sec)
+	item, err := s.octeliumC.CoreC().UpdateConfig(ctx, itm)
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -178,24 +172,6 @@ func (s *Server) validateConfig(ctx context.Context, itm *corev1.Config) error {
 		}
 	default:
 		return grpcutils.InvalidArg("Invalid Config data type")
-		/*
-			case *corev1.Config_Data_DataMap_:
-				lenMap := len(itm.Data.GetDataMap().Map)
-				if lenMap == 0 || lenMap > 1000 {
-					return grpcutils.InvalidArg("Invalid data map length")
-				}
-				for key, val := range itm.Data.GetDataMap().Map {
-					if !rgx.NameMain.MatchString(key) {
-						return grpcutils.InvalidArg("Invalid Config data map key: %s", key)
-					}
-
-					lenVal := len(val)
-
-					if lenVal == 0 || lenVal > 512*1024 {
-						return grpcutils.InvalidArg("Invalid Config size")
-					}
-				}
-		*/
 	}
 
 	return nil

@@ -42,7 +42,7 @@ func (s *Server) CreateUser(ctx context.Context, req *corev1.User) (*corev1.User
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	_, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	_, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err == nil {
 		return nil, grpcutils.AlreadyExists("The User %s already exists", req.Metadata.Name)
 	}
@@ -73,7 +73,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *corev1.User) (*corev1.User
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -125,7 +125,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 		return nil, err
 	}
 
-	usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -134,7 +134,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 		return nil, err
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteUser(ctx, &rmetav1.DeleteOptions{Uid: usr.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteUser(ctx, apivalidation.ObjectToRDeleteOptions(usr))
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,8 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 	return &metav1.OperationResult{}, nil
 }
 
-func (s *Server) CheckAndSetUser(ctx context.Context, octeliumC octeliumc.ClientInterface, req *corev1.User, isSystem bool) error {
+func (s *Server) CheckAndSetUser(ctx context.Context,
+	octeliumC octeliumc.ClientInterface, req *corev1.User, isSystem bool) error {
 
 	specLabels := make(map[string]string)
 

@@ -37,7 +37,7 @@ func (s *Server) UpdateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	item, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -75,7 +75,7 @@ func (s *Server) CreateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 		return nil, err
 	}
 
-	_, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	_, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err == nil {
 		return nil, grpcutils.AlreadyExists("The Namespace %s already exists", req.Metadata.Name)
 	}
@@ -102,7 +102,7 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 		return nil, err
 	}
 
-	ns, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	ns, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -111,7 +111,7 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 		return nil, err
 	}
 
-	if _, err := s.octeliumC.CoreC().DeleteNamespace(ctx, &rmetav1.DeleteOptions{Uid: ns.Metadata.Uid}); err != nil {
+	if _, err := s.octeliumC.CoreC().DeleteNamespace(ctx, apivalidation.ObjectToRDeleteOptions(ns)); err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
 
@@ -132,10 +132,7 @@ func (s *Server) GetNamespace(ctx context.Context, req *metav1.GetOptions) (*cor
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

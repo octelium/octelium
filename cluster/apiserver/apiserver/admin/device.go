@@ -38,10 +38,7 @@ func (s *Server) ListDevice(ctx context.Context, req *corev1.ListDeviceOptions) 
 		if err := apivalidation.CheckObjectRef(req.UserRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid:  req.UserRef.Uid,
-			Name: req.UserRef.Name,
-		})
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(req.UserRef))
 		if err != nil {
 			return nil, err
 		}
@@ -61,15 +58,12 @@ func (s *Server) DeleteDevice(ctx context.Context, req *metav1.DeleteOptions) (*
 		return nil, err
 	}
 
-	dev, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{
-		Name: req.Name,
-		Uid:  req.Uid,
-	})
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
-	if _, err := s.octeliumC.CoreC().DeleteDevice(ctx, &rmetav1.DeleteOptions{Uid: dev.Metadata.Uid}); err != nil {
+	if _, err := s.octeliumC.CoreC().DeleteDevice(ctx, apivalidation.ObjectToRDeleteOptions(dev)); err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
 
@@ -81,10 +75,7 @@ func (s *Server) GetDevice(ctx context.Context, req *metav1.GetOptions) (*corev1
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -98,10 +89,7 @@ func (s *Server) UpdateDevice(ctx context.Context, req *corev1.Device) (*corev1.
 		return nil, serr.InvalidArgWithErr(err)
 	}
 
-	item, err := s.octeliumC.CoreC().GetDevice(ctx, &rmetav1.GetOptions{
-		Uid:  req.Metadata.Uid,
-		Name: req.Metadata.Name,
-	})
+	item, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}

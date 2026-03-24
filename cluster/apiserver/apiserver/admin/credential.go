@@ -44,7 +44,7 @@ func (s *Server) CreateCredential(ctx context.Context, req *corev1.Credential) (
 		return nil, err
 	}
 
-	_, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+	_, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err == nil {
 		return nil, grpcutils.AlreadyExists("The Credential %s already exists", req.Metadata.Name)
 	}
@@ -75,7 +75,7 @@ func (s *Server) DeleteCredential(ctx context.Context, req *metav1.DeleteOptions
 		return nil, err
 	}
 
-	tkn, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	tkn, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -84,7 +84,7 @@ func (s *Server) DeleteCredential(ctx context.Context, req *metav1.DeleteOptions
 		return nil, err
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteCredential(ctx, &rmetav1.DeleteOptions{Uid: tkn.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteCredential(ctx, apivalidation.ObjectToRDeleteOptions(tkn))
 	if err != nil {
 		return nil, err
 	}
@@ -100,10 +100,7 @@ func (s *Server) ListCredential(ctx context.Context, req *corev1.ListCredentialO
 		if err := apivalidation.CheckObjectRef(req.UserRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid:  req.UserRef.Uid,
-			Name: req.UserRef.Name,
-		})
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(req.UserRef))
 		if err != nil {
 			return nil, err
 		}
@@ -123,10 +120,7 @@ func (s *Server) GetCredential(ctx context.Context, req *metav1.GetOptions) (*co
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -139,10 +133,7 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 		return nil, err
 	}
 
-	cred, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
-		Uid:  req.CredentialRef.Uid,
-		Name: req.CredentialRef.Name,
-	})
+	cred, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.ObjectReferenceToRGetOptions(req.CredentialRef))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -362,10 +353,7 @@ func (s *Server) UpdateCredential(ctx context.Context, req *corev1.Credential) (
 		return nil, err
 	}
 
-	item, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
-		Name: req.Metadata.Name,
-		Uid:  req.Metadata.Uid,
-	})
+	item, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
 		return nil, err
 	}

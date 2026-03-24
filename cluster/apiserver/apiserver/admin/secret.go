@@ -36,7 +36,7 @@ func (s *Server) CreateSecret(ctx context.Context, req *corev1.Secret) (*corev1.
 	}
 
 	{
-		_, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: req.Metadata.Name})
+		_, err := s.octeliumC.CoreC().GetSecret(ctx, apivalidation.ObjectToRGetOptions(req))
 		if err == nil {
 			return nil, grpcutils.AlreadyExists("The Secret %s already exists", req.Metadata.Name)
 		}
@@ -81,7 +81,7 @@ func (s *Server) DeleteSecret(ctx context.Context, req *metav1.DeleteOptions) (*
 		return nil, err
 	}
 
-	sec, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: req.Name, Uid: req.Uid})
+	sec, err := s.octeliumC.CoreC().GetSecret(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -103,10 +103,7 @@ func (s *Server) GetSecret(ctx context.Context, req *metav1.GetOptions) (*corev1
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetSecret(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
@@ -196,24 +193,6 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 		}
 	default:
 		return grpcutils.InvalidArg("Invalid Secret data type")
-		/*
-			case *corev1.Secret_Data_DataMap_:
-				lenMap := len(itm.Data.GetDataMap().Map)
-				if lenMap == 0 || lenMap > 1000 {
-					return grpcutils.InvalidArg("Invalid data map length")
-				}
-				for key, val := range itm.Data.GetDataMap().Map {
-					if !rgx.NameMain.MatchString(key) {
-						return grpcutils.InvalidArg("Invalid Secret data map key: %s", key)
-					}
-
-					lenVal := len(val)
-
-					if lenVal == 0 || lenVal > 512*1024 {
-						return grpcutils.InvalidArg("Invalid Secret size")
-					}
-				}
-		*/
 	}
 
 	return nil

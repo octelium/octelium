@@ -56,10 +56,7 @@ func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions
 		if err := apivalidation.CheckObjectRef(req.NamespaceRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		ns, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
-			Uid:  req.NamespaceRef.Uid,
-			Name: req.NamespaceRef.Name,
-		})
+		ns, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.ObjectReferenceToRGetOptions(req.NamespaceRef))
 		if err != nil {
 			return nil, err
 		}
@@ -70,10 +67,7 @@ func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions
 		if err := apivalidation.CheckObjectRef(req.RegionRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 			return nil, err
 		}
-		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
-			Uid:  req.RegionRef.Uid,
-			Name: req.RegionRef.Name,
-		})
+		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, apivalidation.ObjectReferenceToRGetOptions(req.RegionRef))
 		if err != nil {
 			return nil, err
 		}
@@ -102,6 +96,7 @@ func (s *Server) UpdateService(ctx context.Context, req *corev1.Service) (*corev
 
 	item, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
 		Name: vutils.GetServiceFullNameFromName(req.Metadata.Name),
+		Uid:  req.Metadata.Uid,
 	})
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
@@ -261,7 +256,7 @@ func (s *Server) DeleteService(ctx context.Context, req *metav1.DeleteOptions) (
 
 	ret := &metav1.OperationResult{}
 
-	_, err = s.octeliumC.CoreC().DeleteService(ctx, &rmetav1.DeleteOptions{Uid: svc.Metadata.Uid})
+	_, err = s.octeliumC.CoreC().DeleteService(ctx, apivalidation.ObjectToRDeleteOptions(svc))
 	if err != nil {
 		return nil, serr.K8sInternal(err)
 	}
