@@ -26,7 +26,7 @@ import (
 
 	"context"
 
-	"github.com/jackc/pgproto3/v2"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -299,7 +299,7 @@ func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c n
 			return nil, nil, nil
 		default:
 			zap.L().Debug("Creating a new pg backend")
-			pgBackend := pgproto3.NewBackend(pgproto3.NewChunkReader(c), c)
+			pgBackend := pgproto3.NewBackend(c, c)
 
 			zap.L().Debug("Waiting for the startup msg")
 			startupMessage, err := pgBackend.ReceiveStartupMessage()

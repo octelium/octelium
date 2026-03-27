@@ -19,11 +19,12 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgproto3/v2"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
@@ -185,27 +186,22 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		return err
 	}
 
-	c.pgFrontend = pgproto3.NewFrontend(
-		pgproto3.NewChunkReader(c.upstreamHijackedConn.Conn), c.upstreamHijackedConn.Conn)
+	c.pgFrontend = c.upstreamHijackedConn.Frontend
 
-	if err := c.pgBackend.Send(&pgproto3.AuthenticationOk{}); err != nil {
-		return err
-	}
+	c.pgBackend.Send(&pgproto3.AuthenticationOk{})
 
-	if err := c.pgBackend.Send(&pgproto3.BackendKeyData{
+	c.pgBackend.Send(&pgproto3.BackendKeyData{
 		ProcessID: c.upstreamHijackedConn.PID,
 		SecretKey: c.upstreamHijackedConn.SecretKey,
-	}); err != nil {
-		return err
-	}
+	})
 
 	for k, v := range c.upstreamHijackedConn.ParameterStatuses {
-		if err := c.pgBackend.Send(&pgproto3.ParameterStatus{Name: k, Value: v}); err != nil {
-			return err
-		}
+		c.pgBackend.Send(&pgproto3.ParameterStatus{Name: k, Value: v})
 	}
 
-	if err := c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'}); err != nil {
+	c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+
+	if err := c.pgBackend.Flush(); err != nil {
 		return err
 	}
 
@@ -215,16 +211,15 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 }
 
 func (c *dctx) serve(ctx context.Context) error {
-	serverConn, err := pgconn.Construct(c.upstreamHijackedConn)
-	if err != nil {
-		return err
-	}
 	defer func() {
-		serverConn.Close(ctx)
+		zap.L().Debug("Closing upstream hijacked conn", zap.String("id", c.id))
+		if c.upstreamHijackedConn != nil && c.upstreamHijackedConn.Conn != nil {
+			c.upstreamHijackedConn.Conn.Close()
+		}
 	}()
 
 	go c.startDownstreamLoop(ctx)
-	go c.startUpstreamLoop(ctx, serverConn)
+	go c.startUpstreamLoop(ctx)
 
 	zap.L().Debug("Waiting to end serving dctx", zap.String("id", c.id))
 	select {
@@ -274,8 +269,8 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				}
 			}
 
-			err = c.pgFrontend.Send(message)
-			if err != nil {
+			c.pgFrontend.Send(message)
+			if err := c.pgFrontend.Flush(); err != nil {
 				c.downstreamCh <- err
 				return
 			}
@@ -329,14 +324,14 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 	}
 
 	if !resp.IsAuthorized {
-		if err := c.pgBackend.Send(&pgproto3.ErrorResponse{
+		c.pgBackend.Send(&pgproto3.ErrorResponse{
 			Severity: "FATAL",
 			Code:     "28000",
 			Message:  "Octelium: Unauthorized",
-		}); err != nil {
-			return false, resp.Reason, err
-		}
-		if err := c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'}); err != nil {
+		})
+		c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+
+		if err := c.pgBackend.Flush(); err != nil {
 			return false, resp.Reason, err
 		}
 
@@ -346,7 +341,7 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 	return true, resp.Reason, nil
 }
 
-func (c *dctx) startUpstreamLoop(ctx context.Context, serverConn *pgconn.PgConn) {
+func (c *dctx) startUpstreamLoop(ctx context.Context) {
 	defer zap.L().Debug("upstreamLoop exited...")
 	zap.L().Debug("Starting upstreamLoop")
 	for {
@@ -357,7 +352,9 @@ func (c *dctx) startUpstreamLoop(ctx context.Context, serverConn *pgconn.PgConn)
 		default:
 			message, err := c.pgFrontend.Receive()
 			if err != nil {
-				if serverConn.IsClosed() {
+				if (c.upstreamConn != nil && c.upstreamConn.IsClosed()) ||
+					errors.Is(err, io.EOF) ||
+					errors.Is(err, net.ErrClosed) {
 					c.upstreamCh <- nil
 					return
 				}
@@ -366,8 +363,8 @@ func (c *dctx) startUpstreamLoop(ctx context.Context, serverConn *pgconn.PgConn)
 			}
 			zap.L().Debug("upstream msg", zap.Any("msg", message))
 
-			err = c.pgBackend.Send(message)
-			if err != nil {
+			c.pgBackend.Send(message)
+			if err := c.pgBackend.Flush(); err != nil {
 				c.upstreamCh <- err
 				return
 			}
