@@ -266,6 +266,53 @@ func TestServer(t *testing.T) {
 		assert.Nil(t, err)
 	}
 
+	{
+		_, err = db.Exec("SELECT current_database();")
+		assert.Nil(t, err)
+
+		createTableSQL := `
+	CREATE TABLE users (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		status VARCHAR(50) NOT NULL
+	);`
+		_, err = db.Exec(createTableSQL)
+		assert.Nil(t, err)
+
+		var insertedID int
+		insertSQL := "INSERT INTO users (name, status) VALUES ($1, $2) RETURNING id"
+		err = db.QueryRow(insertSQL, "john doe", "active").Scan(&insertedID)
+		assert.Nil(t, err)
+		assert.True(t, insertedID > 0)
+
+		var name, status string
+		querySQL := "SELECT name, status FROM users WHERE id = $1"
+
+		err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+		assert.Nil(t, err)
+		assert.Equal(t, "john doe", name)
+		assert.Equal(t, "active", status)
+
+		updateSQL := "UPDATE users SET status = $1 WHERE id = $2"
+		res, err := db.Exec(updateSQL, "inactive", insertedID)
+		assert.Nil(t, err)
+
+		rowsAffected, err := res.RowsAffected()
+		assert.Nil(t, err)
+		assert.Equal(t, int64(1), rowsAffected)
+
+		deleteSQL := "DELETE FROM users WHERE id = $1"
+		res, err = db.Exec(deleteSQL, insertedID)
+		assert.Nil(t, err)
+
+		rowsAffected, err = res.RowsAffected()
+		assert.Nil(t, err)
+		assert.Equal(t, int64(1), rowsAffected)
+
+		err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+		assert.ErrorIs(t, err, sql.ErrNoRows)
+	}
+
 	err = srv.Close()
 	zap.L().Debug("close err", zap.Error(err))
 }
