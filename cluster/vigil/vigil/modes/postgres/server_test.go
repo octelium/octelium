@@ -53,7 +53,6 @@ func TestServer(t *testing.T) {
 		tst.Destroy()
 	})
 	fakeC := tst.C
-
 	{
 		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
 		assert.Nil(t, err)
@@ -270,30 +269,32 @@ func TestServer(t *testing.T) {
 		_, err = db.Exec("SELECT current_database();")
 		assert.Nil(t, err)
 
-		createTableSQL := `
-	CREATE TABLE users (
+		table := fmt.Sprintf("users%s", utilrand.GetRandomStringCanonical(6))
+
+		createTableSQL := fmt.Sprintf(`
+	CREATE TABLE %s (
 		id SERIAL PRIMARY KEY,
 		name VARCHAR(100) NOT NULL,
 		status VARCHAR(50) NOT NULL
-	);`
+	);`, table)
 		_, err = db.Exec(createTableSQL)
 		assert.Nil(t, err)
 
 		var insertedID int
-		insertSQL := "INSERT INTO users (name, status) VALUES ($1, $2) RETURNING id"
+		insertSQL := fmt.Sprintf("INSERT INTO %s (name, status) VALUES ($1, $2) RETURNING id", table)
 		err = db.QueryRow(insertSQL, "john doe", "active").Scan(&insertedID)
 		assert.Nil(t, err)
 		assert.True(t, insertedID > 0)
 
 		var name, status string
-		querySQL := "SELECT name, status FROM users WHERE id = $1"
+		querySQL := fmt.Sprintf("SELECT name, status FROM %s WHERE id = $1", table)
 
 		err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
 		assert.Nil(t, err)
 		assert.Equal(t, "john doe", name)
 		assert.Equal(t, "active", status)
 
-		updateSQL := "UPDATE users SET status = $1 WHERE id = $2"
+		updateSQL := fmt.Sprintf("UPDATE %s SET status = $1 WHERE id = $2", table)
 		res, err := db.Exec(updateSQL, "inactive", insertedID)
 		assert.Nil(t, err)
 
@@ -301,7 +302,7 @@ func TestServer(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, int64(1), rowsAffected)
 
-		deleteSQL := "DELETE FROM users WHERE id = $1"
+		deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = $1", table)
 		res, err = db.Exec(deleteSQL, insertedID)
 		assert.Nil(t, err)
 
@@ -311,6 +312,148 @@ func TestServer(t *testing.T) {
 
 		err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
 		assert.ErrorIs(t, err, sql.ErrNoRows)
+
+		{
+			svc.Spec.Config.GetPostgres().Authorization = &corev1.Service_Spec_Config_Postgres_Authorization{
+				Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+			}
+			svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_DENY,
+								},
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			svc, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svc)
+			assert.Nil(t, err)
+
+			vCache.SetService(svc)
+
+			err = db.Close()
+			assert.Nil(t, err)
+			time.Sleep(2 * time.Second)
+			{
+				db, err := sql.Open("postgres", fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", svc.Spec.Port))
+				assert.Nil(t, err)
+
+				{
+					err := db.Ping()
+					assert.Nil(t, err)
+				}
+
+				var insertedID int
+				insertSQL := fmt.Sprintf("INSERT INTO %s (name, status) VALUES ($1, $2) RETURNING id", table)
+				err = db.QueryRow(insertSQL, "linus torvalds", "active").Scan(&insertedID)
+				assert.Nil(t, err, "%+v", err)
+				assert.True(t, insertedID > 0)
+
+				var name, status string
+				querySQL := fmt.Sprintf("SELECT name, status FROM %s WHERE id = $1", table)
+
+				err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+				assert.Nil(t, err)
+				assert.Equal(t, "linus torvalds", name)
+				assert.Equal(t, "active", status)
+
+				updateSQL := fmt.Sprintf("UPDATE %s SET status = $1 WHERE id = $2", table)
+				_, err = db.Exec(updateSQL, "inactive", insertedID)
+				assert.NotNil(t, err)
+
+				deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = $1", table)
+				res, err = db.Exec(deleteSQL, insertedID)
+				assert.Nil(t, err, "%+v", err)
+			}
+		}
+
+		{
+			svc.Spec.Config.GetPostgres().Authorization = nil
+			svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_DENY,
+								},
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			svc, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svc)
+			assert.Nil(t, err)
+
+			vCache.SetService(svc)
+
+			err = db.Close()
+			assert.Nil(t, err)
+			time.Sleep(2 * time.Second)
+			{
+				db, err := sql.Open("postgres", fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", svc.Spec.Port))
+				assert.Nil(t, err)
+
+				{
+					err := db.Ping()
+					assert.Nil(t, err)
+				}
+
+				var insertedID int
+				insertSQL := fmt.Sprintf("INSERT INTO %s (name, status) VALUES ($1, $2) RETURNING id", table)
+				err = db.QueryRow(insertSQL, "linus torvalds 2", "active").Scan(&insertedID)
+				assert.Nil(t, err, "%+v", err)
+				assert.True(t, insertedID > 0)
+
+				var name, status string
+				querySQL := fmt.Sprintf("SELECT name, status FROM %s WHERE id = $1", table)
+
+				err = db.QueryRow(querySQL, insertedID).Scan(&name, &status)
+				assert.Nil(t, err)
+				assert.Equal(t, "linus torvalds 2", name)
+				assert.Equal(t, "active", status)
+
+				updateSQL := fmt.Sprintf("UPDATE %s SET status = $1 WHERE id = $2", table)
+				_, err = db.Exec(updateSQL, "inactive", insertedID)
+				assert.Nil(t, err)
+
+				deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = $1", table)
+				res, err = db.Exec(deleteSQL, insertedID)
+				assert.Nil(t, err, "%+v", err)
+			}
+		}
 	}
 
 	err = srv.Close()

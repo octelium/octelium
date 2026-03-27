@@ -71,6 +71,8 @@ type dctx struct {
 
 	reasonInit *corev1.AccessLog_Entry_Common_Reason
 	authResp   *coctovigilv1.AuthenticateAndAuthorizeResponse
+
+	lastTxStatus byte
 }
 
 func newDctx(ctx context.Context, conn net.Conn,
@@ -98,6 +100,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 		svcConfig:      vigilutils.GetServiceConfig(ctx, authResp),
 		authResp:       authResp,
 		reasonInit:     reasonInit,
+		lastTxStatus:   'I',
 	}
 }
 
@@ -185,6 +188,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	if err != nil {
 		return err
 	}
+	c.upstreamConn = nil
 
 	c.pgFrontend = c.upstreamHijackedConn.Frontend
 
@@ -239,6 +243,8 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 	zap.L().Debug("Starting downstreamLoop")
 	defer zap.L().Debug("downstreamLoop exited...")
 
+	var pendingSync bool
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -250,14 +256,25 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				c.downstreamCh <- err
 				return
 			}
-			zap.L().Debug("downstream msg", zap.Any("msg", message))
+
+			zap.L().Debug("downstream msg received",
+				zap.String("type", fmt.Sprintf("%T", message)),
+				zap.Bool("pendingSync", pendingSync))
 
 			switch message.(type) {
 			case *pgproto3.Terminate:
 				zap.L().Debug("Received terminate msg. Exiting downstreamLoop")
 				c.downstreamCh <- nil
 				return
+			case *pgproto3.Sync:
+				if pendingSync {
+					pendingSync = false
+					continue
+				}
 			default:
+				if pendingSync {
+					continue
+				}
 				proceed, reason, err := c.authorizeCommand(ctx, message)
 				if err != nil {
 					c.downstreamCh <- err
@@ -265,6 +282,7 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				}
 				c.setMessageLog(message, reason)
 				if !proceed {
+					pendingSync = true
 					continue
 				}
 			}
@@ -325,11 +343,11 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 
 	if !resp.IsAuthorized {
 		c.pgBackend.Send(&pgproto3.ErrorResponse{
-			Severity: "FATAL",
-			Code:     "28000",
+			Severity: "ERROR",
+			Code:     "42501",
 			Message:  "Octelium: Unauthorized",
 		})
-		c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+		c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: c.lastTxStatus})
 
 		if err := c.pgBackend.Flush(); err != nil {
 			return false, resp.Reason, err
@@ -361,7 +379,13 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 				c.upstreamCh <- err
 				return
 			}
-			zap.L().Debug("upstream msg", zap.Any("msg", message))
+			zap.L().Debug("upstream msg received",
+				zap.String("type", fmt.Sprintf("%T", message)))
+
+			switch msg := message.(type) {
+			case *pgproto3.ReadyForQuery:
+				c.lastTxStatus = msg.TxStatus
+			}
 
 			c.pgBackend.Send(message)
 			if err := c.pgBackend.Flush(); err != nil {

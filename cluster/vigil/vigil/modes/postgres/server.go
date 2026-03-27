@@ -66,8 +66,6 @@ type Server struct {
 	mu       sync.Mutex
 	isClosed bool
 
-	// svcCtl     *controllers.ServiceController
-	// sessionCtl *controllers.SessionController
 	lbManager *loadbalancer.LBManager
 
 	secretMan *secretman.SecretManager
