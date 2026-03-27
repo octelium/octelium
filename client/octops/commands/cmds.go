@@ -19,6 +19,7 @@ import (
 	"github.com/octelium/octelium/client/common/commands/version"
 	"github.com/octelium/octelium/client/octops/commands/cert"
 	"github.com/octelium/octelium/client/octops/commands/initcmd"
+	"github.com/octelium/octelium/client/octops/commands/installpackage"
 	"github.com/octelium/octelium/client/octops/commands/uninstall"
 	"github.com/octelium/octelium/client/octops/commands/upgrade"
 	"github.com/spf13/cobra"
@@ -41,8 +42,5 @@ func InitCmds() {
 	Cmd.AddCommand(cert.Cmd)
 	Cmd.AddCommand(version.Cmd)
 	Cmd.AddCommand(uninstall.Cmd)
-}
-
-func init() {
-
+	Cmd.AddCommand(installpackage.Cmd)
 }

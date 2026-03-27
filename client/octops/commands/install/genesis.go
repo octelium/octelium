@@ -95,13 +95,16 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis"),
+				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis", ""),
 			},
 		},
 	}
 }
 
-func GetGenesisPodSpec(domain, cmd, version, svcAccount string) corev1.PodSpec {
+func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg string) corev1.PodSpec {
+	if pkg == "" {
+		pkg = "octelium"
+	}
 	return corev1.PodSpec{
 		ServiceAccountName: svcAccount,
 		RestartPolicy:      corev1.RestartPolicyNever,
@@ -129,15 +132,15 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount string) corev1.PodSpec {
 
 		Containers: []corev1.Container{
 			{
-				Name: "octelium-genesis",
+				Name: fmt.Sprintf("%s-genesis", pkg),
 				Image: func() string {
 					if version != "" {
-						return cliutils.GetGenesisImage(version)
+						return cliutils.GetGenesisImageWithPackage(pkg, version)
 					}
 					if ldflags.IsDev() {
-						return cliutils.GetGenesisImage("")
+						return cliutils.GetGenesisImageWithPackage(pkg, "")
 					} else {
-						return cliutils.GetGenesisImage("latest")
+						return cliutils.GetGenesisImageWithPackage(pkg, "latest")
 					}
 				}(),
 				ImagePullPolicy: corev1.PullAlways,

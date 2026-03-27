@@ -111,7 +111,15 @@ func GetServiceFullNameFromName(arg string) string {
 }
 
 func GetGenesisImage(version string) string {
-	return ldflags.GetImage("octelium-genesis", version)
+	return GetGenesisImageWithPackage("", version)
+}
+
+func GetGenesisImageWithPackage(pkg, version string) string {
+	if pkg == "" {
+		pkg = "octelium"
+	}
+
+	return ldflags.GetImage(fmt.Sprintf("%s-genesis", pkg), version)
 }
 
 func GetSecretPrompt() ([]byte, error) {

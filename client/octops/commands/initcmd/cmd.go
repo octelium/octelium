@@ -43,7 +43,6 @@ type args struct {
 	KubeContext        string
 	BootstrapFile      string
 	Version            string
-	// ExternalIPs        []string
 }
 
 var examples = `
