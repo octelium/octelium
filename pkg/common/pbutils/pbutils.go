@@ -53,7 +53,7 @@ func UnmarshalYAML(in []byte, out proto.Message) error {
 	if err != nil {
 		return err
 	}
-	return protojson.Unmarshal(jsonBytes, out)
+	return UnmarshalJSON(jsonBytes, out)
 }
 
 func UnmarshalJSON(in []byte, out proto.Message) error {
