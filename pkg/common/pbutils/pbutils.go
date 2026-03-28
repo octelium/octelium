@@ -57,7 +57,11 @@ func UnmarshalYAML(in []byte, out proto.Message) error {
 }
 
 func UnmarshalJSON(in []byte, out proto.Message) error {
-	return protojson.Unmarshal(in, out)
+	unmarshaler := protojson.UnmarshalOptions{
+		DiscardUnknown: true,
+	}
+
+	return unmarshaler.Unmarshal(in, out)
 }
 
 func MarshalJSON(in proto.Message, indent bool) ([]byte, error) {
