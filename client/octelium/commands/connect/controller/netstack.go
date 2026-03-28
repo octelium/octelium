@@ -16,7 +16,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"runtime"
@@ -166,7 +165,7 @@ func (c *Controller) createNetstackTUN() error {
 
 	tcpipErr := dev.stack.CreateNIC(1, (*endpoint)(dev))
 	if tcpipErr != nil {
-		return fmt.Errorf("CreateNIC: %v", tcpipErr)
+		return errors.Errorf("CreateNIC: %v", tcpipErr)
 	}
 
 	for _, addr := range c.c.Connection.Addresses {
@@ -437,7 +436,7 @@ func (tnet *Net) DialContext(ctx context.Context, network, address string) (net.
 			if partialDeadline.Before(deadline) {
 				var cancel context.CancelFunc
 				dialCtx, cancel = context.WithDeadline(ctx, partialDeadline)
-				defer cancel()
+				cancel()
 			}
 		}
 
@@ -494,51 +493,48 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 
 	lookup := func(qtype uint16) lookupResult {
 		fqdn := dns.Fqdn(host)
-		m := new(dns.Msg)
-		m.SetQuestion(fqdn, qtype)
-		m.RecursionDesired = true
-		m.Id = dns.Id()
-		m.SetEdns0(4096, false)
+		var lastErr error
 
 		for _, server := range servers {
+			m := new(dns.Msg)
+			m.SetQuestion(fqdn, qtype)
+			m.RecursionDesired = true
+			m.SetEdns0(4096, false)
+			m.Id = dns.Id()
+
 			serverAddr := net.JoinHostPort(server.String(), "53")
 
-			in, _, err := tnet.exchangeDNS(ctx, "udp", m, serverAddr)
+			in, err := tnet.exchangeDNS(ctx, "udp", m, serverAddr)
 			if err != nil {
-				return lookupResult{
-					err: &net.DNSError{Err: err.Error(),
-						Name:   host,
-						Server: server.String(),
-					}}
-			}
-
-			if in.Rcode != dns.RcodeSuccess {
-				return lookupResult{err: &net.DNSError{
-					Err:        fmt.Sprintf("DNS Rcode: %s", dns.RcodeToString[in.Rcode]),
-					Name:       host,
-					Server:     server.String(),
-					IsNotFound: in.Rcode == dns.RcodeNameError,
-				}}
+				lastErr = &net.DNSError{
+					Err:    err.Error(),
+					Name:   host,
+					Server: server.String(),
+				}
+				continue
 			}
 
 			if in.Truncated {
-				in, _, err = tnet.exchangeDNS(ctx, "tcp", m, serverAddr)
+				m.Id = dns.Id()
+				in, err = tnet.exchangeDNS(ctx, "tcp", m, serverAddr)
 				if err != nil {
-					return lookupResult{
-						err: &net.DNSError{
-							Err:    err.Error(),
-							Name:   host,
-							Server: server.String(),
-						}}
+					lastErr = &net.DNSError{
+						Err:    err.Error(),
+						Name:   host,
+						Server: server.String(),
+					}
+					continue
 				}
-				if in.Rcode != dns.RcodeSuccess {
-					return lookupResult{err: &net.DNSError{
-						Err:        fmt.Sprintf("DNS Rcode: %s", dns.RcodeToString[in.Rcode]),
-						Name:       host,
-						Server:     server.String(),
-						IsNotFound: in.Rcode == dns.RcodeNameError,
-					}}
+			}
+
+			if in.Rcode != dns.RcodeSuccess {
+				lastErr = &net.DNSError{
+					Err:        dns.RcodeToString[in.Rcode],
+					Name:       host,
+					Server:     server.String(),
+					IsNotFound: in.Rcode == dns.RcodeNameError,
 				}
+				continue
 			}
 
 			var addrs []net.IP
@@ -550,11 +546,13 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 					addrs = append(addrs, rr.AAAA)
 				}
 			}
+
 			if len(addrs) > 0 {
 				return lookupResult{addrs: addrs}
 			}
 		}
-		return lookupResult{err: &net.DNSError{Err: "no answer from DNS server", Name: host}}
+
+		return lookupResult{err: lastErr}
 	}
 
 	var (
@@ -606,16 +604,16 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 	return out, nil
 }
 
-func (tnet *Net) exchangeDNS(ctx context.Context, netType string, m *dns.Msg, serverAddr string) (*dns.Msg, time.Duration, error) {
+func (tnet *Net) exchangeDNS(ctx context.Context, netType string, m *dns.Msg, serverAddr string) (*dns.Msg, error) {
 	host, port, err := net.SplitHostPort(serverAddr)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	portN, _ := strconv.Atoi(port)
 	serverIP := net.ParseIP(host)
 
 	if err := ctx.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	var conn net.Conn
@@ -625,7 +623,7 @@ func (tnet *Net) exchangeDNS(ctx context.Context, netType string, m *dns.Msg, se
 		conn, err = tnet.DialContextTCP(ctx, &net.TCPAddr{IP: serverIP, Port: portN})
 	}
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer conn.Close()
 
@@ -636,23 +634,22 @@ func (tnet *Net) exchangeDNS(ctx context.Context, netType string, m *dns.Msg, se
 	}
 
 	dnsConn := &dns.Conn{Conn: conn}
-	start := time.Now()
 
 	if err := dnsConn.WriteMsg(m); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	in, err := dnsConn.ReadMsg()
 	if err != nil {
-		return nil, time.Since(start), err
+		return nil, err
 	}
 
 	if in.Id != m.Id {
-		return nil, time.Since(start), fmt.Errorf("dns message ID mismatch: got %d, expected %d", in.Id, m.Id)
+		return nil, errors.Errorf("dns message ID mismatch: got %d, expected %d", in.Id, m.Id)
 	}
 	if !in.Response {
-		return nil, time.Since(start), errors.New("dns message is not a response")
+		return nil, errors.Errorf("dns message is not a response")
 	}
 
-	return in, time.Since(start), nil
+	return in, nil
 }
