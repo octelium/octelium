@@ -26,7 +26,7 @@
 
 ## What is Octelium?
 
-Octelium is a free and open source, self-hosted, unified zero trust secure access platform that is flexible enough to operate as a modern zero-config remote access VPN, a comprehensive Zero Trust Network Access (ZTNA)/BeyondCorp platform, an ngrok/Cloudflare Tunnel alternative, an API gateway, an AI/LLM gateway, a scalable infrastructure for access and deployment to build MCP gateways and A2A architectures/meshes, a PaaS-like platform, a Kubernetes gateway/ingress and even as a homelab infrastructure.
+Octelium is a free and open source, self-hosted, unified zero trust secure access platform that is flexible enough to operate as a modern zero-config remote access VPN, a comprehensive Zero Trust Network Access (ZTNA)/BeyondCorp platform, an ngrok/Cloudflare Tunnel alternative, an API gateway, an AI/LLM gateway, a scalable infrastructure for access and deployment to build MCP gateways and AI agent-based architectures/agentic meshes, a PaaS-like deployment platform for containerized applications, a Kubernetes gateway/ingress and even as a homelab infrastructure.
 
 Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secretless secure access via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access, for both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases, via context-aware access control on a per-request basis.
 
@@ -47,7 +47,7 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 * **Unified Zero Trust Access to SaaS APIs:** Provides secretless access to SaaS APIs for both teams and workloads, eliminating the need to manage and distribute long-lived and over-privileged API keys. See a generic example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/zero-trust-saas-api), AWS Lambda [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/lambda-zero-trust-secretless-access), and AWS S3 [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/s3-zero-trust-secretless-access).
 - **MCP Gateways and A2A-based Architectures** A secure infrastructure for Model Context Protocol [(MCP)](https://modelcontextprotocol.io/introduction) gateways and Agent2Agent Protocol [(A2A)](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/)-based architectures that provides identity management, authentication over standard OAuth2 client credentials and bearer authentication, secure remote access and deployment as well as identity-based, L7-aware access control via policy-as-code and visibility (see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/ai/self-hosted-mcp)).
 * **Homelab:** A unified self-hosted Homelab infrastructure to connect and provide secure remote access to all your resources behind NAT from anywhere (e.g. all your devices including your laptop, IoT, cloud providers, Raspberry Pis, routers, etc...) as well as a secure deployment platform to deploy and privately as well as publicly host your websites, blogs, APIs or to remotely test heavy containers (e.g. LLM runtimes such as Ollama, databases such as ClickHouse and Elasticsearch, Pi-hole, etc...). See examples for [remote VSCode](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/remote-vscode-code-server), and [Pi-hole](https://octelium.com/docs/octelium/latest/management/guide/service/homelab/pihole).
-* **Kubernetes Ingress Alternative:** A more advanced alternative to standard Kubernetes ingress controllers and load balancers, allowing you to route to any Kubernetes service via dynamic, L7-aware policy-as-code.
+* **Kubernetes Ingress Alternative:** A more advanced alternative to standard Kubernetes ingress controllers and load balancers, allowing you to route to any Kubernetes service via dynamic, L7-aware policy-as-code (see an example [here](https://octelium.com/docs/octelium/latest/management/guide/service/http/open-source-kubernetes-ingress-controller)).
 
 
 ## Main Features
@@ -116,6 +116,12 @@ For Windows in Powershell
 
 ```powershell
 iwr https://octelium.com/install.ps1 -useb | iex
+```
+
+You can also install the CLIs via Homebrew as follows:
+
+```bash
+brew install octelium/tap/octelium
 ```
 
 ## Useful Links
