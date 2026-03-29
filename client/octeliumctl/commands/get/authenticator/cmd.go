@@ -62,7 +62,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	ctx := cmd.Context()
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -71,7 +73,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	c := corev1.NewMainServiceClient(conn)
 
 	if i.FirstArg() != "" {
-		res, err := c.GetAuthenticator(cmd.Context(), &metav1.GetOptions{
+		res, err := c.GetAuthenticator(ctx, &metav1.GetOptions{
 			Name: i.FirstArg(),
 		})
 		if err != nil {
@@ -92,7 +94,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	itmList, err := c.ListAuthenticator(cmd.Context(), &corev1.ListAuthenticatorOptions{
+	itmList, err := c.ListAuthenticator(ctx, &corev1.ListAuthenticatorOptions{
 		Common:  cliutils.GetCommonListOptions(cmd),
 		UserRef: usrRef,
 	})
@@ -114,12 +116,22 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "User", "Type", "Age", "Registered")
+	p := printer.NewPrinter("Name", "User", "Type", "Age", "Registered", "State", "Authentications")
 
 	for _, itm := range itmList.Items {
 		p.AppendRow(itm.Metadata.Name, itm.Status.UserRef.Name, itm.Status.Type.String(),
 			cliutils.GetResourceAge(itm),
-			cliutils.PrintBoolean(itm.Status.IsRegistered))
+			cliutils.PrintBoolean(itm.Status.IsRegistered),
+			itm.Spec.State.String(),
+			func() string {
+				if itm.Status.TotalAuthenticationAttempts == 0 {
+					return ""
+				}
+
+				return fmt.Sprintf("%d/%d",
+					itm.Status.SuccessfulAuthentications, itm.Status.TotalAuthenticationAttempts)
+			}(),
+		)
 	}
 
 	p.Render()
