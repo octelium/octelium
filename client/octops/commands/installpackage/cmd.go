@@ -120,9 +120,18 @@ func getGenesisJob(domain, cmd, version, pkg string) *batchv1.Job {
 		"octelium.com/component-type": "cluster",
 	}
 
+	if pkg == "" {
+		pkg = "octelium"
+	}
+
+	if cmd == "" {
+		cmd = "init"
+	}
+
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("octelium-genesis-package-%s", utilrand.GetRandomStringLowercase(6)),
+			Name: fmt.Sprintf("octelium-genesis-%s-%s-%s",
+				cmd, pkg, utilrand.GetRandomStringLowercase(6)),
 			Namespace: "octelium",
 			Labels:    labels,
 		},
