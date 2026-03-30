@@ -57,7 +57,7 @@ func getGenesisJob(domain, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: install.GetGenesisPodSpec(domain, "upgrade", version, "octelium-nocturne", ""),
+				Spec: install.GetGenesisPodSpec(domain, "upgrade", version, "octelium-nocturne", "", ""),
 			},
 		},
 	}

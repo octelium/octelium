@@ -95,16 +95,20 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis", ""),
+				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis", "", ""),
 			},
 		},
 	}
 }
 
-func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg string) corev1.PodSpec {
+func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1.PodSpec {
 	if pkg == "" {
 		pkg = "octelium"
 	}
+	if rgn == "" {
+		rgn = "default"
+	}
+
 	return corev1.PodSpec{
 		ServiceAccountName: svcAccount,
 		RestartPolicy:      corev1.RestartPolicyNever,
@@ -182,6 +186,10 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg string) corev1.PodS
 						{
 							Name:  "OCTELIUM_DOMAIN",
 							Value: domain,
+						},
+						{
+							Name:  "OCTELIUM_REGION_NAME",
+							Value: rgn,
 						},
 					}
 
