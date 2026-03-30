@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands/initcmd"
 	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -57,8 +58,8 @@ var cmdArgs args
 func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.KubeConfigFilePath, "kubeconfig", "", "kubeconfig file path")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.KubeContext, "kubecontext", "", "kubecontext")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "", `Cluster version. By default it is set to "latest"`)
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Package, "package", "", `Package name`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Version, "version", "", `Package version. By default it is set to "latest"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Package, "package", "", `Package name. Currently the values "octeliumee", "cordium" are available`)
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Upgrade, "upgrade", false, `Upgrade an already installed package`)
 }
 
@@ -95,6 +96,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	if err := createGenesis(ctx, k8sC, domain, genesisCmd, cmdArgs.Version, cmdArgs.Package); err != nil {
 		return err
+	}
+
+	if cmdArgs.Upgrade {
+		cliutils.LineNotify(`Upgrading the package "%s" has started...`, cmdArgs.Package)
+	} else {
+		cliutils.LineNotify(`Installing the package "%s" has started...`, cmdArgs.Package)
 	}
 
 	return nil
