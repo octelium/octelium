@@ -18,15 +18,14 @@ package vcache
 
 import (
 	"context"
-	"sync"
+	"sync/atomic"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 type Cache struct {
-	mu  sync.RWMutex
-	svc *corev1.Service
+	svc atomic.Pointer[corev1.Service]
 }
 
 func NewCache(ctx context.Context) (*Cache, error) {
@@ -35,14 +34,13 @@ func NewCache(ctx context.Context) (*Cache, error) {
 
 func (c *Cache) SetService(svc *corev1.Service) {
 	clone := pbutils.Clone(svc).(*corev1.Service)
-	c.mu.Lock()
-	c.svc = clone
-	c.mu.Unlock()
+	c.svc.Store(clone)
 }
 
 func (c *Cache) GetService() *corev1.Service {
-	c.mu.RLock()
-	ret := c.svc
-	c.mu.RUnlock()
-	return pbutils.Clone(ret).(*corev1.Service)
+	svc := c.svc.Load()
+	if svc == nil {
+		return nil
+	}
+	return pbutils.Clone(svc).(*corev1.Service)
 }
