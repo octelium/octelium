@@ -18,7 +18,6 @@ package middlewares
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"time"
 
@@ -78,8 +77,8 @@ const (
 )
 
 type RequestContext struct {
-	Service   *corev1.Service
-	Conn      net.Conn
+	Service *corev1.Service
+	// Conn      net.Conn
 	CreatedAt time.Time
 
 	IsAuthorized      bool

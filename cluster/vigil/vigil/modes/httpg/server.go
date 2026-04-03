@@ -271,13 +271,14 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			svc := s.vCache.GetService()
-			reqCtx := middlewares.GetCtxRequestContext(ctx)
-			reqCtx.Service = svc
-			reqCtx.ServiceConfig = svc.Spec.Config
-			reqCtx.CreatedAt = time.Now()
-			zap.L().Debug("New request",
-				zap.Any("svc", svc), zap.Any("uri", r.RequestURI), zap.String("method", r.Method))
-			next.ServeHTTP(w, r)
+			reqCtx := &middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}
+
+			ctx := context.WithValue(r.Context(), middlewares.CtxRequestContext, reqCtx)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		}), nil
 	})
 
@@ -381,14 +382,6 @@ func (s *Server) serve(ctx context.Context) error {
 		Addr:              fmt.Sprintf(":%d", ucorev1.ToService(svc).RealPort()),
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			reqCtx := &middlewares.RequestContext{
-				CreatedAt: time.Now(),
-				Conn:      c,
-			}
-
-			return context.WithValue(ctx, middlewares.CtxRequestContext, reqCtx)
-		},
 	}
 
 	if svc.Spec.IsTLS {

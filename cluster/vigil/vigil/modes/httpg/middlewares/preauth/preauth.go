@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -30,7 +32,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
-	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
@@ -164,7 +165,6 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 	reqCtx *middlewares.RequestContext,
 	additional *additionalInfo) (*coctovigilv1.DownstreamRequest, error) {
 
-	c := reqCtx.Conn
 	svc := reqCtx.Service
 
 	httpC := &corev1.RequestContext_Request_HTTP{
@@ -205,7 +205,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}
 
 		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
+			Source: getDownstreamSource(req),
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Kubernetes_{
@@ -229,7 +229,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 			return nil, err
 		}
 		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
+			Source: getDownstreamSource(req),
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Grpc{
@@ -245,7 +245,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}, nil
 	default:
 		return &coctovigilv1.DownstreamRequest{
-			Source: vigilutils.GetDownstreamRequestSource(c),
+			Source: getDownstreamSource(req),
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Http{
@@ -253,5 +253,22 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 				},
 			},
 		}, nil
+	}
+}
+
+func getDownstreamSource(r *http.Request) *coctovigilv1.DownstreamRequest_Source {
+	address, port, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return &coctovigilv1.DownstreamRequest_Source{}
+	}
+
+	portInt, err := strconv.ParseInt(port, 10, 32)
+	if err != nil {
+		return &coctovigilv1.DownstreamRequest_Source{}
+	}
+
+	return &coctovigilv1.DownstreamRequest_Source{
+		Address: address,
+		Port:    int32(portInt),
 	}
 }
