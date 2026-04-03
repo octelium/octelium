@@ -268,6 +268,19 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.Handler, error) {
 	chain := middlewares.New()
 
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			svc := s.vCache.GetService()
+			reqCtx := middlewares.GetCtxRequestContext(ctx)
+			reqCtx.Service = svc
+			reqCtx.ServiceConfig = svc.Spec.Config
+			reqCtx.CreatedAt = time.Now()
+			zap.L().Debug("New request",
+				zap.Any("svc", svc), zap.Any("uri", r.RequestURI), zap.String("method", r.Method))
+			next.ServeHTTP(w, r)
+		}), nil
+	})
+
 	appendPlugins := func(phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) {
 
 		chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -369,13 +382,9 @@ func (s *Server) serve(ctx context.Context) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			svc := s.vCache.GetService()
-
 			reqCtx := &middlewares.RequestContext{
-				CreatedAt:     time.Now(),
-				Service:       svc,
-				Conn:          c,
-				ServiceConfig: svc.Spec.Config,
+				CreatedAt: time.Now(),
+				Conn:      c,
 			}
 
 			return context.WithValue(ctx, middlewares.CtxRequestContext, reqCtx)
