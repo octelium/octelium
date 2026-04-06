@@ -1,9 +1,9 @@
-FROM node:24 as builder-web
+FROM node:24 AS builder-web
 
 COPY cluster/authserver/authserver/web/package /build
 RUN cd /build && npm install && npm run build
 
-FROM golang:1.25.8 as builder
+FROM golang:1.25.8 AS builder
 RUN mkdir /build
 ADD . /build/
 WORKDIR /build
