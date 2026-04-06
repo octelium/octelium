@@ -741,9 +741,11 @@ func (s *Service) IsListenerHTTP2() bool {
 		return true
 	}
 
-	if s.Spec.IsTLS {
-		return true
-	}
+	/*
+		if s.Spec.IsTLS {
+			return true
+		}
+	*/
 
 	switch s.BackendScheme() {
 	case "grpc", "h2c":
