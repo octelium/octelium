@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -346,20 +347,17 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	/*
-		if len(crw.headers) > 0 {
-			for k, v := range crw.headers {
-				if len(v) > 0 {
-					crw.ResponseWriter.Header().Set(k, v[0])
-				}
-			}
-		}
-	*/
-
 	{
-		crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
+		if req.Method != http.MethodHead {
+			crw.ResponseWriter.Header().Set("Content-Length", strconv.Itoa(crw.body.Len()))
+		}
+		if crw.statusCode != 0 {
+			crw.ResponseWriter.WriteHeader(crw.statusCode)
+		}
 		crw.ResponseWriter.Write(crw.body.Bytes())
 	}
+
+	
 
 	closeGRPC()
 }
