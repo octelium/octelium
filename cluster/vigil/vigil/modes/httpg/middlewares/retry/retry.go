@@ -18,7 +18,9 @@ package retry
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -32,6 +34,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+const maxBodySize = 200_000_000
 
 type middleware struct {
 	next http.Handler
@@ -90,7 +94,21 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	startedAt := time.Now()
 	backOff.Reset()
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxBodySize))
+	if len(bodyBytes) == maxBodySize {
+		rw.WriteHeader(http.StatusRequestEntityTooLarge)
+		return
+	} else if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	req.Body.Close()
+
 	for attempts := 1; ; attempts++ {
+		reqC := req.Clone(ctx)
+		reqC.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 		crw := &responseWriter{
 			ResponseWriter: rw,
 			req:            req,
@@ -104,7 +122,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			maxElapsedTime: maxElapsedTime,
 		}
 
-		m.next.ServeHTTP(crw, req)
+		m.next.ServeHTTP(crw, reqC)
 
 		if !crw.isRetry {
 			return
@@ -116,6 +134,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		select {
 		case <-timer.C():
 		case <-ctx.Done():
+			return
 		}
 	}
 
@@ -170,6 +189,9 @@ func (w *responseWriter) Write(buf []byte) (int, error) {
 }
 
 func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.isRetry = false
+	w.isWritten = true
+
 	hj, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
@@ -179,10 +201,14 @@ func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *responseWriter) Flush() {
+	if w.isRetry || !w.isWritten {
+		return
+	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
+
 func (w *responseWriter) Header() http.Header {
 	if w.isWritten {
 		return w.ResponseWriter.Header()
@@ -191,6 +217,8 @@ func (w *responseWriter) Header() http.Header {
 }
 
 func (p *responseWriter) Push(target string, opts *http.PushOptions) error {
+	p.isRetry = false
+
 	if p, ok := p.ResponseWriter.(http.Pusher); ok {
 		return p.Push(target, opts)
 	}
@@ -253,9 +281,17 @@ func (t *defaultTimer) C() <-chan time.Time {
 func (t *defaultTimer) Start(duration time.Duration) {
 	if t.timer == nil {
 		t.timer = time.NewTimer(duration)
-	} else {
-		t.timer.Reset(duration)
+		return
 	}
+
+	if !t.timer.Stop() {
+		select {
+		case <-t.timer.C:
+		default:
+		}
+	}
+
+	t.timer.Reset(duration)
 }
 
 func (t *defaultTimer) Stop() {
