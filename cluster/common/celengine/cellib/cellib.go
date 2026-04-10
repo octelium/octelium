@@ -35,6 +35,7 @@ func (*celLib) CompileOptions() []cel.EnvOption {
 	)
 	ret = append(ret, funcJSON()...)
 	ret = append(ret, funcNet()...)
+	ret = append(ret, funcTime()...)
 
 	ret = append(ret, MethodsList())
 	ret = append(ret, Str())

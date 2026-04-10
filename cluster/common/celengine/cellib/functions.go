@@ -25,6 +25,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/pkg/errors"
 )
 
 func functionNow() cel.EnvOption {
@@ -170,4 +171,98 @@ func funcNet() []cel.EnvOption {
 			),
 		),
 	}
+}
+
+func funcTime() []cel.EnvOption {
+	return []cel.EnvOption{
+		cel.Function("time.isWeekday",
+			cel.Overload("time_isWeekday_ts",
+				[]*cel.Type{cel.TimestampType}, cel.BoolType,
+				cel.UnaryBinding(func(v ref.Val) ref.Val {
+					t, err := toTime(v)
+					if err != nil {
+						return errToVal(err)
+					}
+					wd := t.UTC().Weekday()
+					return types.Bool(wd >= time.Monday && wd <= time.Friday)
+				}),
+			),
+		),
+
+		cel.Function("time.isWeekdayInTZ",
+			cel.Overload("time_isWeekdayInTZ_ts_string",
+				[]*cel.Type{cel.TimestampType, cel.StringType}, cel.BoolType,
+				cel.BinaryBinding(func(tsVal, tzVal ref.Val) ref.Val {
+					t, err := toTime(tsVal)
+					if err != nil {
+						return errToVal(err)
+					}
+					loc, err := getTZLocation(tzVal)
+					if err != nil {
+						return errToVal(err)
+					}
+					wd := t.In(loc).Weekday()
+					return types.Bool(wd >= time.Monday && wd <= time.Friday)
+				}),
+			),
+		),
+
+		cel.Function("time.isWeekend",
+			cel.Overload("time_isWeekend_ts",
+				[]*cel.Type{cel.TimestampType}, cel.BoolType,
+				cel.UnaryBinding(func(v ref.Val) ref.Val {
+					t, err := toTime(v)
+					if err != nil {
+						return errToVal(err)
+					}
+					wd := t.UTC().Weekday()
+					return types.Bool(wd == time.Saturday || wd == time.Sunday)
+				}),
+			),
+		),
+
+		cel.Function("time.isWeekendInTZ",
+			cel.Overload("time_isWeekendInTZ_ts_string",
+				[]*cel.Type{cel.TimestampType, cel.StringType}, cel.BoolType,
+				cel.BinaryBinding(func(tsVal, tzVal ref.Val) ref.Val {
+					t, err := toTime(tsVal)
+					if err != nil {
+						return errToVal(err)
+					}
+					loc, err := getTZLocation(tzVal)
+					if err != nil {
+						return errToVal(err)
+					}
+					wd := t.In(loc).Weekday()
+					return types.Bool(wd == time.Saturday || wd == time.Sunday)
+				}),
+			),
+		),
+	}
+
+}
+
+func getTZLocation(arg ref.Val) (*time.Location, error) {
+	tz, ok := arg.Value().(string)
+	if !ok {
+		return nil, errors.Errorf("Could not get timezone")
+	}
+
+	if tz == "" || tz == "UTC" {
+		return time.UTC, nil
+	}
+
+	return time.LoadLocation(tz)
+}
+
+func toTime(v ref.Val) (time.Time, error) {
+	if ret, ok := v.(types.Timestamp); ok {
+		return ret.Time, nil
+	}
+
+	return time.Time{}, errors.Errorf("Not a timestamp: %T", v)
+}
+
+func errToVal(err error) ref.Val {
+	return types.NewErr("%+v", err)
 }
