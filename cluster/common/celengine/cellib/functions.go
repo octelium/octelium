@@ -18,8 +18,10 @@ package cellib
 
 import (
 	"encoding/json"
+	"net"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
@@ -37,55 +39,135 @@ func functionNow() cel.EnvOption {
 	)
 }
 
-func functionJSONFrom() cel.EnvOption {
-	return cel.Function("json.parse",
-		cel.Overload("json_parse",
-			[]*cel.Type{
-				cel.StringType,
-			},
-			cel.DynType,
-			cel.UnaryBinding(fnJSONFrom),
-		),
-	)
-}
-
-func functionJSONMarshal() cel.EnvOption {
-	return cel.Function("json.marshal",
-		cel.Overload("json_marshal",
-			[]*cel.Type{
+func funcJSON() []cel.EnvOption {
+	return []cel.EnvOption{
+		cel.Function("json.parse",
+			cel.Overload("json_parse",
+				[]*cel.Type{
+					cel.StringType,
+				},
 				cel.DynType,
-			},
-			cel.StringType,
-			cel.UnaryBinding(fnJSONMarshal),
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					value := val.Value()
+					switch tVal := value.(type) {
+					case string:
+						out := make(map[string]any)
+						if err := json.Unmarshal([]byte(tVal), &out); err != nil {
+							return types.NewErr("Could not parse json")
+						}
+						return types.DefaultTypeAdapter.NativeToValue(out)
+					case []byte:
+						out := make(map[string]any)
+						if err := json.Unmarshal(tVal, &out); err != nil {
+							return types.NewErr("Could not parse json")
+						}
+						return types.DefaultTypeAdapter.NativeToValue(out)
+					default:
+						return types.NewErr("Invalid json_from arg")
+					}
+				}),
+			),
 		),
-	)
-}
 
-func fnJSONFrom(val ref.Val) ref.Val {
-	value := val.Value()
-	switch tVal := value.(type) {
-	case string:
-		out := make(map[string]any)
-		if err := json.Unmarshal([]byte(tVal), &out); err != nil {
-			return types.NewErr("Could not parse json")
-		}
-		return types.DefaultTypeAdapter.NativeToValue(out)
-	case []byte:
-		out := make(map[string]any)
-		if err := json.Unmarshal(tVal, &out); err != nil {
-			return types.NewErr("Could not parse json")
-		}
-		return types.DefaultTypeAdapter.NativeToValue(out)
-	default:
-		return types.NewErr("Invalid json_from arg")
+		cel.Function("json.marshal",
+			cel.Overload("json_marshal",
+				[]*cel.Type{
+					cel.DynType,
+				},
+				cel.StringType,
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					value := val.Value()
+					out, err := json.Marshal(value)
+					if err != nil {
+						return types.NewErr("Could not marshal json")
+					}
+					return types.DefaultTypeAdapter.NativeToValue(string(out))
+				}),
+			),
+		),
 	}
 }
 
-func fnJSONMarshal(val ref.Val) ref.Val {
-	value := val.Value()
-	out, err := json.Marshal(value)
-	if err != nil {
-		return types.NewErr("Could not marshal json")
+func funcNet() []cel.EnvOption {
+	return []cel.EnvOption{
+		cel.Function("net.isIP",
+			cel.Overload("net_isIP_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.UnaryBinding(func(ipArg ref.Val) ref.Val {
+					ipStr, ok := ipArg.Value().(string)
+					if !ok {
+						return types.Bool(false)
+					}
+					return types.Bool(govalidator.IsIP(ipStr))
+				}),
+			),
+		),
+		cel.Function("net.isIPv4",
+			cel.Overload("net_isIPv4_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.UnaryBinding(func(ipArg ref.Val) ref.Val {
+					ipStr, ok := ipArg.Value().(string)
+					if !ok {
+						return types.Bool(false)
+					}
+					return types.Bool(govalidator.IsIPv4(ipStr))
+				}),
+			),
+		),
+
+		cel.Function("net.isIPv6",
+			cel.Overload("net_isIPv6_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.UnaryBinding(func(ipArg ref.Val) ref.Val {
+					ipStr, ok := ipArg.Value().(string)
+					if !ok {
+						return types.Bool(false)
+					}
+					return types.Bool(govalidator.IsIPv6(ipStr))
+				}),
+			),
+		),
+		cel.Function("net.isPrivateIP",
+			cel.Overload("net_isPrivateIP_string", []*cel.Type{cel.StringType}, cel.BoolType,
+				cel.UnaryBinding(func(ipArg ref.Val) ref.Val {
+					ipStr, ok := ipArg.Value().(string)
+					if !ok {
+						return types.NewErr("Could not get IP arg")
+					}
+
+					ip := net.ParseIP(ipStr)
+					if ip == nil {
+						return types.NewErr("Could not parse IP: %s", ipStr)
+					}
+					return types.Bool(ip.IsPrivate())
+				}),
+			),
+		),
+		cel.Function("net.isIPInRange",
+			cel.Overload("net_isIPInRange_string_string",
+				[]*cel.Type{cel.StringType, cel.StringType},
+				cel.BoolType,
+				cel.BinaryBinding(func(ipArg, cidrArg ref.Val) ref.Val {
+					ipStr, ok := ipArg.Value().(string)
+					if !ok {
+						return types.NewErr("Could not get IP arg")
+					}
+
+					cidrStr, ok := cidrArg.Value().(string)
+					if !ok {
+						return types.NewErr("Could not get CIDR arg")
+					}
+
+					ip := net.ParseIP(ipStr)
+					if ip == nil {
+						return types.NewErr("Could not parse IP address: %s", ipStr)
+					}
+
+					_, subnet, err := net.ParseCIDR(cidrStr)
+					if err != nil {
+						return types.NewErr("Could not parse CIDR: %+v", err)
+					}
+
+					return types.Bool(subnet.Contains(ip))
+				}),
+			),
+		),
 	}
-	return types.DefaultTypeAdapter.NativeToValue(string(out))
 }

@@ -32,8 +32,9 @@ func (*celLib) CompileOptions() []cel.EnvOption {
 
 	ret = append(ret,
 		functionNow(),
-		functionJSONFrom(),
-		functionJSONMarshal())
+	)
+	ret = append(ret, funcJSON()...)
+	ret = append(ret, funcNet()...)
 
 	ret = append(ret, MethodsList())
 	ret = append(ret, Str())
