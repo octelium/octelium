@@ -72,28 +72,17 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	reqCtxVal := m.getRequestContextLValue(reqCtx.DownstreamInfo)
 
 	doAfterResponse := func() {
-
-		/*
-			if len(crw.headers) > 0 {
-				for k, v := range crw.headers {
-					if len(v) < 1 {
-						continue
-					}
-
-					crw.ResponseWriter.Header().Set(k, v[0])
-				}
-			}
-		*/
-
-		{
-			crw.ResponseWriter.Header().Set("Content-Length", fmt.Sprintf("%d", len(crw.body.Bytes())))
-			crw.ResponseWriter.WriteHeader(crw.statusCode)
-
-			if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
-				zap.L().Warn("Could not write to lua crw", zap.Error(err))
+		for k, vv := range crw.headers {
+			for _, v := range vv {
+				crw.ResponseWriter.Header().Add(k, v)
 			}
 		}
-
+		crw.ResponseWriter.Header().Set("Content-Length",
+			fmt.Sprintf("%d", crw.body.Len()))
+		crw.ResponseWriter.WriteHeader(crw.statusCode)
+		if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
+			zap.L().Warn("Could not write response", zap.Error(err))
+		}
 		for _, luaCtx := range luaContexts {
 			luaCtx.close()
 		}
@@ -157,26 +146,37 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	// headers    http.Header
-	body  *bytes.Buffer
-	isSet bool
+	statusCode  int
+	headers     http.Header
+	body        *bytes.Buffer
+	wroteHeader bool
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
-		// headers:        make(http.Header),
-		body:       new(bytes.Buffer),
-		statusCode: 200,
+		headers:        make(http.Header),
+		body:           new(bytes.Buffer),
+		statusCode:     http.StatusOK,
 	}
 }
 
+func (w *responseWriter) Header() http.Header {
+	return w.headers
+}
+
 func (w *responseWriter) WriteHeader(statusCode int) {
-	w.statusCode = statusCode
+	if !w.wroteHeader {
+		w.statusCode = statusCode
+		w.wroteHeader = true
+	}
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.statusCode = http.StatusOK
+		w.wroteHeader = true
+	}
 	return w.body.Write(b)
 }
 

@@ -17,9 +17,10 @@
 package lua
 
 import (
-	"fmt"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
+	"go.uber.org/zap"
 )
 
 // Most fns here are from github.com/yuin/gopher-lua/blob/master/baselib.go
@@ -42,13 +43,11 @@ func doGlobalFnError(L *lua.LState) int {
 
 func doGlobalFnPrint(L *lua.LState) int {
 	top := L.GetTop()
+	parts := make([]string, 0, top)
 	for i := 1; i <= top; i++ {
-		fmt.Print(L.ToStringMeta(L.Get(i)).String())
-		if i != top {
-			fmt.Print("\t")
-		}
+		parts = append(parts, L.ToStringMeta(L.Get(i)).String())
 	}
-	fmt.Println("")
+	zap.L().Debug("lua print: " + strings.Join(parts, "\t"))
 	return 0
 }
 
@@ -75,18 +74,14 @@ func doGlobalFnType(L *lua.LState) int {
 
 func ipairsaux(L *lua.LState) int {
 	tb := L.CheckTable(1)
-	i := L.CheckInt(2)
-	i++
+	i := L.CheckInt(2) + 1
 	v := tb.RawGetInt(i)
 	if v == lua.LNil {
 		return 0
-	} else {
-		L.Pop(1)
-		L.Push(lua.LNumber(i))
-		L.Push(lua.LNumber(i))
-		L.Push(v)
-		return 2
 	}
+	L.Push(lua.LNumber(i))
+	L.Push(v)
+	return 2
 }
 
 func pairsaux(L *lua.LState) int {
@@ -94,11 +89,8 @@ func pairsaux(L *lua.LState) int {
 	key, value := tb.Next(L.Get(2))
 	if key == lua.LNil {
 		return 0
-	} else {
-		L.Pop(1)
-		L.Push(key)
-		L.Push(key)
-		L.Push(value)
-		return 2
 	}
+	L.Push(key)
+	L.Push(value)
+	return 2
 }

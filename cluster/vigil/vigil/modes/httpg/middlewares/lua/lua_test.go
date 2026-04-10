@@ -36,7 +36,6 @@ import (
 )
 
 func TestMiddleware(t *testing.T) {
-
 	ctx := context.Background()
 
 	tst, err := tests.Initialize(nil)

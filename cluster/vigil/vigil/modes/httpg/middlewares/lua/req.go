@@ -126,10 +126,10 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 
 	c.rw.body.Reset()
 	c.rw.body.Write(bodyBytes)
-	c.rw.isSet = true
 
 	return 0
 }
+
 func (c *luaCtx) getRequestBody(L *lua.LState) int {
 	bodyBytes, err := io.ReadAll(c.req.Body)
 	if err != nil {
@@ -138,7 +138,6 @@ func (c *luaCtx) getRequestBody(L *lua.LState) int {
 		return 2
 	}
 
-	defer c.req.Body.Close()
 	body := string(bodyBytes)
 	c.req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	L.Push(lua.LString(body))
@@ -206,7 +205,7 @@ func (c *luaCtx) setStatusCode(L *lua.LState) int {
 	val := L.Get(1)
 
 	if val.Type() != lua.LTNumber {
-		L.Push(lua.LString("Query param is not a string"))
+		L.Push(lua.LString("status code is not a number"))
 		return 1
 	}
 
