@@ -121,7 +121,7 @@ func (c *Client) Authorize(ctx context.Context, req *coctovigilv1.AuthorizeReque
 
 		reqCtx.Namespace, _ = c.embeddedSrv.GetCache().GetNamespace(reqCtx.Service.Status.NamespaceRef.Uid)
 
-		return c.embeddedSrv.DoAuthorize(ctx, reqCtx)
+		return c.embeddedSrv.DoAuthorize(ctx, reqCtx, nil)
 	} else {
 		// zap.L().Debug("Starting a remote Authorize")
 		return c.remoteC.InternalC().Authorize(ctx, &coctovigilv1.AuthorizeRequest{

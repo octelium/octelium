@@ -37,7 +37,8 @@ type policyDecisionResult struct {
 }
 
 type getDecisionReq struct {
-	i *corev1.RequestContext
+	i          *corev1.RequestContext
+	additional *coctovigilv1.Authorization
 }
 
 type getDecisionResp struct {
@@ -69,10 +70,11 @@ func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDeci
 		return nil, err
 	}
 
-	return s.doGetDecision(ctx, req.i, reqCtxMap, allRules)
+	return s.doGetDecision(ctx, reqCtxMap, allRules)
 }
 
-func (s *Server) doGetDecision(ctx context.Context, i *corev1.RequestContext, reqCtxMap map[string]any, allRules []*policyRule) (*getDecisionResp, error) {
+func (s *Server) doGetDecision(ctx context.Context,
+	reqCtxMap map[string]any, allRules []*policyRule) (*getDecisionResp, error) {
 
 	slices.SortFunc(allRules, func(a, b *policyRule) int {
 		if diff := a.rule.Priority - b.rule.Priority; diff < 0 {
@@ -424,6 +426,18 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 	}
 
 	if rules, err := s.getRulesFromPolicyTriggers(ctx, req.i, reqCtxMap, &usedPolicies); err == nil {
+		ret = append(ret, rules...)
+	}
+
+	if req.additional != nil {
+		rules, err := s.getResourcePolicyRules(ctx,
+			req.i, reqCtxMap,
+			req.additional.Policies,
+			req.additional.InlinePolicies,
+			nil, &usedPolicies)
+		if err != nil {
+			return nil, err
+		}
 		ret = append(ret, rules...)
 	}
 

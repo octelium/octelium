@@ -53,8 +53,9 @@ func (s *internalService) AuthenticateAndAuthorize(
 	}
 
 	resp, err := s.s.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
-		Service: svc,
-		Request: req.Request,
+		Service:    svc,
+		Request:    req.Request,
+		Additional: req.Additional,
 	})
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
@@ -117,7 +118,8 @@ func (s *internalService) Authorize(
 		return nil, err
 	}
 
-	isAuthorized, reason, err := s.s.isAuthorizedWithMetrics(ctx, s.s.getReqCtx(di, req.Request, svc))
+	isAuthorized, reason, err := s.s.isAuthorizedWithMetrics(ctx,
+		s.s.getReqCtx(di, req.Request, svc), req.Additional)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +146,8 @@ func (s *internalService) Evaluate(
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
-	// TODO
-	resp, err := s.s.doGetDecision(ctx, nil, reqCtxMap, allRules)
+
+	resp, err := s.s.doGetDecision(ctx, reqCtxMap, allRules)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}

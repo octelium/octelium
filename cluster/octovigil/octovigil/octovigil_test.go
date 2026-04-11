@@ -1025,6 +1025,129 @@ match if {
 		testIsUnauthorized(srv, svc, getReq(usr.Session, svc))
 		testIsUnauthorized(srv, svc, getReqHTTP(usr.Session, svc, "/", "GET"))
 	}
+
+	{
+		// Additional
+
+		svcReq := tests.GenService(network.Metadata.Name)
+		svcReq.Spec.IsPublic = true
+		svcReq.Spec.Mode = corev1.Service_Spec_HTTP
+
+		svcReq.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: `1 == 1`,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		svc, err := adminSrv.CreateService(ctx, svcReq)
+		assert.Nil(t, err, "%+v", err)
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+		assert.Nil(t, err)
+
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+		srv.cache.SetService(svcV)
+
+		usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+		assert.Nil(t, err)
+
+		srv.cache.SetUser(usr.Usr)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		srv.cache.SetSession(usr.Session)
+
+		pol, err := srv.octeliumC.CoreC().CreatePolicy(ctx, &corev1.Policy{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Policy_Spec{
+				Rules: []*corev1.Policy_Spec_Rule{
+					{
+						Condition: &corev1.Condition{
+							Type: &corev1.Condition_MatchAny{
+								MatchAny: true,
+							},
+						},
+						Effect: corev1.Policy_Spec_Rule_DENY,
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.cache.SetPolicy(pol))
+
+		{
+			i, err := srv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+				Service: svc,
+				Request: getReq(usr.Session, svc),
+			})
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, i.IsAuthenticated)
+			assert.True(t, i.IsAuthorized)
+		}
+
+		{
+			i, err := srv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+				Service: svc,
+				Request: getReq(usr.Session, svc),
+				Additional: &coctovigilv1.Authorization{
+					InlinePolicies: []*corev1.InlinePolicy{
+						{
+							Spec: &corev1.Policy_Spec{
+								Rules: []*corev1.Policy_Spec_Rule{
+									{
+										Condition: &corev1.Condition{
+											Type: &corev1.Condition_MatchAny{
+												MatchAny: true,
+											},
+										},
+										Effect: corev1.Policy_Spec_Rule_DENY,
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, i.IsAuthenticated)
+			assert.False(t, i.IsAuthorized)
+
+			assert.NotNil(t, i.AuthorizationDecisionReason.Details.GetPolicyMatch().GetInlinePolicy())
+		}
+
+		{
+			i, err := srv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+				Service: svc,
+				Request: getReq(usr.Session, svc),
+				Additional: &coctovigilv1.Authorization{
+					Policies: []string{pol.Metadata.Name},
+				},
+			})
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, i.IsAuthenticated)
+			assert.False(t, i.IsAuthorized)
+
+			assert.NotNil(t, i.AuthorizationDecisionReason.Details.GetPolicyMatch().GetPolicy())
+			assert.Equal(t, pol.Metadata.Uid,
+				i.AuthorizationDecisionReason.Details.GetPolicyMatch().GetPolicy().PolicyRef.Uid)
+		}
+	}
 }
 
 func TestAuthenticateFailure(t *testing.T) {

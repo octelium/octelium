@@ -425,7 +425,7 @@ func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1
 		ret.RequestContext = s.getReqCtx(downstreamInfo, req.Request.Request, req.Service)
 	}
 
-	isAuthorized, reason, err := s.isAuthorizedWithMetrics(ctx, ret.RequestContext)
+	isAuthorized, reason, err := s.isAuthorizedWithMetrics(ctx, ret.RequestContext, req.Additional)
 	if err != nil {
 		return nil, err
 	}
@@ -440,10 +440,11 @@ func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1
 	return ret, nil
 }
 
-func (s *Server) isAuthorizedWithMetrics(ctx context.Context, req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+func (s *Server) isAuthorizedWithMetrics(ctx context.Context,
+	req *corev1.RequestContext, additional *coctovigilv1.Authorization) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 	startedAt := time.Now()
 	s.commonMetrics.atAuthorizationRequestStart()
-	isAuthorized, reason, err := s.isAuthorized(ctx, req)
+	isAuthorized, reason, err := s.isAuthorized(ctx, req, additional)
 	s.commonMetrics.atAuthorizationRequestEnd(startedAt,
 		metric.WithAttributeSet(
 			attribute.NewSet(
@@ -521,8 +522,8 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 }
 
 func (s *Server) DoAuthorize(ctx context.Context,
-	req *corev1.RequestContext) (*coctovigilv1.AuthorizeResponse, error) {
-	isAuthorized, reason, err := s.isAuthorized(ctx, req)
+	req *corev1.RequestContext, additional *coctovigilv1.Authorization) (*coctovigilv1.AuthorizeResponse, error) {
+	isAuthorized, reason, err := s.isAuthorized(ctx, req, additional)
 	if err != nil {
 		return nil, err
 	}
@@ -534,10 +535,11 @@ func (s *Server) DoAuthorize(ctx context.Context,
 }
 
 func (s *Server) isAuthorized(ctx context.Context,
-	req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+	req *corev1.RequestContext,
+	additional *coctovigilv1.Authorization) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 
 	if s.isAnonymousAuthorizationEnabled(req.Service) {
-		return s.isAuthorizedAnonymous(ctx, req)
+		return s.isAuthorizedAnonymous(ctx, req, additional)
 	}
 
 	reason := &corev1.AccessLog_Entry_Common_Reason{}
@@ -651,7 +653,8 @@ func (s *Server) isAuthorized(ctx context.Context,
 	defer cancelFn()
 
 	resp, err := s.getDecision(ctx, &getDecisionReq{
-		i: req,
+		i:          req,
+		additional: additional,
 	})
 	if err != nil {
 		return false, reason, err
@@ -677,14 +680,15 @@ func (s *Server) isAnonymousAuthorizationEnabled(svc *corev1.Service) bool {
 }
 
 func (s *Server) isAuthorizedAnonymous(ctx context.Context,
-	req *corev1.RequestContext) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+	req *corev1.RequestContext, additional *coctovigilv1.Authorization) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 	ctx, cancelFn := context.WithTimeout(ctx, 2*time.Second)
 	defer cancelFn()
 
 	reason := &corev1.AccessLog_Entry_Common_Reason{}
 
 	resp, err := s.getDecision(ctx, &getDecisionReq{
-		i: req,
+		i:          req,
+		additional: additional,
 	})
 	if err != nil {
 		return false, reason, err
