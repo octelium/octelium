@@ -139,7 +139,6 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) isURLSameClusterOrigin(arg string) bool {
-
 	if len(arg) == 0 || len(arg) > 1500 {
 		return false
 	}
@@ -149,11 +148,16 @@ func (s *server) isURLSameClusterOrigin(arg string) bool {
 		return false
 	}
 
-	if !strings.HasSuffix(redirectURL.Hostname(), s.domain) {
+	hostname := redirectURL.Hostname()
+
+	switch {
+	case strings.HasSuffix(hostname, "."+s.domain):
+		return true
+	case hostname == s.domain:
+		return true
+	default:
 		return false
 	}
-
-	return true
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
