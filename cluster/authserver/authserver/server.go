@@ -265,19 +265,14 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 		return err
 	}
 
-	s.webProvidersC.Lock()
-	defer s.webProvidersC.Unlock()
-
-	s.assertionProvidersC.Lock()
-	defer s.assertionProvidersC.Unlock()
-
 	zap.L().Debug("Resetting the Identity Provider list")
 
-	s.webProvidersC.connectors = []utils.Provider{}
-	s.assertionProvidersC.connectors = []utils.Provider{}
+	webProvidersConnectors := []utils.Provider{}
+	assertionProvidersConnectors := []utils.Provider{}
 
 	doAddWeb := func(idp *corev1.IdentityProvider) error {
 		var c utils.Provider
+		var err error
 
 		switch idp.Spec.Type.(type) {
 		case *corev1.IdentityProvider_Spec_Github_:
@@ -315,7 +310,7 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 			return nil
 		}
 
-		s.webProvidersC.connectors = append(s.webProvidersC.connectors, c)
+		webProvidersConnectors = append(webProvidersConnectors, c)
 		zap.L().Debug("Added web IdentityProvider", zap.String("name", c.Name()))
 		return nil
 	}
@@ -332,7 +327,7 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			s.assertionProvidersC.connectors = append(s.assertionProvidersC.connectors, c)
+			assertionProvidersConnectors = append(assertionProvidersConnectors, c)
 			zap.L().Debug("Added assertion IdentityProvider", zap.String("name", c.Name()))
 		}
 
@@ -354,6 +349,14 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Successfully set the Identity Provider list")
+
+	s.webProvidersC.Lock()
+	s.webProvidersC.connectors = webProvidersConnectors
+	s.webProvidersC.Unlock()
+
+	s.assertionProvidersC.Lock()
+	s.assertionProvidersC.connectors = assertionProvidersConnectors
+	s.assertionProvidersC.Unlock()
 
 	return nil
 }
