@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/crewjam/saml"
@@ -60,7 +61,12 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
 			if err != nil {
 				return nil, err
 			}
-			return samlsp.FetchMetadata(ctx, http.DefaultClient, *idpMetadataURL)
+			return samlsp.FetchMetadata(ctx, &http.Client{
+				Timeout: 10 * time.Second,
+				Transport: &http.Transport{
+					TLSHandshakeTimeout: 5 * time.Second,
+				},
+			}, *idpMetadataURL)
 		default:
 			return nil, errors.Errorf("Either metadata or metadataURL must be supplied")
 		}
@@ -81,17 +87,15 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
 				return fmt.Sprintf("https://%s", opts.ClusterConfig.Status.Domain)
 			}(),
 			AcsURL: func() url.URL {
-				ret, _ := url.Parse(utils.GetCallbackURL(opts.ClusterConfig.Status.Domain))
+				ret, err := url.Parse(utils.GetCallbackURL(opts.ClusterConfig.Status.Domain))
+				if err != nil {
+					return url.URL{}
+				}
 				return *ret
 			}(),
 
 			IDPMetadata: idpMetadata,
-			ForceAuthn: func() *bool {
-				if conf.ForceAuthn {
-					return utils_types.BoolToPtr(true)
-				}
-				return nil
-			}(),
+			ForceAuthn:  utils_types.BoolToPtr(conf.ForceAuthn),
 		},
 	}
 
@@ -138,9 +142,16 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 
 	assertion, err := c.sp.ParseResponse(r, []string{reqID})
 	if err != nil {
-		merr := err.(*saml.InvalidResponseError)
-		zap.L().Debug("Could not validate SAML responses", zap.Error(merr), zap.Error(merr.PrivateErr))
+		if merr, ok := err.(*saml.InvalidResponseError); ok {
+			zap.L().Debug("Could not validate SAML responses",
+				zap.Error(merr), zap.Error(merr.PrivateErr))
+		} else {
+			zap.L().Debug("Could not validate SAML responses", zap.Error(err))
+		}
 		return nil, err
+	}
+	if assertion == nil {
+		return nil, errors.Errorf("Nil assertion")
 	}
 
 	var assertionStr string
@@ -149,6 +160,10 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 	}
 
 	identifier := getValStr(assertion, getAttrIdentifier(conf))
+	if identifier == "" {
+		return nil, errors.Errorf("Could not get identifier")
+	}
+
 	email := ""
 	if govalidator.IsEmail(identifier) {
 		email = identifier
