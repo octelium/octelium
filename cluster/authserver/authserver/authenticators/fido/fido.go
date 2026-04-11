@@ -238,10 +238,6 @@ func (u *WebauthnUser) WebAuthnDisplayName() string {
 	return ""
 }
 
-func (u *WebauthnUser) WebAuthnIcon() string {
-	return ""
-}
-
 func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 
 	if u.authn.Status.Info == nil || u.authn.Status.Info.GetFido() == nil {
@@ -390,7 +386,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 	{
 		authnList, err := c.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
 			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("status.info.webauthn.idHash",
+				urscsrv.FilterFieldEQValStr("status.info.fido.idHash",
 					base64.StdEncoding.EncodeToString(idHash)),
 			},
 		})
@@ -406,7 +402,9 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 	var isResidentKey bool
 	if parsedResponse.ClientExtensionResults != nil {
 		if credProps, ok := parsedResponse.ClientExtensionResults["credProps"].(map[string]any); ok {
-			isResidentKey = credProps["rk"].(bool)
+			if rk, ok := credProps["rk"].(bool); ok {
+				isResidentKey = rk
+			}
 		}
 	}
 
