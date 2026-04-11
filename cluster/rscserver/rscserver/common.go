@@ -357,7 +357,7 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 		}
 	}
 
-	if s.doPostUpdate(ctx, req, old, api, version, kind); err != nil {
+	if err := s.doPostUpdate(ctx, req, old, api, version, kind); err != nil {
 		zap.L().Warn("Could not do postUpdate", zap.Error(err))
 	}
 
@@ -478,6 +478,8 @@ func (s *Server) doList(ctx context.Context,
 	if err != nil {
 		return nil, nil, rerr.InternalWithErr(err)
 	}
+
+	defer rows.Close()
 
 	for rows.Next() {
 		var data []byte
@@ -712,8 +714,15 @@ func (s *Server) doSetCache(ctx context.Context, itm umetav1.ResourceObjectI, ap
 
 	itmBytes, _ := pbutils.Marshal(itm)
 
-	s.redisC.Set(ctx, getObjectKeyByName(api, version, kind, md.Name), string(itmBytes), 0).Result()
-	s.redisC.Set(ctx, getObjectKeyByUID(md.Uid), string(itmBytes), 0).Result()
+	if _, err := s.redisC.Set(ctx,
+		getObjectKeyByName(api, version, kind, md.Name), string(itmBytes), 0).Result(); err != nil {
+		zap.L().Warn("Could not set redis object",
+			zap.String("key", getObjectKeyByName(api, version, kind, md.Name)), zap.Error(err))
+	}
+	if _, err := s.redisC.Set(ctx, getObjectKeyByUID(md.Uid), string(itmBytes), 0).Result(); err != nil {
+		zap.L().Warn("Could not set redis object",
+			zap.String("key", getObjectKeyByUID(md.Uid)), zap.Error(err))
+	}
 }
 
 func (s *Server) doDeleteCache(ctx context.Context, itm umetav1.ResourceObjectI, api, version, kind string) {

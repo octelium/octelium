@@ -107,41 +107,6 @@ func NewServer(ctx context.Context, o *Opts) (*Server, error) {
 		commonMetrics: commonMetrics,
 	}
 
-	/*
-		if os.Getenv("OCTELIUM_USE_SECRETMAN") == "true" {
-			ret.hasSecretManager = true
-			addr := os.Getenv("OCTELIUM_SECRETMAN_ADDR")
-			retryCodes := []codes.Code{
-				codes.Unavailable,
-				codes.ResourceExhausted,
-				codes.Unknown,
-				codes.Aborted,
-				codes.DataLoss,
-				codes.Internal,
-				codes.DeadlineExceeded,
-			}
-
-			unaryMiddlewares := []grpc.UnaryClientInterceptor{
-				grpc_retry.UnaryClientInterceptor(
-					grpc_retry.WithMax(32),
-					grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
-					grpc_retry.WithCodes(retryCodes...)),
-			}
-
-			zap.L().Info("Using secretManager", zap.String("address", addr))
-
-			grpcConn, err := grpc.NewClient(
-				addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
-				grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			ret.secretmanC = csecretmanv1.NewMainServiceClient(grpcConn)
-		}
-	*/
-
 	return ret, nil
 }
 
