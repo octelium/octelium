@@ -58,12 +58,13 @@ func newDctx(ctx context.Context,
 func (c *dctx) close() error {
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
 	}
-	c.conn = nil
 	return nil
 }
 
-func (c *dctx) serve(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) {
+func (c *dctx) serve(ctx context.Context,
+	lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) {
 	c.proxy = newProxy(c, lbManager)
 	c.proxy.serve(ctx, svc, secretMan)
 }

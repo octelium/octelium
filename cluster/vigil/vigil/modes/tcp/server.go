@@ -17,14 +17,12 @@
 package tcp
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
-	"time"
-
 	"sync"
-
-	"context"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -69,10 +67,7 @@ type Server struct {
 	sessionCtl *controllers.SessionController
 	lbManager  *loadbalancer.LBManager
 
-	// logManager *logmanager.LogManager
-
 	secretMan *secretman.SecretManager
-	// metricsStore *metricsstore.MetricsStore
 
 	crtMan struct {
 		mu  sync.RWMutex
@@ -101,7 +96,6 @@ func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
 }
 
 func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
-
 	server := &Server{
 		doneComplete: make(chan struct{}),
 		octovigilC:   opts.OctovigilC,
@@ -133,23 +127,25 @@ func (s *Server) Close() error {
 	}
 
 	s.isClosed = true
-	s.cancelFn()
+	if s.cancelFn != nil {
+		s.cancelFn()
+	}
 
 	zap.L().Debug("Closing TCP server")
+
+	if s.lis != nil {
+		s.lis.Close()
+	}
+
 	s.dctxMap.mu.Lock()
 	for _, dctx := range s.dctxMap.dctxMap {
 		dctx.close()
 	}
 	s.dctxMap.mu.Unlock()
 
-	if s.lis != nil {
-		s.lis.Close()
-	}
-
 	zap.L().Debug("TCP server closed")
 	close(s.doneComplete)
 
-	// s.logManager.Close()
 	return nil
 }
 
@@ -171,8 +167,6 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	if err := setKeepAlive(c); err != nil {
 		zap.L().Debug("Could not set keepAlive", zap.Error(err))
-		c.Close()
-		return
 	}
 
 	s.tlsCfgMan.mu.RLock()
@@ -185,6 +179,8 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			c.Close()
 			return
 		}
+	} else {
+		s.tlsCfgMan.mu.RUnlock()
 	}
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
@@ -219,77 +215,61 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	}
 
 	i := authResp.RequestContext
-
 	dctx := newDctx(ctx, c, i, authResp)
 
-	{
-
-		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
-			StartTime:       startTime,
-			IsAuthenticated: true,
-			IsAuthorized:    true,
-			ReqCtx:          i,
-			ConnectionID:    dctx.id,
-			Reason:          authResp.AuthorizationDecisionReason,
-		})
-		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
-			Tcp: &corev1.AccessLog_Entry_Info_TCP{
-				Type: corev1.AccessLog_Entry_Info_TCP_START,
-			},
-		}
-		otelutils.EmitAccessLog(logE)
+	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
+		StartTime:       startTime,
+		IsAuthenticated: true,
+		IsAuthorized:    true,
+		ReqCtx:          i,
+		ConnectionID:    dctx.id,
+		Reason:          authResp.AuthorizationDecisionReason,
+	})
+	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
+		Tcp: &corev1.AccessLog_Entry_Info_TCP{
+			Type: corev1.AccessLog_Entry_Info_TCP_START,
+		},
 	}
+	otelutils.EmitAccessLog(logE)
 
-	{
-		s.dctxMap.mu.Lock()
-		s.dctxMap.dctxMap[dctx.id] = dctx
-		s.dctxMap.mu.Unlock()
-	}
+	s.dctxMap.mu.Lock()
+	s.dctxMap.dctxMap[dctx.id] = dctx
+	s.dctxMap.mu.Unlock()
 
 	s.metricsStore.AtRequestStart()
 	dctx.serve(ctx, s.lbManager, svc, s.secretMan)
 	s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
 
-	defer dctx.close()
+	dctx.close()
 
-	{
-		s.dctxMap.mu.Lock()
-		delete(s.dctxMap.dctxMap, dctx.id)
-		s.dctxMap.mu.Unlock()
+	s.dctxMap.mu.Lock()
+	delete(s.dctxMap.dctxMap, dctx.id)
+	s.dctxMap.mu.Unlock()
+
+	logEnd := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
+		StartTime:       startTime,
+		IsAuthenticated: true,
+		IsAuthorized:    true,
+		ReqCtx:          i,
+		ConnectionID:    dctx.id,
+	})
+	logEnd.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
+		Tcp: &corev1.AccessLog_Entry_Info_TCP{
+			Type:          corev1.AccessLog_Entry_Info_TCP_END,
+			ReceivedBytes: uint64(dctx.proxy.recvBytes),
+			SentBytes:     uint64(dctx.proxy.sentBytes),
+		},
 	}
-
-	{
-
-		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
-			StartTime:       startTime,
-			IsAuthenticated: true,
-			IsAuthorized:    true,
-			ReqCtx:          i,
-			ConnectionID:    dctx.id,
-		})
-
-		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
-			Tcp: &corev1.AccessLog_Entry_Info_TCP{
-				Type:          corev1.AccessLog_Entry_Info_TCP_END,
-				ReceivedBytes: uint64(dctx.proxy.recvBytes),
-				SentBytes:     uint64(dctx.proxy.sentBytes),
-			},
-		}
-
-		otelutils.EmitAccessLog(logE)
-	}
-
+	otelutils.EmitAccessLog(logEnd)
 }
 
 func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn) *coctovigilv1.DownstreamRequest {
-
 	return &coctovigilv1.DownstreamRequest{
 		Source: vigilutils.GetDownstreamRequestSource(c),
 	}
 }
 
 func (s *Server) setTLSConfig(ctx context.Context) error {
-
 	crt, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
 	if err != nil && !grpcerr.IsNotFound(err) {
 		return err
@@ -307,11 +287,6 @@ func (s *Server) setTLSConfig(ctx context.Context) error {
 		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			s.crtMan.mu.RLock()
 			defer s.crtMan.mu.RUnlock()
-			/*
-				if s.crtMan.crt == nil {
-					return nil, nil
-				}
-			*/
 			return ocrypto.GetTLSCertificate(s.crtMan.crt)
 		},
 	}
@@ -339,16 +314,9 @@ func (s *Server) Run(ctx context.Context) error {
 	ctx, cancelFn := context.WithCancel(ctx)
 	s.cancelFn = cancelFn
 
-	/*
-		if err := s.logManager.Run(ctx); err != nil {
-			return err
-		}
-	*/
-
 	go s.serve(ctx)
 
 	zap.L().Debug("TCP server is now running")
-
 	return nil
 }
 
@@ -357,24 +325,22 @@ func (s *Server) serve(ctx context.Context) {
 
 	for {
 		conn, err := s.lis.Accept()
-
 		if err != nil {
-			zap.L().Warn("Could not accept conn", zap.Error(err))
-			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.L().Debug("Timeout err")
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
 			select {
 			case <-ctx.Done():
-				zap.L().Debug("shutting down server")
+				zap.L().Debug("shutting down server gracefully via context")
 				return
 			default:
-				time.Sleep(100 * time.Millisecond)
-				continue
 			}
 
+			if opErr, ok := err.(*net.OpError); ok && !opErr.Temporary() && !opErr.Timeout() {
+				zap.L().Debug("Listener closed, stopping accept loop")
+				return
+			}
+
+			zap.L().Warn("Could not accept conn", zap.Error(err))
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
 
 		go s.handleConn(ctx, conn)
@@ -382,13 +348,15 @@ func (s *Server) serve(ctx context.Context) {
 }
 
 func setKeepAlive(conn net.Conn) error {
-	tcpConn := conn.(*net.TCPConn)
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
 	if err := tcpConn.SetKeepAlive(true); err != nil {
 		return err
 	}
 	if err := tcpConn.SetKeepAlivePeriod(40 * time.Second); err != nil {
 		return err
 	}
-
 	return nil
 }

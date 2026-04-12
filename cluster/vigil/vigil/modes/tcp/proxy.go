@@ -47,13 +47,7 @@ func newProxy(dctx *dctx, lbManager *loadbalancer.LBManager) *proxy {
 }
 
 func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) {
-
-	var conn connCloser
-	if p.dctx.isTLS {
-		conn = p.dctx.conn.(*tls.Conn)
-	} else {
-		conn = p.dctx.conn.(*net.TCPConn)
-	}
+	conn := p.dctx.conn
 
 	upstreamConn, err := p.getUpstreamConn(ctx, svc, secretMan)
 	if err != nil {
@@ -66,8 +60,7 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 		zap.String("id", p.dctx.id), zap.Int64("received", p.recvBytes), zap.Int64("sent", p.sentBytes))
 }
 
-func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) (connCloser, error) {
-
+func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) (net.Conn, error) {
 	upstream, err := p.lbManager.GetUpstream(ctx, p.dctx.authResp)
 	if err != nil {
 		return nil, err
@@ -82,24 +75,23 @@ func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secret
 		return tls.Dial("tcp", upstream.HostPort, tlsCfg)
 	}
 
-	ret, err := net.DialTimeout("tcp", upstream.HostPort, 20*time.Second)
+	conn, err := net.DialTimeout("tcp", upstream.HostPort, 20*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	return ret.(*net.TCPConn), nil
-
+	return conn, nil
 }
 
-func (p *proxy) doServe(conn, connBackend connCloser) {
-	defer connBackend.Close()
+func (p *proxy) doServe(clientConn, backendConn net.Conn) {
+	defer backendConn.Close()
 
 	p.wg.Add(2)
-	go p.connCopy(conn, connBackend, true)
-	go p.connCopy(connBackend, conn, false)
+	go p.connCopy(clientConn, backendConn, true)
+	go p.connCopy(backendConn, clientConn, false)
 	p.wg.Wait()
 }
 
-func (p *proxy) connCopy(dst, src connCloser, isRecv bool) {
+func (p *proxy) connCopy(dst, src net.Conn, isRecv bool) {
 	defer p.wg.Done()
 
 	n, _ := io.Copy(dst, src)
@@ -109,18 +101,22 @@ func (p *proxy) connCopy(dst, src connCloser, isRecv bool) {
 		p.sentBytes = n
 	}
 
-	if err := dst.CloseWrite(); err != nil {
+	if err := closeWrite(dst); err != nil {
 		zap.L().Debug("Could not closeWrite dst", zap.String("id", p.dctx.id), zap.Error(err))
-		return
 	}
 
 	if err := dst.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
 		zap.L().Debug("Could not set read deadline", zap.String("id", p.dctx.id), zap.Error(err))
 	}
-
 }
 
-type connCloser interface {
-	net.Conn
+func closeWrite(conn net.Conn) error {
+	if cw, ok := conn.(closeWriter); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+type closeWriter interface {
 	CloseWrite() error
 }
