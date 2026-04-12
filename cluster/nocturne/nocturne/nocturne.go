@@ -66,8 +66,8 @@ func Run(ctx context.Context) error {
 
 	watcher.InitWatcher(octeliumC).Run(ctx)
 
-	podcontroller.NewController(k8sC,
-		octeliumC, kubeInformerFactory.Core().V1().Pods(),
+	podCtl := podcontroller.NewController(kubeInformerFactory.Core().V1().Pods(),
+		octeliumC,
 		umetav1.GetObjectReference(region))
 	k8ssecretcontroller.NewController(k8sC, octeliumC, kubeInformerFactory.Core().V1().Secrets())
 	k8sservicecontroller.NewController(k8sC, octeliumC, kubeInformerFactory.Core().V1().Services())
@@ -93,12 +93,6 @@ func Run(ctx context.Context) error {
 			return err
 		}
 
-		/*
-			if err := watcher.Session(ctx, nil, sessCtl.OnAdd, sessCtl.OnUpdate, sessCtl.OnDelete); err != nil {
-				return err
-			}
-		*/
-
 		if err := watcher.ClusterConfig(ctx, nil, cccontroller.NewController(octeliumC, k8sC).OnUpdate); err != nil {
 			return err
 		}
@@ -107,6 +101,8 @@ func Run(ctx context.Context) error {
 	stopCh := make(chan struct{})
 
 	kubeInformerFactory.Start(stopCh)
+
+	go podCtl.Run(ctx, 2)
 
 	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Nocturne is now running...")
