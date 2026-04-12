@@ -60,7 +60,6 @@ type Server struct {
 	sessionCtl *controllers.SessionController
 	lbManager  *loadbalancer.LBManager
 
-	// logManager *logmanager.LogManager
 	secretMan *secretman.SecretManager
 
 	svcRef *metav1.ObjectReference
@@ -94,7 +93,6 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 }
 
 func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
-
 	return nil
 }
 
@@ -121,6 +119,11 @@ func (s *Server) Run(ctx context.Context) error {
 	s.srv.Handler = s
 
 	go func() {
+		<-ctx.Done()
+		s.Close()
+	}()
+
+	go func() {
 		if err := s.srv.ListenAndServe(); err != nil {
 			zap.L().Debug("Failed to listen DNS server", zap.Error(err))
 		}
@@ -137,40 +140,42 @@ func (s *Server) Close() error {
 	}
 	zap.L().Debug("Starting closing DNS server")
 	s.isClosed = true
-	s.cancelFn()
+	if s.cancelFn != nil {
+		s.cancelFn()
+	}
 
-	s.srv.Shutdown()
+	if s.srv != nil {
+		_ = s.srv.Shutdown()
+	}
 
-	// s.logManager.Close()
 	zap.L().Debug("DNS server is now closed")
 	return nil
 }
 
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
-
 	startedAt := time.Now()
-	if r == nil || len(r.Question) == 0 {
-		msg := dns.Msg{}
-		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(&msg)
+	if r == nil {
 		return
 	}
+
+	if len(r.Question) != 1 {
+		msg := new(dns.Msg)
+		msg.SetRcode(r, dns.RcodeNotImplemented)
+		_ = w.WriteMsg(msg)
+		return
+	}
+
 	s.metricsStore.AtRequestStart()
 	defer s.metricsStore.AtRequestEnd(startedAt, nil)
-	msg := dns.Msg{}
-	msg.SetReply(r)
 
 	svc := s.vCache.GetService()
-	if svc == nil {
-		zap.L().Warn("Could not get the Service from cache")
+	if svc == nil || svc.Spec.IsDisabled {
+		if svc == nil {
+			zap.L().Warn("Could not get the Service from cache")
+		}
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
-		return
-	}
-
-	if svc.Spec.IsDisabled {
-		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
@@ -185,12 +190,13 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		address = addr.IP.String()
 		port = addr.Port
 	default:
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
-	q := msg.Question[0]
+	q := r.Question[0]
 
 	req := &coctovigilv1.DownstreamRequest{
 		Source: &coctovigilv1.DownstreamRequest_Source{
@@ -212,14 +218,16 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	})
 	if err != nil {
 		zap.L().Warn("Could not get AuthenticateAndAuthorize", zap.Error(err))
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
 	if !authResp.IsAuthenticated {
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
@@ -255,54 +263,71 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if !authResp.IsAuthorized {
+		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeRefused)
 		otelutils.EmitAccessLog(logE)
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
 	upstream, err := s.lbManager.GetUpstream(ctx, authResp)
 	if err != nil {
 		zap.L().Warn("Could not get lb upstream", zap.Error(err))
+		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeServerFailure)
+		otelutils.EmitAccessLog(logE)
+
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
+
+	clientReq := r.Copy()
 
 	client := dns.Client{
 		Net: func() string {
 			if upstream.URL == nil {
-				return ""
+				return "udp"
 			}
 			switch upstream.URL.Scheme {
 			case "tls", "tcp-tls", "dot":
 				return "tcp-tls"
+			case "tcp":
+				return "tcp"
+			default:
+				return "udp"
 			}
-			return ""
 		}(),
 		Timeout: 5 * time.Second,
 	}
 
-	clientReq := dns.Msg{}
-	clientReq.SetQuestion(q.Name, q.Qtype)
-
-	proxiedMsg, _, err := client.Exchange(&clientReq, upstream.HostPort)
-	if err != nil {
+	proxiedMsg, _, err := client.Exchange(clientReq, upstream.HostPort)
+	if err != nil || proxiedMsg == nil {
 		zap.L().Warn("Could not do exchange", zap.Error(err), zap.String("upstream", upstream.HostPort))
+		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeServerFailure)
+		otelutils.EmitAccessLog(logE)
+
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		_ = w.WriteMsg(msg)
 		return
 	}
 
-	msg.Answer = proxiedMsg.Answer
-	msg.Extra = proxiedMsg.Extra
-	msg.Ns = proxiedMsg.Ns
-	msg.Rcode = proxiedMsg.Rcode
-	w.WriteMsg(&msg)
+	resp := new(dns.Msg)
+	resp.MsgHdr = proxiedMsg.MsgHdr
+	resp.Id = r.Id
 
-	logE.Entry.Info.GetDns().Rcode = int64(msg.Rcode)
-	if len(msg.Answer) > 0 {
-		answer := msg.Answer[0]
+	resp.Question = r.Question
+	resp.Answer = proxiedMsg.Answer
+	resp.Ns = proxiedMsg.Ns
+	resp.Extra = proxiedMsg.Extra
+
+	_ = w.WriteMsg(resp)
+
+	logE.Entry.Info.GetDns().Rcode = int64(resp.Rcode)
+	if len(resp.Answer) > 0 {
+		answer := resp.Answer[0]
 		logE.Entry.Info.GetDns().Answer = strings.TrimPrefix(answer.String(), answer.Header().String())
 	}
 	otelutils.EmitAccessLog(logE)
