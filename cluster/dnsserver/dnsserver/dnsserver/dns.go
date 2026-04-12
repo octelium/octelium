@@ -127,7 +127,12 @@ func (s *DNSServer) Unset(svc *corev1.Service) {
 }
 
 func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
-	if r == nil || len(r.Question) == 0 {
+
+	if r == nil {
+		return
+	}
+
+	if len(r.Question) == 0 {
 		msg := dns.Msg{}
 		msg.SetRcode(r, dns.RcodeRefused)
 		w.WriteMsg(&msg)
@@ -290,7 +295,7 @@ func (s *DNSServer) Run(ctx context.Context) error {
 			if err := srv.ListenAndServe(); err != nil {
 				zap.L().Debug("Failed to set udp listener", zap.Error(err))
 			}
-			zap.L().Debug("DNS server existed...")
+			zap.L().Debug("DNS server exited...")
 		}()
 	}
 
@@ -299,9 +304,7 @@ func (s *DNSServer) Run(ctx context.Context) error {
 
 func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error) {
 
-	// zap.L().Debug("Getting proxied answer", zap.String("domain", domain), zap.Uint16("type", typ))
 	if cached := s.fallbackZoneCache.get(domain, typ); cached != nil {
-		// zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", cached))
 		return cached, nil
 	}
 
@@ -321,7 +324,6 @@ func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error
 
 	s.fallbackZoneCache.set(domain, typ, r)
 
-	// zap.L().Debug("Found cached proxied answer", zap.String("domain", domain), zap.Any("answer", r))
 	return r, nil
 }
 
