@@ -91,3 +91,105 @@ func TestFunctionJSON(t *testing.T) {
 	}
 
 }
+
+func TestFunctionNet(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	env, err := cel.NewEnv(
+		cel.Declarations(
+			decls.NewVar("ctx", decls.Dyn),
+			decls.NewVar("attrs", decls.Dyn),
+		),
+		CELLib(),
+	)
+	assert.Nil(t, err)
+
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{`net.isIP("192.168.1.1")`, true},
+		{`net.isIP("not-an-ip")`, false},
+		{`net.isIPv4("10.0.0.1")`, true},
+		{`net.isIPv4("2001:db8::1")`, false},
+		{`net.isIPv6("2001:db8::1")`, true},
+		{`net.isIPv6("192.168.1.1")`, false},
+		{`net.isPrivateIP("10.5.0.1")`, true},
+		{`net.isPrivateIP("8.8.8.8")`, false},
+		{`net.isIPInRange("192.168.1.50", "192.168.1.0/24")`, true},
+		{`net.isIPInRange("10.0.0.1", "192.168.1.0/24")`, false},
+	}
+
+	for _, tc := range cases {
+		ast, iss := env.Compile(tc.expr)
+		assert.Nil(t, iss.Err())
+
+		prg, err := env.Program(ast)
+		assert.Nil(t, err)
+
+		out, _, err := prg.ContextEval(ctx, map[string]any{})
+		assert.Nil(t, err)
+
+		res, ok := out.Value().(bool)
+		assert.True(t, ok)
+		assert.Equal(t, tc.want, res)
+	}
+}
+
+func TestFunctionTime(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	env, err := cel.NewEnv(
+		cel.Declarations(
+			decls.NewVar("ctx", decls.Dyn),
+			decls.NewVar("attrs", decls.Dyn),
+		),
+		CELLib(),
+	)
+	assert.Nil(t, err)
+
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{`time.isWeekday(timestamp("2023-10-18T12:00:00Z"))`, true},
+		{`time.isWeekend(timestamp("2023-10-18T12:00:00Z"))`, false},
+
+		{`time.isWeekday(timestamp("2023-10-21T12:00:00Z"))`, false},
+		{`time.isWeekend(timestamp("2023-10-21T12:00:00Z"))`, true},
+
+		{`time.isWeekdayInTZ(timestamp("2023-10-20T23:00:00Z"), "Asia/Tokyo")`, false},
+		{`time.isWeekendInTZ(timestamp("2023-10-20T23:00:00Z"), "Asia/Tokyo")`, true},
+
+		{`time.isWeekdayInTZ(timestamp("2023-10-22T23:00:00Z"), "Asia/Tokyo")`, true},
+		{`time.isWeekendInTZ(timestamp("2023-10-22T23:00:00Z"), "Asia/Tokyo")`, false},
+	}
+
+	for _, tc := range cases {
+
+		ast, iss := env.Compile(tc.expr)
+		assert.Nil(t, iss.Err())
+
+		prg, err := env.Program(ast)
+		assert.Nil(t, err)
+
+		out, _, err := prg.ContextEval(ctx, map[string]any{})
+		assert.Nil(t, err)
+
+		res, ok := out.Value().(bool)
+		assert.True(t, ok)
+		assert.Equal(t, tc.want, res)
+	}
+}
