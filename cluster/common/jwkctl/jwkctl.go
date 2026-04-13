@@ -240,7 +240,12 @@ func (c *Controller) createToken(content *authv1.TokenT0_Content) (string, error
 		return "", err
 	}
 
-	ret.Signature = ed25519.Sign(key.key.(ed25519.PrivateKey), contentBytes)
+	switch key := key.key.(type) {
+	case ed25519.PrivateKey:
+		ret.Signature = ed25519.Sign(key, contentBytes)
+	default:
+		return "", errors.Errorf("Unsupported key type")
+	}
 
 	tknBytes, err := pbutils.Marshal(ret)
 	if err != nil {
@@ -366,8 +371,13 @@ func (c *Controller) parseToken(tknStr string) (*authv1.TokenT0, error) {
 		return nil, err
 	}
 
-	if isValid := ed25519.Verify(key.key.(ed25519.PrivateKey).Public().(ed25519.PublicKey), contentByte, tkn.Signature); !isValid {
-		return nil, errors.Errorf("Invalid signature")
+	switch key := key.key.(type) {
+	case ed25519.PrivateKey:
+		if isValid := ed25519.Verify(key.Public().(ed25519.PublicKey), contentByte, tkn.Signature); !isValid {
+			return nil, errors.Errorf("Invalid signature")
+		}
+	default:
+		return nil, errors.Errorf("Unsupported key type")
 	}
 
 	if _, err := c.getUID(tkn.Content.Subject); err != nil {
