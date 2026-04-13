@@ -627,8 +627,7 @@ func TestServer(t *testing.T) {
 		buf := make([]byte, 1024)
 		n, err := stdoutPipe.Read(buf)
 		assert.Nil(t, err)
-		zap.S().Debugf("%s", buf[:n])
-
+		assert.True(t, n > 0)
 		sshC.Close()
 		c.Close()
 	}
@@ -938,11 +937,9 @@ func TestServer(t *testing.T) {
 
 				ret, err := checker.Authenticate(conn, key)
 				if err != nil {
-					zap.S().Debugf("Could not authenticate ssh key: %+v : %+v", err, key)
 					return nil, err
 				}
 
-				zap.S().Debugf("SSH client successfully authenticated with permissions: %+v", ret)
 				return ret, nil
 			},
 		}

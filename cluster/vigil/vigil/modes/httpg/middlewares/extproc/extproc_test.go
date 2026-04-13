@@ -188,9 +188,8 @@ func TestMiddleware(t *testing.T) {
 	assert.Nil(t, err)
 
 	go func() {
-		zap.S().Debug("running gRPC server...")
 		if err := grpcSrv.Serve(lisGRPC); err != nil {
-			zap.S().Infof("gRPC server closed: %+v", err)
+			zap.L().Warn("gRPC server closed", zap.Error(err))
 		}
 	}()
 
@@ -310,9 +309,8 @@ func TestMiddlewareTimeout(t *testing.T) {
 	assert.Nil(t, err)
 
 	go func() {
-		zap.S().Debug("running gRPC server...")
 		if err := grpcSrv.Serve(lisGRPC); err != nil {
-			zap.S().Infof("gRPC server closed: %+v", err)
+			zap.L().Info("gRPC server closed", zap.Error(err))
 		}
 	}()
 

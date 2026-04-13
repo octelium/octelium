@@ -51,7 +51,7 @@ func (c *middleware) gzipHandler() http.Handler {
 		gzhttp.CompressionLevel(gzip.DefaultCompression),
 		gzhttp.MinSize(gzhttp.DefaultMinSize))
 	if err != nil {
-		zap.S().Errorf("Could not create a gzhttp wrapper: %+v", err)
+		zap.L().Warn("Could not create a gzhttp wrapper", zap.Error(err))
 		return c.next
 	}
 

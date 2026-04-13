@@ -205,13 +205,12 @@ func TestServer(t *testing.T) {
 	assert.Nil(t, err)
 
 	{
-		res, err := db.Exec("SELECT datname FROM pg_database LIMIT 5;")
+		_, err := db.Exec("SELECT datname FROM pg_database LIMIT 5;")
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 	}
 
 	{
-		res, err := db.Exec(`
+		_, err := db.Exec(`
 		CREATE OR REPLACE FUNCTION helloWorld(name text) RETURNS void AS $helloWorld$
 		DECLARE
 		BEGIN
@@ -220,15 +219,13 @@ func TestServer(t *testing.T) {
 		$helloWorld$ LANGUAGE plpgsql;
 		`)
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 	}
 
 	{
-		res, err := db.Exec(`
+		_, err := db.Exec(`
 		SELECT "helloworld"('myname');
 		`)
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 	}
 
 	{
@@ -236,11 +233,9 @@ func TestServer(t *testing.T) {
 		SELECT "helloworld"('myname');
 		`)
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 
-		res1, err := res.Exec()
+		_, err = res.Exec()
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res1)
 
 		err = res.Close()
 		assert.Nil(t, err)
@@ -251,13 +246,11 @@ func TestServer(t *testing.T) {
 			ReadOnly: true,
 		})
 		assert.Nil(t, err)
-		res, err := tx.Exec("SELECT datname FROM pg_database LIMIT 5;")
+		_, err = tx.Exec("SELECT datname FROM pg_database LIMIT 5;")
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 
 		err = tx.Commit()
 		assert.Nil(t, err)
-		zap.S().Debugf("Res: %+v", res)
 	}
 
 	{
