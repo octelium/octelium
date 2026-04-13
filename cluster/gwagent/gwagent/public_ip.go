@@ -186,7 +186,7 @@ func getDefaultInterface() (string, error) {
 
 			for _, route := range routes {
 				if route.Dst == nil || route.Dst.String() == "0.0.0.0/0" {
-					zap.S().Debugf("Found default dev %s", link.Attrs().Name)
+					zap.L().Debug("Found default dev", zap.String("name", link.Attrs().Name))
 					return link.Attrs().Name, nil
 				}
 			}
@@ -199,7 +199,7 @@ func getDefaultInterface() (string, error) {
 
 			for _, route := range routes {
 				if route.Dst == nil || route.Dst.String() == "::/0" {
-					zap.S().Debugf("Found default dev %s", link.Attrs().Name)
+					zap.L().Debug("Found default dev", zap.String("name", link.Attrs().Name))
 					return link.Attrs().Name, nil
 				}
 			}
