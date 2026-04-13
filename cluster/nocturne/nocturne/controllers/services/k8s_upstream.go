@@ -386,6 +386,30 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 					}
 					return utils_types.BoolToPtr(spec.SecurityContext.ReadOnlyRootFilesystem)
 				}(),
+
+				Capabilities: func() *k8scorev1.Capabilities {
+					if spec.SecurityContext == nil || spec.SecurityContext.Capabilities == nil {
+						return nil
+					}
+					caps := spec.SecurityContext.Capabilities
+
+					return &k8scorev1.Capabilities{
+						Add: func() []k8scorev1.Capability {
+							var ret []k8scorev1.Capability
+							for _, cap := range caps.Add {
+								ret = append(ret, k8scorev1.Capability(cap))
+							}
+							return ret
+						}(),
+						Drop: func() []k8scorev1.Capability {
+							var ret []k8scorev1.Capability
+							for _, cap := range caps.Drop {
+								ret = append(ret, k8scorev1.Capability(cap))
+							}
+							return ret
+						}(),
+					}
+				}(),
 			},
 			VolumeMounts: func() []k8scorev1.VolumeMount {
 				if len(spec.VolumeMounts) < 1 {
