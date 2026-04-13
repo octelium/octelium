@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"mime"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -702,6 +703,22 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 
 					if err := apivalidation.ValidateGenASCII(v); err != nil {
 						return err
+					}
+				}
+			}
+
+			if typ.SecurityContext != nil {
+				if typ.SecurityContext.Capabilities != nil {
+					for _, cap := range typ.SecurityContext.Capabilities.Add {
+						if !k8sCapabilityRegex.MatchString(cap) {
+							return grpcutils.InvalidArg("Invalid capability: %s", cap)
+						}
+					}
+
+					for _, cap := range typ.SecurityContext.Capabilities.Drop {
+						if !k8sCapabilityRegex.MatchString(cap) {
+							return grpcutils.InvalidArg("Invalid capability: %s", cap)
+						}
 					}
 				}
 			}
@@ -1668,3 +1685,5 @@ func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*corev
 
 	return ret, nil
 }
+
+var k8sCapabilityRegex = regexp.MustCompile(`^(ALL|[A-Z][A-Z0-9_]{0,29})$`)
