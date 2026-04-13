@@ -97,7 +97,7 @@ func (w *Watcher) doCheckSession(ctx context.Context, sess *corev1.Session) erro
 
 func (w *Watcher) runCredentials(ctx context.Context) {
 
-	zap.S().Debugf("starting Credential watcher loop")
+	zap.L().Debug("starting Credential watcher loop")
 
 	doRun := func() error {
 

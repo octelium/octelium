@@ -55,7 +55,7 @@ func NewController(
 			}
 
 			if err := setCert(ctx, octeliumC, secret); err != nil {
-				zap.S().Errorf("Could not create cluster cert from k8s secret: %+v", err)
+				zap.L().Error("Could not create cluster cert from k8s secret", zap.Error(err))
 			}
 
 		},
@@ -78,27 +78,10 @@ func NewController(
 			}
 
 			if err := setCert(ctx, octeliumC, newSecret); err != nil {
-				zap.S().Errorf("Could not update cluster cert from k8s secret: %+v", err)
+				zap.L().Error("Could not update cluster cert from k8s secret", zap.Error(err))
 			}
 
 		},
-
-		/*
-			DeleteFunc: func(obj any) {
-				ctx := context.Background()
-
-				secret, ok := obj.(*k8scorev1.Secret)
-				if !ok {
-					return
-				}
-
-				if err := deleteCert(ctx, octeliumC, secret); err != nil {
-					zap.S().Errorf("Could not delete cluster cert from k8s secret: %+v", err)
-				}
-
-			},
-		*/
-
 	})
 }
 

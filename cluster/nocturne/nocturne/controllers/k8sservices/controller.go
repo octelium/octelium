@@ -56,7 +56,7 @@ func NewController(
 			}
 
 			if err := doHandle(ctx, octeliumC, k8sC, newSvc); err != nil {
-				zap.S().Errorf("Could not update DNSctl: %+v", err)
+				zap.L().Error("Could not doHandle", zap.Error(err))
 			}
 		},
 
@@ -70,7 +70,7 @@ func NewController(
 			}
 
 			if err := doHandle(ctx, octeliumC, k8sC, svc); err != nil {
-				zap.S().Errorf("Could not add DNSctl: %+v", err)
+				zap.L().Error("Could not doHandle", zap.Error(err))
 			}
 
 		},
