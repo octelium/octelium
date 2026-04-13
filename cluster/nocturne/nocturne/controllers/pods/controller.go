@@ -218,7 +218,7 @@ func (c *Controller) enqueueAllServices() {
 		c.enqueue(svcName)
 	}
 
-	zap.L().Debug("enqueueAllServices done", zap.Int("count", len(seen)))
+	// zap.L().Debug("enqueueAllServices done", zap.Int("count", len(seen)))
 }
 
 func (c *Controller) reconcile(ctx context.Context, svcName string) error {
