@@ -33,6 +33,9 @@ type dctx struct {
 
 	createdAt time.Time
 	i         *corev1.RequestContext
+
+	ready chan struct{}
+	err   error
 }
 
 func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {
@@ -42,6 +45,7 @@ func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {
 		addr:      addr,
 		createdAt: time.Now(),
 		i:         i,
+		ready:     make(chan struct{}),
 	}
 }
 

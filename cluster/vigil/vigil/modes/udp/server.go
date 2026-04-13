@@ -20,7 +20,6 @@ import (
 	"context"
 	"net"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -64,7 +63,6 @@ type Server struct {
 	sessionCtl *controllers.SessionController
 	lbManager  *loadbalancer.LBManager
 
-	// logManager *logmanager.LogManager
 	secretMan *secretman.SecretManager
 
 	Listener *net.UDPConn
@@ -106,7 +104,6 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 }
 
 func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
-
 	return nil
 }
 
@@ -188,12 +185,8 @@ func (s *Server) replyLoop(dctx *dctx) {
 	readBuf := make([]byte, udpBufSize)
 	for {
 		dctx.connUpstream.SetReadDeadline(time.Now().Add(udpConnTrackTimeout))
-	again:
 		read, err := dctx.connUpstream.Read(readBuf)
 		if err != nil {
-			if err, ok := err.(*net.OpError); ok && err.Err == syscall.ECONNREFUSED {
-				goto again
-			}
 			return
 		}
 		for i := 0; i != read; {
@@ -220,16 +213,16 @@ func (s *Server) doRun(ctx context.Context) {
 				continue
 			}
 
-			if err := s.handlePacket(ctx, readBuf, n, addr); err != nil {
-				zap.L().Warn("Could not handle packet", zap.Error(err))
-			}
+			go func(buf []byte, length int, source *net.UDPAddr) {
+				if err := s.handlePacket(ctx, buf, length, source); err != nil {
+					zap.L().Warn("Could not handle packet", zap.Error(err))
+				}
+			}(readBuf, n, addr)
 		}
-
 	}
 }
 
 func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.UDPAddr) error {
-
 	svc := s.vCache.GetService()
 	if svc == nil {
 		zap.L().Warn("Could not get the Service from cache")
@@ -282,7 +275,6 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 	var isNewlyCreated bool
 
 	s.dctxMap.mu.Lock()
-
 	dctx, ok := s.dctxMap.dctxMap[addr.String()]
 	if !ok {
 		dctx = newDctx(addr, authResp.RequestContext)
@@ -297,15 +289,21 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 	s.dctxMap.mu.Unlock()
 
 	if isNewlyCreated {
-		dctx.connUpstream, err = s.getUpstreamConn(ctx, authResp)
-		if err != nil {
+		dctx.connUpstream, dctx.err = s.getUpstreamConn(ctx, authResp)
+		close(dctx.ready)
+
+		if dctx.err != nil {
 			s.closeDctx(dctx)
-			return err
+			return dctx.err
 		}
 
 		go s.replyLoop(dctx)
 		zap.L().Debug("Successfully built new dctx", zap.String("addr", dctx.addr.String()))
 	} else {
+		<-dctx.ready
+		if dctx.err != nil {
+			return dctx.err
+		}
 		zap.L().Debug("Got stored dctx", zap.String("addr", dctx.addr.String()))
 	}
 
@@ -347,12 +345,13 @@ func (s *Server) Close() error {
 	s.lis.Close()
 
 	s.dctxMap.mu.Lock()
-	defer s.dctxMap.mu.Unlock()
-	for _, dctx := range s.dctxMap.dctxMap {
+	oldMap := s.dctxMap.dctxMap
+	s.dctxMap.dctxMap = make(map[string]*dctx)
+	s.dctxMap.mu.Unlock()
+
+	for _, dctx := range oldMap {
 		dctx.close()
 	}
-
-	s.dctxMap.dctxMap = make(map[string]*dctx)
 
 	zap.L().Debug("UDP server is now closed")
 	return nil
