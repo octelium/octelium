@@ -16,17 +16,14 @@ package authenticator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -35,6 +32,7 @@ import (
 	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -397,7 +395,7 @@ type assertionArgs struct {
 	assertion           string
 }
 
-func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) {
+func (a *authenticator) getAssertion(ctx context.Context) (*assertionArgs, error) {
 	var err error
 	if a.opts.Assertion == nil || a.opts.Assertion.Arg == "" {
 		return nil, errors.Errorf("No assertion argument found")
@@ -424,7 +422,7 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		if len(assertion.argMap) > 0 {
 			audience = assertion.argMap["audience"]
 		}
-		ret.assertion, err = a.getAssertionAzure(audience)
+		ret.assertion, err = a.getAssertionAzure(ctx, audience)
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +432,7 @@ func (a *authenticator) getAssertion(_ context.Context) (*assertionArgs, error) 
 		if len(assertion.argMap) > 0 {
 			audience = assertion.argMap["audience"]
 		}
-		ret.assertion, err = a.getAssertionGithubActions(audience)
+		ret.assertion, err = a.getAssertionGithubActions(ctx, audience)
 		if err != nil {
 			return nil, err
 		}
@@ -527,15 +525,11 @@ func getArgMap(arg string) map[string]string {
 	return ret
 }
 
-func (a *authenticator) getAssertionAzure(aud string) (string, error) {
+func (a *authenticator) getAssertionAzure(ctx context.Context, aud string) (string, error) {
 	const (
-		defaultMountPath     = "azure"
-		defaultResourceURL   = "https://management.azure.com/"
-		metadataEndpoint     = "http://169.254.169.254"
-		metadataAPIVersion   = "2021-05-01"
-		apiVersionQueryParam = "api-version"
-		resourceQueryParam   = "resource"
-		clientTimeout        = 10 * time.Second
+		metadataEndpoint   = "http://169.254.169.254/metadata/identity/oauth2/token"
+		metadataAPIVersion = "2021-05-01"
+		clientTimeout      = 10 * time.Second
 	)
 
 	type errorJSON struct {
@@ -557,56 +551,36 @@ func (a *authenticator) getAssertionAzure(aud string) (string, error) {
 		aud = a.domain
 	}
 
-	identityEndpoint, err := url.Parse(fmt.Sprintf("%s/metadata/identity/oauth2/token", metadataEndpoint))
-	if err != nil {
-		return "", errors.Errorf("could not create Azure metadata URL: %+v", err)
-	}
+	client := resty.New().SetTimeout(clientTimeout)
 
-	identityParameters := identityEndpoint.Query()
-	identityParameters.Add(apiVersionQueryParam, metadataAPIVersion)
-	identityParameters.Add(resourceQueryParam, aud)
-	identityEndpoint.RawQuery = identityParameters.Encode()
+	var successResp responseJSON
+	var errResp errorJSON
 
-	req, err := http.NewRequest(http.MethodGet, identityEndpoint.String(), nil)
-	if err != nil {
-		return "", errors.Errorf("Could not create Azure metadata url HTTP request: %+v", err)
-	}
-	req.Header.Add("Metadata", "true")
+	resp, err := client.R().
+		SetDebug(ldflags.IsDev()).
+		SetContext(ctx).
+		SetHeader("Metadata", "true").
+		SetQueryParams(map[string]string{
+			"api-version": metadataAPIVersion,
+			"resource":    aud,
+		}).
+		SetResult(&successResp).
+		SetError(&errResp).
+		Get(metadataEndpoint)
 
-	client := &http.Client{
-		Timeout: clientTimeout,
-	}
-	resp, err := client.Do(req)
 	if err != nil {
 		return "", errors.Errorf("Could not do HTTP request to Azure metadata url: %+v", err)
 	}
-	defer resp.Body.Close()
 
-	responseBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp errorJSON
-		err = json.Unmarshal(responseBytes, &errResp)
-		if err != nil {
-			return "", errors.Errorf("Could not unmarshal Azure metadata url error response: %+v", err)
-		}
-		return "", errors.Errorf("Could not get token from Azure metadata url: %+v: %+v",
+	if resp.IsError() {
+		return "", errors.Errorf("Could not get token from Azure metadata url: %s: %s",
 			errResp.Error, errResp.ErrorDescription)
 	}
 
-	var r responseJSON
-	err = json.Unmarshal(responseBytes, &r)
-	if err != nil {
-		return "", errors.Errorf("Could not unmarshal Azure metadata endpoint response: %+v", err)
-	}
-
-	return r.AccessToken, nil
+	return successResp.AccessToken, nil
 }
 
-func (a *authenticator) getAssertionGithubActions(aud string) (string, error) {
+func (a *authenticator) getAssertionGithubActions(ctx context.Context, aud string) (string, error) {
 	if aud == "" {
 		aud = fmt.Sprintf("https://%s", a.domain)
 	}
@@ -621,29 +595,30 @@ func (a *authenticator) getAssertionGithubActions(aud string) (string, error) {
 		return "", errors.Errorf("Could not find Github Actions request URL")
 	}
 
-	requestURL = requestURL + "&audience=" + url.QueryEscape(aud)
-
-	req, err := http.NewRequest("GET", requestURL, nil)
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", reqToken))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var response struct {
+	type responseJSON struct {
 		Value string `json:"value"`
 	}
 
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&response); err != nil {
-		return "", err
+	client := resty.New().SetTimeout(10 * time.Second)
+
+	var successResp responseJSON
+
+	resp, err := client.R().
+		SetDebug(ldflags.IsDev()).
+		SetContext(ctx).
+		SetAuthToken(reqToken).
+		SetHeader("Content-Type", "application/json").
+		SetQueryParam("audience", aud).
+		SetResult(&successResp).
+		Get(requestURL)
+
+	if err != nil {
+		return "", errors.Errorf("Could not do HTTP request to Github Actions API: %+v", err)
 	}
-	return response.Value, nil
+
+	if resp.IsError() {
+		return "", errors.Errorf("Could not call GitHub Actions API: %d - %s", resp.StatusCode(), resp.String())
+	}
+
+	return successResp.Value, nil
 }
