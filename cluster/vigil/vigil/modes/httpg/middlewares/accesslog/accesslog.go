@@ -230,8 +230,8 @@ func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP
 	if cfg.IncludeAllRequestHeaders {
 		ret = httputils.GetHeaders(req.Header)
 	} else if len(cfg.IncludeRequestHeaders) > 0 {
+		ret = make(map[string]string)
 		for _, hdr := range cfg.IncludeRequestHeaders {
-			ret = make(map[string]string)
 			hdr = http.CanonicalHeaderKey(hdr)
 			if val := req.Header.Get(hdr); val != "" {
 				ret[hdr] = val
@@ -245,7 +245,9 @@ func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP
 		}
 	}
 
-	delete(ret, "Authorization")
+	if ret != nil {
+		delete(ret, "Authorization")
+	}
 
 	return ret
 }
