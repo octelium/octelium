@@ -161,7 +161,7 @@ func (m *middleware) getAccessLog(
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
 			switch req.Proto {
-			case "HTTP/2.0":
+			case "HTTP/2":
 				return corev1.AccessLog_Entry_Info_HTTP_HTTP2
 			case "HTTP/1.1":
 				return corev1.AccessLog_Entry_Info_HTTP_HTTP11
