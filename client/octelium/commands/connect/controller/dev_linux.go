@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -79,8 +78,7 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 }
 
 func (c *Controller) prepareTUN() error {
-
-	zap.S().Debugf("Checking whether /dev/net/tun exists")
+	zap.L().Debug("Checking whether /dev/net/tun exists")
 	_, err := os.Stat("/dev/net/tun")
 	if err == nil {
 		zap.L().Debug("/dev/net/tun exists. No mknod needed")
@@ -90,18 +88,22 @@ func (c *Controller) prepareTUN() error {
 		return err
 	}
 
-	zap.L().Debug("mknoding /dev/net/tun")
+	zap.L().Debug("creating /dev/net/tun")
 
-	cmds := []string{
-		"mkdir -p /dev/net",
-		"mknod /dev/net/tun c 10 200",
-		"chmod 600 /dev/net/tun",
+	if err := os.MkdirAll("/dev/net", 0755); err != nil {
+		return errors.Errorf("could not create /dev/net directory: %+v", err)
 	}
 
-	for _, cmd := range cmds {
-		if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
-			return errors.Errorf("Could not install /dev/net/tun device: %+v", err)
+	mode := uint32(unix.S_IFCHR | 0600)
+
+	dev := int(unix.Mkdev(10, 200))
+
+	if err := unix.Mknod("/dev/net/tun", mode, dev); err != nil {
+		if err == unix.EPERM {
+			zap.L().Warn("Could not create /dev/net/tun. Missing CAP_MKNOD or insufficient privileges")
 		}
+
+		return errors.Errorf("Could not create /dev/net/tun device: %+v", err)
 	}
 
 	return nil
