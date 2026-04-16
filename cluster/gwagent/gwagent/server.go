@@ -19,7 +19,6 @@ package gwagent
 import (
 	"context"
 	"os"
-	"os/exec"
 
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -37,6 +36,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -106,44 +106,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.node = node
 
-	/*
-		if err := s.setNodeIndex(ctx); err != nil {
-			return err
-		}
-	*/
-
-	if _, err := os.Stat("/dev/net/tun"); err != nil && os.IsNotExist(err) {
-		cmds := []string{
-			"mkdir -p /dev/net",
-			"mknod /dev/net/tun c 10 200",
-			"chmod 600 /dev/net/tun",
-		}
-
-		for _, cmd := range cmds {
-			if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
-				zap.L().Warn("Could not execute command",
-					zap.String("cmd", cmd), zap.Error(err))
-			}
-		}
+	if err := s.prepareTUN(); err != nil {
+		zap.L().Warn("Could not prepareTUN", zap.Error(err))
 	}
-	/*
-		if _, err := os.Stat("/dev/net/tun"); err != nil && os.IsNotExist(err) {
-			zap.L().Debug("Mknoding tun dev")
-			if err := os.WriteFile("/tmp/install_dev_net_tun.sh", []byte(devNetTunScript), 0755); err != nil {
-				return err
-			}
-			if err := exec.Command("/bin/sh", "-c", "/tmp/install_dev_net_tun.sh").Run(); err != nil {
-				return errors.Errorf("Could not install /dev/net/tun device: %+v", err)
-			}
-		}
-	*/
-
-	/*
-		if _, ok := node.Labels["octelium.com/wireguard-installed"]; !ok {
-			zap.L().Debug("WireGuard kernel module is not installed. Going for the user implementation instead...")
-			s.isUserspaceMode = true
-		}
-	*/
 
 	if err := s.setNodePublicIPs(ctx); err != nil {
 		return err
@@ -213,6 +178,38 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Gateway agent is now running", zap.String("node", s.nodeName))
+
+	return nil
+}
+
+func (s *Server) prepareTUN() error {
+	zap.L().Debug("Checking whether /dev/net/tun exists")
+	_, err := os.Stat("/dev/net/tun")
+	if err == nil {
+		zap.L().Debug("/dev/net/tun exists. No mknod needed")
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+
+	zap.L().Debug("creating /dev/net/tun")
+
+	if err := os.MkdirAll("/dev/net", 0755); err != nil {
+		return errors.Errorf("could not create /dev/net directory: %+v", err)
+	}
+
+	mode := uint32(unix.S_IFCHR | 0600)
+
+	dev := int(unix.Mkdev(10, 200))
+
+	if err := unix.Mknod("/dev/net/tun", mode, dev); err != nil {
+		if err == unix.EPERM {
+			zap.L().Warn("Could not create /dev/net/tun. Missing CAP_MKNOD or insufficient privileges")
+		}
+
+		return errors.Errorf("Could not create /dev/net/tun device: %+v", err)
+	}
 
 	return nil
 }
