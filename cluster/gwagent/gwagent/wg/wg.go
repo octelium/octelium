@@ -317,6 +317,8 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 		return err
 	}
 
+	oldPrivateKey, _ := wgtypes.ParseKey(dev.PrivateKey.String())
+
 	if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
 		PrivateKey:   &privateKey,
 		ListenPort:   &dev.ListenPort,
@@ -333,7 +335,7 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 		zap.L().Warn("Could not updateGateway after rotating wg key",
 			zap.String("gw", gw.Metadata.Name), zap.Error(err))
 		if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
-			PrivateKey:   &dev.PrivateKey,
+			PrivateKey:   &oldPrivateKey,
 			ListenPort:   &dev.ListenPort,
 			ReplacePeers: false,
 		}); err != nil {
