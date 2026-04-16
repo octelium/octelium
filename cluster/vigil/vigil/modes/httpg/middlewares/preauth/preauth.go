@@ -110,8 +110,6 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		req.ContentLength = int64(len(additional.Body))
 	}
 
-	reqCtx = middlewares.GetCtxRequestContext(ctx)
-
 	downstreamReq, err := m.getDownstreamReq(req, reqCtx, additional)
 	if err != nil {
 		zap.L().Debug("Could not get downstreamReq", zap.Error(err))
