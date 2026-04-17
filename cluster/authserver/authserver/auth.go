@@ -119,7 +119,8 @@ func getLoginReq(arg string) (*authv1.ClientLoginRequest, error) {
 	if ret.ApiVersion != authv1.ClientLoginRequest_V1 {
 		return nil, errors.Errorf("Unsupported API version")
 	}
-	if ret.CallbackPort < 20000 || ret.CallbackPort > 65000 {
+
+	if ret.CallbackPort < 10000 || ret.CallbackPort > 65535 {
 		return nil, errors.Errorf("invalid callback port")
 	}
 
