@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -32,6 +33,8 @@ import (
 )
 
 type webAuthenticator struct {
+	server              *http.Server
+	listener            net.Listener
 	ch                  chan bool
 	port                int
 	addr                string
@@ -41,24 +44,19 @@ type webAuthenticator struct {
 	callbackSuffix      string
 	scopes              []string
 	loginURL            string
+	closeOnce           sync.Once
 }
 
 func newWebAuthenticator(domain string, scopes []string) (*webAuthenticator, error) {
 
-	port, err := getPort()
-	if err != nil {
-		return nil, err
-	}
-
 	suffix := utilrand.GetRandomString(5)
 
-	zap.L().Debug("Creating new webAuthenticator", zap.Int("port", port), zap.String("pathSuffix", suffix))
+	zap.L().Debug("Creating new webAuthenticator", zap.String("pathSuffix", suffix))
 
 	return &webAuthenticator{
 		domain:              domain,
 		domainRoot:          fmt.Sprintf("https://%s", domain),
 		ch:                  make(chan bool),
-		port:                port,
 		addr:                "localhost",
 		successCallbackPath: fmt.Sprintf("/callback/success/%s", suffix),
 		callbackSuffix:      suffix,
@@ -69,7 +67,9 @@ func newWebAuthenticator(domain string, scopes []string) (*webAuthenticator, err
 
 func (s *webAuthenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
-	defer close(s.ch)
+	defer s.closeOnce.Do(func() {
+		close(s.ch)
+	})
 
 	zap.L().Debug("Received request at auth federation server")
 
@@ -102,28 +102,6 @@ func (s *webAuthenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func isPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-
-	defer ln.Close()
-	time.Sleep(100 * time.Millisecond)
-	return true
-}
-
-func getPort() (int, error) {
-	for i := 0; i < 1000; i++ {
-		port := utilrand.GetRandomRangeMath(20000, 65000)
-		if isPortAvailable(port) {
-			return port, nil
-		}
-	}
-
-	return 0, errors.Errorf("Could not find an available port!")
-}
-
 func (s *webAuthenticator) getLoginURL() string {
 	u, _ := url.Parse(s.loginURL)
 
@@ -145,12 +123,45 @@ func (s *webAuthenticator) getLoginURL() string {
 }
 
 func (s *webAuthenticator) run(_ context.Context) error {
-	go func() error {
-		http.Handle(s.successCallbackPath, s)
-		return http.ListenAndServe(fmt.Sprintf("%s:%d", s.addr, s.port), nil)
+
+	var err error
+
+	s.listener, err = net.Listen("tcp", net.JoinHostPort(s.addr, "0"))
+	if err != nil {
+		return errors.Errorf("could not bind to a local port for authentication callback: %+v", err)
+	}
+
+	s.port = s.listener.Addr().(*net.TCPAddr).Port
+
+	mux := http.NewServeMux()
+
+	mux.Handle(s.successCallbackPath, s)
+
+	s.server = &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.server.Shutdown(shutdownCtx); err != nil {
+			zap.L().Debug("Error shutting down web authentication server", zap.Error(err))
+		}
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := s.server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
+			serverErrCh <- err
+		}
+	}()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+	case err := <-serverErrCh:
+		return errors.Errorf("Could not start auth callback server: %+v", err)
+	}
 
 	cmd, err := cliutils.OpenFileByDefaultAppCmd(s.getLoginURL())
 	if err != nil {
@@ -168,7 +179,8 @@ func (s *webAuthenticator) run(_ context.Context) error {
 
 	select {
 	case <-time.After(10 * time.Minute):
-		return errors.Errorf("You have not authenticated yourself after 10 minutes. Please authenticate yourself again.")
+		return errors.Errorf(
+			"You have not authenticated yourself after 10 minutes. Please authenticate yourself again.")
 	case <-s.ch:
 		return nil
 	}
