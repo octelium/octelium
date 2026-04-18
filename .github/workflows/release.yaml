@@ -498,6 +498,17 @@ jobs:
           # Move SHA256SUMS to release-files
           mv SHA256SUMS release-files/
 
+      - name: Generate and Download SBOM from GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching SBOM from GitHub Dependency Graph API..."
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/dependency-graph/sbom | jq -r '.sbom' > sbom.json
+          mv sbom.json release-files/
+
       - name: Verify release files
         run: |
           echo "=== Final release file count ==="
