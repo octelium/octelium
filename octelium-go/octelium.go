@@ -66,10 +66,7 @@ type sessToken struct {
 }
 
 func (s *sessToken) getAccessToken() (string, error) {
-	s.RLock()
-	defer s.RUnlock()
-
-	if s.t == nil {
+	if !s.hasTkn() {
 		return "", errors.Errorf("Could not find access token")
 	}
 	return s.t.AccessToken, nil
@@ -349,15 +346,23 @@ func (c *Client) doGetAccessToken(ctx context.Context) (string, error) {
 	return c.sessToken.getAccessToken()
 }
 
+func (c *sessToken) hasTkn() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.t != nil
+}
+
 func (c *Client) setAccessTokenResponse(ctx context.Context) error {
 
 	var resp *authv1.SessionToken
 	var err error
-	if c.sessToken.t == nil {
-		resp, err = c.c.C().AuthenticateWithAuthenticationToken(ctx, &authv1.AuthenticateWithAuthenticationTokenRequest{
-			AuthenticationToken: c.cc.AuthenticationToken,
-			Scopes:              c.cc.Scopes,
-		})
+
+	if !c.sessToken.hasTkn() {
+		resp, err = c.c.C().AuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: c.cc.AuthenticationToken,
+				Scopes:              c.cc.Scopes,
+			})
 		if err != nil {
 			return err
 		}
