@@ -222,7 +222,7 @@ func TestGetAccessLog(t *testing.T) {
 		assert.Nil(t, err)
 		req := httptest.NewRequest(http.MethodPost, reqPath, bytes.NewBuffer(jsn))
 		rw := httptest.NewRecorder()
-		logE := md.getAccessLog(req, newResponseWriter(rw), &middlewares.RequestContext{
+		logE := md.getAccessLog(req, newResponseWriter(rw, streamKindNone), &middlewares.RequestContext{
 			CreatedAt: time.Now(),
 			Service:   svc,
 			DownstreamInfo: &corev1.RequestContext{
@@ -243,7 +243,7 @@ func TestGetAccessLog(t *testing.T) {
 					},
 				},
 			},
-		})
+		}, logPhaseComplete, "", 0)
 
 		assert.NotNil(t, logE)
 

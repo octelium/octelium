@@ -23,9 +23,14 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -33,6 +38,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/net/http/httpguts"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -46,25 +52,180 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 	}, nil
 }
 
-const maxBodyLen = 3 * 1024 * 1024
+type streamKind int
+
+const (
+	streamKindNone streamKind = iota
+	streamKindSSE
+	// streamKindGRPC
+	streamKindWS
+	streamKindK8sExec
+	streamKindK8sLog
+	streamKindGeneric
+)
+
+const (
+	maxBodyLen     = 3 * 1024 * 1024
+	maxSSEEventLog = 10
+	sseLogInterval = 30 * time.Second
+)
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
 	ctx := req.Context()
+	reqCtx := middlewares.GetCtxRequestContext(ctx)
 
-	crw := newResponseWriter(w)
+	kind := detectStreamKind(req, reqCtx)
+
+	if kind == streamKindNone {
+		m.serveNonStreaming(w, req, reqCtx)
+		return
+	}
+
+	m.serveStreaming(w, req, reqCtx, kind)
+}
+
+func detectStreamKind(req *http.Request, reqCtx *middlewares.RequestContext) streamKind {
+	svc := reqCtx.Service
+
+	if isWebSocketUpgrade(req) {
+		return streamKindWS
+	}
+
+	/*
+		if ucorev1.ToService(svc).IsGRPC() {
+			return streamKindGRPC
+		}
+		ct := req.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "application/grpc") {
+			return streamKindGRPC
+		}
+	*/
+
+	if ucorev1.ToService(svc).IsKubernetes() {
+		path := req.URL.Path
+		q := req.URL.Query()
+
+		if strings.HasSuffix(path, "/exec") || strings.HasSuffix(path, "/attach") {
+			return streamKindK8sExec
+		}
+		if strings.HasSuffix(path, "/log") {
+			return streamKindK8sLog
+		}
+		if strings.HasSuffix(path, "/portforward") ||
+			q.Get("follow") == "true" || q.Get("follow") == "1" {
+			return streamKindGeneric
+		}
+	}
+
+	accept := req.Header.Get("Accept")
+	if strings.Contains(accept, "text/event-stream") {
+		return streamKindSSE
+	}
+
+	if req.Header.Get("X-Accel-Buffering") == "no" {
+		return streamKindGeneric
+	}
+
+	return streamKindNone
+}
+
+func (m *middleware) serveNonStreaming(w http.ResponseWriter, req *http.Request,
+	reqCtx *middlewares.RequestContext) {
+	crw := newResponseWriter(w, streamKindNone)
 	m.next.ServeHTTP(crw, req)
 
-	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	if reqCtx.DownstreamInfo == nil {
 		return
 	}
 
-	otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx))
+	otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseComplete, "", 0))
 }
 
+func (m *middleware) serveStreaming(w http.ResponseWriter,
+	req *http.Request,
+	reqCtx *middlewares.RequestContext,
+	kind streamKind) {
+	crw := newResponseWriter(w, kind)
+	connID := vutils.GenerateLogID()
+
+	if kind == streamKindSSE {
+		var eventCount int64
+		var mu sync.Mutex
+		lastLog := time.Now()
+
+		svcCfg := reqCtx.ServiceConfig
+		var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
+		if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Visibility != nil {
+			visibilityCfg = svcCfg.GetHttp().Visibility
+		}
+
+		crw.onSSEEvent = func(event []byte) {
+			n := atomic.AddInt64(&eventCount, 1)
+
+			mu.Lock()
+			shouldLog := n <= maxSSEEventLog || time.Since(lastLog) >= sseLogInterval
+			if shouldLog {
+				lastLog = time.Now()
+			}
+			mu.Unlock()
+
+			if !shouldLog {
+				return
+			}
+			if reqCtx.DownstreamInfo == nil {
+				return
+			}
+			log := m.getAccessLog(req, crw, reqCtx, logPhaseSSEEvent, connID, n)
+
+			if visibilityCfg != nil {
+				if visibilityCfg.EnableResponseBody {
+					log.Entry.Info.GetHttp().Response.Body = event
+				}
+
+				if visibilityCfg.EnableResponseBodyMap {
+					bm := &structpb.Struct{}
+
+					if err := pbutils.UnmarshalJSON(event, bm); err != nil {
+						zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
+					} else {
+						log.Entry.Info.GetHttp().Response.BodyMap = bm
+					}
+				}
+			}
+
+			otelutils.EmitAccessLog(log)
+		}
+	}
+
+	m.next.ServeHTTP(crw, req)
+
+	if reqCtx.DownstreamInfo == nil {
+		return
+	}
+
+	if crw.firstByteAt != (time.Time{}) {
+		otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseStreamOpen, connID, 0))
+	}
+
+	otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseStreamClose, connID, crw.eventCount()))
+}
+
+type logPhase int
+
+const (
+	logPhaseComplete logPhase = iota
+	logPhaseStreamOpen
+	logPhaseStreamClose
+	logPhaseSSEEvent
+)
+
 func (m *middleware) getAccessLog(
-	req *http.Request, crw *responseWriter, reqCtx *middlewares.RequestContext) *corev1.AccessLog {
+	req *http.Request,
+	crw *responseWriter,
+	reqCtx *middlewares.RequestContext,
+	phase logPhase,
+	connID string,
+	eventSeq int64) *corev1.AccessLog {
 
 	svcCfg := reqCtx.ServiceConfig
 	var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
@@ -76,7 +237,6 @@ func (m *middleware) getAccessLog(
 	var reqBodyMap *structpb.Struct
 	var respBody []byte
 	var respBodyMap *structpb.Struct
-
 	var reqHeaders map[string]string
 	var respHeaders map[string]string
 
@@ -95,16 +255,27 @@ func (m *middleware) getAccessLog(
 			}
 		}
 
-		if crw.body.Len() <= maxBodyLen {
-			if visibilityCfg.EnableResponseBody {
-				respBody = crw.body.Bytes()
-			}
-			if visibilityCfg.EnableResponseBodyMap && crw.body.Len() > 0 {
-				ret := &structpb.Struct{}
-				if err := pbutils.UnmarshalJSON(crw.body.Bytes(), ret); err != nil {
-					zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
-				} else {
-					respBodyMap = ret
+		if phase == logPhaseComplete || phase == logPhaseStreamClose {
+			if crw.body.Len() <= maxBodyLen {
+				if visibilityCfg.EnableResponseBody {
+					b := make([]byte, crw.body.Len())
+					copy(b, crw.body.Bytes())
+					respBody = b
+				}
+				if visibilityCfg.EnableResponseBodyMap && crw.body.Len() > 0 {
+					ret := &structpb.Struct{}
+
+					body := respBody
+					if body == nil {
+						body = make([]byte, crw.body.Len())
+						copy(body, crw.body.Bytes())
+					}
+
+					if err := pbutils.UnmarshalJSON(body, ret); err != nil {
+						zap.L().Debug("Could not unmarshalJSON respBody", zap.Error(err))
+					} else {
+						respBodyMap = ret
+					}
 				}
 			}
 		}
@@ -119,6 +290,8 @@ func (m *middleware) getAccessLog(
 		IsAuthorized:    reqCtx.IsAuthorized,
 		ReqCtx:          reqCtx.DownstreamInfo,
 		Reason:          reqCtx.DecisionReason,
+		ConnectionID:    connID,
+		Sequence:        eventSeq,
 	})
 
 	crwHeader := crw.Header()
@@ -153,7 +326,7 @@ func (m *middleware) getAccessLog(
 		},
 		Response: &corev1.AccessLog_Entry_Info_HTTP_Response{
 			Code:        uint32(crw.statusCode),
-			BodyBytes:   uint64(crw.body.Len()),
+			BodyBytes:   uint64(atomic.LoadInt64(&crw.bytesWritten)),
 			Body:        respBody,
 			BodyMap:     respBodyMap,
 			ContentType: crwHeader.Get("Content-Type"),
@@ -180,7 +353,6 @@ func (m *middleware) getAccessLog(
 				Http: httpC,
 			},
 		}
-
 		k8sI := reqCtx.DownstreamInfo.Request.GetKubernetes()
 		if k8sI != nil {
 			k8sC := logE.Entry.Info.GetKubernetes()
@@ -207,7 +379,6 @@ func (m *middleware) getAccessLog(
 			grpcC.Service = grpcI.Service
 			grpcC.ServiceFullName = grpcI.ServiceFullName
 			grpcC.Message = crwHeader.Get("Grpc-Message")
-
 			status, _ := strconv.ParseInt(crwHeader.Get("Grpc-Status"), 10, 32)
 			grpcC.Status = int32(status)
 		}
@@ -247,6 +418,8 @@ func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP
 
 	if ret != nil {
 		delete(ret, "Authorization")
+		delete(ret, "Cookie")
+		delete(ret, "X-Api-Key")
 	}
 
 	return ret
@@ -262,8 +435,8 @@ func getResponseHeaderMap(rw http.ResponseWriter, cfg *corev1.Service_Spec_Confi
 	if cfg.IncludeAllResponseHeaders {
 		ret = httputils.GetHeaders(rw.Header())
 	} else if len(cfg.IncludeResponseHeaders) > 0 {
+		ret = make(map[string]string)
 		for _, hdr := range cfg.IncludeResponseHeaders {
-			ret = make(map[string]string)
 			hdr = http.CanonicalHeaderKey(hdr)
 			if val := rw.Header().Get(hdr); val != "" {
 				ret[hdr] = val
@@ -277,26 +450,111 @@ func getResponseHeaderMap(rw http.ResponseWriter, cfg *corev1.Service_Spec_Confi
 		}
 	}
 
+	if ret != nil {
+		delete(ret, "Set-Cookie")
+	}
+
 	return ret
 }
 
 type responseWriter struct {
 	http.ResponseWriter
-	body       *bytes.Buffer
-	statusCode int
+
+	body *bytes.Buffer
+
+	statusCode   int
+	bytesWritten int64
+
+	firstByteAt time.Time
+
+	kind    streamKind
+	writeMu sync.Mutex
+
+	onSSEEvent  func([]byte)
+	sseLineBuf  []byte
+	sseMu       sync.Mutex
+	sseEventCnt atomic.Int64
 }
 
-func newResponseWriter(w http.ResponseWriter) *responseWriter {
+func newResponseWriter(w http.ResponseWriter, kind streamKind) *responseWriter {
 	return &responseWriter{
 		ResponseWriter: w,
 		body:           &bytes.Buffer{},
 		statusCode:     http.StatusOK,
+		kind:           kind,
 	}
 }
 
+func (rw *responseWriter) eventCount() int64 {
+	return rw.sseEventCnt.Load()
+}
+
 func (rw *responseWriter) Write(b []byte) (int, error) {
-	rw.body.Write(b)
-	return rw.ResponseWriter.Write(b)
+	rw.writeMu.Lock()
+	defer rw.writeMu.Unlock()
+
+	if rw.firstByteAt.IsZero() && len(b) > 0 {
+		rw.firstByteAt = time.Now()
+	}
+
+	n, err := rw.ResponseWriter.Write(b)
+	if n > 0 {
+		atomic.AddInt64(&rw.bytesWritten, int64(n))
+
+		switch rw.kind {
+		case streamKindNone:
+			if rw.body.Len() < maxBodyLen {
+				remaining := maxBodyLen - rw.body.Len()
+				if n <= remaining {
+					rw.body.Write(b[:n])
+				} else {
+					rw.body.Write(b[:remaining])
+				}
+			}
+		case streamKindSSE:
+			rw.parseSSEEvents(b[:n])
+		}
+	}
+	return n, err
+}
+
+func (rw *responseWriter) parseSSEEvents(p []byte) {
+	if rw.onSSEEvent == nil {
+		return
+	}
+
+	rw.sseMu.Lock()
+	defer rw.sseMu.Unlock()
+
+	rw.sseLineBuf = append(rw.sseLineBuf, p...)
+
+	for {
+		idx := bytes.Index(rw.sseLineBuf, []byte("\n\n"))
+		if idx == -1 {
+			idx = bytes.Index(rw.sseLineBuf, []byte("\r\n\r\n"))
+			if idx == -1 {
+				break
+			}
+			event := make([]byte, idx)
+			copy(event, rw.sseLineBuf[:idx])
+			rw.sseLineBuf = rw.sseLineBuf[idx+4:]
+			rw.sseEventCnt.Add(1)
+			rw.onSSEEvent(event)
+			continue
+		}
+		event := make([]byte, idx)
+		copy(event, rw.sseLineBuf[:idx])
+		rw.sseLineBuf = rw.sseLineBuf[idx+2:]
+		rw.sseEventCnt.Add(1)
+		rw.onSSEEvent(event)
+	}
+
+	const maxSSELineBuf = 64 * 1024
+	if len(rw.sseLineBuf) > maxSSELineBuf {
+		newBuf := make([]byte, maxSSELineBuf)
+		copy(newBuf, rw.sseLineBuf[len(rw.sseLineBuf)-maxSSELineBuf:])
+		rw.sseLineBuf = newBuf
+	}
 }
 
 func (rw *responseWriter) WriteHeader(statusCode int) {
@@ -309,19 +567,26 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
 	}
-
 	return hj.Hijack()
 }
 
-func (w *responseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-func (p *responseWriter) Push(target string, opts *http.PushOptions) error {
-	if p, ok := p.ResponseWriter.(http.Pusher); ok {
+func (rw *responseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := rw.ResponseWriter.(http.Pusher); ok {
 		return p.Push(target, opts)
 	}
 	return http.ErrNotSupported
+}
+
+func isWebSocketUpgrade(req *http.Request) bool {
+	if !httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
+		return false
+	}
+
+	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket")
 }
