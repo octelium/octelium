@@ -333,10 +333,11 @@ func (m *middleware) getAccessLog(
 			Headers:     respHeaders,
 		},
 		HttpVersion: func() corev1.AccessLog_Entry_Info_HTTP_HTTPVersion {
-			switch req.Proto {
-			case "HTTP/2":
+
+			switch {
+			case req.ProtoMajor == 2:
 				return corev1.AccessLog_Entry_Info_HTTP_HTTP2
-			case "HTTP/1.1":
+			case req.ProtoMajor == 1 && req.ProtoMinor == 1:
 				return corev1.AccessLog_Entry_Info_HTTP_HTTP11
 			default:
 				return corev1.AccessLog_Entry_Info_HTTP_HTTP_VERSION_UNKNOWN
