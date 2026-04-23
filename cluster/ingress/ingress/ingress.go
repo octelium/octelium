@@ -54,7 +54,10 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	go envoyServer.Run()
+
+	if err := envoyServer.Run(ctx); err != nil {
+		return err
+	}
 
 	secretCtl := certcontroller.NewController(octeliumC, envoyServer)
 	svcCtl := svccontroller.NewController(octeliumC, envoyServer)

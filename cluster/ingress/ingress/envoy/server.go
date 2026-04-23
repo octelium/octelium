@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"go.uber.org/zap"
@@ -85,6 +86,8 @@ type Server struct {
 	octeliumC octeliumc.ClientInterface
 
 	hasFrontProxy bool
+
+	triggerCh chan struct{}
 }
 
 type Opts struct {
@@ -101,6 +104,7 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Se
 		domain:        domain,
 		octeliumC:     octeliumC,
 		hasFrontProxy: o.HasFrontProxy,
+		triggerCh:     make(chan struct{}, 1),
 	}
 
 	l, err := net.Listen("tcp", ":8080")
@@ -126,23 +130,86 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Se
 	return server, nil
 }
 
-func (s *Server) Run() error {
+func (s *Server) startDebouncer(ctx context.Context) {
+	const debounceInterval = 300 * time.Millisecond
+	var timer *time.Timer
+	var timerCh <-chan time.Time
+
+	zap.L().Debug("Starting startDebouncer loop")
+
+	for {
+		select {
+		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return
+
+		case <-s.triggerCh:
+			if timer == nil {
+				timer = time.NewTimer(debounceInterval)
+				timerCh = timer.C
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(debounceInterval)
+			}
+
+		case <-timerCh:
+			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+			if err := s.doSnapshot(snapshotCtx); err != nil {
+				zap.L().Error("Failed to perform Envoy snapshot", zap.Error(err))
+			}
+
+			cancel()
+
+			timer = nil
+			timerCh = nil
+		}
+	}
+}
+func (s *Server) DoSnapshot(_ context.Context) error {
+	select {
+	case s.triggerCh <- struct{}{}:
+	default:
+	}
+
+	return nil
+}
+
+func (s *Server) Run(ctx context.Context) error {
 	zap.L().Debug("Starting the Envoy server")
 	if s.hasFrontProxy {
 		zap.L().Info("Front proxy mode is enabled")
 	}
 
-	if err := s.DoSnapshot(context.Background()); err != nil {
+	if err := s.doSnapshot(ctx); err != nil {
 		return err
 	}
-	return s.grpcServer.Serve(s.listener)
+
+	go s.startDebouncer(ctx)
+
+	go func() {
+		if err := s.grpcServer.Serve(s.listener); err != nil {
+			zap.L().Info("gRPC sever exited...", zap.Error(err))
+		}
+	}()
+
+	return nil
 }
 
 func (s *Server) Close() error {
 	return s.listener.Close()
 }
 
-func (s *Server) DoSnapshot(ctx context.Context) error {
+func (s *Server) doSnapshot(ctx context.Context) error {
+	s.Lock()
+	defer s.Unlock()
 
 	zap.L().Info("Starting a new Envoy snapshot")
 
@@ -192,18 +259,6 @@ func (s *Server) DoSnapshot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	/*
-		if ldflags.IsDev() {
-			zap.L().Debug("Setting a new snapshot", zap.Any("cc", cc))
-			for _, lis := range rscListeners {
-				zap.L().Debug("Setting Envoy listener", zap.Any("listener", pbutils.MustConvertToMap(lis)))
-			}
-			for _, cluster := range rscClusters {
-				zap.L().Debug("Setting Envoy cluster", zap.Any("cluster", pbutils.MustConvertToMap(cluster)))
-			}
-		}
-	*/
 
 	snap, err := cache.NewSnapshot(fmt.Sprintf("octelium-%s", utilrand.GetRandomStringLowercase(10)),
 		map[string][]types.Resource{
