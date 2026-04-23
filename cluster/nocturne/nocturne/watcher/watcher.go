@@ -42,11 +42,32 @@ func (w *Watcher) runSessions(ctx context.Context) {
 	zap.L().Debug("Starting Session watcher")
 
 	doRun := func() error {
-		sessList, err := w.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+		sessList, err := func() ([]*corev1.Session, error) {
+			var ret []*corev1.Session
+			var page uint32
+			for {
+				itmList, err := w.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{
+					Paginate:     true,
+					ItemsPerPage: 500,
+					Page:         page,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				ret = append(ret, itmList.Items...)
+				if itmList.ListResponseMeta == nil || !itmList.ListResponseMeta.HasMore {
+					return ret, nil
+				}
+
+				page = page + 1
+			}
+		}()
 		if err != nil {
 			return err
 		}
-		for _, sess := range sessList.Items {
+
+		for _, sess := range sessList {
 			if err := w.doCheckSession(ctx, sess); err != nil {
 				zap.L().Warn("Could not doCheckSession", zap.Error(err), zap.Any("sess", sess))
 			}
@@ -101,12 +122,32 @@ func (w *Watcher) runCredentials(ctx context.Context) {
 
 	doRun := func() error {
 
-		tknList, err := w.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{})
+		credList, err := func() ([]*corev1.Credential, error) {
+			var ret []*corev1.Credential
+			var page uint32
+			for {
+				itmList, err := w.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{
+					Paginate:     true,
+					ItemsPerPage: 500,
+					Page:         page,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				ret = append(ret, itmList.Items...)
+				if itmList.ListResponseMeta == nil || !itmList.ListResponseMeta.HasMore {
+					return ret, nil
+				}
+
+				page = page + 1
+			}
+		}()
 		if err != nil {
 			return err
 		}
 
-		for _, tkn := range tknList.Items {
+		for _, tkn := range credList {
 			if tkn.Spec.ExpiresAt.IsValid() && time.Now().After(tkn.Spec.ExpiresAt.AsTime()) {
 				zap.L().Debug("Removing expired Credential", zap.Any("cred", tkn))
 				if _, err := w.octeliumC.CoreC().DeleteCredential(ctx,
@@ -138,11 +179,32 @@ func (w *Watcher) runAuthenticator(ctx context.Context) {
 	zap.L().Debug("Starting Authenticator watcher")
 
 	doRun := func() error {
-		authnList, err := w.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+		authnList, err := func() ([]*corev1.Authenticator, error) {
+			var ret []*corev1.Authenticator
+			var page uint32
+			for {
+				itmList, err := w.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+					Paginate:     true,
+					ItemsPerPage: 500,
+					Page:         page,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				ret = append(ret, itmList.Items...)
+				if itmList.ListResponseMeta == nil || !itmList.ListResponseMeta.HasMore {
+					return ret, nil
+				}
+
+				page = page + 1
+			}
+		}()
 		if err != nil {
 			return err
 		}
-		for _, authn := range authnList.Items {
+
+		for _, authn := range authnList {
 			if err := w.doCheckAuthenticator(ctx, authn); err != nil {
 				zap.L().Warn("Could not doCheckAuthenticator", zap.Error(err), zap.Any("authn", authn))
 			}
