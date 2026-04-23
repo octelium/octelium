@@ -156,7 +156,28 @@ func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.Se
 	processCh := make(chan []byte, 8000)
 
 	if !req.SkipInitial {
-		itmList, _, err := s.doList(ctx, &rmetav1.ListOptions{}, api, version, kind)
+
+		itmList, err := func() ([]umetav1.ResourceObjectI, error) {
+			var ret []umetav1.ResourceObjectI
+			var page uint32
+			for {
+				itmList, listRes, err := s.doList(ctx, &rmetav1.ListOptions{
+					Paginate:     true,
+					ItemsPerPage: 500,
+					Page:         page,
+				}, api, version, kind)
+				if err != nil {
+					return nil, err
+				}
+
+				ret = append(ret, itmList...)
+				if listRes == nil || !listRes.HasMore || page > 5000 {
+					return ret, nil
+				}
+
+				page = page + 1
+			}
+		}()
 		if err != nil {
 			return err
 		}
