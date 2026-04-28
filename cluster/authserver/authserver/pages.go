@@ -20,10 +20,8 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -199,13 +197,13 @@ func (s *server) getPortalURL() string {
 	return fmt.Sprintf("https://portal.%s", s.domain)
 }
 
-func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", r.URL.Path))
+func (s *server) handleStatic() http.Handler {
+	subFS, err := fs.Sub(fsWeb, "web")
 	if err != nil {
-		zap.L().Debug("Could not read index.html file from web fs", zap.Error(err))
-		w.WriteHeader(http.StatusNotFound)
-		return
+		zap.L().Fatal("Could not initialize static file system", zap.Error(err))
 	}
-	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
-	w.Write(blob)
+
+	httpFS := http.FS(subFS)
+
+	return http.FileServer(httpFS)
 }

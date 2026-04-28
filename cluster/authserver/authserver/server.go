@@ -424,7 +424,7 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 
 		r.HandleFunc("/.well-known/oauth-authorization-server", s.handleOAuth2Metadata).Methods("GET")
 
-		r.HandleFunc("/assets/{file}", s.handleStatic).Methods("GET")
+		r.Handle("/assets/{file}", s.handleStatic()).Methods("GET")
 
 		r.HandleFunc("/authenticators/authenticate", s.handleAuthenticatorAuthenticate).Methods("GET")
 		r.HandleFunc("/authenticators/register", s.handleAuthenticatorRegister).Methods("GET")
