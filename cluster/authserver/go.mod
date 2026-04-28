@@ -14,7 +14,6 @@ require (
 	github.com/google/go-github/v33 v33.0.0
 	github.com/google/go-tpm-tools v0.4.7
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/mux v1.8.1
 	github.com/gosimple/slug v1.15.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000

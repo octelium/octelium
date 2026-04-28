@@ -28,7 +28,6 @@ import (
 	"github.com/go-webauthn/webauthn/metadata/providers/cached"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/gorilla/mux"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -413,27 +412,29 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		}()
 	} else {
 
-		r := mux.NewRouter()
-		r.HandleFunc("/", s.handleLogin).Methods("GET")
-		r.HandleFunc("/login", s.handleLogin).Methods("GET")
+		mux := http.NewServeMux()
 
-		r.HandleFunc("/begin", s.handleAuth).Methods("POST")
-		r.HandleFunc("/callback", s.handleAuthCallback).Methods("GET", "POST")
-		r.HandleFunc("/callback/success", s.handleAuthSuccess).Methods("GET")
-		r.HandleFunc("/oauth2/token", s.handleOAuth2Token).Methods("POST")
+		mux.HandleFunc("GET /", s.handleLogin)
+		mux.HandleFunc("GET /login", s.handleLogin)
 
-		r.HandleFunc("/.well-known/oauth-authorization-server", s.handleOAuth2Metadata).Methods("GET")
+		mux.HandleFunc("POST /begin", s.handleAuth)
+		mux.HandleFunc("GET /callback", s.handleAuthCallback)
+		mux.HandleFunc("POST /callback", s.handleAuthCallback)
+		mux.HandleFunc("GET /callback/success", s.handleAuthSuccess)
+		mux.HandleFunc("POST /oauth2/token", s.handleOAuth2Token)
 
-		r.Handle("/assets/{file}", s.handleStatic()).Methods("GET")
+		mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleOAuth2Metadata)
 
-		r.HandleFunc("/authenticators/authenticate", s.handleAuthenticatorAuthenticate).Methods("GET")
-		r.HandleFunc("/authenticators/register", s.handleAuthenticatorRegister).Methods("GET")
-		r.HandleFunc("/authenticators", s.handleAuthenticatorList).Methods("GET")
-		r.HandleFunc("/denied", s.handleDenied).Methods("GET")
+		mux.Handle("GET /assets/{file}", s.handleStatic())
 
-		r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// zap.L().Debug("404 req", zap.Any("path", r.URL.Path), zap.String("method", r.Method))
-			if r.Method == "GET" {
+		mux.HandleFunc("GET /authenticators/authenticate", s.handleAuthenticatorAuthenticate)
+		mux.HandleFunc("GET /authenticators/register", s.handleAuthenticatorRegister)
+		mux.HandleFunc("GET /authenticators", s.handleAuthenticatorList)
+		mux.HandleFunc("GET /denied", s.handleDenied)
+
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+			if r.Method == http.MethodGet {
 				s.redirectToLogin(w, r)
 			} else {
 				http.NotFound(w, r)
@@ -442,12 +443,11 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 
 		go func() error {
 			srv := &http.Server{
-				Handler:      r,
+				Handler:      mux,
 				Addr:         vutils.ManagedServiceAddr,
 				WriteTimeout: 15 * time.Second,
 				ReadTimeout:  15 * time.Second,
 			}
-
 			return srv.ListenAndServe()
 		}()
 	}
