@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"google.golang.org/protobuf/proto"
 )
@@ -36,16 +35,7 @@ func (s *Server) publishMessage(ctx context.Context, api, version, kind string, 
 		return err
 	}
 
-	_, err = s.redisC.XAdd(ctx, &redis.XAddArgs{
-		Stream: getRedisRscChannel(api, version, kind),
-		MaxLen: 2000,
-		Approx: true,
-		Values: map[string]any{
-			"payload": string(data),
-		},
-	}).Result()
-
-	if err != nil {
+	if _, err := s.redisC.Publish(ctx, getRedisRscChannel(api, version, kind), string(data)).Result(); err != nil {
 		return err
 	}
 

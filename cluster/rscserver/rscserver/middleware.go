@@ -154,7 +154,6 @@ func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.Se
 	ctx := stream.Context()
 
 	processCh := make(chan []byte, 8000)
-	streamKey := getRedisRscChannel(api, version, kind)
 
 	if !req.SkipInitial {
 
@@ -203,7 +202,10 @@ func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.Se
 		}
 	}
 
-	go s.startStreamRecvLoop(ctx, streamKey, processCh)
+	sub := s.redisC.Subscribe(ctx, getRedisRscChannel(api, version, kind))
+	defer sub.Close()
+
+	go s.startStreamRecvLoop(ctx, sub, processCh)
 	go s.startStreamSendLoop(ctx, processCh, stream, api, version, kind)
 
 	<-ctx.Done()
@@ -240,43 +242,20 @@ func (s *Server) doProcessMsg(msg []byte, stream grpc.ServerStream, api, version
 	return nil
 }
 
-func (s *Server) startStreamRecvLoop(ctx context.Context, streamKey string, processCh chan<- []byte) {
+func (s *Server) startStreamRecvLoop(ctx context.Context, pubsub *redis.PubSub, processCh chan<- []byte) {
 
-	lastID := "$"
+	ch := pubsub.Channel()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			streams, err := s.redisC.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{streamKey, lastID},
-				Count:   100,
-				Block:   2 * time.Second,
-			}).Result()
-			if err != nil {
-				if err == redis.Nil {
-					continue
-				}
-
-				if ctx.Err() != nil {
-					return
-				}
-
-				zap.L().Warn("Redis XRead error", zap.Error(err))
-				time.Sleep(500 * time.Millisecond)
+		case msg := <-ch:
+			if msg == nil {
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-
-			for _, stream := range streams {
-				for _, msg := range stream.Messages {
-					lastID = msg.ID
-
-					if payload, ok := msg.Values["payload"].(string); ok {
-						processCh <- []byte(payload)
-					}
-				}
-			}
+			processCh <- []byte(msg.Payload)
 		}
 	}
 }
