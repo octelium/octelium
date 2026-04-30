@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -67,12 +66,20 @@ func parsePasswdFile() (map[string]passwdEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		if name == "" {
+			continue
+		}
 		entries[name] = entry
 	}
 	return entries, nil
 }
 
 func parseLine(line string) (string, passwdEntry, error) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", passwdEntry{}, nil
+	}
+
 	fs := strings.Split(line, ":")
 	if len(fs) != 7 {
 		return "", passwdEntry{}, errors.Errorf("Invalid number of fields")
