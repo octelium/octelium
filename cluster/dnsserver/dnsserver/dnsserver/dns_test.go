@@ -52,6 +52,32 @@ func TestGetHostname(t *testing.T) {
 		}
 	*/
 
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: "svc1.default",
+		},
+		Spec: &corev1.Service_Spec{},
+		Status: &corev1.Service_Status{
+			PrimaryHostname: "svc1",
+			AdditionalHostnames: []string{
+				"svc1.default",
+			},
+			NamespaceRef: &metav1.ObjectReference{
+				Name: "default",
+			},
+			Addresses: []*corev1.Service_Status_Address{
+				{
+					DualStackIP: &metav1.DualStackIP{
+						Ipv4: "1.2.3.4",
+						Ipv6: "::1",
+					},
+				},
+			},
+		},
+	}
+
+	dnsSrv.Set(svc)
+
 	{
 		res, err := dnsSrv.getHostname("svc1.ns0.local.example.com.")
 		assert.Nil(t, err)
@@ -61,7 +87,7 @@ func TestGetHostname(t *testing.T) {
 	{
 		res, err := dnsSrv.getHostname("svc1.local.example.com.")
 		assert.Nil(t, err)
-		assert.Equal(t, "svc1", res)
+		assert.Equal(t, "svc1.default", res)
 	}
 
 	/*
@@ -75,7 +101,19 @@ func TestGetHostname(t *testing.T) {
 	{
 		res, err := dnsSrv.getHostname("svc1.local.")
 		assert.Nil(t, err)
-		assert.Equal(t, "svc1", res)
+		assert.Equal(t, "svc1.default", res)
+	}
+
+	{
+		res, err := dnsSrv.getHostname("svc1.")
+		assert.Nil(t, err)
+		assert.Equal(t, "svc1.default", res)
+	}
+
+	{
+		res, err := dnsSrv.getHostname("svc1.default.local.")
+		assert.Nil(t, err)
+		assert.Equal(t, "svc1.default", res)
 	}
 
 	{
@@ -131,85 +169,6 @@ func TestFallbackUpstreams(t *testing.T) {
 	assert.Equal(t, 53, dnsSrv.upstreams[0].port)
 }
 
-/*
-func TestParseSvcNs(t *testing.T) {
-
-	ctx := context.Background()
-
-	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
-	dnsSrv, err := Initialize(ctx, tst.C.OcteliumC)
-	assert.Nil(t, err)
-
-	invalidVals := []string{
-		"",
-		".",
-		"aa",
-		"example.com",
-		"example.com.",
-		"aa.example.com",
-		"aa.ixample.com.",
-		"aa.sub.sub.example.com.",
-	}
-
-	for _, val := range invalidVals {
-		assert.Nil(t, dnsSrv.parseSvcNs(val))
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1.local.example.com.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "default")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1.ns1.example.com.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "ns1")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1.local.example.com.local.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "default")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1.local.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "default")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1.local.example.com.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "default")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc2.ns2.local.example.com.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc2")
-		assert.Equal(t, res.namespace, "ns2")
-	}
-
-	{
-		res := dnsSrv.parseSvcNs("svc1_ns2.local.example.com.")
-		assert.NotNil(t, res)
-		assert.Equal(t, res.svc, "svc1")
-		assert.Equal(t, res.namespace, "ns2")
-	}
-}
-*/
-
 func TestResolve(t *testing.T) {
 
 	ctx := context.Background()
@@ -263,6 +222,9 @@ func TestResolve(t *testing.T) {
 			Spec: &corev1.Service_Spec{},
 			Status: &corev1.Service_Status{
 				PrimaryHostname: "svc1",
+				AdditionalHostnames: []string{
+					"svc1.default",
+				},
 				NamespaceRef: &metav1.ObjectReference{
 					Name: "default",
 				},
@@ -283,6 +245,42 @@ func TestResolve(t *testing.T) {
 			c := new(dns.Client)
 			m := new(dns.Msg)
 			m.SetQuestion("svc1.local.example.com.", dns.TypeA)
+			r, _, err := c.ExchangeContext(context.Background(), m, addr)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+			assert.Equal(t, "1.2.3.4", (r.Answer[0].(*dns.A)).A.String())
+		}
+		{
+			c := new(dns.Client)
+			m := new(dns.Msg)
+			m.SetQuestion("svc1.local.", dns.TypeA)
+			r, _, err := c.ExchangeContext(context.Background(), m, addr)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+			assert.Equal(t, "1.2.3.4", (r.Answer[0].(*dns.A)).A.String())
+		}
+		{
+			c := new(dns.Client)
+			m := new(dns.Msg)
+			m.SetQuestion("svc1.default.", dns.TypeA)
+			r, _, err := c.ExchangeContext(context.Background(), m, addr)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+			assert.Equal(t, "1.2.3.4", (r.Answer[0].(*dns.A)).A.String())
+		}
+		{
+			c := new(dns.Client)
+			m := new(dns.Msg)
+			m.SetQuestion("svc1.default.local.", dns.TypeA)
+			r, _, err := c.ExchangeContext(context.Background(), m, addr)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+			assert.Equal(t, "1.2.3.4", (r.Answer[0].(*dns.A)).A.String())
+		}
+		{
+			c := new(dns.Client)
+			m := new(dns.Msg)
+			m.SetQuestion("svc1.", dns.TypeA)
 			r, _, err := c.ExchangeContext(context.Background(), m, addr)
 			assert.Nil(t, err, "%+v", err)
 			assert.Equal(t, dns.RcodeSuccess, r.Rcode)

@@ -109,20 +109,12 @@ type SvcInfo struct {
 	CurIdx    uint32
 }
 
-func getKey(svc *corev1.Service) string {
-	return fmt.Sprintf("svc:%s", svc.Metadata.Name)
-}
-
 func (s *DNSServer) Set(svc *corev1.Service) {
-
 	zap.L().Debug("Setting Service", zap.String("name", svc.Metadata.Name), zap.Any("addrs", svc.Status.Addresses))
-
 	s.cache.set(svc)
-
 }
 
 func (s *DNSServer) Unset(svc *corev1.Service) {
-	// s.cache.Delete(getKey(svc))
 	s.cache.delete(svc)
 }
 
@@ -155,9 +147,10 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	hostname, err := s.getHostname(domain)
 	if err != nil {
+		zap.L().Debug("Could not get hostname", zap.String("domain", domain), zap.Error(err))
 		ret, err := s.getProxiedAnswer(domain, r.Question[0].Qtype)
 		if err != nil {
-			msg.SetRcode(r, dns.RcodeNameError)
+			msg.SetRcode(r, dns.RcodeServerFailure)
 			w.WriteMsg(&msg)
 			zap.L().Debug("Could not find svcNs for domain", zap.String("domain", domain))
 			return
@@ -211,8 +204,10 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		doResolve(dns.TypeAAAA)
 		return
 	default:
+		// zap.L().Debug("Invalid qType", zap.Uint16("type", r.Question[0].Qtype))
 		msg.SetRcode(r, dns.RcodeRefused)
 		w.WriteMsg(&msg)
+		return
 	}
 }
 
@@ -240,7 +235,20 @@ func (s *DNSServer) getHostname(arg string) (string, error) {
 		return "default.default", nil
 	}
 
-	return ret, nil
+	parts := strings.Split(ret, ".")
+
+	switch len(parts) {
+	case 0:
+		return "default.default", nil
+	case 1:
+		return fmt.Sprintf("%s.default", parts[0]), nil
+	case 2:
+		return ret, nil
+	default:
+		l := len(parts)
+		return fmt.Sprintf("%s.%s", parts[l-2], parts[l-1]), nil
+	}
+
 }
 
 func (s *DNSServer) getHostnameFromPossibleHostname(arg string) (string, error) {
@@ -254,7 +262,11 @@ func (s *DNSServer) getHostnameFromPossibleHostname(arg string) (string, error) 
 			return ret, nil
 		}
 	case 2:
-		if !slices.Contains(s.reservedNamespaces, parts[1]) && s.cache.has(hostname) {
+		cacheExists := s.cache.has(hostname)
+		if slices.Contains(wellKnownNamespaces, parts[1]) && cacheExists {
+			return hostname, nil
+		}
+		if !slices.Contains(s.reservedNamespaces, parts[1]) && cacheExists {
 			return hostname, nil
 		}
 	}
@@ -511,4 +523,8 @@ var wellKnownTLDs = []string{
 	"tc", "td", "tf", "tg", "th", "tj", "tk", "tl", "tm", "tn", "to", "tr", "tt",
 	"tv", "tw", "tz", "ua", "ug", "uk", "us", "uy", "uz", "va", "vc", "ve", "vg",
 	"vi", "vn", "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
+}
+
+var wellKnownNamespaces = []string{
+	"default", "octelium", "octelium-api", "cordium",
 }
