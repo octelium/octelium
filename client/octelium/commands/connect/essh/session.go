@@ -21,11 +21,14 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
 	"syscall"
 
+	"github.com/pkg/errors"
+	"github.com/pkg/sftp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -155,6 +158,24 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 			key: kv.Key,
 			val: kv.Value,
 		})
+	case "subsystem":
+		var payload = struct{ Value string }{}
+		if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+			return err
+		}
+		zap.L().Debug("Subsystem request", zap.String("subsystem", payload.Value))
+
+		switch payload.Value {
+		case "sftp":
+			if err := c.handleSubsystemSFTP(ctx, sessCtx, req); err != nil {
+				zap.L().Debug("Could not handle sftp subsystem", zap.Error(err))
+				return err
+			}
+			return nil
+		default:
+			zap.L().Debug("Unsupported subsystem", zap.String("subsystem", payload.Value))
+			return req.Reply(false, nil)
+		}
 	default:
 		zap.L().Debug("Unsupported session req type", zap.String("type", req.Type))
 		return req.Reply(false, nil)
@@ -320,6 +341,62 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 
 	c.doHandleSessionReqs(ctx, reqs, sesschan)
 	zap.L().Debug("Handling session requests ended", zap.String("dctxID", c.id))
+}
+
+func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
+	ch := sessCtx.ch
+
+	if os.Getenv("OCTELIUM_ESSH_SFTP_DISABLE") == "true" {
+		return errors.Errorf("eSSH SFTP is disabled")
+	}
+
+	if req.WantReply {
+		if err := req.Reply(true, nil); err != nil {
+			return err
+		}
+	}
+
+	root := "/"
+	if c.usr != nil && c.usr.HomeDir != "" {
+		root = c.usr.HomeDir
+	}
+
+	serverOpts := []sftp.ServerOption{
+		sftp.WithServerWorkingDirectory(root),
+	}
+
+	if !c.sameUser {
+		if os.Getenv("OCTELIUM_ESSH_SFTP_USER") != "true" {
+			return errors.Errorf(
+				`Cannot run SFTP while running as root and having --essh-user unless when setting "OCTELIUM_ESSH_SFTP_USER" env var to "true"`)
+		}
+	}
+
+	srv, err := sftp.NewServer(ch, serverOpts...)
+	if err != nil {
+		ch.Close()
+		return errors.Errorf("Could not create sftp server: %+v", err)
+	}
+
+	go func() {
+		defer ch.Close()
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- srv.Serve()
+		}()
+
+		select {
+		case <-ctx.Done():
+			srv.Close()
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, io.EOF) {
+				zap.L().Debug("sftp server exited...", zap.Error(err))
+			}
+		}
+	}()
+
+	return nil
 }
 
 func parsePTYReq(req *ssh.Request) (*ptyReqParams, error) {

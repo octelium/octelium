@@ -13,6 +13,7 @@ require (
 	github.com/octelium/octelium/client/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
+	github.com/pkg/sftp v1.13.10
 	github.com/quic-go/quic-go v0.59.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -49,6 +50,7 @@ require (
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/native v1.1.0 // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/manifoldco/promptui v0.9.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
