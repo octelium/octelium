@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -23,6 +22,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -62,14 +62,26 @@ func (c *dctx) handleTCPIPChan(ctx context.Context, nch ssh.NewChannel) {
 	}
 	go ssh.DiscardRequests(reqs)
 
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
-		defer ch.Close()
-		defer dconn.Close()
+		defer wg.Done()
 		io.Copy(ch, dconn)
+		ch.CloseWrite()
 	}()
+
 	go func() {
-		defer ch.Close()
-		defer dconn.Close()
+		defer wg.Done()
 		io.Copy(dconn, ch)
+		if tc, ok := dconn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		ch.Close()
+		dconn.Close()
 	}()
 }

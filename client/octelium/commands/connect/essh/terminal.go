@@ -82,29 +82,22 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 		}
 	}
 
-	/*
-		 termState, err := term.SetRawTerminal(ret.pty.Fd())
-		 if err != nil {
-			 return nil, err
-		 }
-
-		 if err := term.DisableEcho(ret.pty.Fd(), termState); err != nil {
-			 return nil, err
-		 }
-	*/
-
 	if !ret.noPty && sessCtx.ptyParams != nil {
 		zap.L().Debug("Setting init win size",
 			zap.Uint32("width", sessCtx.ptyParams.W),
 			zap.Uint32("height", sessCtx.ptyParams.H),
 		)
 		if err := ret.setWinSize(uint16(sessCtx.ptyParams.W), uint16(sessCtx.ptyParams.H)); err != nil {
+			ret.pty.Close()
+			ret.tty.Close()
 			return nil, err
 		}
 	}
 
 	shellPath, err := getShellPath(dctx.usr.Username)
 	if err != nil {
+		ret.pty.Close()
+		ret.tty.Close()
 		return nil, err
 	}
 
@@ -171,12 +164,12 @@ func (t *terminal) setWinSize(w, h uint16) error {
 }
 
 func (t *terminal) run(ctx context.Context) error {
-	zap.S().Debugf("Running terminal: %s", t.id)
+	zap.L().Debug("Running terminal", zap.String("tid", t.id))
 	var once sync.Once
 	var err error
 
 	closeFn := func() {
-		zap.S().Debugf("closing terminal closeCh")
+		zap.L().Debug("closing terminal closeCh", zap.String("tid", t.id))
 		t.closeCh <- struct{}{}
 	}
 
@@ -212,7 +205,9 @@ func (t *terminal) run(ctx context.Context) error {
 		}()
 
 		t.tty.Close()
+		t.mu.Lock()
 		t.tty = nil
+		t.mu.Unlock()
 	}
 
 	go func(ctx context.Context) {
@@ -233,7 +228,7 @@ func (t *terminal) waitAndClose(ctx context.Context) error {
 	go func() {
 		err := t.cmd.Wait()
 		if err != nil {
-			zap.S().Debugf("cmd wait err: %+v", err)
+			zap.L().Debug("terminal wait err", zap.String("tid", t.id), zap.Error(err))
 		}
 		waitCh <- err
 	}()
@@ -244,13 +239,16 @@ func (t *terminal) waitAndClose(ctx context.Context) error {
 		statusCode = 130
 	case err := <-waitCh:
 		if exiterr, ok := err.(*exec.ExitError); ok {
-			zap.S().Debugf("exit code....", zap.Int("code", exiterr.ExitCode()))
+			zap.L().Debug("exit code....", zap.Int("code", exiterr.ExitCode()))
 			statusCode = exiterr.ExitCode()
 		}
 	case <-t.closeCh:
-		if err := t.cmd.Process.Kill(); err != nil {
-			zap.S().Debugf("cmd kill err: %+v", err)
+		if t.cmd.Process != nil {
+			if err := t.cmd.Process.Kill(); err != nil {
+				zap.L().Debug("cmd kill err", zap.Error(err))
+			}
 		}
+
 	}
 
 	if err := t.sessCtx.sendSessionExitStatus(statusCode); err != nil && !errors.Is(err, io.EOF) {
@@ -265,17 +263,16 @@ func (t *terminal) close() error {
 		return nil
 	}
 
-	zap.S().Debugf("Starting closing terminal: %s", t.id)
+	zap.L().Debug("Starting closing terminal", zap.String("tid", t.id))
 
 	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.isClosed {
 		zap.L().Debug("terminal is already closed. Nothing to be done.")
-		t.mu.Unlock()
 		return nil
 	}
 	t.isClosed = true
-	t.mu.Unlock()
 
 	if !t.noPty {
 
@@ -285,14 +282,14 @@ func (t *terminal) close() error {
 		}
 
 		if t.pty != nil {
-			t.tty.Close()
+			t.pty.Close()
 			// t.pty = nil
 		}
 	}
 
 	t.ch.Close()
 
-	zap.S().Debugf("Terminal is now closed: %s", t.id)
+	zap.L().Debug("Terminal is now closed", zap.String("tid", t.id))
 
 	return nil
 }

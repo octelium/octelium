@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -136,8 +137,11 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 	case "keepalive@openssh.com":
 	case "window-change":
 		if term != nil {
-			w, h := parseDims(req.Payload)
-			zap.S().Debugf("Changing win size to %d:%d", w, h)
+			w, h, err := parseDims(req.Payload)
+			if err != nil {
+				return err
+			}
+			zap.L().Debug("Changing win size to", zap.Uint32("w", w), zap.Uint32("h", h))
 			if err := term.setWinSize(uint16(w), uint16(h)); err != nil {
 				return err
 			}
@@ -148,15 +152,16 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 			return err
 		}
 	case "env":
-		var kv struct{ Key, Value string }
-		if err := ssh.Unmarshal(req.Payload, &kv); err != nil {
+
+		key, val, err := parseEnv(req.Payload)
+		if err != nil {
 			return err
 		}
 
-		zap.L().Debug("Adding env var", zap.String("key", kv.Key), zap.String("val", kv.Value))
+		zap.L().Debug("Adding env var", zap.String("key", key), zap.String("val", val))
 		sessCtx.env = append(sessCtx.env, &envVar{
-			key: kv.Key,
-			val: kv.Value,
+			key: key,
+			val: val,
 		})
 	case "subsystem":
 		var payload = struct{ Value string }{}
@@ -248,6 +253,7 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 	}
 
 	if err := cmd.Start(); err != nil {
+		inPipe.Close()
 		return err
 	}
 
@@ -258,7 +264,7 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 
 	go func(ctx context.Context) {
 
-		waitCh := make(chan error)
+		waitCh := make(chan error, 1)
 		go func() {
 			err := cmd.Wait()
 			if err != nil {
@@ -270,7 +276,9 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 		select {
 		case <-ctx.Done():
 			zap.L().Debug("ctx done. Exiting exec...")
-			cmd.Process.Kill()
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
 
 			sessCtx.sendSessionExitStatus(130)
 
@@ -315,29 +323,11 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 
 	zap.L().Debug("Accepting a new channel")
 
-	/*
-		c.mu.Lock()
-
-		if c.hasCh {
-			zap.L().Debug("dctx already has an active channel")
-			newChannel.Reject(ssh.ResourceShortage, "max channels reached")
-			c.mu.Unlock()
-			return
-		}
-	*/
-
 	sesschan, reqs, err := newChannel.Accept()
 	if err != nil {
 		zap.L().Debug("Could not accept a new SSH channel", zap.Error(err))
-		c.mu.Unlock()
 		return
 	}
-
-	/*
-		c.hasCh = true
-		c.ch = sesschan
-		c.mu.Unlock()
-	*/
 
 	c.doHandleSessionReqs(ctx, reqs, sesschan)
 	zap.L().Debug("Handling session requests ended", zap.String("dctxID", c.id))
@@ -408,8 +398,33 @@ func parsePTYReq(req *ssh.Request) (*ptyReqParams, error) {
 	return &r, nil
 }
 
-func parseDims(b []byte) (uint32, uint32) {
+func parseDims(b []byte) (uint32, uint32, error) {
+	if len(b) < 8 {
+		return 0, 0, errors.Errorf("Could not parse dims")
+	}
+
 	w := binary.BigEndian.Uint32(b)
 	h := binary.BigEndian.Uint32(b[4:])
-	return w, h
+	return w, h, nil
+}
+
+func parseEnv(payload []byte) (string, string, error) {
+	var kv struct{ Key, Value string }
+	if err := ssh.Unmarshal(payload, &kv); err != nil {
+		return "", "", err
+	}
+	key := kv.Key
+	val := kv.Value
+
+	switch {
+	case strings.HasPrefix(key, "LC_"):
+	default:
+		switch key {
+		case "LANG", "TERM":
+		default:
+			return "", "", errors.Errorf("Unsupported env var key: %s", key)
+		}
+	}
+
+	return key, val, nil
 }

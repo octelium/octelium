@@ -61,7 +61,9 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	dctx, err := newDctx(c, sshConn, s.usr, s.sameUser)
 	if err != nil {
-		zap.S().Debugf("Could not create a new dctx: %+v", err)
+		zap.L().Debug("Could not create a new dctx", zap.Error(err))
+		sshConn.Close()
+		c.Close()
 		return
 	}
 
@@ -170,7 +172,7 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 		if err != nil {
 			zap.S().Debugf("Could not accept conn: %+v", err)
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				zap.S().Debugf("Timeout err")
+				zap.L().Debug("eSSH Timeout err", zap.Error(opErr))
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
