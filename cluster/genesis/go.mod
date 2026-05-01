@@ -3,7 +3,7 @@ module github.com/octelium/octelium/cluster/genesis
 go 1.25.8
 
 require (
-	github.com/cilium/cilium v1.18.8
+	github.com/cilium/cilium v1.18.9
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
