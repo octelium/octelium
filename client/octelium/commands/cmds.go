@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/disconnect"
 	"github.com/octelium/octelium/client/octelium/commands/get"
 	"github.com/octelium/octelium/client/octelium/commands/serviceconfig"
+	"github.com/octelium/octelium/client/octelium/commands/ssh"
 	"github.com/octelium/octelium/client/octelium/commands/status"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,7 @@ func InitCmds() {
 	Cmd.AddCommand(disconnect.Cmd)
 	Cmd.AddCommand(get.Cmd)
 	Cmd.AddCommand(cp.Cmd)
+	Cmd.AddCommand(ssh.Cmd)
 	Cmd.AddCommand(version.Cmd)
 	Cmd.AddCommand(status.Cmd)
 	Cmd.AddCommand(serviceconfig.Cmd)

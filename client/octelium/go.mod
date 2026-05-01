@@ -3,6 +3,7 @@ module github.com/octelium/octelium/client/octelium
 go 1.25.8
 
 require (
+	al.essio.dev/pkg/shellescape v1.6.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/creack/pty v1.1.24
 	github.com/fatih/color v1.18.0
@@ -23,6 +24,7 @@ require (
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.51.0
 	golang.org/x/sys v0.41.0
+	golang.org/x/term v0.40.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	golang.zx2c4.com/wireguard/windows v0.5.3
