@@ -21,6 +21,7 @@ import (
 	"github.com/octelium/octelium/client/common/commands/logout"
 	"github.com/octelium/octelium/client/common/commands/version"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
+	"github.com/octelium/octelium/client/octelium/commands/cp"
 	"github.com/octelium/octelium/client/octelium/commands/disconnect"
 	"github.com/octelium/octelium/client/octelium/commands/get"
 	"github.com/octelium/octelium/client/octelium/commands/serviceconfig"
@@ -45,6 +46,7 @@ func InitCmds() {
 	Cmd.AddCommand(connect.Cmd)
 	Cmd.AddCommand(disconnect.Cmd)
 	Cmd.AddCommand(get.Cmd)
+	Cmd.AddCommand(cp.Cmd)
 	Cmd.AddCommand(version.Cmd)
 	Cmd.AddCommand(status.Cmd)
 	Cmd.AddCommand(serviceconfig.Cmd)
