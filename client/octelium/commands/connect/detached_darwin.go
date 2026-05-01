@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"al.essio.dev/pkg/shellescape"
 	"go.uber.org/zap"
 )
 
@@ -31,13 +32,13 @@ func doRunDetached(domain string, args []string) error {
 
 	escapedArgs := make([]string, len(args))
 	for i, arg := range args {
-		escapedArgs[i] = shellEscape(arg)
+		escapedArgs[i] = shellescape.Quote(arg)
 	}
 
 	envVars := getDetachedModeEnvVars()
 	var envList []string
 	for k, v := range envVars {
-		envList = append(envList, fmt.Sprintf("%s=%s", k, shellEscape(v)))
+		envList = append(envList, fmt.Sprintf("%s=%s", k, shellescape.Quote(v)))
 	}
 
 	envPrefix := ""
@@ -47,7 +48,7 @@ func doRunDetached(domain string, args []string) error {
 
 	innerCommand := fmt.Sprintf("%s%s %s > /dev/null 2>&1 &",
 		envPrefix,
-		shellEscape(executable),
+		shellescape.Quote(executable),
 		strings.Join(escapedArgs, " "),
 	)
 
@@ -57,8 +58,4 @@ func doRunDetached(domain string, args []string) error {
 
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Run()
-}
-
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
