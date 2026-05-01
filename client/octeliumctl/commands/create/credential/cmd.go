@@ -42,7 +42,6 @@ type args struct {
 	Type               string
 	SessionType        string
 	Policies           []string
-	Scopes             []string
 	MaxAuthentications uint32
 	Out                string
 }
@@ -77,8 +76,6 @@ func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Credential type (Can take the values: "auth-token", "oauth2" or "access-token"). By default it is an Authentication Token`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless")`)
 
-	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
-		`Scope applied to Sessions created by this Credential. Use the flag multiple times to add more Scopes.`)
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Policies, "policy", nil,
 		`Policy attached to Sessions created by this Credential. Use the flag multiple times to add more Policies.`)
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
