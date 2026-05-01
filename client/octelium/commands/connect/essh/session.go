@@ -23,8 +23,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -416,15 +416,46 @@ func parseEnv(payload []byte) (string, string, error) {
 	key := kv.Key
 	val := kv.Value
 
-	switch {
-	case strings.HasPrefix(key, "LC_"):
-	default:
-		switch key {
-		case "LANG", "TERM":
-		default:
-			return "", "", errors.Errorf("Unsupported env var key: %s", key)
+	if !slices.Contains(allowedEnvVars, key) {
+		if os.Getenv("OCTELIUM_ESSH_ALLOW_ANY_ENV") != "true" {
+			return "", "", errors.Errorf("Denied adding the env var key: %s", key)
 		}
 	}
 
 	return key, val, nil
+}
+
+var allowedEnvVars = []string{
+	"TERM",
+	"TERM_PROGRAM",
+	"TERM_PROGRAM_VERSION",
+	"COLORTERM",
+	"COLORFGBG",
+	"DISPLAY",
+
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"LC_MESSAGES",
+	"LC_COLLATE",
+	"LC_MONETARY",
+	"LC_NUMERIC",
+	"LC_TIME",
+	"LC_ADDRESS",
+	"LC_MEASUREMENT",
+	"LC_NAME",
+	"LC_PAPER",
+	"LC_TELEPHONE",
+
+	"TZ",
+
+	"EDITOR",
+	"VISUAL",
+	"PAGER",
+	"MANPAGER",
+
+	"GIT_AUTHOR_NAME",
+	"GIT_AUTHOR_EMAIL",
+	"GIT_COMMITTER_NAME",
+	"GIT_COMMITTER_EMAIL",
 }
