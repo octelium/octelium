@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strconv"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -29,14 +28,16 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/sshutils"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// var rgxName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`)
-
-func (s *Server) SetServiceConfigs(ctx context.Context, req *userv1.SetServiceConfigsRequest) (*userv1.SetServiceConfigsResponse, error) {
+func (s *Server) SetServiceConfigs(ctx context.Context,
+	req *userv1.SetServiceConfigsRequest) (*userv1.SetServiceConfigsResponse, error) {
 	i, err := userctx.GetUserCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -65,10 +66,16 @@ func (s *Server) SetServiceConfigs(ctx context.Context, req *userv1.SetServiceCo
 		return nil, err
 	}
 
-	ret := &userv1.SetServiceConfigsResponse{}
+	host, port := getServiceConfigHostPort(svc, i.Session, cc)
 
-	if ucorev1.ToService(svc).IsKubernetes() {
-		kubeConfig := getKubeConfig(svc, i.Session, cc)
+	ret := &userv1.SetServiceConfigsResponse{
+		Host: host,
+		Port: int32(port),
+	}
+
+	switch {
+	case ucorev1.ToService(svc).IsKubernetes():
+		kubeConfig := getKubeConfig(svc, host, port)
 		kubeConfigYAML, err := kubeConfig.MarshalToYAML()
 		if err != nil {
 			return nil, err
@@ -83,22 +90,32 @@ func (s *Server) SetServiceConfigs(ctx context.Context, req *userv1.SetServiceCo
 		}
 
 		ret.Configs = append(ret.Configs, cfg)
+
+	case svc.Spec.Mode == corev1.Service_Spec_SSH:
+		ca, err := sshutils.GetCAPublicKey(ctx, s.octeliumC)
+		if err != nil {
+			zap.L().Warn("Could not do GetCAPublicKey", zap.Error(err))
+			return nil, serr.InternalWithErr(err)
+		}
+
+		ret.Configs = append(ret.Configs, &userv1.SetServiceConfigsResponse_Config{
+			Type: &userv1.SetServiceConfigsResponse_Config_Ssh{
+				Ssh: &userv1.SetServiceConfigsResponse_Config_SSH{
+					KnownHosts: []string{
+						fmt.Sprintf("@cert-authority %s", knownhosts.Line([]string{"*"}, ca)),
+					},
+					AuthorizedKeys: []string{
+						getAuthorizedKeyCALine(ca),
+					},
+				},
+			},
+		})
 	}
 
 	return ret, nil
 }
 
-func getKubeConfig(svc *corev1.Service, sess *corev1.Session, cc *corev1.ClusterConfig) *k8sutils.KubeConfig {
-
-	publishedService := func() *corev1.Session_Status_Connection_PublishedService {
-		for _, publishedSvc := range sess.Status.Connection.PublishedServices {
-			if publishedSvc.ServiceRef.Uid == svc.Metadata.Uid {
-				return publishedSvc
-			}
-		}
-		return nil
-	}()
-
+func getKubeConfig(svc *corev1.Service, host string, port int) *k8sutils.KubeConfig {
 	url := url.URL{
 		Scheme: func() string {
 			if svc.Spec.IsTLS {
@@ -106,31 +123,9 @@ func getKubeConfig(svc *corev1.Service, sess *corev1.Session, cc *corev1.Cluster
 			}
 			return "http"
 		}(),
-		Host: func() string {
-			var host string
-			if publishedService != nil {
-				return net.JoinHostPort(func() string {
-					if publishedService.Address != "" {
-						return publishedService.Address
-					}
-					return "localhost"
-				}(), strconv.Itoa(int(publishedService.Port)))
-			}
-
-			if !sess.Status.Connection.IgnoreDNS {
-				return fmt.Sprintf("%s:%d",
-					vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort())
-			}
-
-			if ucorev1.ToSession(sess).HasV6() {
-				host = svc.Status.Addresses[0].DualStackIP.Ipv6
-			} else if ucorev1.ToSession(sess).HasV4() {
-				host = svc.Status.Addresses[0].DualStackIP.Ipv4
-			}
-
-			return net.JoinHostPort(host, fmt.Sprintf("%d", ucorev1.ToService(svc).RealPort()))
-		}(),
+		Host: net.JoinHostPort(host, fmt.Sprintf("%d", port)),
 	}
+
 	ret := &k8sutils.KubeConfig{
 		APIVersion:  "v1",
 		Kind:        "Config",
@@ -164,4 +159,36 @@ func getKubeConfig(svc *corev1.Service, sess *corev1.Session, cc *corev1.Cluster
 	}
 
 	return ret
+}
+
+func getServiceConfigHostPort(svc *corev1.Service, sess *corev1.Session, cc *corev1.ClusterConfig) (string, int) {
+	publishedService := func() *corev1.Session_Status_Connection_PublishedService {
+		for _, publishedSvc := range sess.Status.Connection.PublishedServices {
+			if publishedSvc.ServiceRef.Uid == svc.Metadata.Uid {
+				return publishedSvc
+			}
+		}
+		return nil
+	}()
+
+	if publishedService != nil {
+		return func() string {
+			if publishedService.Address != "" {
+				return publishedService.Address
+			}
+			return "localhost"
+		}(), int(publishedService.Port)
+	}
+
+	if !sess.Status.Connection.IgnoreDNS {
+		return vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort()
+	}
+
+	if ucorev1.ToSession(sess).HasV6() {
+		return svc.Status.Addresses[0].DualStackIP.Ipv6, ucorev1.ToService(svc).RealPort()
+	} else if ucorev1.ToSession(sess).HasV4() {
+		return svc.Status.Addresses[0].DualStackIP.Ipv4, ucorev1.ToService(svc).RealPort()
+	}
+
+	return vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort()
 }
