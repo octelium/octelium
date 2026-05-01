@@ -153,7 +153,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 }
 
 func dialSFTP(sessionName string) (*sftp.Client, *ssh.Client, error) {
-	addr := net.JoinHostPort("essh.octelium", "22")
+	addr := net.JoinHostPort("essh.octelium.local", "22")
 
 	sshCfg := &ssh.ClientConfig{
 		User: sessionName,

@@ -105,7 +105,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	q := msg.Question[0]
 	domain := q.Name
 
-	if !s.isClusterDomain(domain) {
+	if !s.isLikelyService(domain) {
 
 		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
 			net.JoinHostPort(s.dnsGetter.GetClusterDNSServers()[0], "53"))
@@ -178,7 +178,7 @@ func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvA
 	return r, nil
 }
 
-func (s *Server) isClusterDomain(domain string) bool {
+func (s *Server) isLikelyService(domain string) bool {
 	suffixList := []string{
 		".local.",
 		fmt.Sprintf(".local.%s.", s.domain),
@@ -190,6 +190,14 @@ func (s *Server) isClusterDomain(domain string) bool {
 		if strings.HasSuffix(domain, suffix) {
 			return true
 		}
+	}
+
+	parts := strings.Split(strings.TrimSuffix(domain, "."), ".")
+	if len(parts) == 1 {
+		return true
+	}
+	if len(parts) >= 2 && len(parts[len(parts)-1]) > 3 {
+		return true
 	}
 
 	return false

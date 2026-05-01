@@ -119,7 +119,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	addr := net.JoinHostPort("essh.octelium", "22")
+	addr := net.JoinHostPort("essh.octelium.local", "22")
 	sshClient, err := ssh.Dial("tcp", addr, sshCfg)
 	if err != nil {
 		return errors.Errorf("Could not connect to session %q at %s: %+v", sessionName, addr, err)

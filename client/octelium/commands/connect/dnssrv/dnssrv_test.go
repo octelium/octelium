@@ -94,6 +94,17 @@ func TestServer(t *testing.T) {
 		assert.Equal(t, "127.0.0.100", srv.ListenHost())
 	}
 
+	{
+		assert.True(t, srv.isLikelyService("svc1."))
+		assert.True(t, srv.isLikelyService("svc1.local."))
+		assert.True(t, srv.isLikelyService("svc1.ns1.local."))
+		assert.True(t, srv.isLikelyService("svc1.local.example.com."))
+		assert.True(t, srv.isLikelyService("svc1.example.com.local."))
+		assert.True(t, srv.isLikelyService("svc1.default."))
+		assert.False(t, srv.isLikelyService("svc1.com."))
+		assert.False(t, srv.isLikelyService("svc1.io."))
+	}
+
 	err = srv.Close()
 	assert.Nil(t, err)
 }
