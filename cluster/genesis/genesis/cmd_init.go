@@ -727,6 +727,33 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 		}
 	}
 
+	{
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name:        "essh.octelium",
+				DisplayName: "Main Embedded SSH Server",
+				Description: `An embedded SSH server used mainly for "octelium cp" commands`,
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_SSH,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Ssh{
+						Ssh: &corev1.Service_Spec_Config_SSH{
+							ESSHMode:                  true,
+							EnableSubsystem:           true,
+							EnableLocalPortForwarding: true,
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
