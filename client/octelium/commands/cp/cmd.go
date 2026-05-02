@@ -15,10 +15,12 @@
 package cp
 
 import (
+	"context"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -29,6 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type args struct {
@@ -76,13 +79,15 @@ Use -r to copy directories recursively.`,
 	Args: cobra.ExactArgs(2),
 }
 
-type endpoint struct {
-	session string
-	path    string
-	isLocal bool
+type Endpoint struct {
+	User            string
+	Path            string
+	IsLocal         bool
+	Addr            string
+	HostKeyCallback ssh.HostKeyCallback
 }
 
-func parseEndpoint(arg string) (*endpoint, error) {
+func parseEndpoint(arg string) (*Endpoint, error) {
 	idx := strings.Index(arg, ":")
 	if idx > 0 {
 		session := arg[:idx]
@@ -93,24 +98,26 @@ func parseEndpoint(arg string) (*endpoint, error) {
 		if path == "" {
 			return nil, errors.Errorf("Invalid endpoint %q: path is empty", arg)
 		}
-		return &endpoint{
-			session: session,
-			path:    path,
-			isLocal: false,
+		return &Endpoint{
+			User:    session,
+			Path:    path,
+			IsLocal: false,
 		}, nil
 	}
-	return &endpoint{
-		path:    arg,
-		isLocal: true,
+	return &Endpoint{
+		Path:    arg,
+		IsLocal: true,
 	}, nil
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
+
+	ctx := cmd.Context()
+
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
 	}
-
 	src, err := parseEndpoint(args[0])
 	if err != nil {
 		return err
@@ -120,11 +127,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if src.isLocal && dst.isLocal {
-		return errors.Errorf("At least one of source or destination must be a session path (session-name:/path)")
-	}
-
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -132,7 +135,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := userv1.NewMainServiceClient(conn)
 
-	resp, err := c.GetStatus(cmd.Context(), &userv1.GetStatusRequest{})
+	resp, err := c.GetStatus(ctx, &userv1.GetStatusRequest{})
 	if err != nil {
 		return err
 	}
@@ -142,25 +145,91 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			`You must be connected to the Cluster. Please use "octelium connect" before running this command.`)
 	}
 
+	cfg, err := c.SetServiceConfigs(ctx, &userv1.SetServiceConfigsRequest{
+		Name: "essh.octelium",
+	})
+	if err != nil {
+		return err
+	}
+
+	hostKeyCallback, err := func() (ssh.HostKeyCallback, error) {
+		if len(cfg.Configs) < 1 ||
+			cfg.Configs[0].GetSsh() == nil ||
+			len(cfg.Configs[0].GetSsh().KnownHosts) == 0 {
+			return nil, errors.Errorf("Could not get Service knownHosts")
+		}
+
+		f, err := os.CreateTemp("", "known_hosts_*")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.WriteString(strings.Join(cfg.Configs[0].GetSsh().KnownHosts, "\n")); err != nil {
+			f.Close()
+			return nil, err
+		}
+		f.Close()
+
+		return knownhosts.New(f.Name())
+	}()
+	if err != nil {
+		return err
+	}
+
+	src.HostKeyCallback = hostKeyCallback
+	src.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	dst.HostKeyCallback = hostKeyCallback
+	dst.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+
+	return DoCommand(ctx, &DoCommandOpts{
+		Src:       src,
+		Dst:       dst,
+		Recursive: cmdArgs.Recursive,
+	})
+}
+
+type DoCommandOpts struct {
+	Recursive bool
+	Src       *Endpoint
+	Dst       *Endpoint
+}
+
+func DoCommand(ctx context.Context, o *DoCommandOpts) error {
+
+	src := o.Src
+	dst := o.Dst
+
+	if src.IsLocal && dst.IsLocal {
+		return errors.Errorf("At least one of source or destination must be a session path (session-name:/path)")
+	}
+
 	switch {
-	case src.isLocal && !dst.isLocal:
-		return copyLocalToSession(dst.session, src.path, dst.path, cmdArgs.Recursive)
-	case !src.isLocal && dst.isLocal:
-		return copySessionToLocal(src.session, src.path, dst.path, cmdArgs.Recursive)
+	case src.IsLocal && !dst.IsLocal:
+		return copyLocalToSession(src, dst, o.Recursive)
+	case !src.IsLocal && dst.IsLocal:
+		return copySessionToLocal(src, dst.Path, o.Recursive)
 	default:
-		return copySessionToSession(src.session, src.path, dst.session, dst.path, cmdArgs.Recursive)
+		return copySessionToSession(src, dst, o.Recursive)
 	}
 }
 
-func dialSFTP(sessionName string) (*sftp.Client, *ssh.Client, error) {
-	addr := net.JoinHostPort("essh.octelium.local", "22")
+func dialSFTP(e *Endpoint) (*sftp.Client, *ssh.Client, error) {
 
+	sessionName := e.User
 	sshCfg := &ssh.ClientConfig{
 		User: sessionName,
 		Auth: []ssh.AuthMethod{},
 
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: func() ssh.HostKeyCallback {
+			if e.HostKeyCallback != nil {
+				return e.HostKeyCallback
+			}
+			return ssh.InsecureIgnoreHostKey()
+		}(),
 	}
+
+	addr := e.Addr
 
 	zap.L().Debug("Dialing SSH", zap.String("addr", addr), zap.String("user", sessionName))
 
@@ -179,8 +248,11 @@ func dialSFTP(sessionName string) (*sftp.Client, *ssh.Client, error) {
 	return sftpClient, sshClient, nil
 }
 
-func copyLocalToSession(sessionName, localPath, remotePath string, recursive bool) error {
-	sftpC, sshC, err := dialSFTP(sessionName)
+func copyLocalToSession(src, dst *Endpoint, recursive bool) error {
+	localPath := src.Path
+	remotePath := dst.Path
+
+	sftpC, sshC, err := dialSFTP(dst)
 	if err != nil {
 		return err
 	}
@@ -255,8 +327,12 @@ func uploadDir(sftpC *sftp.Client, localDir, remoteDir string) error {
 	})
 }
 
-func copySessionToLocal(sessionName, remotePath, localPath string, recursive bool) error {
-	sftpC, sshC, err := dialSFTP(sessionName)
+func copySessionToLocal(src *Endpoint, localPath string, recursive bool) error {
+
+	sessionName := src.User
+	remotePath := src.Path
+
+	sftpC, sshC, err := dialSFTP(src)
 	if err != nil {
 		return err
 	}
@@ -335,15 +411,22 @@ func downloadDir(sftpC *sftp.Client, remoteDirPath, localDirPath string) error {
 	return nil
 }
 
-func copySessionToSession(srcSession, srcPath, dstSession, dstPath string, recursive bool) error {
-	srcSFTP, srcSSH, err := dialSFTP(srcSession)
+func copySessionToSession(src, dst *Endpoint, recursive bool) error {
+
+	srcSession := src.User
+	dstSession := dst.User
+
+	srcPath := src.Path
+	dstPath := dst.Path
+
+	srcSFTP, srcSSH, err := dialSFTP(src)
 	if err != nil {
 		return errors.Errorf("Could not connect to source session %q: %+v", srcSession, err)
 	}
 	defer srcSSH.Close()
 	defer srcSFTP.Close()
 
-	dstSFTP, dstSSH, err := dialSFTP(dstSession)
+	dstSFTP, dstSSH, err := dialSFTP(dst)
 	if err != nil {
 		return errors.Errorf("Could not connect to destination session %q: %+v", dstSession, err)
 	}
