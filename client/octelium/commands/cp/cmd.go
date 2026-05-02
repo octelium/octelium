@@ -85,6 +85,8 @@ type Endpoint struct {
 	IsLocal         bool
 	Addr            string
 	HostKeyCallback ssh.HostKeyCallback
+
+	Network string
 }
 
 func parseEndpoint(arg string) (*Endpoint, error) {
@@ -177,10 +179,22 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	network := func() string {
+		switch cfg.L3Mode {
+		case userv1.SetServiceConfigsResponse_V6:
+			return "tcp6"
+		default:
+			return "tcp"
+		}
+	}()
+
 	src.HostKeyCallback = hostKeyCallback
 	src.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	src.Network = network
+
 	dst.HostKeyCallback = hostKeyCallback
 	dst.Addr = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	dst.Network = network
 
 	return DoCommand(ctx, &DoCommandOpts{
 		Src:       src,
@@ -233,7 +247,14 @@ func dialSFTP(e *Endpoint) (*sftp.Client, *ssh.Client, error) {
 
 	zap.L().Debug("Dialing SSH", zap.String("addr", addr), zap.String("user", sessionName))
 
-	sshClient, err := ssh.Dial("tcp", addr, sshCfg)
+	sshClient, err := ssh.Dial(func() string {
+		switch e.Network {
+		case "tcp", "tcp6":
+			return e.Network
+		default:
+			return "tcp"
+		}
+	}(), addr, sshCfg)
 	if err != nil {
 		return nil, nil, errors.Errorf("Could not connect to session %q at %s: %+v",
 			sessionName, addr, err)

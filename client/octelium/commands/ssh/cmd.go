@@ -179,7 +179,14 @@ func DoCommand(ctx context.Context, o *DoCommandOpts) error {
 	}
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-	sshClient, err := ssh.Dial("tcp", addr, sshCfg)
+	sshClient, err := ssh.Dial(func() string {
+		switch cfg.L3Mode {
+		case userv1.SetServiceConfigsResponse_V6:
+			return "tcp6"
+		default:
+			return "tcp"
+		}
+	}(), addr, sshCfg)
 	if err != nil {
 		return errors.Errorf("Could not connect to session %q at %s: %+v", sessionName, addr, err)
 	}
