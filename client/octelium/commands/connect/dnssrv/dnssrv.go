@@ -142,13 +142,14 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	switch {
 	case q.Qtype == dns.TypeA && !s.hasV4:
-		// zap.L().Debug("Local DNS: IPv4 is not supported", zap.String("domain", domain))
-		msg.SetRcode(r, dns.RcodeRefused)
+		msg.SetReply(r)
+		msg.RecursionAvailable = true
 		w.WriteMsg(&msg)
 		return
+
 	case q.Qtype == dns.TypeAAAA && !s.hasV6:
-		// zap.L().Debug("Local DNS: IPv6 is not supported", zap.String("domain", domain))
-		msg.SetRcode(r, dns.RcodeRefused)
+		msg.SetReply(r)
+		msg.RecursionAvailable = true
 		w.WriteMsg(&msg)
 		return
 	}
