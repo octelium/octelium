@@ -105,6 +105,24 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	q := msg.Question[0]
 	domain := q.Name
 
+	switch q.Qtype {
+	case dns.TypeA, dns.TypeAAAA:
+	default:
+		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
+			net.JoinHostPort(s.dnsGetter.GetClusterDNSServers()[0], "53"))
+		if err != nil {
+			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
+			msg.SetRcode(r, dns.RcodeServerFailure)
+			w.WriteMsg(&msg)
+			return
+		}
+		msg.Answer = ret.Answer
+		msg.Extra = ret.Extra
+		msg.Ns = ret.Ns
+		w.WriteMsg(&msg)
+		return
+	}
+
 	if !s.isLikelyService(domain) {
 
 		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
