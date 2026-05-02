@@ -474,6 +474,55 @@ func (Service_Spec_Type) EnumDescriptor() ([]byte, []int) {
 	return file_userv1_proto_rawDescGZIP(), []int{11, 0, 0}
 }
 
+type SetServiceConfigsResponse_L3Mode int32
+
+const (
+	SetServiceConfigsResponse_BOTH SetServiceConfigsResponse_L3Mode = 0
+	SetServiceConfigsResponse_V4   SetServiceConfigsResponse_L3Mode = 1
+	SetServiceConfigsResponse_V6   SetServiceConfigsResponse_L3Mode = 2
+)
+
+// Enum value maps for SetServiceConfigsResponse_L3Mode.
+var (
+	SetServiceConfigsResponse_L3Mode_name = map[int32]string{
+		0: "BOTH",
+		1: "V4",
+		2: "V6",
+	}
+	SetServiceConfigsResponse_L3Mode_value = map[string]int32{
+		"BOTH": 0,
+		"V4":   1,
+		"V6":   2,
+	}
+)
+
+func (x SetServiceConfigsResponse_L3Mode) Enum() *SetServiceConfigsResponse_L3Mode {
+	p := new(SetServiceConfigsResponse_L3Mode)
+	*p = x
+	return p
+}
+
+func (x SetServiceConfigsResponse_L3Mode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SetServiceConfigsResponse_L3Mode) Descriptor() protoreflect.EnumDescriptor {
+	return file_userv1_proto_enumTypes[8].Descriptor()
+}
+
+func (SetServiceConfigsResponse_L3Mode) Type() protoreflect.EnumType {
+	return &file_userv1_proto_enumTypes[8]
+}
+
+func (x SetServiceConfigsResponse_L3Mode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SetServiceConfigsResponse_L3Mode.Descriptor instead.
+func (SetServiceConfigsResponse_L3Mode) EnumDescriptor() ([]byte, []int) {
+	return file_userv1_proto_rawDescGZIP(), []int{19, 0}
+}
+
 type LogoutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1811,6 +1860,7 @@ type SetServiceConfigsResponse struct {
 	Configs       []*SetServiceConfigsResponse_Config `protobuf:"bytes,1,rep,name=configs,proto3" json:"configs,omitempty"`
 	Host          string                              `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
 	Port          int32                               `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	L3Mode        SetServiceConfigsResponse_L3Mode    `protobuf:"varint,4,opt,name=l3Mode,proto3,enum=octelium.api.main.user.v1.SetServiceConfigsResponse_L3Mode" json:"l3Mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1864,6 +1914,13 @@ func (x *SetServiceConfigsResponse) GetPort() int32 {
 		return x.Port
 	}
 	return 0
+}
+
+func (x *SetServiceConfigsResponse) GetL3Mode() SetServiceConfigsResponse_L3Mode {
+	if x != nil {
+		return x.L3Mode
+	}
+	return SetServiceConfigsResponse_BOTH
 }
 
 type GetStatusResponse_User struct {
@@ -4089,7 +4146,7 @@ var file_userv1_proto_rawDesc = []byte{
 	0x07, 0x0a, 0x05, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x22, 0x2e, 0x0a, 0x18, 0x53, 0x65, 0x74, 0x53,
 	0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x71,
 	0x75, 0x65, 0x73, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0xe3, 0x03, 0x0a, 0x19, 0x53, 0x65, 0x74,
+	0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0xdc, 0x04, 0x0a, 0x19, 0x53, 0x65, 0x74,
 	0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65,
 	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x55, 0x0a, 0x07, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67,
 	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x3b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
@@ -4099,79 +4156,87 @@ var file_userv1_proto_rawDesc = []byte{
 	0x6e, 0x66, 0x69, 0x67, 0x52, 0x07, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x12, 0x12, 0x0a,
 	0x04, 0x68, 0x6f, 0x73, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x68, 0x6f, 0x73,
 	0x74, 0x12, 0x12, 0x0a, 0x04, 0x70, 0x6f, 0x72, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52,
-	0x04, 0x70, 0x6f, 0x72, 0x74, 0x1a, 0xc6, 0x02, 0x0a, 0x06, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67,
-	0x12, 0x68, 0x0a, 0x0a, 0x6b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x46, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31,
-	0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69,
-	0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x43, 0x6f, 0x6e, 0x66, 0x69,
-	0x67, 0x2e, 0x4b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x48, 0x00, 0x52, 0x0a,
-	0x6b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x53, 0x0a, 0x03, 0x73, 0x73,
-	0x68, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x3f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
-	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72,
-	0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f,
-	0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x43, 0x6f,
-	0x6e, 0x66, 0x69, 0x67, 0x2e, 0x53, 0x53, 0x48, 0x48, 0x00, 0x52, 0x03, 0x73, 0x73, 0x68, 0x1a,
-	0x26, 0x0a, 0x0a, 0x4b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x18, 0x0a,
-	0x07, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x07,
-	0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x1a, 0x4d, 0x0a, 0x03, 0x53, 0x53, 0x48, 0x12, 0x1e,
-	0x0a, 0x0a, 0x6b, 0x6e, 0x6f, 0x77, 0x6e, 0x48, 0x6f, 0x73, 0x74, 0x73, 0x18, 0x01, 0x20, 0x03,
-	0x28, 0x09, 0x52, 0x0a, 0x6b, 0x6e, 0x6f, 0x77, 0x6e, 0x48, 0x6f, 0x73, 0x74, 0x73, 0x12, 0x26,
-	0x0a, 0x0e, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72, 0x69, 0x7a, 0x65, 0x64, 0x4b, 0x65, 0x79, 0x73,
-	0x18, 0x02, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0e, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72, 0x69, 0x7a,
-	0x65, 0x64, 0x4b, 0x65, 0x79, 0x73, 0x42, 0x06, 0x0a, 0x04, 0x74, 0x79, 0x70, 0x65, 0x32, 0x80,
-	0x06, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x66,
-	0x0a, 0x07, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x29, 0x2e, 0x6f, 0x63, 0x74, 0x65,
-	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73,
-	0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2a, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31,
-	0x2e, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x12, 0x6b, 0x0a, 0x0a, 0x44, 0x69, 0x73, 0x63, 0x6f, 0x6e,
-	0x6e, 0x65, 0x63, 0x74, 0x12, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31,
-	0x2e, 0x44, 0x69, 0x73, 0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x44,
-	0x69, 0x73, 0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69,
-	0x63, 0x65, 0x12, 0x2d, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
-	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x4c,
-	0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
-	0x73, 0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69,
-	0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65,
-	0x72, 0x76, 0x69, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x6c, 0x0a, 0x0d, 0x4c,
-	0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x2f, 0x2e, 0x6f,
-	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
-	0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d,
-	0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
-	0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70,
-	0x61, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x22, 0x00, 0x12, 0x68, 0x0a, 0x09, 0x47, 0x65, 0x74,
-	0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e,
-	0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61,
-	0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e,
-	0x47, 0x65, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x00, 0x12, 0x80, 0x01, 0x0a, 0x11, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69,
-	0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x12, 0x33, 0x2e, 0x6f, 0x63, 0x74, 0x65,
+	0x04, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x53, 0x0a, 0x06, 0x6c, 0x33, 0x4d, 0x6f, 0x64, 0x65, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x3b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76,
+	0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66,
+	0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e, 0x4c, 0x33, 0x4d, 0x6f,
+	0x64, 0x65, 0x52, 0x06, 0x6c, 0x33, 0x4d, 0x6f, 0x64, 0x65, 0x1a, 0xc6, 0x02, 0x0a, 0x06, 0x43,
+	0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x68, 0x0a, 0x0a, 0x6b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e,
+	0x66, 0x69, 0x67, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x46, 0x2e, 0x6f, 0x63, 0x74, 0x65,
 	0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73,
 	0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
-	0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x34,
-	0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61,
-	0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65,
-	0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65, 0x72,
-	0x76, 0x69, 0x63, 0x65, 0x12, 0x25, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
-	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31,
-	0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f, 0x63,
+	0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x2e,
+	0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x2e, 0x4b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69,
+	0x67, 0x48, 0x00, 0x52, 0x0a, 0x6b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12,
+	0x53, 0x0a, 0x03, 0x73, 0x73, 0x68, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x3f, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76,
+	0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x2e, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x2e, 0x53, 0x53, 0x48, 0x48, 0x00, 0x52,
+	0x03, 0x73, 0x73, 0x68, 0x1a, 0x26, 0x0a, 0x0a, 0x4b, 0x75, 0x62, 0x65, 0x63, 0x6f, 0x6e, 0x66,
+	0x69, 0x67, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x0c, 0x52, 0x07, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x1a, 0x4d, 0x0a, 0x03,
+	0x53, 0x53, 0x48, 0x12, 0x1e, 0x0a, 0x0a, 0x6b, 0x6e, 0x6f, 0x77, 0x6e, 0x48, 0x6f, 0x73, 0x74,
+	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0a, 0x6b, 0x6e, 0x6f, 0x77, 0x6e, 0x48, 0x6f,
+	0x73, 0x74, 0x73, 0x12, 0x26, 0x0a, 0x0e, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72, 0x69, 0x7a, 0x65,
+	0x64, 0x4b, 0x65, 0x79, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0e, 0x61, 0x75, 0x74,
+	0x68, 0x6f, 0x72, 0x69, 0x7a, 0x65, 0x64, 0x4b, 0x65, 0x79, 0x73, 0x42, 0x06, 0x0a, 0x04, 0x74,
+	0x79, 0x70, 0x65, 0x22, 0x22, 0x0a, 0x06, 0x4c, 0x33, 0x4d, 0x6f, 0x64, 0x65, 0x12, 0x08, 0x0a,
+	0x04, 0x42, 0x4f, 0x54, 0x48, 0x10, 0x00, 0x12, 0x06, 0x0a, 0x02, 0x56, 0x34, 0x10, 0x01, 0x12,
+	0x06, 0x0a, 0x02, 0x56, 0x36, 0x10, 0x02, 0x32, 0x80, 0x06, 0x0a, 0x0b, 0x4d, 0x61, 0x69, 0x6e,
+	0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x66, 0x0a, 0x07, 0x43, 0x6f, 0x6e, 0x6e, 0x65,
+	0x63, 0x74, 0x12, 0x29, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x43,
+	0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2a, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6f, 0x6e, 0x6e, 0x65, 0x63,
+	0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x12,
+	0x6b, 0x0a, 0x0a, 0x44, 0x69, 0x73, 0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x12, 0x2c, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x69, 0x73, 0x63, 0x6f, 0x6e,
+	0x6e, 0x65, 0x63, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x6f, 0x63,
 	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
-	0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22,
-	0x00, 0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f,
-	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
-	0x6d, 0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f, 0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x75, 0x73, 0x65, 0x72,
-	0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x44, 0x69, 0x73, 0x63, 0x6f, 0x6e, 0x6e, 0x65,
+	0x63, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x66, 0x0a, 0x0b,
+	0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x2d, 0x2e, 0x6f, 0x63,
+	0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e,
+	0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76,
+	0x69, 0x63, 0x65, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x26, 0x2e, 0x6f, 0x63, 0x74,
+	0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75,
+	0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x4c, 0x69,
+	0x73, 0x74, 0x22, 0x00, 0x12, 0x6c, 0x0a, 0x0d, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65,
+	0x73, 0x70, 0x61, 0x63, 0x65, 0x12, 0x2f, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d,
+	0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76,
+	0x31, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x4f,
+	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x28, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e,
+	0x76, 0x31, 0x2e, 0x4e, 0x61, 0x6d, 0x65, 0x73, 0x70, 0x61, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74,
+	0x22, 0x00, 0x12, 0x68, 0x0a, 0x09, 0x47, 0x65, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
+	0x2b, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d,
+	0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x53,
+	0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x6f,
+	0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e,
+	0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x53, 0x74, 0x61, 0x74,
+	0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x80, 0x01, 0x0a,
+	0x11, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69,
+	0x67, 0x73, 0x12, 0x33, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70,
+	0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31, 0x2e, 0x53,
+	0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x73,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x34, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69,
+	0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72,
+	0x2e, 0x76, 0x31, 0x2e, 0x53, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x43, 0x6f,
+	0x6e, 0x66, 0x69, 0x67, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12,
+	0x59, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x25, 0x2e,
+	0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69,
+	0x6e, 0x2e, 0x6d, 0x65, 0x74, 0x61, 0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x74, 0x4f, 0x70, 0x74,
+	0x69, 0x6f, 0x6e, 0x73, 0x1a, 0x22, 0x2e, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2e,
+	0x61, 0x70, 0x69, 0x2e, 0x6d, 0x61, 0x69, 0x6e, 0x2e, 0x75, 0x73, 0x65, 0x72, 0x2e, 0x76, 0x31,
+	0x2e, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x22, 0x00, 0x42, 0x2f, 0x5a, 0x2d, 0x67, 0x69,
+	0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75,
+	0x6d, 0x2f, 0x6f, 0x63, 0x74, 0x65, 0x6c, 0x69, 0x75, 0x6d, 0x2f, 0x61, 0x70, 0x69, 0x73, 0x2f,
+	0x6d, 0x61, 0x69, 0x6e, 0x2f, 0x75, 0x73, 0x65, 0x72, 0x76, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x33,
 }
 
 var (
@@ -4186,7 +4251,7 @@ func file_userv1_proto_rawDescGZIP() []byte {
 	return file_userv1_proto_rawDescData
 }
 
-var file_userv1_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_userv1_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
 var file_userv1_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_userv1_proto_goTypes = []any{
 	(GetStatusResponse_User_Spec_Type)(0),                    // 0: octelium.api.main.user.v1.GetStatusResponse.User.Spec.Type
@@ -4197,152 +4262,154 @@ var file_userv1_proto_goTypes = []any{
 	(HostedService_Mode)(0),                                  // 5: octelium.api.main.user.v1.HostedService.Mode
 	(ConnectionState_L3Mode)(0),                              // 6: octelium.api.main.user.v1.ConnectionState.L3Mode
 	(Service_Spec_Type)(0),                                   // 7: octelium.api.main.user.v1.Service.Spec.Type
-	(*LogoutRequest)(nil),                                    // 8: octelium.api.main.user.v1.LogoutRequest
-	(*LogoutResponse)(nil),                                   // 9: octelium.api.main.user.v1.LogoutResponse
-	(*GetStatusRequest)(nil),                                 // 10: octelium.api.main.user.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),                                // 11: octelium.api.main.user.v1.GetStatusResponse
-	(*ConnectRequest)(nil),                                   // 12: octelium.api.main.user.v1.ConnectRequest
-	(*DisconnectRequest)(nil),                                // 13: octelium.api.main.user.v1.DisconnectRequest
-	(*DisconnectResponse)(nil),                               // 14: octelium.api.main.user.v1.DisconnectResponse
-	(*Gateway)(nil),                                          // 15: octelium.api.main.user.v1.Gateway
-	(*DNS)(nil),                                              // 16: octelium.api.main.user.v1.DNS
-	(*HostedService)(nil),                                    // 17: octelium.api.main.user.v1.HostedService
-	(*ConnectionState)(nil),                                  // 18: octelium.api.main.user.v1.ConnectionState
-	(*Service)(nil),                                          // 19: octelium.api.main.user.v1.Service
-	(*ServiceList)(nil),                                      // 20: octelium.api.main.user.v1.ServiceList
-	(*ListServiceOptions)(nil),                               // 21: octelium.api.main.user.v1.ListServiceOptions
-	(*ListNamespaceOptions)(nil),                             // 22: octelium.api.main.user.v1.ListNamespaceOptions
-	(*Namespace)(nil),                                        // 23: octelium.api.main.user.v1.Namespace
-	(*NamespaceList)(nil),                                    // 24: octelium.api.main.user.v1.NamespaceList
-	(*ConnectResponse)(nil),                                  // 25: octelium.api.main.user.v1.ConnectResponse
-	(*SetServiceConfigsRequest)(nil),                         // 26: octelium.api.main.user.v1.SetServiceConfigsRequest
-	(*SetServiceConfigsResponse)(nil),                        // 27: octelium.api.main.user.v1.SetServiceConfigsResponse
-	(*GetStatusResponse_User)(nil),                           // 28: octelium.api.main.user.v1.GetStatusResponse.User
-	(*GetStatusResponse_Session)(nil),                        // 29: octelium.api.main.user.v1.GetStatusResponse.Session
-	(*GetStatusResponse_Cluster)(nil),                        // 30: octelium.api.main.user.v1.GetStatusResponse.Cluster
-	(*GetStatusResponse_User_Spec)(nil),                      // 31: octelium.api.main.user.v1.GetStatusResponse.User.Spec
-	(*GetStatusResponse_User_Status)(nil),                    // 32: octelium.api.main.user.v1.GetStatusResponse.User.Status
-	(*GetStatusResponse_Session_Spec)(nil),                   // 33: octelium.api.main.user.v1.GetStatusResponse.Session.Spec
-	(*GetStatusResponse_Session_Status)(nil),                 // 34: octelium.api.main.user.v1.GetStatusResponse.Session.Status
-	(*ConnectRequest_Initialize)(nil),                        // 35: octelium.api.main.user.v1.ConnectRequest.Initialize
-	(*ConnectRequest_Initialize_ServiceOptions)(nil),         // 36: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions
-	(*ConnectRequest_Initialize_PublishedService)(nil),       // 37: octelium.api.main.user.v1.ConnectRequest.Initialize.PublishedService
-	(*ConnectRequest_Initialize_ServiceOptions_Service)(nil), // 38: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.Service
-	(*Gateway_WireGuard)(nil),                                // 39: octelium.api.main.user.v1.Gateway.WireGuard
-	(*Gateway_QUICV0)(nil),                                   // 40: octelium.api.main.user.v1.Gateway.QUICV0
-	(*HostedService_Upstream)(nil),                           // 41: octelium.api.main.user.v1.HostedService.Upstream
-	(*ConnectionState_ServiceOptions)(nil),                   // 42: octelium.api.main.user.v1.ConnectionState.ServiceOptions
-	(*ConnectionState_ServiceConfig)(nil),                    // 43: octelium.api.main.user.v1.ConnectionState.ServiceConfig
-	(*ConnectionState_ServiceConfig_SSH)(nil),                // 44: octelium.api.main.user.v1.ConnectionState.ServiceConfig.SSH
-	(*Service_Spec)(nil),                                     // 45: octelium.api.main.user.v1.Service.Spec
-	(*Service_Status)(nil),                                   // 46: octelium.api.main.user.v1.Service.Status
-	(*Namespace_Spec)(nil),                                   // 47: octelium.api.main.user.v1.Namespace.Spec
-	(*Namespace_Status)(nil),                                 // 48: octelium.api.main.user.v1.Namespace.Status
-	(*ConnectResponse_AddGateway)(nil),                       // 49: octelium.api.main.user.v1.ConnectResponse.AddGateway
-	(*ConnectResponse_UpdateGateway)(nil),                    // 50: octelium.api.main.user.v1.ConnectResponse.UpdateGateway
-	(*ConnectResponse_DeleteGateway)(nil),                    // 51: octelium.api.main.user.v1.ConnectResponse.DeleteGateway
-	(*ConnectResponse_Disconnect)(nil),                       // 52: octelium.api.main.user.v1.ConnectResponse.Disconnect
-	(*ConnectResponse_Message)(nil),                          // 53: octelium.api.main.user.v1.ConnectResponse.Message
-	(*ConnectResponse_UpdateDNS)(nil),                        // 54: octelium.api.main.user.v1.ConnectResponse.UpdateDNS
-	(*ConnectResponse_AddService)(nil),                       // 55: octelium.api.main.user.v1.ConnectResponse.AddService
-	(*ConnectResponse_UpdateService)(nil),                    // 56: octelium.api.main.user.v1.ConnectResponse.UpdateService
-	(*ConnectResponse_DeleteService)(nil),                    // 57: octelium.api.main.user.v1.ConnectResponse.DeleteService
-	(*SetServiceConfigsResponse_Config)(nil),                 // 58: octelium.api.main.user.v1.SetServiceConfigsResponse.Config
-	(*SetServiceConfigsResponse_Config_Kubeconfig)(nil),      // 59: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.Kubeconfig
-	(*SetServiceConfigsResponse_Config_SSH)(nil),             // 60: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.SSH
-	(*metav1.DualStackIP)(nil),                               // 61: octelium.api.main.meta.v1.DualStackIP
-	(*metav1.DualStackNetwork)(nil),                          // 62: octelium.api.main.meta.v1.DualStackNetwork
-	(*metav1.Metadata)(nil),                                  // 63: octelium.api.main.meta.v1.Metadata
-	(*metav1.ListResponseMeta)(nil),                          // 64: octelium.api.main.meta.v1.ListResponseMeta
-	(*metav1.CommonListOptions)(nil),                         // 65: octelium.api.main.meta.v1.CommonListOptions
-	(*timestamppb.Timestamp)(nil),                            // 66: google.protobuf.Timestamp
-	(*metav1.GetOptions)(nil),                                // 67: octelium.api.main.meta.v1.GetOptions
+	(SetServiceConfigsResponse_L3Mode)(0),                    // 8: octelium.api.main.user.v1.SetServiceConfigsResponse.L3Mode
+	(*LogoutRequest)(nil),                                    // 9: octelium.api.main.user.v1.LogoutRequest
+	(*LogoutResponse)(nil),                                   // 10: octelium.api.main.user.v1.LogoutResponse
+	(*GetStatusRequest)(nil),                                 // 11: octelium.api.main.user.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),                                // 12: octelium.api.main.user.v1.GetStatusResponse
+	(*ConnectRequest)(nil),                                   // 13: octelium.api.main.user.v1.ConnectRequest
+	(*DisconnectRequest)(nil),                                // 14: octelium.api.main.user.v1.DisconnectRequest
+	(*DisconnectResponse)(nil),                               // 15: octelium.api.main.user.v1.DisconnectResponse
+	(*Gateway)(nil),                                          // 16: octelium.api.main.user.v1.Gateway
+	(*DNS)(nil),                                              // 17: octelium.api.main.user.v1.DNS
+	(*HostedService)(nil),                                    // 18: octelium.api.main.user.v1.HostedService
+	(*ConnectionState)(nil),                                  // 19: octelium.api.main.user.v1.ConnectionState
+	(*Service)(nil),                                          // 20: octelium.api.main.user.v1.Service
+	(*ServiceList)(nil),                                      // 21: octelium.api.main.user.v1.ServiceList
+	(*ListServiceOptions)(nil),                               // 22: octelium.api.main.user.v1.ListServiceOptions
+	(*ListNamespaceOptions)(nil),                             // 23: octelium.api.main.user.v1.ListNamespaceOptions
+	(*Namespace)(nil),                                        // 24: octelium.api.main.user.v1.Namespace
+	(*NamespaceList)(nil),                                    // 25: octelium.api.main.user.v1.NamespaceList
+	(*ConnectResponse)(nil),                                  // 26: octelium.api.main.user.v1.ConnectResponse
+	(*SetServiceConfigsRequest)(nil),                         // 27: octelium.api.main.user.v1.SetServiceConfigsRequest
+	(*SetServiceConfigsResponse)(nil),                        // 28: octelium.api.main.user.v1.SetServiceConfigsResponse
+	(*GetStatusResponse_User)(nil),                           // 29: octelium.api.main.user.v1.GetStatusResponse.User
+	(*GetStatusResponse_Session)(nil),                        // 30: octelium.api.main.user.v1.GetStatusResponse.Session
+	(*GetStatusResponse_Cluster)(nil),                        // 31: octelium.api.main.user.v1.GetStatusResponse.Cluster
+	(*GetStatusResponse_User_Spec)(nil),                      // 32: octelium.api.main.user.v1.GetStatusResponse.User.Spec
+	(*GetStatusResponse_User_Status)(nil),                    // 33: octelium.api.main.user.v1.GetStatusResponse.User.Status
+	(*GetStatusResponse_Session_Spec)(nil),                   // 34: octelium.api.main.user.v1.GetStatusResponse.Session.Spec
+	(*GetStatusResponse_Session_Status)(nil),                 // 35: octelium.api.main.user.v1.GetStatusResponse.Session.Status
+	(*ConnectRequest_Initialize)(nil),                        // 36: octelium.api.main.user.v1.ConnectRequest.Initialize
+	(*ConnectRequest_Initialize_ServiceOptions)(nil),         // 37: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions
+	(*ConnectRequest_Initialize_PublishedService)(nil),       // 38: octelium.api.main.user.v1.ConnectRequest.Initialize.PublishedService
+	(*ConnectRequest_Initialize_ServiceOptions_Service)(nil), // 39: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.Service
+	(*Gateway_WireGuard)(nil),                                // 40: octelium.api.main.user.v1.Gateway.WireGuard
+	(*Gateway_QUICV0)(nil),                                   // 41: octelium.api.main.user.v1.Gateway.QUICV0
+	(*HostedService_Upstream)(nil),                           // 42: octelium.api.main.user.v1.HostedService.Upstream
+	(*ConnectionState_ServiceOptions)(nil),                   // 43: octelium.api.main.user.v1.ConnectionState.ServiceOptions
+	(*ConnectionState_ServiceConfig)(nil),                    // 44: octelium.api.main.user.v1.ConnectionState.ServiceConfig
+	(*ConnectionState_ServiceConfig_SSH)(nil),                // 45: octelium.api.main.user.v1.ConnectionState.ServiceConfig.SSH
+	(*Service_Spec)(nil),                                     // 46: octelium.api.main.user.v1.Service.Spec
+	(*Service_Status)(nil),                                   // 47: octelium.api.main.user.v1.Service.Status
+	(*Namespace_Spec)(nil),                                   // 48: octelium.api.main.user.v1.Namespace.Spec
+	(*Namespace_Status)(nil),                                 // 49: octelium.api.main.user.v1.Namespace.Status
+	(*ConnectResponse_AddGateway)(nil),                       // 50: octelium.api.main.user.v1.ConnectResponse.AddGateway
+	(*ConnectResponse_UpdateGateway)(nil),                    // 51: octelium.api.main.user.v1.ConnectResponse.UpdateGateway
+	(*ConnectResponse_DeleteGateway)(nil),                    // 52: octelium.api.main.user.v1.ConnectResponse.DeleteGateway
+	(*ConnectResponse_Disconnect)(nil),                       // 53: octelium.api.main.user.v1.ConnectResponse.Disconnect
+	(*ConnectResponse_Message)(nil),                          // 54: octelium.api.main.user.v1.ConnectResponse.Message
+	(*ConnectResponse_UpdateDNS)(nil),                        // 55: octelium.api.main.user.v1.ConnectResponse.UpdateDNS
+	(*ConnectResponse_AddService)(nil),                       // 56: octelium.api.main.user.v1.ConnectResponse.AddService
+	(*ConnectResponse_UpdateService)(nil),                    // 57: octelium.api.main.user.v1.ConnectResponse.UpdateService
+	(*ConnectResponse_DeleteService)(nil),                    // 58: octelium.api.main.user.v1.ConnectResponse.DeleteService
+	(*SetServiceConfigsResponse_Config)(nil),                 // 59: octelium.api.main.user.v1.SetServiceConfigsResponse.Config
+	(*SetServiceConfigsResponse_Config_Kubeconfig)(nil),      // 60: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.Kubeconfig
+	(*SetServiceConfigsResponse_Config_SSH)(nil),             // 61: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.SSH
+	(*metav1.DualStackIP)(nil),                               // 62: octelium.api.main.meta.v1.DualStackIP
+	(*metav1.DualStackNetwork)(nil),                          // 63: octelium.api.main.meta.v1.DualStackNetwork
+	(*metav1.Metadata)(nil),                                  // 64: octelium.api.main.meta.v1.Metadata
+	(*metav1.ListResponseMeta)(nil),                          // 65: octelium.api.main.meta.v1.ListResponseMeta
+	(*metav1.CommonListOptions)(nil),                         // 66: octelium.api.main.meta.v1.CommonListOptions
+	(*timestamppb.Timestamp)(nil),                            // 67: google.protobuf.Timestamp
+	(*metav1.GetOptions)(nil),                                // 68: octelium.api.main.meta.v1.GetOptions
 }
 var file_userv1_proto_depIdxs = []int32{
-	30, // 0: octelium.api.main.user.v1.GetStatusResponse.cluster:type_name -> octelium.api.main.user.v1.GetStatusResponse.Cluster
-	28, // 1: octelium.api.main.user.v1.GetStatusResponse.user:type_name -> octelium.api.main.user.v1.GetStatusResponse.User
-	29, // 2: octelium.api.main.user.v1.GetStatusResponse.session:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session
-	35, // 3: octelium.api.main.user.v1.ConnectRequest.initialize:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize
-	39, // 4: octelium.api.main.user.v1.Gateway.wireguard:type_name -> octelium.api.main.user.v1.Gateway.WireGuard
-	40, // 5: octelium.api.main.user.v1.Gateway.quicv0:type_name -> octelium.api.main.user.v1.Gateway.QUICV0
+	31, // 0: octelium.api.main.user.v1.GetStatusResponse.cluster:type_name -> octelium.api.main.user.v1.GetStatusResponse.Cluster
+	29, // 1: octelium.api.main.user.v1.GetStatusResponse.user:type_name -> octelium.api.main.user.v1.GetStatusResponse.User
+	30, // 2: octelium.api.main.user.v1.GetStatusResponse.session:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session
+	36, // 3: octelium.api.main.user.v1.ConnectRequest.initialize:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize
+	40, // 4: octelium.api.main.user.v1.Gateway.wireguard:type_name -> octelium.api.main.user.v1.Gateway.WireGuard
+	41, // 5: octelium.api.main.user.v1.Gateway.quicv0:type_name -> octelium.api.main.user.v1.Gateway.QUICV0
 	4,  // 6: octelium.api.main.user.v1.HostedService.l4Type:type_name -> octelium.api.main.user.v1.HostedService.L4Type
-	41, // 7: octelium.api.main.user.v1.HostedService.upstream:type_name -> octelium.api.main.user.v1.HostedService.Upstream
-	61, // 8: octelium.api.main.user.v1.HostedService.address:type_name -> octelium.api.main.meta.v1.DualStackIP
+	42, // 7: octelium.api.main.user.v1.HostedService.upstream:type_name -> octelium.api.main.user.v1.HostedService.Upstream
+	62, // 8: octelium.api.main.user.v1.HostedService.address:type_name -> octelium.api.main.meta.v1.DualStackIP
 	5,  // 9: octelium.api.main.user.v1.HostedService.mode:type_name -> octelium.api.main.user.v1.HostedService.Mode
-	62, // 10: octelium.api.main.user.v1.ConnectionState.addresses:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	15, // 11: octelium.api.main.user.v1.ConnectionState.gateways:type_name -> octelium.api.main.user.v1.Gateway
-	16, // 12: octelium.api.main.user.v1.ConnectionState.dns:type_name -> octelium.api.main.user.v1.DNS
-	43, // 13: octelium.api.main.user.v1.ConnectionState.serviceConfigs:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceConfig
+	63, // 10: octelium.api.main.user.v1.ConnectionState.addresses:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	16, // 11: octelium.api.main.user.v1.ConnectionState.gateways:type_name -> octelium.api.main.user.v1.Gateway
+	17, // 12: octelium.api.main.user.v1.ConnectionState.dns:type_name -> octelium.api.main.user.v1.DNS
+	44, // 13: octelium.api.main.user.v1.ConnectionState.serviceConfigs:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceConfig
 	6,  // 14: octelium.api.main.user.v1.ConnectionState.l3Mode:type_name -> octelium.api.main.user.v1.ConnectionState.L3Mode
-	42, // 15: octelium.api.main.user.v1.ConnectionState.serviceOptions:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceOptions
-	62, // 16: octelium.api.main.user.v1.ConnectionState.cidr:type_name -> octelium.api.main.meta.v1.DualStackNetwork
-	63, // 17: octelium.api.main.user.v1.Service.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	45, // 18: octelium.api.main.user.v1.Service.spec:type_name -> octelium.api.main.user.v1.Service.Spec
-	46, // 19: octelium.api.main.user.v1.Service.status:type_name -> octelium.api.main.user.v1.Service.Status
-	19, // 20: octelium.api.main.user.v1.ServiceList.items:type_name -> octelium.api.main.user.v1.Service
-	64, // 21: octelium.api.main.user.v1.ServiceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	65, // 22: octelium.api.main.user.v1.ListServiceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	65, // 23: octelium.api.main.user.v1.ListNamespaceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
-	63, // 24: octelium.api.main.user.v1.Namespace.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	47, // 25: octelium.api.main.user.v1.Namespace.spec:type_name -> octelium.api.main.user.v1.Namespace.Spec
-	48, // 26: octelium.api.main.user.v1.Namespace.status:type_name -> octelium.api.main.user.v1.Namespace.Status
-	23, // 27: octelium.api.main.user.v1.NamespaceList.items:type_name -> octelium.api.main.user.v1.Namespace
-	64, // 28: octelium.api.main.user.v1.NamespaceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
-	66, // 29: octelium.api.main.user.v1.ConnectResponse.createdAt:type_name -> google.protobuf.Timestamp
-	49, // 30: octelium.api.main.user.v1.ConnectResponse.addGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.AddGateway
-	50, // 31: octelium.api.main.user.v1.ConnectResponse.updateGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateGateway
-	51, // 32: octelium.api.main.user.v1.ConnectResponse.deleteGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.DeleteGateway
-	54, // 33: octelium.api.main.user.v1.ConnectResponse.updateDNS:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateDNS
-	53, // 34: octelium.api.main.user.v1.ConnectResponse.message:type_name -> octelium.api.main.user.v1.ConnectResponse.Message
-	52, // 35: octelium.api.main.user.v1.ConnectResponse.disconnect:type_name -> octelium.api.main.user.v1.ConnectResponse.Disconnect
-	55, // 36: octelium.api.main.user.v1.ConnectResponse.addService:type_name -> octelium.api.main.user.v1.ConnectResponse.AddService
-	56, // 37: octelium.api.main.user.v1.ConnectResponse.updateService:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateService
-	57, // 38: octelium.api.main.user.v1.ConnectResponse.deleteService:type_name -> octelium.api.main.user.v1.ConnectResponse.DeleteService
-	18, // 39: octelium.api.main.user.v1.ConnectResponse.state:type_name -> octelium.api.main.user.v1.ConnectionState
-	58, // 40: octelium.api.main.user.v1.SetServiceConfigsResponse.configs:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config
-	63, // 41: octelium.api.main.user.v1.GetStatusResponse.User.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	31, // 42: octelium.api.main.user.v1.GetStatusResponse.User.spec:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Spec
-	32, // 43: octelium.api.main.user.v1.GetStatusResponse.User.status:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Status
-	63, // 44: octelium.api.main.user.v1.GetStatusResponse.Session.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	33, // 45: octelium.api.main.user.v1.GetStatusResponse.Session.spec:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Spec
-	34, // 46: octelium.api.main.user.v1.GetStatusResponse.Session.status:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Status
-	63, // 47: octelium.api.main.user.v1.GetStatusResponse.Cluster.metadata:type_name -> octelium.api.main.meta.v1.Metadata
-	0,  // 48: octelium.api.main.user.v1.GetStatusResponse.User.Spec.type:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Spec.Type
-	1,  // 49: octelium.api.main.user.v1.GetStatusResponse.Session.Status.type:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Status.Type
-	2,  // 50: octelium.api.main.user.v1.ConnectRequest.Initialize.l3Mode:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.L3Mode
-	36, // 51: octelium.api.main.user.v1.ConnectRequest.Initialize.serviceOptions:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions
-	3,  // 52: octelium.api.main.user.v1.ConnectRequest.Initialize.connectionType:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ConnectionType
-	37, // 53: octelium.api.main.user.v1.ConnectRequest.Initialize.publishedServices:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.PublishedService
-	38, // 54: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.services:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.Service
-	17, // 55: octelium.api.main.user.v1.ConnectionState.ServiceOptions.services:type_name -> octelium.api.main.user.v1.HostedService
-	44, // 56: octelium.api.main.user.v1.ConnectionState.ServiceConfig.ssh:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceConfig.SSH
-	7,  // 57: octelium.api.main.user.v1.Service.Spec.type:type_name -> octelium.api.main.user.v1.Service.Spec.Type
-	15, // 58: octelium.api.main.user.v1.ConnectResponse.AddGateway.gateway:type_name -> octelium.api.main.user.v1.Gateway
-	15, // 59: octelium.api.main.user.v1.ConnectResponse.UpdateGateway.gateway:type_name -> octelium.api.main.user.v1.Gateway
-	16, // 60: octelium.api.main.user.v1.ConnectResponse.UpdateDNS.dns:type_name -> octelium.api.main.user.v1.DNS
-	17, // 61: octelium.api.main.user.v1.ConnectResponse.AddService.service:type_name -> octelium.api.main.user.v1.HostedService
-	17, // 62: octelium.api.main.user.v1.ConnectResponse.UpdateService.service:type_name -> octelium.api.main.user.v1.HostedService
-	59, // 63: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.kubeconfig:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config.Kubeconfig
-	60, // 64: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.ssh:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config.SSH
-	12, // 65: octelium.api.main.user.v1.MainService.Connect:input_type -> octelium.api.main.user.v1.ConnectRequest
-	13, // 66: octelium.api.main.user.v1.MainService.Disconnect:input_type -> octelium.api.main.user.v1.DisconnectRequest
-	21, // 67: octelium.api.main.user.v1.MainService.ListService:input_type -> octelium.api.main.user.v1.ListServiceOptions
-	22, // 68: octelium.api.main.user.v1.MainService.ListNamespace:input_type -> octelium.api.main.user.v1.ListNamespaceOptions
-	10, // 69: octelium.api.main.user.v1.MainService.GetStatus:input_type -> octelium.api.main.user.v1.GetStatusRequest
-	26, // 70: octelium.api.main.user.v1.MainService.SetServiceConfigs:input_type -> octelium.api.main.user.v1.SetServiceConfigsRequest
-	67, // 71: octelium.api.main.user.v1.MainService.GetService:input_type -> octelium.api.main.meta.v1.GetOptions
-	25, // 72: octelium.api.main.user.v1.MainService.Connect:output_type -> octelium.api.main.user.v1.ConnectResponse
-	14, // 73: octelium.api.main.user.v1.MainService.Disconnect:output_type -> octelium.api.main.user.v1.DisconnectResponse
-	20, // 74: octelium.api.main.user.v1.MainService.ListService:output_type -> octelium.api.main.user.v1.ServiceList
-	24, // 75: octelium.api.main.user.v1.MainService.ListNamespace:output_type -> octelium.api.main.user.v1.NamespaceList
-	11, // 76: octelium.api.main.user.v1.MainService.GetStatus:output_type -> octelium.api.main.user.v1.GetStatusResponse
-	27, // 77: octelium.api.main.user.v1.MainService.SetServiceConfigs:output_type -> octelium.api.main.user.v1.SetServiceConfigsResponse
-	19, // 78: octelium.api.main.user.v1.MainService.GetService:output_type -> octelium.api.main.user.v1.Service
-	72, // [72:79] is the sub-list for method output_type
-	65, // [65:72] is the sub-list for method input_type
-	65, // [65:65] is the sub-list for extension type_name
-	65, // [65:65] is the sub-list for extension extendee
-	0,  // [0:65] is the sub-list for field type_name
+	43, // 15: octelium.api.main.user.v1.ConnectionState.serviceOptions:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceOptions
+	63, // 16: octelium.api.main.user.v1.ConnectionState.cidr:type_name -> octelium.api.main.meta.v1.DualStackNetwork
+	64, // 17: octelium.api.main.user.v1.Service.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	46, // 18: octelium.api.main.user.v1.Service.spec:type_name -> octelium.api.main.user.v1.Service.Spec
+	47, // 19: octelium.api.main.user.v1.Service.status:type_name -> octelium.api.main.user.v1.Service.Status
+	20, // 20: octelium.api.main.user.v1.ServiceList.items:type_name -> octelium.api.main.user.v1.Service
+	65, // 21: octelium.api.main.user.v1.ServiceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	66, // 22: octelium.api.main.user.v1.ListServiceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	66, // 23: octelium.api.main.user.v1.ListNamespaceOptions.common:type_name -> octelium.api.main.meta.v1.CommonListOptions
+	64, // 24: octelium.api.main.user.v1.Namespace.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	48, // 25: octelium.api.main.user.v1.Namespace.spec:type_name -> octelium.api.main.user.v1.Namespace.Spec
+	49, // 26: octelium.api.main.user.v1.Namespace.status:type_name -> octelium.api.main.user.v1.Namespace.Status
+	24, // 27: octelium.api.main.user.v1.NamespaceList.items:type_name -> octelium.api.main.user.v1.Namespace
+	65, // 28: octelium.api.main.user.v1.NamespaceList.listResponseMeta:type_name -> octelium.api.main.meta.v1.ListResponseMeta
+	67, // 29: octelium.api.main.user.v1.ConnectResponse.createdAt:type_name -> google.protobuf.Timestamp
+	50, // 30: octelium.api.main.user.v1.ConnectResponse.addGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.AddGateway
+	51, // 31: octelium.api.main.user.v1.ConnectResponse.updateGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateGateway
+	52, // 32: octelium.api.main.user.v1.ConnectResponse.deleteGateway:type_name -> octelium.api.main.user.v1.ConnectResponse.DeleteGateway
+	55, // 33: octelium.api.main.user.v1.ConnectResponse.updateDNS:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateDNS
+	54, // 34: octelium.api.main.user.v1.ConnectResponse.message:type_name -> octelium.api.main.user.v1.ConnectResponse.Message
+	53, // 35: octelium.api.main.user.v1.ConnectResponse.disconnect:type_name -> octelium.api.main.user.v1.ConnectResponse.Disconnect
+	56, // 36: octelium.api.main.user.v1.ConnectResponse.addService:type_name -> octelium.api.main.user.v1.ConnectResponse.AddService
+	57, // 37: octelium.api.main.user.v1.ConnectResponse.updateService:type_name -> octelium.api.main.user.v1.ConnectResponse.UpdateService
+	58, // 38: octelium.api.main.user.v1.ConnectResponse.deleteService:type_name -> octelium.api.main.user.v1.ConnectResponse.DeleteService
+	19, // 39: octelium.api.main.user.v1.ConnectResponse.state:type_name -> octelium.api.main.user.v1.ConnectionState
+	59, // 40: octelium.api.main.user.v1.SetServiceConfigsResponse.configs:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config
+	8,  // 41: octelium.api.main.user.v1.SetServiceConfigsResponse.l3Mode:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.L3Mode
+	64, // 42: octelium.api.main.user.v1.GetStatusResponse.User.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	32, // 43: octelium.api.main.user.v1.GetStatusResponse.User.spec:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Spec
+	33, // 44: octelium.api.main.user.v1.GetStatusResponse.User.status:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Status
+	64, // 45: octelium.api.main.user.v1.GetStatusResponse.Session.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	34, // 46: octelium.api.main.user.v1.GetStatusResponse.Session.spec:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Spec
+	35, // 47: octelium.api.main.user.v1.GetStatusResponse.Session.status:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Status
+	64, // 48: octelium.api.main.user.v1.GetStatusResponse.Cluster.metadata:type_name -> octelium.api.main.meta.v1.Metadata
+	0,  // 49: octelium.api.main.user.v1.GetStatusResponse.User.Spec.type:type_name -> octelium.api.main.user.v1.GetStatusResponse.User.Spec.Type
+	1,  // 50: octelium.api.main.user.v1.GetStatusResponse.Session.Status.type:type_name -> octelium.api.main.user.v1.GetStatusResponse.Session.Status.Type
+	2,  // 51: octelium.api.main.user.v1.ConnectRequest.Initialize.l3Mode:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.L3Mode
+	37, // 52: octelium.api.main.user.v1.ConnectRequest.Initialize.serviceOptions:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions
+	3,  // 53: octelium.api.main.user.v1.ConnectRequest.Initialize.connectionType:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ConnectionType
+	38, // 54: octelium.api.main.user.v1.ConnectRequest.Initialize.publishedServices:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.PublishedService
+	39, // 55: octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.services:type_name -> octelium.api.main.user.v1.ConnectRequest.Initialize.ServiceOptions.Service
+	18, // 56: octelium.api.main.user.v1.ConnectionState.ServiceOptions.services:type_name -> octelium.api.main.user.v1.HostedService
+	45, // 57: octelium.api.main.user.v1.ConnectionState.ServiceConfig.ssh:type_name -> octelium.api.main.user.v1.ConnectionState.ServiceConfig.SSH
+	7,  // 58: octelium.api.main.user.v1.Service.Spec.type:type_name -> octelium.api.main.user.v1.Service.Spec.Type
+	16, // 59: octelium.api.main.user.v1.ConnectResponse.AddGateway.gateway:type_name -> octelium.api.main.user.v1.Gateway
+	16, // 60: octelium.api.main.user.v1.ConnectResponse.UpdateGateway.gateway:type_name -> octelium.api.main.user.v1.Gateway
+	17, // 61: octelium.api.main.user.v1.ConnectResponse.UpdateDNS.dns:type_name -> octelium.api.main.user.v1.DNS
+	18, // 62: octelium.api.main.user.v1.ConnectResponse.AddService.service:type_name -> octelium.api.main.user.v1.HostedService
+	18, // 63: octelium.api.main.user.v1.ConnectResponse.UpdateService.service:type_name -> octelium.api.main.user.v1.HostedService
+	60, // 64: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.kubeconfig:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config.Kubeconfig
+	61, // 65: octelium.api.main.user.v1.SetServiceConfigsResponse.Config.ssh:type_name -> octelium.api.main.user.v1.SetServiceConfigsResponse.Config.SSH
+	13, // 66: octelium.api.main.user.v1.MainService.Connect:input_type -> octelium.api.main.user.v1.ConnectRequest
+	14, // 67: octelium.api.main.user.v1.MainService.Disconnect:input_type -> octelium.api.main.user.v1.DisconnectRequest
+	22, // 68: octelium.api.main.user.v1.MainService.ListService:input_type -> octelium.api.main.user.v1.ListServiceOptions
+	23, // 69: octelium.api.main.user.v1.MainService.ListNamespace:input_type -> octelium.api.main.user.v1.ListNamespaceOptions
+	11, // 70: octelium.api.main.user.v1.MainService.GetStatus:input_type -> octelium.api.main.user.v1.GetStatusRequest
+	27, // 71: octelium.api.main.user.v1.MainService.SetServiceConfigs:input_type -> octelium.api.main.user.v1.SetServiceConfigsRequest
+	68, // 72: octelium.api.main.user.v1.MainService.GetService:input_type -> octelium.api.main.meta.v1.GetOptions
+	26, // 73: octelium.api.main.user.v1.MainService.Connect:output_type -> octelium.api.main.user.v1.ConnectResponse
+	15, // 74: octelium.api.main.user.v1.MainService.Disconnect:output_type -> octelium.api.main.user.v1.DisconnectResponse
+	21, // 75: octelium.api.main.user.v1.MainService.ListService:output_type -> octelium.api.main.user.v1.ServiceList
+	25, // 76: octelium.api.main.user.v1.MainService.ListNamespace:output_type -> octelium.api.main.user.v1.NamespaceList
+	12, // 77: octelium.api.main.user.v1.MainService.GetStatus:output_type -> octelium.api.main.user.v1.GetStatusResponse
+	28, // 78: octelium.api.main.user.v1.MainService.SetServiceConfigs:output_type -> octelium.api.main.user.v1.SetServiceConfigsResponse
+	20, // 79: octelium.api.main.user.v1.MainService.GetService:output_type -> octelium.api.main.user.v1.Service
+	73, // [73:80] is the sub-list for method output_type
+	66, // [66:73] is the sub-list for method input_type
+	66, // [66:66] is the sub-list for extension type_name
+	66, // [66:66] is the sub-list for extension extendee
+	0,  // [0:66] is the sub-list for field type_name
 }
 
 func init() { file_userv1_proto_init() }
@@ -4377,7 +4444,7 @@ func file_userv1_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_userv1_proto_rawDesc,
-			NumEnums:      8,
+			NumEnums:      9,
 			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,

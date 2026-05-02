@@ -71,6 +71,21 @@ func (s *Server) SetServiceConfigs(ctx context.Context,
 	ret := &userv1.SetServiceConfigsResponse{
 		Host: host,
 		Port: int32(port),
+		L3Mode: func() userv1.SetServiceConfigsResponse_L3Mode {
+			if i.Session.Status.Connection == nil {
+				return userv1.SetServiceConfigsResponse_BOTH
+			}
+			switch i.Session.Status.Connection.L3Mode {
+			case corev1.Session_Status_Connection_V4:
+				return userv1.SetServiceConfigsResponse_V4
+			case corev1.Session_Status_Connection_V6:
+				return userv1.SetServiceConfigsResponse_V6
+			case corev1.Session_Status_Connection_BOTH:
+				return userv1.SetServiceConfigsResponse_BOTH
+			default:
+				return userv1.SetServiceConfigsResponse_BOTH
+			}
+		}(),
 	}
 
 	switch {
