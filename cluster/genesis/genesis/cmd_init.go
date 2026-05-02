@@ -732,7 +732,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Metadata: &metav1.Metadata{
 				Name:        "essh.octelium",
 				DisplayName: "Main Embedded SSH Server",
-				Description: `An embedded SSH server used mainly for "octelium cp" commands`,
+				Description: `An embedded SSH server used mainly for "octelium ssh" and "octelium cp" commands`,
 			},
 			Spec: &corev1.Service_Spec{
 				Mode: corev1.Service_Spec_SSH,
