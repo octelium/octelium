@@ -137,6 +137,24 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := msg.Question[0].Name
 
+	switch msg.Question[0].Qtype {
+	case dns.TypeA, dns.TypeAAAA:
+	default:
+		ret, err := s.getProxiedAnswer(domain, r.Question[0].Qtype)
+		if err != nil {
+			msg.SetRcode(r, dns.RcodeServerFailure)
+			w.WriteMsg(&msg)
+			zap.L().Debug("Could not getProxiedAnswer", zap.String("domain", domain))
+			return
+		}
+
+		msg.Answer = ret.Answer
+		msg.Extra = ret.Extra
+		msg.Ns = ret.Ns
+		w.WriteMsg(&msg)
+		return
+	}
+
 	if !govalidator.IsDNSName(domain) {
 		msg := dns.Msg{}
 		msg.SetRcode(r, dns.RcodeRefused)
@@ -152,7 +170,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			msg.SetRcode(r, dns.RcodeServerFailure)
 			w.WriteMsg(&msg)
-			zap.L().Debug("Could not find svcNs for domain", zap.String("domain", domain))
+			zap.L().Debug("Could not getProxiedAnswer", zap.String("domain", domain))
 			return
 		}
 
