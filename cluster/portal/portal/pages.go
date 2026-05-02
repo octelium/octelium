@@ -19,9 +19,7 @@ package portal
 import (
 	"embed"
 	"io/fs"
-	"mime"
 	"net/http"
-	"path/filepath"
 
 	"go.uber.org/zap"
 )
@@ -42,13 +40,13 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.renderIndex(w)
 }
 
-func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", r.URL.Path))
+func (s *server) handleStatic() http.Handler {
+	subFS, err := fs.Sub(fsWeb, "web")
 	if err != nil {
-		zap.L().Debug("Could not read index.html file from web fs", zap.Error(err))
-		w.WriteHeader(http.StatusNotFound)
-		return
+		zap.L().Fatal("Could not initialize static file system", zap.Error(err))
 	}
-	w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
-	w.Write(blob)
+
+	httpFS := http.FS(subFS)
+
+	return http.FileServer(httpFS)
 }

@@ -19,7 +19,6 @@ package portal
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -44,9 +43,7 @@ func initServer(ctx context.Context,
 	clusterCfg *corev1.ClusterConfig) (*server, error) {
 
 	ret := &server{
-
-		domain: clusterCfg.Status.Domain,
-
+		domain:    clusterCfg.Status.Domain,
 		octeliumC: octeliumC,
 
 		stateCache: cache.New(14*time.Minute, 1*time.Minute),
@@ -80,11 +77,27 @@ func (s *server) getTemplateGlobals() *templateGlobals {
 	return val.(*templateGlobals)
 }
 
+func (s *server) getMux() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.Handle("GET /assets/{file}", s.handleStatic())
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			s.handleIndex(w, r)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	return mux
+}
+
 func (s *server) run(ctx context.Context) error {
 
 	go func() error {
 		srv := &http.Server{
-			Handler:      s,
+			Handler:      s.getMux(),
 			Addr:         vutils.ManagedServiceAddr,
 			WriteTimeout: 15 * time.Second,
 			ReadTimeout:  15 * time.Second,
@@ -94,19 +107,6 @@ func (s *server) run(ctx context.Context) error {
 	}()
 
 	return nil
-}
-
-func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/assets/"):
-		s.handleStatic(w, r)
-		return
-	case r.Method == "GET":
-		s.handleIndex(w, r)
-		return
-	default:
-		w.WriteHeader(http.StatusNotFound)
-	}
 }
 
 func Run(ctx context.Context) error {
