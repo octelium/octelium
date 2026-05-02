@@ -15,8 +15,11 @@
 package ssh
 
 import (
+	"context"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -25,6 +28,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
 )
 
@@ -93,40 +97,95 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		remoteCommand = args[1:]
 	}
 
-	{
-		conn, err := client.GetGRPCClientConn(ctx, i.Domain)
+	return DoCommand(ctx, &DoCommandOpts{
+		Domain:          i.Domain,
+		Service:         "essh.octelium",
+		SSHUser:         sessionName,
+		Command:         remoteCommand,
+		NoCommand:       cmdArgs.NoCommand,
+		DynamicForwards: cmdArgs.DynamicForwards,
+		LocalForwards:   cmdArgs.LocalForwards,
+	})
+}
+
+type DoCommandOpts struct {
+	Domain          string
+	SSHUser         string
+	LocalForwards   []string
+	DynamicForwards []string
+	Command         []string
+	NoCommand       bool
+	Service         string
+}
+
+func DoCommand(ctx context.Context, o *DoCommandOpts) error {
+	conn, err := client.GetGRPCClientConn(ctx, o.Domain)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	sessionName := o.SSHUser
+	remoteCommand := o.Command
+
+	c := userv1.NewMainServiceClient(conn)
+
+	resp, err := c.GetStatus(ctx, &userv1.GetStatusRequest{})
+	if err != nil {
+		return err
+	}
+
+	if !resp.Session.Status.IsConnected {
+		return errors.Errorf(
+			`You must be connected to the Cluster. Please use "octelium connect" before running this command.`)
+	}
+
+	cfg, err := c.SetServiceConfigs(ctx, &userv1.SetServiceConfigsRequest{
+		Name: o.Service,
+	})
+	if err != nil {
+		return err
+	}
+
+	hostKeyCallback, err := func() (ssh.HostKeyCallback, error) {
+		if len(cfg.Configs) < 1 ||
+			cfg.Configs[0].GetSsh() == nil ||
+			len(cfg.Configs[0].GetSsh().KnownHosts) == 0 {
+			return nil, errors.Errorf("Could not get Service knownHosts")
+		}
+
+		f, err := os.CreateTemp("", "known_hosts_*")
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer conn.Close()
+		defer os.Remove(f.Name())
 
-		c := userv1.NewMainServiceClient(conn)
-
-		resp, err := c.GetStatus(ctx, &userv1.GetStatusRequest{})
-		if err != nil {
-			return err
+		if _, err := f.WriteString(strings.Join(cfg.Configs[0].GetSsh().KnownHosts, "\n")); err != nil {
+			f.Close()
+			return nil, err
 		}
+		f.Close()
 
-		if !resp.Session.Status.IsConnected {
-			return errors.Errorf(
-				`You must be connected to the Cluster. Please use "octelium connect" before running this command.`)
-		}
+		return knownhosts.New(f.Name())
+	}()
+	if err != nil {
+		return err
 	}
 
 	sshCfg := &ssh.ClientConfig{
 		User:            sessionName,
 		Auth:            []ssh.AuthMethod{},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 	}
 
-	addr := net.JoinHostPort("essh.octelium.local", "22")
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
 	sshClient, err := ssh.Dial("tcp", addr, sshCfg)
 	if err != nil {
 		return errors.Errorf("Could not connect to session %q at %s: %+v", sessionName, addr, err)
 	}
 	defer sshClient.Close()
 
-	for _, spec := range cmdArgs.LocalForwards {
+	for _, spec := range o.LocalForwards {
 		lf, err := parseForwardSpec(spec)
 		if err != nil {
 			return errors.Errorf("Invalid -L value %q: %+v", spec, err)
@@ -134,11 +193,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		go runLocalForward(ctx, sshClient, lf)
 	}
 
-	for _, spec := range cmdArgs.DynamicForwards {
+	for _, spec := range o.DynamicForwards {
 		go runDynamicForward(ctx, sshClient, spec)
 	}
 
-	if cmdArgs.NoCommand {
+	if o.NoCommand {
 		<-ctx.Done()
 		return nil
 	}
