@@ -147,7 +147,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	hostname, err := s.getHostname(domain)
 	if err != nil {
-		zap.L().Debug("Could not get hostname", zap.String("domain", domain), zap.Error(err))
+		// zap.L().Debug("Could not get hostname", zap.String("domain", domain), zap.Error(err))
 		ret, err := s.getProxiedAnswer(domain, r.Question[0].Qtype)
 		if err != nil {
 			msg.SetRcode(r, dns.RcodeServerFailure)
