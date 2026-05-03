@@ -298,24 +298,20 @@ func (s *Server) getAccessTokenFromHTTPHeader(hdr map[string]string) (string, er
 		return authHdr, nil
 	}
 
+	if cookieVal, ok := hdr["cookie"]; ok && cookieVal != "" {
+		header := http.Header{}
+		header.Add("Cookie", cookieVal)
+		request := http.Request{Header: header}
+		if cookie, err := request.Cookie("octelium_auth"); err == nil && cookie.Value != "" {
+			return cookie.Value, nil
+		}
+	}
+
 	if authHdr, ok := hdr["authorization"]; ok && strings.HasPrefix(authHdr, "Bearer ") {
 		return strings.TrimPrefix(authHdr, "Bearer "), nil
 	}
 
-	cookieVal := hdr["cookie"]
-	if cookieVal == "" {
-		return "", errors.Errorf("Could not find jwt neither in header or cookie")
-	}
-
-	header := http.Header{}
-	header.Add("Cookie", cookieVal)
-	request := http.Request{Header: header}
-	cookie, err := request.Cookie("octelium_auth")
-	if err != nil {
-		return "", err
-	}
-
-	return cookie.Value, nil
+	return "", errors.Errorf("Could not find jwt neither in header or cookie")
 }
 
 var UnauthenticatedErr = errors.New("Vigil Unauthenticated error")
