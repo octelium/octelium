@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -131,6 +132,16 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	}
 
 	region.Status.Version = ldflags.GetVersion()
+	if region.Status.VersionInfoMap == nil {
+		region.Status.VersionInfoMap = make(map[string]*corev1.Region_Status_VersionInfo)
+	}
+
+	region.Status.VersionInfoMap["octelium"] = &corev1.Region_Status_VersionInfo{
+		Package: "octelium",
+		SetAt:   pbutils.Now(),
+		Version: ldflags.GetVersion(),
+		Id:      os.Getenv("OCTELIUM_INSTALL_ID"),
+	}
 
 	_, err = g.octeliumC.CoreC().UpdateRegion(ctx, region)
 	if err != nil {

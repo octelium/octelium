@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -104,6 +105,12 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 			region.Status = &corev1.Region_Status{}
 		}
 		region.Status.Version = ldflags.GetVersion()
+		region.Status.VersionInfoMap = make(map[string]*corev1.Region_Status_VersionInfo)
+		region.Status.VersionInfoMap["octelium"] = &corev1.Region_Status_VersionInfo{
+			Package: "octelium",
+			SetAt:   pbutils.Now(),
+			Version: ldflags.GetVersion(),
+		}
 		vutils.SetRegionPublicHostName(region)
 
 		zap.L().Debug("Initialized Region from loaded init", zap.Any("region", region))
