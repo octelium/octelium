@@ -33,6 +33,7 @@ import (
 	types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const healthCheckCluster = "octelium-health-check"
@@ -129,6 +130,16 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 		}(),
 
 		LoadAssignment: getClusterLoadAssignment(name, host, port),
+		CircuitBreakers: &clusterv3.CircuitBreakers{
+			Thresholds: []*clusterv3.CircuitBreakers_Thresholds{
+				{
+					MaxConnections:     &wrapperspb.UInt32Value{Value: 3000},
+					MaxPendingRequests: &wrapperspb.UInt32Value{Value: 3000},
+					MaxRequests:        &wrapperspb.UInt32Value{Value: 3000},
+					MaxRetries:         &wrapperspb.UInt32Value{Value: 3},
+				},
+			},
+		},
 	}
 
 	if isHTTP2 {
@@ -172,10 +183,6 @@ func getClusterLoadAssignment(cluster, host string, port int) *endpoint.ClusterL
 }
 
 func getEndpoints(host string, port int) *endpoint.LocalityLbEndpoints {
-	return getEndpointsBackend(host, port)
-}
-
-func getEndpointsBackend(host string, port int) *endpoint.LocalityLbEndpoints {
 	ret := &endpoint.LocalityLbEndpoints{
 		LbEndpoints: []*endpoint.LbEndpoint{},
 	}

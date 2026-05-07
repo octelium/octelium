@@ -33,9 +33,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	brotlicompr "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/brotli/compressor/v3"
 	gzipcompr "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/gzip/compressor/v3"
-	zstdcompr "github.com/envoyproxy/go-control-plane/envoy/extensions/compression/zstd/compressor/v3"
 	compressv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/compressor/v3"
 
 	corsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3"
@@ -198,8 +196,10 @@ func getListenerTransportSocket(crtList []*corev1.Secret, alpnProtocols []string
 				TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2,
 				TlsMaximumProtocolVersion: tlsv3.TlsParameters_TLSv1_3,
 				CipherSuites: []string{
-					"[ECDHE-ECDSA-AES128-GCM-SHA256|ECDHE-ECDSA-CHACHA20-POLY1305]",
-					"[ECDHE-RSA-AES128-GCM-SHA256|ECDHE-RSA-CHACHA20-POLY1305]",
+					"ECDHE-ECDSA-AES128-GCM-SHA256",
+					"ECDHE-ECDSA-CHACHA20-POLY1305",
+					"ECDHE-RSA-AES128-GCM-SHA256",
+					"ECDHE-RSA-CHACHA20-POLY1305",
 					"ECDHE-ECDSA-AES256-GCM-SHA384",
 					"ECDHE-RSA-AES256-GCM-SHA384",
 				},
@@ -274,6 +274,7 @@ func getHttpConnManagerFilterMain(ctx context.Context, r *GetListenersReq) (*lis
 		RouteSpecifier: &envoyhcm.HttpConnectionManager_RouteConfig{
 			RouteConfig: routeConfig,
 		},
+		MaxRequestHeadersKb: &wrapperspb.UInt32Value{Value: 32},
 
 		// TODO: This value might need to be changed in the future
 		StreamIdleTimeout: &durationpb.Duration{
@@ -343,61 +344,63 @@ func getHttpConnManagerFilterMain(ctx context.Context, r *GetListenersReq) (*lis
 func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 	filters := []*envoyhcm.HttpFilter{}
 
-	{
-		zstdFilter := &zstdcompr.Zstd{}
+	/*
+		{
+			zstdFilter := &zstdcompr.Zstd{}
 
-		zstdPbFilter, err := anypb.New(zstdFilter)
-		if err != nil {
-			return nil, err
+			zstdPbFilter, err := anypb.New(zstdFilter)
+			if err != nil {
+				return nil, err
+			}
+
+			compressorFilter := &compressv3.Compressor{
+				CompressorLibrary: &core.TypedExtensionConfig{
+					Name:        "zstd-compressor",
+					TypedConfig: zstdPbFilter,
+				},
+			}
+
+			pbFilter, err := anypb.New(compressorFilter)
+			if err != nil {
+				return nil, err
+			}
+
+			filters = append(filters, &envoyhcm.HttpFilter{
+				Name: "envoy.filters.http.compressor",
+				ConfigType: &envoyhcm.HttpFilter_TypedConfig{
+					TypedConfig: pbFilter,
+				},
+			})
 		}
 
-		compressorFilter := &compressv3.Compressor{
-			CompressorLibrary: &core.TypedExtensionConfig{
-				Name:        "zstd-compressor",
-				TypedConfig: zstdPbFilter,
-			},
+		{
+			brotliFilter := &brotlicompr.Brotli{}
+
+			brotliPbFilter, err := anypb.New(brotliFilter)
+			if err != nil {
+				return nil, err
+			}
+
+			compressorFilter := &compressv3.Compressor{
+				CompressorLibrary: &core.TypedExtensionConfig{
+					Name:        "brotli-compressor",
+					TypedConfig: brotliPbFilter,
+				},
+			}
+
+			pbFilter, err := anypb.New(compressorFilter)
+			if err != nil {
+				return nil, err
+			}
+
+			filters = append(filters, &envoyhcm.HttpFilter{
+				Name: "envoy.filters.http.compressor",
+				ConfigType: &envoyhcm.HttpFilter_TypedConfig{
+					TypedConfig: pbFilter,
+				},
+			})
 		}
-
-		pbFilter, err := anypb.New(compressorFilter)
-		if err != nil {
-			return nil, err
-		}
-
-		filters = append(filters, &envoyhcm.HttpFilter{
-			Name: "envoy.filters.http.compressor",
-			ConfigType: &envoyhcm.HttpFilter_TypedConfig{
-				TypedConfig: pbFilter,
-			},
-		})
-	}
-
-	{
-		brotliFilter := &brotlicompr.Brotli{}
-
-		brotliPbFilter, err := anypb.New(brotliFilter)
-		if err != nil {
-			return nil, err
-		}
-
-		compressorFilter := &compressv3.Compressor{
-			CompressorLibrary: &core.TypedExtensionConfig{
-				Name:        "brotli-compressor",
-				TypedConfig: brotliPbFilter,
-			},
-		}
-
-		pbFilter, err := anypb.New(compressorFilter)
-		if err != nil {
-			return nil, err
-		}
-
-		filters = append(filters, &envoyhcm.HttpFilter{
-			Name: "envoy.filters.http.compressor",
-			ConfigType: &envoyhcm.HttpFilter_TypedConfig{
-				TypedConfig: pbFilter,
-			},
-		})
-	}
+	*/
 
 	{
 		gzipFilter := &gzipcompr.Gzip{
@@ -417,6 +420,28 @@ func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 			CompressorLibrary: &core.TypedExtensionConfig{
 				Name:        "gzip-compressor",
 				TypedConfig: gzippbFilter,
+			},
+			ContentType: []string{
+				// "application/json",
+				"application/xml",
+				"application/xhtml+xml",
+				"application/javascript",
+				"application/x-javascript",
+				"text/html",
+				"text/css",
+				"text/plain",
+				"text/xml",
+			},
+
+			ResponseDirectionConfig: &compressv3.Compressor_ResponseDirectionConfig{
+				CommonConfig: &compressv3.Compressor_CommonDirectionConfig{
+					MinContentLength: &wrapperspb.UInt32Value{
+						Value: 1024,
+					},
+				},
+
+				DisableOnEtagHeader:        true,
+				RemoveAcceptEncodingHeader: true,
 			},
 		}
 

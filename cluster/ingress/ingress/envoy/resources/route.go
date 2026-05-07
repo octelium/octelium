@@ -25,6 +25,7 @@ import (
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	corsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3"
 	envoy_type_matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
@@ -65,7 +66,7 @@ func getRouteConfigMain(ctx context.Context, r *GetListenersReq) (*routev3.Route
 	return routeConfig, nil
 }
 
-func getVirtualHostAPI(ctx context.Context, r *GetListenersReq) (*routev3.VirtualHost, error) {
+func getVirtualHostAPI(_ context.Context, r *GetListenersReq) (*routev3.VirtualHost, error) {
 
 	domain := r.Domain
 	svcList := r.ServiceList
@@ -98,14 +99,16 @@ func getVirtualHostAPI(ctx context.Context, r *GetListenersReq) (*routev3.Virtua
 		filter := &corsv3.CorsPolicy{
 			AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
 				{
-					MatchPattern: &envoy_type_matcher.StringMatcher_Suffix{
-						Suffix: domain,
+					MatchPattern: &envoy_type_matcher.StringMatcher_SafeRegex{
+						SafeRegex: &matcherv3.RegexMatcher{
+							Regex: fmt.Sprintf(`^https://([a-zA-Z0-9-]+\.)*%s(:[0-9]+)?$`, domain),
+						},
 					},
 				},
 			},
 			AllowMethods:     "GET, PUT, DELETE, POST, OPTIONS",
 			AllowHeaders:     "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
-			MaxAge:           "1728000",
+			MaxAge:           "86400",
 			ExposeHeaders:    "set-cookie,grpc-status,grpc-message",
 			AllowCredentials: wrapperspb.Bool(true),
 		}
