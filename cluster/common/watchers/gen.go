@@ -129,7 +129,12 @@ func (w *Watcher) doRun(ctx context.Context) error {
 
 	client = reflect.ValueOf(w.client)
 
-	res := client.MethodByName(fmt.Sprintf("Watch%s", w.kind)).Call(
+	method := client.MethodByName(fmt.Sprintf("Watch%s", w.kind))
+	if !method.IsValid() {
+		return errors.Errorf("Could not find Watch method for kind: %s", w.kind)
+	}
+
+	res := method.Call(
 		[]reflect.Value{
 			reflect.ValueOf(ctx),
 			reflect.ValueOf(&rmetav1.WatchOptions{}),
