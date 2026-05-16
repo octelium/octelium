@@ -1103,7 +1103,7 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 		Spec: &corev1.Credential_Spec{
 			User:        "root",
 			Type:        corev1.Credential_Spec_AUTH_TOKEN,
-			ExpiresAt:   pbutils.Timestamp(time.Now().Add(30 * 24 * time.Hour)),
+			ExpiresAt:   pbutils.Timestamp(time.Now().Add(6 * 30 * 24 * time.Hour)),
 			SessionType: corev1.Session_Status_CLIENT,
 			Authorization: &corev1.Credential_Spec_Authorization{
 				InlinePolicies: []*corev1.InlinePolicy{
