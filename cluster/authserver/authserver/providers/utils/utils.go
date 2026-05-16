@@ -43,7 +43,7 @@ type StartAuthInfo struct {
 type Provider interface {
 	Name() string
 	Type() string
-	LoginURL(state string) (string, string, error)
+	LoginURL(r *http.Request, state string) (string, string, error)
 	HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error)
 	Provider() *corev1.IdentityProvider
 	AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error)

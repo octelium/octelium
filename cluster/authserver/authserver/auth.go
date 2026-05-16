@@ -555,7 +555,7 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 
 	state := utilrand.GetRandomString(36)
 
-	loginURL, reqID, err := provider.LoginURL(state)
+	loginURL, reqID, err := provider.LoginURL(r, state)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}

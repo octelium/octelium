@@ -72,7 +72,7 @@ func (c *Connector) Type() string {
 	return "oidcIdentityToken"
 }
 
-func (c *Connector) LoginURL(state string) (string, string, error) {
+func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
 	return "", "", errors.Errorf("LoginURL is not supported")
 }
 

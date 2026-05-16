@@ -125,7 +125,7 @@ func TestProvider(t *testing.T) {
 	assert.Nil(t, err)
 
 	state := utilrand.GetRandomStringCanonical(32)
-	loginURL, reqID, err := provider.LoginURL(state)
+	loginURL, reqID, err := provider.LoginURL(httptest.NewRequest("GET", "/", nil), state)
 	assert.Nil(t, err)
 
 	myUser := &samlidp.User{

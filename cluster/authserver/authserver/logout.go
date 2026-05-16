@@ -81,23 +81,10 @@ func (s *server) doLogout(ctx context.Context, _ *authv1.LogoutRequest) (*authv1
 			md["set-cookie"] = append(md["set-cookie"], cookie.String())
 		}
 
-		if err := grpc.SetHeader(ctx, md); err != nil { // ← was missing
+		if err := grpc.SetHeader(ctx, md); err != nil {
 			zap.L().Warn("Could not set logout cookies in gRPC header", zap.Error(err))
 		}
 	}
 
 	return &authv1.LogoutResponse{}, nil
 }
-
-/*
-func (s *server) getGRPCCtxFromHTTPReq(r *http.Request) context.Context {
-	md := make(metadata.MD)
-	for k, v := range r.Header {
-		if k != "" && govalidator.IsASCII(k) && len(v) > 0 {
-			md.Set(k, v...)
-		}
-	}
-
-	return metadata.NewIncomingContext(r.Context(), md)
-}
-*/

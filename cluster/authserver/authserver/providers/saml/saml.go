@@ -119,7 +119,7 @@ func (c *Connector) Type() string {
 	return "saml"
 }
 
-func (c *Connector) LoginURL(state string) (string, string, error) {
+func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
 
 	ssoURL := c.sp.GetSSOBindingLocation(saml.HTTPRedirectBinding)
 

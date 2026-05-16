@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -36,13 +37,13 @@ import (
 )
 
 type Connector struct {
-	c         *corev1.IdentityProvider
-	cc        *corev1.ClusterConfig
-	provider  *oidc.Provider
-	verifier  *oidc.IDTokenVerifier
+	c  *corev1.IdentityProvider
+	cc *corev1.ClusterConfig
+
 	scopes    []string
 	secret    string
 	celEngine *celengine.CELEngine
+	issuerURL string
 }
 
 func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, error) {
@@ -52,11 +53,6 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
 	}
 
 	conf := opts.Provider.Spec.GetOidc()
-
-	provider, err := oidc.NewProvider(ctx, conf.IssuerURL)
-	if err != nil {
-		return nil, errors.Errorf("failed to get provider: %v", err)
-	}
 
 	scopes := []string{oidc.ScopeOpenID}
 
@@ -71,14 +67,12 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
 	}
 
 	ret := &Connector{
-		c:        opts.Provider,
-		cc:       opts.ClusterConfig,
-		provider: provider,
-		verifier: provider.Verifier(
-			&oidc.Config{ClientID: conf.ClientID},
-		),
+		c:  opts.Provider,
+		cc: opts.ClusterConfig,
+
 		scopes:    scopes,
 		celEngine: opts.CELEngine,
+		issuerURL: conf.IssuerURL,
 	}
 
 	sec, err := opts.OcteliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
@@ -105,29 +99,39 @@ func (c *Connector) Type() string {
 	return "oidc"
 }
 
-func (c *Connector) LoginURL(state string) (string, string, error) {
+func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
 	nonce := utilrand.GetRandomStringCanonical(8)
-	return c.oauth2Config().AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)), nonce, nil
+	provider, err := c.newProvider(r.Context())
+	if err != nil {
+		return "", "", err
+	}
+	return c.oauth2Config(provider).AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)), nonce, nil
 }
 
-func (c *Connector) oauth2Config() *oauth2.Config {
+func (c *Connector) oauth2Config(provider *oidc.Provider) *oauth2.Config {
 	config := c.c.Spec.GetOidc()
 
 	return &oauth2.Config{
 		ClientID:     config.ClientID,
 		ClientSecret: c.secret,
-		Endpoint:     c.provider.Endpoint(),
+		Endpoint:     provider.Endpoint(),
 		Scopes:       c.scopes,
 		RedirectURL:  utils.GetCallbackURL(c.cc.Status.Domain),
 	}
 }
 
 func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
-	oauth2Config := c.oauth2Config()
 
 	conf := c.c.Spec.GetOidc()
 
 	ctx := r.Context()
+
+	provider, err := c.newProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	oauth2Config := c.oauth2Config(provider)
 
 	q := r.URL.Query()
 	if errType := q.Get("error"); errType != "" {
@@ -143,11 +147,15 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		return nil, errors.Errorf("Invalid token")
 	}
 
+	verifier := provider.Verifier(
+		&oidc.Config{ClientID: conf.ClientID},
+	)
+
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		return nil, errors.Errorf("Could not find id_token in token response")
 	}
-	idToken, err := c.verifier.Verify(ctx, rawIDToken)
+	idToken, err := verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, errors.Errorf("Could not verify the ID Token: %v", err)
 	}
@@ -159,7 +167,7 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 
 	if conf.UseUserInfoEndpoint {
 		zap.L().Debug("Getting userInfo endpoint")
-		userInfo, err := c.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
 			return nil, errors.Errorf("Could not get userInfo endpoint: %v", err)
 		}
@@ -221,4 +229,12 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 
 func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error) {
 	return nil, nil, errors.Errorf("AuthenticateAssertion is unimplemented")
+}
+
+func (c *Connector) newProvider(ctx context.Context) (*oidc.Provider, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	return oidc.NewProvider(ctx, c.issuerURL)
 }
