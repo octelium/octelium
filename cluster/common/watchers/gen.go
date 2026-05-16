@@ -192,6 +192,7 @@ func (w *Watcher) startRecvLoop(ctx context.Context) {
 				continue
 			}
 
+			failN = 0
 			w.processCh <- watchObj
 		}
 	}
