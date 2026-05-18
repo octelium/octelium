@@ -110,24 +110,42 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		ServerVersion: "SSH-2.0-Octelium",
 	}
 
-	signer, err := sshutils.GenerateSigner()
-	if err != nil {
-		return nil, err
+	var err error
+	svc := opts.VCache.GetService()
+
+	{
+		signerHost, err := sshutils.GenerateServiceEd25519HostSigner(ctx, octeliumC, svc)
+		if err != nil {
+			signerHost, err = sshutils.GenerateSigner()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		hostSigner, err := sshutils.GenerateHostSigner(ctx, octeliumC, signerHost)
+		if err != nil {
+			return nil, err
+		}
+
+		server.sshConfig.AddHostKey(hostSigner)
 	}
 
-	hostSigner, err := sshutils.GenerateHostSigner(ctx, octeliumC, signer)
-	if err != nil {
-		return nil, err
+	{
+		signerUser, err := sshutils.GenerateServiceEd25519UserSigner(ctx, octeliumC, svc)
+		if err != nil {
+			signerUser, err = sshutils.GenerateSigner()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		server.userSigner, err = sshutils.GenerateUserSigner(ctx, octeliumC, signerUser)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	server.sshConfig.AddHostKey(hostSigner)
-
-	server.userSigner, err = sshutils.GenerateUserSigner(ctx, octeliumC, signer)
-	if err != nil {
-		return nil, err
-	}
-
-	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, svc)
 	if err != nil {
 		return nil, err
 	}

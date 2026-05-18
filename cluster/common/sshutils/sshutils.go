@@ -19,11 +19,16 @@ package sshutils
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"net"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -31,6 +36,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -177,4 +183,49 @@ func GetHostKeyCACallback(caPubKey ssh.PublicKey) ssh.HostKeyCallback {
 
 		return errors.Errorf("Not a certificate key")
 	}
+}
+
+func GenerateServiceEd25519HostSigner(ctx context.Context,
+	octeliumC octeliumc.ClientInterface, svc *corev1.Service) (ssh.Signer, error) {
+	seedSec, err := getSeedSecret(ctx, octeliumC)
+	if err != nil {
+		return nil, err
+	}
+
+	return deriveEd25519HostKey(seedSec, "host", svc.Metadata.Uid)
+}
+
+func GenerateServiceEd25519UserSigner(ctx context.Context,
+	octeliumC octeliumc.ClientInterface, svc *corev1.Service) (ssh.Signer, error) {
+	seedSec, err := getSeedSecret(ctx, octeliumC)
+	if err != nil {
+		return nil, err
+	}
+
+	return deriveEd25519HostKey(seedSec, "user", svc.Metadata.Uid)
+}
+
+func getSeedSecret(ctx context.Context,
+	octeliumC octeliumc.ClientInterface) ([]byte, error) {
+	seedSec, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+		Name: "sys:ssh-svc-seed",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ucorev1.ToSecret(seedSec).GetValueBytes(), nil
+}
+
+func deriveEd25519HostKey(masterSeed []byte, keyType, serviceUID string) (ssh.Signer, error) {
+	info := fmt.Sprintf("octelium/vigil/ssh-%s-key/ed25519/%s", keyType, serviceUID)
+	r := hkdf.New(sha256.New, masterSeed, nil, []byte(info))
+
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := io.ReadFull(r, seed); err != nil {
+		return nil, fmt.Errorf("Could not get ed25519 seed: %w", err)
+	}
+
+	privKey := ed25519.NewKeyFromSeed(seed)
+	return ssh.NewSignerFromKey(privKey)
 }

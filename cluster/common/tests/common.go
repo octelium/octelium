@@ -386,6 +386,27 @@ func Initialize(o *Opts) (*T, error) {
 		}
 	}
 
+	{
+		_, err := octeliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name:           "sys:ssh-svc-seed",
+				IsSystem:       true,
+				IsSystemHidden: true,
+				IsUserHidden:   true,
+			},
+			Spec:   &corev1.Secret_Spec{},
+			Status: &corev1.Secret_Status{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_ValueBytes{
+					ValueBytes: []byte(utilrand.GetRandomBytesMust(32)),
+				},
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	_, err = c.OcteliumC.CoreC().CreateUser(ctx, &corev1.User{
 		Metadata: &metav1.Metadata{
 			Name: "root",

@@ -43,6 +43,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -196,6 +197,10 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 
 	if err := g.createSSHCA(ctx); err != nil {
 		return err
+	}
+
+	if err := g.createSSHServiceSeedSecret(ctx); err != nil {
+		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
 	}
 
 	if err := g.createAESKey(ctx); err != nil {
@@ -1049,6 +1054,34 @@ func (g *Genesis) createSSHCA(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Successfully created SSH CA Secret")
+
+	return nil
+}
+
+func (g *Genesis) createSSHServiceSeedSecret(ctx context.Context) error {
+	_, err := g.octeliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name:           "sys:ssh-svc-seed",
+			IsSystem:       true,
+			IsSystemHidden: true,
+			IsUserHidden:   true,
+		},
+		Spec:   &corev1.Secret_Spec{},
+		Status: &corev1.Secret_Status{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_ValueBytes{
+				ValueBytes: []byte(utilrand.GetRandomBytesMust(32)),
+			},
+		},
+	})
+	if err != nil {
+		if grpcerr.AlreadyExists(err) {
+			return nil
+		}
+		return err
+	}
+
+	zap.L().Debug("Created SSH Service seed Secret")
 
 	return nil
 }

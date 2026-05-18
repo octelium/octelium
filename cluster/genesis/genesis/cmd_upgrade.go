@@ -126,6 +126,24 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
 	}
 
+	if err := func(ctx context.Context) error {
+		if _, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+			Name: "sys:ssh-svc-seed",
+		}); err == nil {
+			return nil
+		} else if !grpcerr.IsNotFound(err) {
+			return err
+		}
+
+		if err := g.createSSHServiceSeedSecret(ctx); err != nil {
+			return err
+		}
+
+		return nil
+	}(ctx); err != nil {
+		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
+	}
+
 	region, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Uid: regionV.Metadata.Uid})
 	if err != nil {
 		return err
