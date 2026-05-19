@@ -49,6 +49,23 @@ func TestController(t *testing.T) {
 	}
 
 	{
+		k8sSec := &k8scorev1.Secret{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name:      "cert-cluster",
+				Namespace: "octelium",
+			},
+			Data: map[string][]byte{
+				"tls.crt": utilrand.GetRandomBytesMust(200),
+				"tls.key": utilrand.GetRandomBytesMust(200),
+			},
+		}
+
+		err = setCert(ctx, fakeC.OcteliumC, k8sSec)
+		assert.NotNil(t, err)
+
+	}
+
+	{
 		crt, err := utils_cert.GenerateCARoot()
 		assert.Nil(t, err)
 

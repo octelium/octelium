@@ -18,13 +18,16 @@ package k8ssecretcontroller
 
 import (
 	"context"
+	"crypto/tls"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/go-faster/errors"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -47,7 +50,8 @@ func NewController(
 
 		AddFunc: func(obj any) {
 
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 
 			secret, ok := obj.(*k8scorev1.Secret)
 			if !ok {
@@ -62,7 +66,8 @@ func NewController(
 
 		UpdateFunc: func(old, new any) {
 
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 
 			oldSecret, ok := old.(*k8scorev1.Secret)
 			if !ok {
@@ -105,6 +110,10 @@ func setCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret *k
 }
 
 func doSetCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret *k8scorev1.Secret) error {
+
+	if _, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"]); err != nil {
+		return errors.Errorf("Could not load TLS certificate: %+v", err)
+	}
 
 	crt, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
 	if err == nil {
