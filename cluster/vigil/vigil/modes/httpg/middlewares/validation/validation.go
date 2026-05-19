@@ -60,7 +60,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	schema := m.getSchema(cfg.GetHttp().Body.Validation.GetJsonSchema().GetInline())
 	if schema == nil {
-		m.next.ServeHTTP(rw, req)
+		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 

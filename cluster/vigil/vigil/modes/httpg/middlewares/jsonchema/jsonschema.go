@@ -87,6 +87,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			jsonSchemaC := plugin.GetJsonSchema()
 
 			schema := m.getSchema(jsonSchemaC.GetInline())
+			if schema == nil {
+				rw.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 
 			res := schema.Validate(reqCtx.BodyJSONMap)
 			if res == nil || res.IsValid() {
