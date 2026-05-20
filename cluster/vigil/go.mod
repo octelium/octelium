@@ -15,7 +15,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/kaptinlin/jsonschema v0.6.5
 	github.com/klauspost/compress v1.18.4
-	github.com/lib/pq v1.11.2
+	github.com/lib/pq v1.12.3
 	github.com/miekg/dns v1.1.72
 	github.com/moby/term v0.5.2
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
