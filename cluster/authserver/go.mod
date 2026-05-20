@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/authserver
 
-go 1.25.8
+go 1.26.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0

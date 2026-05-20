@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/ingress
 
-go 1.25.8
+go 1.26.3
 
 require (
 	github.com/envoyproxy/go-control-plane v0.14.0
