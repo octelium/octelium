@@ -28,8 +28,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/net v0.52.0
-	golang.org/x/oauth2 v0.35.0
-	google.golang.org/grpc v1.80.0
+	golang.org/x/oauth2 v0.36.0
+	google.golang.org/grpc v1.81.1
 )
 
 require (
