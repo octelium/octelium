@@ -9,6 +9,7 @@ on:
       - master
       - main
       - dev*
+      - b-*
 jobs:
   test:
     runs-on: ubuntu-24.04
