@@ -22,7 +22,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver/v2 v2.3.0
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.52.0
 	golang.org/x/oauth2 v0.36.0
 	k8s.io/api v0.35.3
@@ -43,7 +43,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elastic/elastic-transport-go/v8 v8.7.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
-	github.com/fatih/color v1.18.0 // indirect
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect

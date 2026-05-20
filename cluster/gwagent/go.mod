@@ -11,7 +11,7 @@ require (
 	github.com/quic-go/quic-go v0.58.0
 	github.com/stretchr/testify v1.11.1
 	github.com/vishvananda/netlink v1.3.1
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	k8s.io/api v0.35.3

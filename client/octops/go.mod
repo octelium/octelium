@@ -4,9 +4,9 @@ go 1.26.3
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/hashicorp/go-version v1.8.0
+	github.com/hashicorp/go-version v1.9.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/client/common v0.0.0-00010101000000-000000000000
@@ -15,7 +15,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	k8s.io/api v0.35.3
 	k8s.io/apimachinery v0.35.3
 	k8s.io/client-go v0.35.3

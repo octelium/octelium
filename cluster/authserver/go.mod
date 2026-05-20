@@ -26,7 +26,7 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.52.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/grpc v1.81.1

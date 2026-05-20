@@ -29,7 +29,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.52.0
 	golang.org/x/oauth2 v0.36.0
