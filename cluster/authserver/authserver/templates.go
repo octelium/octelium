@@ -18,6 +18,8 @@ package authserver
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -25,60 +27,75 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
 )
 
 var indexTmpl2 = template.Must(template.New("index.html").Parse(`
-<script>window.__OCTELIUM_STATE__ = {{ .State }}</script>
-<script>window.__OCTELIUM_GLOBALS__ = {{ .Globals }}</script>
+<script nonce="{{ .Nonce }}">window.__OCTELIUM_STATE__ = {{ .State }}</script>
+<script nonce="{{ .Nonce }}">window.__OCTELIUM_GLOBALS__ = {{ .Globals }}</script>
 `))
 
+type indexTemplateArgs struct {
+	Nonce   string
+	State   template.JS
+	Globals template.JS
+}
+
 func (s *server) renderIndex(w http.ResponseWriter) {
+	nonce := utilrand.GetRandomStringCanonical(24)
 
-	data := s.getTemplateIndexArgs()
+	data, err := s.getTemplateIndexArgs(nonce)
+	if err != nil {
+		zap.L().Error("Could not get index template args", zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "/index.html"))
+	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
 	if err != nil {
 		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(blob)))
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(blob))
 	if err != nil {
 		zap.L().Error("Could not get index.html doc", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	var b bytes.Buffer
-	var b2 bytes.Buffer
-
-	b2.Write([]byte(`<!DOCTYPE html>`))
-
-	err = indexTmpl2.Execute(&b, data)
-	if err != nil {
-		zap.L().Debug("Could not read index.html file from web fs", zap.Error(err))
+	var scripts bytes.Buffer
+	if err := indexTmpl2.Execute(&scripts, data); err != nil {
+		zap.L().Error("Could not execute index template", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	if err := goquery.Render(&b2, doc.Find("head").First().AppendHtml(b.String()).Parent()); err != nil {
+	head := doc.Find("head").First()
+	if head.Length() == 0 {
+		zap.L().Error("Could not find head element in index.html")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	head.AppendHtml(scripts.String())
+
+	var out bytes.Buffer
+	out.WriteString("<!DOCTYPE html>")
+	if err := goquery.Render(&out, head.Parent()); err != nil {
+		zap.L().Error("Could not render index.html", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	s.setDomainCookie(w)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(b2.Bytes())
+	s.setHTMLSecurityHeaders(w, nonce)
+	w.Write(out.Bytes())
 }
 
-func (s *server) getTemplateIndexArgs() map[string]any {
-
-	tmplArgs := map[string]any{
-		"Globals": s.getTemplateGlobals(),
-	}
-
+func (s *server) getTemplateIndexArgs(nonce string) (*indexTemplateArgs, error) {
 	state := &templateState{
 		Domain: s.domain,
 	}
@@ -112,9 +129,21 @@ func (s *server) getTemplateIndexArgs() map[string]any {
 		state.IdentityProviders = append(state.IdentityProviders, item)
 	}
 
-	tmplArgs["State"] = state
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return nil, err
+	}
 
-	return tmplArgs
+	globalsJSON, err := json.Marshal(s.getTemplateGlobals())
+	if err != nil {
+		return nil, err
+	}
+
+	return &indexTemplateArgs{
+		Nonce:   nonce,
+		State:   template.JS(stateJSON),
+		Globals: template.JS(globalsJSON),
+	}, nil
 }
 
 type templateState struct {
@@ -139,8 +168,9 @@ type templateGlobalsCluster struct {
 }
 
 func (s *server) renderLoggedIn(w http.ResponseWriter) {
+	nonce := utilrand.GetRandomStringCanonical(24)
 
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "/index.html"))
+	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
 	if err != nil {
 		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
 		w.WriteHeader(http.StatusNotFound)
@@ -148,8 +178,31 @@ func (s *server) renderLoggedIn(w http.ResponseWriter) {
 	}
 
 	s.setDomainCookie(w)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.setHTMLSecurityHeaders(w, nonce)
 	w.Write(blob)
+}
+
+func (s *server) setHTMLSecurityHeaders(w http.ResponseWriter, nonce string) {
+	csp := strings.Join([]string{
+		"default-src 'none'",
+		fmt.Sprintf("script-src 'self' 'nonce-%s'", nonce),
+		fmt.Sprintf("style-src 'self' 'unsafe-inline' 'nonce-%s'", nonce),
+		"img-src 'self' data:",
+		"font-src 'self'",
+		fmt.Sprintf("connect-src 'self' https://octelium-api.%s", s.domain),
+		"frame-src 'none'",
+		"frame-ancestors 'none'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+	}, "; ")
+
+	w.Header().Set("Content-Security-Policy", csp)
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 }
 
 func (s *server) setDomainCookie(w http.ResponseWriter) {
