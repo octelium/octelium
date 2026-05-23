@@ -186,7 +186,7 @@ func (s *server) setHTMLSecurityHeaders(w http.ResponseWriter, nonce string) {
 	csp := strings.Join([]string{
 		"default-src 'none'",
 		fmt.Sprintf("script-src 'self' 'nonce-%s'", nonce),
-		fmt.Sprintf("style-src 'self' 'unsafe-inline' 'nonce-%s'", nonce),
+		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data:",
 		"font-src 'self'",
 		fmt.Sprintf("connect-src 'self' https://octelium-api.%s", s.domain),
