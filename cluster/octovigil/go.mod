@@ -9,7 +9,6 @@ require (
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
-	go.etcd.io/bbolt v1.4.3
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.uber.org/zap v1.27.1

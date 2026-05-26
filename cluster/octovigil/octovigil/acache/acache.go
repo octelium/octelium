@@ -17,341 +17,286 @@
 package acache
 
 import (
-	"fmt"
+	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
-	"github.com/octelium/octelium/pkg/common/pbutils"
-	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
-	"go.etcd.io/bbolt"
-	"go.uber.org/zap"
 )
-
-type Cache struct {
-	db *bbolt.DB
-}
-
-func NewCache() (*Cache, error) {
-
-	filename := fmt.Sprintf("/tmp/vigil-%s.db", utilrand.GetRandomStringLowercase(6))
-	db, err := bbolt.Open(filename, 0600, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := db.Update(func(tx *bbolt.Tx) error {
-
-		bucketNames := []string{
-			"Service", "Session", "User",
-			"Device", "Group",
-			"Policy", "Namespace"}
-
-		for _, bucketName := range bucketNames {
-			_, err = tx.CreateBucketIfNotExists([]byte(bucketName))
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	return &Cache{
-		db: db,
-	}, nil
-}
 
 var ErrNotFound = errors.New("Resource not found")
 var SessionNotFound = errors.New("Session not found")
+
+type Cache struct {
+	users      keyedStore[*corev1.User]
+	devices    keyedStore[*corev1.Device]
+	services   keyedStore[*corev1.Service]
+	groups     keyedStore[*corev1.Group]
+	policies   keyedStore[*corev1.Policy]
+	namespaces keyedStore[*corev1.Namespace]
+	sessions   sessionStore
+}
+
+type keyedStore[T any] struct {
+	sync.RWMutex
+	m map[string]T
+}
+
+func newKeyedStore[T any]() keyedStore[T] {
+	return keyedStore[T]{m: make(map[string]T)}
+}
+
+func (s *keyedStore[T]) get(key string) (T, bool) {
+	s.RLock()
+	v, ok := s.m[key]
+	s.RUnlock()
+	return v, ok
+}
+
+func (s *keyedStore[T]) set(keys []string, val T) {
+	s.Lock()
+	for _, k := range keys {
+		s.m[k] = val
+	}
+	s.Unlock()
+}
+
+func (s *keyedStore[T]) del(keys []string) {
+	s.Lock()
+	for _, k := range keys {
+		delete(s.m, k)
+	}
+	s.Unlock()
+}
+
+type sessionStore struct {
+	sync.RWMutex
+	m      map[string]*corev1.Session
+	ipKeys map[string][]string
+}
+
+func NewCache() (*Cache, error) {
+	return &Cache{
+		users:      newKeyedStore[*corev1.User](),
+		devices:    newKeyedStore[*corev1.Device](),
+		services:   newKeyedStore[*corev1.Service](),
+		groups:     newKeyedStore[*corev1.Group](),
+		policies:   newKeyedStore[*corev1.Policy](),
+		namespaces: newKeyedStore[*corev1.Namespace](),
+		sessions: sessionStore{
+			m:      make(map[string]*corev1.Session),
+			ipKeys: make(map[string][]string),
+		},
+	}, nil
+}
 
 func (c *Cache) IsErrNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
 }
 
-func (c *Cache) setResource(key string, obj umetav1.ResourceObjectI, kind string) error {
-	objBytes, err := pbutils.Marshal(obj)
-	if err != nil {
-		return err
-	}
-
-	/*
-		zap.L().Debug("Setting resource in cache",
-			zap.String("kind", obj.GetKind()),
-			zap.String("apiVersion", obj.GetApiVersion()),
-			zap.String("uid", obj.GetMetadata().Uid),
-			zap.String("name", obj.GetMetadata().Name),
-			zap.String("resourceVersion", obj.GetMetadata().ResourceVersion),
-			zap.String("key", key))
-	*/
-
-	if err := c.db.Update(func(tx *bbolt.Tx) error {
-
-		b := tx.Bucket([]byte(kind))
-
-		if key == "" {
-			key = obj.GetMetadata().Uid
-		}
-		err := b.Put([]byte(key), objBytes)
-
-		return err
-
-	}); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Cache) getResource(kind string, key string) (umetav1.ResourceObjectI, error) {
-	if key == "" {
-		return nil, ErrNotFound
-	}
-
-	rsc, err := func() (umetav1.ResourceObjectI, error) {
-		switch kind {
-		default:
-			return ucorev1.NewObject(kind)
-
-		}
-	}()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := c.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(kind))
-		v := b.Get([]byte(key))
-		if v == nil {
-			return ErrNotFound
-		}
-
-		if err := pbutils.Unmarshal(v, rsc); err != nil {
-			return err
-		}
-
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	/*
-		zap.L().Debug("Got cached resource",
-			zap.String("key", key))
-	*/
-
-	return rsc, nil
-}
-
-func (c *Cache) deleteResource(kind string, key string) error {
-
-	/*
-		zap.L().Debug("Deleting resource from cache",
-			zap.String("kind", kind),
-			zap.String("key", key))
-	*/
-	if err := c.db.Update(func(tx *bbolt.Tx) error {
-
-		b := tx.Bucket([]byte(kind))
-
-		err := b.Delete([]byte(key))
-
-		return err
-
-	}); err != nil {
-		return err
-	}
+func (c *Cache) Close() error {
 	return nil
 }
 
 func (c *Cache) SetUser(usr *corev1.User) error {
-	return c.setResource("", usr, ucorev1.KindUser)
+	c.users.set([]string{usr.Metadata.Uid}, usr)
+	return nil
+}
+
+func (c *Cache) GetUser(uid string) (*corev1.User, error) {
+	v, ok := c.users.get(uid)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
+}
+
+func (c *Cache) DeleteUser(usr *corev1.User) error {
+	c.users.del([]string{usr.Metadata.Uid})
+	return nil
 }
 
 func (c *Cache) SetDevice(device *corev1.Device) error {
-	return c.setResource("", device, ucorev1.KindDevice)
-}
-
-func (c *Cache) SetSession(sess *corev1.Session) error {
-	return c.setSession(sess)
-}
-
-func (c *Cache) SetPolicy(p *corev1.Policy) error {
-	if err := c.setResource("", p, ucorev1.KindPolicy); err != nil {
-		return err
-	}
-
-	if err := c.setResource(p.Metadata.Name, p, ucorev1.KindPolicy); err != nil {
-		return err
-	}
-
+	c.devices.set([]string{device.Metadata.Uid}, device)
 	return nil
 }
 
-func (c *Cache) DeletePolicy(p *corev1.Policy) error {
-	return c.deleteResource(ucorev1.KindPolicy, p.Metadata.Uid)
+func (c *Cache) GetDevice(uid string) (*corev1.Device, error) {
+	v, ok := c.devices.get(uid)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
 }
 
-func (c *Cache) GetPolicy(uid string) (*corev1.Policy, error) {
-	ret, err := c.getResource(ucorev1.KindPolicy, uid)
-	if err != nil {
-		return nil, err
-	}
-	return ret.(*corev1.Policy), nil
-}
-
-func (c *Cache) SetNamespace(p *corev1.Namespace) error {
-	if err := c.setResource("", p, ucorev1.KindNamespace); err != nil {
-		return err
-	}
-
-	if err := c.setResource(p.Metadata.Name, p, ucorev1.KindNamespace); err != nil {
-		return err
-	}
-
+func (c *Cache) DeleteDevice(device *corev1.Device) error {
+	c.devices.del([]string{device.Metadata.Uid})
 	return nil
 }
 
-func (c *Cache) DeleteNamespace(p *corev1.Namespace) error {
-	return c.deleteResource(ucorev1.KindNamespace, p.Metadata.Uid)
+func (c *Cache) SetService(svc *corev1.Service) error {
+	c.services.set([]string{svc.Metadata.Uid}, svc)
+	return nil
 }
 
-func (c *Cache) GetNamespace(uid string) (*corev1.Namespace, error) {
-	ret, err := c.getResource(ucorev1.KindNamespace, uid)
-	if err != nil {
-		return nil, err
+func (c *Cache) GetService(identifier string) (*corev1.Service, error) {
+	v, ok := c.services.get(identifier)
+	if !ok {
+		return nil, ErrNotFound
 	}
-	return ret.(*corev1.Namespace), nil
+	return v, nil
+}
+
+func (c *Cache) DeleteService(svc *corev1.Service) error {
+	c.services.del([]string{svc.Metadata.Uid})
+	return nil
 }
 
 func (c *Cache) SetGroup(group *corev1.Group) error {
-	if err := c.setResource(group.Metadata.Uid, group, ucorev1.KindGroup); err != nil {
-		return err
-	}
-
-	if err := c.setResource(group.Metadata.Name, group, ucorev1.KindGroup); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Cache) DeleteGroup(group *corev1.Group) error {
-	if err := c.deleteResource(ucorev1.KindGroup, group.Metadata.Uid); err != nil {
-		return err
-	}
-
-	if err := c.deleteResource(ucorev1.KindGroup, group.Metadata.Name); err != nil {
-		return err
-	}
-
+	c.groups.set([]string{group.Metadata.Uid, group.Metadata.Name}, group)
 	return nil
 }
 
 func (c *Cache) GetGroup(key string) (*corev1.Group, error) {
-	ret, err := c.getResource(ucorev1.KindGroup, key)
-	if err != nil {
-		return nil, err
+	v, ok := c.groups.get(key)
+	if !ok {
+		return nil, ErrNotFound
 	}
-	return ret.(*corev1.Group), nil
+	return v, nil
 }
 
-func (c *Cache) GetUser(uid string) (*corev1.User, error) {
-	ret, err := c.getResource(ucorev1.KindUser, uid)
-	if err != nil {
-		return nil, err
-	}
-	return ret.(*corev1.User), nil
+func (c *Cache) DeleteGroup(group *corev1.Group) error {
+	c.groups.del([]string{group.Metadata.Uid, group.Metadata.Name})
+	return nil
 }
 
-func (c *Cache) GetDevice(uid string) (*corev1.Device, error) {
-	ret, err := c.getResource(ucorev1.KindDevice, uid)
-	if err != nil {
-		return nil, err
+func (c *Cache) SetPolicy(p *corev1.Policy) error {
+	c.policies.set([]string{p.Metadata.Uid, p.Metadata.Name}, p)
+	return nil
+}
+
+func (c *Cache) GetPolicy(key string) (*corev1.Policy, error) {
+	v, ok := c.policies.get(key)
+	if !ok {
+		return nil, ErrNotFound
 	}
-	return ret.(*corev1.Device), nil
+	return v, nil
+}
+
+func (c *Cache) DeletePolicy(p *corev1.Policy) error {
+	c.policies.del([]string{p.Metadata.Uid, p.Metadata.Name})
+	return nil
+}
+
+func (c *Cache) SetNamespace(ns *corev1.Namespace) error {
+	c.namespaces.set([]string{ns.Metadata.Uid, ns.Metadata.Name}, ns)
+	return nil
+}
+
+func (c *Cache) GetNamespace(key string) (*corev1.Namespace, error) {
+	v, ok := c.namespaces.get(key)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
+}
+
+func (c *Cache) DeleteNamespace(ns *corev1.Namespace) error {
+	c.namespaces.del([]string{ns.Metadata.Uid, ns.Metadata.Name})
+	return nil
+}
+
+func (c *Cache) SetSession(sess *corev1.Session) error {
+	c.sessions.Lock()
+	defer c.sessions.Unlock()
+
+	uid := sess.Metadata.Uid
+
+	if oldIPKeys, ok := c.sessions.ipKeys[uid]; ok {
+		for _, key := range oldIPKeys {
+			delete(c.sessions.m, key)
+		}
+	}
+
+	var newIPKeys []string
+	if sess.Status.Connection != nil {
+		for _, addr := range sess.Status.Connection.Addresses {
+			if addr.V4 != "" {
+				ipKey := umetav1.ToDualStackNetwork(addr).ToIP().Ipv4
+				c.sessions.m[ipKey] = sess
+				newIPKeys = append(newIPKeys, ipKey)
+			}
+			if addr.V6 != "" {
+				ipKey := umetav1.ToDualStackNetwork(addr).ToIP().Ipv6
+				c.sessions.m[ipKey] = sess
+				newIPKeys = append(newIPKeys, ipKey)
+			}
+		}
+	}
+
+	if len(newIPKeys) > 0 {
+		c.sessions.ipKeys[uid] = newIPKeys
+	} else {
+		delete(c.sessions.ipKeys, uid)
+	}
+
+	c.sessions.m[uid] = sess
+	c.sessions.m[sess.Metadata.Name] = sess
+
+	return nil
 }
 
 func (c *Cache) GetSession(identifier string) (*corev1.Session, error) {
-	ret, err := c.getResource(ucorev1.KindSession, identifier)
-	if err != nil {
-		return nil, err
+	if identifier == "" {
+		return nil, ErrNotFound
 	}
-	return ret.(*corev1.Session), nil
-}
-
-func (c *Cache) DeleteUser(usr *corev1.User) error {
-	return c.deleteResource(ucorev1.KindUser, usr.Metadata.Uid)
-}
-
-func (c *Cache) DeleteDevice(device *corev1.Device) error {
-	return c.deleteResource(ucorev1.KindDevice, device.Metadata.Uid)
-}
-
-func (c *Cache) DeleteService(svc *corev1.Service) error {
-	return c.deleteResource(ucorev1.KindService, svc.Metadata.Uid)
+	c.sessions.RLock()
+	v, ok := c.sessions.m[identifier]
+	c.sessions.RUnlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
 }
 
 func (c *Cache) DeleteSession(sess *corev1.Session) error {
+	c.sessions.Lock()
+	defer c.sessions.Unlock()
+
+	uid := sess.Metadata.Uid
+
+	if oldIPKeys, ok := c.sessions.ipKeys[uid]; ok {
+		for _, key := range oldIPKeys {
+			delete(c.sessions.m, key)
+		}
+		delete(c.sessions.ipKeys, uid)
+	}
 
 	if sess.Status.Connection != nil {
 		for _, addr := range sess.Status.Connection.Addresses {
 			if addr.V4 != "" {
-				c.deleteResource(ucorev1.KindSession, umetav1.ToDualStackNetwork(addr).ToIP().Ipv4)
+				delete(c.sessions.m, umetav1.ToDualStackNetwork(addr).ToIP().Ipv4)
 			}
 			if addr.V6 != "" {
-				c.deleteResource(ucorev1.KindSession, (umetav1.ToDualStackNetwork(addr).ToIP()).Ipv6)
+				delete(c.sessions.m, umetav1.ToDualStackNetwork(addr).ToIP().Ipv6)
 			}
 		}
 	}
 
-	if err := c.deleteResource(ucorev1.KindSession, sess.Metadata.Uid); err != nil {
-		return err
-	}
-
-	if err := c.deleteResource(ucorev1.KindSession, sess.Metadata.Name); err != nil {
-		return err
-	}
+	delete(c.sessions.m, uid)
+	delete(c.sessions.m, sess.Metadata.Name)
 
 	return nil
 }
 
-func (c *Cache) setSession(sess *corev1.Session) error {
-
-	if sess.Status.Connection != nil {
-		var keys []string
-		for _, addr := range sess.Status.Connection.Addresses {
-			if addr.V4 != "" {
-				keys = append(keys, umetav1.ToDualStackNetwork(addr).ToIP().Ipv4)
-			}
-			if addr.V6 != "" {
-				keys = append(keys, umetav1.ToDualStackNetwork(addr).ToIP().Ipv6)
-			}
-		}
-
-		for _, key := range keys {
-			if err := c.setResource(key, sess, ucorev1.KindSession); err != nil {
-				zap.L().Error("Could not set Session resource in cache", zap.String("key", key), zap.Error(err))
-			}
-		}
-	}
-
-	if err := c.setResource(sess.Metadata.Uid, sess, ucorev1.KindSession); err != nil {
-		zap.L().Error("Could not set Session resource in cache", zap.Error(err))
-	}
-
-	if err := c.setResource(sess.Metadata.Name, sess, ucorev1.KindSession); err != nil {
-		zap.L().Error("Could not set Session resource in cache", zap.Error(err))
-	}
-
-	return nil
+type DownstreamInfo struct {
+	User    *corev1.User
+	Device  *corev1.Device
+	Session *corev1.Session
+	Groups  []*corev1.Group
 }
 
 func (c *Cache) GetDownstreamInfoBySessionIdentifier(arg string) (*DownstreamInfo, error) {
-
 	if arg == "" {
 		return nil, SessionNotFound
 	}
@@ -364,9 +309,12 @@ func (c *Cache) GetDownstreamInfoBySessionIdentifier(arg string) (*DownstreamInf
 		return nil, err
 	}
 
-	usr, err := c.GetUser(sess.Status.UserRef.Uid)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
+	var usr *corev1.User
+	if sess.Status.UserRef != nil {
+		usr, err = c.GetUser(sess.Status.UserRef.Uid)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
 	}
 
 	ret := &DownstreamInfo{
@@ -394,28 +342,4 @@ func (c *Cache) GetDownstreamInfoBySessionIdentifier(arg string) (*DownstreamInf
 	}
 
 	return ret, nil
-}
-
-type DownstreamInfo struct {
-	User    *corev1.User
-	Device  *corev1.Device
-	Session *corev1.Session
-	Groups  []*corev1.Group
-}
-
-func (c *Cache) SetService(svc *corev1.Service) error {
-	return c.setResource(svc.Metadata.Uid, svc, ucorev1.KindService)
-}
-
-func (c *Cache) GetService(identifier string) (*corev1.Service, error) {
-	ret, err := c.getResource(ucorev1.KindService, identifier)
-	if err != nil {
-		return nil, err
-	}
-	return ret.(*corev1.Service), nil
-}
-
-func (c *Cache) Close() error {
-	err := c.db.Close()
-	return err
 }
