@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net/netip"
 	"sync"
 	"time"
@@ -212,56 +213,28 @@ func (c *QUICController) getBuf(ctx context.Context, stream *quic.Stream, desire
 }
 
 func decodeMsg(stream *quic.Stream) ([]byte, uint32, error) {
-	bufSize := 1024
-	buf := make([]byte, bufSize)
-	n, err := stream.Read(buf)
-	if err != nil {
-		return nil, 0, errors.Errorf("Could not read init stream req: %+v", err)
+	hdr := make([]byte, hdrSize)
+	if _, err := io.ReadFull(stream, hdr); err != nil {
+		return nil, 0, errors.Errorf("Could not read message header: %+v", err)
 	}
 
-	if n <= hdrSize || n >= 1024 {
-		return nil, 0, errors.Errorf("Invalid init stream req size: %d", n)
-	}
-	payloadSize := binary.BigEndian.Uint32(buf[:4])
-	typ := binary.BigEndian.Uint32(buf[4:hdrSize])
+	payloadSize := binary.BigEndian.Uint32(hdr[:4])
+	typ := binary.BigEndian.Uint32(hdr[4:hdrSize])
 
-	switch typ {
-	case 0:
+	if typ == 0 {
 		return nil, 0, errors.Errorf("Invalid msg type")
 	}
 
-	if payloadSize > 4096 {
-		return nil, 0, errors.Errorf("Invalid msg size")
+	if payloadSize == 0 || payloadSize > 4096 {
+		return nil, 0, errors.Errorf("Invalid payload size: %d", payloadSize)
 	}
 
-	if payloadSize+uint32(hdrSize) < uint32(n) {
-		return nil, 0, errors.Errorf("msg size does not match")
+	payload := make([]byte, payloadSize)
+	if _, err := io.ReadFull(stream, payload); err != nil {
+		return nil, 0, errors.Errorf("Could not read message payload: %+v", err)
 	}
 
-	if payloadSize+uint32(hdrSize) == uint32(n) {
-		return buf[hdrSize:n], typ, nil
-	}
-
-	var ni int
-	curPayloadSize := uint32(n - hdrSize)
-
-	ret := make([]byte, n)
-	copy(ret[:], buf[:n])
-
-	for ; curPayloadSize < payloadSize; curPayloadSize = curPayloadSize + uint32(ni) {
-		iBuf := make([]byte, bufSize)
-		ni, err = stream.Read(iBuf)
-		if err != nil {
-			return nil, 0, errors.Errorf("Could not read subsequent stream req %+v", err)
-		}
-		ret = append(ret, iBuf[:ni]...)
-	}
-
-	if uint32(len(ret[hdrSize:])) != payloadSize {
-		return nil, 0, errors.Errorf("Final payloadSize does not match: %d ... %d", len(ret[hdrSize:]), payloadSize)
-	}
-
-	return ret[hdrSize:], typ, nil
+	return payload, typ, nil
 }
 
 func (c *QUICController) doInit(ctx context.Context, stream *quic.Stream) (*corev1.Session, error) {
