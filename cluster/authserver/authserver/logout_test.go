@@ -56,6 +56,15 @@ func TestHandleLogout(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.handleLogout(w, reqHTTP)
 		resp := w.Result()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	}
+
+	{
+		reqHTTP := httptest.NewRequest("GET", "http://localhost/logout", nil)
+		reqHTTP.Header.Set("X-Octelium-Origin", srv.rootURL)
+		w := httptest.NewRecorder()
+		srv.handleLogout(w, reqHTTP)
+		resp := w.Result()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	}
 
@@ -65,6 +74,7 @@ func TestHandleLogout(t *testing.T) {
 
 		{
 			req := httptest.NewRequest("GET", "http://localhost/auth/v1/logout", nil)
+			req.Header.Set("X-Octelium-Origin", srv.rootURL)
 			w := httptest.NewRecorder()
 			req.AddCookie(&http.Cookie{
 				Name:  "octelium_rt",
