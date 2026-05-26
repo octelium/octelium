@@ -253,7 +253,7 @@ func (s *server) loadDeviceRegistrationBeginReq(ctx context.Context, sess *corev
 	}
 
 	beginReqMap, ok := respMap["req"].(map[string]any)
-	if !ok || beginResponseMap == nil {
+	if !ok || beginReqMap == nil {
 		return nil, grpcutils.InvalidArg("nil beginRequest")
 	}
 
