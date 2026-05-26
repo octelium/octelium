@@ -83,27 +83,8 @@ func getOctovigilDeployment(o *CommonOpts) *appsv1.Deployment {
 							Name:            componentOctovigil,
 							Image:           components.GetImage(components.Octovigil, ""),
 							ImagePullPolicy: k8sutils.GetImagePullPolicy(),
-
-							LivenessProbe: MainLivenessProbe(),
-
-							VolumeMounts: []k8scorev1.VolumeMount{
-								{
-									MountPath: "/tmp",
-									Name:      "tmpfs",
-								},
-							},
-
+							LivenessProbe:   MainLivenessProbe(),
 							SecurityContext: MainSecurityContext(),
-						},
-					},
-					Volumes: []k8scorev1.Volume{
-						{
-							Name: "tmpfs",
-							VolumeSource: k8scorev1.VolumeSource{
-								EmptyDir: &k8scorev1.EmptyDirVolumeSource{
-									Medium: k8scorev1.StorageMediumMemory,
-								},
-							},
 						},
 					},
 				},
