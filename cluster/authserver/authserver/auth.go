@@ -307,7 +307,12 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		return errors.Errorf("Unhandled authenticatorAction")
 	}
 
-	if state != nil && !state.IsApp {
+	switch {
+	case state == nil:
+		s.setLoginCookies(w, accessToken, refreshToken, sess)
+		s.redirectToCallbackSuccess(w, r, s.getPortalURL())
+		return nil
+	case !state.IsApp:
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		if state.CallbackURL != "" {
 			s.redirectToCallbackSuccess(w, r, state.CallbackURL)
@@ -316,16 +321,16 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		}
 
 		return nil
-	}
+	default:
+		u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
+		if err != nil {
+			return err
+		}
 
-	u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
-	if err != nil {
-		return err
+		s.setLoginCookies(w, accessToken, refreshToken, sess)
+		s.redirectToCallbackSuccess(w, r, u.String())
+		return nil
 	}
-
-	s.setLoginCookies(w, accessToken, refreshToken, sess)
-	s.redirectToCallbackSuccess(w, r, u.String())
-	return nil
 }
 
 func (s *server) generateClientCallbackURL(ctx context.Context,
