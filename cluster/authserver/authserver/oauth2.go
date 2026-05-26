@@ -39,8 +39,14 @@ import (
 const assertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
 func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 100*1024)
 
-	grantType := r.FormValue("grant_type")
+	if err := r.ParseForm(); err != nil {
+		s.returnOAuth2Err(w, "invalid_request", 400)
+		return
+	}
+
+	grantType := r.Form.Get("grant_type")
 
 	switch grantType {
 	case "client_credentials":
@@ -49,7 +55,6 @@ func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 		s.returnOAuth2Err(w, "unsupported_grant_type", 400)
 		return
 	}
-
 }
 
 func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *http.Request) {
