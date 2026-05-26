@@ -100,7 +100,7 @@ func (c *Connector) Type() string {
 }
 
 func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
-	nonce := utilrand.GetRandomStringCanonical(8)
+	nonce := utilrand.GetRandomStringCanonical(22)
 	provider, err := c.newProvider(r.Context())
 	if err != nil {
 		return "", "", err
