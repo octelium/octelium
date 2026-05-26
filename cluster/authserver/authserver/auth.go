@@ -135,19 +135,9 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	{
-		hdr := r.Header.Get("X-Octelium-Origin")
-		if hdr == "" {
-			zap.L().Debug("X-Octelium-Origin header is not set")
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		if hdr != s.rootURL {
-			zap.L().Debug("X-Octelium-Origin header does not match", zap.String("val", hdr))
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	if err := s.checkXOcteliumOrigin(r); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	defer r.Body.Close()
@@ -198,6 +188,19 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		LoginURL: loginState.LoginURL,
 	})
 
+}
+
+func (s *server) checkXOcteliumOrigin(r *http.Request) error {
+	hdr := r.Header.Get("X-Octelium-Origin")
+	if hdr == "" {
+		return errors.Errorf("X-Octelium-Origin header is not set")
+	}
+
+	if hdr != s.rootURL {
+		return errors.Errorf("X-Octelium-Origin header does not match")
+	}
+
+	return nil
 }
 
 func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {

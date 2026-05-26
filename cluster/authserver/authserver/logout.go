@@ -32,6 +32,11 @@ import (
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
+	if err := s.checkXOcteliumOrigin(r); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
