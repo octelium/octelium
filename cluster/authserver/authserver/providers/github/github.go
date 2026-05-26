@@ -20,8 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
-	"github.com/google/go-github/v33/github"
+	"github.com/google/go-github/v88/github"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -100,7 +101,8 @@ func (c *Connector) oauth2Config() *oauth2.Config {
 func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
 	oauth2Config := c.oauth2Config()
 
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	q := r.URL.Query()
 	if errType := q.Get("error"); errType != "" {
@@ -116,13 +118,21 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		return nil, errors.Errorf("Invalid token")
 	}
 
-	client := oauth2Config.Client(ctx, token)
-
-	githubClient := github.NewClient(client)
+	githubClient, err := github.NewClient(
+		github.WithHTTPClient(oauth2Config.Client(ctx, token)),
+	)
+	if err != nil {
+		return nil, errors.Errorf("Could not create GitHub client: %v", err)
+	}
 
 	user, _, err := githubClient.Users.Get(ctx, "")
 	if err != nil {
-		return nil, errors.Errorf("Could not get user")
+		return nil, errors.Errorf("Could not get user: %v", err)
+	}
+
+	verifiedEmail := getVerifiedPrimaryEmail(ctx, githubClient)
+	if verifiedEmail == "" {
+		verifiedEmail = user.GetEmail()
 	}
 
 	userMap := make(map[string]any)
@@ -140,6 +150,9 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 			IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
 				IdentityProviderRef: umetav1.GetObjectReference(c.c),
 				Type:                corev1.IdentityProvider_Status_GITHUB,
+				Identifier:          user.GetLogin(),
+				Email:               verifiedEmail,
+				PicURL:              user.GetAvatarURL(),
 			},
 		},
 		Aal: utils.GetAAL(ctx, &utils.GetAALReq{
@@ -149,19 +162,30 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		}),
 	}
 
-	if user.Login != nil {
-		ret.GetIdentityProvider().Identifier = *user.Login
-	}
-
-	if user.Email != nil {
-		ret.GetIdentityProvider().Email = *user.Email
-	}
-
-	if user.AvatarURL != nil {
-		ret.GetIdentityProvider().PicURL = *user.AvatarURL
-	}
-
 	return ret, nil
+}
+
+func getVerifiedPrimaryEmail(ctx context.Context, client *github.Client) string {
+	emails, _, err := client.Users.ListEmails(ctx, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		zap.L().Debug("Could not list user emails", zap.Error(err))
+		return ""
+	}
+
+	var firstVerified string
+	for _, e := range emails {
+		if !e.GetVerified() {
+			continue
+		}
+		if e.GetPrimary() {
+			return e.GetEmail()
+		}
+		if firstVerified == "" {
+			firstVerified = e.GetEmail()
+		}
+	}
+
+	return firstVerified
 }
 
 func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error) {
