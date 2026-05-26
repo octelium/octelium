@@ -678,7 +678,7 @@ func ValidateEnvVar(key, val string) error {
 
 func ValidateEnvVarValue(val string) error {
 	if len(val) > 8129 {
-		return grpcutils.InvalidArg("Value is too long: %s", val)
+		return grpcutils.InvalidArg("Value is too long")
 	}
 
 	return nil
@@ -686,11 +686,29 @@ func ValidateEnvVarValue(val string) error {
 
 func ValidateEnvVarKey(key string) error {
 	if key == "" {
-		return grpcutils.InvalidArg("Key is empty")
+		return grpcutils.InvalidArg("Environment variable key is empty")
 	}
 
-	if len(key) > 1024 {
-		return grpcutils.InvalidArg("Key is too long: %s", key)
+	if len(key) > 256 {
+		return grpcutils.InvalidArg("Environment variable key is too long")
+	}
+
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= 'a' && c <= 'z':
+		case c == '_':
+		case c >= '0' && c <= '9':
+			if i == 0 {
+				return grpcutils.InvalidArg(
+					"Environment variable key can only start with a letter or underscore, got: %s", key)
+			}
+		default:
+			return grpcutils.InvalidArg(
+				"Environment variable key contains invalid character %q in: %s", c, key)
+		}
 	}
 
 	return nil
