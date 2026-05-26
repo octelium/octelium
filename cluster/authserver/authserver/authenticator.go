@@ -225,14 +225,12 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteAuthenticator(ctx, &rmetav1.DeleteOptions{
-		Uid:  authn.Metadata.Uid,
-		Name: authn.Metadata.Name,
-	})
+	_, err = s.octeliumC.CoreC().DeleteAuthenticator(ctx, apivalidation.ObjectToRDeleteOptions(authn))
 	if err != nil {
 		if !grpcerr.IsNotFound(err) {
 			return nil, s.errInternalErr(err)
 		}
+		return nil, s.errNotFound("Authenticator not found")
 	}
 
 	return &metav1.OperationResult{}, nil
@@ -327,6 +325,8 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 		if !grpcerr.IsNotFound(err) {
 			return nil, s.errInternalErr(err)
 		}
+
+		return nil, s.errNotFound("Authenticator not found")
 	}
 
 	return s.toAuthenticator(authn), nil
