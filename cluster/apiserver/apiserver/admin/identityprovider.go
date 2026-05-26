@@ -100,6 +100,9 @@ func (s *Server) ListIdentityProvider(ctx context.Context, req *corev1.ListIdent
 }
 
 func (s *Server) DeleteIdentityProvider(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
+	if err := apivalidation.CheckDeleteOptions(req, nil); err != nil {
+		return nil, err
+	}
 
 	g, err := s.octeliumC.CoreC().GetIdentityProvider(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {

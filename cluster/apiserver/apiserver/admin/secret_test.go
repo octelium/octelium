@@ -61,6 +61,15 @@ func TestSecret(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, secretValue, ucorev1.ToSecret(secret).GetValueBytes())
 
+		secret.Data = &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		}
+		secU, err := srv.UpdateSecret(ctx, secret)
+		assert.Nil(t, err)
+		assert.Nil(t, secU.Data)
+
 		secI, err := srv.GetSecret(ctx, &metav1.GetOptions{Uid: secret.Metadata.Uid})
 		assert.Nil(t, err)
 		assert.Equal(t, secretName, secI.Metadata.Name)

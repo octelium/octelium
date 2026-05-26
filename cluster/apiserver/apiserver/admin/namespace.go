@@ -111,6 +111,15 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 		return nil, err
 	}
 
+	svcList, err := s.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterFieldEQValStr("status.namespaceRef.uid", ns.Metadata.Uid),
+		},
+	})
+	if len(svcList.Items) > 0 {
+		return nil, serr.InvalidArg("Namespace has existing Services")
+	}
+
 	if _, err := s.octeliumC.CoreC().DeleteNamespace(ctx, apivalidation.ObjectToRDeleteOptions(ns)); err != nil {
 		return nil, serr.InternalWithErr(err)
 	}

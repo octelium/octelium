@@ -139,6 +139,8 @@ func (s *Server) UpdateSecret(ctx context.Context, req *corev1.Secret) (*corev1.
 		return nil, serr.InternalWithErr(err)
 	}
 
+	item.Data = nil
+
 	return item, nil
 }
 
