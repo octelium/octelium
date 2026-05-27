@@ -129,6 +129,7 @@ func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *corev1.Node)
 			if err != nil {
 				return err
 			}
+			return nil
 		}
 	}
 	return nil
