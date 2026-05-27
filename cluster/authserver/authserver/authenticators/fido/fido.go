@@ -235,7 +235,16 @@ func (u *WebauthnUser) WebAuthnDisplayName() string {
 	if u.authn.Spec.DisplayName != "" {
 		return u.authn.Spec.DisplayName
 	}
-	return ""
+
+	if u.usr.Spec.Email != "" {
+		return strings.ToLower(u.usr.Spec.Email)
+	}
+
+	if u.usr.Metadata.DisplayName != "" {
+		return u.usr.Metadata.DisplayName
+	}
+
+	return u.usr.Metadata.Name
 }
 
 func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
