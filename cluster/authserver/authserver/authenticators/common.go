@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -153,10 +154,10 @@ func EncryptData(ctx context.Context, octeliumC octeliumc.ClientInterface, plain
 	}, nil
 }
 
-func DecryptData(ctx context.Context, octeliumC octeliumc.ClientInterface, req *corev1.Authenticator_Status_EncryptedData) ([]byte, error) {
-	keySecret, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-		Uid: req.KeySecretRef.Uid,
-	})
+func DecryptData(ctx context.Context, octeliumC octeliumc.ClientInterface,
+	req *corev1.Authenticator_Status_EncryptedData) ([]byte, error) {
+	keySecret, err := octeliumC.CoreC().GetSecret(ctx,
+		apivalidation.ObjectReferenceToRGetOptions(req.KeySecretRef))
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +170,10 @@ func DecryptData(ctx context.Context, octeliumC octeliumc.ClientInterface, req *
 	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(req.Nonce) != 12 {
+		return nil, errors.Errorf("invalid nonce length")
 	}
 
 	plaintext, err := aesgcm.Open(nil, req.Nonce, req.Ciphertext, nil)
@@ -187,7 +192,7 @@ func GetDisplayName(authn *corev1.Authenticator, usr *corev1.User) string {
 		return authn.Metadata.DisplayName
 	}
 
-	if usr != nil && usr.Spec.Info != nil && usr.Spec.Email != "" {
+	if usr != nil && usr.Spec.Email != "" {
 		return usr.Spec.Email
 	}
 
