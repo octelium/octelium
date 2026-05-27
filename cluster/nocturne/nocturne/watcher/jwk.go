@@ -22,7 +22,9 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/jwkctl/jwkutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 )
 
@@ -95,7 +97,8 @@ func (w *Watcher) doProcessJWKSecret(ctx context.Context, secret *corev1.Secret)
 		zap.L().Debug("The root Secret is old and is getting deleted",
 			zap.Any("secretMetadata", secret.Metadata))
 
-		if _, err := w.octeliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{Uid: secret.Metadata.Uid}); err != nil {
+		if _, err := w.octeliumC.CoreC().DeleteSecret(ctx,
+			apivalidation.ObjectToRDeleteOptions(secret)); err != nil && !grpcerr.IsNotFound(err) {
 			return err
 		}
 
