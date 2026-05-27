@@ -78,9 +78,10 @@ func (c *Connector) Type() string {
 	return "github"
 }
 
-func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
-
-	return c.oauth2Config().AuthCodeURL(state), "", nil
+func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
+	return &utils.GetLoginResponse{
+		LoginURL: c.oauth2Config().AuthCodeURL(state),
+	}, nil
 }
 
 func (c *Connector) oauth2Config() *oauth2.Config {

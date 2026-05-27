@@ -110,8 +110,10 @@ func TestProvider(t *testing.T) {
 		oidcSrv.QueueUser(myUsr)
 
 		state := utilrand.GetRandomStringCanonical(32)
-		codeURL, reqID, err := provider.LoginURL(httptest.NewRequest("GET", "/", nil), state)
+		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
+		codeURL := loginResp.LoginURL
+		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -152,8 +154,10 @@ func TestProvider(t *testing.T) {
 		oidcSrv.QueueUser(myUsr)
 
 		state := utilrand.GetRandomStringCanonical(32)
-		codeURL, reqID, err := provider.LoginURL(httptest.NewRequest("GET", "/", nil), state)
+		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
+		codeURL := loginResp.LoginURL
+		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -193,8 +197,10 @@ func TestProvider(t *testing.T) {
 		oidcSrv.QueueUser(myUsr)
 
 		state := utilrand.GetRandomStringCanonical(32)
-		codeURL, reqID, err := provider.LoginURL(httptest.NewRequest("GET", "/", nil), state)
+		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
+		codeURL := loginResp.LoginURL
+		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -234,8 +240,10 @@ func TestProvider(t *testing.T) {
 		oidcSrv.QueueUser(myUsr)
 
 		state := utilrand.GetRandomStringCanonical(32)
-		codeURL, reqID, err := provider.LoginURL(httptest.NewRequest("GET", "/", nil), state)
+		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
+		codeURL := loginResp.LoginURL
+		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{

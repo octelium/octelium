@@ -185,7 +185,7 @@ func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(postAuthResp{
-		LoginURL: loginState.LoginURL,
+		LoginURL: loginState.Login.LoginURL,
 	})
 
 }
@@ -236,7 +236,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	idp := provider.Provider()
 
-	authInfo, err := provider.HandleCallback(r, userState.RequestID)
+	authInfo, err := provider.HandleCallback(r, userState.Login.ReqID)
 	if err != nil {
 		zap.L().Debug("Could not handleCallback", zap.Error(err))
 		doRedirect(err)
@@ -565,16 +565,15 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 
 	state := utilrand.GetRandomString(36)
 
-	loginURL, reqID, err := provider.LoginURL(r, state)
+	loginResp, err := provider.GetLogin(r, state)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
 	userState := &loginState{
-		ID:        state,
-		UID:       provider.Provider().Metadata.Uid,
-		RequestID: reqID,
-		LoginURL:  loginURL,
+		ID:    state,
+		UID:   provider.Provider().GetMetadata().GetUid(),
+		Login: loginResp,
 	}
 
 	if query == "" {

@@ -126,7 +126,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.Redirect(w, r, loginState.LoginURL, http.StatusSeeOther)
+		http.Redirect(w, r, loginState.Login.LoginURL, http.StatusSeeOther)
 	default:
 		s.setLogoutCookies(w)
 		s.renderIndex(w)

@@ -72,8 +72,8 @@ func (c *Connector) Type() string {
 	return "oidcIdentityToken"
 }
 
-func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
-	return "", "", errors.Errorf("LoginURL is not supported")
+func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
+	return nil, errors.Errorf("GetLogin is not supported")
 }
 
 func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {

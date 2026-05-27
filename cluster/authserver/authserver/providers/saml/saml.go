@@ -119,21 +119,24 @@ func (c *Connector) Type() string {
 	return "saml"
 }
 
-func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
+func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
 
 	ssoURL := c.sp.GetSSOBindingLocation(saml.HTTPRedirectBinding)
 
 	authenReq, err := c.sp.MakeAuthenticationRequest(ssoURL, saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 
 	url, err := authenReq.Redirect(state, c.sp)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 
-	return url.String(), authenReq.ID, nil
+	return &utils.GetLoginResponse{
+		LoginURL: url.String(),
+		ReqID:    authenReq.ID,
+	}, nil
 }
 
 func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {

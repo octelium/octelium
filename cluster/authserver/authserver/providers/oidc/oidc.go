@@ -99,13 +99,16 @@ func (c *Connector) Type() string {
 	return "oidc"
 }
 
-func (c *Connector) LoginURL(r *http.Request, state string) (string, string, error) {
+func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
 	nonce := utilrand.GetRandomStringCanonical(22)
 	provider, err := c.newProvider(r.Context())
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	return c.oauth2Config(provider).AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)), nonce, nil
+	return &utils.GetLoginResponse{
+		LoginURL: c.oauth2Config(provider).AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)),
+		ReqID:    nonce,
+	}, nil
 }
 
 func (c *Connector) oauth2Config(provider *oidc.Provider) *oauth2.Config {

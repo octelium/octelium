@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	idputils "github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -38,9 +39,9 @@ type loginState struct {
 	CallbackURL string
 	IsApp       bool
 
-	UID       string
-	RequestID string
-	LoginURL  string
+	UID string
+
+	Login *idputils.GetLoginResponse
 }
 
 type authenticatorCallbackState struct {
