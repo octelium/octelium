@@ -206,6 +206,7 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	zap.L().Debug("Creating sshClientConn", zap.String("id", c.id))
 	clientConn, clientChans, clientReqs, err := ssh.NewClientConn(conn, upstream.HostPort, clientConfig)
 	if err != nil {
+		conn.Close()
 		zap.L().Debug("Could not create new client conn", zap.String("id", c.id), zap.Error(err))
 		return err
 	}
