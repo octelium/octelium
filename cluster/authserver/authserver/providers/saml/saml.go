@@ -139,10 +139,10 @@ func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResp
 	}, nil
 }
 
-func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
+func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
 
 	conf := c.c.Spec.GetSaml()
-
+	reqID := login.ReqID
 	assertion, err := c.sp.ParseResponse(r, []string{reqID})
 	if err != nil {
 		if merr, ok := err.(*saml.InvalidResponseError); ok {

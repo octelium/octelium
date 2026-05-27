@@ -113,7 +113,6 @@ func TestProvider(t *testing.T) {
 		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
 		codeURL := loginResp.LoginURL
-		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -134,7 +133,7 @@ func TestProvider(t *testing.T) {
 		{
 			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
 
-			usr, err := provider.HandleCallback(req, reqID)
+			usr, err := provider.HandleCallback(req, loginResp)
 			assert.Nil(t, err)
 
 			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
@@ -157,7 +156,6 @@ func TestProvider(t *testing.T) {
 		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
 		codeURL := loginResp.LoginURL
-		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -178,7 +176,7 @@ func TestProvider(t *testing.T) {
 		{
 			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
 
-			usr, err := provider.HandleCallback(req, reqID)
+			usr, err := provider.HandleCallback(req, loginResp)
 			assert.Nil(t, err)
 
 			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
@@ -200,7 +198,6 @@ func TestProvider(t *testing.T) {
 		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
 		codeURL := loginResp.LoginURL
-		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -221,7 +218,7 @@ func TestProvider(t *testing.T) {
 		{
 			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
 
-			usr, err := provider.HandleCallback(req, reqID)
+			usr, err := provider.HandleCallback(req, loginResp)
 			assert.Nil(t, err)
 
 			assert.Equal(t, myUsr.Email, usr.GetIdentityProvider().Email)
@@ -243,7 +240,6 @@ func TestProvider(t *testing.T) {
 		loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 		assert.Nil(t, err)
 		codeURL := loginResp.LoginURL
-		reqID := loginResp.ReqID
 
 		var redirectURL string
 		{
@@ -264,7 +260,7 @@ func TestProvider(t *testing.T) {
 		{
 			req := httptest.NewRequest(http.MethodGet, redirectURL, nil)
 
-			_, err := provider.HandleCallback(req, reqID)
+			_, err := provider.HandleCallback(req, loginResp)
 			assert.NotNil(t, err)
 
 		}

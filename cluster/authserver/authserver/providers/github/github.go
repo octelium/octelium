@@ -99,7 +99,7 @@ func (c *Connector) oauth2Config() *oauth2.Config {
 	}
 }
 
-func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
+func (c *Connector) HandleCallback(r *http.Request, _ *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
 	oauth2Config := c.oauth2Config()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

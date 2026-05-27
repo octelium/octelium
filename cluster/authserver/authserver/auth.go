@@ -236,7 +236,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	idp := provider.Provider()
 
-	authInfo, err := provider.HandleCallback(r, userState.Login.ReqID)
+	authInfo, err := provider.HandleCallback(r, userState.Login)
 	if err != nil {
 		zap.L().Debug("Could not handleCallback", zap.Error(err))
 		doRedirect(err)

@@ -76,7 +76,7 @@ func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResp
 	return nil, errors.Errorf("GetLogin is not supported")
 }
 
-func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
+func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
 	return nil, errors.Errorf("HandleCallback is unsupported")
 }
 

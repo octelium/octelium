@@ -50,7 +50,7 @@ type Provider interface {
 	Name() string
 	Type() string
 	GetLogin(r *http.Request, state string) (*GetLoginResponse, error)
-	HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error)
+	HandleCallback(r *http.Request, login *GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error)
 	Provider() *corev1.IdentityProvider
 	AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error)
 }

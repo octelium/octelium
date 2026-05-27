@@ -129,7 +129,6 @@ func TestProvider(t *testing.T) {
 	loginResp, err := provider.GetLogin(httptest.NewRequest("GET", "/", nil), state)
 	assert.Nil(t, err)
 	loginURL := loginResp.LoginURL
-	reqID := loginResp.ReqID
 
 	myUser := &samlidp.User{
 		Name:              utilrand.GetRandomStringCanonical(8),
@@ -224,7 +223,7 @@ func TestProvider(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "https://example.com/callback",
 			bytes.NewBuffer([]byte(fmt.Sprintf("SAMLResponse=%s&RelayState=%s", samlResponse, relayState))))
 		req.Header.Set("Content-type", "application/x-www-form-urlencoded")
-		_, _ = provider.HandleCallback(req, reqID)
+		_, _ = provider.HandleCallback(req, loginResp)
 	}
 
 }

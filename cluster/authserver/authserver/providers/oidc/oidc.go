@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -30,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	vutils "github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -47,6 +49,9 @@ type Connector struct {
 }
 
 func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, error) {
+	if opts == nil || opts.Provider == nil || opts.Provider.Spec == nil {
+		return nil, errors.Errorf("Nil provider options")
+	}
 
 	if opts.Provider.Spec.GetOidc() == nil {
 		return nil, errors.Errorf("Not an OIDC provider")
@@ -76,7 +81,7 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
 	}
 
 	sec, err := opts.OcteliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-		Name: opts.Provider.Spec.GetOidc().ClientSecret.GetFromSecret(),
+		Name: conf.GetClientSecret().GetFromSecret(),
 	})
 	if err != nil {
 		return nil, err
@@ -101,13 +106,23 @@ func (c *Connector) Type() string {
 
 func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
 	nonce := utilrand.GetRandomStringCanonical(22)
+	verifier := oauth2.GenerateVerifier()
+
 	provider, err := c.newProvider(r.Context())
 	if err != nil {
 		return nil, err
 	}
+
+	loginURL := c.oauth2Config(provider).AuthCodeURL(
+		state,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.S256ChallengeOption(verifier),
+	)
+
 	return &utils.GetLoginResponse{
-		LoginURL: c.oauth2Config(provider).AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)),
+		LoginURL: loginURL,
 		ReqID:    nonce,
+		Verifier: verifier,
 	}, nil
 }
 
@@ -123,9 +138,21 @@ func (c *Connector) oauth2Config(provider *oidc.Provider) *oauth2.Config {
 	}
 }
 
-func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Session_Status_Authentication_Info, error) {
-
+func (c *Connector) HandleCallback(r *http.Request,
+	login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
 	conf := c.c.Spec.GetOidc()
+
+	if login == nil {
+		return nil, errors.Errorf("Nil login state")
+	}
+
+	if login.ReqID == "" {
+		return nil, errors.Errorf("Empty OIDC nonce")
+	}
+
+	if login.Verifier == "" {
+		return nil, errors.Errorf("Empty OIDC PKCE verifier")
+	}
 
 	ctx := r.Context()
 
@@ -138,10 +165,23 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 
 	q := r.URL.Query()
 	if errType := q.Get("error"); errType != "" {
-		return nil, errors.Errorf("%s", q.Get("error_description"))
+		errDesc := q.Get("error_description")
+		if errDesc != "" {
+			return nil, errors.Errorf("%s", errDesc)
+		}
+		return nil, errors.Errorf("%s", errType)
 	}
 
-	token, err := oauth2Config.Exchange(ctx, q.Get("code"))
+	code := q.Get("code")
+	if code == "" {
+		return nil, errors.Errorf("No authorization code found")
+	}
+
+	token, err := oauth2Config.Exchange(
+		ctx,
+		code,
+		oauth2.VerifierOption(login.Verifier),
+	)
 	if err != nil {
 		return nil, errors.Errorf("Could not get token: %v", err)
 	}
@@ -150,55 +190,96 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		return nil, errors.Errorf("Invalid token")
 	}
 
-	verifier := provider.Verifier(
-		&oidc.Config{ClientID: conf.ClientID},
-	)
+	verifier := provider.Verifier(&oidc.Config{
+		ClientID: conf.ClientID,
+	})
 
 	rawIDToken, ok := token.Extra("id_token").(string)
-	if !ok {
+	if !ok || rawIDToken == "" {
 		return nil, errors.Errorf("Could not find id_token in token response")
 	}
+
 	idToken, err := verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, errors.Errorf("Could not verify the ID Token: %v", err)
 	}
 
-	claims := make(map[string]any)
-	if err := idToken.Claims(&claims); err != nil {
+	idTokenClaims := make(map[string]any)
+	if err := idToken.Claims(&idTokenClaims); err != nil {
 		return nil, err
+	}
+
+	claims := make(map[string]any, len(idTokenClaims))
+	for k, v := range idTokenClaims {
+		claims[k] = v
 	}
 
 	if conf.UseUserInfoEndpoint {
 		zap.L().Debug("Getting userInfo endpoint")
+
 		userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
 			return nil, errors.Errorf("Could not get userInfo endpoint: %v", err)
 		}
 
-		if err := userInfo.Claims(&claims); err != nil {
+		if userInfo.Subject != "" && userInfo.Subject != idToken.Subject {
+			return nil, errors.Errorf("UserInfo subject mismatch")
+		}
+
+		userInfoClaims := make(map[string]any)
+		if err := userInfo.Claims(&userInfoClaims); err != nil {
 			return nil, err
+		}
+
+		for k, v := range userInfoClaims {
+			switch k {
+			case "iss", "sub", "aud", "exp", "iat", "nbf", "nonce", "azp", "auth_time", "acr", "amr":
+				continue
+			default:
+				claims[k] = v
+			}
 		}
 	}
 
-	zap.L().Debug("Got oidc claims", zap.String("idp", c.c.Metadata.Name), zap.Any("claims", claims))
+	zap.L().Debug("Got OIDC claims",
+		zap.String("idp", c.c.Metadata.Name),
+		zap.Int("claimCount", len(claims)))
 
-	// preferredUsernameKey := "preferred_username"
-	identifierKey := "email"
 	emailVerifiedKey := "email_verified"
 	picURLClaim := "picture"
-
+	identifierKey := "email"
 	if conf.IdentifierClaim != "" {
 		identifierKey = conf.IdentifierClaim
 	}
 
 	identifier, _ := claims[identifierKey].(string)
+	identifier = strings.TrimSpace(identifier)
+
+	if identifier == "" {
+		return nil, errors.Errorf("OIDC identifier claim %s is missing or empty", identifierKey)
+	}
+
 	picURL, _ := claims[picURLClaim].(string)
-	emailVerified, _ := claims[emailVerifiedKey].(bool)
+	emailVerified := func() bool {
+		switch v := claims[emailVerifiedKey].(type) {
+		case bool:
+			return v
+		case string:
+			return strings.EqualFold(v, "true")
+		default:
+			return false
+		}
+	}()
 	email, _ := claims["email"].(string)
 	nonce, _ := claims["nonce"].(string)
 
-	if nonce != reqID {
+	if nonce == "" || !vutils.SecureStringEqual(nonce, login.ReqID) {
 		return nil, errors.Errorf("Nonce mismatch")
+	}
+
+	if conf.CheckEmailVerified && !emailVerified {
+		return nil, errors.Errorf(
+			"The User email is not verified according to the provider. Please verify it and try again")
 	}
 
 	ret := &corev1.Session_Status_Authentication_Info{
@@ -207,10 +288,9 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 			IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
 				IdentityProviderRef: umetav1.GetObjectReference(c.c),
 				Type:                corev1.IdentityProvider_Status_OIDC,
-
-				Identifier: identifier,
-				PicURL:     picURL,
-				Email:      email,
+				Identifier:          identifier,
+				PicURL:              picURL,
+				Email:               email,
 			},
 		},
 		Aal: utils.GetAAL(ctx, &utils.GetAALReq{
@@ -220,22 +300,15 @@ func (c *Connector) HandleCallback(r *http.Request, reqID string) (*corev1.Sessi
 		}),
 	}
 
-	if conf.CheckEmailVerified {
-		if !emailVerified {
-			return nil, errors.Errorf(
-				"The User email is not verified according to the provider. Please verify it and try again")
-		}
-	}
-
 	return ret, nil
 }
 
-func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error) {
+func (c *Connector) AuthenticateAssertion(ctx context.Context,
+	req *authv1.AuthenticateWithAssertionRequest) (*corev1.User, *corev1.Session_Status_Authentication_Info, error) {
 	return nil, nil, errors.Errorf("AuthenticateAssertion is unimplemented")
 }
 
 func (c *Connector) newProvider(ctx context.Context) (*oidc.Provider, error) {
-
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
