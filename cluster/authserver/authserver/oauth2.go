@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -97,9 +98,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		return
 	}
 
-	usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-		Uid: tkn.Status.UserRef.Uid,
-	})
+	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(tkn.Status.UserRef))
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
 			s.returnOAuth2Err(w, "invalid_client", 400)

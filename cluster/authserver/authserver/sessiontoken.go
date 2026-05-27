@@ -26,7 +26,6 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
@@ -210,7 +209,7 @@ func (s *server) updateAndAutoDeleteCredential(ctx context.Context, tkn *corev1.
 		return nil
 	}
 
-	if _, err := s.octeliumC.CoreC().DeleteCredential(ctx, &rmetav1.DeleteOptions{Uid: tkn.Metadata.Uid}); err != nil {
+	if _, err := s.octeliumC.CoreC().DeleteCredential(ctx, apivalidation.ObjectToRDeleteOptions(tkn)); err != nil {
 		return s.errInternalErr(err)
 	}
 
@@ -413,8 +412,7 @@ func (s *server) getUserFromSession(ctx context.Context, sess *corev1.Session) (
 }
 
 func (s *server) getUserFromUserRef(ctx context.Context, usrRef *metav1.ObjectReference) (*corev1.User, error) {
-	usr, err := s.octeliumC.CoreC().GetUser(ctx,
-		&rmetav1.GetOptions{Uid: usrRef.Uid})
+	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(usrRef))
 	if err != nil {
 		if !grpcerr.IsNotFound(err) {
 			return nil, s.errInternalErr(err)
@@ -542,9 +540,8 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Uid: authInfo.GetAuthenticator().AuthenticatorRef.Uid,
-	})
+	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx,
+		apivalidation.ObjectReferenceToRGetOptions(authInfo.GetAuthenticator().AuthenticatorRef))
 	if err != nil {
 		return nil, err
 	}

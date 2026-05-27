@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
@@ -170,6 +169,10 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		return nil, nil, nil, "", err
 	}
 
+	retErrStr := func(err string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+		return retErr(errors.Errorf("%s", err))
+	}
+
 	lenResp := len(response)
 	if lenResp < 100 || lenResp > 5000 {
 		return retErr(errors.Errorf("Invalid response length"))
@@ -198,9 +201,8 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 			return nil, err
 		}
 
-		usr, err = s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid: authn.Status.UserRef.Uid,
-		})
+		usr, err = s.octeliumC.CoreC().GetUser(ctx,
+			apivalidation.ObjectReferenceToRGetOptions(authn.Status.UserRef))
 		if err != nil {
 			return nil, err
 		}
@@ -220,11 +222,35 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 	}
 
 	if usr == nil {
-		return retErr(errors.Errorf("User not set by getWebauthnUser"))
+		return retErrStr("User not set by getWebauthnUser")
 	}
 
 	if authn == nil {
-		return retErr(errors.Errorf("Authenticator not set by getWebauthnUser"))
+		return retErrStr("Authenticator not set by getWebauthnUser")
+	}
+
+	if usr.Spec.Type != corev1.User_Spec_HUMAN {
+		return retErrStr("Invalid User type")
+	}
+
+	if usr.Spec.IsDisabled {
+		return retErrStr("User is deactivated")
+	}
+
+	if usr.Status.IsLocked {
+		return retErrStr("User is locked")
+	}
+
+	if !authn.Status.IsRegistered {
+		return retErrStr("Authenticator is not registered")
+	}
+
+	if authn.Status.Type != corev1.Authenticator_Status_FIDO {
+		return retErrStr("Invalid Authenticator type")
+	}
+
+	if authn.Spec.State != corev1.Authenticator_Spec_ACTIVE {
+		return retErrStr("Authenticator is not ACTIVE")
 	}
 
 	return usr, authn, cred, state.Query, nil

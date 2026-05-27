@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -49,9 +50,7 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 
 	deleteSess := func() {
 
-		_, err := s.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
-			Uid: sess.Metadata.Uid,
-		})
+		_, err := s.octeliumC.CoreC().DeleteSession(ctx, apivalidation.ObjectToRDeleteOptions(sess))
 		if err != nil {
 			zap.L().Debug("Could not delete old web Session",
 				zap.String("name", sess.Metadata.Name), zap.Error(err))

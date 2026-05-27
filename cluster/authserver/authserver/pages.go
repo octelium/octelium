@@ -25,7 +25,7 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 )
@@ -114,9 +114,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Debug("Could not get IdentityProvider. Probably removed by Cluster admins. Removing the Session too",
 					zap.String("sess", sess.Metadata.Name),
 					zap.String("idp", info.GetIdentityProvider().IdentityProviderRef.Name))
-			s.octeliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
-				Uid: sess.Metadata.Uid,
-			})
+			s.octeliumC.CoreC().DeleteSession(ctx, apivalidation.ObjectToRDeleteOptions(sess))
 			s.setLogoutCookies(w)
 			s.renderIndex(w)
 			return

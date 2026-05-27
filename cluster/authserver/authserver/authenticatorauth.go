@@ -27,7 +27,6 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
@@ -264,10 +263,7 @@ func (s *server) getAuthenticator(ctx context.Context,
 	if err := apivalidation.CheckObjectRef(authnRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
 		return nil, s.errInvalidArgErr(err)
 	}
-	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-		Uid:  authnRef.Uid,
-		Name: authnRef.Name,
-	})
+	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.ObjectReferenceToRGetOptions(authnRef))
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
 			return nil, s.errNotFoundErr(err)
@@ -766,9 +762,7 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_REGISTRATION_RECOMMENDED,
 		corev1.Session_Status_REGISTRATION_REQUIRED:
-		sess, err = s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
-			Uid: sess.Metadata.Uid,
-		})
+		sess, err = s.octeliumC.CoreC().GetSession(ctx, apivalidation.ObjectToRGetOptions(sess))
 		if err != nil {
 			return nil, s.errInternalErr(err)
 		}

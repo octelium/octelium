@@ -303,10 +303,7 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 		return nil, s.errInvalidArgErr(err)
 	}
 
-	authn, err := s.getAuthenticator(ctx, &metav1.ObjectReference{
-		Uid:  req.Metadata.Uid,
-		Name: req.Metadata.Name,
-	}, sess)
+	authn, err := s.getAuthenticator(ctx, umetav1.GetObjectReference(req), sess)
 	if err != nil {
 		return nil, err
 	}
@@ -364,9 +361,8 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 	}
 
 	if sess.Status.RequiredAuthenticatorRef != nil {
-		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-			Uid: sess.Status.RequiredAuthenticatorRef.Uid,
-		})
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx,
+			apivalidation.ObjectReferenceToRGetOptions(sess.Status.RequiredAuthenticatorRef))
 		if err != nil {
 			return nil, err
 		}
@@ -383,9 +379,9 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 		sess.Status.InitialAuthentication.Info != nil &&
 		sess.Status.InitialAuthentication.Info.GetAuthenticator() != nil &&
 		sess.Status.InitialAuthentication.Info.GetAuthenticator().Type == corev1.Authenticator_Status_FIDO {
-		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
-			Uid: sess.Status.InitialAuthentication.Info.GetAuthenticator().AuthenticatorRef.Uid,
-		})
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx,
+			apivalidation.ObjectReferenceToRGetOptions(
+				sess.Status.InitialAuthentication.Info.GetAuthenticator().AuthenticatorRef))
 		if err != nil {
 			return nil, err
 		}
@@ -438,16 +434,6 @@ func (s *server) getAvailableAuthenticators(ctx context.Context,
 			default:
 				continue
 			}
-
-			/*
-				if itm.Status.DeviceRef != nil && sess.Status.DeviceRef != nil &&
-					itm.Status.DeviceRef.Uid == sess.Status.DeviceRef.Uid {
-					ret.MainAuthenticator = itm
-					ret.AvailableAuthenticators = []*corev1.Authenticator{itm}
-
-					return ret, nil
-				}
-			*/
 		case corev1.Session_Status_CLIENTLESS:
 			if !sess.Status.IsBrowser {
 				continue

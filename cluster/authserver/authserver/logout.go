@@ -22,7 +22,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
@@ -46,7 +46,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	_, err = s.octeliumC.CoreC().DeleteSession(ctx,
-		&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid})
+		apivalidation.ObjectToRDeleteOptions(sess))
 	if err == nil || grpcerr.IsNotFound(err) {
 		s.setLogoutCookies(w)
 		w.WriteHeader(http.StatusOK)
@@ -69,7 +69,7 @@ func (s *server) doLogout(ctx context.Context, _ *authv1.LogoutRequest) (*authv1
 	}
 
 	if _, err := s.octeliumC.CoreC().DeleteSession(ctx,
-		&rmetav1.DeleteOptions{Uid: sess.Metadata.Uid}); err != nil {
+		apivalidation.ObjectToRDeleteOptions(sess)); err != nil {
 		if !grpcerr.IsNotFound(err) {
 			return nil, grpcutils.InternalWithErr(err)
 		}
