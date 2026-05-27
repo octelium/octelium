@@ -158,10 +158,12 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		} else if authS.GetOauth2ClientCredentials() != nil &&
 			authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
 			authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret() != "" {
+			cc := authS.GetOauth2ClientCredentials()
 			accessToken, err := m.secretMan.GetOAuth2CCToken(ctx, &secretman.GetOAuth2CCTokenReq{
-				ClientID:   authS.GetOauth2ClientCredentials().ClientID,
-				SecretName: authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret(),
-				TokenURL:   authS.GetOauth2ClientCredentials().TokenURL,
+				ClientID:   cc.ClientID,
+				SecretName: cc.GetClientSecret().GetFromSecret(),
+				TokenURL:   cc.TokenURL,
+				Scopes:     cc.Scopes,
 			})
 			if err == nil {
 				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
