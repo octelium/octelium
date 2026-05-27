@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,6 +336,7 @@ type GetOAuth2CCTokenReq struct {
 }
 
 func (r *GetOAuth2CCTokenReq) getID() string {
-	shaHash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", r.ClientID, r.SecretName, r.TokenURL)))
+	shaHash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s",
+		r.ClientID, r.SecretName, r.TokenURL, strings.Join(r.Scopes, "-"))))
 	return base64.StdEncoding.EncodeToString(shaHash[:16])
 }
