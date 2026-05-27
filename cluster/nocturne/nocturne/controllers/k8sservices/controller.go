@@ -18,6 +18,7 @@ package k8sservicescontroller
 
 import (
 	"context"
+	"slices"
 
 	"go.uber.org/zap"
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -95,6 +96,14 @@ func doHandle(ctx context.Context, octeliumC octeliumc.ClientInterface, k8sC kub
 	if region.Status == nil {
 		region.Status = &corev1.Region_Status{}
 	}
+
+	if slices.Equal(region.Status.IngressAddresses, ipAddrs) {
+		zap.L().Debug("No need to update region ingress addrs. Nothing has changed...")
+		return nil
+	}
+
+	zap.L().Debug("Updating region ingress addrs",
+		zap.Any("region", region), zap.Strings("addrs", ipAddrs))
 
 	region.Status.IngressAddresses = ipAddrs
 
