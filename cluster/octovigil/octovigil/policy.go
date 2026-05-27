@@ -183,6 +183,7 @@ func (s *Server) getEvaluatePolicyRules(ctx context.Context, req *coctovigilv1.E
 		for _, p := range allPolices {
 			policy, err := s.getPolicyFromName(ctx, p)
 			if err != nil {
+				zap.L().Error("Could not getPolicyFromName", zap.String("policy", p))
 				continue
 			}
 
@@ -269,6 +270,7 @@ func (s *Server) getResourcePolicyRules(ctx context.Context,
 		for _, p := range allPolices {
 			policy, err := s.getPolicyFromName(ctx, p)
 			if err != nil {
+				zap.L().Error("Could not getPolicyFromName", zap.String("policy", p))
 				continue
 			}
 
@@ -557,6 +559,8 @@ func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePoli
 			attrs:     req.attrs,
 		})
 		if err != nil {
+			zap.L().Error("Could not getDecisionEnforcementRule",
+				zap.Any("rule", rule), zap.Error(err))
 			continue
 		}
 		if res.decision == matchDecisionMATCH_YES {

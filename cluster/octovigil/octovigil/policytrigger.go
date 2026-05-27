@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"go.uber.org/zap"
 )
 
 func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
@@ -37,6 +38,8 @@ func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
 
 		rules, err := s.getRulesFromPolicyTrigger(ctx, i, reqCtxMap, pt, usedPolicies)
 		if err != nil {
+			zap.L().Error("Could not getRulesFromPolicyTrigger. Ignoring it...",
+				zap.Any("trigger", pt), zap.Error(err))
 			continue
 		}
 		if len(rules) == 0 {
