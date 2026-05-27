@@ -64,7 +64,10 @@ func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
 		"ctx": reqCtxMap,
 	}
 
-	isMatched, _ := o.CELEngine.EvalCondition(ctx, cond, inputMap)
+	isMatched, err := o.CELEngine.EvalCondition(ctx, cond, inputMap)
+	if err != nil {
+		zap.L().Error("Could not eval plugin condition", zap.Any("condition", cond))
+	}
 
 	return isMatched
 }
