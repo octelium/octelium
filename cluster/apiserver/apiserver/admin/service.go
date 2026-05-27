@@ -664,8 +664,8 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 
 				switch itm.Type.(type) {
 				case *corev1.Service_Spec_Config_Upstream_Container_Env_Value:
-					if err := apivalidation.ValidateEnvVarKey(itm.GetValue()); err != nil {
-						return err
+					if len(itm.GetValue()) > 2048 {
+						return grpcutils.InvalidArg("env var value is too long")
 					}
 				case *corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret:
 					if err := s.validateSecretOwner(ctx, itm); err != nil {
