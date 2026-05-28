@@ -21,12 +21,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -48,14 +48,13 @@ func parseDirectTCPIPReq(data []byte) (*reqDirectTCPIP, error) {
 	return &r, nil
 }
 
-func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
+func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 	svcCfg := c.svcConfig
 
 	if svcCfg == nil || svcCfg.GetSsh() == nil || !svcCfg.GetSsh().EnableLocalPortForwarding {
 		zap.L().Debug("Handling TCPIP rejected since local port forwarding is not enabled", zap.String("id", c.id))
 		nch.Reject(ssh.UnknownChannelType,
 			fmt.Sprintf("Channel type: %s is unsupported", nch.ChannelType()))
-
 		return
 	}
 
@@ -87,24 +86,10 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 	conn, err := c.remoteConn.sshClient.Dial("tcp", remoteAddr)
 	if err != nil {
 		zap.L().Debug("Could not connect to remote addr",
-			zap.String("id", c.id), zap.String("addr", remoteAddr))
+			zap.String("id", c.id), zap.String("addr", remoteAddr), zap.Error(err))
 		return
 	}
 	defer conn.Close()
-
-	var wg sync.WaitGroup
-
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		_, err = io.Copy(ch, conn)
-	}()
-
-	go func() {
-		defer wg.Done()
-		_, err = io.Copy(conn, ch)
-	}()
 
 	{
 		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -129,8 +114,36 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 		otelutils.EmitAccessLog(logE)
 	}
 
+	errCh := make(chan error, 2)
+
+	go func() {
+		_, err := io.Copy(ch, conn)
+		errCh <- err
+	}()
+
+	go func() {
+		_, err := io.Copy(conn, ch)
+		errCh <- err
+	}()
+
 	zap.L().Debug("Waiting for port forwarding to close", zap.String("id", c.id))
-	wg.Wait()
+
+	firstErr := <-errCh
+
+	ch.Close()
+	conn.Close()
+
+	secondErr := <-errCh
+
+	if firstErr != nil && !errors.Is(firstErr, io.EOF) && !errors.Is(firstErr, net.ErrClosed) {
+		zap.L().Debug("direct-tcpip copy ended with error",
+			zap.String("id", c.id), zap.String("addr", remoteAddr), zap.Error(firstErr))
+	}
+
+	if secondErr != nil && !errors.Is(secondErr, io.EOF) && !errors.Is(secondErr, net.ErrClosed) {
+		zap.L().Debug("direct-tcpip peer copy ended with error",
+			zap.String("id", c.id), zap.String("addr", remoteAddr), zap.Error(secondErr))
+	}
 
 	{
 		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
