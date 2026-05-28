@@ -111,6 +111,9 @@ func (c *Controller) doSetConfig(_ context.Context, cfg *corev1.Config) error {
 }
 
 func (c *Controller) doLoadDB(data []byte) error {
+	if c.db != nil {
+		c.db.Close()
+	}
 	var err error
 	c.db, err = geoip2.OpenBytes(data)
 	if err != nil {
@@ -123,7 +126,12 @@ func (c *Controller) doLoadDB(data []byte) error {
 }
 
 func (c *Controller) Close() error {
-	return c.db.Close()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.db != nil {
+		return c.db.Close()
+	}
+	return nil
 }
 
 func (c *Controller) Resolve(addr netip.Addr) *corev1.GeoIP {
@@ -314,7 +322,7 @@ func (c *Controller) setUpstream(ctx context.Context,
 		}).
 		AddRetryHook(func(r *resty.Response, err error) {
 			zap.L().Debug("Retrying....", zap.Error(err))
-		}).SetTimeout(100 * time.Second).SetLogger(zap.S())
+		}).SetTimeout(60 * time.Second).SetLogger(zap.S())
 
 	resp, err := httpC.R().SetContext(ctx).Get(upstream.Url)
 	if err != nil {
@@ -347,11 +355,23 @@ func (c *Controller) setUpstream(ctx context.Context,
 }
 
 func decompress(data []byte) ([]byte, error) {
-	gr, err := gzip.NewReader(io.Reader(bytes.NewReader(data)))
+	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer gr.Close()
 
-	return io.ReadAll(gr)
+	const maxMMDBSize = 512 * 1024 * 1024
+	limited := io.LimitReader(gr, maxMMDBSize+1)
+
+	out, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(out) > maxMMDBSize {
+		return nil, errors.Errorf("Decompressed MMDB exceeds maximum size of %d bytes", maxMMDBSize)
+	}
+
+	return out, nil
 }
