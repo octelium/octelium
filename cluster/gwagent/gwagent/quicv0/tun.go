@@ -256,7 +256,11 @@ func (s *QUICController) doProcessTunPacket(pkt []byte) {
 		return
 	}
 
-	dctx.sendCh <- pkt
+	select {
+	case dctx.sendCh <- pkt:
+	default:
+		zap.L().Warn("Could not send to QUIC sendCh")
+	}
 }
 
 func (s *QUICController) getDctxFromTunPacket(pkt []byte) *dctx {
