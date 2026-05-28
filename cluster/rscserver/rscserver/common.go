@@ -382,6 +382,16 @@ func (s *Server) doList(ctx context.Context,
 		return nil, nil, rerr.InvalidWithErr(err)
 	}
 
+	if req.ExcludeSystemHidden {
+		filters = append(filters,
+			goqu.L(`COALESCE((resource->'metadata'->>'isSystemHidden')::boolean, false) = false`))
+	}
+
+	if req.ExcludeUserHidden {
+		filters = append(filters,
+			goqu.L(`COALESCE((resource->'metadata'->>'isUserHidden')::boolean, false) = false`))
+	}
+
 	{
 		if req.SpecLabels != nil {
 			for k, v := range req.SpecLabels {
