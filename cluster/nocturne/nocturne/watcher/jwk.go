@@ -76,6 +76,10 @@ func (w *Watcher) doRunJWKSecret(ctx context.Context) error {
 }
 
 func (w *Watcher) doProcessJWKSecret(ctx context.Context, secret *corev1.Secret) error {
+	if secret.Metadata.SystemLabels == nil {
+		return nil
+	}
+
 	if w.needsRotation(secret) {
 		zap.L().Debug("The root Secret needs rotation",
 			zap.Any("secretMetadata", secret.Metadata))
