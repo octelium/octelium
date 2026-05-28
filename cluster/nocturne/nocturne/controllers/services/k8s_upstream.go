@@ -439,24 +439,24 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 				SuccessThreshold:    probe.SuccessThreshold,
 				FailureThreshold:    probe.FailureThreshold,
 			}
-			switch spec.LivenessProbe.Type.(type) {
+			switch probe.Type.(type) {
 			case *corev1.Service_Spec_Config_Upstream_Container_Probe_Grpc:
 				ret.ProbeHandler = k8scorev1.ProbeHandler{
 					GRPC: &k8scorev1.GRPCAction{
-						Port: int32(spec.LivenessProbe.GetGrpc().Port),
+						Port: int32(probe.GetGrpc().Port),
 					},
 				}
 			case *corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet:
 				ret.ProbeHandler = k8scorev1.ProbeHandler{
 					HTTPGet: &k8scorev1.HTTPGetAction{
-						Path: spec.LivenessProbe.GetHttpGet().Path,
-						Port: intstr.FromInt32(int32(spec.LivenessProbe.GetHttpGet().Port)),
+						Path: probe.GetHttpGet().Path,
+						Port: intstr.FromInt32(int32(probe.GetHttpGet().Port)),
 					},
 				}
 			case *corev1.Service_Spec_Config_Upstream_Container_Probe_TcpSocket:
 				ret.ProbeHandler = k8scorev1.ProbeHandler{
 					TCPSocket: &k8scorev1.TCPSocketAction{
-						Port: intstr.FromInt32(int32(spec.LivenessProbe.GetTcpSocket().Port)),
+						Port: intstr.FromInt32(int32(probe.GetTcpSocket().Port)),
 					},
 				}
 			default:
@@ -506,7 +506,7 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 							"data": ucorev1.ToSecret(sec).GetSpecValueStr(),
 						},
 
-						Type: k8scorev1.SecretTypeDockerConfigJson,
+						Type: k8scorev1.SecretTypeOpaque,
 					}
 
 					if _, err := k8sutils.CreateOrUpdateSecret(ctx, c.k8sC, req); err == nil {

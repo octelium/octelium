@@ -63,7 +63,7 @@ func (c *Controller) handleDeleteSessionUpstream(ctx context.Context, svc *corev
 				continue
 			}
 			zap.L().Warn("Could not get Session to update upstreams after Service deletion",
-				zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
+				zap.String("sess", uConn.Metadata.Name), zap.String("svc", svc.Metadata.Name))
 			return err
 		}
 
