@@ -96,6 +96,8 @@ func getVirtualHostAPI(_ context.Context, r *GetListenersReq) (*routev3.VirtualH
 		}(),
 	}
 
+	addGlobalResponseHeaders(vh)
+
 	{
 		filter := &corsv3.CorsPolicy{
 			AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
@@ -242,6 +244,8 @@ func getVirtualHostService(svc *corev1.Service, r *GetListenersReq) (*routev3.Vi
 		}(),
 	}
 
+	addGlobalResponseHeaders(vh)
+
 	return vh, nil
 }
 
@@ -307,4 +311,25 @@ func getRoutesService(svc *corev1.Service, domain string) ([]*routev3.Route, err
 	}
 
 	return []*routev3.Route{route}, nil
+}
+
+func addGlobalResponseHeaders(vh *routev3.VirtualHost) {
+
+	vh.ResponseHeadersToAdd = append(vh.ResponseHeadersToAdd, &corev3.HeaderValueOption{
+		Header: &corev3.HeaderValue{
+			Key:   "Strict-Transport-Security",
+			Value: "max-age=2592000",
+		},
+		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+	})
+
+	vh.ResponseHeadersToAdd = append(vh.ResponseHeadersToAdd,
+		&corev3.HeaderValueOption{
+			Header: &corev3.HeaderValue{
+				Key:   "Server",
+				Value: "octelium",
+			},
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+		},
+	)
 }
