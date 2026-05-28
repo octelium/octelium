@@ -116,6 +116,10 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 			urscsrv.FilterFieldEQValStr("status.namespaceRef.uid", ns.Metadata.Uid),
 		},
 	})
+	if err != nil {
+		return nil, serr.InternalWithErr(err)
+	}
+
 	if len(svcList.Items) > 0 {
 		return nil, serr.InvalidArg("Namespace has existing Services")
 	}
