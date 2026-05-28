@@ -209,7 +209,9 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	zap.L().Debug("Started handling a new conn", zap.String("remoteAddr", c.RemoteAddr().String()))
 
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
+	_ = c.SetDeadline(time.Time{})
 	if err != nil {
 		zap.L().Debug("Could not establish a newServerConn")
 		c.Close()
