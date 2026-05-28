@@ -120,11 +120,11 @@ func getRetryCodes() []codes.Code {
 	return []codes.Code{
 		codes.Unavailable,
 		codes.ResourceExhausted,
-		codes.Unknown,
+		// codes.Unknown,
 		codes.Aborted,
-		codes.DataLoss,
+		// codes.DataLoss,
 		// codes.Internal,
-		codes.DeadlineExceeded,
+		// codes.DeadlineExceeded,
 	}
 }
 
