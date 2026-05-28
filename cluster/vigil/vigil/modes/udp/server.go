@@ -158,9 +158,9 @@ func (s *Server) closeDctx(dctx *dctx) {
 	otelutils.EmitAccessLog(logE)
 
 	s.dctxMap.mu.Lock()
-	defer s.dctxMap.mu.Unlock()
-	dctx.close()
 	delete(s.dctxMap.dctxMap, dctx.addr.String())
+	s.dctxMap.mu.Unlock()
+	dctx.close()
 }
 
 func (s *Server) replyLoop(dctx *dctx) {
