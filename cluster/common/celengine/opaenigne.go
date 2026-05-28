@@ -39,17 +39,22 @@ func newOPAEngine(_ context.Context, _ *opaOpts) (*opaEngine, error) {
 	}, nil
 }
 
-func (e *opaEngine) EvalPolicy(ctx context.Context, script string, input map[string]any) (bool, error) {
+var ErrOPAUndefined = errors.New("OPA decision undefined")
 
+func (e *opaEngine) EvalPolicy(ctx context.Context, script string, input map[string]any) (bool, error) {
 	res, err := e.doEvalPolicy(ctx, script, input, "condition", "match")
 	if err != nil {
-		return false, nil
+		if errors.Is(err, ErrOPAUndefined) {
+			return false, nil
+		}
+		return false, err
 	}
 
 	b, ok := res.(bool)
 	if !ok {
 		return false, errors.Errorf("OPA policy rule must return a boolean, got %T", res)
 	}
+
 	return b, nil
 }
 
@@ -89,6 +94,7 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context, script string, input map[s
 	if script == "" {
 		return nil, errors.Errorf("Rego script is empty")
 	}
+
 	pq, err := e.getOrSetPQ(ctx, script, mod, qry)
 	if err != nil {
 		return nil, err
@@ -100,7 +106,11 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context, script string, input map[s
 	}
 
 	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
-		return nil, errors.Errorf("OPA evaluation produced no results")
+		return nil, ErrOPAUndefined
+	}
+
+	if len(rs) > 1 || len(rs[0].Expressions) > 1 {
+		return nil, errors.Errorf("OPA evaluation produced ambiguous results")
 	}
 
 	return rs[0].Expressions[0].Value, nil
