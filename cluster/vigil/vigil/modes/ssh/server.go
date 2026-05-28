@@ -267,7 +267,6 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 				StartTime:       startTime,
 				IsAuthenticated: true,
-				IsAuthorized:    true,
 				ReqCtx:          i,
 				Reason:          authResp.AuthorizationDecisionReason,
 			})

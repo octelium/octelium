@@ -153,12 +153,25 @@ type recordWriter struct {
 	isStdin       bool
 }
 
+const maxSSHRecordingChunk = 32 * 1024
+
 func (r *recordWriter) Write(b []byte) (int, error) {
-	if !r.skipRecording {
-		r.chunkChan <- &recordingChunk{
-			createdAt: time.Now(),
-			data:      b,
-		}
+	if r.skipRecording {
+		return len(b), nil
+	}
+
+	n := min(maxSSHRecordingChunk, len(b))
+
+	cp := make([]byte, n)
+	copy(cp, b[:n])
+
+	select {
+	case r.chunkChan <- &recordingChunk{
+		createdAt: time.Now(),
+		data:      cp,
+	}:
+	default:
+		zap.L().Warn("Recording channel full, dropping chunk")
 	}
 
 	return len(b), nil

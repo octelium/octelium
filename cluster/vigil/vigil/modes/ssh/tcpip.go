@@ -67,6 +67,7 @@ func (c *dctx) handleDirectTCPIP(ctx context.Context, nch ssh.NewChannel) {
 	if err := ssh.Unmarshal(nch.ExtraData(), tcpIPReq); err != nil {
 		zap.L().Debug("Could not parse Direct TCP_IP request",
 			zap.String("id", c.id), zap.Error(err))
+		nch.Reject(ssh.Prohibited, "invalid direct-tcpip request")
 		return
 	}
 
