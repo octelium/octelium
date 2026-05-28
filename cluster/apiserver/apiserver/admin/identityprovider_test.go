@@ -166,6 +166,22 @@ func TestIdentityProvider(t *testing.T) {
 				},
 			},
 		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Oidc{
+					Oidc: &corev1.IdentityProvider_Spec_OIDC{
+						ClientID:  utilrand.GetRandomString(32),
+						IssuerURL: "https://accounts.google.com/.well-known/openid-configuration",
+						ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
+							Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
+								FromSecret: sec.Metadata.Name,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, invalid := range invalids {
@@ -199,6 +215,23 @@ func TestIdentityProvider(t *testing.T) {
 					Oidc: &corev1.IdentityProvider_Spec_OIDC{
 						ClientID:  utilrand.GetRandomString(32),
 						IssuerURL: "https://example.com",
+						ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
+							Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
+								FromSecret: sec.Metadata.Name,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.IdentityProvider_Spec{
+				Type: &corev1.IdentityProvider_Spec_Oidc{
+					Oidc: &corev1.IdentityProvider_Spec_OIDC{
+						ClientID:  utilrand.GetRandomString(32),
+						IssuerURL: "https://accounts.google.com",
 						ClientSecret: &corev1.IdentityProvider_Spec_OIDC_ClientSecret{
 							Type: &corev1.IdentityProvider_Spec_OIDC_ClientSecret_FromSecret{
 								FromSecret: sec.Metadata.Name,

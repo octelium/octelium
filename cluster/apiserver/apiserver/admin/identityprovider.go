@@ -19,10 +19,10 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
+	"unicode/utf8"
 
-	"github.com/asaskevich/govalidator"
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -33,7 +33,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/octelium/octelium/pkg/utils/ldflags"
 )
 
 func (s *Server) CreateIdentityProvider(ctx context.Context, req *corev1.IdentityProvider) (*corev1.IdentityProvider, error) {
@@ -164,8 +163,112 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 
 	req.Status = &corev1.IdentityProvider_Status{}
 
+	canonicalOIDCIssuerURL := func(arg string) (string, error) {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			return "", grpcutils.InvalidArg("issuerURL must be set")
+		}
+		if len(arg) > 2048 {
+			return "", grpcutils.InvalidArg("issuerURL is too long")
+		}
+		if !utf8.ValidString(arg) {
+			return "", grpcutils.InvalidArg("issuerURL must be valid UTF-8")
+		}
+
+		u, err := url.Parse(arg)
+		if err != nil {
+			return "", grpcutils.InvalidArg("issuerURL is invalid")
+		}
+
+		u.Scheme = strings.ToLower(u.Scheme)
+		u.Host = strings.ToLower(u.Host)
+		u.RawQuery = ""
+		u.Fragment = ""
+		u.User = nil
+
+		p := strings.TrimRight(u.EscapedPath(), "/")
+		u.Path = p
+
+		if u.Scheme != "https" {
+			return "", grpcutils.InvalidArg("issuerURL must use https")
+		}
+
+		if u.Host == "" {
+			return "", grpcutils.InvalidArg("issuerURL host must be set")
+		}
+
+		if u.User != nil {
+			return "", grpcutils.InvalidArg("issuerURL must not contain userinfo")
+		}
+
+		if u.RawQuery != "" || u.Fragment != "" {
+			return "", grpcutils.InvalidArg("issuerURL must not contain query or fragment")
+		}
+
+		if p == "/.well-known/openid-configuration" ||
+			strings.HasSuffix(p, "/.well-known/openid-configuration") {
+			return "", grpcutils.InvalidArg("issuerURL must be the issuer, not the discovery URL")
+		}
+
+		return u.String(), nil
+	}
+
+	canonicalHTTPSURL := func(arg string, field string, allowQuery bool) (string, error) {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			return "", grpcutils.InvalidArg("%s must be set", field)
+		}
+		if len(arg) > 2048 {
+			return "", grpcutils.InvalidArg("%s is too long", field)
+		}
+		if !utf8.ValidString(arg) {
+			return "", grpcutils.InvalidArg("%s must be valid UTF-8", field)
+		}
+
+		u, err := url.Parse(arg)
+		if err != nil {
+			return "", grpcutils.InvalidArg("%s is invalid", field)
+		}
+
+		u.Scheme = strings.ToLower(u.Scheme)
+		u.Host = strings.ToLower(u.Host)
+		u.Fragment = ""
+		u.User = nil
+
+		if u.Scheme != "https" {
+			return "", grpcutils.InvalidArg("%s must use https", field)
+		}
+		if u.Host == "" {
+			return "", grpcutils.InvalidArg("%s host must be set", field)
+		}
+		if u.User != nil {
+			return "", grpcutils.InvalidArg("%s must not contain userinfo", field)
+		}
+		if u.Fragment != "" {
+			return "", grpcutils.InvalidArg("%s must not contain fragment", field)
+		}
+		if !allowQuery && u.RawQuery != "" {
+			return "", grpcutils.InvalidArg("%s must not contain query", field)
+		}
+
+		return u.String(), nil
+	}
+
+	canonicalIssuerString := func(arg string) string {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			return ""
+		}
+
+		if issuer, err := canonicalOIDCIssuerURL(arg); err == nil {
+			return issuer
+		}
+
+		return strings.TrimRight(arg, "/")
+	}
+
 	validateIssuerUniqueness := func(issuer string, typ corev1.IdentityProvider_Status_Type) error {
-		issuer = strings.TrimSuffix(issuer, "/")
+		issuer = canonicalIssuerString(issuer)
 		if issuer == "" {
 			return grpcutils.InvalidArg("Issuer cannot be empty")
 		}
@@ -176,8 +279,13 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		}
 
 		for _, idp := range idpList.Items {
-			if idp.Metadata.Name == req.Metadata.Name {
-				continue
+			if req.Metadata != nil && idp.Metadata != nil {
+				if req.Metadata.Uid != "" && idp.Metadata.Uid == req.Metadata.Uid {
+					continue
+				}
+				if req.Metadata.Uid == "" && idp.Metadata.Name == req.Metadata.Name {
+					continue
+				}
 			}
 
 			switch idp.Status.Type {
@@ -191,23 +299,117 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 				continue
 			}
 
+			var existingIssuer string
+
 			switch idp.Status.Type {
 			case corev1.IdentityProvider_Status_OIDC:
-				if strings.TrimSuffix(idp.Spec.GetOidc().IssuerURL, "/") == issuer {
-					return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
-				}
+				existingIssuer = idp.Spec.GetOidc().GetIssuerURL()
+
 			case corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN:
-				spec := idp.Spec.GetOidcIdentityToken()
-				switch spec.Type.(type) {
+				idTokenSpec := idp.Spec.GetOidcIdentityToken()
+				switch idTokenSpec.Type.(type) {
 				case *corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL:
-					if strings.TrimSuffix(spec.GetIssuerURL(), "/") == issuer {
-						return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
-					}
+					existingIssuer = idTokenSpec.GetIssuerURL()
 				default:
-					if strings.TrimSuffix(spec.Issuer, "/") == issuer {
-						return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
-					}
+					existingIssuer = idTokenSpec.GetIssuer()
 				}
+			}
+
+			if canonicalIssuerString(existingIssuer) == issuer {
+				return grpcutils.InvalidArg("This issuer already exists: %s", issuer)
+			}
+		}
+
+		return nil
+	}
+
+	validateOAuthScope := func(scope string) error {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return grpcutils.InvalidArg("scope cannot be empty")
+		}
+		if len(scope) > 128 {
+			return grpcutils.InvalidArg("scope is too long")
+		}
+		if !utf8.ValidString(scope) {
+			return grpcutils.InvalidArg("scope must be valid UTF-8")
+		}
+
+		for _, r := range scope {
+			if r <= 0x20 || r == 0x7f {
+				return grpcutils.InvalidArg("scope must not contain whitespace or control characters")
+			}
+		}
+
+		return nil
+	}
+
+	validateScopes := func(scopes []string) error {
+		if len(scopes) == 0 {
+			return nil
+		}
+		if len(scopes) > 32 {
+			return grpcutils.InvalidArg("Too many scopes")
+		}
+
+		seen := make(map[string]struct{}, len(scopes))
+		for _, scope := range scopes {
+			if err := validateOAuthScope(scope); err != nil {
+				return err
+			}
+
+			if _, ok := seen[scope]; ok {
+				return grpcutils.InvalidArg("Duplicate scope: %s", scope)
+			}
+			seen[scope] = struct{}{}
+		}
+
+		if _, ok := seen["openid"]; !ok {
+			return grpcutils.InvalidArg("OIDC scopes must include openid")
+		}
+
+		return nil
+	}
+
+	validateClaimName := func(claim string, field string, required bool) error {
+		claim = strings.TrimSpace(claim)
+		if claim == "" {
+			if required {
+				return grpcutils.InvalidArg("%s must be set", field)
+			}
+			return nil
+		}
+		if len(claim) > 256 {
+			return grpcutils.InvalidArg("%s is too long", field)
+		}
+		if !utf8.ValidString(claim) {
+			return grpcutils.InvalidArg("%s must be valid UTF-8", field)
+		}
+
+		for _, r := range claim {
+			if r <= 0x20 || r == 0x7f {
+				return grpcutils.InvalidArg("%s must not contain whitespace or control characters", field)
+			}
+		}
+
+		return nil
+	}
+
+	validateAudience := func(aud string) error {
+		aud = strings.TrimSpace(aud)
+		if aud == "" {
+			return nil
+		}
+		if len(aud) > 512 {
+			return grpcutils.InvalidArg("audience is too long")
+		}
+		if !utf8.ValidString(aud) {
+			return grpcutils.InvalidArg("audience must be valid UTF-8")
+		}
+
+		for _, r := range aud {
+			if r <= 0x20 || r == 0x7f {
+				return grpcutils.InvalidArg("audience must not contain whitespace or control characters")
 			}
 		}
 
@@ -217,103 +419,123 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 	switch spec.Type.(type) {
 	case *corev1.IdentityProvider_Spec_Github_:
 		typ := spec.GetGithub()
+
 		if err := s.validateGenStr(typ.ClientID, true, "clientID"); err != nil {
 			return err
 		}
+
 		if err := s.validateSecretOwner(ctx, typ.ClientSecret); err != nil {
 			return err
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_GITHUB
+
 	case *corev1.IdentityProvider_Spec_Oidc:
 		typ := spec.GetOidc()
-		if typ.IssuerURL == "" {
-			return grpcutils.InvalidArg("issuerURL must be set")
-		}
-		if !govalidator.IsURL(typ.IssuerURL) {
-			return grpcutils.InvalidArg("issuerURL is not a valid URL: %s", typ.IssuerURL)
-		}
 
-		if !ldflags.IsTest() {
-			if _, err := oidc.NewProvider(ctx, typ.IssuerURL); err != nil {
-				return grpcutils.InvalidArg("failed to get oidc provider : %s", err.Error())
-			}
+		issuer, err := canonicalOIDCIssuerURL(typ.IssuerURL)
+		if err != nil {
+			return err
+		}
+		typ.IssuerURL = issuer
+
+		if err := validateIssuerUniqueness(issuer, corev1.IdentityProvider_Status_OIDC); err != nil {
+			return err
 		}
 
 		if err := s.validateGenStr(typ.ClientID, true, "clientID"); err != nil {
 			return err
 		}
+
 		if err := s.validateSecretOwner(ctx, typ.ClientSecret); err != nil {
 			return err
 		}
 
-		if len(typ.Scopes) > 0 {
-			if len(typ.Scopes) > 32 {
-				return grpcutils.InvalidArg("Too many scopes")
-			}
-			for _, scope := range typ.Scopes {
-				if err := apivalidation.ValidateGenASCII(scope); err != nil {
-					return err
-				}
-			}
+		if err := validateScopes(typ.Scopes); err != nil {
+			return err
 		}
 
-		if typ.IdentifierClaim != "" {
-			if err := apivalidation.ValidateGenASCII(typ.IdentifierClaim); err != nil {
-				return err
-			}
+		if err := validateClaimName(typ.IdentifierClaim, "identifierClaim", false); err != nil {
+			return err
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC
+
 	case *corev1.IdentityProvider_Spec_OidcIdentityToken:
 		typ := spec.GetOidcIdentityToken()
+
+		var issuer string
+
 		switch typ.Type.(type) {
 		case *corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL:
-			if !govalidator.IsURL(typ.GetIssuerURL()) {
-				return grpcutils.InvalidArg("Invalid issuer URL")
+			canonicalIssuer, err := canonicalOIDCIssuerURL(typ.GetIssuerURL())
+			if err != nil {
+				return err
 			}
 
-			if typ.Issuer != "" {
+			typ.Type = &corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL{
+				IssuerURL: canonicalIssuer,
+			}
+
+			if strings.TrimSpace(typ.Issuer) != "" {
 				return grpcutils.InvalidArg("You cannot define an issuer for issuerURL type")
 			}
+
+			issuer = canonicalIssuer
+
 		case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent:
+			content := strings.TrimSpace(typ.GetJwksContent())
+			if content == "" {
+				return grpcutils.InvalidArg("JWKS content must be set")
+			}
+			if len(content) > 256*1024 {
+				return grpcutils.InvalidArg("JWKS content is too large")
+			}
+
 			var jwks jose.JSONWebKeySet
-			if err := json.Unmarshal([]byte(typ.GetJwksContent()), &jwks); err != nil {
-				return grpcutils.InvalidArg("Cannot unmarshal jwks content: %+v", err)
+			if err := json.Unmarshal([]byte(content), &jwks); err != nil {
+				return grpcutils.InvalidArg("Cannot unmarshal JWKS content")
 			}
+			if len(jwks.Keys) == 0 {
+				return grpcutils.InvalidArg("JWKS content contains no keys")
+			}
+
+			if err := validateClaimName(typ.Issuer, "issuer", true); err != nil {
+				return err
+			}
+
+			issuer = strings.TrimSpace(typ.Issuer)
+
 		case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL:
-			if !govalidator.IsURL(typ.GetJwksURL()) {
-				return grpcutils.InvalidArg("Invalid JWKS URL")
+			jwksURL, err := canonicalHTTPSURL(typ.GetJwksURL(), "jwksURL", false)
+			if err != nil {
+				return err
 			}
+
+			typ.Type = &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL{
+				JwksURL: jwksURL,
+			}
+
+			if err := validateClaimName(typ.Issuer, "issuer", true); err != nil {
+				return err
+			}
+
+			issuer = strings.TrimSpace(typ.Issuer)
+
 		default:
 			return grpcutils.InvalidArg("You must set either an issuerURL, JWKS Content or JWKS URL")
 		}
 
-		if err := s.validateGenStr(spec.GetOidcIdentityToken().Issuer, false, "issuer"); err != nil {
+		if err := validateAudience(typ.Audience); err != nil {
 			return err
 		}
 
-		if err := s.validateGenStr(spec.GetOidcIdentityToken().Audience, false, "audience"); err != nil {
-			return err
-		}
-
-		if err := validateIssuerUniqueness(func() string {
-			switch typ.Type.(type) {
-			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_IssuerURL:
-				return typ.GetIssuerURL()
-			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent:
-				return typ.Issuer
-			case *corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksURL:
-				return typ.Issuer
-			default:
-				return ""
-			}
-		}(),
-			corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN); err != nil {
+		if err := validateIssuerUniqueness(issuer, corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN); err != nil {
 			return err
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN
+
 	case *corev1.IdentityProvider_Spec_Saml:
 		typ := spec.GetSaml()
 
@@ -325,30 +547,31 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 			if len(typ.GetMetadata()) > 20000 {
 				return grpcutils.InvalidArg("Metadata content is too large")
 			}
+
 		case *corev1.IdentityProvider_Spec_SAML_MetadataURL:
-			if typ.GetMetadataURL() == "" {
-				return grpcutils.InvalidArg("metadata URL must be set")
+			metadataURL, err := canonicalHTTPSURL(typ.GetMetadataURL(), "metadataURL", false)
+			if err != nil {
+				return err
 			}
-			if !govalidator.IsURL(typ.GetMetadataURL()) {
-				return grpcutils.InvalidArg("Invalid metadata URL")
+
+			typ.MetadataType = &corev1.IdentityProvider_Spec_SAML_MetadataURL{
+				MetadataURL: metadataURL,
 			}
+
 		default:
 			return grpcutils.InvalidArg("Either metadataURL or metadata must be supplied")
 		}
 
-		if typ.IdentifierAttribute != "" {
-			if err := apivalidation.ValidateGenASCII(typ.IdentifierAttribute); err != nil {
-				return err
-			}
+		if err := validateClaimName(typ.IdentifierAttribute, "identifierAttribute", false); err != nil {
+			return err
 		}
 
-		if typ.EntityID != "" {
-			if err := apivalidation.ValidateGenASCII(typ.EntityID); err != nil {
-				return err
-			}
+		if err := validateClaimName(typ.EntityID, "entityID", false); err != nil {
+			return err
 		}
 
 		req.Status.Type = corev1.IdentityProvider_Status_SAML
+
 	default:
 		return grpcutils.InvalidArg("Must specify a type for the IdentityProvider")
 	}
@@ -361,6 +584,7 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		if err := s.validateCondition(ctx, rule.Condition); err != nil {
 			return err
 		}
+
 		switch rule.Aal {
 		case corev1.IdentityProvider_Spec_AALRule_AAL_UNSET:
 			return grpcutils.InvalidArg("AAL cannot be unset. It must be set to either AAL1, AAL2 or AAL3")
