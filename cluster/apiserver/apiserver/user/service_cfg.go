@@ -157,7 +157,7 @@ func getKubeConfig(svc *corev1.Service, host string, port int) *k8sutils.KubeCon
 			{
 				Name: "kubernetes-admin",
 				User: k8sutils.KubeConfigUserConfig{
-					Token: "dummy-token",
+					Token: "dummy-token-authenticated-by-octelium-session",
 				},
 			},
 		},

@@ -91,7 +91,11 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 	tickerCh := time.NewTicker(5 * time.Minute)
 	defer tickerCh.Stop()
 
-	defer s.doDisconnect(context.Background(), i)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.doDisconnect(ctx, i)
+	}()
 
 	s.connServer.addConnectedSess(i.Session, stream)
 	defer s.connServer.removeConnectedSess(i.Session.Metadata.Uid)

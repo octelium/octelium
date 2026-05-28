@@ -62,15 +62,24 @@ type connServer struct {
 }
 
 func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
-	s.RLock()
-	defer s.RUnlock()
-	zap.L().Debug("Broadcasting message", zap.Any("msg", msg))
 	if msg.CreatedAt == nil {
 		msg.CreatedAt = pbutils.Now()
 	}
 
+	zap.L().Debug("Broadcasting message", zap.Any("msg", msg))
+
+	s.RLock()
+	conns := make([]*connectedSession, 0, len(s.connectedSessMap))
 	for _, conn := range s.connectedSessMap {
-		conn.stream.Send(msg)
+		conns = append(conns, conn)
+	}
+	s.RUnlock()
+
+	for _, conn := range conns {
+		if err := conn.stream.Send(msg); err != nil {
+			zap.L().Debug("Could not send broadcast message",
+				zap.String("sessUID", conn.sess.Metadata.Uid), zap.Error(err))
+		}
 	}
 
 	return nil
