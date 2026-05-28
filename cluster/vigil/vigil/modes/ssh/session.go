@@ -37,8 +37,11 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	startTime := time.Now()
 	sessionID := fmt.Sprintf("%s-%s", c.id, utilrand.GetRandomStringLowercase(6))
 
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
 	recorder := newRecorder(c, sessionID)
-	recorder.run(ctx)
+	recorder.run(sessionCtx)
 
 	stdinWriter := recorder.getStdinWriter()
 	stdoutWriter := recorder.getStdoutWriter()
@@ -298,6 +301,9 @@ func (c *dctx) setLogSessionDownstreamReq(req *ssh.Request, sessionID string) er
 			},
 		}
 	}
+
+	otelutils.EmitAccessLog(logE)
+
 	return nil
 }
 
