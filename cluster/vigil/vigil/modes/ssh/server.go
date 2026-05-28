@@ -155,25 +155,34 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 
 func (s *Server) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.isClosed {
+		s.mu.Unlock()
 		return nil
 	}
-
 	s.isClosed = true
-	zap.L().Debug("Starting closing the SSH server")
-	s.cancelFn()
 
-	zap.L().Debug("Closing active dctxs")
+	cancelFn := s.cancelFn
+	lis := s.lis
+
+	var dctxs []*dctx
 	s.dctxMap.mu.Lock()
-	for _, dctx := range s.dctxMap.dctxMap {
-		dctx.close()
+	for _, d := range s.dctxMap.dctxMap {
+		dctxs = append(dctxs, d)
 	}
 	s.dctxMap.mu.Unlock()
-	zap.L().Debug("Closing the SSH server listener")
-	if s.lis != nil {
-		s.lis.Close()
-		s.lis = nil
+
+	s.mu.Unlock()
+
+	if cancelFn != nil {
+		cancelFn()
+	}
+
+	for _, d := range dctxs {
+		d.close()
+	}
+
+	if lis != nil {
+		lis.Close()
 	}
 
 	zap.L().Debug("SSH server is now closed")
