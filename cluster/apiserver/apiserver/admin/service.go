@@ -45,6 +45,7 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"golang.org/x/net/http/httpguts"
 )
 
 func (s *Server) ListService(ctx context.Context, req *corev1.ListServiceOptions) (*corev1.ServiceList, error) {
@@ -865,14 +866,14 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			}
 
 			for _, hdr := range hdrSpec.AddRequestHeaders {
-				if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
-					return err
+				if !httpguts.ValidHeaderFieldName(hdr.Key) {
+					return grpcutils.InvalidArg("invalid header name")
 				}
 
 				switch hdr.Type.(type) {
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
-					if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
-						return err
+					if !httpguts.ValidHeaderFieldValue(hdr.GetValue()) {
+						return grpcutils.InvalidArg("invalid header value")
 					}
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
 					if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
@@ -885,8 +886,8 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			}
 
 			for _, hdr := range hdrSpec.AddResponseHeaders {
-				if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
-					return err
+				if !httpguts.ValidHeaderFieldName(hdr.Key) {
+					return grpcutils.InvalidArg("invalid header name")
 				}
 
 				switch hdr.Type.(type) {
@@ -1120,12 +1121,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 					}
 
 					for _, hdr := range plugin.GetDirect().Headers {
-						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldName(hdr.Key) {
+							return grpcutils.InvalidArg("invalid header name")
 						}
 
-						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+							return grpcutils.InvalidArg("invalid header value")
 						}
 					}
 
@@ -1208,12 +1209,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 					}
 
 					for _, hdr := range conf.Headers {
-						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldName(hdr.Key) {
+							return grpcutils.InvalidArg("invalid header name")
 						}
 
-						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+							return grpcutils.InvalidArg("invalid header value")
 						}
 					}
 
@@ -1275,12 +1276,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 					}
 
 					for _, hdr := range conf.Headers {
-						if err := s.validateGenStr(hdr.Key, true, "key"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldName(hdr.Key) {
+							return grpcutils.InvalidArg("invalid header name")
 						}
 
-						if err := s.validateGenStr(hdr.Value, true, "value"); err != nil {
-							return err
+						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+							return grpcutils.InvalidArg("invalid header value")
 						}
 					}
 
