@@ -31,11 +31,11 @@ func (c *Controller) doSetDNS() error {
 		if err := c.doSetDNSResolvctl(); err == nil {
 			return nil
 		} else {
-			zap.S().Debugf("Could not set DNS via systemd-resolved: %+v. Fallbacking...", err)
+			zap.L().Debug("Could not set DNS via systemd-resolved. Fallbacking...", zap.Error(err))
 		}
 	}
 
-	zap.S().Debugf("Fallback to setting resolv.conf directly")
+	zap.L().Debug("Fallback to setting resolv.conf directly")
 
 	return c.doSetDNSResolvConf()
 
@@ -100,12 +100,12 @@ func (c *Controller) doSetDNSResolvctl() error {
 	}
 
 	if b, err := exec.Command(cmdBin, strings.Split(cmdDNSArgs, " ")...).CombinedOutput(); err != nil {
-		zap.S().Debugf("command error: %s", string(b))
+		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}
 
 	if b, err := exec.Command(cmdBin, strings.Split(cmdDomainArgs, " ")...).CombinedOutput(); err != nil {
-		zap.S().Debugf("command error: %s", string(b))
+		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}
 

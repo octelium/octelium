@@ -27,7 +27,7 @@ func (c *Controller) doSetRoutes() error {
 		return nil
 	}
 
-	zap.S().Debugf("setting routes")
+	zap.L().Debug("setting routes")
 
 	mainTable := int(c.c.Preferences.LinuxPrefs.MainTableIndex)
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
@@ -52,14 +52,14 @@ func (c *Controller) doSetRoutes() error {
 	cidr := c.c.Connection.Cidr
 
 	if c.ipv4Supported && cidr.V4 != "" {
-		zap.S().Debugf("setting route: %s", cidr.V4)
+		zap.L().Debug("setting v4 route", zap.String("cidr", cidr.V4))
 		if err := doAddRoute(cidr.V4, mainTable); err != nil {
 			return errors.Errorf("Could not set route: %s: %+v", cidr.V4, err)
 		}
 	}
 
 	if c.ipv6Supported && cidr.V6 != "" {
-		zap.S().Debugf("setting route: %s", cidr.V6)
+		zap.L().Debug("setting v6 route", zap.String("cidr", cidr.V6))
 		if err := doAddRoute(cidr.V6, mainTable); err != nil {
 			return errors.Errorf("Could not set route: %s: %+v", cidr.V6, err)
 		}
@@ -73,7 +73,7 @@ func (c *Controller) doUnsetRoutes() error {
 		return nil
 	}
 
-	tableIdx := int(c.c.Preferences.LinuxPrefs.TableIndex)
+	mainTable := int(c.c.Preferences.LinuxPrefs.MainTableIndex)
 
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
 	if err != nil {
@@ -85,7 +85,7 @@ func (c *Controller) doUnsetRoutes() error {
 		return netlink.RouteDel(&netlink.Route{
 			LinkIndex: l.Attrs().Index,
 			Scope:     netlink.SCOPE_LINK,
-			Table:     tableIdx,
+			Table:     mainTable,
 			Dst:       route,
 		})
 	}

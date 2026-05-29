@@ -27,22 +27,22 @@ import (
 
 func (c *Controller) InitDev(ctx context.Context) error {
 
-	zap.S().Debugf("initializing dev")
+	zap.L().Debug("initializing dev")
 	if err := c.doInitDev(ctx); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("setting dev up")
+	zap.L().Debug("setting dev up")
 	if err := c.setDevUp(); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("setting dev addresses")
+	zap.L().Debug("setting dev addresses")
 	if err := c.SetDevAddrs(); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("setting routes")
+	zap.L().Debug("setting routes")
 	if err := c.setRoutes(); err != nil {
 		return err
 	}
@@ -50,7 +50,7 @@ func (c *Controller) InitDev(ctx context.Context) error {
 	switch c.c.Preferences.ConnectionType {
 	case cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0:
 	default:
-		zap.S().Debugf("initializing dev wg config")
+		zap.L().Debug("initializing dev wg config")
 		if err := c.setWGDev(); err != nil {
 			return errors.Errorf("Could not set wg dev: %+v", err)
 		}

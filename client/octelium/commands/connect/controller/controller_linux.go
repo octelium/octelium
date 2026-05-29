@@ -36,12 +36,12 @@ func (c *Controller) doClose() {
 
 func (c *Controller) doStart(ctx context.Context) error {
 
-	zap.S().Debugf("setting prefs")
+	zap.L().Debug("setting prefs")
 	if err := c.SetPrefs(); err != nil {
 		return err
 	}
 
-	zap.S().Debugf("Initializing dev")
+	zap.L().Debug("Initializing dev")
 	if err := c.InitDev(ctx); err != nil {
 		return err
 	}
