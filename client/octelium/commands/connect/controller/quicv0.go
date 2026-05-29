@@ -544,28 +544,32 @@ func (c *quicEngine) startTunWriteLoop(ctx context.Context) {
 }
 
 func (c *quicEngine) startTunReadLoop(ctx context.Context) {
+	buf := make([]byte, 65535)
+	buffs := [][]byte{buf}
+	sizes := []int{0}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			buffs := make([][]byte, 1)
-			sizes := make([]int, 1)
+		}
 
-			buffs[0] = make([]byte, 1500)
-
-			n, err := c.ctl.getTUNDev().Read(buffs, sizes, tunPacketOffset)
-			if err != nil {
-				zap.L().Debug("Could not read from tun", zap.Error(err))
-				continue
+		n, err := c.ctl.getTUNDev().Read(buffs, sizes, tunPacketOffset)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
 			}
+			zap.L().Debug("Could not read from tun", zap.Error(err))
+			continue
+		}
 
-			for i := 0; i < n; i++ {
-				pktBuf := buffs[i][tunPacketOffset : sizes[i]+tunPacketOffset]
-				c.processTunPkt(pktBuf)
-			}
-
+		for i := 0; i < n; i++ {
+			start := tunPacketOffset
+			end := sizes[i] + tunPacketOffset
+			pkt := make([]byte, end-start)
+			copy(pkt, buffs[i][start:end])
+			c.processTunPkt(pkt)
 		}
 	}
 }
