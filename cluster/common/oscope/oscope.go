@@ -19,6 +19,7 @@ package oscope
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -35,7 +36,6 @@ func VerifyScopes(scopes []string) error {
 }
 
 func GetScopes(scopes []string) ([]*corev1.Scope, error) {
-	var ret []*corev1.Scope
 	if scopes != nil && len(scopes) == 0 {
 		return nil, errors.Errorf("Scopes must not be an empty array")
 	}
@@ -46,11 +46,24 @@ func GetScopes(scopes []string) ([]*corev1.Scope, error) {
 		return nil, errors.Errorf("Too many scopes")
 	}
 
-	for _, scope := range scopes {
-		scope, err := getScope(scope)
+	ret := make([]*corev1.Scope, 0, len(scopes))
+	seen := make(map[string]struct{}, len(scopes))
+
+	for _, scopeStr := range scopes {
+		if scopeStr != strings.TrimSpace(scopeStr) {
+			return nil, errors.Errorf("Scope must not contain leading or trailing whitespace")
+		}
+
+		if _, ok := seen[scopeStr]; ok {
+			return nil, errors.Errorf("Duplicate scope: %s", scopeStr)
+		}
+		seen[scopeStr] = struct{}{}
+
+		scope, err := getScope(scopeStr)
 		if err != nil {
 			return nil, err
 		}
+
 		ret = append(ret, scope)
 	}
 
@@ -274,12 +287,16 @@ func getScopeService(arg string) (*corev1.Scope, error) {
 
 func IsAuthorizedByScopes(req *corev1.RequestContext) bool {
 
-	if req.Session == nil {
+	if req == nil || req.Session == nil || req.Session.Status == nil {
 		return false
 	}
 
 	if len(req.Session.Status.Scopes) == 0 {
 		return true
+	}
+
+	if req.Service == nil || req.Service.Metadata == nil || req.Service.Status == nil {
+		return false
 	}
 
 	return doIsAuthorizedByScopes(req.Session.Status.Scopes, req.Service, req.Request)
@@ -292,15 +309,23 @@ func doIsAuthorizedByScopes(scopes []*corev1.Scope, svc *corev1.Service, req *co
 	}
 
 	for _, scope := range scopes {
+		if scope == nil || scope.Type == nil {
+			continue
+		}
+
 		switch scope.Type.(type) {
 		case *corev1.Scope_Service_:
 			if IsAuthorizedByScopeService(scope.GetService(), svc, req) {
 				return true
 			}
 		case *corev1.Scope_Api:
-			if !ucorev1.ToService(svc).IsManagedService() &&
+			switch {
+			case ucorev1.ToService(svc).IsManagedService() &&
 				svc.Status.ManagedService != nil &&
-				svc.Status.ManagedService.Type == "apiserver" {
+				svc.Status.ManagedService.Type == "apiserver" &&
+				svc.Spec.Mode == corev1.Service_Spec_GRPC &&
+				svc.Status.NamespaceRef != nil && svc.Status.NamespaceRef.Name == "octelium-api":
+			default:
 				continue
 			}
 			if req == nil || req.GetGrpc() == nil {
@@ -328,6 +353,14 @@ func IsAuthorizedByScopeAPIServer(scope *corev1.Scope_API, svc *corev1.Service, 
 		return true
 	case *corev1.Scope_API_Filter_:
 		filter := scope.GetFilter()
+
+		if filter == nil {
+			return false
+		}
+
+		if len(filter.Packages) == 0 && len(filter.Services) == 0 && len(filter.Methods) == 0 {
+			return false
+		}
 
 		if len(filter.Packages) > 0 {
 			if !isInListOrAny(filter.Packages, grpcReq.Package) {
@@ -359,6 +392,14 @@ func IsAuthorizedByScopeService(scope *corev1.Scope_Service, svc *corev1.Service
 		return true
 	case *corev1.Scope_Service_Filter_:
 		filter := scope.GetFilter()
+		if filter == nil {
+			return false
+		}
+
+		if len(filter.Names) == 0 && len(filter.Namespaces) == 0 {
+			return false
+		}
+
 		if len(filter.Names) > 0 {
 			if !isInListOrAny(filter.Names, svc.Metadata.Name) {
 				return false
@@ -377,20 +418,8 @@ func IsAuthorizedByScopeService(scope *corev1.Scope_Service, svc *corev1.Service
 	}
 }
 
-func isInList(lst []string, arg string) bool {
-	for _, itm := range lst {
-		if itm == arg {
-			return true
-		}
-	}
-	return false
-}
-
 func isInListOrAny(lst []string, arg string) bool {
-	for _, itm := range lst {
-		if itm == arg || itm == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(lst, func(itm string) bool {
+		return itm == arg || itm == "*"
+	})
 }
