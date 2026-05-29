@@ -207,17 +207,27 @@ func (c *quicEngine) close() error {
 	return nil
 }
 
-func (c *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
-	c.quicGWMap.Lock()
-	defer c.quicGWMap.Unlock()
+func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
+	e.quicGWMap.Lock()
+	if old := e.quicGWMap.gwMap[gw.Id]; old != nil {
+		old.close()
+		delete(e.quicGWMap.gwMap, gw.Id)
+	}
+	e.quicGWMap.Unlock()
 
-	quicGW, err := newQUIGW(c, gw)
+	newGW, err := newQUIGW(e, gw)
 	if err != nil {
 		return err
 	}
-	c.quicGWMap.gwMap[gw.Id] = quicGW
+	if err := newGW.run(ctx); err != nil {
+		return err
+	}
 
-	return quicGW.run(ctx)
+	e.quicGWMap.Lock()
+	e.quicGWMap.gwMap[gw.Id] = newGW
+	e.quicGWMap.Unlock()
+
+	return nil
 }
 
 func newQUIGW(engine *quicEngine, gw *userv1.Gateway) (*quicGW, error) {
@@ -505,7 +515,13 @@ func (c *quicGW) startReceiveFromGWLoop(ctx context.Context) {
 				continue
 			}
 
-			c.tunCh <- msg
+			select {
+			case c.tunCh <- msg:
+			case <-ctx.Done():
+				return
+			default:
+				zap.L().Debug("Dropping QUIC packet.", zap.String("gw", c.gw.Id))
+			}
 		}
 	}
 }
@@ -561,7 +577,11 @@ func (c *quicEngine) processTunPkt(pkt []byte) {
 	gw := c.getGWFromPkt(pkt)
 
 	if gw != nil {
-		gw.gwCh <- pkt
+		select {
+		case gw.gwCh <- pkt:
+		default:
+			zap.L().Debug("Dropping QUIC packet...", zap.String("gw", gw.gw.Id))
+		}
 	}
 }
 
