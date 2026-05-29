@@ -676,7 +676,7 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 		HostAddress: res.addr,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
-			case userv1.Service_Spec_UDP:
+			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
 				return cliconfigv1.Connection_Preferences_PublishedService_UDP
 			default:
 				return cliconfigv1.Connection_Preferences_PublishedService_TCP

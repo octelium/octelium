@@ -27,15 +27,20 @@ import (
 )
 
 func doConnect(ctx context.Context, domain string) error {
-
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
 
 	ctx, cancelFn := context.WithCancel(ctx)
+	defer cancelFn()
+
 	go func() {
-		<-signalCh
-		zap.L().Debug("Received shutdown signal")
-		cancelFn()
+		select {
+		case <-signalCh:
+			zap.L().Debug("Received shutdown signal")
+			cancelFn()
+		case <-ctx.Done():
+		}
 	}()
 
 	return connect(ctx, domain)
