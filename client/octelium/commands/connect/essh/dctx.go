@@ -15,7 +15,6 @@
 //go:build !windows
 // +build !windows
 
-
 package essh
 
 import (
@@ -60,7 +59,7 @@ func newDctx(conn net.Conn, sshConn *ssh.ServerConn, usr *user.User, sameUser bo
 		sameUser: sameUser,
 	}
 
-	zap.S().Debugf("new dctx %s created", ret.id)
+	zap.L().Debug("new eSSH dctx created", zap.String("id", ret.id))
 
 	return ret, nil
 }
@@ -74,7 +73,7 @@ func (c *dctx) close() error {
 	}
 	c.isClosed = true
 
-	zap.S().Debugf("Closing dctx: %s", c.id)
+	zap.L().Debug("Closing eSSH dctx", zap.String("id", c.id))
 
 	if c.sshConn != nil {
 		c.sshConn.Close()
@@ -83,8 +82,6 @@ func (c *dctx) close() error {
 	if c.conn != nil {
 		c.conn.Close()
 	}
-
-	zap.S().Debugf("dctx is now closed: %s", c.id)
 
 	return nil
 }

@@ -51,7 +51,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	ctx, cancelFn := context.WithCancel(ctx)
 	defer cancelFn()
 
-	zap.S().Debugf("New Conn: %s", c.RemoteAddr().String())
+	zap.L().Debug("Starting eSSH handleConn", zap.String("addr", c.RemoteAddr().String()))
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
 	if err != nil {
@@ -95,7 +95,7 @@ func (d *dctx) handleGlobalReq(req *ssh.Request) {
 		return
 	}
 
-	zap.S().Debugf("New global req: %s", req.Type)
+	zap.L().Debug("New global req", zap.String("type", req.Type))
 	switch req.Type {
 	case "keepalive@openssh.com":
 		if req.WantReply {
@@ -107,7 +107,7 @@ func (d *dctx) handleGlobalReq(req *ssh.Request) {
 }
 
 func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
-	zap.S().Debugf("New Channel: %s", nch.ChannelType())
+	zap.L().Debug("Starting handleNewChannel", zap.String("type", nch.ChannelType()))
 
 	switch nch.ChannelType() {
 	case "session":
@@ -170,7 +170,7 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
-			zap.S().Debugf("Could not accept conn: %+v", err)
+			zap.L().Debug("Could not accept eSSH conn", zap.Error(err))
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 				zap.L().Debug("eSSH Timeout err", zap.Error(opErr))
 				time.Sleep(100 * time.Millisecond)
@@ -179,7 +179,7 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 
 			select {
 			case <-ctx.Done():
-				zap.S().Debugf("shutting down server")
+				zap.L().Debug("shutting down eSSH server")
 				return nil
 			default:
 				time.Sleep(100 * time.Millisecond)
@@ -256,11 +256,11 @@ func NewServer(opts *Opts) (*Server, error) {
 
 			ret, err := checker.Authenticate(conn, key)
 			if err != nil {
-				zap.S().Debugf("Could not authenticate ssh key: %+v : %+v", err, key)
+				zap.L().Debug("Could not authenticate ssh key", zap.Error(err))
 				return nil, err
 			}
 
-			zap.S().Debugf("SSH client successfully authenticated with permissions: %+v", ret)
+			zap.L().Debug("SSH client successfully authenticated with permissions", zap.Any("perm", ret))
 			return ret, nil
 		},
 	}
@@ -297,7 +297,7 @@ func (s *Server) getListener(listenerAddr string) (net.Listener, error) {
 			}
 		}
 
-		zap.S().Warnf("Could not listen on TCP port on %s: %+v. Trying again (attempt %d).", listenerAddr, err, i)
+		zap.L().Warn("Could not listen on TCP port", zap.String("addr", listenerAddr), zap.Error(err))
 		time.Sleep(250 * time.Millisecond)
 	}
 	return nil, errors.Errorf("Could not listen on TCP port on %s:.", listenerAddr)
