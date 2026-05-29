@@ -84,114 +84,183 @@ type sessCtx struct {
 	term      *terminal
 	ptyParams *ptyReqParams
 	env       []*envVar
+	started   bool
 }
 
 func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
-	zap.L().Debug("New sess req", zap.String("type", req.Type))
+	if req == nil {
+		return errors.Errorf("nil SSH request")
+	}
 
-	term := sessCtx.term
+	zap.L().Debug("New sess req", zap.String("type", req.Type))
 
 	switch req.Type {
 	case "pty-req":
+		if sessCtx.started {
+			replyFailure(req)
+			return errors.Errorf("pty request after session start")
+		}
+
 		ptyParams, err := parsePTYReq(req)
 		if err != nil {
+			replyFailure(req)
 			return err
 		}
+
 		sessCtx.ptyParams = ptyParams
 
 		if ptyParams.Env != "" {
-			sessCtx.env = append(sessCtx.env, &envVar{
-				key: "TERM",
-				val: ptyParams.Env,
-			})
+			sessCtx.env = setOrAppendEnv(sessCtx.env, "TERM", ptyParams.Env)
 		}
 
-		if term == nil {
-			term, err := newTerminal(c, sessCtx)
-			if err != nil {
-				zap.L().Debug("Could not start a new terminal", zap.Error(err))
-				return err
-			}
-			sessCtx.term = term
-			if err := term.run(ctx); err != nil {
-				return err
-			}
-		} else {
-			zap.L().Debug("There is an already running shell. No terminal to be created.")
-		}
+		return replySuccess(req)
 
 	case "shell":
-		if term == nil {
-			term, err := newTerminal(c, sessCtx)
-			if err != nil {
-				zap.L().Debug("Could not start a new terminal", zap.Error(err))
-				return err
-			}
-			sessCtx.term = term
-			if err := term.run(ctx); err != nil {
-				return err
-			}
-		} else {
-			zap.L().Debug("There is an already running shell. No terminal to be created...")
+		if sessCtx.started {
+			replyFailure(req)
+			return errors.Errorf("session already started")
 		}
-	case "keepalive@openssh.com":
-	case "window-change":
-		if term != nil {
-			w, h, err := parseDims(req.Payload)
-			if err != nil {
-				return err
-			}
-			zap.L().Debug("Changing win size to", zap.Uint32("w", w), zap.Uint32("h", h))
-			if err := term.setWinSize(uint16(w), uint16(h)); err != nil {
-				return err
-			}
+		sessCtx.started = true
+
+		term, err := newTerminal(c, sessCtx)
+		if err != nil {
+			zap.L().Debug("Could not start a new terminal", zap.Error(err))
+			replyFailure(req)
+			return err
 		}
+
+		sessCtx.term = term
+
+		if err := term.run(ctx); err != nil {
+			replyFailure(req)
+			return err
+		}
+
+		return replySuccess(req)
+
 	case "exec":
+		if sessCtx.started {
+			replyFailure(req)
+			return errors.Errorf("session already started")
+		}
+		sessCtx.started = true
+
 		if err := c.handleSessionReqExec(ctx, sessCtx, req); err != nil {
 			zap.L().Debug("Could not handle exec req", zap.Error(err))
-			return err
-		}
-	case "env":
-
-		key, val, err := parseEnv(req.Payload)
-		if err != nil {
+			replyFailure(req)
 			return err
 		}
 
-		zap.L().Debug("Adding env var", zap.String("key", key), zap.String("val", val))
-		sessCtx.env = append(sessCtx.env, &envVar{
-			key: key,
-			val: val,
-		})
+		return replySuccess(req)
+
 	case "subsystem":
-		var payload = struct{ Value string }{}
+		if sessCtx.started {
+			replyFailure(req)
+			return errors.Errorf("session already started")
+		}
+
+		var payload struct{ Value string }
 		if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+			replyFailure(req)
 			return err
 		}
+
 		zap.L().Debug("Subsystem request", zap.String("subsystem", payload.Value))
 
 		switch payload.Value {
 		case "sftp":
+			sessCtx.started = true
+
 			if err := c.handleSubsystemSFTP(ctx, sessCtx, req); err != nil {
 				zap.L().Debug("Could not handle sftp subsystem", zap.Error(err))
+				replyFailure(req)
 				return err
 			}
-			return nil
+			return replySuccess(req)
+
 		default:
 			zap.L().Debug("Unsupported subsystem", zap.String("subsystem", payload.Value))
-			return req.Reply(false, nil)
+			replyFailure(req)
+			return errors.Errorf("unsupported subsystem: %s", payload.Value)
 		}
+
+	case "env":
+		if sessCtx.started {
+			replyFailure(req)
+			return errors.Errorf("env request after session start")
+		}
+
+		key, val, err := parseEnv(req.Payload)
+		if err != nil {
+			replyFailure(req)
+			return err
+		}
+
+		zap.L().Debug("Adding env var", zap.String("key", key))
+		sessCtx.env = setOrAppendEnv(sessCtx.env, key, val)
+
+		return replySuccess(req)
+
+	case "window-change":
+		w, h, err := parseDims(req.Payload)
+		if err != nil {
+			replyFailure(req)
+			return err
+		}
+
+		if w == 0 || h == 0 || w > 65535 || h > 65535 {
+			replyFailure(req)
+			return errors.Errorf("invalid terminal dimensions")
+		}
+
+		if sessCtx.term != nil {
+			zap.L().Debug("Changing win size to", zap.Uint32("w", w), zap.Uint32("h", h))
+			if err := sessCtx.term.setWinSize(uint16(w), uint16(h)); err != nil {
+				replyFailure(req)
+				return err
+			}
+		} else if sessCtx.ptyParams != nil {
+			sessCtx.ptyParams.W = w
+			sessCtx.ptyParams.H = h
+		}
+
+		return replySuccess(req)
+
+	case "keepalive@openssh.com":
+		return replySuccess(req)
+
 	default:
 		zap.L().Debug("Unsupported session req type", zap.String("type", req.Type))
-		return req.Reply(false, nil)
+		replyFailure(req)
+		return errors.Errorf("unsupported session request type: %s", req.Type)
 	}
+}
 
-	if req.WantReply {
-		zap.L().Debug("Replying to req with true")
-		req.Reply(true, nil)
+func replySuccess(req *ssh.Request) error {
+	if req != nil && req.WantReply {
+		return req.Reply(true, nil)
 	}
-
 	return nil
+}
+
+func replyFailure(req *ssh.Request) {
+	if req != nil && req.WantReply {
+		_ = req.Reply(false, nil)
+	}
+}
+
+func setOrAppendEnv(env []*envVar, key, val string) []*envVar {
+	for _, e := range env {
+		if e.key == key {
+			e.val = val
+			return env
+		}
+	}
+
+	return append(env, &envVar{
+		key: key,
+		val: val,
+	})
 }
 
 func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
