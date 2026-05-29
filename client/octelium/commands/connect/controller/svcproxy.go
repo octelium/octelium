@@ -84,7 +84,9 @@ func (s *serviceProxy) Close() error {
 		lis.close()
 	}
 
-	s.cancelFn()
+	if s.cancelFn != nil {
+		s.cancelFn()
+	}
 
 	zap.L().Debug("Service proxy controller successfully close")
 

@@ -27,13 +27,11 @@ import (
 )
 
 func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
-	zap.S().Debugf("setting wg config for gw %s", gw.Id)
+	zap.L().Debug("Setting gw", zap.Any("gw", gw))
 	allowedIPs, err := c.getWGPeerAllowedIPs(gw)
 	if err != nil {
 		return err
 	}
-
-	zap.S().Debugf("allowed IPs for gw %s are %+q", gw.Id, allowedIPs)
 
 	gwPubK, err := wgtypes.ParseKey(gw.Wireguard.PublicKey)
 	if err != nil {
@@ -70,7 +68,7 @@ func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
 	if err := c.wgC.ConfigureDevice(c.c.Preferences.DeviceName, wgCfg); err != nil {
 		return err
 	}
-	zap.S().Debugf("success setting wg config for gw %s", gw.Id)
+
 	return nil
 }
 

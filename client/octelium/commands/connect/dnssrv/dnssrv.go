@@ -92,10 +92,18 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
-	if r == nil || len(r.Question) == 0 {
-		msg := dns.Msg{}
+	if r == nil {
+		msg := new(dns.Msg)
+		msg.MsgHdr.Response = true
+		msg.Rcode = dns.RcodeRefused
+		w.WriteMsg(msg)
+		return
+	}
+
+	if len(r.Question) == 0 {
+		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(&msg)
+		w.WriteMsg(msg)
 		return
 	}
 

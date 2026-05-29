@@ -60,7 +60,7 @@ func wgKeyB64ToHex(arg string) string {
 }
 
 func fromUAPI(arg string) *wgtypes.Config {
-	// Used ONLY for testing puproses. Not complete translation.
+	// Used ONLY for testing purposes. Not complete translation.
 
 	ret := &wgtypes.Config{}
 

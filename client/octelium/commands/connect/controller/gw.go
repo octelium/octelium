@@ -84,7 +84,7 @@ func (c *Controller) DeleteGateway(ctx context.Context, gwID string) error {
 
 			c.c.Connection.Gateways = append(c.c.Connection.Gateways[:i], c.c.Connection.Gateways[i+1:]...)
 
-			zap.S().Debugf("GWs = %+v", c.c.Connection.Gateways)
+			zap.L().Debug("Removing gw", zap.Any("gw", gw))
 
 			if c.isNetstack {
 				if err := c.dev.IpcSet(c.toUAPI()); err != nil {
