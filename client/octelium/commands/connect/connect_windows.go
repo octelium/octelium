@@ -87,18 +87,18 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 
 	ctx := context.Background()
 	if err := copyConfigOwnerToIPCSecurityDescriptor(); err != nil {
-		return
+		return false, 1
 	}
 
 	logFile, err := conf.LogFile(true)
 	if err != nil {
 		zap.L().Error("Could not get LogFile", zap.Error(err))
-		return
+		return false, 1
 	}
 
 	if err := ringlogger.InitGlobalLogger(logFile, "OCT"); err != nil {
 		zap.L().Error("Could not InitGlobalLogger", zap.Error(err))
-		return
+		return false, 1
 	}
 
 	if m, err := mgr.Connect(); err == nil {
@@ -131,8 +131,12 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 		}
 	}()
 
-	connect(ctx, c.domain)
-	return
+	if err := connect(ctx, c.domain); err != nil {
+		zap.L().Error("connect exited with error", zap.Error(err))
+		return false, 1
+	}
+
+	return false, 0
 }
 
 func copyConfigOwnerToIPCSecurityDescriptor() error {
