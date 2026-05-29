@@ -48,7 +48,7 @@ func newStateController(c *cliconfigv1.Connection,
 		c:                     c,
 		ctl:                   ctl,
 		proxy:                 proxy,
-		getConnErrCh:          make(chan error),
+		getConnErrCh:          make(chan error, 1),
 		apiserverDisconnectCh: make(chan struct{}),
 		streamC:               streamC,
 	}

@@ -462,7 +462,10 @@ func (c *ctl) close() error {
 		return nil
 	}
 	c.isClosed = true
-	c.cancelFn()
+
+	if c.cancelFn != nil {
+		c.cancelFn()
+	}
 
 	if c.proxyCtl != nil {
 		c.proxyCtl.Close()
@@ -526,6 +529,8 @@ type tryConnectRet struct {
 }
 
 func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryConnectRet {
+
+	defer close(doneCh)
 
 	doNeedReconnect := func(err error) bool {
 		if grpcerr.IsInvalidArg(err) ||
@@ -613,7 +618,6 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	}
 
 	ctl.close()
-	close(doneCh)
 
 	return tryConnectRet{
 		err:            retErr,
