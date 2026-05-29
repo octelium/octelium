@@ -154,6 +154,10 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 }
 
 func (t *terminal) setWinSize(w, h uint16) error {
+	if t.pty == nil {
+		return nil
+	}
+
 	if err := term.SetWinsize(t.pty.Fd(), &term.Winsize{
 		Width:  w,
 		Height: h,
@@ -224,7 +228,7 @@ func (t *terminal) run(ctx context.Context) error {
 
 func (t *terminal) waitAndClose(ctx context.Context) error {
 
-	waitCh := make(chan error)
+	waitCh := make(chan error, 1)
 	go func() {
 		err := t.cmd.Wait()
 		if err != nil {

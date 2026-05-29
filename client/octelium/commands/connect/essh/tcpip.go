@@ -22,7 +22,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -62,25 +61,27 @@ func (c *dctx) handleTCPIPChan(ctx context.Context, nch ssh.NewChannel) {
 	}
 	go ssh.DiscardRequests(reqs)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	errCh := make(chan struct{}, 2)
 
 	go func() {
-		defer wg.Done()
 		io.Copy(ch, dconn)
 		ch.CloseWrite()
+		errCh <- struct{}{}
 	}()
 
 	go func() {
-		defer wg.Done()
 		io.Copy(dconn, ch)
 		if tc, ok := dconn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
+		errCh <- struct{}{}
 	}()
 
 	go func() {
-		wg.Wait()
+		select {
+		case <-ctx.Done():
+		case <-errCh:
+		}
 		ch.Close()
 		dconn.Close()
 	}()
