@@ -68,6 +68,9 @@ type CreateSessionOpts struct {
 func NewSession(ctx context.Context,
 	o *CreateSessionOpts,
 ) (*corev1.Session, error) {
+	if o == nil {
+		return nil, grpcutils.InvalidArg("Nil CreateSessionOpts")
+	}
 
 	usr := o.Usr
 	device := o.Device
@@ -349,6 +352,11 @@ func NewSession(ctx context.Context,
 func CreateSession(ctx context.Context,
 	o *CreateSessionOpts,
 ) (*corev1.Session, error) {
+
+	if o == nil {
+		return nil, grpcutils.InvalidArg("Nil CreateSessionOpts")
+	}
+
 	octeliumC := o.OcteliumC
 	var err error
 	if o.ClusterConfig == nil {
@@ -479,17 +487,19 @@ func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 }
 
 func prependAuthenticationToLastArray(sess *corev1.Session) {
-	if sess.Status.Authentication == nil {
+	if sess == nil || sess.Status == nil || sess.Status.Authentication == nil {
 		return
 	}
 
-	maxLen := 100
+	const maxLen = 100
 
-	if len(sess.Status.LastAuthentications) >= maxLen {
-		sess.Status.LastAuthentications = sess.Status.LastAuthentications[:maxLen-2]
+	items := append([]*corev1.Session_Status_Authentication{
+		pbutils.Clone(sess.Status.Authentication).(*corev1.Session_Status_Authentication),
+	}, sess.Status.LastAuthentications...)
+
+	if len(items) > maxLen {
+		items = items[:maxLen]
 	}
 
-	sess.Status.LastAuthentications = append([]*corev1.Session_Status_Authentication{
-		sess.Status.Authentication,
-	}, sess.Status.LastAuthentications...)
+	sess.Status.LastAuthentications = items
 }
