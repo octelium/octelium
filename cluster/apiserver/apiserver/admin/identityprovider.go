@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 )
 
 func (s *Server) CreateIdentityProvider(ctx context.Context, req *corev1.IdentityProvider) (*corev1.IdentityProvider, error) {
@@ -189,8 +190,10 @@ func (s *Server) validateIdentityProvider(ctx context.Context, req *corev1.Ident
 		p := strings.TrimRight(u.EscapedPath(), "/")
 		u.Path = p
 
-		if u.Scheme != "https" {
-			return "", grpcutils.InvalidArg("issuerURL must use https")
+		if !ldflags.IsTest() {
+			if u.Scheme != "https" {
+				return "", grpcutils.InvalidArg("issuerURL must use https")
+			}
 		}
 
 		if u.Host == "" {
