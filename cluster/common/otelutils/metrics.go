@@ -19,6 +19,7 @@ package otelutils
 import (
 	"context"
 	"runtime"
+	"runtime/metrics"
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/components"
@@ -78,8 +79,6 @@ func SetProcessMetrics(ctx context.Context) error {
 
 	meter := GetMeter()
 
-	var attrs []metric.ObserveOption
-
 	goroutineNum, err := meter.Int64ObservableUpDownCounter("process.goroutines")
 	if err != nil {
 		return err
@@ -99,21 +98,14 @@ func SetProcessMetrics(ctx context.Context) error {
 		return err
 	}
 
-	meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
-		observer.ObserveInt64(goroutineNum, int64(runtime.NumGoroutine()), attrs...)
-		observer.ObserveInt64(uptime, int64(time.Since(components.RuntimeStartedAt()).Seconds()), attrs...)
-
-		memStats := &runtime.MemStats{}
-		runtime.ReadMemStats(memStats)
-
-		observer.ObserveInt64(heapAlloc, int64(memStats.HeapAlloc), attrs...)
-
+	samples := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+	meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		o.ObserveInt64(goroutineNum, int64(runtime.NumGoroutine()))
+		o.ObserveInt64(uptime, int64(time.Since(components.RuntimeStartedAt()).Seconds()))
+		metrics.Read(samples)
+		o.ObserveInt64(heapAlloc, int64(samples[0].Value.Uint64()))
 		return nil
-	},
-		goroutineNum,
-		uptime,
-		heapAlloc,
-	)
+	}, goroutineNum, uptime, heapAlloc)
 
 	return nil
 }

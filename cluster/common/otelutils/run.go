@@ -57,5 +57,9 @@ func RunOTEL(ctx context.Context) error {
 
 	zap.ReplaceGlobals(zap.New(zapcore.NewTee(zap.L().Core(), zapLogger)))
 
+	if err := SetProcessMetrics(ctx); err != nil {
+		zap.L().Warn("Could not SetProcessMetrics", zap.Error(err))
+	}
+
 	return nil
 }
