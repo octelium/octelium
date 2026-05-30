@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -32,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type Client struct {
@@ -53,6 +55,11 @@ func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(middlewares.GetUnaryInterceptors()...)),
 		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(middlewares.GetStreamInterceptors()...)),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                45 * time.Second,
+			Timeout:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	}
 
 	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
@@ -83,7 +90,6 @@ func NewClient(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	
 
 	ret := &Client{
 		coreC:           rcorev1.NewResourceServiceClient(grpcConn),
