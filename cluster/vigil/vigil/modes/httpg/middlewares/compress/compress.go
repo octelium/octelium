@@ -25,35 +25,36 @@ import (
 	"go.uber.org/zap"
 )
 
-type middleware struct {
-	next http.Handler
+var excludedContentTypes = []string{
+	"application/grpc",
+	"text/event-stream",
 
-	excludes []string
+	"application/zip",
+	"application/gzip",
+	"application/x-gzip",
+	"application/zstd",
+	"application/x-zstd",
+}
+
+type middleware struct {
+	handler http.Handler
 }
 
 func New(ctx context.Context, next http.Handler) (http.Handler, error) {
+	wrapper, err := gzhttp.NewWrapper(
+		gzhttp.ExceptContentTypes(excludedContentTypes),
+		gzhttp.CompressionLevel(gzip.DefaultCompression),
+		gzhttp.MinSize(gzhttp.DefaultMinSize),
+	)
+	if err != nil {
+		zap.L().Warn("Could not create gzhttp wrapper",
+			zap.Error(err))
+		return &middleware{handler: next}, nil
+	}
 
-	excludes := []string{"application/grpc"}
-
-	return &middleware{
-		next:     next,
-		excludes: excludes,
-	}, nil
+	return &middleware{handler: wrapper(next)}, nil
 }
 
 func (c *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	c.gzipHandler().ServeHTTP(rw, req)
-}
-
-func (c *middleware) gzipHandler() http.Handler {
-	wrapper, err := gzhttp.NewWrapper(
-		gzhttp.ExceptContentTypes(c.excludes),
-		gzhttp.CompressionLevel(gzip.DefaultCompression),
-		gzhttp.MinSize(gzhttp.DefaultMinSize))
-	if err != nil {
-		zap.L().Warn("Could not create a gzhttp wrapper", zap.Error(err))
-		return c.next
-	}
-
-	return wrapper(c.next)
+	c.handler.ServeHTTP(rw, req)
 }
