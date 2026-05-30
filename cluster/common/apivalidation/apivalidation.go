@@ -697,17 +697,12 @@ func ValidateEnvVarKey(key string) error {
 		c := key[i]
 
 		switch {
-		case c >= 'A' && c <= 'Z':
-		case c >= 'a' && c <= 'z':
-		case c == '_':
-		case c >= '0' && c <= '9':
-			if i == 0 {
-				return grpcutils.InvalidArg(
-					"Environment variable key can only start with a letter or underscore, got: %s", key)
-			}
-		default:
-			return grpcutils.InvalidArg(
-				"Environment variable key contains invalid character %q in: %s", c, key)
+		case c == 0:
+			return grpcutils.InvalidArg("Invalid environment variable")
+		case c == '=':
+			return grpcutils.InvalidArg("Environment variable key cannot contain '=': %s", key)
+		case c < 0x20 || c == 0x7f:
+			return grpcutils.InvalidArg("Invalid environment variable")
 		}
 	}
 
