@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
@@ -30,9 +31,14 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+var ErrNotFound = errors.New("Octelium: SPIFFE socket not found")
+
 func GetSPIFFEEndpointSocket() string {
-	if val := os.Getenv("SPIFFE_ENDPOINT_SOCKET"); val != "" {
-		return val
+	if val := strings.TrimSpace(os.Getenv("SPIFFE_ENDPOINT_SOCKET")); val != "" {
+		if strings.HasPrefix(val, "unix://") {
+			return val
+		}
+		return "unix://" + val
 	}
 
 	csiPaths := []string{
@@ -40,16 +46,19 @@ func GetSPIFFEEndpointSocket() string {
 		"/run/spire/sockets/agent.sock",
 	}
 
-	for _, csiPath := range csiPaths {
-		if _, err := os.Stat(csiPath); err == nil {
-			return "unix://" + csiPath
+	for _, p := range csiPaths {
+		st, err := os.Stat(p)
+		if err == nil && st.Mode()&os.ModeSocket != 0 {
+			return "unix://" + p
 		}
 	}
 
 	return ""
 }
 
-var ErrNotFound = errors.New("Octelium: SPIFFE socket not Found")
+func allowInsecureFallback() bool {
+	return os.Getenv("OCTELIUM_ALLOW_INSECURE_GRPC") == "true"
+}
 
 func GetWorkloadC(ctx context.Context) (*workloadapi.Client, error) {
 	socketAddr := GetSPIFFEEndpointSocket()
@@ -60,64 +69,104 @@ func GetWorkloadC(ctx context.Context) (*workloadapi.Client, error) {
 	return workloadapi.New(ctx, workloadapi.WithAddr(socketAddr))
 }
 
-func GetSPIFFESource(ctx context.Context) (r *workloadapi.X509Source, err error) {
+func GetSPIFFESource(ctx context.Context) (*workloadapi.X509Source, error) {
 	c, err := GetWorkloadC(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return workloadapi.NewX509Source(ctx, workloadapi.WithClient(c))
+	source, err := workloadapi.NewX509Source(ctx, workloadapi.WithClient(c))
+	if err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+
+	return source, nil
+}
+
+func getAuthorizer(ctx context.Context, source *workloadapi.X509Source) (tlsconfig.Authorizer, error) {
+	if val := strings.TrimSpace(os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN")); val != "" {
+		td, err := spiffeid.TrustDomainFromString(val)
+		if err != nil {
+			return nil, err
+		}
+
+		return tlsconfig.AuthorizeMemberOf(td), nil
+	}
+
+	svid, err := source.GetX509SVID()
+	if err != nil {
+		return nil, err
+	}
+
+	return tlsconfig.AuthorizeMemberOf(svid.ID.TrustDomain()), nil
+}
+
+func logSVID(msg string, source *workloadapi.X509Source) {
+	svid, err := source.GetX509SVID()
+	if err != nil {
+		zap.L().Debug(msg, zap.Error(err))
+		return
+	}
+
+	fields := []zap.Field{
+		zap.String("spiffeID", svid.ID.String()),
+	}
+	if len(svid.Certificates) > 0 {
+		fields = append(fields, zap.String("subject", svid.Certificates[0].Subject.String()))
+	}
+
+	zap.L().Debug(msg, fields...)
 }
 
 type GetGRPCClientCredOpts struct {
+	AllowInsecureFallback bool
 }
 
 func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
-
-	if source, err := GetSPIFFESource(ctx); err == nil {
-		svid, err := source.GetX509SVID()
-		if err != nil {
-			return nil, err
+	source, err := GetSPIFFESource(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) && (allowInsecureFallback() || (o != nil && o.AllowInsecureFallback)) {
+			zap.L().Warn("SPIFFE socket not found; using insecure gRPC client credentials")
+			return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 		}
-
-		zap.L().Debug("SPIFFE is enabled. Setting client cred", zap.Any("crt", svid.Certificates[0]))
-		tlsConfig := tlsconfig.MTLSClientConfig(source, source, GetAuthorizer())
-
-		return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
-	} else if errors.Is(err, ErrNotFound) {
-		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
-	} else {
 		return nil, err
 	}
+
+	authz, err := getAuthorizer(ctx, source)
+	if err != nil {
+		source.Close()
+		return nil, err
+	}
+
+	logSVID("SPIFFE is enabled. Setting client credentials", source)
+
+	tlsConfig := tlsconfig.MTLSClientConfig(source, source, authz)
+	return grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
 }
 
 type GetGRPCServerCredOpts struct {
-}
-
-func GetAuthorizer() tlsconfig.Authorizer {
-	if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
-		if authorizer, err := spiffeid.TrustDomainFromString(val); err == nil {
-			return tlsconfig.AuthorizeMemberOf(authorizer)
-		}
-	}
-
-	return tlsconfig.AuthorizeAny()
+	AllowInsecureFallback bool
 }
 
 func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
-	if source, err := GetSPIFFESource(ctx); err == nil {
-		svid, err := source.GetX509SVID()
-		if err != nil {
-			return nil, err
+	source, err := GetSPIFFESource(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) && (allowInsecureFallback() || (o != nil && o.AllowInsecureFallback)) {
+			zap.L().Warn("SPIFFE socket not found; using insecure gRPC server credentials")
+			return grpc.Creds(insecure.NewCredentials()), nil
 		}
-
-		zap.L().Debug("SPIFFE is enabled. Setting server cred", zap.Any("crt", svid.Certificates[0]))
-		tlsConfig := tlsconfig.MTLSServerConfig(source, source, GetAuthorizer())
-
-		return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
-	} else if errors.Is(err, ErrNotFound) {
-		return grpc.Creds(insecure.NewCredentials()), nil
-	} else {
 		return nil, err
 	}
+
+	authz, err := getAuthorizer(ctx, source)
+	if err != nil {
+		source.Close()
+		return nil, err
+	}
+
+	logSVID("SPIFFE is enabled. Setting server credentials", source)
+
+	tlsConfig := tlsconfig.MTLSServerConfig(source, source, authz)
+	return grpc.Creds(credentials.NewTLS(tlsConfig)), nil
 }
