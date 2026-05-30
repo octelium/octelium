@@ -169,20 +169,19 @@ func makeHostCert(signer, caSigner ssh.Signer, typ int) (ssh.Signer, error) {
 }
 
 func GetHostKeyCACallback(caPubKey ssh.PublicKey) ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		switch typedKey := key.(type) {
-		case *ssh.Certificate:
-			if typedKey.SignatureKey != nil {
-				caBytes := typedKey.SignatureKey.Marshal()
-				if len(caBytes) > 0 && utils.SecureBytesEqual(caBytes, caPubKey.Marshal()) {
-					return nil
-				}
-			}
-		default:
+	if caPubKey == nil {
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return errors.Errorf("nil SSH CA public key")
 		}
-
-		return errors.Errorf("Not a certificate key")
 	}
+
+	checker := &ssh.CertChecker{
+		IsHostAuthority: func(auth ssh.PublicKey, address string) bool {
+			return utils.SecureBytesEqual(auth.Marshal(), caPubKey.Marshal())
+		},
+	}
+
+	return checker.CheckHostKey
 }
 
 func GenerateServiceEd25519HostSigner(ctx context.Context,
