@@ -56,10 +56,6 @@ func GetSPIFFEEndpointSocket() string {
 	return ""
 }
 
-func allowInsecureFallback() bool {
-	return os.Getenv("OCTELIUM_ALLOW_INSECURE_GRPC") == "true"
-}
-
 func GetWorkloadC(ctx context.Context) (*workloadapi.Client, error) {
 	socketAddr := GetSPIFFEEndpointSocket()
 	if socketAddr == "" {
@@ -120,13 +116,12 @@ func logSVID(msg string, source *workloadapi.X509Source) {
 }
 
 type GetGRPCClientCredOpts struct {
-	AllowInsecureFallback bool
 }
 
 func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.DialOption, error) {
 	source, err := GetSPIFFESource(ctx)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) && (allowInsecureFallback() || (o != nil && o.AllowInsecureFallback)) {
+		if errors.Is(err, ErrNotFound) {
 			zap.L().Warn("SPIFFE socket not found; using insecure gRPC client credentials")
 			return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 		}
@@ -146,13 +141,12 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 }
 
 type GetGRPCServerCredOpts struct {
-	AllowInsecureFallback bool
 }
 
 func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.ServerOption, error) {
 	source, err := GetSPIFFESource(ctx)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) && (allowInsecureFallback() || (o != nil && o.AllowInsecureFallback)) {
+		if errors.Is(err, ErrNotFound) {
 			zap.L().Warn("SPIFFE socket not found; using insecure gRPC server credentials")
 			return grpc.Creds(insecure.NewCredentials()), nil
 		}
