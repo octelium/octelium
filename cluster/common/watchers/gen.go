@@ -33,18 +33,15 @@ import (
 )
 
 type Watcher struct {
-	api      string
-	version  string
-	kind     string
+	api     string
+	version string
+	kind    string
+
 	onCreate func(ctx context.Context, item umetav1.ResourceObjectI) error
 	onUpdate func(ctx context.Context, newItem, oldItem umetav1.ResourceObjectI) error
 	onDelete func(ctx context.Context, item umetav1.ResourceObjectI) error
 
-	processCh chan *rmetav1.WatchEvent
-
 	client any
-
-	grpcClientStream grpc.ClientStream
 
 	cancelFn context.CancelFunc
 	mu       sync.Mutex
@@ -65,15 +62,14 @@ func NewWatcher(api, version, kind string,
 ) (*Watcher, error) {
 
 	ret := &Watcher{
-		api:       api,
-		version:   version,
-		kind:      kind,
-		onCreate:  onCreate,
-		onUpdate:  onUpdate,
-		onDelete:  onDelete,
-		client:    client,
-		newObjFn:  newObjFn,
-		processCh: make(chan *rmetav1.WatchEvent, 1000),
+		api:      api,
+		version:  version,
+		kind:     kind,
+		onCreate: onCreate,
+		onUpdate: onUpdate,
+		onDelete: onDelete,
+		client:   client,
+		newObjFn: newObjFn,
 	}
 
 	return ret, nil
@@ -82,56 +78,98 @@ func NewWatcher(api, version, kind string,
 func (w *Watcher) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
 	if w.isClosed {
 		return
 	}
+
 	zap.L().Debug("Closing resource watcher",
-		zap.String("api", w.api), zap.String("version", w.version), zap.String("kind", w.kind))
+		zap.String("api", w.api),
+		zap.String("version", w.version),
+		zap.String("kind", w.kind))
+
 	w.isClosed = true
-	w.cancelFn()
+
+	if w.cancelFn != nil {
+		w.cancelFn()
+	}
 }
 
-func (w *Watcher) Run(ctx context.Context) error {
+func (w *Watcher) Run(parent context.Context) error {
+	ctx, cancel := context.WithCancel(parent)
 
-	go func(ctx context.Context) {
-		for {
+	w.mu.Lock()
+	w.cancelFn = cancel
+	w.mu.Unlock()
+
+	go func() {
+		defer cancel()
+
+		for ctx.Err() == nil {
+			err := w.doRun(ctx)
+			if err == nil {
+				return
+			}
+
+			zap.L().Warn("Could not run watcher. Trying again...",
+				zap.String("api", w.api),
+				zap.String("kind", w.kind),
+				zap.String("version", w.version),
+				zap.Error(err))
+
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				err := w.doRun(ctx)
-				w.Close()
-				if err == nil {
-					return
-				}
-
-				zap.L().Warn("Could not run watcher. Trying again...",
-					zap.String("api", w.api),
-					zap.String("kind", w.kind),
-					zap.String("version", w.version),
-					zap.Error(err))
-				time.Sleep(1 * time.Second)
+			case <-time.After(1 * time.Second):
 			}
 		}
-	}(ctx)
+	}()
+
 	return nil
 }
 
-func (w *Watcher) doRun(ctx context.Context) error {
+func (w *Watcher) doRun(parentCtx context.Context) error {
+	ctx, cancelFn := context.WithCancel(parentCtx)
+	defer cancelFn()
 
-	ctx, cancelFn := context.WithCancel(ctx)
-	w.cancelFn = cancelFn
-
-	var client reflect.Value
+	processCh := make(chan *rmetav1.WatchEvent, 1000)
 
 	zap.L().Debug("Starting running resource watcher",
-		zap.String("api", w.api), zap.String("version", w.version), zap.String("kind", w.kind))
+		zap.String("api", w.api),
+		zap.String("version", w.version),
+		zap.String("kind", w.kind))
 
-	client = reflect.ValueOf(w.client)
+	grpcClientStream, err := w.openWatchStream(ctx)
+	if err != nil {
+		return err
+	}
+
+	go w.startProcessLoop(ctx, cancelFn, processCh)
+	go w.startRecvLoop(ctx, cancelFn, grpcClientStream, processCh)
+
+	<-ctx.Done()
+
+	if err := grpcClientStream.CloseSend(); err != nil {
+		zap.L().Debug("Could not close watcher client stream",
+			zap.String("api", w.api),
+			zap.String("kind", w.kind),
+			zap.String("version", w.version),
+			zap.Error(err))
+	}
+
+	if parentCtx.Err() != nil {
+		return nil
+	}
+
+	return errors.Errorf("Watch stream for %s/%s terminated...", w.api, w.kind)
+}
+
+func (w *Watcher) openWatchStream(ctx context.Context) (grpc.ClientStream, error) {
+	client := reflect.ValueOf(w.client)
 
 	method := client.MethodByName(fmt.Sprintf("Watch%s", w.kind))
 	if !method.IsValid() {
-		return errors.Errorf("Could not find Watch method for kind: %s", w.kind)
+		return nil, errors.Errorf("Could not find Watch method for kind: %s", w.kind)
 	}
 
 	res := method.Call(
@@ -142,34 +180,33 @@ func (w *Watcher) doRun(ctx context.Context) error {
 	)
 
 	if len(res) != 2 {
-		return errors.Errorf("Invalid reflect ret len")
+		return nil, errors.Errorf("Invalid reflect ret len")
 	}
 
 	if res[1].Interface() != nil {
-		return res[1].Interface().(error)
+		return nil, res[1].Interface().(error)
 	}
 
 	if res[0].Interface() == nil {
-		return errors.Errorf("Could not run watcher. Client stream is nil")
+		return nil, errors.Errorf("Could not run watcher. Client stream is nil")
 	}
 
 	grpcClientStream, ok := res[0].Interface().(grpc.ClientStream)
 	if !ok {
-		return errors.Errorf("Could not run watcher. Could not cast to grpc.ClientStream")
+		return nil, errors.Errorf("Could not run watcher. Could not cast to grpc.ClientStream")
 	}
 
-	w.grpcClientStream = grpcClientStream
-
-	go w.startProcessLoop(ctx)
-	go w.startRecvLoop(ctx)
-
-	<-ctx.Done()
-	return nil
+	return grpcClientStream, nil
 }
 
-func (w *Watcher) startRecvLoop(ctx context.Context) {
+func (w *Watcher) startRecvLoop(
+	ctx context.Context,
+	cancelFn context.CancelFunc,
+	grpcClientStream grpc.ClientStream,
+	processCh chan<- *rmetav1.WatchEvent,
+) {
 	failN := 0
-	defer w.Close()
+	defer cancelFn()
 
 	for {
 		select {
@@ -177,15 +214,22 @@ func (w *Watcher) startRecvLoop(ctx context.Context) {
 			return
 		default:
 			watchObj := &rmetav1.WatchEvent{}
-			if err := w.grpcClientStream.RecvMsg(watchObj); err != nil {
+			if err := grpcClientStream.RecvMsg(watchObj); err != nil {
 				zap.L().Warn("Could not recv watch object",
 					zap.String("api", w.api),
 					zap.String("kind", w.kind),
 					zap.String("version", w.version),
-					zap.Error(err), zap.Int("attempt", failN+1))
-				failN = failN + 1
+					zap.Error(err),
+					zap.Int("attempt", failN+1))
 
-				time.Sleep(100 * time.Millisecond)
+				failN++
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
+
 				if failN > 15 {
 					zap.L().Warn("Could not recv watch object. Exiting watcher recv loop",
 						zap.String("api", w.api),
@@ -194,28 +238,39 @@ func (w *Watcher) startRecvLoop(ctx context.Context) {
 						zap.Error(err))
 					return
 				}
+
 				continue
 			}
 
 			failN = 0
-			w.processCh <- watchObj
+
+			select {
+			case processCh <- watchObj:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
 
-func (w *Watcher) startProcessLoop(ctx context.Context) {
-	defer w.Close()
+func (w *Watcher) startProcessLoop(
+	ctx context.Context,
+	cancelFn context.CancelFunc,
+	processCh <-chan *rmetav1.WatchEvent,
+) {
+	defer cancelFn()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case obj := <-w.processCh:
+		case obj := <-processCh:
 			if err := w.doProcess(ctx, obj); err != nil {
 				zap.L().Warn("Could not process watcher event",
 					zap.String("api", w.api),
 					zap.String("kind", w.kind),
-					zap.String("version", w.version), zap.Error(err))
+					zap.String("version", w.version),
+					zap.Error(err))
 			}
 		}
 	}
@@ -226,6 +281,7 @@ func (w *Watcher) getObject(in *anypb.Any) (umetav1.ResourceObjectI, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if err := pbutils.AnyToMessage(in, obj); err != nil {
 		return nil, err
 	}
@@ -234,6 +290,9 @@ func (w *Watcher) getObject(in *anypb.Any) (umetav1.ResourceObjectI, error) {
 }
 
 func (w *Watcher) doProcess(ctx context.Context, watchObj *rmetav1.WatchEvent) error {
+	if watchObj == nil || watchObj.Event == nil || watchObj.Event.Type == nil {
+		return nil
+	}
 
 	switch watchObj.Event.Type.(type) {
 	case *rmetav1.WatchEvent_Event_Create_:
@@ -242,37 +301,45 @@ func (w *Watcher) doProcess(ctx context.Context, watchObj *rmetav1.WatchEvent) e
 			if err != nil {
 				return err
 			}
+
 			return w.runFn(ctx, func(ctx context.Context) error {
 				return w.onCreate(ctx, obj)
 			})
 		}
+
 	case *rmetav1.WatchEvent_Event_Update_:
 		if w.onUpdate != nil {
 			newObj, err := w.getObject(watchObj.Event.GetUpdate().NewItem)
 			if err != nil {
 				return err
 			}
+
 			oldObj, err := w.getObject(watchObj.Event.GetUpdate().OldItem)
 			if err != nil {
 				return err
 			}
+
 			return w.runFn(ctx, func(ctx context.Context) error {
 				return w.onUpdate(ctx, newObj, oldObj)
 			})
 		}
+
 	case *rmetav1.WatchEvent_Event_Delete_:
 		if w.onDelete != nil {
 			obj, err := w.getObject(watchObj.Event.GetDelete().Item)
 			if err != nil {
 				return err
 			}
+
 			return w.runFn(ctx, func(ctx context.Context) error {
 				return w.onDelete(ctx, obj)
 			})
 		}
+
 	default:
 		return errors.Errorf("Unknown event type")
 	}
+
 	return nil
 }
 
@@ -280,6 +347,7 @@ func (w *Watcher) runFn(ctx context.Context, fn func(ctx context.Context) error)
 	if fn == nil {
 		return nil
 	}
+
 	go func(ctx context.Context) {
 		for i := range 5 {
 			nctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
@@ -290,12 +358,15 @@ func (w *Watcher) runFn(ctx context.Context, fn func(ctx context.Context) error)
 			}
 
 			cancel()
+
 			zap.L().Warn("Could not run watcher fn. Trying again...",
 				zap.String("api", w.api),
 				zap.String("kind", w.kind),
 				zap.String("version", w.version),
-				zap.Error(err), zap.Int("attempt", i+1))
+				zap.Error(err),
+				zap.Int("attempt", i+1))
 		}
 	}(ctx)
+
 	return nil
 }
