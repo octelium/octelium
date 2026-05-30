@@ -79,7 +79,7 @@ func GenerateHostSigner(ctx context.Context, octeliumC octeliumc.ClientInterface
 	if err != nil {
 		return nil, err
 	}
-	return makeHostCert(signer, caSigner, ssh.HostCert)
+	return makeCertSigner(signer, caSigner, ssh.HostCert)
 }
 
 func GenerateUserSigner(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer) (ssh.Signer, error) {
@@ -87,7 +87,7 @@ func GenerateUserSigner(ctx context.Context, octeliumC octeliumc.ClientInterface
 	if err != nil {
 		return nil, err
 	}
-	return makeHostCert(signer, caSigner, ssh.UserCert)
+	return makeCertSigner(signer, caSigner, ssh.UserCert)
 }
 
 func GetCAPublicKey(ctx context.Context, octeliumC octeliumc.ClientInterface) (ssh.PublicKey, error) {
@@ -119,7 +119,7 @@ func getCASigner(ctx context.Context, octeliumC octeliumc.ClientInterface) (ssh.
 }
 
 func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, error) {
-	var err error
+
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, er
 		Key:          priv.PublicKey(),
 		CertType:     uint32(typ),
 		SignatureKey: signer.PublicKey(),
-		ValidAfter:   uint64(time.Now().Unix()),
+		ValidAfter:   uint64(time.Now().Add(-5 * time.Minute).Unix()),
 		ValidBefore:  uint64(time.Now().Add(24 * 30 * 12 * 10 * time.Hour).Unix()),
 	}
 
@@ -147,18 +147,14 @@ func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, er
 		}
 	}
 
-	bytesForSigning := cert.Marshal()
-	bytesForSigning = bytesForSigning[:len(bytesForSigning)-4]
-
-	cert.Signature, err = signer.Sign(rand.Reader, bytesForSigning)
-	if err != nil {
+	if err := cert.SignCert(rand.Reader, signer); err != nil {
 		return nil, err
 	}
 
 	return cert, nil
 }
 
-func makeHostCert(signer, caSigner ssh.Signer, typ int) (ssh.Signer, error) {
+func makeCertSigner(signer, caSigner ssh.Signer, typ int) (ssh.Signer, error) {
 
 	cert, err := makeCert(signer, caSigner, typ)
 	if err != nil {
