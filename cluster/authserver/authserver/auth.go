@@ -476,6 +476,10 @@ func (s *server) authenticateUser(ctx context.Context,
 		return nil, errors.Errorf("Deactivated User")
 	}
 
+	if usr.Status.IsLocked {
+		return nil, errors.Errorf("User is locked")
+	}
+
 	if usr.Spec.Type != corev1.User_Spec_HUMAN {
 		return nil, errors.Errorf("Invalid User type")
 	}

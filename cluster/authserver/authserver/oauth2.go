@@ -113,7 +113,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if usr.Spec.IsDisabled {
+	if usr.Spec.IsDisabled || usr.Status.IsLocked {
 		s.returnOAuth2Err(w, "invalid_request", 400)
 		return
 	}
@@ -315,7 +315,7 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		return
 	}
 
-	if usr.Spec.IsDisabled {
+	if usr.Spec.IsDisabled || usr.Status.IsLocked {
 		s.returnOAuth2Err(w, "invalid_request", 400)
 		return
 	}
