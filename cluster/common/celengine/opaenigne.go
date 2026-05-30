@@ -21,13 +21,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
 type opaEngine struct {
-	c *cache.Cache
+	c    *cache.Cache
+	caps *ast.Capabilities
 }
 
 type opaOpts struct {
@@ -35,7 +37,8 @@ type opaOpts struct {
 
 func newOPAEngine(_ context.Context, _ *opaOpts) (*opaEngine, error) {
 	return &opaEngine{
-		c: cache.New(24*time.Hour, 10*time.Minute),
+		c:    cache.New(24*time.Hour, 10*time.Minute),
+		caps: getOPACapabilities(),
 	}, nil
 }
 
@@ -79,6 +82,8 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry stri
 	rg := rego.New(
 		rego.Query(fmt.Sprintf("data.octelium.%s.%s", mod, qry)),
 		rego.Module(fmt.Sprintf("octelium.%s", mod), script),
+		rego.Capabilities(e.caps),
+		rego.StrictBuiltinErrors(true),
 	)
 
 	pq, err := rg.PrepareForEval(ctx)
@@ -90,7 +95,8 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry stri
 	return &pq, nil
 }
 
-func (e *opaEngine) doEvalPolicy(ctx context.Context, script string, input map[string]any, mod, qry string) (any, error) {
+func (e *opaEngine) doEvalPolicy(ctx context.Context,
+	script string, input map[string]any, mod, qry string) (any, error) {
 	if script == "" {
 		return nil, errors.Errorf("Rego script is empty")
 	}
@@ -114,4 +120,90 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context, script string, input map[s
 	}
 
 	return rs[0].Expressions[0].Value, nil
+}
+
+var opaAllowedBuiltins = map[string]struct{}{
+	"eq": {}, "equal": {}, "neq": {}, "lt": {}, "lte": {}, "gt": {}, "gte": {},
+	"assign": {}, "internal.member_2": {}, "internal.member_3": {},
+
+	"plus": {}, "minus": {}, "mul": {}, "div": {}, "rem": {},
+	"round": {}, "ceil": {}, "floor": {}, "abs": {},
+	"numbers.range": {}, "numbers.range_step": {},
+	"bits.and": {}, "bits.or": {}, "bits.xor": {}, "bits.negate": {},
+	"bits.lsh": {}, "bits.rsh": {},
+
+	"count": {}, "sum": {}, "product": {}, "max": {}, "min": {},
+	"sort": {}, "all": {}, "any": {},
+
+	"array.concat": {}, "array.reverse": {}, "array.slice": {},
+	"and": {}, "or": {}, "intersection": {}, "union": {},
+	"object.get": {}, "object.keys": {}, "object.remove": {},
+	"object.union": {}, "object.union_n": {}, "object.filter": {}, "object.subset": {},
+	"json.filter": {}, "json.remove": {}, "json.patch": {},
+
+	"concat": {}, "contains": {}, "startswith": {}, "endswith": {},
+	"indexof": {}, "indexof_n": {}, "substring": {},
+	"lower": {}, "upper": {}, "replace": {}, "strings.replace_n": {},
+	"split": {}, "trim": {}, "trim_left": {}, "trim_right": {},
+	"trim_prefix": {}, "trim_suffix": {}, "trim_space": {},
+	"sprintf": {}, "format_int": {}, "strings.reverse": {}, "strings.count": {},
+	"strings.any_prefix_match": {}, "strings.any_suffix_match": {},
+
+	"regex.match": {}, "regex.is_valid": {}, "regex.split": {},
+	"regex.find_n": {}, "regex.find_all_string_submatch_n": {},
+	"regex.replace": {}, "regex.template_match": {}, "regex.globs_match": {},
+	"glob.match": {}, "glob.quote_meta": {},
+
+	"to_number": {}, "type_name": {},
+	"is_number": {}, "is_string": {}, "is_boolean": {},
+	"is_array": {}, "is_set": {}, "is_object": {}, "is_null": {},
+
+	"base64.encode": {}, "base64.decode": {}, "base64.is_valid": {},
+	"base64url.encode": {}, "base64url.encode_no_pad": {}, "base64url.decode": {},
+	"hex.encode": {}, "hex.decode": {},
+	"urlquery.encode": {}, "urlquery.decode": {},
+	"urlquery.encode_object": {}, "urlquery.decode_object": {},
+	"json.marshal": {}, "json.unmarshal": {}, "json.is_valid": {},
+	"yaml.marshal": {}, "yaml.unmarshal": {}, "yaml.is_valid": {},
+
+	"crypto.hmac.md5": {}, "crypto.hmac.sha1": {},
+	"crypto.hmac.sha256": {}, "crypto.hmac.sha512": {}, "crypto.hmac.equal": {},
+	"crypto.md5": {}, "crypto.sha1": {}, "crypto.sha256": {},
+	"crypto.x509.parse_certificates":            {},
+	"crypto.x509.parse_and_verify_certificates": {},
+	"io.jwt.decode":                             {}, "io.jwt.decode_verify": {},
+	"io.jwt.verify_hs256": {}, "io.jwt.verify_hs384": {}, "io.jwt.verify_hs512": {},
+	"io.jwt.verify_rs256": {}, "io.jwt.verify_rs384": {}, "io.jwt.verify_rs512": {},
+	"io.jwt.verify_es256": {}, "io.jwt.verify_es384": {}, "io.jwt.verify_es512": {},
+	"io.jwt.verify_ps256": {}, "io.jwt.verify_ps384": {}, "io.jwt.verify_ps512": {},
+	"io.jwt.encode_sign": {}, "io.jwt.encode_sign_raw": {},
+
+	"time.now_ns": {}, "time.parse_ns": {}, "time.parse_rfc3339_ns": {},
+	"time.parse_duration_ns": {}, "time.date": {}, "time.clock": {},
+	"time.weekday": {}, "time.add_date": {}, "time.diff": {}, "time.format": {},
+
+	"net.cidr_contains": {}, "net.cidr_contains_matches": {},
+	"net.cidr_intersects": {}, "net.cidr_merge": {}, "net.cidr_is_valid": {},
+
+	"semver.compare": {}, "semver.is_valid": {},
+
+	"http.send": {},
+
+	"rand.intn":    {},
+	"uuid.rfc4122": {},
+}
+
+func getOPACapabilities() *ast.Capabilities {
+
+	caps := ast.CapabilitiesForThisVersion()
+
+	filtered := make([]*ast.Builtin, 0, len(caps.Builtins))
+	for _, b := range caps.Builtins {
+		if _, ok := opaAllowedBuiltins[b.Name]; ok {
+			filtered = append(filtered, b)
+		}
+	}
+	caps.Builtins = filtered
+
+	return caps
 }
