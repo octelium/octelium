@@ -425,18 +425,17 @@ func (tnet *Net) DialContext(ctx context.Context, network, address string) (net.
 		}
 
 		dialCtx := ctx
+		var cancel context.CancelFunc
 		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
-			partialDeadline, err := partialDeadline(time.Now(), deadline, len(addrs)-i)
+			pd, err := partialDeadline(time.Now(), deadline, len(addrs)-i)
 			if err != nil {
 				if firstErr == nil {
 					firstErr = &net.OpError{Op: "dial", Err: err}
 				}
 				break
 			}
-			if partialDeadline.Before(deadline) {
-				var cancel context.CancelFunc
-				dialCtx, cancel = context.WithDeadline(ctx, partialDeadline)
-				cancel()
+			if pd.Before(deadline) {
+				dialCtx, cancel = context.WithDeadline(ctx, pd)
 			}
 		}
 
@@ -445,6 +444,9 @@ func (tnet *Net) DialContext(ctx context.Context, network, address string) (net.
 			c, err = tnet.DialUDP(nil, &net.UDPAddr{IP: addr, Port: port})
 		} else {
 			c, err = tnet.DialContextTCP(dialCtx, &net.TCPAddr{IP: addr, Port: port})
+		}
+		if cancel != nil {
+			cancel()
 		}
 		if err == nil {
 			return c, nil
