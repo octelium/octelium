@@ -135,7 +135,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	msg := dns.Msg{}
 	msg.SetReply(r)
 
-	domain := msg.Question[0].Name
+	domain := strings.ToLower(msg.Question[0].Name)
 
 	switch msg.Question[0].Qtype {
 	case dns.TypeA, dns.TypeAAAA:
