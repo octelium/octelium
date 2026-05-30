@@ -237,6 +237,60 @@ func TestGetAuthenticationToken(t *testing.T) {
 		_, err = srv.getCredentialFromToken(ctx, tknResp.GetAuthenticationToken().AuthenticationToken)
 		assert.NotNil(t, err)
 	}
+
+	{
+
+		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Credential_Spec{
+				User:        usrT.Usr.Metadata.Name,
+				Type:        corev1.Credential_Spec_AUTH_TOKEN,
+				SessionType: corev1.Session_Status_CLIENT,
+				ExpiresAt:   pbutils.Timestamp(time.Now().Add(1 * time.Hour)),
+			},
+		})
+		assert.Nil(t, err)
+
+		tknResp, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		cred, err = srv.getCredentialFromToken(ctx, tknResp.GetAuthenticationToken().AuthenticationToken)
+		assert.Nil(t, err)
+
+		cred.Spec.MaxAuthentications = 3
+		cred.Status.TotalAuthentications = 3
+
+		cred, err = srv.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tknResp.GetAuthenticationToken().AuthenticationToken)
+		assert.NotNil(t, err)
+
+		cred.Spec.MaxAuthentications = 3
+		cred.Status.TotalAuthentications = 4
+
+		cred, err = srv.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tknResp.GetAuthenticationToken().AuthenticationToken)
+		assert.NotNil(t, err)
+
+		cred.Spec.MaxAuthentications = 3
+		cred.Status.TotalAuthentications = 2
+
+		cred, err = srv.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tknResp.GetAuthenticationToken().AuthenticationToken)
+		assert.Nil(t, err)
+	}
 }
 
 func TestNeedsReAuth(t *testing.T) {

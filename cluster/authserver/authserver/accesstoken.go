@@ -81,6 +81,10 @@ func (s *server) getCredentialFromToken(ctx context.Context, authTokenStr string
 		return nil, s.errUnauthenticated("Authentication token expired")
 	}
 
+	if tkn.Spec.MaxAuthentications > 0 && tkn.Status.TotalAuthentications >= tkn.Spec.MaxAuthentications {
+		return nil, s.errUnauthenticated("Authentications for this Credential have been exceeded the max ")
+	}
+
 	return tkn, nil
 }
 
