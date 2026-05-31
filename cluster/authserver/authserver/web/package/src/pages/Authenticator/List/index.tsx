@@ -1,7 +1,7 @@
 import { isDev } from "@/utils";
 
 import { getClientAuth } from "@/utils/client";
-import * as Auth from "@octelium/apis/main/authv1/authv1";
+import * as Auth from "@octelium/apis/main/authv1";
 import { useQuery } from "@tanstack/react-query";
 
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";

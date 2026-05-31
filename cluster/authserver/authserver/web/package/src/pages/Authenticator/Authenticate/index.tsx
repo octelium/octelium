@@ -16,8 +16,8 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
-import * as Auth from "@octelium/apis/main/authv1/authv1";
-import { DeleteOptions } from "@octelium/apis/main/metav1/metav1";
+import * as Auth from "@octelium/apis/main/authv1";
+import { DeleteOptions } from "@octelium/apis/main/metav1";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { IoMdSend } from "react-icons/io";
 import { MdEdit, MdEditOff } from "react-icons/md";

@@ -1,5 +1,5 @@
-import * as AuthPB from "@octelium/apis/main/authv1/authv1";
-import * as MetaPB from "@octelium/apis/main/metav1/metav1";
+import * as AuthPB from "@octelium/apis/main/authv1";
+import * as MetaPB from "@octelium/apis/main/metav1";
 
 export type ResourceAuth = AuthPB.Authenticator;
 export type Resource = ResourceAuth;

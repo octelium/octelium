@@ -7,7 +7,7 @@ import LogoMain from "@/components/LogoMain";
 import { isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
 import { Divider } from "@mantine/core";
-import * as Auth from "@octelium/apis/main/authv1/authv1";
+import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "react-hot-toast";
 
