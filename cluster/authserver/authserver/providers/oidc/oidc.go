@@ -312,5 +312,36 @@ func (c *Connector) newProvider(ctx context.Context) (*oidc.Provider, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return oidc.NewProvider(ctx, c.issuerURL)
+	issuerURL := strings.TrimSpace(c.issuerURL)
+	if issuerURL == "" {
+		return nil, errors.Errorf("Empty OIDC issuer URL")
+	}
+
+	p, err := oidc.NewProvider(ctx, issuerURL)
+	if err == nil {
+		return p, nil
+	}
+
+	alt := toggleTrailingSlash(issuerURL)
+	if alt != issuerURL {
+		p2, err2 := oidc.NewProvider(ctx, alt)
+		if err2 == nil {
+			zap.L().Debug("Initialized OIDC provider using alternate trailing-slash issuer form",
+				zap.String("configuredIssuer", issuerURL),
+				zap.String("effectiveIssuer", alt))
+			return p2, nil
+		}
+
+		return nil, errors.Errorf("Could not initialize OIDC provider for issuer %s. %+v", issuerURL, err2)
+	}
+
+	return nil, errors.Errorf("Could not initialize OIDC provider for issuer %s. %+v", issuerURL, err)
+}
+
+func toggleTrailingSlash(s string) string {
+	if strings.HasSuffix(s, "/") {
+		return strings.TrimSuffix(s, "/")
+	}
+
+	return s + "/"
 }
