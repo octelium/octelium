@@ -1,5 +1,5 @@
 const isDevVal = import.meta.env.MODE === "development";
-import { Metadata } from "@octelium/apis/main/metav1/metav1";
+import { Metadata } from "@octelium/apis/main/metav1";
 import type { RpcError } from "@protobuf-ts/runtime-rpc";
 
 import { QueryClient } from "@tanstack/react-query";
@@ -77,7 +77,7 @@ export const printResourceNameWithDisplay = (arg: Metadata) => {
 export const truncateUtf8 = (
   input: string,
   maxBytes: number,
-  options?: { suffix?: string }
+  options?: { suffix?: string },
 ) => {
   if (maxBytes <= 0) return "";
 

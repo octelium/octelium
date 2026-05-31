@@ -6,7 +6,7 @@ import {
   ListNamespaceOptions,
   ListServiceOptions,
   Service_Spec_Type,
-} from "@octelium/apis/main/userv1/userv1";
+} from "@octelium/apis/main/userv1";
 import { useQuery } from "@tanstack/react-query";
 
 import CopyText from "@/components/CopyText";
@@ -19,7 +19,7 @@ import {
   ResourceListWrapper,
 } from "@/components/ResourceList";
 import { getDomain, printResourceNameWithDisplay, toNumOrZero } from "@/utils";
-import { Service, ServiceList } from "@octelium/apis/main/userv1/userv1";
+import { Service, ServiceList } from "@octelium/apis/main/userv1";
 import { BiLinkExternal } from "react-icons/bi";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";

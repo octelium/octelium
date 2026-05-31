@@ -1,15 +1,14 @@
 import { Button } from "@mantine/core";
-import { PanelTop, Boxes, LogOut, LockKeyhole } from "lucide-react";
+import { Boxes, LockKeyhole, LogOut, PanelTop } from "lucide-react";
 
-import * as React from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
+import { getDomain } from "@/utils";
+import { getClientAuth } from "@/utils/client";
 import { Modal } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { LogoutRequest } from "@octelium/apis/main/userv1";
 import { useMutation } from "@tanstack/react-query";
-import { getClientAuth } from "@/utils/client";
-import { LogoutRequest } from "@octelium/apis/main/userv1/userv1";
-import { getDomain } from "@/utils";
+import { Link, useLocation } from "react-router-dom";
+import { twMerge } from "tailwind-merge";
 
 const items = [
   {

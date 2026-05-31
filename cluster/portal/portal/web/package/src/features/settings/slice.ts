@@ -1,8 +1,7 @@
-import { createSlice } from "@reduxjs/toolkit";
-import { PayloadAction } from "@reduxjs/toolkit";
 import Settings from "@/utils/types/settings";
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-import * as UserPB from "@octelium/apis/main/userv1/userv1";
+import * as UserPB from "@octelium/apis/main/userv1";
 
 export const slice = createSlice({
   name: "settings",
@@ -12,14 +11,14 @@ export const slice = createSlice({
   reducers: {
     setItemsPerPage: (
       state,
-      action: PayloadAction<{ itemsPerPage: number }>
+      action: PayloadAction<{ itemsPerPage: number }>,
     ) => {
       state.itemsPerPage = action.payload.itemsPerPage;
     },
 
     setStatus: (
       state,
-      action: PayloadAction<{ status: UserPB.GetStatusResponse }>
+      action: PayloadAction<{ status: UserPB.GetStatusResponse }>,
     ) => {
       state.status = action.payload.status;
     },

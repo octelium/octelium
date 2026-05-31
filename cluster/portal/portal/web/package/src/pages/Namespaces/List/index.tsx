@@ -6,7 +6,7 @@ import {
   ListServiceOptions,
   Namespace,
   NamespaceList,
-} from "@octelium/apis/main/userv1/userv1";
+} from "@octelium/apis/main/userv1";
 import { useQuery } from "@tanstack/react-query";
 
 import CopyText from "@/components/CopyText";

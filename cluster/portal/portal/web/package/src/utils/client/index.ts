@@ -1,6 +1,6 @@
+import * as AuthGRPC from "@octelium/apis/main/authv1";
+import * as UserGRPC from "@octelium/apis/main/userv1";
 import * as grpcWeb from "@protobuf-ts/grpcweb-transport";
-import * as UserGRPC from "@octelium/apis/main/userv1/userv1.client";
-import * as AuthGRPC from "@octelium/apis/main/authv1/authv1.client";
 import { getDomain, isDev } from "..";
 
 export const getTransport = () => {
@@ -25,7 +25,6 @@ export const getTransport = () => {
 export const getClientUser = (): UserGRPC.MainServiceClient => {
   return new UserGRPC.MainServiceClient(getTransport());
 };
-
 
 export const getClientAuth = (): AuthGRPC.MainServiceClient => {
   return new AuthGRPC.MainServiceClient(getTransport());
