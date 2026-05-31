@@ -122,7 +122,7 @@ func GetGRPCClientCred(ctx context.Context, o *GetGRPCClientCredOpts) (grpc.Dial
 	source, err := GetSPIFFESource(ctx)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			zap.L().Warn("SPIFFE socket not found; using insecure gRPC client credentials")
+			zap.L().Debug("SPIFFE socket not found; using insecure gRPC client credentials")
 			return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 		}
 		return nil, err
@@ -147,7 +147,7 @@ func GetGRPCServerCred(ctx context.Context, o *GetGRPCServerCredOpts) (grpc.Serv
 	source, err := GetSPIFFESource(ctx)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			zap.L().Warn("SPIFFE socket not found; using insecure gRPC server credentials")
+			zap.L().Debug("SPIFFE socket not found; using insecure gRPC server credentials")
 			return grpc.Creds(insecure.NewCredentials()), nil
 		}
 		return nil, err
