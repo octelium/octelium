@@ -42,7 +42,8 @@
     "clusterv1",
     "authv1",
     "authserver",
-    "sess"
+    "sess",
+    "cordium"
   ],
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",

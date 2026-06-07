@@ -65,6 +65,8 @@ Octelium is a versatile platform that can serve as a complete or partial solutio
 
 - **Continuous Strong Authentication** A unified authentication system for both human and workload _Users_, supporting any web identity provider (IdP) that uses OpenID Connect or SAML 2.0 as well as GitHub OAuth2 (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#web-identity-providers)). It also allows for secretless authentication for workloads via OIDC-based assertions (read more [here](https://octelium.com/docs/octelium/latest/management/core/identity-providers#workload-identity-providers)). Built-in support for MFA/re-authentication/login via FIDO2/WebAuthn/Passkey, TOTP and TPM 2.0 _Authenticators_.
 
+- **Clientless access through remote sandboxes** [Cordium](https://github.com/octelium/cordium) is a free and open source, self-hosted, identity-based, general-purpose sandbox platform built on Kubernetes and Octelium. It provides isolated, reproducible sandboxes for developers, AI agents, and automated workloads that can be used for remote access to Octelium _Services_ without having to install, manage and distribute the Octelium CLIs on the _Users_' machines. Cordium is accessible through web-based terminals via the Cordium web portal (see a short video [demo](https://octelium.com/assets/cordium-web-DDaI3_PJ.webm)), SSH, CLI, and gRPC APIs.
+
 
 - **OpenTelemetry-native Auditing and Visibility** Real-time, identity-based, L7-aware visibility and access logging. Every request is logged and exported to your OpenTelemetry OTLP receivers for seamless integration with your log management and SIEM tools.
 
@@ -124,6 +126,12 @@ You can also install the CLIs via Homebrew as follows:
 brew install octelium/tap/octelium
 ```
 
+## Octelium Enterprise
+
+Octelium enterprise includes features including: web-based dashboard for centralized control and visibility to access/authentication/audit logs in real-time, SIEM integrations (e.g. OTLP, Splunk, Datadog, etc.), SCIM 2.0 synchronization and User/Group provisioning, encrypted Secret management at rest, TLS certificate and public DNS management, UI-based policy builders and testers, among other features.
+
+Octelium enterprise is developed in a separate public [repository](https://github.com/octelium/octelium-ee) under the Octelium enterprise source-available [license](https://github.com/octelium/octelium-ee/blob/main/LICENSE). Octelium enterprise can be used for free forever for personal and internal evaluation use cases.
+
 ## Useful Links
 
 - [What is Octelium?](https://octelium.com/docs/octelium/latest/overview/intro)
@@ -157,7 +165,7 @@ Octelium is free and open source software:
 
 - **What is the current status of the project?**
 
-  It's now in public beta. It's basically v1.0 but with bugs. The architecture, main features and APIs had been stabilized before the project was open sourced and made publicly available.
+  Octelium is getting ready for v1.0 soon. The architecture, main features and APIs had been stabilized before the project was open sourced and made publicly available.
 
 - **Who's behind this project?**
 
