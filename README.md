@@ -128,9 +128,9 @@ brew install octelium/tap/octelium
 
 ## Octelium Enterprise
 
-Octelium enterprise includes features including: web-based dashboard for centralized control and visibility to access/authentication/audit logs in real-time, SIEM integrations (e.g. OTLP, Splunk, Datadog, etc.), SCIM 2.0 synchronization and User/Group provisioning, encrypted Secret management at rest, TLS certificate and public DNS management, UI-based policy builders and testers, among other features.
+Octelium enterprise additional features including: web-based dashboard for centralized control and visibility to access/authentication/audit logs in real-time, SIEM integrations (e.g. OTLP, Splunk, Datadog, etc.), SCIM 2.0 synchronization and User/Group provisioning, encrypted Secret management at rest, TLS certificate and public DNS management, UI-based policy builders and testers, among other features.
 
-Octelium enterprise is developed in a separate public [repository](https://github.com/octelium/octelium-ee) under the Octelium enterprise source-available [license](https://github.com/octelium/octelium-ee/blob/main/LICENSE). Octelium enterprise can be used for free forever for personal and internal evaluation use cases.
+Octelium enterprise is developed in a separate public [repository](https://github.com/octelium/octelium-ee) under the Octelium enterprise source-available [license](https://github.com/octelium/octelium-ee/blob/main/LICENSE). Octelium enterprise can be used for free forever for personal and internal evaluation use cases. For installation instructions, please visit the repository.
 
 ## Useful Links
 
