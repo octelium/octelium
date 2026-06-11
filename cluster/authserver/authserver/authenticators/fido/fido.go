@@ -196,8 +196,16 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 		return nil, authenticators.ErrInvalidAuth(err)
 	}
 
+	if cred.Authenticator.CloneWarning {
+		return nil, authenticators.ErrInvalidAuthMsg("FIDO possible cloned Authenticator")
+	}
+
 	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
 		return nil, authenticators.ErrInvalidAuthMsg("User is not verified")
+	}
+
+	if fido := authn.Status.Info.GetFido(); fido != nil && cred.Authenticator.SignCount > fido.SignCount {
+		fido.SignCount = cred.Authenticator.SignCount
 	}
 
 	zap.L().Debug("webauthn login successful", zap.Any("cred", cred))
@@ -276,7 +284,8 @@ func (u *WebauthnUser) WebAuthnCredentials() []webauthn.Credential {
 				return "none"
 			}(),
 			Authenticator: webauthn.Authenticator{
-				AAGUID: aaguid[:],
+				AAGUID:    aaguid[:],
+				SignCount: fido.SignCount,
 			},
 		},
 	}
@@ -431,6 +440,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 				BackupEligible: cred.Flags.BackupEligible,
 				Aaguid:         aaguid.String(),
 				IsPasskey:      isResidentKey,
+				SignCount:      cred.Authenticator.SignCount,
 				Type: func() corev1.Authenticator_Status_Info_FIDO_Type {
 					switch cred.Authenticator.Attachment {
 					case protocol.Platform:

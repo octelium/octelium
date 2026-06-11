@@ -57,6 +57,20 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		return nil, grpcutils.Unauthorized("Invalid authentication")
 	}
 
+	if cred.Authenticator.SignCount > 0 {
+		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.ObjectToRGetOptions(authn))
+		if err != nil {
+			return nil, s.errInternalErr(err)
+		}
+		if fido := authn.Status.GetInfo().GetFido(); fido != nil &&
+			cred.Authenticator.SignCount > fido.SignCount {
+			fido.SignCount = cred.Authenticator.SignCount
+			if _, err := s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn); err != nil {
+				return nil, s.errInternalErr(err)
+			}
+		}
+	}
+
 	authInfo := &corev1.Session_Status_Authentication_Info{
 		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
 		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
@@ -219,6 +233,10 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 	cred, err := s.passkeyCtl.ValidateDiscoverableLogin(getWebauthnUser, *state.Session, parsedResponse)
 	if err != nil {
 		return retErr(err)
+	}
+
+	if cred.Authenticator.CloneWarning {
+		return retErrStr("FIDO possible cloned Authenticator")
 	}
 
 	if usr == nil {
