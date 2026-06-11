@@ -137,6 +137,16 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	if len(sessList.Items) > 0 {
 		sess = sessList.Items[0]
 
+		if sess.Status.IsLocked {
+			s.returnOAuth2Err(w, "invalid_client", 400)
+			return
+		}
+
+		if sess.Spec.State == corev1.Session_Spec_REJECTED {
+			s.returnOAuth2Err(w, "invalid_client", 400)
+			return
+		}
+
 		s.setCurrAuthentication(sess, &corev1.Session_Status_Authentication_Info{
 			Type: corev1.Session_Status_Authentication_Info_CREDENTIAL,
 			Details: &corev1.Session_Status_Authentication_Info_Credential_{
