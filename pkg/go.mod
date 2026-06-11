@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/pkg
 
-go 1.25.8
+go 1.26.4
 
 require (
 	github.com/ghodss/yaml v1.0.0

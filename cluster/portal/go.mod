@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/portal
 
-go 1.25.8
+go 1.26.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
