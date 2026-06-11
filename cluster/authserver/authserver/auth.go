@@ -557,6 +557,7 @@ func (s *server) getLogoutCookies() []*http.Cookie {
 		{
 			Name:     "octelium_login_state",
 			Value:    "",
+			MaxAge:   -1,
 			Secure:   true,
 			HttpOnly: true,
 			Domain:   s.domain,

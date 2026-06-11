@@ -830,7 +830,7 @@ func (s *server) prependToLastAttempts(a *corev1.Authenticator) {
 	maxLen := 10
 
 	if len(a.Status.LastAuthenticationAttempts) >= maxLen {
-		a.Status.LastAuthenticationAttempts = a.Status.LastAuthenticationAttempts[:maxLen-2]
+		a.Status.LastAuthenticationAttempts = a.Status.LastAuthenticationAttempts[:maxLen-1]
 	}
 
 	a.Status.LastAuthenticationAttempts = append([]*corev1.Authenticator_Status_AuthenticationAttempt{
