@@ -75,10 +75,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, redirect, http.StatusSeeOther)
 				return
 			}
-		} else {
-			http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
-			return
 		}
+
+		http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
+		return
 	}
 
 	zap.L().Debug("Session needs an authentication in handleLogin",
