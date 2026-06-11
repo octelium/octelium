@@ -132,9 +132,6 @@ func (c *Connector) HandleCallback(r *http.Request, _ *utils.GetLoginResponse) (
 	}
 
 	verifiedEmail := getVerifiedPrimaryEmail(ctx, githubClient)
-	if verifiedEmail == "" {
-		verifiedEmail = user.GetEmail()
-	}
 
 	userMap := make(map[string]any)
 	if userBytes, err := json.Marshal(user); err == nil {
