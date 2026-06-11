@@ -156,6 +156,10 @@ func EncryptData(ctx context.Context, octeliumC octeliumc.ClientInterface, plain
 
 func DecryptData(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	req *corev1.Authenticator_Status_EncryptedData) ([]byte, error) {
+	if req == nil || req.KeySecretRef == nil || len(req.Ciphertext) == 0 || len(req.Nonce) == 0 {
+		return nil, errors.Errorf("Invalid DecryptData req")
+	}
+
 	keySecret, err := octeliumC.CoreC().GetSecret(ctx,
 		apivalidation.ObjectReferenceToRGetOptions(req.KeySecretRef))
 	if err != nil {
