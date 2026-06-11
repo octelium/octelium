@@ -763,7 +763,7 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 	for _, rule := range idp.Spec.PostAuthenticationRules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Debug("Could not eval postAuthentication condition", zap.Error(err))
+			zap.L().Warn("Could not evalCondition in doPostAuthenticationRules", zap.Error(err))
 			continue
 		}
 
@@ -858,7 +858,7 @@ func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	for _, rule := range rules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Debug("Could not eval postAuthentication condition", zap.Error(err))
+			zap.L().Warn("Could not evalCondition in doAuthenticatorEnforcementRule", zap.Error(err))
 			continue
 		}
 
