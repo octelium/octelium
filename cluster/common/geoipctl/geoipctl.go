@@ -324,7 +324,63 @@ func (c *Controller) setUpstream(ctx context.Context,
 			zap.L().Debug("Retrying....", zap.Error(err))
 		}).SetTimeout(60 * time.Second).SetLogger(zap.S())
 
-	resp, err := httpC.R().SetContext(ctx).Get(upstream.Url)
+	req := httpC.R().SetContext(ctx)
+
+	type secretOwner interface {
+		GetFromSecret() string
+	}
+
+	getSecret := func(secOwner secretOwner) (string, error) {
+		if secOwner == nil {
+			return "", errors.Errorf("You must set fromSecret")
+		}
+		if secOwner.GetFromSecret() == "" {
+			return "", errors.Errorf("Empty Secret name")
+		}
+
+		sec, err := c.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: secOwner.GetFromSecret()})
+		if err != nil {
+			return "", err
+		}
+
+		return ucorev1.ToSecret(sec).GetValueStr(), nil
+	}
+
+	if upstream.Auth != nil {
+		switch upstream.Auth.Type.(type) {
+		case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_Auth_Basic_:
+			spec := upstream.GetAuth().GetBasic()
+			secret, err := getSecret(spec.GetPassword())
+			if err != nil {
+				return err
+			}
+			req = req.SetBasicAuth(spec.Username, secret)
+		case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_Auth_Bearer_:
+			spec := upstream.GetAuth().GetBearer()
+			secret, err := getSecret(spec)
+			if err != nil {
+				return err
+			}
+
+			req = req.SetAuthToken(secret)
+		case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_Auth_Custom_:
+			spec := upstream.GetAuth().GetCustom()
+			secret, err := getSecret(spec.GetValue())
+			if err != nil {
+				return err
+			}
+			req = req.SetHeader(spec.Header, secret)
+		case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_Auth_Query_:
+			spec := upstream.GetAuth().GetQuery()
+			secret, err := getSecret(spec.GetValue())
+			if err != nil {
+				return err
+			}
+			req = req.SetQueryParam(spec.Key, secret)
+		}
+	}
+
+	resp, err := req.Get(upstream.Url)
 	if err != nil {
 		return err
 	}
