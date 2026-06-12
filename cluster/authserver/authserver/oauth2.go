@@ -347,6 +347,12 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		s.returnOAuth2Err(w, "invalid_request", 400)
 		return
 	}
+
+	if err := s.doPostAuthenticationRules(ctx, provider.Provider(), usr, info); err != nil {
+		s.returnOAuth2Err(w, "invalid_request", 400)
+		return
+	}
+
 	sess, err := sessionc.CreateSession(ctx, &sessionc.CreateSessionOpts{
 		OcteliumC:          s.octeliumC,
 		ClusterConfig:      cc,
