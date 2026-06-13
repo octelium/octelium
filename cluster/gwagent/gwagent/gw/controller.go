@@ -19,6 +19,7 @@ package gw
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"net"
 
 	"go.uber.org/zap"
@@ -186,27 +187,197 @@ type subnet struct {
 	V6 *net.IPNet
 }
 
-func getGatewaySubnet(c *corev1.ClusterConfig, nodeIdx, regionIdx int) (*subnet, error) {
+const (
+	gatewayPrefixLenV4   = 24
+	defaultRegionBitsV4  = 4
+	defaultGatewayBitsV4 = 4
+)
 
+func serviceSubnetV4(c *corev1.ClusterConfig) string {
+	return c.GetStatus().GetNetwork().GetServiceSubnet().GetV4()
+}
+
+func serviceSubnetV6(c *corev1.ClusterConfig) string {
+	return c.GetStatus().GetNetwork().GetServiceSubnet().GetV6()
+}
+
+func gatewayAllocationBitsV4(c *corev1.ClusterConfig) (regionBits, gatewayBits int) {
+	regionBits = defaultRegionBitsV4
+	gatewayBits = defaultGatewayBitsV4
+
+	v4 := c.GetStatus().GetNetworkConfig().GetV4()
+	if v4 == nil {
+		return regionBits, gatewayBits
+	}
+
+	if v4.GetRegionBits() > 0 {
+		regionBits = int(v4.GetRegionBits())
+	}
+	if v4.GetGatewayBits() > 0 {
+		gatewayBits = int(v4.GetGatewayBits())
+	}
+
+	return regionBits, gatewayBits
+}
+
+func nthSubnet(base *net.IPNet, newPrefix int, index uint64) (*net.IPNet, error) {
+	if base == nil {
+		return nil, errors.Errorf("Base network is nil")
+	}
+
+	ones, bits := base.Mask.Size()
+	if bits == 0 {
+		return nil, errors.Errorf("Invalid base network mask")
+	}
+	if newPrefix < ones {
+		return nil, errors.Errorf("new prefix /%d is shorter than base prefix /%d", newPrefix, ones)
+	}
+	if newPrefix > bits {
+		return nil, errors.Errorf("new prefix /%d exceeds address bit width %d", newPrefix, bits)
+	}
+
+	childBits := newPrefix - ones
+	if childBits >= 64 {
+		return nil, errors.Errorf("Too many child subnet bits: %d", childBits)
+	}
+
+	maxChildren := uint64(1) << uint(childBits)
+	if index >= maxChildren {
+		return nil, errors.Errorf("Subnet index %d exceeds available child subnet count %d", index, maxChildren)
+	}
+
+	ip := base.IP
+
+	switch bits {
+	case 32:
+		v4 := ip.To4()
+		if v4 == nil {
+			return nil, errors.Errorf("Base network is not IPv4")
+		}
+		ip = v4
+
+	case 128:
+		v6 := ip.To16()
+		if v6 == nil || ip.To4() != nil {
+			return nil, errors.Errorf("Base network is not IPv6")
+		}
+		ip = v6
+
+	default:
+		return nil, errors.Errorf("Unsupported address bit width: %d", bits)
+	}
+
+	offset := new(big.Int).Lsh(
+		new(big.Int).SetUint64(index),
+		uint(bits-newPrefix),
+	)
+
+	ipInt := new(big.Int).Add(new(big.Int).SetBytes(ip), offset)
+
+	out := make([]byte, bits/8)
+	if len(ipInt.Bytes()) > len(out) {
+		return nil, errors.Errorf("Allocated subnet overflows address width")
+	}
+
+	ipInt.FillBytes(out)
+
+	return &net.IPNet{
+		IP:   net.IP(out),
+		Mask: net.CIDRMask(newPrefix, bits),
+	}, nil
+}
+
+func getGatewaySubnetV4(c *corev1.ClusterConfig, nodeIdx, regionIdx int) (*net.IPNet, error) {
+	if c == nil {
+		return nil, errors.Errorf("ClusterConfig is nil")
+	}
+	if regionIdx < 0 {
+		return nil, errors.Errorf("Region index cannot be negative: %d", regionIdx)
+	}
+	if nodeIdx < 0 {
+		return nil, errors.Errorf("Gateway index cannot be negative: %d", nodeIdx)
+	}
+
+	serviceSubnet := serviceSubnetV4(c)
+	if serviceSubnet == "" {
+		return nil, errors.Errorf("IPv4 Service subnet is empty")
+	}
+
+	_, base, err := net.ParseCIDR(serviceSubnet)
+	if err != nil {
+		return nil, err
+	}
+
+	ones, bits := base.Mask.Size()
+	if bits != 32 {
+		return nil, errors.Errorf("Service subnet %s is not a valid IPv4 range", serviceSubnet)
+	}
+	if ones > gatewayPrefixLenV4 {
+		return nil, errors.Errorf(
+			"IPv4 service subnet prefix /%d is longer than fixed gateway subnet prefix /%d",
+			ones,
+			gatewayPrefixLenV4,
+		)
+	}
+
+	regionBits, gatewayBits := gatewayAllocationBitsV4(c)
+
+	if regionBits < 0 || gatewayBits < 0 {
+		return nil, errors.Errorf("Region/Gateway bit widths cannot be negative")
+	}
+	if regionBits > 30 || gatewayBits > 30 {
+		return nil, errors.Errorf(
+			"Region/Gateway bit widths are too large.",
+		)
+	}
+
+	availableBits := gatewayPrefixLenV4 - ones
+	allocationBits := regionBits + gatewayBits
+
+	if allocationBits > availableBits {
+		return nil, errors.Errorf(
+			"Gateway allocation does not fit",
+		)
+	}
+
+	maxRegions := 1 << uint(regionBits)
+	maxGatewaysPerRegion := 1 << uint(gatewayBits)
+
+	if regionIdx >= maxRegions {
+		return nil, errors.Errorf(
+			"Region index %d exceeds the maximum of %d regions allowed by %d region bits",
+			regionIdx,
+			maxRegions,
+			regionBits,
+		)
+	}
+	if nodeIdx >= maxGatewaysPerRegion {
+		return nil, errors.Errorf(
+			"Gateway index %d exceeds the maximum of %d Gateways per region allowed by %d Gateway bits",
+			nodeIdx,
+			maxGatewaysPerRegion,
+			gatewayBits,
+		)
+	}
+
+	index := (uint64(regionIdx) << uint(gatewayBits)) | uint64(nodeIdx)
+
+	return nthSubnet(base, gatewayPrefixLenV4, index)
+}
+
+func getGatewaySubnet(c *corev1.ClusterConfig, nodeIdx, regionIdx int) (*subnet, error) {
 	ret := &subnet{}
 
 	if ucorev1.ToClusterConfig(c).HasV4() {
-		_, clusterNet, err := net.ParseCIDR(c.Status.Network.ServiceSubnet.V4)
+		v4Net, err := getGatewaySubnetV4(c, nodeIdx, regionIdx)
 		if err != nil {
 			return nil, err
 		}
-
-		clusterNetIP := clusterNet.IP.To4()
-		octetNo2 := byte((regionIdx%16)<<4) | byte(nodeIdx%16)
-
-		ret.V4 = &net.IPNet{
-			IP:   net.IPv4(clusterNetIP[0], clusterNetIP[1], octetNo2, 0),
-			Mask: net.CIDRMask(24, 32),
-		}
+		ret.V4 = v4Net
 	}
 
 	if ucorev1.ToClusterConfig(c).HasV6() {
-		_, v6Net, err := net.ParseCIDR(c.Status.Network.ServiceSubnet.V6)
+		_, v6Net, err := net.ParseCIDR(serviceSubnetV6(c))
 		if err != nil {
 			return nil, err
 		}
