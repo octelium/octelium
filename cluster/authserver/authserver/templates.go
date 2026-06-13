@@ -163,8 +163,7 @@ type templateGlobals struct {
 }
 
 type templateGlobalsCluster struct {
-	Domain      string `json:"domain,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	Domain string `json:"domain,omitempty"`
 }
 
 func (s *server) renderLoggedIn(w http.ResponseWriter) {

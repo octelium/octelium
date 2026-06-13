@@ -235,8 +235,7 @@ func initServer(ctx context.Context,
 func (s *server) setTemplateGlobals(clusterCfg *corev1.ClusterConfig) {
 	t := &templateGlobals{
 		Cluster: templateGlobalsCluster{
-			Domain:      clusterCfg.Status.Domain,
-			DisplayName: clusterCfg.Metadata.DisplayName,
+			Domain: clusterCfg.Status.Domain,
 		},
 	}
 
