@@ -54,8 +54,7 @@ type templateGlobals struct {
 }
 
 type templateGlobalsCluster struct {
-	Domain      string `json:"domain,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	Domain string `json:"domain,omitempty"`
 }
 
 var indexTmpl = template.Must(template.New("state").Parse(
@@ -80,8 +79,7 @@ func initServer(ctx context.Context,
 func (s *server) setTemplateGlobals(clusterCfg *corev1.ClusterConfig) {
 	t := &templateGlobals{
 		Cluster: templateGlobalsCluster{
-			Domain:      clusterCfg.Status.Domain,
-			DisplayName: clusterCfg.Metadata.DisplayName,
+			Domain: clusterCfg.Status.Domain,
 		},
 	}
 	s.genCache.Set("template-globals", t, cache.NoExpiration)
