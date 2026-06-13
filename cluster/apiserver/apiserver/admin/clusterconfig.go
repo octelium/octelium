@@ -83,6 +83,10 @@ func (s *Server) validateClusterConfigSpec(ctx context.Context, c *corev1.Cluste
 		return err
 	}
 
+	if err := validateIngress(c); err != nil {
+		return err
+	}
+
 	if err := validateGateway(c); err != nil {
 		return err
 	}
@@ -96,6 +100,10 @@ func (s *Server) validateClusterConfigSpec(ctx context.Context, c *corev1.Cluste
 	}
 
 	if err := s.validateCCAuthenticator(ctx, c); err != nil {
+		return err
+	}
+
+	if err := s.validateAuthentication(ctx, c); err != nil {
 		return err
 	}
 
@@ -250,6 +258,91 @@ func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterC
 			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN:
 				return grpcutils.InvalidArg("Rule effect must be set")
 			}
+		}
+	}
+
+	return nil
+}
+
+func validateIngress(c *corev1.ClusterConfig) error {
+	if c.Spec.Ingress == nil {
+		return nil
+	}
+
+	if c.Spec.Ingress.XffNumTrustedHops < 0 {
+		return grpcutils.InvalidArg("xffNumTrustedHops cannot be negative")
+	}
+
+	return nil
+}
+
+func (s *Server) validateAuthentication(ctx context.Context, c *corev1.ClusterConfig) error {
+	if c.Spec.Authentication == nil {
+		return nil
+	}
+
+	geo := c.Spec.Authentication.Geolocation
+	if geo == nil {
+		return nil
+	}
+
+	mmdb := geo.GetMmdb()
+	if mmdb == nil {
+		return nil
+	}
+
+	up := mmdb.GetUpstream()
+	if up == nil {
+		return nil
+	}
+
+	if !govalidator.IsURL(up.Url) {
+		return grpcutils.InvalidArg("Invalid MMDB upstream URL: %s", up.Url)
+	}
+
+	auth := up.Auth
+	if auth == nil {
+		return nil
+	}
+
+	switch {
+	case auth.GetBearer() != nil:
+		if err := s.validateSecretOwner(ctx, auth.GetBearer()); err != nil {
+			return err
+		}
+	case auth.GetBasic() != nil:
+		basic := auth.GetBasic()
+		if basic.Username == "" {
+			return grpcutils.InvalidArg("MMDB upstream basic auth must set username")
+		}
+		if len(basic.Username) > 256 {
+			return grpcutils.InvalidArg("MMDB upstream basic auth username is too long")
+		}
+
+		if err := s.validateSecretOwner(ctx, basic.GetPassword()); err != nil {
+			return err
+		}
+	case auth.GetCustom() != nil:
+		custom := auth.GetCustom()
+		if custom.Header == "" {
+			return grpcutils.InvalidArg("MMDB upstream custom auth must set header")
+		}
+
+		if err := s.validateSecretOwner(ctx, custom.GetValue()); err != nil {
+			return err
+		}
+	case auth.GetQuery() != nil:
+		query := auth.GetQuery()
+		if query.Key == "" {
+			return grpcutils.InvalidArg("MMDB upstream query auth must set key")
+		}
+
+		if len(query.Key) > 256 {
+			return grpcutils.InvalidArg("MMDB upstream query auth key is too long")
+		}
+
+		if err := s.validateSecretOwner(ctx, query.GetValue()); err != nil {
+			return err
 		}
 	}
 
