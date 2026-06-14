@@ -32,7 +32,7 @@ import { HiMiniCommandLine } from "react-icons/hi2";
 import { SiKubernetes, SiMysql } from "react-icons/si";
 
 import parseQuery from "@/utils/parseQuery";
-import { Collapse, Text } from "@mantine/core";
+import { Collapse, Select, Text } from "@mantine/core";
 import { IoIosDesktop } from "react-icons/io";
 import ConnectCommand from "./ConnectCommand";
 
@@ -269,7 +269,7 @@ const NamespaceFilter = (props: {
         Filter by namespace
       </div>
 
-      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex flex-wrap gap-1.5">
         {entries.map((e) => {
           const isActive = e.value === props.active;
 
@@ -280,7 +280,7 @@ const NamespaceFilter = (props: {
               onClick={() => props.onSelect(e.value)}
               aria-pressed={isActive}
               className={twMerge(
-                "relative cursor-pointer flex-none rounded-full px-3.5 py-1.5 text-sm font-bold whitespace-nowrap transition-colors duration-500",
+                "relative cursor-pointer flex-none rounded-full px-3.5 py-1.5 text-sm font-semibold whitespace-nowrap transition-colors duration-200",
                 isActive
                   ? "text-white"
                   : "text-slate-600 hover:bg-slate-200/70 hover:text-slate-900",
@@ -305,6 +305,30 @@ const NamespaceFilter = (props: {
   );
 };
 
+const SERVICE_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "WEB", label: "Web App" },
+  { value: "HTTP", label: "HTTP" },
+  { value: "GRPC", label: "gRPC" },
+  { value: "SSH", label: "SSH" },
+  { value: "KUBERNETES", label: "Kubernetes" },
+  { value: "POSTGRES", label: "PostgreSQL" },
+  { value: "MYSQL", label: "MySQL" },
+  { value: "TCP", label: "TCP" },
+  { value: "UDP", label: "UDP" },
+  { value: "DNS", label: "DNS" },
+];
+
+const buildServicesURL = (
+  namespace: string | null,
+  type: string | null,
+): string => {
+  const p = new URLSearchParams();
+  if (namespace) p.set("namespace", namespace);
+  if (type) p.set("type", type);
+  const qs = p.toString();
+  return qs ? `/services?${qs}` : "/services";
+};
+
 const Page = () => {
   const settings = useAppSelector((state) => state.settings);
 
@@ -313,9 +337,10 @@ const Page = () => {
   const hasNS = searchParams.has("namespace");
   const navigate = useNavigate();
 
-  let opts = parseQuery<{ common: { page: number; itemsPerPage?: number } }>(
-    searchParams.toString(),
-  );
+  let opts = parseQuery<{
+    common: { page: number; itemsPerPage?: number };
+    type?: string;
+  }>(searchParams.toString());
   if (opts.common && opts.common.page && opts.common.page > 0) {
     opts.common.page = opts.common.page - 1;
   }
@@ -325,6 +350,9 @@ const Page = () => {
     common: {
       itemsPerPage: settings.itemsPerPage,
     },
+    type: opts.type
+      ? Service_Spec_Type[opts.type as "SSH"]
+      : Service_Spec_Type.UNSET,
   });
 
   const qry = useQuery({
@@ -337,7 +365,13 @@ const Page = () => {
   const qryNS = useQuery({
     queryKey: ["user/main.listNamespace", ListServiceOptions.toJsonString(o)],
     queryFn: async () => {
-      return await getClientUser().listNamespace(ListNamespaceOptions.create());
+      return await getClientUser().listNamespace(
+        ListNamespaceOptions.create({
+          common: {
+            itemsPerPage: 500,
+          },
+        }),
+      );
     },
   });
 
@@ -357,14 +391,35 @@ const Page = () => {
         {qryNS.isSuccess &&
           qryNS.data &&
           qryNS.data.response.items.length > 0 && (
-            <div className="mb-4">
-              <NamespaceFilter
-                namespaces={qryNS.data.response.items}
-                active={searchParams.get("namespace")}
-                onSelect={(v) => {
-                  navigate(v ? `/services?namespace=${v}` : "/services");
-                }}
-              />
+            <div className="mb-4 flex">
+              <div className="flex-1 mr-4">
+                <NamespaceFilter
+                  namespaces={qryNS.data.response.items}
+                  active={searchParams.get("namespace")}
+                  onSelect={(v) => {
+                    navigate(v ? `/services?namespace=${v}` : "/services");
+                  }}
+                />
+              </div>
+
+              <div>
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Filter by Type
+                </div>
+                <Select
+                  size="xs"
+                  placeholder="All Types"
+                  clearable
+                  data={SERVICE_TYPE_OPTIONS}
+                  value={searchParams.get("type")}
+                  onChange={(val) =>
+                    navigate(
+                      buildServicesURL(searchParams.get("namespace"), val),
+                    )
+                  }
+                  className="mt-1 w-48 font-bold"
+                />
+              </div>
             </div>
           )}
       </div>

@@ -9,7 +9,6 @@ import { useAppDispatch } from "@/utils/hooks";
 import { AppShell, Burger } from "@mantine/core";
 import { useDisclosure, useHeadroom } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
-import Links from "./Links";
 
 export default () => {
   const dispatch = useAppDispatch();
@@ -57,10 +56,6 @@ export default () => {
             </div>
           </AppShell.Header>
 
-          <AppShell.Navbar p="md" className="!bg-slate-100" zIndex={-1}>
-            <Sidebar />
-          </AppShell.Navbar>
-
           <AppShell.Main className="!bg-transparent h-full w-full mt-[60px]">
             <div className="flex-1 flex flex-col min-h-full min-w-full items-center justify-center">
               <div className="flex-1 w-full h-full">
@@ -69,8 +64,8 @@ export default () => {
               <Footer />
             </div>
           </AppShell.Main>
-          <AppShell.Aside p="md" className="!bg-transparent mt-[60px]">
-            <Links />
+          <AppShell.Aside p="md" className="!bg-transparent">
+            <Sidebar />
           </AppShell.Aside>
         </AppShell>
       </div>

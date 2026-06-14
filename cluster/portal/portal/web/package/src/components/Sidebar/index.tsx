@@ -9,6 +9,7 @@ import { LogoutRequest } from "@octelium/apis/main/userv1";
 import { useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
+import Links from "@/pages/Links";
 
 const items = [
   {
@@ -40,28 +41,7 @@ export default function () {
     <div className="h-full w-full mt-[60px]">
       <div className="w-full h-full flex flex-col">
         <div>
-          {items.map((item) => (
-            <div key={item.title}>
-              <div>
-                <Link
-                  viewTransition
-                  className={twMerge(
-                    "transition-all duration-500 hover:bg-slate-200 font-extrabold",
-                    "flex w-full items-center justify-center",
-                    "py-1 px-2 rounded-md my-1",
-                    "text-sm",
-                    loc.pathname.startsWith(item.url)
-                      ? `!text-white bg-zinc-800 hover:bg-black shadow-md`
-                      : `text-zinc-600 hover:text-zinc-800`,
-                  )}
-                  to={item.url}
-                >
-                  <item.icon />
-                  <span className="flex-1 ml-2">{item.title}</span>
-                </Link>
-              </div>
-            </div>
-          ))}
+         <Links />
         </div>
         <div className="flex-1"></div>
         <div className="flex flex-col">
