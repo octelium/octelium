@@ -34,6 +34,7 @@ import { SiKubernetes, SiMysql } from "react-icons/si";
 import parseQuery from "@/utils/parseQuery";
 import { Button, Collapse, Text } from "@mantine/core";
 import { IoIosDesktop } from "react-icons/io";
+import ConnectCommand from "./ConnectCommand";
 
 const getTypeIcon = (svc: Service) => {
   return match(svc.spec?.type)
@@ -118,6 +119,8 @@ const ItemDetails = (props: { item: Service; domain: string }) => {
           </div>
         </InfoItem>
       )}
+
+      <ConnectCommand service={props.item} domain={props.domain} />
     </div>
   );
 };
