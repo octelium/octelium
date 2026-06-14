@@ -32,9 +32,13 @@ import { HiMiniCommandLine } from "react-icons/hi2";
 import { SiKubernetes, SiMysql } from "react-icons/si";
 
 import parseQuery from "@/utils/parseQuery";
-import { Button, Collapse, Text } from "@mantine/core";
+import { Collapse, Text } from "@mantine/core";
 import { IoIosDesktop } from "react-icons/io";
 import ConnectCommand from "./ConnectCommand";
+
+import { motion, useReducedMotion } from "framer-motion";
+
+import { Namespace } from "@octelium/apis/main/userv1";
 
 const getTypeIcon = (svc: Service) => {
   return match(svc.spec?.type)
@@ -235,6 +239,72 @@ const ServiceListC = (props: { itemsList: ServiceList }) => {
   );
 };
 
+type Entry = {
+  key: string;
+  value: string | null;
+  label: string;
+};
+
+const NamespaceFilter = (props: {
+  namespaces: Namespace[];
+  active: string | null;
+  onSelect: (name: string | null) => void;
+}) => {
+  const reduced = useReducedMotion();
+
+  const entries: Entry[] = [
+    { key: "__all__", value: null, label: "All Namespaces" },
+    ...props.namespaces
+      .filter((x) => x.metadata!.name !== "octelium")
+      .map((x) => ({
+        key: x.metadata!.name,
+        value: x.metadata!.name,
+        label: printResourceNameWithDisplay(x.metadata!),
+      })),
+  ];
+
+  return (
+    <div className="mb-5">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        Filter by namespace
+      </div>
+
+      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {entries.map((e) => {
+          const isActive = e.value === props.active;
+
+          return (
+            <button
+              key={e.key}
+              type="button"
+              onClick={() => props.onSelect(e.value)}
+              aria-pressed={isActive}
+              className={twMerge(
+                "relative cursor-pointer flex-none rounded-full px-3.5 py-1.5 text-sm font-bold whitespace-nowrap transition-colors duration-500",
+                isActive
+                  ? "text-white"
+                  : "text-slate-600 hover:bg-slate-200/70 hover:text-slate-900",
+              )}
+            >
+              {isActive &&
+                (reduced ? (
+                  <span className="absolute inset-0 rounded-full bg-zinc-900" />
+                ) : (
+                  <motion.span
+                    layoutId="ns-filter-active"
+                    className="absolute inset-0 rounded-full bg-zinc-900 shadow-sm"
+                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                  />
+                ))}
+              <span className="relative font-semibold">{e.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const Page = () => {
   const settings = useAppSelector((state) => state.settings);
 
@@ -288,38 +358,13 @@ const Page = () => {
           qryNS.data &&
           qryNS.data.response.items.length > 0 && (
             <div className="mb-4">
-              <div className="font-bold text-gray-700">Filter by Namespace</div>
-              <div className="flex flex-row items-center">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  className="mr-2 !transition-all !duration-500"
-                  onClick={() => {
-                    navigate("/services");
-                  }}
-                >
-                  All Namespaces
-                </Button>
-                {qryNS.data.response.items
-                  .filter((x) => x.metadata!.name !== "octelium")
-                  .map((x) => (
-                    <Button
-                      size="xs"
-                      key={x.metadata!.name}
-                      variant={
-                        searchParams.get("namespace") === x.metadata?.name
-                          ? undefined
-                          : "outline"
-                      }
-                      className="mr-2 !transition-all !duration-500 shadow-2xs"
-                      onClick={() => {
-                        navigate(`/services?namespace=${x.metadata!.name}`);
-                      }}
-                    >
-                      {printResourceNameWithDisplay(x.metadata!)}
-                    </Button>
-                  ))}
-              </div>
+              <NamespaceFilter
+                namespaces={qryNS.data.response.items}
+                active={searchParams.get("namespace")}
+                onSelect={(v) => {
+                  navigate(v ? `/services?namespace=${v}` : "/services");
+                }}
+              />
             </div>
           )}
       </div>
