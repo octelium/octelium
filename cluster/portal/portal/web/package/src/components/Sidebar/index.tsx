@@ -66,7 +66,7 @@ export default function () {
         <div className="flex-1"></div>
         <div className="flex flex-col">
           <Button
-            className="mb-3"
+            className="mb-3 transition-all duration-500"
             fullWidth
             variant="outline"
             component="a"
@@ -76,7 +76,12 @@ export default function () {
             <span>Authenticators</span>
           </Button>
 
-          <Button fullWidth variant="outline" onClick={open}>
+          <Button
+            fullWidth
+            variant="outline"
+            className="transition-all duration-500"
+            onClick={open}
+          >
             <LogOut className="mr-1" />
             <span>Logout</span>
           </Button>

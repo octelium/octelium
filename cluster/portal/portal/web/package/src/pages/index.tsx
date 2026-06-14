@@ -20,7 +20,7 @@ export default () => {
     queryKey: ["user/getStatus"],
     queryFn: async () => {
       const { response } = await getClientUser().getStatus({});
-      console.log("getStatus", response);
+
       dispatch(setStatus({ status: response }));
       return response;
     },

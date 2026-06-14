@@ -111,7 +111,7 @@ const ItemDetails = (props: { item: Service; domain: string }) => {
         <InfoItem title="Private Addresses">
           <div className="flex flex-col">
             {item.status?.addresses.map((x) => (
-              <span className="w-full">
+              <span className="w-full" key={x}>
                 <CopyText value={x} />
               </span>
             ))}
@@ -273,10 +273,9 @@ const Page = () => {
       <title>Services - Octelium Portal</title>
       <div className="mt-4 mb-6">
         <div
-          className={twMerge("font-bold text-3xl text-gray-800")}
-          style={{
-            textShadow: "0 2px 8px rgba(0, 0, 0, 0.2)",
-          }}
+          className={twMerge(
+            "font-bold text-3xl text-gray-800 text-shadow-2xs",
+          )}
         >
           Services
         </div>
@@ -291,7 +290,7 @@ const Page = () => {
                 <Button
                   size="xs"
                   variant="outline"
-                  className="mr-2 transition-all duration-500"
+                  className="mr-2 !transition-all !duration-500"
                   onClick={() => {
                     navigate("/services");
                   }}
@@ -309,7 +308,7 @@ const Page = () => {
                           ? undefined
                           : "outline"
                       }
-                      className="mr-2 shadow-md"
+                      className="mr-2 !transition-all !duration-500 shadow-2xs"
                       onClick={() => {
                         navigate(`/services?namespace=${x.metadata!.name}`);
                       }}
