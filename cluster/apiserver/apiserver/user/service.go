@@ -52,6 +52,10 @@ func (s *Server) ListService(ctx context.Context, req *userv1.ListServiceOptions
 
 	listOpts := urscsrv.GetUserPublicListOptions(req)
 
+	if req.Type != userv1.Service_Spec_UNSET {
+		listOpts.Filters = append(listOpts.Filters, urscsrv.FilterFieldEQValStr("spec.mode", req.Type.String()))
+	}
+
 	if ns != nil {
 		listOpts.Filters = append(listOpts.Filters, urscsrv.FilterStatusNamespaceUID(ns.Metadata.Uid))
 	}
