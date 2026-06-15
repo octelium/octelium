@@ -10,6 +10,7 @@ import {
   Button,
   Collapse,
   Input,
+  Loader,
   Modal,
   PinInput,
   Tooltip,
@@ -19,18 +20,30 @@ import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import * as Auth from "@octelium/apis/main/authv1";
 import { DeleteOptions } from "@octelium/apis/main/metav1";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import { IoMdSend } from "react-icons/io";
 import { MdEdit, MdEditOff } from "react-icons/md";
 import { Link, useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 import { ReturnToPortal } from "../Register";
 
-const TOTP = (props: { authn: Auth.Authenticator }) => {
-  const { authn } = props;
+const buildSuccessURL = (query: URLSearchParams | null) => {
+  const qs = query?.toString() ?? "";
+  return qs.length > 0 ? `/callback/success?${qs}` : "/callback/success";
+};
+
+const isUserCancellation = (err: unknown) =>
+  err instanceof DOMException &&
+  (err.name === "NotAllowedError" || err.name === "AbortError");
+
+const TOTP = (props: {
+  authn: Auth.Authenticator;
+  query: URLSearchParams | null;
+}) => {
+  const { authn, query } = props;
 
   const c = getClientAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-  let [copy, setCopy] = React.useState<URLSearchParams | undefined>(undefined);
+  const [otp, setOtp] = React.useState("");
 
   const mutation = useMutation({
     mutationFn: async (otp: string) => {
@@ -54,22 +67,14 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
         }),
       );
     },
-    onSuccess: (r) => {
-      window.location.href = copy
-        ? `/callback/success?${copy.toString()}`
-        : "/callback/success";
+    onSuccess: () => {
+      window.location.href = buildSuccessURL(query);
     },
-    onError: (resp) => {},
+    onError: () => {
+      setOtp("");
+      toast.error("Could not verify the code. Please try again.");
+    },
   });
-
-  React.useEffect(() => {
-    setCopy(new URLSearchParams(searchParams));
-
-    searchParams.forEach((val, key, parent) => {
-      searchParams.delete(key);
-    });
-    setSearchParams(searchParams);
-  }, []);
 
   return (
     <div className="w-full flex flex-col items-center justify-center">
@@ -84,6 +89,8 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
         length={6}
         autoFocus
         size="lg"
+        value={otp}
+        onChange={setOtp}
         onComplete={(val) => {
           mutation.mutate(val);
         }}
@@ -92,12 +99,14 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
   );
 };
 
-const Fido = (props: { authn: Auth.Authenticator }) => {
-  const { authn } = props;
+const Fido = (props: {
+  authn: Auth.Authenticator;
+  query: URLSearchParams | null;
+}) => {
+  const { authn, query } = props;
 
   const c = getClientAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-  let [copy, setCopy] = React.useState<URLSearchParams | undefined>(undefined);
+  const startedRef = React.useRef(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -107,61 +116,82 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
         }),
       );
 
-      if (response.challengeRequest?.type.oneofKind === `fido`) {
-        try {
-          const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
-            JSON.parse(response.challengeRequest.type.fido.request),
-          );
-          const credential = (await navigator.credentials.get({
-            publicKey,
-          })) as PublicKeyCredential;
+      if (response.challengeRequest?.type.oneofKind !== `fido`) {
+        throw new Error("Unexpected challenge type");
+      }
 
-          return await c.authenticateWithAuthenticator(
-            Auth.AuthenticateWithAuthenticatorRequest.create({
-              authenticatorRef: getResourceRef(authn),
-              challengeResponse: {
-                type: {
-                  oneofKind: "fido",
-                  fido: {
-                    response: JSON.stringify(credential.toJSON()),
-                  },
-                },
+      const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
+        JSON.parse(response.challengeRequest.type.fido.request),
+      );
+      const credential = (await navigator.credentials.get({
+        publicKey,
+      })) as PublicKeyCredential;
+
+      return await c.authenticateWithAuthenticator(
+        Auth.AuthenticateWithAuthenticatorRequest.create({
+          authenticatorRef: getResourceRef(authn),
+          challengeResponse: {
+            type: {
+              oneofKind: "fido",
+              fido: {
+                response: JSON.stringify(credential.toJSON()),
               },
-            }),
-          );
-        } catch (err) {
-          console.log("fido get err", err);
-          throw err;
-        }
+            },
+          },
+        }),
+      );
+    },
+    onSuccess: () => {
+      window.location.href = buildSuccessURL(query);
+    },
+    onError: (err) => {
+      if (!isUserCancellation(err)) {
+        toast.error("Could not verify your security key. Please try again.");
       }
     },
-    onSuccess: (r) => {
-      window.location.href = copy
-        ? `/callback/success?${copy.toString()}`
-        : "/callback/success";
-    },
-    onError: (resp) => {},
   });
 
   React.useEffect(() => {
-    setCopy(new URLSearchParams(searchParams));
-
-    searchParams.forEach((val, key, parent) => {
-      searchParams.delete(key);
-    });
-    setSearchParams(searchParams);
-
+    if (startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
     mutation.mutate();
   }, []);
 
-  return <div></div>;
+  return (
+    <div className="w-full flex flex-col items-center justify-center my-4">
+      {mutation.isPending && (
+        <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          Waiting for your security key
+        </h2>
+      )}
+      {mutation.isError && (
+        <div className="w-full flex flex-col items-center justify-center">
+          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+            Authentication was not completed
+          </h2>
+          <Button
+            onClick={() => {
+              mutation.mutate();
+            }}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 };
 
-export const Authenticator = (props: { authn: Auth.Authenticator }) => {
-  const { authn } = props;
-  let [open, setOpen] = React.useState(false);
-  let [isEdit, setIsEdit] = React.useState(false);
-  let [displayName, setDisplayName] = React.useState<string>(
+export const Authenticator = (props: {
+  authn: Auth.Authenticator;
+  query: URLSearchParams | null;
+}) => {
+  const { authn, query } = props;
+  const [open, setOpen] = React.useState(false);
+  const [isEdit, setIsEdit] = React.useState(false);
+  const [displayName, setDisplayName] = React.useState<string>(
     authn.spec!.displayName,
   );
 
@@ -177,28 +207,32 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
         }),
       );
     },
-    onSuccess: (r) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["getAvailableAuthenticator"],
       });
     },
-    onError: (resp) => {},
+    onError: () => {
+      toast.error("Could not delete the Authenticator. Please try again.");
+    },
   });
 
   const mutationUpdate = useMutation({
     mutationFn: async () => {
-      let req = Auth.Authenticator.clone(authn);
+      const req = Auth.Authenticator.clone(authn);
       req.spec!.displayName = displayName ?? "";
 
       await c.updateAuthenticator(req);
     },
-    onSuccess: (r) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["getAvailableAuthenticator"],
       });
       setIsEdit(false);
     },
-    onError: (resp) => {},
+    onError: () => {
+      toast.error("Could not update the Authenticator. Please try again.");
+    },
   });
 
   return (
@@ -323,11 +357,11 @@ export const Authenticator = (props: { authn: Auth.Authenticator }) => {
         {open && (
           <div>
             {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
-              <Fido authn={authn} />
+              <Fido authn={authn} query={query} />
             )}
 
             {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
-              <TOTP authn={authn} />
+              <TOTP authn={authn} query={query} />
             )}
           </div>
         )}
@@ -390,8 +424,9 @@ const devList = Auth.AuthenticatorList.create({
 
 export const ListAvailableAuthenticators = (props: {
   resp: Auth.GetAvailableAuthenticatorResponse;
+  query: URLSearchParams | null;
 }) => {
-  const { resp } = props;
+  const { resp, query } = props;
 
   if (resp.availableAuthenticators.length < 1) {
     return (
@@ -418,47 +453,43 @@ export const ListAvailableAuthenticators = (props: {
             Your Session's Main Authenticator
           </div>
 
-          <Authenticator authn={resp.mainAuthenticator} />
+          <Authenticator authn={resp.mainAuthenticator} query={query} />
         </div>
       )}
-      {resp.availableAuthenticators.length < 1 ? (
+      <div>
+        <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          Your Available Authenticators{" "}
+          <Button
+            className="ml-2 shadow-md"
+            component={Link}
+            to={`/authenticators/register`}
+          >
+            Register
+          </Button>
+        </h2>
         <div className="w-full">
-          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
-            You have no Available Authenticators{" "}
-            <Button
-              className="ml-2 shadow-md"
-              component={Link}
-              to={`/authenticators/register`}
-            >
-              Register
-            </Button>
-          </div>
+          {resp.availableAuthenticators.map((x) => (
+            <Authenticator key={x.metadata!.name} authn={x} query={query} />
+          ))}
         </div>
-      ) : (
-        <div>
-          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
-            Your Available Authenticators{" "}
-            <Button
-              className="ml-2 shadow-md"
-              component={Link}
-              to={`/authenticators/register`}
-            >
-              Register
-            </Button>
-          </h2>
-          <div className="w-full">
-            {resp.availableAuthenticators.map((x) => (
-              <Authenticator key={x.metadata!.name} authn={x} />
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
 
 const Page = () => {
   const c = getClientAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const queryRef = React.useRef<URLSearchParams | null>(null);
+  if (queryRef.current === null) {
+    queryRef.current = new URLSearchParams(searchParams);
+  }
+  const query = queryRef.current;
+
+  React.useEffect(() => {
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }, []);
 
   const { isError, isLoading, data } = useQuery({
     queryKey: ["getAvailableAuthenticator"],
@@ -474,10 +505,21 @@ const Page = () => {
   });
 
   if (isLoading) {
-    return <></>;
+    return (
+      <div className="w-full flex items-center justify-center my-24">
+        <Loader />
+      </div>
+    );
   }
-  if (!data) {
-    return <></>;
+
+  if (isError || !data) {
+    return (
+      <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
+        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          Could not load your Authenticators. Please refresh and try again.
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -488,17 +530,19 @@ const Page = () => {
           <div>
             {data.mainAuthenticator.status?.type ===
               Auth.Authenticator_Status_Type.FIDO && (
-              <Fido authn={data.mainAuthenticator} />
+              <Fido authn={data.mainAuthenticator} query={query} />
             )}
 
             {data.mainAuthenticator.status?.type ===
               Auth.Authenticator_Status_Type.TOTP && (
-              <TOTP authn={data.mainAuthenticator} />
+              <TOTP authn={data.mainAuthenticator} query={query} />
             )}
           </div>
         )}
 
-        {!data.mainAuthenticator && <ListAvailableAuthenticators resp={data} />}
+        {!data.mainAuthenticator && (
+          <ListAvailableAuthenticators resp={data} query={query} />
+        )}
       </div>
       <ReturnToPortal />
     </div>
