@@ -12,6 +12,16 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "react-hot-toast";
 import { IoIosFingerPrint } from "react-icons/io";
 
+import type { IconType } from "react-icons";
+import {
+  FaAws,
+  FaGithub,
+  FaGitlab,
+  FaGoogle,
+  FaMicrosoft,
+} from "react-icons/fa";
+import { SiAuth0, SiAuthentik, SiKeycloak, SiOkta } from "react-icons/si";
+
 interface authResponse {
   loginURL: string;
 }
@@ -34,6 +44,36 @@ interface StateProvider {
 }
 
 const PASSKEY_ID = "__passkey__";
+
+const PROVIDER_ICONS: { keywords: string[]; Icon: IconType }[] = [
+  { keywords: ["github"], Icon: FaGithub },
+  { keywords: ["gitlab"], Icon: FaGitlab },
+  { keywords: ["google", "gsuite"], Icon: FaGoogle },
+  {
+    keywords: ["microsoft", "azure", "entra", "adfs", "ad fs"],
+    Icon: FaMicrosoft,
+  },
+  { keywords: ["okta"], Icon: SiOkta },
+  { keywords: ["auth0"], Icon: SiAuth0 },
+  { keywords: ["keycloak"], Icon: SiKeycloak },
+  { keywords: ["amazon", "aws", "cognito"], Icon: FaAws },
+  { keywords: ["authentik"], Icon: SiAuthentik },
+];
+
+export function getProviderIcon(displayName: string): {
+  Icon: IconType | null;
+  found: boolean;
+} {
+  const name = displayName.toLowerCase().trim();
+
+  const match = PROVIDER_ICONS.find((p) =>
+    p.keywords.some((k) => name.includes(k)),
+  );
+
+  return match
+    ? { Icon: match.Icon, found: true }
+    : { Icon: null, found: false };
+}
 
 function getState(): State {
   if (!isDev()) {
@@ -221,6 +261,7 @@ const Page = () => {
 
           <div className="flex flex-col items-center justify-center">
             {providers.map((c) => {
+              const { Icon, found } = getProviderIcon(c.displayName);
               return (
                 <button
                   className={twMerge(
@@ -234,10 +275,11 @@ const Page = () => {
                   key={c.uid}
                   onClick={() => beginLogin(c.uid)}
                 >
-                  <div className="w-full flex flex-row items-center justify-center">
-                    <span className="flex-1 flex items-center justify-center font-semibold">
-                      {c.displayName}
-                    </span>
+                  <div className="w-full flex flex-row items-center justify-center gap-2">
+                    {found && Icon && (
+                      <Icon className="h-6 w-6 shrink-0" aria-hidden />
+                    )}
+                    <span className="font-semibold">{c.displayName}</span>
                   </div>
                 </button>
               );
