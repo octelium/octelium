@@ -4,18 +4,25 @@ import { getDomain, isDev } from "@/utils";
 
 import { getClientAuth } from "@/utils/client";
 import { getResourceRef } from "@/utils/pb";
-import { PinInput, TextInput } from "@mantine/core";
+import { Button, Loader, PinInput, TextInput } from "@mantine/core";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
+import toast from "react-hot-toast";
 import { twMerge } from "tailwind-merge";
+
+const isUserCancellation = (err: unknown) =>
+  err instanceof DOMException &&
+  (err.name === "NotAllowedError" || err.name === "AbortError");
 
 const TOTP = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
 
   const c = getClientAuth();
-  let [url, setURL] = React.useState<string | undefined>(undefined);
+  const [url, setURL] = React.useState<string | undefined>(undefined);
+  const [otp, setOtp] = React.useState("");
+  const startedRef = React.useRef(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -29,12 +36,15 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
         }),
       );
 
-      if (response.challengeRequest?.type.oneofKind === `totp`) {
-        setURL(response.challengeRequest.type.totp.url);
+      if (response.challengeRequest?.type.oneofKind !== `totp`) {
+        throw new Error("Unexpected challenge type");
       }
+
+      setURL(response.challengeRequest.type.totp.url);
     },
-    onSuccess: (r) => {},
-    onError: (resp) => {},
+    onError: () => {
+      toast.error("Could not start registration. Please try again.");
+    },
   });
 
   const mutationFinish = useMutation({
@@ -53,13 +63,20 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
         }),
       );
     },
-    onSuccess: (r) => {
+    onSuccess: () => {
       window.location.href = "/callback/success";
     },
-    onError: (resp) => {},
+    onError: () => {
+      setOtp("");
+      toast.error("Could not verify the code. Please try again.");
+    },
   });
 
   React.useEffect(() => {
+    if (startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
     mutation.mutate();
   }, []);
 
@@ -77,7 +94,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
           </div>
 
           <div className="font-bold text-sm text-slate-500 flex items-center justify-center my-2 text-center">
-            <span>Or use use the link </span>{" "}
+            <span>Or use the link </span>{" "}
             <a className="ml-2 text-black font-extrabold shadow-2xl" href={url}>
               here
             </a>
@@ -91,11 +108,34 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
               length={6}
               size="lg"
               autoFocus
+              value={otp}
+              onChange={setOtp}
               onComplete={(val) => {
                 mutationFinish.mutate(val);
               }}
             />
           </div>
+        </div>
+      )}
+
+      {!url && mutation.isPending && (
+        <div className="my-24 flex items-center justify-center">
+          <Loader />
+        </div>
+      )}
+
+      {!url && mutation.isError && (
+        <div className="w-full flex flex-col items-center justify-center my-4">
+          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+            Could not start registration
+          </div>
+          <Button
+            onClick={() => {
+              mutation.mutate();
+            }}
+          >
+            Try again
+          </Button>
         </div>
       )}
     </div>
@@ -106,6 +146,7 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
   const { authn } = props;
 
   const c = getClientAuth();
+  const startedRef = React.useRef(false);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -115,55 +156,80 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
         }),
       );
 
-      if (response.challengeRequest?.type.oneofKind === `fido`) {
-        const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(
-          JSON.parse(response.challengeRequest.type.fido.request),
-        );
-
-        try {
-          const credential = (await navigator.credentials.create({
-            publicKey,
-          })) as PublicKeyCredential;
-
-          return await c.registerAuthenticatorFinish(
-            Auth.AuthenticateWithAuthenticatorRequest.create({
-              authenticatorRef: getResourceRef(authn),
-              challengeResponse: {
-                type: {
-                  oneofKind: "fido",
-                  fido: {
-                    response: JSON.stringify(credential.toJSON()),
-                  },
-                },
-              },
-            }),
-          );
-        } catch (err) {
-          console.log("fido create err", err);
-          throw err;
-        }
+      if (response.challengeRequest?.type.oneofKind !== `fido`) {
+        throw new Error("Unexpected challenge type");
       }
+
+      const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(
+        JSON.parse(response.challengeRequest.type.fido.request),
+      );
+
+      const credential = (await navigator.credentials.create({
+        publicKey,
+      })) as PublicKeyCredential;
+
+      return await c.registerAuthenticatorFinish(
+        Auth.AuthenticateWithAuthenticatorRequest.create({
+          authenticatorRef: getResourceRef(authn),
+          challengeResponse: {
+            type: {
+              oneofKind: "fido",
+              fido: {
+                response: JSON.stringify(credential.toJSON()),
+              },
+            },
+          },
+        }),
+      );
     },
-    onSuccess: (r) => {
+    onSuccess: () => {
       window.location.href = "/callback/success";
     },
-    onError: (resp) => {},
+    onError: (err) => {
+      if (!isUserCancellation(err)) {
+        toast.error("Could not register your security key. Please try again.");
+      }
+    },
   });
 
   React.useEffect(() => {
+    if (startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
     mutation.mutate();
   }, []);
 
-  return <div></div>;
+  return (
+    <div className="w-full flex flex-col items-center justify-center my-4">
+      {mutation.isPending && (
+        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          Waiting for your security key
+        </div>
+      )}
+      {mutation.isError && (
+        <div className="w-full flex flex-col items-center justify-center">
+          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+            Registration was not completed
+          </div>
+          <Button
+            onClick={() => {
+              mutation.mutate();
+            }}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const Page = () => {
   const c = getClientAuth();
-  let [displayName, setDisplayName] = React.useState<string | undefined>(
-    undefined,
-  );
+  const [displayName, setDisplayName] = React.useState<string>("");
 
-  let [authn, setAuthn] = React.useState<Auth.Authenticator | undefined>(
+  const [authn, setAuthn] = React.useState<Auth.Authenticator | undefined>(
     undefined,
   );
 
@@ -196,7 +262,9 @@ const Page = () => {
     onSuccess: (r) => {
       setAuthn(r);
     },
-    onError: (resp) => {},
+    onError: () => {
+      toast.error("Could not create the Authenticator. Please try again.");
+    },
   });
 
   return (
@@ -275,11 +343,11 @@ const Page = () => {
         )}
         {authn && (
           <div>
-            {authn.status?.type == Auth.Authenticator_Status_Type.TOTP && (
+            {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
               <TOTP authn={authn} />
             )}
 
-            {authn.status?.type == Auth.Authenticator_Status_Type.FIDO && (
+            {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
               <Fido authn={authn} />
             )}
           </div>
