@@ -100,7 +100,7 @@ func (s *server) setSecurityHeaders(w http.ResponseWriter, nonce string) {
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: https:",
 		"font-src 'self'",
-		fmt.Sprintf("connect-src 'self' https://octelium-api.%s", s.domain),
+		fmt.Sprintf("connect-src 'self' https://octelium-api.%s https://api.github.com", s.domain),
 		"frame-src 'none'",
 		"frame-ancestors 'none'",
 		"object-src 'none'",
