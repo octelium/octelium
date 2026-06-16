@@ -1,15 +1,15 @@
 import { Button } from "@mantine/core";
 import { Boxes, LockKeyhole, LogOut, PanelTop } from "lucide-react";
 
+import Links from "@/pages/Links";
 import { getDomain } from "@/utils";
 import { getClientAuth } from "@/utils/client";
 import { Modal } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { LogoutRequest } from "@octelium/apis/main/userv1";
 import { useMutation } from "@tanstack/react-query";
-import { Link, useLocation } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
-import Links from "@/pages/Links";
+import { useLocation } from "react-router-dom";
+import ReleaseBox from "../ReleaseBox";
 
 const items = [
   {
@@ -41,7 +41,9 @@ export default function () {
     <div className="h-full w-full mt-[60px]">
       <div className="w-full h-full flex flex-col">
         <div>
-         <Links />
+          <Links />
+
+          <ReleaseBox />
         </div>
         <div className="flex-1"></div>
         <div className="flex flex-col">
