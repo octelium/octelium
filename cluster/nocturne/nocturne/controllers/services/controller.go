@@ -478,11 +478,13 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
-	if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
-		k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
-		if !k8serr.IsNotFound(err) {
-			zap.L().Warn("Could not delete svc configMap",
-				zap.String("svc", svc.Metadata.Name), zap.Error(err))
+	if svc.Status.ParentServiceRef == nil {
+		if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
+			k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
+			if !k8serr.IsNotFound(err) {
+				zap.L().Warn("Could not delete svc configMap",
+					zap.String("svc", svc.Metadata.Name), zap.Error(err))
+			}
 		}
 	}
 
