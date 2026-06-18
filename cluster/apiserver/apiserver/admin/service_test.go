@@ -649,6 +649,64 @@ func TestCreateService(t *testing.T) {
 
 		assert.Nil(t, err)
 	}
+
+	{
+		svc, err := srv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode:        corev1.Service_Spec_HTTP,
+				IsAnonymous: true,
+				IsPublic:    true,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: "https://example.com",
+						},
+					},
+				},
+			},
+		})
+
+		assert.Nil(t, err)
+
+		childSvc, err := srv.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), svc.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode:        corev1.Service_Spec_HTTP,
+				IsAnonymous: true,
+				IsPublic:    true,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: "https://example.com",
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.DeleteService(ctx, &metav1.DeleteOptions{
+			Uid: svc.Metadata.Uid,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+
+		_, err = srv.DeleteService(ctx, &metav1.DeleteOptions{
+			Uid: childSvc.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.DeleteService(ctx, &metav1.DeleteOptions{
+			Uid: svc.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+	}
+
 }
 
 func TestServiceMode(t *testing.T) {
