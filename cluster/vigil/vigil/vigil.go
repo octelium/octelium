@@ -114,28 +114,33 @@ func NewServer(ctx context.Context, opts *Opts) (*Server, error) {
 		zap.L().Debug("Starting onServiceUpdate",
 			zap.Any("svc", new))
 
-		ret.vCache.SetService(new)
+		if new.Metadata.Uid == ret.svcUID {
+			ret.vCache.SetService(new)
+		} else if new.Status.ParentServiceRef != nil && new.Status.ParentServiceRef.Uid == ret.svcUID {
+			ret.vCache.SetChildService(new)
+		} else {
+			return nil
+		}
 
 		if err := ret.secretMan.ApplyService(ctx); err != nil {
 			zap.L().Warn("Could not applyService for secretMan", zap.Error(err))
 		}
 
-		if (new.Spec.Mode != old.Spec.Mode) ||
-			(ucorev1.ToService(new).RealPort() != ucorev1.ToService(old).RealPort()) {
-			zap.L().Info("Mode or Port changed. Reloading Service...")
-			ret.server.Close()
-			zap.L().Debug("Server is now closed")
-			if err := ret.createServer(ctx); err != nil {
-				return err
-			}
-			zap.L().Debug("Server recreated")
-			return ret.server.Run(ctx)
-		} else {
+		return nil
+	}
 
-			return nil
-
+	ret.svcCtl.FnOnAdd = func(ctx context.Context, svc *corev1.Service) error {
+		if svc.Status.ParentServiceRef != nil && svc.Status.ParentServiceRef.Uid == ret.svcUID {
+			ret.vCache.SetChildService(svc)
 		}
+		return nil
+	}
 
+	ret.svcCtl.FnOnDelete = func(ctx context.Context, svc *corev1.Service) error {
+		if svc.Status.ParentServiceRef != nil && svc.Status.ParentServiceRef.Uid == ret.svcUID {
+			ret.vCache.DeleteChildService(svc.Metadata.Name)
+		}
+		return nil
 	}
 
 	if err := ret.createServer(ctx); err != nil {

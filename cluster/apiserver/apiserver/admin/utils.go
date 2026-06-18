@@ -72,8 +72,8 @@ func getNamespace(name string) (string, error) {
 	if len(args) == 1 {
 		return "default", nil
 	}
-	if len(args) == 2 {
-		return args[1], nil
+	if len(args) >= 2 {
+		return args[len(args)-1], nil
 	}
 	return "", serr.InvalidArg("Invalid Namespace name")
 }

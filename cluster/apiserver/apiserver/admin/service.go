@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -90,7 +91,7 @@ func (s *Server) UpdateService(ctx context.Context, req *corev1.Service) (*corev
 	if err := apivalidation.ValidateCommon(req, &apivalidation.ValidateCommonOpts{
 		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
 			RequireName: true,
-			ParentsMax:  1,
+			ParentsMax:  vutils.GetMaxServiceParents(),
 		},
 	}); err != nil {
 		return nil, err
@@ -132,7 +133,7 @@ func (s *Server) DoCreateService(ctx context.Context, req *corev1.Service, isSys
 	if err := apivalidation.ValidateCommon(req, &apivalidation.ValidateCommonOpts{
 		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
 			RequireName: true,
-			ParentsMax:  1,
+			ParentsMax:  vutils.GetMaxServiceParents(),
 		},
 	}); err != nil {
 		return nil, err
@@ -171,6 +172,37 @@ func (s *Server) DoCreateService(ctx context.Context, req *corev1.Service, isSys
 		Status: &corev1.Service_Status{
 			NamespaceRef: umetav1.GetObjectReference(ns),
 		},
+	}
+
+	if segments := strings.Split(item.Metadata.Name, "."); len(segments) > 1 {
+
+		parent := func(domain string) string {
+			firstDot := strings.Index(domain, ".")
+			if firstDot == -1 {
+				return domain
+			}
+			return domain[firstDot+1:]
+		}(item.Metadata.Name)
+
+		if parent != ns.Metadata.Name {
+			if !ucorev1.ToService(item).IsHTTP() {
+				return nil, serr.InvalidArg("A child Service must be HTTP-based")
+			}
+
+			parentSvc, err := s.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: parent,
+			})
+			if err != nil {
+				return nil, serr.K8sNotFoundOrInternalWithErr(err)
+			}
+
+			if !ucorev1.ToService(parentSvc).IsHTTP() {
+				return nil, serr.InvalidArg("The Parent Service must be HTTP-based")
+			}
+
+			item.Status.ParentServiceRef = umetav1.GetObjectReference(parentSvc)
+		}
+
 	}
 
 	if isSystemService && req.Status != nil {
@@ -237,7 +269,7 @@ func (s *Server) CreateService(ctx context.Context, req *corev1.Service) (*corev
 
 func (s *Server) DeleteService(ctx context.Context, req *metav1.DeleteOptions) (*metav1.OperationResult, error) {
 	if err := apivalidation.CheckDeleteOptions(req, &apivalidation.CheckGetOptionsOpts{
-		ParentsMax: 1,
+		ParentsMax: vutils.GetMaxServiceParents(),
 	}); err != nil {
 		return nil, err
 	}
@@ -250,6 +282,21 @@ func (s *Server) DeleteService(ctx context.Context, req *metav1.DeleteOptions) (
 	)
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	{
+		childSvcList, err := s.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{
+				urscsrv.FilterFieldEQValStr("status.parentServiceRef.uid", svc.Metadata.Uid),
+			},
+		})
+		if err != nil {
+			return nil, serr.InternalWithErr(err)
+		}
+
+		if len(childSvcList.Items) > 0 {
+			return nil, serr.InvalidArg("You cannot delete a Service before deleting all of its child Services")
+		}
 	}
 
 	if err := apivalidation.CheckIsSystem(svc); err != nil {
@@ -272,7 +319,7 @@ func (s *Server) validateService(ctx context.Context,
 	if err := apivalidation.ValidateCommon(svc, &apivalidation.ValidateCommonOpts{
 		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
 			RequireName: true,
-			ParentsMax:  1,
+			ParentsMax:  vutils.GetMaxServiceParents(),
 		},
 	}); err != nil {
 		return err
@@ -1667,7 +1714,7 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 
 func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*corev1.Service, error) {
 	if err := apivalidation.CheckGetOptions(req, &apivalidation.CheckGetOptionsOpts{
-		ParentsMax: 1,
+		ParentsMax: vutils.GetMaxServiceParents(),
 	}); err != nil {
 		return nil, err
 	}

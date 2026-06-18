@@ -104,7 +104,7 @@ func GetServiceFullNameFromName(arg string) string {
 	if len(args) == 1 {
 		return fmt.Sprintf("%s.default", arg)
 	}
-	if len(args) == 2 {
+	if len(args) >= 2 {
 		return arg
 	}
 	return ""

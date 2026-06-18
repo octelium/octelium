@@ -80,7 +80,7 @@ func (s *Server) ListService(ctx context.Context, req *userv1.ListServiceOptions
 func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
 
 	if err := apivalidation.CheckGetOptions(req, &apivalidation.CheckGetOptionsOpts{
-		ParentsMax: 1,
+		ParentsMax: vutils.GetMaxServiceParents(),
 	}); err != nil {
 		return nil, err
 	}

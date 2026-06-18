@@ -59,6 +59,10 @@ func NewController(octeliumC octeliumc.ClientInterface, k8sC kubernetes.Interfac
 
 func (c *Controller) deployK8sResources(ctx context.Context, svc *corev1.Service) error {
 
+	if svc.Status.ParentServiceRef != nil {
+		return nil
+	}
+
 	ownerCM, err := k8sutils.CreateOrUpdateConfigMap(ctx, c.k8sC, c.getOwnerConfigMap(svc))
 	if err != nil {
 		return err

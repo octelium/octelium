@@ -213,15 +213,6 @@ func (s *Server) getTLSConfig(ctx context.Context, svc *corev1.Service) (*tls.Co
 			}
 		}(),
 
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-		},
-
 		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			s.crtMan.mu.RLock()
 			defer s.crtMan.mu.RUnlock()
@@ -270,9 +261,28 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.Handler, error) {
 	chain := middlewares.New()
 
+	getSvc := func(r *http.Request) *corev1.Service {
+
+		domain, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			domain = r.Host
+		}
+
+		if domain == "" {
+			return s.vCache.GetService()
+		}
+
+		if ret := s.vCache.GetServiceByName(domain); ret != nil {
+			return ret
+		}
+
+		return s.vCache.GetService()
+	}
+
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			svc := s.vCache.GetService()
+			svc := getSvc(r)
+
 			reqCtx := &middlewares.RequestContext{
 				CreatedAt:     time.Now(),
 				Service:       svc,
