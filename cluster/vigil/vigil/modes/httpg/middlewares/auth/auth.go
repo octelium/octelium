@@ -93,6 +93,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	auth, err := m.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
+		Service: svc,
 		Request: reqCtx.DownstreamRequest,
 	})
 	if err != nil {

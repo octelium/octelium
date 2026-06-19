@@ -22,8 +22,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/pkg/errors"
 
 	"sync"
@@ -263,6 +265,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	getSvc := func(r *http.Request) *corev1.Service {
 
+		if govalidator.IsIP(r.Host) {
+			return s.vCache.GetService()
+		}
+
 		domain, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			domain = r.Host
@@ -271,6 +277,9 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		if domain == "" {
 			return s.vCache.GetService()
 		}
+
+		domain = strings.TrimSuffix(domain, fmt.Sprintf(".%s", s.domain))
+		domain = strings.TrimSuffix(domain, ".local")
 
 		if ret := s.vCache.GetChildService(domain); ret != nil {
 			return ret
