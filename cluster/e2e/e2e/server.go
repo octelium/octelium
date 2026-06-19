@@ -1726,6 +1726,8 @@ func (s *server) waitDeploymentSvc(ctx context.Context, name string) error {
 		Metadata: &metav1.Metadata{
 			Name: vutils.GetServiceFullNameFromName(name),
 		},
+		Spec:   &corev1.Service_Spec{},
+		Status: &corev1.Service_Status{},
 	}))
 }
 
