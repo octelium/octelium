@@ -1905,6 +1905,7 @@ func (s *server) installClusterCert(ctx context.Context) error {
 		fmt.Sprintf("*.octelium.local.%s", domain),
 		fmt.Sprintf("*.octelium-api.local.%s", domain),
 		fmt.Sprintf("*.demo-nginx.%s", domain),
+		fmt.Sprintf("*.demo-nginx.default.%s", domain),
 		fmt.Sprintf("*.demo-nginx.local.%s", domain),
 	}
 
