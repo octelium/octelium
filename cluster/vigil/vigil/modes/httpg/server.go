@@ -272,7 +272,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 			return s.vCache.GetService()
 		}
 
-		if ret := s.vCache.GetServiceByName(domain); ret != nil {
+		if ret := s.vCache.GetChildService(domain); ret != nil {
 			return ret
 		}
 
