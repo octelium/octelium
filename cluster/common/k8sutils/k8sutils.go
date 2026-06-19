@@ -37,6 +37,10 @@ func normalizeSvcNameStr(arg string) string {
 }
 
 func GetSvcHostname(svc *corev1.Service) string {
+	if svc.Status.ParentServiceRef != nil {
+		return fmt.Sprintf("svc-%s", normalizeSvcNameStr(svc.Status.ParentServiceRef.Name))
+	}
+
 	return fmt.Sprintf("svc-%s", normalizeSvcName(svc))
 }
 

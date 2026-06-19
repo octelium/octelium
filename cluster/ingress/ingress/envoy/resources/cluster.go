@@ -230,5 +230,5 @@ func getTransportSocket(hostname string) (*core.TransportSocket, error) {
 }
 
 func getClusterNameFromService(svc *corev1.Service) string {
-	return fmt.Sprintf("svc-%s", k8sutils.GetSvcHostname(svc))
+	return fmt.Sprintf("svc-%s", svc.Metadata.Name)
 }
