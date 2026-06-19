@@ -113,11 +113,8 @@ func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Servic
 			zap.String("svc", newSvc.Metadata.Name))
 		return nil
 	case !newSvcInMyRegion && oldSvcInMyRegion:
-		if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
-			k8sutils.GetSvcHostname(oldSvc), k8smetav1.DeleteOptions{}); err != nil {
-			if !k8serr.IsNotFound(err) {
-				return err
-			}
+		if err := c.deleteConfigMap(ctx, oldSvc); err != nil {
+			return err
 		}
 		return nil
 	default:
@@ -478,6 +475,18 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
+	if err := c.deleteConfigMap(ctx, svc); err != nil {
+		return err
+	}
+
+	if err := c.handleDeleteSessionUpstream(ctx, svc); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) deleteConfigMap(ctx context.Context, svc *corev1.Service) error {
 	if svc.Status.ParentServiceRef == nil {
 		if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
 			k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
@@ -486,10 +495,6 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 					zap.String("svc", svc.Metadata.Name), zap.Error(err))
 			}
 		}
-	}
-
-	if err := c.handleDeleteSessionUpstream(ctx, svc); err != nil {
-		return err
 	}
 
 	return nil
