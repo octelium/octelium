@@ -229,6 +229,10 @@ func (s *server) run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.runChildService(ctx); err != nil {
+		return err
+	}
+
 	if err := s.runGeoIP(ctx); err != nil {
 		return err
 	}
@@ -1403,6 +1407,78 @@ func (s *server) runOcteliumctlAccessToken(ctx context.Context) error {
 
 	{
 		s.httpCPublicAccessTokenCheck("demo-nginx", res.GetAccessToken().AccessToken)
+	}
+
+	return nil
+}
+
+func (s *server) runChildService(ctx context.Context) error {
+	t := s.t
+
+	out, err := s.getCmd(ctx,
+		"octeliumctl create cred --user root --policy allow-all --type access-token -o json").CombinedOutput()
+	assert.Nil(t, err)
+
+	res := &corev1.CredentialToken{}
+
+	zap.L().Debug("Command out", zap.String("out", string(out)))
+
+	err = pbutils.UnmarshalJSON(out, res)
+	assert.Nil(t, err)
+
+	accessToken := res.GetAccessToken().AccessToken
+
+	conn, err := client.GetGRPCClientConn(ctx, s.domain)
+	assert.Nil(t, err)
+	defer conn.Close()
+
+	c := corev1.NewMainServiceClient(conn)
+
+	{
+		s.httpCPublicAccessTokenCheck("demo-nginx", accessToken)
+	}
+
+	{
+		svc, err := c.GetService(ctx, &metav1.GetOptions{
+			Name: "demo-nginx.default",
+		})
+		assert.Nil(t, err)
+
+		child1, err := c.CreateService(ctx, &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), svc.Metadata.Name),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode:     corev1.Service_Spec_HTTP,
+				IsPublic: true,
+				Port:     80,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Response: &corev1.Service_Spec_Config_HTTP_Response{
+								Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_{
+									Direct: &corev1.Service_Spec_Config_HTTP_Response_Direct{
+										Type: &corev1.Service_Spec_Config_HTTP_Response_Direct_Inline{
+											Inline: "child-1",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		time.Sleep(4 * time.Second)
+
+		res, err := s.httpCPublicAccessToken(child1.Metadata.Name, accessToken).R().Get("/")
+		assert.Nil(t, err)
+
+		assert.Equal(t, http.StatusOK, res.StatusCode())
+
+		assert.Equal(t, "child-1", string(res.Body()))
 	}
 
 	return nil
