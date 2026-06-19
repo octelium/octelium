@@ -300,12 +300,7 @@ func getRoutesService(svc *corev1.Service, domain string) ([]*routev3.Route, err
 				},
 
 				HostRewriteSpecifier: &routev3.RouteAction_HostRewriteLiteral{
-					HostRewriteLiteral: func() string {
-						if svc.Status.ParentServiceRef != nil {
-							return fmt.Sprintf("%s.%s", svc.Status.ParentServiceRef.Name, domain)
-						}
-						return getSvcFQDNs(svc, domain)[0]
-					}(),
+					HostRewriteLiteral: getSvcFQDNs(svc, domain)[0],
 				},
 
 				ClusterSpecifier: &routev3.RouteAction_Cluster{
