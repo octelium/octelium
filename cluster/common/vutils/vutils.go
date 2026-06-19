@@ -266,7 +266,7 @@ func GetServiceFullNameFromName(arg string) string {
 	if len(args) == 1 {
 		return fmt.Sprintf("%s.default", arg)
 	}
-	if len(args) >= 2 {
+	if len(args) == 2 {
 		return arg
 	}
 	return ""
@@ -366,7 +366,3 @@ const ManagedServicePort = 49999
 const HealthCheckPortVigil = 49094
 const HealthCheckPortManagedService = 49095
 const HealthCheckPortMain = 49090
-
-func GetMaxServiceParents() uint64 {
-	return 2
-}

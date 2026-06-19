@@ -250,12 +250,11 @@ func ToCredential(a *corev1.Credential) *Credential {
 }
 
 func (s *Service) Name() string {
-	name := s.Metadata.Name
-	lastDot := strings.LastIndex(name, ".")
-	if lastDot == -1 {
-		return name
+	args := strings.Split(s.Metadata.Name, ".")
+	if len(args) == 0 {
+		return ""
 	}
-	return name[:lastDot]
+	return args[0]
 }
 
 func (s *ServiceConfig) GetRealName() string {

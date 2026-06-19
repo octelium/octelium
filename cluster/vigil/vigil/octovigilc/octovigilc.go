@@ -90,22 +90,14 @@ func NewClient(ctx context.Context, opts *Opts) (*Client, error) {
 
 func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
 	if c.isEmbedded {
-		svc := req.Service
-		if svc == nil {
-			svc = c.vCache.GetService()
-		}
 		return c.embeddedSrv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
-			Service: svc,
+			Service: c.vCache.GetService(),
 			Request: req.Request,
 		})
 	} else {
 		// zap.L().Debug("Starting a remote AuthenticateAndAuthorize")
-		svcUID := c.svcUID
-		if req.Service != nil {
-			svcUID = req.Service.Metadata.Uid
-		}
 		return c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
-			ServiceUID: svcUID,
+			ServiceUID: c.svcUID,
 			Request:    req.Request,
 		})
 	}
@@ -142,7 +134,6 @@ func (c *Client) Authorize(ctx context.Context, req *coctovigilv1.AuthorizeReque
 
 type AuthenticateAndAuthorizeRequest struct {
 	Request *coctovigilv1.DownstreamRequest
-	Service *corev1.Service
 }
 
 func (c *Client) GetCache() *acache.Cache {
