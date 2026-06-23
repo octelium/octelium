@@ -679,6 +679,13 @@ func TestGetSessionFromGRPCCtx(t *testing.T) {
 	}
 }
 
+func nextTOTPStepTime(now time.Time) time.Time {
+	const period = int64(30)
+
+	nextStep := now.Unix()/period + 1
+	return time.Unix(nextStep*period, 0).UTC()
+}
+
 func TestAuthenticateWithAuthenticator(t *testing.T) {
 	ctx := context.Background()
 
@@ -688,6 +695,7 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 		tst.Destroy()
 	})
 	fakeC := tst.C
+
 	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
 	assert.Nil(t, err)
 
@@ -700,7 +708,6 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 	})
 
 	{
-
 		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
 			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
 		assert.Nil(t, err)
@@ -713,22 +720,6 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 		assert.Nil(t, err)
 
-		/*
-			factor, err := srv.octeliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
-				Metadata: &metav1.Metadata{
-					Name: utilrand.GetRandomStringCanonical(8),
-				},
-
-				Spec: &corev1.IdentityProvider_Spec{
-					Type: &corev1.IdentityProvider_Spec_Totp{
-						Totp: &corev1.IdentityProvider_Spec_TOTP{},
-					},
-				},
-			})
-
-			assert.Nil(t, err)
-		*/
-
 		authn, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
 			Metadata: &metav1.Metadata{
 				Name: utilrand.GetRandomStringCanonical(8),
@@ -739,7 +730,6 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 			Status: &corev1.Authenticator_Status{
 				UserRef: umetav1.GetObjectReference(usrT.Usr),
 				Type:    corev1.Authenticator_Status_TOTP,
-				// IdentityProviderRef: umetav1.GetObjectReference(factor),
 			},
 		})
 		assert.Nil(t, err)
@@ -752,8 +742,8 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 
 		usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
 		assert.Nil(t, err)
-		usrT.Resync()
 
+		usrT.Resync()
 		usrT.Resync()
 
 		authn, err = srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
@@ -761,11 +751,12 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 		})
 		assert.Nil(t, err)
 
-		getSecret := func(ctx context.Context, usr *corev1.User) (string, error) {
+		getSecret := func(ctx context.Context) (string, error) {
 			authn, err := tst.C.OcteliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{
 				Uid: authn.Metadata.Uid,
 			})
 			assert.Nil(t, err)
+
 			info := authn.Status.GetInfo().GetTotp().GetSharedSecret()
 
 			plaintext, err := authenticators.DecryptData(ctx, fakeC.OcteliumC, info)
@@ -784,8 +775,10 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 		k, err := otp.NewKeyFromURL(authBeginResp.ChallengeRequest.GetTotp().Url)
 		assert.Nil(t, err)
 
+		registrationTime := time.Now().UTC()
+
 		{
-			passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+			passcode, err := totp.GenerateCode(k.Secret(), registrationTime)
 			assert.Nil(t, err)
 
 			postResp, err := srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
@@ -803,10 +796,36 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 		}
 
 		{
-
-			secret, err := getSecret(ctx, usrT.Usr)
+			secret, err := getSecret(ctx)
 			assert.Nil(t, err)
-			passcode, err := totp.GenerateCode(secret, time.Now())
+
+			replayedPasscode, err := totp.GenerateCode(secret, registrationTime)
+			assert.Nil(t, err)
+
+			_, err = srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+			})
+			assert.Nil(t, err, "%+v", err)
+
+			postResp, err := srv.doAuthenticateWithAuthenticator(getCtxRT(usrT), &authv1.AuthenticateWithAuthenticatorRequest{
+				AuthenticatorRef: umetav1.GetObjectReference(authn),
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: replayedPasscode,
+						},
+					},
+				},
+			})
+			assert.NotNil(t, err)
+			assert.Nil(t, postResp)
+		}
+
+		{
+			secret, err := getSecret(ctx)
+			assert.Nil(t, err)
+
+			passcode, err := totp.GenerateCode(secret, nextTOTPStepTime(registrationTime))
 			assert.Nil(t, err)
 
 			_, err = srv.doAuthenticateAuthenticatorBegin(getCtxRT(usrT), &authv1.AuthenticateAuthenticatorBeginRequest{
@@ -827,6 +846,5 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 			assert.Nil(t, err, "%+v", err)
 			assert.NotNil(t, postResp, "%+v", err)
 		}
-
 	}
 }

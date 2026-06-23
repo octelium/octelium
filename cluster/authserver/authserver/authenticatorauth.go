@@ -827,6 +827,8 @@ func (s *server) prependToLastAttempts(a *corev1.Authenticator) {
 		return
 	}
 
+	a.Status.AuthenticationAttempt.CompletedAt = pbutils.Now()
+
 	maxLen := 10
 
 	if len(a.Status.LastAuthenticationAttempts) >= maxLen {

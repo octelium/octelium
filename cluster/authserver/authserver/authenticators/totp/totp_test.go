@@ -67,7 +67,6 @@ func TestTOTP(t *testing.T) {
 			State: corev1.Authenticator_Spec_ACTIVE,
 		},
 		Status: &corev1.Authenticator_Status{
-			// IdentityProviderRef: umetav1.GetObjectReference(factor),
 			UserRef: umetav1.GetObjectReference(usr.Usr),
 		},
 	})
@@ -116,18 +115,31 @@ func TestTOTP(t *testing.T) {
 		assert.Nil(t, err)
 
 		authn.Status.SuccessfulAuthentications = authn.Status.SuccessfulAuthentications + 1
+
+		_, err = fctr.Finish(ctx, &authenticators.FinishReq{
+			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Totp{
+						Totp: &authv1.ChallengeResponse_TOTP{
+							Response: passcode,
+						},
+					},
+				},
+			},
+		})
+
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
 	}
 
 	{
-		// Again to get the secret from the User auth factor state
 		req, err := fctr.Begin(ctx, &authenticators.BeginReq{})
 		assert.Nil(t, err)
 
-		passcode, err := totp.GenerateCode(k.Secret(), time.Now())
+		passcode, err := totp.GenerateCode(k.Secret(), time.Now().Add(30*time.Second))
 		assert.Nil(t, err)
 
 		_, err = fctr.Finish(ctx, &authenticators.FinishReq{
-
 			ChallengeRequest: req.Response.ChallengeRequest,
 			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
 				ChallengeResponse: &authv1.ChallengeResponse{
