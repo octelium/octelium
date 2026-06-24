@@ -18,6 +18,7 @@ package octovigil
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -121,6 +122,43 @@ func (s *Server) doEvalPreCondition(ctx context.Context, i *corev1.RequestContex
 	case *corev1.PolicyTrigger_Status_PreCondition_UserRef:
 		if preCondition.GetUserRef() != nil && i.User != nil {
 			if preCondition.GetUserRef().Uid != i.User.Metadata.Uid {
+				return false, nil
+			}
+
+			didMatch = true
+		}
+	case *corev1.PolicyTrigger_Status_PreCondition_DeviceRef:
+		if preCondition.GetDeviceRef() != nil && i.Device != nil {
+			if preCondition.GetDeviceRef().Uid != i.Device.Metadata.Uid {
+				return false, nil
+			}
+
+			didMatch = true
+		}
+	case *corev1.PolicyTrigger_Status_PreCondition_ServiceRef:
+		if preCondition.GetServiceRef() != nil && i.Service != nil {
+			if preCondition.GetServiceRef().Uid != i.Service.Metadata.Uid {
+				return false, nil
+			}
+
+			didMatch = true
+		}
+	case *corev1.PolicyTrigger_Status_PreCondition_NamespaceRef:
+		if preCondition.GetNamespaceRef() != nil && i.Namespace != nil {
+			if preCondition.GetNamespaceRef().Uid != i.Namespace.Metadata.Uid {
+				return false, nil
+			}
+
+			didMatch = true
+		}
+	case *corev1.PolicyTrigger_Status_PreCondition_GroupRef:
+		if preCondition.GetGroupRef() != nil && len(i.Groups) > 0 {
+
+			groupUID := preCondition.GetGroupRef().Uid
+
+			if !slices.ContainsFunc(i.Groups, func(itm *corev1.Group) bool {
+				return itm.Metadata.Uid == groupUID
+			}) {
 				return false, nil
 			}
 
