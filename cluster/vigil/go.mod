@@ -26,6 +26,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
+	github.com/things-go/go-socks5 v0.1.1
 	github.com/yuin/gopher-lua v1.1.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0

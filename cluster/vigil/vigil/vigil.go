@@ -43,6 +43,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/mysql"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/postgres"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/socks5"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/ssh"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/tcp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/udp"
@@ -187,6 +188,9 @@ func (s *Server) createServer(ctx context.Context) error {
 	case corev1.Service_Spec_MYSQL:
 		zap.L().Debug("Starting in MySQL mode", zap.String("mode", mode.String()))
 		s.server, err = mysql.New(ctx, opts)
+	case corev1.Service_Spec_SOCKS5:
+		zap.L().Debug("Starting in SOCKS5 mode", zap.String("mode", mode.String()))
+		s.server, err = socks5.New(ctx, opts)
 	default:
 		return errors.Errorf("Unsupported protocol type by Vigil's server: %s", mode)
 	}
