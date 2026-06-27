@@ -43,7 +43,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const defaultESSHPort = 22022
+const (
+	defaultESSHPort    = 22022
+	defaultESOCKS5Port = 1080
+)
 
 func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 	publishedServices []*cliconfigv1.Connection_Preferences_PublishedService) error {
@@ -113,6 +116,14 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 					}
 
 					return defaultESSHPort
+				}(),
+				ESOCKS5Enable: cmdArgs.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
+				ESOCKS5Port: func() int32 {
+					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESOCKS5_PORT"), 10, 32); err == nil {
+						return int32(port)
+					}
+
+					return defaultESOCKS5Port
 				}(),
 			},
 		},
@@ -257,6 +268,32 @@ func getConnectionConfig(ctx context.Context,
 
 				ListenIPAddresses: func() []string {
 					ipAddrsStr := os.Getenv("OCTELIUM_ESSH_IP_ADDRS")
+					if ipAddrsStr == "" {
+						return nil
+					}
+
+					ipStrs := strings.Split(ipAddrsStr, ",")
+
+					var ret []string
+					for _, ipStr := range ipStrs {
+						ret = append(ret, strings.TrimSpace(ipStr))
+					}
+					return ret
+				}(),
+			},
+
+			ESOCKS5: &cliconfigv1.Connection_Preferences_ESOCKS5{
+				IsEnabled: cmdArgs.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
+				Port: func() int32 {
+					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESOCKS5_PORT"), 10, 32); err == nil {
+						return int32(port)
+					}
+
+					return defaultESOCKS5Port
+				}(),
+
+				ListenIPAddresses: func() []string {
+					ipAddrsStr := os.Getenv("OCTELIUM_ESOCKS5_IP_ADDRS")
 					if ipAddrsStr == "" {
 						return nil
 					}

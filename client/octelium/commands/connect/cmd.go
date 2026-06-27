@@ -39,8 +39,9 @@ type args struct {
 	PublishServices    []string
 	ImplementationMode string
 
-	UseESSH  bool
-	ESSHUser string
+	UseESSH    bool
+	UseESOCKS5 bool
+	ESSHUser   string
 
 	Assertion string
 	Scopes    []string
@@ -141,6 +142,8 @@ You can also use multiple scopes in the same command as follows "--scope service
 		`
 	The tunneling mode for the  connection. The current available values are "wg", "wireguard" which use WireGuard (i.e. the default tunneling mode)
 	and "quicv0" which uses QUIC. Currently "quicv0" is experimental and not suitable for production environments`)
+
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESOCKS5, "esocks5", false, "Run embedded SOCKS5 server")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
