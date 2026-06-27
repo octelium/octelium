@@ -193,11 +193,11 @@ func (c *Controller) Start(ctx context.Context) error {
 		zap.L().Debug("Creating eSSH main server")
 		c.eSSHHMainSrv, err = esshmain.New(c.c, c, c.ipv4Supported, c.ipv6Supported)
 		if err != nil {
-			zap.L().Warn("Could not create a new Workspace eSSH server", zap.Error(err))
+			zap.L().Warn("Could not create a new eSSH server", zap.Error(err))
 		} else {
 			zap.L().Debug("Running eSSH main server")
 			if err := c.eSSHHMainSrv.Run(ctx); err != nil {
-				zap.L().Warn("Could not run the Workspace eSSH server", zap.Error(err))
+				zap.L().Warn("Could not run the eSSH server", zap.Error(err))
 			}
 		}
 	}
@@ -212,6 +212,10 @@ func (c *Controller) Start(ctx context.Context) error {
 		})
 		if err != nil {
 			zap.L().Warn("Could not create a new embedded SOCKS5 server", zap.Error(err))
+		} else {
+			if err := c.esocks5Srv.Start(ctx); err != nil {
+				zap.L().Warn("Could not run the embedded SOCKS5 server", zap.Error(err))
+			}
 		}
 	}
 
