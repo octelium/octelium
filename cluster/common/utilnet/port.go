@@ -47,6 +47,8 @@ func GetPortFromScheme(arg string) (int, error) {
 		return 21, nil
 	case "dot":
 		return 853, nil
+	case "socks5":
+		return 1080, nil
 	default:
 		return 0, errors.Errorf("Unknown scheme %s. Please provide port number", arg)
 	}
