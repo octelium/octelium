@@ -17,6 +17,8 @@ package controller
 import (
 	"context"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -24,6 +26,8 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller/esshmain"
 	"github.com/octelium/octelium/client/octelium/commands/connect/dnssrv"
+	"github.com/octelium/octelium/client/octelium/commands/connect/esocks5"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/device"
@@ -63,8 +67,8 @@ type Controller struct {
 
 	quicEngine   *quicEngine
 	eSSHHMainSrv *esshmain.ESSHMain
-
-	localDNSSrv *dnssrv.Server
+	esocks5Srv   *esocks5.Server
+	localDNSSrv  *dnssrv.Server
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {
@@ -131,6 +135,12 @@ func (c *Controller) Close() error {
 		}
 	}
 
+	if c.esocks5Srv != nil {
+		if err := c.esocks5Srv.Close(); err != nil {
+			zap.L().Warn("Could not close embedded SOCKS5 server", zap.Error(err))
+		}
+	}
+
 	if c.localDNSSrv != nil {
 		if err := c.localDNSSrv.Close(); err != nil {
 			zap.L().Warn("Could not close local DNS server", zap.Error(err))
@@ -192,6 +202,19 @@ func (c *Controller) Start(ctx context.Context) error {
 		}
 	}
 
+	if c.c.Preferences != nil &&
+		c.c.Preferences.ESOCKS5 != nil &&
+		c.c.Preferences.ESOCKS5.IsEnabled {
+
+		c.esocks5Srv, err = esocks5.NewServer(&esocks5.Opts{
+			ListenAddrs: getESOCKS5ListenAddrs(c.c),
+			GoNetCtl:    c,
+		})
+		if err != nil {
+			zap.L().Warn("Could not create a new embedded SOCKS5 server", zap.Error(err))
+		}
+	}
+
 	return nil
 }
 
@@ -236,4 +259,45 @@ func (c *Controller) getMTU() int {
 	}
 
 	return 1280
+}
+
+func getESOCKS5ListenAddrs(connCfg *cliconfigv1.Connection) []string {
+	if connCfg == nil ||
+		connCfg.Connection == nil ||
+		connCfg.Preferences == nil ||
+		connCfg.Preferences.ESOCKS5 == nil {
+		return nil
+	}
+
+	portStr := strconv.Itoa(int(connCfg.Preferences.ESOCKS5.Port))
+	if portStr == "0" {
+		portStr = strconv.Itoa(1080)
+	}
+
+	if len(connCfg.Preferences.ESOCKS5.ListenIPAddresses) > 0 {
+		var ret []string
+		for _, addr := range connCfg.Preferences.ESOCKS5.ListenIPAddresses {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				ret = append(ret, net.JoinHostPort(addr, portStr))
+			}
+		}
+		return ret
+	}
+
+	ipv4Supported := connCfg.Preferences.L3Mode != cliconfigv1.Connection_Preferences_V6
+	ipv6Supported := connCfg.Preferences.L3Mode != cliconfigv1.Connection_Preferences_V4
+
+	var ret []string
+	for _, addr := range connCfg.Connection.Addresses {
+		if addr.V4 != "" && ipv4Supported {
+			ret = append(ret,
+				net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv4, portStr))
+		} else if addr.V6 != "" && ipv6Supported {
+			ret = append(ret,
+				net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv6, portStr))
+		}
+	}
+
+	return ret
 }

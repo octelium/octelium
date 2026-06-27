@@ -19,6 +19,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
+	github.com/things-go/go-socks5 v0.1.1
 	github.com/vishvananda/netlink v1.3.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
