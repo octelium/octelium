@@ -759,6 +759,30 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 		}
 	}
 
+	{
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name:        "socks5.octelium",
+				DisplayName: "SOCKS5 Server for Embedded Access",
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_SOCKS5,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Socks5{
+						Socks5: &corev1.Service_Spec_Config_SOCKS5{
+							IsEmbeddedMode: true,
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
