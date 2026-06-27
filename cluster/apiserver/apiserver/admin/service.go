@@ -1376,6 +1376,28 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			return serr.InvalidArg("Unsupported kubernetes config type")
 		}
 
+	case *corev1.Service_Spec_Config_Socks5:
+		if spec.Mode != corev1.Service_Spec_SOCKS5 {
+			return grpcutils.InvalidArg("SOCKS5 mode must be set for SOCKS5 config to be used")
+		}
+		inSocks5 := cfg.GetSocks5()
+
+		if inSocks5.Auth != nil {
+			switch inSocks5.Auth.Type.(type) {
+			case *corev1.Service_Spec_Config_SOCKS5_Auth_UsernamePassword_:
+
+				if inSocks5.Auth.GetUsernamePassword().Username != "" {
+					if err := apivalidation.ValidateGenASCII(inSocks5.Auth.GetUsernamePassword().Username); err != nil {
+						return err
+					}
+				}
+
+				if err := s.validateSecretOwner(ctx, inSocks5.Auth.GetUsernamePassword().Password); err != nil {
+					return err
+				}
+
+			}
+		}
 	case *corev1.Service_Spec_Config_Ssh:
 		if spec.Mode != corev1.Service_Spec_SSH {
 			return grpcutils.InvalidArg("SSH mode must be set for SSH config to be used")
@@ -1635,6 +1657,8 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return 5432
 		case corev1.Service_Spec_MYSQL:
 			return 3306
+		case corev1.Service_Spec_SOCKS5:
+			return 1080
 		default:
 			return 0
 		}
