@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/ocrypto"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/otelutils"
@@ -110,6 +111,9 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 
 	server.socksSrv = gosocks5.NewServer(
 		gosocks5.WithAuthMethods([]gosocks5.Authenticator{
+			&gosocks5.UserPassAuthenticator{
+				Credentials: sessionSelectorCredentialStore{},
+			},
 			gosocks5.NoAuthAuthenticator{},
 		}),
 		gosocks5.WithResolver(noResolveResolver{}),
@@ -311,8 +315,10 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 		return err
 	}
 
+	request := s.getDownstreamReq(ctx, clientConn, target)
+
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
-		Request: s.getDownstreamReq(ctx, clientConn, target),
+		Request: request,
 	})
 	if err != nil {
 		zap.L().Debug("Could not authenticate/authorize SOCKS5 request", zap.Error(err))
@@ -331,7 +337,19 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 		return errors.Errorf("SOCKS5 request is not authorized")
 	}
 
-	dctx := newDctx(ctx, clientConn, writer, req.Reader, target, authResp)
+	svcConfig := vigilutils.GetServiceConfig(ctx, authResp)
+
+	var upstreamSession *corev1.Session
+	if isEmbeddedMode(svcConfig) {
+		upstreamSession, err = s.getEmbeddedUpstreamSession(ctx, req)
+		if err != nil {
+			zap.L().Debug("Could not get embedded SOCKS5 upstream Session", zap.Error(err))
+			gosocks5.SendReply(writer, statute.RepRuleFailure, nil)
+			return err
+		}
+	}
+
+	dctx := newDctx(ctx, clientConn, writer, req.Reader, target, authResp, svcConfig, upstreamSession)
 
 	s.dctxMap.mu.Lock()
 	s.dctxMap.dctxMap[dctx.id] = dctx
@@ -354,6 +372,30 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 	s.emitEndLog(startTime, dctx, authResp, target)
 
 	return err
+}
+
+func (s *Server) getEmbeddedUpstreamSession(ctx context.Context, req *gosocks5.Request) (*corev1.Session, error) {
+	sessionName := getAuthUsername(req)
+	if sessionName == "" {
+		return nil, errors.Errorf("SOCKS5 embedded mode requires username/password auth with username set to the upstream Session name")
+	}
+
+	if err := apivalidation.ValidateName(sessionName, 0, 0); err != nil {
+		return nil, err
+	}
+
+	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+		Name: sessionName,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if !ucorev1.ToSession(sess).IsClientConnectedSOCKS5() {
+		return nil, errors.Errorf("upstream Session is not connected or not SOCKS5 embedded")
+	}
+
+	return sess, nil
 }
 
 func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn, target *target) *coctovigilv1.DownstreamRequest {

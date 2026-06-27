@@ -326,6 +326,14 @@ func (s *Session) IsClientConnectedESSH() bool {
 	return s.Status.Connection.ESSHEnable
 }
 
+func (s *Session) IsClientConnectedSOCKS5() bool {
+	if !s.IsClientConnected() {
+		return false
+	}
+
+	return s.Status.Connection.ESOCKS5Enable
+}
+
 func (s *Session) HasV4() bool {
 	if s == nil || s.Status.Connection == nil {
 		return false

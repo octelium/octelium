@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -86,6 +88,10 @@ func (p *proxy) getUpstreamConn(
 	svc *corev1.Service,
 	secretMan *secretman.SecretManager,
 ) (net.Conn, error) {
+	if isEmbeddedMode(p.dctx.svcConfig) {
+		return p.getEmbeddedUpstreamConn(ctx)
+	}
+
 	upstream, err := p.lbManager.GetUpstream(ctx, p.dctx.authResp)
 	if err != nil {
 		return nil, err
@@ -121,12 +127,41 @@ func (p *proxy) getUpstreamConn(
 		}
 	}
 
+	return p.dialViaSOCKS5(ctx, upstream.HostPort, auth)
+}
+
+func (p *proxy) getEmbeddedUpstreamConn(ctx context.Context) (net.Conn, error) {
+	if p.dctx.upstreamSession == nil {
+		return nil, errors.Errorf("Nil embedded SOCKS5 upstream Session")
+	}
+
+	if !ucorev1.ToSession(p.dctx.upstreamSession).IsClientConnectedSOCKS5() {
+		return nil, errors.Errorf("Upstream Session is not connected or not SOCKS5 embedded")
+	}
+
+	addr := getEmbeddedSessionAddr(p.dctx.upstreamSession)
+	if addr == "" {
+		return nil, errors.Errorf("Could not find upstream Session IP addr")
+	}
+
+	port := p.dctx.upstreamSession.Status.Connection.ESOCKS5Port
+	if port == 0 {
+		return nil, errors.Errorf("Upstream Session SOCKS5 port is not set")
+	}
+
+	p.dctx.upstreamHost = addr
+	p.dctx.upstreamPort = int(port)
+
+	return p.dialViaSOCKS5(ctx, net.JoinHostPort(addr, strconv.Itoa(int(port))), nil)
+}
+
+func (p *proxy) dialViaSOCKS5(ctx context.Context, socksAddr string, auth *xproxy.Auth) (net.Conn, error) {
 	forward := &upstreamDialer{
 		ctx:     ctx,
 		timeout: 20 * time.Second,
 	}
 
-	dialer, err := xproxy.SOCKS5("tcp", upstream.HostPort, auth, forward)
+	dialer, err := xproxy.SOCKS5("tcp", socksAddr, auth, forward)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +172,23 @@ func (p *proxy) getUpstreamConn(
 	}
 
 	return conn, nil
+}
+
+func getEmbeddedSessionAddr(sess *corev1.Session) string {
+	if sess == nil || sess.Status == nil || sess.Status.Connection == nil {
+		return ""
+	}
+
+	conn := sess.Status.Connection
+	for _, addr := range conn.Addresses {
+		if addr.V6 != "" && ucorev1.ToSession(sess).HasV6() {
+			return umetav1.ToDualStackNetwork(addr).ToIP().Ipv6
+		} else if addr.V4 != "" && ucorev1.ToSession(sess).HasV4() {
+			return umetav1.ToDualStackNetwork(addr).ToIP().Ipv4
+		}
+	}
+
+	return ""
 }
 
 func (p *proxy) doServe(clientWriter io.Writer, clientReader io.Reader, upstreamConn net.Conn) {

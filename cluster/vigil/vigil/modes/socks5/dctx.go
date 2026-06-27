@@ -29,7 +29,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
-	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 )
 
 type dctx struct {
@@ -49,6 +48,8 @@ type dctx struct {
 	svcConfig *corev1.Service_Spec_Config
 	authResp  *coctovigilv1.AuthenticateAndAuthorizeResponse
 
+	upstreamSession *corev1.Session
+
 	upstreamHost string
 	upstreamPort int
 }
@@ -60,6 +61,8 @@ func newDctx(
 	downstreamReader io.Reader,
 	target *target,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
+	svcConfig *corev1.Service_Spec_Config,
+	upstreamSession *corev1.Session,
 ) *dctx {
 	return &dctx{
 		id:               vutils.GenerateLogID(),
@@ -70,8 +73,9 @@ func newDctx(
 		req:              target.req,
 		target:           target,
 		createdAt:        time.Now(),
-		svcConfig:        vigilutils.GetServiceConfig(ctx, authResp),
+		svcConfig:        svcConfig,
 		authResp:         authResp,
+		upstreamSession:  upstreamSession,
 	}
 }
 
