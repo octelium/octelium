@@ -1,7 +1,7 @@
 {
   "editor.defaultFormatter": "golang.go",
   "terminal.integrated.defaultProfile.linux": "zsh",
-  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.colorTheme": "Dark Modern",
   "go.survey.prompt": false,
   "[jsonc]": {
     "editor.defaultFormatter": "vscode.json-language-features"

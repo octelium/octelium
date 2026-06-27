@@ -21,21 +21,12 @@ import (
 	"github.com/things-go/go-socks5/statute"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/cluster/common/apivalidation"
 )
 
 type sessionSelectorCredentialStore struct{}
 
 func (sessionSelectorCredentialStore) Valid(user, password, userAddr string) bool {
-	if user == "" || len(user) > 255 {
-		return false
-	}
-
-	if password == "" || len(password) > 255 {
-		return false
-	}
-
-	return apivalidation.ValidateName(user, 0, 0) == nil
+	return true
 }
 
 func getAuthUsername(req *gosocks5.Request) string {
