@@ -306,6 +306,12 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 		}
 	}
 
+	if req.ESOCKS5Port != 0 {
+		if err := apivalidation.ValidatePort(int(req.ESOCKS5Port)); err != nil {
+			return nil, err
+		}
+	}
+
 	sess.Status.IsConnected = true
 	pubKey := privateKey.PublicKey()
 	ed25519Pub, ed25519Priv, err := ed25519.GenerateKey(nil)
@@ -337,6 +343,16 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 				return req.ESSHPort
 			}
 			return 22022
+		}(),
+		ESOCKS5Enable: req.ESOCKS5Enable,
+		ESOCKS5Port: func() int32 {
+			if !req.ESOCKS5Enable {
+				return 0
+			}
+			if req.ESOCKS5Port != 0 {
+				return req.ESOCKS5Port
+			}
+			return 1080
 		}(),
 
 		L3Mode: func() corev1.Session_Status_Connection_L3Mode {
