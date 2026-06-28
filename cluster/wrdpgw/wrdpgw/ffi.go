@@ -1,3 +1,5 @@
+//go:build cgo && wrdpgw_credssp
+
 /*
  * Copyright Octelium Labs, LLC. All rights reserved.
  *
@@ -13,12 +15,11 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 package wrdpgw
 
 /*
 #cgo CFLAGS: -I${SRCDIR}
-#cgo LDFLAGS: -lwrdpgw_credssp
+#cgo LDFLAGS: -L${SRCDIR}/.libs -lwrdpgw_credssp -ldl -lm -lpthread
 #include <stdlib.h>
 #include "wrdpgw_credssp.h"
 */

@@ -26,7 +26,9 @@ WORKDIR /build
 COPY --from=builder-web /build/dist /build/cluster/wrdpgw/wrdpgw/web
 
 RUN mkdir -p /build/cluster/wrdpgw/wrdpgw/.libs
-COPY --from=builder-rust /build/target/release/libwrdpgw_credssp.a /build/cluster/wrdpgw/wrdpgw/.libs/
+COPY --from=builder-rust /build/target/release/libwrdpgw_credssp.a /build/cluster/wrdpgw/wrdpgw/.libs/libwrdpgw_credssp.a
+RUN ls -la /build/cluster/wrdpgw/wrdpgw/.libs && \
+    test -f /build/cluster/wrdpgw/wrdpgw/.libs/libwrdpgw_credssp.a
 
 RUN make build-wrdpgw
 
