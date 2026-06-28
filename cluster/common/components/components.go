@@ -41,6 +41,7 @@ const NodeInit ComponentType = "nodeinit"
 const Genesis ComponentType = "genesis"
 const Octovigil ComponentType = "octovigil"
 const Portal ComponentType = "portal"
+const WRRDPGW ComponentType = "wrdpgw"
 
 var myComponentType ComponentType
 var myComponentNS ComponentNamespace

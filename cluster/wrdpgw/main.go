@@ -23,7 +23,7 @@ import (
 
 func init() {
 	components.SetComponentNamespace(components.ComponentNamespaceOctelium)
-	components.SetComponentType(components.Portal)
+	components.SetComponentType(components.WRRDPGW)
 }
 
 func main() {

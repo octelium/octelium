@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/rscutils"
@@ -1684,6 +1685,25 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return serr.InternalWithErr(err)
 		}
 		svc.Status.RegionRef = umetav1.GetObjectReference(rgn)
+	}
+
+	if svc.Spec.Mode == corev1.Service_Spec_RDP_WEB {
+		svc.Status.ManagedService = &corev1.Service_Status_ManagedService{
+			Image:              oc.GetImage(oc.WRRDPGW, ""),
+			Type:               "wrdpgw",
+			ReadOnlyFileSystem: true,
+			HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+				Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+					Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
+						Port: vutils.HealthCheckPortManagedService,
+					},
+				},
+			},
+		}
+	} else {
+		if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
+			svc.Status.ManagedService = nil
+		}
 	}
 
 	return nil
