@@ -73,7 +73,7 @@ build-octovigil:
 build-portal:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-portal github.com/octelium/octelium/cluster/portal
 build-wrdpgw:
-	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-wrdpgw github.com/octelium/octelium/cluster/wrdpgw
+	CGO_ENABLED=1 GOOS=linux go build -tags wrdpgw_credssp $(LDFLAGS) -o bin/octelium-wrdpgw github.com/octelium/octelium/cluster/wrdpgw
 build-e2e:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-e2e github.com/octelium/octelium/cluster/e2e
 

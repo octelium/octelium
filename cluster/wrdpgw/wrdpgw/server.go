@@ -44,6 +44,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
@@ -73,12 +74,15 @@ type server struct {
 
 	httpSrv *http.Server
 
-	mu       sync.Mutex
-	isClosed bool
+	mu        sync.Mutex
+	isClosed  bool
+	secretMan *secretman.SecretManager
 }
 
 type templateGlobals struct {
 	WebSocketPath string `json:"webSocketPath,omitempty"`
+	Destination   string `json:"destination,omitempty"`
+	Secretless    bool   `json:"secretless,omitempty"`
 }
 
 var indexTmpl = template.Must(template.New("state").Parse(
@@ -109,11 +113,20 @@ func newServer(ctx context.Context, octeliumC octeliumc.ClientInterface, svc *co
 		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
+	ret.secretMan, err = secretman.New(ctx, octeliumC, ret.vCache)
+	if err != nil {
+		return nil, err
+	}
+
 	return ret, nil
 }
 
 func (s *server) run(ctx context.Context) error {
 	if err := s.lbManager.Run(ctx); err != nil {
+		return err
+	}
+
+	if err := s.secretMan.ApplyService(ctx); err != nil {
 		return err
 	}
 
@@ -162,7 +175,7 @@ func (s *server) onServiceAdd(ctx context.Context, svc *corev1.Service) error {
 	}
 
 	s.vCache.SetService(svc)
-	return nil
+	return s.secretMan.ApplyService(ctx)
 }
 
 func (s *server) onServiceUpdate(ctx context.Context, new, old *corev1.Service) error {
@@ -171,7 +184,7 @@ func (s *server) onServiceUpdate(ctx context.Context, new, old *corev1.Service) 
 	}
 
 	s.vCache.SetService(new)
-	return nil
+	return s.secretMan.ApplyService(ctx)
 }
 
 func (s *server) onServiceDelete(ctx context.Context, svc *corev1.Service) error {
@@ -229,9 +242,7 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 		return
 	}
 
-	globalsJSON, err := json.Marshal(&templateGlobals{
-		WebSocketPath: webSocketPath,
-	})
+	globalsJSON, err := json.Marshal(s.buildTemplateGlobals())
 	if err != nil {
 		zap.L().Error("Could not marshal wrdpgw globals", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -278,6 +289,21 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 
 	s.setIndexSecurityHeaders(w, nonce)
 	w.Write(out.Bytes())
+}
+
+func (s *server) buildTemplateGlobals() *templateGlobals {
+	ret := &templateGlobals{
+		WebSocketPath: webSocketPath,
+	}
+
+	cred, err := s.getInjectedCredential(context.Background())
+	if err != nil {
+		zap.L().Debug("Could not resolve wrdpgw injected credential for globals", zap.Error(err))
+		return ret
+	}
+
+	ret.Secretless = cred != nil
+	return ret
 }
 
 func (s *server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
@@ -347,6 +373,22 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cred, err := s.getInjectedCredential(ctx)
+	if err != nil {
+		zap.L().Debug("Could not resolve wrdpgw injected credential", zap.Error(err))
+		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
+		ws.Close(websocket.StatusInternalError, "could not resolve injected credential")
+		return
+	}
+
+	trust, err := s.getUpstreamTLSTrust()
+	if err != nil {
+		zap.L().Debug("Could not resolve wrdpgw upstream TLS trust", zap.Error(err))
+		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
+		ws.Close(websocket.StatusInternalError, "could not resolve upstream TLS trust")
+		return
+	}
+
 	upstream, err := s.getUpstream(ctx)
 	if err != nil {
 		zap.L().Debug("Could not get wrdpgw upstream",
@@ -357,11 +399,17 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handshake, err := performRDPHandshake(ctx, upstream, rdcpReq.X224ConnectionPDU)
+	handshake, err := performRDPHandshake(ctx, &rdpHandshakeParams{
+		upstream:   upstream,
+		clientX224: rdcpReq.X224ConnectionPDU,
+		cred:       cred,
+		trust:      trust,
+	})
 	if err != nil {
 		zap.L().Debug("Could not perform RDP handshake",
 			zap.String("requestedDestination", rdcpReq.Destination),
 			zap.String("upstream", upstream.HostPort),
+			zap.Bool("secretless", cred != nil),
 			zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathHTTPError(http.StatusBadGateway))
 		ws.Close(websocket.StatusTryAgainLater, "could not connect to upstream RDP server")
@@ -406,7 +454,8 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	zap.L().Debug("wrdpgw session started",
 		zap.String("remoteAddr", r.RemoteAddr),
 		zap.String("requestedDestination", rdcpReq.Destination),
-		zap.String("upstream", upstream.HostPort))
+		zap.String("upstream", upstream.HostPort),
+		zap.Bool("secretless", cred != nil))
 
 	recvBytes, sentBytes := relay(ctx, wsConn, handshake.TLSConn)
 
@@ -453,31 +502,6 @@ func (s *server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error
 	}
 
 	return upstream, nil
-}
-
-func (s *server) dialUpstream(ctx context.Context, upstream *loadbalancer.Upstream) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-
-	var dialer net.Dialer
-	dialer.KeepAlive = 30 * time.Second
-
-	conn, err := dialer.DialContext(ctx, "tcp", upstream.HostPort)
-	if err != nil {
-		return nil, err
-	}
-
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		if err := tcpConn.SetKeepAlive(true); err != nil {
-			zap.L().Debug("Could not enable wrdpgw TCP keepalive", zap.Error(err))
-		}
-
-		if err := tcpConn.SetKeepAlivePeriod(30 * time.Second); err != nil {
-			zap.L().Debug("Could not set wrdpgw TCP keepalive period", zap.Error(err))
-		}
-	}
-
-	return conn, nil
 }
 
 type copyResult struct {

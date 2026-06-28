@@ -19,7 +19,6 @@ package wrdpgw
 import (
 	"context"
 	"crypto/tls"
-	"io"
 	"net"
 	"time"
 
@@ -33,6 +32,19 @@ const (
 	tlsHandshakeTimeout  = 15 * time.Second
 )
 
+type injectedCredential struct {
+	Domain   string
+	Username string
+	Password string
+}
+
+type rdpHandshakeParams struct {
+	upstream   *loadbalancer.Upstream
+	clientX224 []byte
+	cred       *injectedCredential
+	trust      *tlsTrustPolicy
+}
+
 type rdpHandshakeResult struct {
 	TLSConn     *tls.Conn
 	X224PDU     []byte
@@ -41,17 +53,25 @@ type rdpHandshakeResult struct {
 	Negotiation bool
 }
 
-func performRDPHandshake(
-	ctx context.Context,
-	upstream *loadbalancer.Upstream,
-	x224Request []byte,
-) (*rdpHandshakeResult, error) {
-	if upstream == nil || upstream.HostPort == "" {
+func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandshakeResult, error) {
+	if p.upstream == nil || p.upstream.HostPort == "" {
 		return nil, errors.Errorf("empty RDP upstream")
 	}
 
-	if len(x224Request) == 0 {
-		return nil, errors.Errorf("empty X.224 connection request")
+	if p.trust == nil {
+		return nil, errors.Errorf("missing upstream TLS trust policy")
+	}
+
+	secretless := p.cred != nil
+
+	var x224Request []byte
+	if secretless {
+		x224Request = buildX224ConnectionRequest(protocolHybrid | protocolSSL)
+	} else {
+		if len(p.clientX224) == 0 {
+			return nil, errors.Errorf("empty client X.224 connection request")
+		}
+		x224Request = p.clientX224
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
@@ -60,7 +80,7 @@ func performRDPHandshake(
 	var dialer net.Dialer
 	dialer.KeepAlive = 30 * time.Second
 
-	rawConn, err := dialer.DialContext(dialCtx, "tcp", upstream.HostPort)
+	rawConn, err := dialer.DialContext(dialCtx, "tcp", p.upstream.HostPort)
 	if err != nil {
 		return nil, err
 	}
@@ -74,10 +94,10 @@ func performRDPHandshake(
 
 	if tcpConn, ok := rawConn.(*net.TCPConn); ok {
 		if err := tcpConn.SetKeepAlive(true); err != nil {
-			zap.L().Debug("SetKeepAlive err", zap.Error(err))
+			zap.L().Debug("Could not enable wrdpgw TCP keepalive", zap.Error(err))
 		}
 		if err := tcpConn.SetKeepAlivePeriod(30 * time.Second); err != nil {
-			zap.L().Debug("SetKeepAlivePeriod err", zap.Error(err))
+			zap.L().Debug("Could not set wrdpgw TCP keepalive period", zap.Error(err))
 		}
 	}
 
@@ -97,23 +117,52 @@ func performRDPHandshake(
 	if isRDPNegotiationFailure(x224Response) {
 		return &rdpHandshakeResult{
 			X224PDU:     x224Response,
-			ServerAddr:  upstream.HostPort,
+			ServerAddr:  p.upstream.HostPort,
 			Negotiation: false,
 		}, nil
+	}
+
+	selected, ok := rdpConfirmSelectedProtocol(x224Response)
+	if !ok {
+		return nil, errors.Errorf("invalid X.224 connection confirm")
+	}
+
+	if secretless {
+		if selected&protocolHybrid == 0 {
+			return nil, errors.Errorf("upstream did not select CredSSP/HYBRID for secretless access")
+		}
+	} else {
+		if selected == protocolRDP {
+			return nil, errors.Errorf("upstream selected standard RDP security which is unsupported")
+		}
 	}
 
 	if err := rawConn.SetDeadline(time.Now().Add(tlsHandshakeTimeout)); err != nil {
 		return nil, err
 	}
 
-	tlsConn := tls.Client(rawConn, &tls.Config{
-		ServerName:         getTLSServerName(upstream),
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
-	})
-
+	tlsConn := tls.Client(rawConn, buildUpstreamTLSConfig(p.upstream, p.trust))
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, err
+	}
+
+	x224ForBrowser := x224Response
+
+	if secretless {
+		spki := getPeerLeafSPKI(tlsConn)
+		if len(spki) == 0 {
+			return nil, errors.Errorf("could not extract upstream public key")
+		}
+
+		if err := driveCredSSP(tlsConn, p.cred, spki, credsspTarget(p.upstream)); err != nil {
+			return nil, err
+		}
+
+		synthetic, err := synthesizeSSLConfirm(x224Response)
+		if err != nil {
+			return nil, err
+		}
+		x224ForBrowser = synthetic
 	}
 
 	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
@@ -124,100 +173,22 @@ func performRDPHandshake(
 
 	return &rdpHandshakeResult{
 		TLSConn:     tlsConn,
-		X224PDU:     x224Response,
+		X224PDU:     x224ForBrowser,
 		CertChain:   getPeerCertChain(tlsConn),
-		ServerAddr:  upstream.HostPort,
+		ServerAddr:  p.upstream.HostPort,
 		Negotiation: true,
 	}, nil
 }
 
-func readTPKT(r io.Reader) ([]byte, error) {
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, err
+func credsspTarget(upstream *loadbalancer.Upstream) string {
+	host := upstream.Host
+	if host == "" {
+		if h, _, err := net.SplitHostPort(upstream.HostPort); err == nil {
+			host = h
+		} else {
+			host = upstream.HostPort
+		}
 	}
 
-	if header[0] != 0x03 {
-		return nil, errors.Errorf("invalid TPKT version: %d", header[0])
-	}
-
-	totalLen := int(header[2])<<8 | int(header[3])
-	if totalLen < 4 {
-		return nil, errors.Errorf("invalid TPKT length: %d", totalLen)
-	}
-
-	if totalLen > 64*1024 {
-		return nil, errors.Errorf("TPKT length is too large: %d", totalLen)
-	}
-
-	body := make([]byte, totalLen-4)
-	if _, err := io.ReadFull(r, body); err != nil {
-		return nil, err
-	}
-
-	ret := make([]byte, 0, totalLen)
-	ret = append(ret, header...)
-	ret = append(ret, body...)
-	return ret, nil
-}
-
-func isRDPNegotiationFailure(x224 []byte) bool {
-	if len(x224) < 19 {
-		return false
-	}
-
-	if x224[0] != 0x03 {
-		return false
-	}
-
-	if x224[5] != 0xd0 {
-		return false
-	}
-
-	negOffset := 11
-	if x224[negOffset] != 0x03 {
-		return false
-	}
-
-	if x224[negOffset+2] != 0x08 || x224[negOffset+3] != 0x00 {
-		return false
-	}
-
-	return true
-}
-
-func getTLSServerName(upstream *loadbalancer.Upstream) string {
-	if upstream == nil {
-		return ""
-	}
-
-	if upstream.SNIHost != "" {
-		return upstream.SNIHost
-	}
-
-	if upstream.Host != "" {
-		return upstream.Host
-	}
-
-	host, _, err := net.SplitHostPort(upstream.HostPort)
-	if err != nil {
-		return ""
-	}
-
-	if ip := net.ParseIP(host); ip != nil {
-		return ""
-	}
-
-	return host
-}
-
-func getPeerCertChain(conn *tls.Conn) [][]byte {
-	state := conn.ConnectionState()
-
-	var ret [][]byte
-	for _, cert := range state.PeerCertificates {
-		ret = append(ret, append([]byte(nil), cert.Raw...))
-	}
-
-	return ret
+	return "TERMSRV/" + host
 }

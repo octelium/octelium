@@ -1,0 +1,23 @@
+# Copyright Octelium Labs, LLC. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License version 3.
+
+[package]
+name = "wrdpgw_credssp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "wrdpgw_credssp"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+sspi = "0.21"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+panic = "unwind"
