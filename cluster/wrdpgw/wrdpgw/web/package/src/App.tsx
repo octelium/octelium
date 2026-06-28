@@ -4,16 +4,12 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   Container,
-  Divider,
   Group,
+  Loader,
   LoadingOverlay,
-  PasswordInput,
   Stack,
-  Switch,
   Text,
-  TextInput,
   Title,
   Tooltip,
 } from "@mantine/core";
@@ -26,7 +22,6 @@ import {
   Power,
   Shield,
   TerminalSquare,
-  AppWindow as Windows,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -40,26 +35,12 @@ import {
   type RdpExtensions,
 } from "./lib/iron";
 
-type RdpFormState = {
-  domain: string;
-  username: string;
-  password: string;
-  kdcProxyUrl: string;
-  pcb: string;
-  enableClipboard: boolean;
-  enableCredssp: boolean;
-  unicodeKeyboard: boolean;
-};
+type ScreenScale = Parameters<UserInteraction["setScale"]>[0];
 
-const initialFormState: RdpFormState = {
-  domain: "",
-  username: "",
-  password: "",
-  kdcProxyUrl: "",
-  pcb: "",
-  enableClipboard: true,
-  enableCredssp: true,
-  unicodeKeyboard: false,
+const SCREEN_SCALE: Record<"fit" | "real" | "full", ScreenScale> = {
+  fit: 1 as ScreenScale,
+  full: 2 as ScreenScale,
+  real: 3 as ScreenScale,
 };
 
 export function App() {
@@ -69,10 +50,10 @@ export function App() {
     [globals.webSocketPath],
   );
 
-  const [form, setForm] = useState<RdpFormState>(initialFormState);
   const [backend, setBackend] = useState<unknown>(null);
   const [extensions, setExtensions] = useState<RdpExtensions | null>(null);
   const [moduleReady, setModuleReady] = useState(false);
+  const [interactionReady, setInteractionReady] = useState(false);
   const [sessionVisible, setSessionVisible] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [status, setStatus] = useState("Initializing RDP client...");
@@ -80,6 +61,7 @@ export function App() {
 
   const userInteractionRef = useRef<UserInteraction | null>(null);
   const remoteElementRef = useRef<HTMLElement | null>(null);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,16 +93,6 @@ export function App() {
     };
   }, []);
 
-  const setField = <K extends keyof RdpFormState>(
-    key: K,
-    value: RdpFormState[K],
-  ) => {
-    setForm((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-  };
-
   const onRemoteElement = useCallback((el: HTMLElement | null) => {
     if (!el || remoteElementRef.current === el) {
       return;
@@ -136,52 +108,37 @@ export function App() {
       }
 
       userInteractionRef.current = ui;
+      setInteractionReady(true);
       setStatus("Ready");
     });
   }, []);
 
-  const validate = (): string | null => {
-    if (!form.username.trim()) {
-      return "Username is required.";
-    }
+  const startSession = useCallback(async () => {
+    const ui = userInteractionRef.current;
+    const exts = extensions;
 
-    if (!form.password) {
-      return "Password is required.";
-    }
-
-    if (!moduleReady || !backend || !extensions) {
-      return "RDP client is still loading.";
-    }
-
-    if (!userInteractionRef.current) {
-      return "RDP component is not ready yet.";
-    }
-
-    return null;
-  };
-
-  const startSession = async () => {
-    const validationError = validate();
-    if (validationError) {
-      setError(validationError);
+    if (!moduleReady || !backend || !exts) {
+      setError("RDP client is still loading.");
       return;
     }
 
-    const ui = userInteractionRef.current!;
-    const exts = extensions!;
+    if (!ui) {
+      setError("RDP component is not ready yet.");
+      return;
+    }
 
     setConnecting(true);
     setError(null);
     setStatus("Connecting...");
 
     try {
-      ui.setEnableClipboard(form.enableClipboard);
-      ui.setKeyboardUnicodeMode(form.unicodeKeyboard);
+      ui.setEnableClipboard(true);
+      ui.setKeyboardUnicodeMode(false);
 
       const builder = ui
         .configBuilder()
-        .withUsername(form.username.trim())
-        .withPassword(form.password)
+        .withUsername("")
+        .withPassword("")
         .withDestination(globals.destination)
         .withProxyAddress(wsURL)
         .withAuthToken("")
@@ -191,20 +148,8 @@ export function App() {
         })
         .withExtension(exts.displayControl(true));
 
-      if (form.domain.trim() !== "") {
-        builder.withServerDomain(form.domain.trim());
-      }
-
-      if (form.pcb.trim() !== "") {
-        builder.withExtension(exts.preConnectionBlob(form.pcb.trim()));
-      }
-
-      if (form.kdcProxyUrl.trim() !== "") {
-        builder.withExtension(exts.kdcProxyUrl(form.kdcProxyUrl.trim()));
-      }
-
       if (exts.enableCredssp) {
-        builder.withExtension(exts.enableCredssp(form.enableCredssp));
+        builder.withExtension(exts.enableCredssp(false));
       }
 
       const sessionInfo = await ui.connect(builder.build());
@@ -233,7 +178,14 @@ export function App() {
         message: msg,
       });
     }
-  };
+  }, [extensions, backend, moduleReady, wsURL, globals.destination]);
+
+  useEffect(() => {
+    if (moduleReady && interactionReady && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      void startSession();
+    }
+  }, [moduleReady, interactionReady, startSession]);
 
   const shutdownSession = async () => {
     setStatus("Disconnecting...");
@@ -252,14 +204,6 @@ export function App() {
 
   const sendMetaKey = () => {
     userInteractionRef.current?.metaKey();
-  };
-
-  type ScreenScale = Parameters<UserInteraction["setScale"]>[0];
-
-  const SCREEN_SCALE: Record<"fit" | "real" | "full", ScreenScale> = {
-    fit: 1 as ScreenScale,
-    full: 2 as ScreenScale,
-    real: 3 as ScreenScale,
   };
 
   const setScale = (scale: "fit" | "real" | "full") => {
@@ -296,22 +240,22 @@ export function App() {
             </Group>
 
             <Card withBorder shadow="md" padding="xl" radius="lg">
-              <Stack gap="md">
-                <Group gap="sm">
-                  <Windows size={20} />
-                  <Title order={3}>RDP credentials</Title>
-                </Group>
+              <Stack gap="md" align="center" className="py-6 text-center">
+                {connecting ? <Loader size="lg" /> : <Monitor size={42} />}
+
+                <Title order={3}>{connecting ? "Connecting" : status}</Title>
 
                 <Text size="sm" c="dimmed">
-                  These credentials are sent to the browser-side RDP client for
-                  the upstream RDP server. They are not secretless in this mode.
+                  Securely connecting to {globals.destination}. Credentials are
+                  injected by the gateway, so no sign-in is required.
                 </Text>
 
                 {error && (
                   <Alert
                     color="red"
                     icon={<AlertCircle size={18} />}
-                    title="Error"
+                    title="Connection error"
+                    className="w-full text-left"
                   >
                     <Text className="whitespace-pre-wrap" size="sm">
                       {error}
@@ -319,84 +263,16 @@ export function App() {
                   </Alert>
                 )}
 
-                <TextInput
-                  label="Domain"
-                  placeholder="Optional Windows domain"
-                  value={form.domain}
-                  onChange={(e) => setField("domain", e.currentTarget.value)}
-                />
-
-                <TextInput
-                  required
-                  label="Username"
-                  placeholder="Administrator"
-                  autoComplete="username"
-                  value={form.username}
-                  onChange={(e) => setField("username", e.currentTarget.value)}
-                />
-
-                <PasswordInput
-                  required
-                  label="Password"
-                  placeholder="RDP password"
-                  autoComplete="current-password"
-                  value={form.password}
-                  onChange={(e) => setField("password", e.currentTarget.value)}
-                />
-
-                <Divider label="Advanced" labelPosition="center" />
-
-                <TextInput
-                  label="Pre-connection blob"
-                  placeholder="Optional PCB"
-                  value={form.pcb}
-                  onChange={(e) => setField("pcb", e.currentTarget.value)}
-                />
-
-                <TextInput
-                  label="KDC proxy URL"
-                  placeholder="Optional Kerberos KDC proxy URL"
-                  value={form.kdcProxyUrl}
-                  onChange={(e) =>
-                    setField("kdcProxyUrl", e.currentTarget.value)
-                  }
-                />
-
-                <Group justify="space-between" align="center">
-                  <Switch
-                    label="Enable clipboard"
-                    checked={form.enableClipboard}
-                    onChange={(e) =>
-                      setField("enableClipboard", e.currentTarget.checked)
-                    }
-                  />
-
-                  <Switch
-                    label="Enable CredSSP"
-                    checked={form.enableCredssp}
-                    onChange={(e) =>
-                      setField("enableCredssp", e.currentTarget.checked)
-                    }
-                  />
-                </Group>
-
-                <Checkbox
-                  label="Use Unicode keyboard mode"
-                  checked={form.unicodeKeyboard}
-                  onChange={(e) =>
-                    setField("unicodeKeyboard", e.currentTarget.checked)
-                  }
-                />
-
-                <Button
-                  size="md"
-                  leftSection={<TerminalSquare size={18} />}
-                  disabled={!moduleReady}
-                  loading={connecting}
-                  onClick={() => void startSession()}
-                >
-                  Connect
-                </Button>
+                {!connecting && (
+                  <Button
+                    size="md"
+                    leftSection={<TerminalSquare size={18} />}
+                    disabled={!moduleReady || !interactionReady}
+                    onClick={() => void startSession()}
+                  >
+                    {error ? "Retry" : "Reconnect"}
+                  </Button>
+                )}
 
                 <Text size="xs" c="dimmed">
                   WebSocket endpoint:{" "}
@@ -484,21 +360,6 @@ export function App() {
           )}
         </div>
       </div>
-
-      {!sessionVisible && (
-        <div className="hidden">
-          {moduleReady && (
-            <iron-remote-desktop
-              ref={onRemoteElement}
-              verbose="false"
-              debugwasm="OFF"
-              scale="fit"
-              flexcentre="true"
-              module={backend}
-            />
-          )}
-        </div>
-      )}
     </div>
   );
 }
