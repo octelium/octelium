@@ -1,0 +1,8 @@
+{
+    "recommendations": [
+        "redhat.vscode-yaml",
+        "esbenp.prettier-vscode",
+        "streetsidesoftware.code-spell-checker",
+        "bradlc.vscode-tailwindcss"
+    ]
+}

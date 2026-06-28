@@ -31,6 +31,7 @@ jobs:
             rscserver,
             vigil,
             octovigil,
+            wrdpgw,
           ]
         arch:
           - amd64
@@ -120,6 +121,7 @@ jobs:
             rscserver,
             vigil,
             octovigil,
+            wrdpgw,
           ]
     steps:
       - name: Check out code

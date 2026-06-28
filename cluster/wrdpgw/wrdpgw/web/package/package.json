@@ -1,0 +1,45 @@
+{
+  "name": "octelium-rdp-web-client",
+  "private": true,
+  "version": "0.0.0-main",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview --host 0.0.0.0",
+    "build-dev": "tsc && vite build --mode development",
+    "build-staging": "tsc && vite build --mode staging"
+  },
+  "dependencies": {
+    "@devolutions/iron-remote-desktop": "0.11.0",
+    "@devolutions/iron-remote-desktop-rdp": "0.7.0",
+    "@mantine/core": "^8.3.15",
+    "@mantine/hooks": "^8.3.15",
+    "@mantine/notifications": "^8.3.15",
+    "@tailwindcss/postcss": "^4.2.1",
+    "lucide-react": "^0.576.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "@vitejs/plugin-react-swc": "^4.2.3",
+    "eslint": "^9.39.3",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "postcss": "^8.5.13",
+    "rollup-plugin-visualizer": "^7.0.1",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.2",
+    "vite-plugin-svgr": "^4.5.0",
+    "vite-plugin-top-level-await": "^1.2.2",
+    "vite-plugin-wasm": "^3.1.0"
+  }
+}
