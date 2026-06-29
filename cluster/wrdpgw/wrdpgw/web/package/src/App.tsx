@@ -141,7 +141,7 @@ export function App() {
         .withPassword("")
         .withDestination(globals.destination)
         .withProxyAddress(wsURL)
-        .withAuthToken("")
+        .withAuthToken("octelium")
         .withDesktopSize({
           width: Math.max(window.innerWidth, 1024),
           height: Math.max(window.innerHeight, 768),
