@@ -1399,6 +1399,16 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 
 			}
 		}
+	case *corev1.Service_Spec_Config_Rdp:
+		if spec.Mode != corev1.Service_Spec_RDP_WEB {
+			return grpcutils.InvalidArg("RDP_WEB mode must be set for RDP config to be used")
+		}
+		rdp := cfg.GetRdp()
+		if rdp.GetAuth() != nil && rdp.GetAuth().GetPassword() != nil {
+			if err := s.validateSecretOwner(ctx, rdp.GetAuth().GetPassword()); err != nil {
+				return err
+			}
+		}
 	case *corev1.Service_Spec_Config_Ssh:
 		if spec.Mode != corev1.Service_Spec_SSH {
 			return grpcutils.InvalidArg("SSH mode must be set for SSH config to be used")
