@@ -492,7 +492,12 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("upstream", upstream.HostPort),
 		zap.Bool("secretless", cred != nil))
 
-	recvBytes, sentBytes := relay(ctx, wsConn, handshake.TLSConn)
+	var rewriteSelectedProtocol uint32
+	if cred != nil {
+		rewriteSelectedProtocol = protocolHybrid
+	}
+
+	recvBytes, sentBytes := relay(ctx, wsConn, handshake.TLSConn, rewriteSelectedProtocol)
 
 	zap.L().Debug("wrdpgw session ended",
 		zap.String("remoteAddr", r.RemoteAddr),
@@ -557,11 +562,79 @@ func (r *firstChunkLogger) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func relay(ctx context.Context, downstream net.Conn, upstream net.Conn) (uint64, uint64) {
+type mcsSelectedProtocolRewriter struct {
+	src       io.Reader
+	target    uint32
+	rewritten bool
+}
+
+func (r *mcsSelectedProtocolRewriter) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if n > 0 && !r.rewritten {
+		r.rewritten = true
+		rewriteMCSSelectedProtocol(p[:n], r.target)
+	}
+	return n, err
+}
+
+func rewriteMCSSelectedProtocol(buf []byte, target uint32) {
+	const (
+		coreHeaderLen       = 4
+		selectedProtoInCore = 208
+		selectedProtoLen    = 4
+	)
+
+	for i := 0; i+coreHeaderLen < len(buf)-1; i++ {
+		if buf[i] != 0x01 || buf[i+1] != 0xc0 {
+			continue
+		}
+
+		coreLen := int(buf[i+2]) | int(buf[i+3])<<8
+		if coreLen < coreHeaderLen+selectedProtoInCore+selectedProtoLen || coreLen > 1024 {
+			continue
+		}
+
+		fieldAt := i + coreHeaderLen + selectedProtoInCore
+		if fieldAt+selectedProtoLen > len(buf) {
+			continue
+		}
+
+		current := uint32(buf[fieldAt]) |
+			uint32(buf[fieldAt+1])<<8 |
+			uint32(buf[fieldAt+2])<<16 |
+			uint32(buf[fieldAt+3])<<24
+
+		if current == target {
+			return
+		}
+
+		buf[fieldAt] = byte(target)
+		buf[fieldAt+1] = byte(target >> 8)
+		buf[fieldAt+2] = byte(target >> 16)
+		buf[fieldAt+3] = byte(target >> 24)
+
+		zap.L().Debug("wrdpgw rewrote MCS serverSelectedProtocol",
+			zap.Int("offset", fieldAt),
+			zap.Uint32("from", current),
+			zap.Uint32("to", target))
+		return
+	}
+
+	zap.L().Debug("wrdpgw did not find MCS CS_CORE to rewrite serverSelectedProtocol")
+}
+
+func relay(ctx context.Context, downstream net.Conn, upstream net.Conn, rewriteSelectedProtocol uint32) (uint64, uint64) {
 	resCh := make(chan copyResult, 2)
 
-	go copyConn(resCh, "downstream_to_upstream", upstream,
-		&firstChunkLogger{src: downstream, direction: "downstream_to_upstream"})
+	var downstreamSrc io.Reader = &firstChunkLogger{src: downstream, direction: "downstream_to_upstream"}
+	if rewriteSelectedProtocol != 0 {
+		downstreamSrc = &mcsSelectedProtocolRewriter{
+			src:    downstreamSrc,
+			target: rewriteSelectedProtocol,
+		}
+	}
+
+	go copyConn(resCh, "downstream_to_upstream", upstream, downstreamSrc)
 	go copyConn(resCh, "upstream_to_downstream", downstream,
 		&firstChunkLogger{src: upstream, direction: "upstream_to_downstream"})
 
