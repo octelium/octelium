@@ -35,7 +35,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/coder/websocket"
-	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -486,13 +485,7 @@ func (s *server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error
 		return nil, errors.Errorf("could not get Service from vcache")
 	}
 
-	authResp := &coctovigilv1.AuthenticateAndAuthorizeResponse{
-		RequestContext: &corev1.RequestContext{
-			Service: svc,
-		},
-	}
-
-	upstream, err := s.lbManager.GetUpstream(ctx, authResp)
+	upstream, err := s.lbManager.GetUpstreamFromConfig(ctx, svc, nil)
 	if err != nil {
 		return nil, err
 	}
