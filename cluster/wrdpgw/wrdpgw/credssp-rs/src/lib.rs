@@ -147,7 +147,6 @@ unsafe fn new_impl(
         target,
     )
     .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("credssp init: {e}")))?;
-    eprintln!("wrdpgw_credssp_new: initialized CredSspClient for user {} domain {} target {}", username, domain, target);
 
     Ok(WrdpgwCredssp { client })
 }
