@@ -177,19 +177,19 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 	x224ForBrowser := x224Response
 
 	if secretless {
-		spki := getPeerLeafSPKI(tlsConn)
-		if len(spki) == 0 {
-			return nil, errors.Errorf("could not extract upstream public key")
+		serverPublicKey, err := getPeerLeafCredSSPPublicKey(tlsConn)
+		if err != nil {
+			return nil, err
 		}
 
 		zap.L().Debug("Performing CredSSP handshake with upstream",
 			zap.String("upstream", p.upstream.HostPort),
 			zap.Bool("secretless", secretless),
 			zap.String("credsspTarget", credsspTarget(p.upstream)),
-			zap.Int("spkiLength", len(spki)),
-			zap.String("spkiHex", fmt.Sprintf("%x", spki)))
+			zap.Int("serverPublicKeyLength", len(serverPublicKey)),
+			zap.String("serverPublicKeyHex", fmt.Sprintf("%x", serverPublicKey)))
 
-		if err := driveCredSSP(tlsConn, p.cred, spki, credsspTarget(p.upstream)); err != nil {
+		if err := driveCredSSP(tlsConn, p.cred, serverPublicKey, credsspTarget(p.upstream)); err != nil {
 			return nil, err
 		}
 
@@ -197,8 +197,8 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 			zap.String("upstream", p.upstream.HostPort),
 			zap.Bool("secretless", secretless),
 			zap.String("credsspTarget", credsspTarget(p.upstream)),
-			zap.Int("spkiLength", len(spki)),
-			zap.String("spkiHex", fmt.Sprintf("%x", spki)))
+			zap.Int("serverPublicKeyLength", len(serverPublicKey)),
+			zap.String("serverPublicKeyHex", fmt.Sprintf("%x", serverPublicKey)))
 
 		synthetic, err := synthesizeSSLConfirm(x224Response)
 		if err != nil {

@@ -17,6 +17,7 @@
 package wrdpgw
 
 import (
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -33,6 +34,10 @@ type tlsTrustPolicy struct {
 }
 
 func (p *tlsTrustPolicy) verifyPeerCertificate(rawCerts [][]byte) error {
+	if p == nil {
+		return errors.Errorf("missing upstream TLS trust policy")
+	}
+
 	if len(rawCerts) == 0 {
 		return errors.Errorf("upstream presented no certificate")
 	}
@@ -60,6 +65,7 @@ func buildUpstreamTLSConfig(upstream *loadbalancer.Upstream, trust *tlsTrustPoli
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS12,
 		MaxVersion:         tls.VersionTLS12,
+		CipherSuites:       nil,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			return trust.verifyPeerCertificate(rawCerts)
 		},
@@ -102,11 +108,17 @@ func getPeerCertChain(conn *tls.Conn) [][]byte {
 	return ret
 }
 
-func getPeerLeafSPKI(conn *tls.Conn) []byte {
+func getPeerLeafCredSSPPublicKey(conn *tls.Conn) ([]byte, error) {
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
-		return nil
+		return nil, errors.Errorf("upstream presented no certificate")
 	}
 
-	return append([]byte(nil), state.PeerCertificates[0].RawSubjectPublicKeyInfo...)
+	leaf := state.PeerCertificates[0]
+	switch pub := leaf.PublicKey.(type) {
+	case *rsa.PublicKey:
+		return x509.MarshalPKCS1PublicKey(pub), nil
+	default:
+		return nil, errors.Errorf("unsupported upstream RDP certificate public key type %T", leaf.PublicKey)
+	}
 }
