@@ -338,6 +338,14 @@ func (s *server) setStaticHeaders(w http.ResponseWriter) {
 }
 
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+
+	zap.L().Debug("wrdpgw websocket connection attempt",
+		zap.String("remoteAddr", r.RemoteAddr),
+		zap.String("requestURI", r.RequestURI),
+		zap.String("method", r.Method),
+		zap.String("host", r.Host),
+		zap.String("userAgent", r.UserAgent()),
+		zap.Strings("header", r.Header["Sec-Websocket-Protocol"]))
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		CompressionMode:    websocket.CompressionDisabled,
 		InsecureSkipVerify: true,
@@ -398,6 +406,8 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	zap.L().Debug("Got upstream", zap.Any("upstream", upstream))
+
 	handshake, err := performRDPHandshake(ctx, &rdpHandshakeParams{
 		upstream:   upstream,
 		clientX224: rdcpReq.X224ConnectionPDU,
@@ -416,6 +426,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !handshake.Negotiation {
+		zap.L().Debug("RDP handshake negotiation failed",
+			zap.String("requestedDestination", rdcpReq.Destination),
+			zap.String("upstream", upstream.HostPort),
+			zap.Bool("secretless", cred != nil))
 		resp, err := encodeRDCleanPathNegotiationError(handshake.X224PDU)
 		if err != nil {
 			writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
@@ -430,6 +444,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	defer handshake.TLSConn.Close()
 
+	zap.L().Debug("RDP handshake successful",
+		zap.String("requestedDestination", rdcpReq.Destination),
+		zap.String("upstream", upstream.HostPort),
+		zap.Bool("secretless", cred != nil))
 	resp, err := encodeRDCleanPathResponse(
 		handshake.ServerAddr,
 		handshake.X224PDU,
@@ -442,6 +460,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	zap.L().Debug("Sending RDCleanPath response",
+		zap.String("requestedDestination", rdcpReq.Destination),
+		zap.String("upstream", upstream.HostPort),
+		zap.Bool("secretless", cred != nil))
 	if err := ws.Write(ctx, websocket.MessageBinary, resp); err != nil {
 		zap.L().Debug("Could not write RDCleanPath response", zap.Error(err))
 		return

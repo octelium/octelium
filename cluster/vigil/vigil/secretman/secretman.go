@@ -224,6 +224,13 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 				doAppend(k8sC.GetKubeconfig().GetFromSecret())
 			}
 		}
+
+		if cfg.GetRdp() != nil {
+			if cfg.GetRdp().GetAuth() != nil && cfg.GetRdp().GetAuth().GetPassword() != nil &&
+				cfg.GetRdp().GetAuth().GetPassword().GetFromSecret() != "" {
+				doAppend(cfg.GetRdp().GetAuth().GetPassword().GetFromSecret())
+			}
+		}
 	}
 
 	doSetCfgSecrets(svc.Spec.Config)
