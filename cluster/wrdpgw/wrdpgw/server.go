@@ -384,6 +384,11 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	zap.L().Debug("Decoded RDCleanPath request",
+		zap.String("destination", rdcpReq.Destination),
+		zap.Int("clientX224Length", len(rdcpReq.X224ConnectionPDU)),
+		zap.String("clientX224Hex", fmt.Sprintf("%x", rdcpReq.X224ConnectionPDU)))
+
 	cred, err := s.getInjectedCredential(ctx)
 	if err != nil {
 		zap.L().Debug("Could not resolve wrdpgw injected credential", zap.Error(err))
@@ -451,7 +456,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	zap.L().Debug("RDP handshake successful",
 		zap.String("requestedDestination", rdcpReq.Destination),
 		zap.String("upstream", upstream.HostPort),
-		zap.Bool("secretless", cred != nil))
+		zap.Bool("secretless", cred != nil),
+		zap.Int("x224ForBrowserLength", len(handshake.X224PDU)),
+		zap.String("x224ForBrowserHex", fmt.Sprintf("%x", handshake.X224PDU)),
+		zap.Int("certChainCount", len(handshake.CertChain)))
 	resp, err := encodeRDCleanPathResponse(
 		handshake.ServerAddr,
 		handshake.X224PDU,
@@ -467,7 +475,9 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	zap.L().Debug("Sending RDCleanPath response",
 		zap.String("requestedDestination", rdcpReq.Destination),
 		zap.String("upstream", upstream.HostPort),
-		zap.Bool("secretless", cred != nil))
+		zap.Bool("secretless", cred != nil),
+		zap.Int("responseLength", len(resp)),
+		zap.String("responseHex", fmt.Sprintf("%x", resp)))
 	if err := ws.Write(ctx, websocket.MessageBinary, resp); err != nil {
 		zap.L().Debug("Could not write RDCleanPath response", zap.Error(err))
 		return
@@ -529,11 +539,31 @@ type copyResult struct {
 	err       error
 }
 
+type firstChunkLogger struct {
+	src       io.Reader
+	direction string
+	logged    bool
+}
+
+func (r *firstChunkLogger) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if n > 0 && !r.logged {
+		r.logged = true
+		zap.L().Debug("wrdpgw relay first chunk",
+			zap.String("direction", r.direction),
+			zap.Int("length", n),
+			zap.String("hex", fmt.Sprintf("%x", p[:n])))
+	}
+	return n, err
+}
+
 func relay(ctx context.Context, downstream net.Conn, upstream net.Conn) (uint64, uint64) {
 	resCh := make(chan copyResult, 2)
 
-	go copyConn(resCh, "downstream_to_upstream", upstream, downstream)
-	go copyConn(resCh, "upstream_to_downstream", downstream, upstream)
+	go copyConn(resCh, "downstream_to_upstream", upstream,
+		&firstChunkLogger{src: downstream, direction: "downstream_to_upstream"})
+	go copyConn(resCh, "upstream_to_downstream", downstream,
+		&firstChunkLogger{src: upstream, direction: "upstream_to_downstream"})
 
 	first := <-resCh
 
