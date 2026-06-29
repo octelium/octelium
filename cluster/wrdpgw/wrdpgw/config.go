@@ -32,6 +32,8 @@ func (s *server) getInjectedCredential(ctx context.Context) (*injectedCredential
 		return nil, errors.Errorf("could not get Service from vcache")
 	}
 
+	zap.L().Debug("Getting injected credential for service", zap.Any("svc", svc))
+
 	cfg := svc.Spec.GetConfig()
 	if cfg == nil {
 		return nil, nil

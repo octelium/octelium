@@ -173,6 +173,8 @@ func (s *server) onServiceAdd(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
+	zap.L().Debug("wrdpgw onServiceAdd", zap.Any("svc", svc))
+
 	s.vCache.SetService(svc)
 	return s.secretMan.ApplyService(ctx)
 }
@@ -181,6 +183,8 @@ func (s *server) onServiceUpdate(ctx context.Context, new, old *corev1.Service) 
 	if new.Metadata.Uid != s.svcUID {
 		return nil
 	}
+
+	zap.L().Debug("wrdpgw onServiceUpdate", zap.Any("new", new), zap.Any("old", old))
 
 	s.vCache.SetService(new)
 	return s.secretMan.ApplyService(ctx)
