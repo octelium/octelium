@@ -72,6 +72,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
             target_len,
         )
     }));
+    eprintln!("wrdpgw_credssp_new: public_key_len={} head={:02x?} domain_len={} user_len={} target_len={}", server_pubkey_len, if server_pubkey_len > 0 { Some(*server_pubkey) } else { None }, domain_len, username_len, target_len);
 
     if !out_client.is_null() {
         *out_client = ptr::null_mut();
@@ -79,17 +80,21 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
 
     match res {
         Ok(Ok(client)) => {
+            eprintln!("wrdpgw_credssp_new: created client");
             if out_client.is_null() {
+                eprintln!("wrdpgw_credssp_new: out_client is null");
                 return WRDPGW_ERR_INVALID_ARGUMENT;
             }
             *out_client = Box::into_raw(Box::new(client));
             WRDPGW_OK
         }
         Ok(Err((kind, msg))) => {
+            eprintln!("wrdpgw_credssp_new: error {}: {}", kind, msg);
             set_error(out_error, &msg);
             kind
         }
         Err(_) => {
+            eprintln!("wrdpgw_credssp_new: panic");
             set_error(out_error, "panic in wrdpgw_credssp_new");
             WRDPGW_ERR_INTERNAL
         }
@@ -132,6 +137,7 @@ unsafe fn new_impl(
         username: uname,
         password: Secret::from(password),
     };
+    eprintln!("wrdpgw_credssp_new: creating CredSspClient for user {} domain {} target {}", username, domain, target);
 
     let client = CredSspClient::new(
         pubkey,
@@ -141,6 +147,7 @@ unsafe fn new_impl(
         target,
     )
     .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("credssp init: {e}")))?;
+    eprintln!("wrdpgw_credssp_new: initialized CredSspClient for user {} domain {} target {}", username, domain, target);
 
     Ok(WrdpgwCredssp { client })
 }
@@ -156,9 +163,10 @@ pub unsafe extern "C" fn wrdpgw_credssp_step(
     out_error: *mut *mut c_char,
 ) -> i32 {
     let res = catch_unwind(AssertUnwindSafe(|| step_impl(client, incoming, incoming_len)));
-
+    eprintln!("wrdpgw_credssp_step: incoming_len={} out_outgoing={:?} out_outgoing_len={:?} out_state={:?}", incoming_len, out_outgoing, out_outgoing_len, out_state);
     match res {
         Ok(Ok((buf, state))) => {
+            eprintln!("wrdpgw_credssp_step: outgoing_len={} state={}", buf.len(), state);
             let (p, l) = leak_bytes(buf);
             if !out_outgoing.is_null() {
                 *out_outgoing = p;
@@ -172,6 +180,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_step(
             WRDPGW_OK
         }
         Ok(Err((kind, msg))) => {
+            eprintln!("wrdpgw_credssp_step: error {}: {}", kind, msg);
             set_error(out_error, &msg);
             kind
         }
@@ -211,10 +220,13 @@ unsafe fn step_impl(
         ClientState::ReplyNeeded(req) => (req, CREDSSP_STATE_REPLY_NEEDED),
         ClientState::FinalMessage(req) => (req, CREDSSP_STATE_FINAL),
     };
+    eprintln!("wrdpgw_credssp_step: incoming_len={} state={}", incoming_len, st);
 
     let mut buf = Vec::with_capacity(req.buffer_len() as usize);
     req.encode_ts_request(&mut buf)
         .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("encode TSRequest: {e}")))?;
+
+    eprintln!("wrdpgw_credssp_step: outgoing_len={} state={}", buf.len(), st);
 
     Ok((buf, st))
 }
