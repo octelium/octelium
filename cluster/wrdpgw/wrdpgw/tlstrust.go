@@ -59,6 +59,7 @@ func buildUpstreamTLSConfig(upstream *loadbalancer.Upstream, trust *tlsTrustPoli
 		ServerName:         getTLSServerName(upstream),
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS12,
+		MaxVersion:         tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			return trust.verifyPeerCertificate(rawCerts)
 		},

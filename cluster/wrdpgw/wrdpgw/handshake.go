@@ -19,6 +19,7 @@ package wrdpgw
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"time"
 
@@ -105,14 +106,32 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 		return nil, err
 	}
 
+	zap.L().Debug("Performing RDP handshake with upstream",
+		zap.String("upstream", p.upstream.HostPort),
+		zap.Bool("secretless", secretless),
+		zap.Int("requestLength", len(x224Request)),
+		zap.String("requestHex", fmt.Sprintf("%x", x224Request)))
+
 	if _, err := rawConn.Write(x224Request); err != nil {
 		return nil, err
 	}
+
+	zap.L().Debug("RDP handshake X.224 request sent",
+		zap.String("upstream", p.upstream.HostPort),
+		zap.Bool("secretless", secretless),
+		zap.Int("requestLength", len(x224Request)),
+		zap.String("requestHex", fmt.Sprintf("%x", x224Request)))
 
 	x224Response, err := readTPKT(rawConn)
 	if err != nil {
 		return nil, err
 	}
+
+	zap.L().Debug("RDP handshake X.224 response received",
+		zap.String("upstream", p.upstream.HostPort),
+		zap.Bool("secretless", secretless),
+		zap.Int("responseLength", len(x224Response)),
+		zap.String("responseHex", fmt.Sprintf("%x", x224Response)))
 
 	if isRDPNegotiationFailure(x224Response) {
 		return &rdpHandshakeResult{
@@ -126,6 +145,11 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 	if !ok {
 		return nil, errors.Errorf("invalid X.224 connection confirm")
 	}
+
+	zap.L().Debug("RDP handshake X.224 confirm selected protocol",
+		zap.String("upstream", p.upstream.HostPort),
+		zap.Bool("secretless", secretless),
+		zap.Int("selectedProtocol", int(selected)))
 
 	if secretless {
 		if selected&protocolHybrid == 0 {
@@ -143,6 +167,10 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 
 	tlsConn := tls.Client(rawConn, buildUpstreamTLSConfig(p.upstream, p.trust))
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		zap.L().Debug("Could not complete TLS handshake with upstream",
+			zap.String("upstream", p.upstream.HostPort),
+			zap.Bool("secretless", secretless),
+			zap.Error(err))
 		return nil, err
 	}
 
@@ -154,14 +182,34 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 			return nil, errors.Errorf("could not extract upstream public key")
 		}
 
+		zap.L().Debug("Performing CredSSP handshake with upstream",
+			zap.String("upstream", p.upstream.HostPort),
+			zap.Bool("secretless", secretless),
+			zap.String("credsspTarget", credsspTarget(p.upstream)),
+			zap.Int("spkiLength", len(spki)),
+			zap.String("spkiHex", fmt.Sprintf("%x", spki)))
+
 		if err := driveCredSSP(tlsConn, p.cred, spki, credsspTarget(p.upstream)); err != nil {
 			return nil, err
 		}
+
+		zap.L().Debug("CredSSP handshake with upstream completed",
+			zap.String("upstream", p.upstream.HostPort),
+			zap.Bool("secretless", secretless),
+			zap.String("credsspTarget", credsspTarget(p.upstream)),
+			zap.Int("spkiLength", len(spki)),
+			zap.String("spkiHex", fmt.Sprintf("%x", spki)))
 
 		synthetic, err := synthesizeSSLConfirm(x224Response)
 		if err != nil {
 			return nil, err
 		}
+
+		zap.L().Debug("Synthesized X.224 connection confirm for browser",
+			zap.String("upstream", p.upstream.HostPort),
+			zap.Bool("secretless", secretless),
+			zap.Int("syntheticLength", len(synthetic)),
+			zap.String("syntheticHex", fmt.Sprintf("%x", synthetic)))
 		x224ForBrowser = synthetic
 	}
 
