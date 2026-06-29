@@ -582,21 +582,6 @@ func (l *Service) GetAllUpstreamEndpointsByConfig(cfg *corev1.Service_Spec_Confi
 		}
 	}()
 
-	if l.IsManagedService() {
-
-		if l.Status.ManagedService != nil && l.Status.ManagedService.Port != 0 {
-			ret = append(ret, &corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
-				Url: fmt.Sprintf("%s://localhost:%d", scheme, l.Status.ManagedService.Port),
-			})
-		} else {
-			ret = append(ret, &corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
-				Url: fmt.Sprintf("%s://localhost:49999", scheme),
-			})
-		}
-
-		return ret
-	}
-
 	if cfg != nil && cfg.GetSsh() != nil && cfg.GetSsh().ESSHMode {
 		ret = append(ret, &corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
 			Url: "ssh://localhost:22022",

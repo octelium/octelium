@@ -71,12 +71,26 @@ var ErrNoUpstream = errors.Errorf("No upstreams found")
 func (l *LBManager) getUpstreamFromSvc(_ context.Context,
 	svc *corev1.Service, cfg *corev1.Service_Spec_Config) (*Upstream, error) {
 
-	upstrs := ucorev1.ToService(svc).GetAllUpstreamEndpointsByConfig(cfg)
-	if len(upstrs) == 0 {
-		return nil, ErrNoUpstream
-	}
+	var u *corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint
+	if ucorev1.ToService(svc).IsManagedService() {
+		scheme := getScheme(svc)
+		if svc.Status.ManagedService != nil && svc.Status.ManagedService.Port != 0 {
+			u = &corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
+				Url: fmt.Sprintf("%s://localhost:%d", scheme, svc.Status.ManagedService.Port),
+			}
+		} else {
+			u = &corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
+				Url: fmt.Sprintf("%s://localhost:49999", scheme),
+			}
+		}
+	} else {
+		upstrs := ucorev1.ToService(svc).GetAllUpstreamEndpointsByConfig(cfg)
+		if len(upstrs) == 0 {
+			return nil, ErrNoUpstream
+		}
 
-	u := upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
+		u = upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
+	}
 
 	murl, err := url.Parse(u.Url)
 	if err != nil {
@@ -287,4 +301,19 @@ func getConfiguredUpstreamEndpoints(svc *corev1.Service,
 	}
 
 	return ret
+}
+
+func getScheme(l *corev1.Service) string {
+	switch l.Spec.Mode {
+	case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,
+		corev1.Service_Spec_WEB, corev1.Service_Spec_RDP_WEB,
+		corev1.Service_Spec_KUBERNETES:
+		return "http"
+	case corev1.Service_Spec_SSH:
+		return "ssh"
+	case corev1.Service_Spec_UDP, corev1.Service_Spec_DNS:
+		return "udp"
+	default:
+		return "tcp"
+	}
 }
