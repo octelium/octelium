@@ -570,7 +570,8 @@ func (l *Service) GetAllUpstreamEndpointsByConfig(cfg *corev1.Service_Spec_Confi
 	scheme := func() string {
 		switch l.Spec.Mode {
 		case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,
-			corev1.Service_Spec_WEB, corev1.Service_Spec_KUBERNETES:
+			corev1.Service_Spec_WEB, corev1.Service_Spec_RDP_WEB,
+			corev1.Service_Spec_KUBERNETES:
 			return "http"
 		case corev1.Service_Spec_SSH:
 			return "ssh"
@@ -727,7 +728,8 @@ func (l *Service) IsHTTP() bool {
 	case corev1.Service_Spec_HTTP,
 		corev1.Service_Spec_KUBERNETES,
 		corev1.Service_Spec_GRPC,
-		corev1.Service_Spec_WEB:
+		corev1.Service_Spec_WEB,
+		corev1.Service_Spec_RDP_WEB:
 		return true
 	default:
 		return false
