@@ -23,6 +23,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -116,6 +117,23 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 
 	if err := g.installOcteliumResources(ctx, clusterCfg, regionV); err != nil {
 		return err
+	}
+
+	{
+		svcList, err := g.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{
+				urscsrv.FilterFieldEQValStr("spec.mode", corev1.Service_Spec_RDP_WEB.String()),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, svc := range svcList.Items {
+			if svc.Status.ManagedService != nil {
+				svc.Status.ManagedService.Image = oc.GetImage(oc.WRRDPGW, "")
+			}
+		}
 	}
 
 	if err := g.updateServicesUpgradeUID(ctx, regionV); err != nil {
