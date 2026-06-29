@@ -18,10 +18,12 @@ package wrdpgw
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -39,11 +41,29 @@ func driveCredSSP(tlsConn *tls.Conn, cred *injectedCredential, serverPubkey []by
 		return errors.Errorf("missing upstream public key")
 	}
 
+	zap.L().Debug("Starting CredSSP handshake with upstream",
+		zap.String("upstream", tlsConn.RemoteAddr().String()),
+		zap.String("credsspTarget", target),
+		zap.Int("spkiLength", len(serverPubkey)),
+		zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)))
+
 	client, err := ffiCredsspNew(serverPubkey, cred.Domain, cred.Username, cred.Password, target)
 	if err != nil {
+		zap.L().Debug("Could not initialize CredSSP handshake with upstream",
+			zap.String("upstream", tlsConn.RemoteAddr().String()),
+			zap.String("credsspTarget", target),
+			zap.Int("spkiLength", len(serverPubkey)),
+			zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)),
+			zap.Error(err))
 		return err
 	}
 	defer client.free()
+
+	zap.L().Debug("CredSSP handshake with upstream initialized",
+		zap.String("upstream", tlsConn.RemoteAddr().String()),
+		zap.String("credsspTarget", target),
+		zap.Int("spkiLength", len(serverPubkey)),
+		zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)))
 
 	var incoming []byte
 
@@ -53,6 +73,18 @@ func driveCredSSP(tlsConn *tls.Conn, cred *injectedCredential, serverPubkey []by
 			return err
 		}
 
+		zap.L().Debug("CredSSP handshake step completed",
+			zap.String("upstream", tlsConn.RemoteAddr().String()),
+			zap.String("credsspTarget", target),
+			zap.Int("spkiLength", len(serverPubkey)),
+			zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)),
+			zap.Int("roundTrip", i+1),
+			zap.Int("outgoingLength", len(outgoing)),
+			zap.String("outgoingHex", fmt.Sprintf("%x", outgoing)),
+			zap.Int("incomingLength", len(incoming)),
+			zap.String("incomingHex", fmt.Sprintf("%x", incoming)),
+			zap.Int("state", int(state)))
+
 		if len(outgoing) > 0 {
 			if err := tlsConn.SetWriteDeadline(time.Now().Add(credsspStepTimeout)); err != nil {
 				return err
@@ -61,6 +93,15 @@ func driveCredSSP(tlsConn *tls.Conn, cred *injectedCredential, serverPubkey []by
 				return err
 			}
 		}
+
+		zap.L().Debug("CredSSP handshake step sent",
+			zap.String("upstream", tlsConn.RemoteAddr().String()),
+			zap.String("credsspTarget", target),
+			zap.Int("spkiLength", len(serverPubkey)),
+			zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)),
+			zap.Int("roundTrip", i+1),
+			zap.Int("outgoingLength", len(outgoing)),
+			zap.String("outgoingHex", fmt.Sprintf("%x", outgoing)))
 
 		if state == credsspStateFinal {
 			return nil
@@ -74,6 +115,14 @@ func driveCredSSP(tlsConn *tls.Conn, cred *injectedCredential, serverPubkey []by
 		if err != nil {
 			return err
 		}
+		zap.L().Debug("CredSSP handshake step received",
+			zap.String("upstream", tlsConn.RemoteAddr().String()),
+			zap.String("credsspTarget", target),
+			zap.Int("spkiLength", len(serverPubkey)),
+			zap.String("spkiHex", fmt.Sprintf("%x", serverPubkey)),
+			zap.Int("roundTrip", i+1),
+			zap.Int("incomingLength", len(incoming)),
+			zap.String("incomingHex", fmt.Sprintf("%x", incoming)))
 	}
 
 	return errors.Errorf("CredSSP did not complete within %d round trips", credsspMaxRoundTrips)
