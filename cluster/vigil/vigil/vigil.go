@@ -179,7 +179,8 @@ func (s *Server) createServer(ctx context.Context) error {
 	case corev1.Service_Spec_HTTP,
 		corev1.Service_Spec_KUBERNETES,
 		corev1.Service_Spec_GRPC,
-		corev1.Service_Spec_WEB:
+		corev1.Service_Spec_WEB,
+		corev1.Service_Spec_RDP_WEB:
 		zap.L().Debug("Starting in HTTP mode", zap.String("mode", mode.String()))
 		s.server, err = httpg.New(ctx, opts)
 	case corev1.Service_Spec_POSTGRES:
