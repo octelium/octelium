@@ -18,6 +18,8 @@ package wrdpgw
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -144,7 +146,7 @@ func TestRelay(t *testing.T) {
 
 	resCh := make(chan [2]uint64, 1)
 	go func() {
-		recv, sent := relay(ctx, downstream, upstreamConn)
+		recv, sent := relay(ctx, downstream, upstreamConn, 0)
 		resCh <- [2]uint64{recv, sent}
 	}()
 
@@ -165,7 +167,7 @@ func TestRelay(t *testing.T) {
 	assert.Equal(t, uint64(len(msg)), res[1])
 }
 
-func TestWebSocket(t *testing.T) {
+func TestWebSocketRejectsInvalidRDCleanPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -225,20 +227,45 @@ func TestWebSocket(t *testing.T) {
 
 	ws.SetReadLimit(maxMessageSize)
 
-	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
-
-	msg := []byte("hello rdp web relay")
-
-	_, err = conn.Write(msg)
+	err = ws.Write(ctx, websocket.MessageBinary, []byte("this is not a valid RDCleanPath request"))
 	assert.Nil(t, err)
 
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	assert.Nil(t, err, "%+v", err)
-	assert.Equal(t, msg, buf[:n])
+	var closeErr error
+	for {
+		_, _, readErr := ws.Read(ctx)
+		if readErr != nil {
+			closeErr = readErr
+			break
+		}
+	}
 
-	err = ws.Close(websocket.StatusNormalClosure, "")
+	assert.Equal(t, websocket.StatusUnsupportedData, websocket.CloseStatus(closeErr))
+}
+
+func TestRewriteMCSSelectedProtocol(t *testing.T) {
+	const mcsConnectInitialHex = "0300019f02f0807f658201930401010401010101ff301a020122020102020100020101020100020101020300ffff0201023019020101020101020101020101020100020101020204200201023020020300ffff020300fc17020300ffff020101020100020101020300ffff0201020482012d000500147c00018122000800100001c00044756361811601c0ea000400080040061a0301ca03aa0000000000000000690072006f006e007200640070002d007700650062000000000000000000000004000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001ca01000000000010000f0029080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006000100000000000000000000000000000000000000000002c00c00000000000000000003c0200002000000636c69707264720000008000647264796e76630000008000"
+
+	const fieldOffset = 349
+
+	buf, err := hex.DecodeString(mcsConnectInitialHex)
 	assert.Nil(t, err)
+
+	before := binary.LittleEndian.Uint32(buf[fieldOffset : fieldOffset+4])
+	assert.Equal(t, protocolSSL, before)
+
+	rewriteMCSSelectedProtocol(buf, protocolHybrid)
+
+	after := binary.LittleEndian.Uint32(buf[fieldOffset : fieldOffset+4])
+	assert.Equal(t, protocolHybrid, after)
+}
+
+func TestRewriteMCSSelectedProtocolNoCoreData(t *testing.T) {
+	buf := []byte("not an MCS connect initial and has no CS_CORE block")
+	original := append([]byte(nil), buf...)
+
+	rewriteMCSSelectedProtocol(buf, protocolHybrid)
+
+	assert.Equal(t, original, buf)
 }
 
 func TestSafeUint64(t *testing.T) {
