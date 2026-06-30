@@ -92,6 +92,13 @@ func (l *LBManager) getUpstreamFromSvc(_ context.Context,
 		u = upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
 	}
 
+	return l.doGetUpstream(u, svc)
+}
+
+func (l *LBManager) doGetUpstream(
+	u *corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint,
+	svc *corev1.Service) (*Upstream, error) {
+
 	murl, err := url.Parse(u.Url)
 	if err != nil {
 		return nil, err
@@ -243,64 +250,18 @@ func (c *LBManager) DeleteSession(sess *corev1.Session) {
 func (l *LBManager) GetUpstreamFromConfig(_ context.Context,
 	svc *corev1.Service, cfg *corev1.Service_Spec_Config) (*Upstream, error) {
 
-	if svc == nil {
-		return nil, ErrNoUpstream
+	if cfg == nil {
+		cfg = svc.Spec.Config
 	}
 
-	upstrs := getConfiguredUpstreamEndpoints(svc, cfg)
+	upstrs := ucorev1.ToService(svc).GetAllUpstreamEndpointsByConfig(cfg)
 	if len(upstrs) == 0 {
 		return nil, ErrNoUpstream
 	}
 
 	u := upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
 
-	murl, err := url.Parse(u.Url)
-	if err != nil {
-		return nil, err
-	}
-
-	parsedURL := &url.URL{
-		Scheme: murl.Scheme,
-		Host:   murl.Host,
-	}
-
-	if u.User != "" {
-		return nil, ErrNoUpstream
-	}
-
-	return &Upstream{
-		HostPort: net.JoinHostPort(parsedURL.Hostname(), fmt.Sprintf("%d", ucorev1.EndpointRealPort(u))),
-		Host:     parsedURL.Hostname(),
-		Port:     ucorev1.EndpointRealPort(u),
-		SNIHost:  getSNIHost(parsedURL.Hostname()),
-		URL:      parsedURL,
-	}, nil
-}
-
-func getConfiguredUpstreamEndpoints(svc *corev1.Service,
-	cfg *corev1.Service_Spec_Config) []*corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint {
-
-	if cfg == nil || cfg.GetUpstream() == nil {
-		cfg = svc.Spec.Config
-	}
-
-	var ret []*corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint
-
-	upstream := cfg.GetUpstream()
-
-	switch upstream.Type.(type) {
-	case *corev1.Service_Spec_Config_Upstream_Url:
-		ret = []*corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
-			{
-				Url:  upstream.GetUrl(),
-				User: upstream.User,
-			},
-		}
-	case *corev1.Service_Spec_Config_Upstream_Loadbalance_:
-		ret = upstream.GetLoadbalance().Endpoints
-	}
-
-	return ret
+	return l.doGetUpstream(u, svc)
 }
 
 func getScheme(l *corev1.Service) string {
