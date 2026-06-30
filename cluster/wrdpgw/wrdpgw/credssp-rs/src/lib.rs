@@ -5,19 +5,6 @@
  * it under the terms of the GNU Affero General Public License version 3.
  */
 
-// CredSSP token computation for wrdpgw secretless access.
-//
-// This library deliberately performs no socket I/O. It is a pure state machine:
-// Go owns the upstream TLS connection and pumps each TSRequest in and out, while
-// this side computes the next token using the injected credentials. That keeps
-// the FFI surface on the control path (a handful of calls during the handshake)
-// rather than the data path, so there is no long-lived shared stream to race a
-// close against and no per-chunk crossing during the session.
-//
-// Scope for v1 is NTLM only. Negotiate/Kerberos would make sspi yield KDC
-// network requests; resolve_to_result surfaces that as an error rather than
-// silently failing, which is the intended typed signal until KDC proxying lands.
-
 use std::ffi::{c_char, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
@@ -58,6 +45,17 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
     out_client: *mut *mut WrdpgwCredssp,
     out_error: *mut *mut c_char,
 ) -> i32 {
+    if !out_error.is_null() {
+        *out_error = ptr::null_mut();
+    }
+
+    if out_client.is_null() {
+        set_error(out_error, "null out_client");
+        return WRDPGW_ERR_INVALID_ARGUMENT;
+    }
+
+    *out_client = ptr::null_mut();
+
     let res = catch_unwind(AssertUnwindSafe(|| {
         new_impl(
             server_pubkey,
@@ -72,29 +70,17 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
             target_len,
         )
     }));
-    eprintln!("wrdpgw_credssp_new: public_key_len={} head={:02x?} domain_len={} user_len={} target_len={}", server_pubkey_len, if server_pubkey_len > 0 { Some(*server_pubkey) } else { None }, domain_len, username_len, target_len);
-
-    if !out_client.is_null() {
-        *out_client = ptr::null_mut();
-    }
 
     match res {
         Ok(Ok(client)) => {
-            eprintln!("wrdpgw_credssp_new: created client");
-            if out_client.is_null() {
-                eprintln!("wrdpgw_credssp_new: out_client is null");
-                return WRDPGW_ERR_INVALID_ARGUMENT;
-            }
             *out_client = Box::into_raw(Box::new(client));
             WRDPGW_OK
         }
         Ok(Err((kind, msg))) => {
-            eprintln!("wrdpgw_credssp_new: error {}: {}", kind, msg);
             set_error(out_error, &msg);
             kind
         }
         Err(_) => {
-            eprintln!("wrdpgw_credssp_new: panic");
             set_error(out_error, "panic in wrdpgw_credssp_new");
             WRDPGW_ERR_INTERNAL
         }
@@ -137,7 +123,6 @@ unsafe fn new_impl(
         username: uname,
         password: Secret::from(password),
     };
-    eprintln!("wrdpgw_credssp_new: creating CredSspClient for user {} domain {} target {}", username, domain, target);
 
     let client = CredSspClient::new(
         pubkey,
@@ -161,25 +146,30 @@ pub unsafe extern "C" fn wrdpgw_credssp_step(
     out_state: *mut i32,
     out_error: *mut *mut c_char,
 ) -> i32 {
+    if !out_error.is_null() {
+        *out_error = ptr::null_mut();
+    }
+
+    if out_outgoing.is_null() || out_outgoing_len.is_null() || out_state.is_null() {
+        set_error(out_error, "null output pointer");
+        return WRDPGW_ERR_INVALID_ARGUMENT;
+    }
+
+    *out_outgoing = ptr::null_mut();
+    *out_outgoing_len = 0;
+    *out_state = CREDSSP_STATE_REPLY_NEEDED;
+
     let res = catch_unwind(AssertUnwindSafe(|| step_impl(client, incoming, incoming_len)));
-    eprintln!("wrdpgw_credssp_step: incoming_len={} out_outgoing={:?} out_outgoing_len={:?} out_state={:?}", incoming_len, out_outgoing, out_outgoing_len, out_state);
+
     match res {
         Ok(Ok((buf, state))) => {
-            eprintln!("wrdpgw_credssp_step: outgoing_len={} state={}", buf.len(), state);
             let (p, l) = leak_bytes(buf);
-            if !out_outgoing.is_null() {
-                *out_outgoing = p;
-            }
-            if !out_outgoing_len.is_null() {
-                *out_outgoing_len = l;
-            }
-            if !out_state.is_null() {
-                *out_state = state;
-            }
+            *out_outgoing = p;
+            *out_outgoing_len = l;
+            *out_state = state;
             WRDPGW_OK
         }
         Ok(Err((kind, msg))) => {
-            eprintln!("wrdpgw_credssp_step: error {}: {}", kind, msg);
             set_error(out_error, &msg);
             kind
         }
@@ -219,13 +209,10 @@ unsafe fn step_impl(
         ClientState::ReplyNeeded(req) => (req, CREDSSP_STATE_REPLY_NEEDED),
         ClientState::FinalMessage(req) => (req, CREDSSP_STATE_FINAL),
     };
-    eprintln!("wrdpgw_credssp_step: incoming_len={} state={}", incoming_len, st);
 
     let mut buf = Vec::with_capacity(req.buffer_len() as usize);
     req.encode_ts_request(&mut buf)
         .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("encode TSRequest: {e}")))?;
-
-    eprintln!("wrdpgw_credssp_step: outgoing_len={} state={}", buf.len(), st);
 
     Ok((buf, st))
 }
@@ -279,6 +266,9 @@ unsafe fn set_error(out_error: *mut *mut c_char, msg: &str) {
 }
 
 fn leak_bytes(v: Vec<u8>) -> (*mut u8, usize) {
+    if v.is_empty() {
+        return (ptr::null_mut(), 0);
+    }
     let boxed = v.into_boxed_slice();
     let len = boxed.len();
     let p = Box::into_raw(boxed) as *mut u8;
