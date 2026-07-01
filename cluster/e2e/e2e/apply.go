@@ -318,7 +318,7 @@ spec:
         image: ghcr.io/ggml-org/llama.cpp:server
         args:
         - "--model-url"
-        - "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf"
+        - "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
         - "--host"
         - "0.0.0.0"
         - "--port"
