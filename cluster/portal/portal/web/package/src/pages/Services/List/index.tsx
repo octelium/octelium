@@ -39,6 +39,7 @@ import ConnectCommand from "./ConnectCommand";
 import { motion, useReducedMotion } from "framer-motion";
 
 import { Namespace } from "@octelium/apis/main/userv1";
+import { IoMdDesktop } from "react-icons/io";
 
 const getTypeIcon = (svc: Service) => {
   return match(svc.spec?.type)
@@ -47,6 +48,7 @@ const getTypeIcon = (svc: Service) => {
     .with(Service_Spec_Type.POSTGRES, () => <BiLogoPostgresql />)
     .with(Service_Spec_Type.SSH, () => <HiMiniCommandLine />)
     .with(Service_Spec_Type.WEB, () => <IoIosDesktop />)
+    .with(Service_Spec_Type.RDP_WEB, () => <IoMdDesktop />)
     .otherwise(() => <TypeText name={getType(svc)} />);
 };
 
@@ -68,6 +70,7 @@ const getType = (svc: Service): string => {
     .with(Service_Spec_Type.UDP, () => "UDP")
     .with(Service_Spec_Type.WEB, () => "Web App")
     .with(Service_Spec_Type.DNS, () => "DNS")
+    .with(Service_Spec_Type.RDP_WEB, () => "RDP Web")
     .otherwise(() => "");
 };
 
@@ -187,20 +190,22 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
           </Collapse>
         </div>
         <div className="flex items-center justify-center">
-          {item.spec?.isPublic && item.spec.type === Service_Spec_Type.WEB && (
-            <a
-              className={twMerge(
-                "bg-gray-800 text-white py-2 px-4 ml-2 font-bold shadow-lg text-sm rounded-lg",
-                "hover:bg-black transition-all duration-200 shadow-xl",
-                "flex flex-row items-center justify-center",
-              )}
-              href={`https://${getServicePublicFQDN(item, props.domain)}`}
-              target="_blank"
-            >
-              <span className="px-1">Visit</span>
-              <BiLinkExternal />
-            </a>
-          )}
+          {item.spec?.isPublic &&
+            (item.spec.type === Service_Spec_Type.WEB ||
+              item.spec.type === Service_Spec_Type.RDP_WEB) && (
+              <a
+                className={twMerge(
+                  "bg-gray-800 text-white py-2 px-4 ml-2 font-bold shadow-lg text-sm rounded-lg",
+                  "hover:bg-black transition-all duration-200 shadow-xl",
+                  "flex flex-row items-center justify-center",
+                )}
+                href={`https://${getServicePublicFQDN(item, props.domain)}`}
+                target="_blank"
+              >
+                <span className="px-1">Visit</span>
+                <BiLinkExternal />
+              </a>
+            )}
         </div>
       </div>
     </div>
@@ -316,6 +321,7 @@ const SERVICE_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "TCP", label: "TCP" },
   { value: "UDP", label: "UDP" },
   { value: "DNS", label: "DNS" },
+  { value: "RDP_WEB", label: "RDP Web" },
 ];
 
 const buildServicesURL = (
