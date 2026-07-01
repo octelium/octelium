@@ -1304,7 +1304,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 						Messages: []openai.ChatCompletionMessageParamUnion{
 							openai.UserMessage("What is zero trust?"),
 						},
-						Model: "qwen3:0.6b",
+						Model: "e2e",
 					})
 					assert.Nil(t, err)
 
@@ -1320,7 +1320,7 @@ func (s *server) runOcteliumctlApplyCommands(ctx context.Context) error {
 						Messages: []openai.ChatCompletionMessageParamUnion{
 							openai.UserMessage("What are the largest cities in the world?"),
 						},
-						Model: "qwen3:0.6b",
+						Model: "e2e",
 					})
 
 					acc := openai.ChatCompletionAccumulator{}

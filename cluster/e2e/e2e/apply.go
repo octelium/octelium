@@ -317,14 +317,22 @@ spec:
         port: 8080
         image: ghcr.io/ggml-org/llama.cpp:server
         args:
-        - "--model-url"
-        - "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
+        - "-hf"
+        - "Qwen/Qwen3-0.6B-GGUF:Q8_0"
+        - "--alias"
+        - "e2e"
         - "--host"
         - "0.0.0.0"
         - "--port"
         - "8080"
         - "-c"
-        - "2048"
+        - "512"
+        - "-n"
+        - "32"
+        - "-np"
+        - "1"
+        - "-t"
+        - "2"
         resourceLimit:
           cpu:
             millicores: 2000
