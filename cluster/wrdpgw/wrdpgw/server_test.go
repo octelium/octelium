@@ -33,7 +33,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -83,7 +82,44 @@ func (s *echoSrv) close() {
 }
 
 func TestRenderIndex(t *testing.T) {
-	srv := &server{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamPort := tests.GetPort()
+	echo := newEchoSrv(t, upstreamPort)
+	defer echo.close()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_TCP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", upstreamPort),
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
+	assert.Nil(t, err)
 
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 	w := httptest.NewRecorder()
@@ -177,7 +213,6 @@ func TestWebSocketRejectsInvalidRDCleanPath(t *testing.T) {
 		tst.Destroy()
 	})
 	fakeC := tst.C
-
 	adminSrv := admin.NewServer(&admin.Opts{
 		OcteliumC:  fakeC.OcteliumC,
 		IsEmbedded: true,
@@ -205,10 +240,7 @@ func TestWebSocketRejectsInvalidRDCleanPath(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
-	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
-	assert.Nil(t, err)
-
-	srv, err := newServer(ctx, fakeC.OcteliumC, svcV)
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
 	assert.Nil(t, err)
 
 	err = srv.lbManager.Run(ctx)

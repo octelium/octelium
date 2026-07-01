@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 package wrdpgw
 
 /*
@@ -34,6 +35,8 @@ import (
 const (
 	credsspStateReplyNeeded = int(C.WRDPGW_CREDSSP_STATE_REPLY_NEEDED)
 	credsspStateFinal       = int(C.WRDPGW_CREDSSP_STATE_FINAL)
+
+	maxCGoBytesLen = int(^uint32(0) >> 1)
 )
 
 type ffiCredssp struct {
@@ -71,6 +74,10 @@ func ffiCredsspNew(serverPubkey []byte, domain, username, password, target strin
 }
 
 func (c *ffiCredssp) step(incoming []byte) ([]byte, int, error) {
+	if c == nil || c.ptr == nil {
+		return nil, 0, errors.Errorf("CredSSP client is closed")
+	}
+
 	var outPtr *C.uint8_t
 	var outLen C.size_t
 	var state C.int32_t
@@ -86,19 +93,35 @@ func (c *ffiCredssp) step(incoming []byte) ([]byte, int, error) {
 		return nil, 0, ffiError(int(kind), cErr)
 	}
 
-	var outgoing []byte
-	if outPtr != nil && outLen > 0 {
-		outgoing = C.GoBytes(unsafe.Pointer(outPtr), C.int(outLen))
-		C.wrdpgw_free_bytes(outPtr, outLen)
+	if outPtr != nil {
+		defer C.wrdpgw_free_bytes(outPtr, outLen)
 	}
 
-	return outgoing, int(state), nil
+	st := int(state)
+	switch st {
+	case credsspStateReplyNeeded, credsspStateFinal:
+	default:
+		return nil, 0, errors.Errorf("CredSSP returned invalid state: %d", st)
+	}
+
+	if outPtr == nil || outLen == 0 {
+		return nil, st, nil
+	}
+
+	if outLen > C.size_t(maxCGoBytesLen) {
+		return nil, 0, errors.Errorf("CredSSP output is too large: %d", uint64(outLen))
+	}
+
+	outgoing := C.GoBytes(unsafe.Pointer(outPtr), C.int(outLen))
+
+	return outgoing, st, nil
 }
 
 func (c *ffiCredssp) free() {
 	if c == nil || c.ptr == nil {
 		return
 	}
+
 	C.wrdpgw_credssp_free(c.ptr)
 	c.ptr = nil
 }
@@ -107,6 +130,7 @@ func bytesPtr(b []byte) *C.uint8_t {
 	if len(b) == 0 {
 		return nil
 	}
+
 	return (*C.uint8_t)(unsafe.Pointer(&b[0]))
 }
 
@@ -138,8 +162,3 @@ func zeroBytes(b []byte) {
 		b[i] = 0
 	}
 }
-
-var (
-	errCredsspKDCRequired = errors.New("CredSSP requires Kerberos KDC access")
-	errCredsspAuthFailed  = errors.New("CredSSP authentication failed")
-)
