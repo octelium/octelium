@@ -333,7 +333,7 @@ func (s *Server) validateService(ctx context.Context,
 	}
 
 	if spec.DynamicConfig != nil {
-		if len(spec.DynamicConfig.Configs) > 256 {
+		if len(spec.DynamicConfig.Configs) > 1000 {
 			return serr.InvalidArg("Too many dynamic named Configs")
 		}
 		if len(spec.DynamicConfig.Rules) > 1000 {
