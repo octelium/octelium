@@ -37,10 +37,7 @@ func (s *Server) ListGateway(ctx context.Context, req *corev1.ListGatewayOptions
 			return nil, err
 		}
 
-		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
-			Uid:  req.RegionRef.Uid,
-			Name: req.RegionRef.Name,
-		})
+		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, apivalidation.ObjectReferenceToRGetOptions(req.RegionRef))
 		if err != nil {
 			return nil, err
 		}

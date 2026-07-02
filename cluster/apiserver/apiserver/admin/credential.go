@@ -192,9 +192,7 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 		if err != nil {
 			return nil, serr.InternalWithErr(err)
 		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-			Uid: cred.Status.UserRef.Uid,
-		})
+		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(cred.Status.UserRef))
 		if err != nil {
 			return nil, grpcutils.K8sNotFoundOrInternalWithErr(err)
 		}

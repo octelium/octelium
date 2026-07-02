@@ -257,10 +257,7 @@ func (s *Server) GetUser(ctx context.Context, req *metav1.GetOptions) (*corev1.U
 		return nil, err
 	}
 
-	ret, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
-		Uid:  req.Uid,
-		Name: req.Name,
-	})
+	ret, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.GetOptionsToRGetOptions(req))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
