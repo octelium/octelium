@@ -132,6 +132,9 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		for _, svc := range svcList.Items {
 			if svc.Status.ManagedService != nil {
 				svc.Status.ManagedService.Image = oc.GetImage(oc.WRRDPGW, "")
+				if _, err := g.octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
+					zap.L().Warn("Could not updateService", zap.Any("svc", svc), zap.Error(err))
+				}
 			}
 		}
 	}
