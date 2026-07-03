@@ -22,8 +22,6 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
-	"github.com/octelium/octelium/pkg/apiutils/umetav1"
-	"google.golang.org/protobuf/proto"
 )
 
 func MetadataFrom(req *metav1.Metadata) *metav1.Metadata {
@@ -34,6 +32,7 @@ func MetadataFrom(req *metav1.Metadata) *metav1.Metadata {
 		Labels:      req.Labels,
 		Annotations: req.Annotations,
 		Tags:        req.Tags,
+		PicURL:      req.PicURL,
 	}
 }
 
@@ -48,25 +47,6 @@ func MetadataUpdate(to *metav1.Metadata, from *metav1.Metadata) {
 }
 
 var rgxName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`)
-
-/*
-func CheckGetOptions(req *rmetav1.GetOptions) error {
-
-	if req.Name != "" && !rgxName.MatchString(req.Name) {
-		return serr.InvalidArg("Invalid name: %s", req.Name)
-	}
-
-	if req.Namespace != "" && !rgxName.MatchString(req.Namespace) {
-		return serr.InvalidArg("Invalid namespace: %s", req.Namespace)
-	}
-
-	if req.Uid != "" && !govalidator.IsUUIDv4(req.Uid) {
-		return serr.InvalidArg("Invalid UID")
-	}
-
-	return nil
-}
-*/
 
 func CheckGetOrDeleteOptions(req geTorDeleteI) error {
 
@@ -99,38 +79,4 @@ func GetNamespace(ns string) string {
 		return "default"
 	}
 	return ns
-}
-
-func IsMetadataEqual(a, b umetav1.ResourceObjectI) bool {
-	aM := &metav1.Metadata{
-		DisplayName: a.GetMetadata().DisplayName,
-		Description: a.GetMetadata().Description,
-		Labels:      a.GetMetadata().Labels,
-		Annotations: a.GetMetadata().Annotations,
-		PicURL:      a.GetMetadata().PicURL,
-		Tags:        a.GetMetadata().Tags,
-	}
-
-	bM := &metav1.Metadata{
-		DisplayName: b.GetMetadata().DisplayName,
-		Description: b.GetMetadata().Description,
-		Labels:      b.GetMetadata().Labels,
-		Annotations: b.GetMetadata().Annotations,
-		PicURL:      b.GetMetadata().PicURL,
-		Tags:        b.GetMetadata().Tags,
-	}
-
-	return proto.Equal(aM, bM)
-}
-
-func IsNameValid(arg string) bool {
-	return rgxName.MatchString(arg)
-}
-
-func IsNameValidOptional(arg string) bool {
-	if arg == "" {
-		return true
-	}
-
-	return rgxName.MatchString(arg)
 }
