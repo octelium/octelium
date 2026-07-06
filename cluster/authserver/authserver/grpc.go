@@ -128,3 +128,15 @@ func (s *authMainSvc) AuthenticateWithPasskey(ctx context.Context,
 
 	return s.s.doAuthenticateWithPasskey(ctx, req)
 }
+
+func (s *authMainSvc) RunDeviceProbeBegin(ctx context.Context,
+	req *authv1.RunDeviceProbeBeginRequest) (*authv1.RunDeviceProbeBeginResponse, error) {
+
+	return s.s.doRunDeviceProbeBegin(ctx, req)
+}
+
+func (s *authMainSvc) RunDeviceProbeFinish(ctx context.Context,
+	req *authv1.RunDeviceProbeFinishRequest) (*authv1.RunDeviceProbeFinishResponse, error) {
+
+	return s.s.doRunDeviceProbeFinish(ctx, req)
+}

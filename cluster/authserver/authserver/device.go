@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -31,12 +32,14 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 func (s *server) doBuildDevice(ctx context.Context,
@@ -487,4 +490,243 @@ func (s *server) getDeviceByID(ctx context.Context, id string) (*corev1.Device, 
 	}
 
 	return devList.Items[0], nil
+}
+
+const probeRequestTTL = time.Minute
+
+func (s *server) doRunDeviceProbeBegin(ctx context.Context,
+	req *authv1.RunDeviceProbeBeginRequest) (*authv1.RunDeviceProbeBeginResponse, error) {
+	sess, err := s.getSessionFromGRPCCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if sess.Status.DeviceRef == nil {
+		return &authv1.RunDeviceProbeBeginResponse{}, nil
+	}
+
+	usr, err := s.getUserFromSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	if usr.Spec.Type != corev1.User_Spec_HUMAN {
+		return nil, grpcutils.PermissionDenied("Not a human user")
+	}
+
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	if err != nil {
+		return nil, err
+	}
+
+	if isPostureFresh(dev) {
+		return &authv1.RunDeviceProbeBeginResponse{}, nil
+	}
+
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg := cc.GetStatus().GetDevice()
+	if cfg == nil || len(cfg.Probes) == 0 {
+		return &authv1.RunDeviceProbeBeginResponse{}, nil
+	}
+
+	var probes []*authv1.DeviceProbe
+	var ownerRefs []*metav1.ObjectReference
+
+	inputMap := map[string]any{
+		"ctx": map[string]any{
+			"user":    pbutils.MustConvertToMap(usr),
+			"session": pbutils.MustConvertToMap(sess),
+			"device":  pbutils.MustConvertToMap(dev),
+		},
+	}
+
+	for _, p := range cfg.Probes {
+		if p.GetOwnerRef() == nil || p.OsType != dev.Status.GetOsType() {
+			continue
+		}
+		ok, err := s.celEngine.EvalCondition(ctx, p.Condition, inputMap)
+		if err != nil {
+			zap.L().Warn("Could not evaluate probe condition", zap.Error(err))
+			continue
+		}
+		if !ok {
+			continue
+		}
+		probes = append(probes, s.toAuthProbe(p))
+		ownerRefs = append(ownerRefs, p.OwnerRef)
+	}
+	if len(probes) == 0 {
+		return &authv1.RunDeviceProbeBeginResponse{}, nil
+	}
+
+	if len(probes) > 100 {
+		probes = probes[:100]
+	}
+
+	if dev.Status == nil {
+		dev.Status = &corev1.Device_Status{}
+	}
+	dev.Status.Probe = &corev1.Device_Status_Probe{
+		Request: &corev1.Device_Status_Probe_Request{
+			OwnerRefs: ownerRefs,
+		},
+		RequestedAt: pbutils.Now(),
+	}
+
+	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
+		return nil, err
+	}
+
+	return &authv1.RunDeviceProbeBeginResponse{
+		Probes: probes,
+	}, nil
+}
+
+func (s *server) doRunDeviceProbeFinish(ctx context.Context,
+	req *authv1.RunDeviceProbeFinishRequest) (*authv1.RunDeviceProbeFinishResponse, error) {
+
+	if err := s.validateRunDeviceProbeFinish(req); err != nil {
+		return nil, grpcutils.InvalidArg("Invalid request: %v", err)
+	}
+
+	sess, err := s.getSessionFromGRPCCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if sess.Status.DeviceRef == nil {
+		return nil, grpcutils.InvalidArg("No Device is associated with this Session")
+	}
+
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	if err != nil {
+		return nil, err
+	}
+
+	if dev.Status == nil {
+		dev.Status = &corev1.Device_Status{}
+	}
+
+	probe := dev.Status.GetProbe()
+	stored := probe.GetRequest()
+	if stored == nil {
+		return nil, grpcutils.InvalidArg("No pending probe request for this Device")
+	}
+	if probe.RequestedAt == nil || time.Since(probe.RequestedAt.AsTime()) > probeRequestTTL {
+		dev.Status.Probe = nil
+		if _, uErr := s.octeliumC.CoreC().UpdateDevice(ctx, dev); uErr != nil {
+			return nil, uErr
+		}
+		return nil, grpcutils.InvalidArg("Probe request expired")
+	}
+
+	ownerByUID := map[string]*metav1.ObjectReference{}
+	for _, ref := range stored.OwnerRefs {
+		if ref.GetUid() != "" {
+			ownerByUID[ref.Uid] = ref
+		}
+	}
+
+	var results []*corev1.Device_Status_Probe_Result
+	for _, r := range req.Results {
+		ref, ok := ownerByUID[r.Uid]
+		if !ok {
+			continue
+		}
+		res := &corev1.Device_Status_Probe_Result{
+			OwnerRef: ref,
+		}
+		switch t := r.Type.(type) {
+		case *authv1.DeviceProbeResult_Output:
+			res.Type = &corev1.Device_Status_Probe_Result_Output{Output: t.Output}
+		case *authv1.DeviceProbeResult_Error:
+			res.Type = &corev1.Device_Status_Probe_Result_Error{Error: t.Error}
+		default:
+			continue
+		}
+		results = append(results, res)
+	}
+
+	dev.Status.Probe = &corev1.Device_Status_Probe{
+		Results: results,
+		SetAt:   pbutils.Now(),
+	}
+
+	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
+		return nil, err
+	}
+
+	return &authv1.RunDeviceProbeFinishResponse{}, nil
+}
+
+func (s *server) toAuthProbe(p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
+	wp := &authv1.DeviceProbe{
+		Uid:              p.OwnerRef.Uid,
+		Kind:             p.Kind,
+		RequireElevation: p.RequireElevation,
+	}
+	switch t := p.Type.(type) {
+	case *corev1.ClusterConfig_Status_Device_Probe_RunCommand_:
+		wp.Type = &authv1.DeviceProbe_RunCommand_{RunCommand: &authv1.DeviceProbe_RunCommand{
+			Command:        t.RunCommand.Command,
+			Args:           t.RunCommand.Args,
+			TimeoutSeconds: t.RunCommand.TimeoutSeconds,
+			MaxOutputBytes: t.RunCommand.MaxOutputBytes,
+		}}
+	case *corev1.ClusterConfig_Status_Device_Probe_ReadFile_:
+		wp.Type = &authv1.DeviceProbe_ReadFile_{ReadFile: &authv1.DeviceProbe_ReadFile{
+			Path:     t.ReadFile.Path,
+			MaxBytes: t.ReadFile.MaxBytes,
+		}}
+	case *corev1.ClusterConfig_Status_Device_Probe_ReadRegistry_:
+		wp.Type = &authv1.DeviceProbe_ReadRegistry_{ReadRegistry: &authv1.DeviceProbe_ReadRegistry{
+			Key:  t.ReadRegistry.Key,
+			Name: t.ReadRegistry.Name,
+		}}
+	}
+	return wp
+}
+
+func isPostureFresh(dev *corev1.Device) bool {
+	p := dev.GetStatus().GetPosture()
+	if p == nil {
+		return false
+	}
+	if p.ExpiresAt == nil {
+		return true
+	}
+	return time.Now().Before(p.ExpiresAt.AsTime())
+}
+
+func (s *server) validateRunDeviceProbeFinish(req *authv1.RunDeviceProbeFinishRequest) error {
+	if req == nil {
+		return errors.Errorf("Nil req")
+	}
+
+	if len(req.Results) > 100 {
+		return errors.Errorf("Too many results")
+	}
+
+	for _, r := range req.Results {
+		if !govalidator.IsUUIDv4(r.Uid) {
+			return errors.Errorf("Invalid UID: %s", r.Uid)
+		}
+		switch r.Type.(type) {
+		case *authv1.DeviceProbeResult_Output:
+			if len(r.GetOutput()) > 10000 {
+				return errors.Errorf("Output is too large")
+			}
+		case *authv1.DeviceProbeResult_Error:
+			if len(r.GetError()) > 10000 {
+				return errors.Errorf("Error is too large")
+			}
+		default:
+			return errors.Errorf("Invalid result type")
+		}
+	}
+
+	return nil
 }

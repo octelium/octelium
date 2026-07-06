@@ -52,6 +52,8 @@ const (
 	MainService_GetAvailableAuthenticator_FullMethodName           = "/octelium.api.main.auth.v1.MainService/GetAvailableAuthenticator"
 	MainService_AuthenticateWithPasskeyBegin_FullMethodName        = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskeyBegin"
 	MainService_AuthenticateWithPasskey_FullMethodName             = "/octelium.api.main.auth.v1.MainService/AuthenticateWithPasskey"
+	MainService_RunDeviceProbeBegin_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/RunDeviceProbeBegin"
+	MainService_RunDeviceProbeFinish_FullMethodName                = "/octelium.api.main.auth.v1.MainService/RunDeviceProbeFinish"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -76,6 +78,8 @@ type MainServiceClient interface {
 	GetAvailableAuthenticator(ctx context.Context, in *GetAvailableAuthenticatorRequest, opts ...grpc.CallOption) (*GetAvailableAuthenticatorResponse, error)
 	AuthenticateWithPasskeyBegin(ctx context.Context, in *AuthenticateWithPasskeyBeginRequest, opts ...grpc.CallOption) (*AuthenticateWithPasskeyBeginResponse, error)
 	AuthenticateWithPasskey(ctx context.Context, in *AuthenticateWithPasskeyRequest, opts ...grpc.CallOption) (*SessionToken, error)
+	RunDeviceProbeBegin(ctx context.Context, in *RunDeviceProbeBeginRequest, opts ...grpc.CallOption) (*RunDeviceProbeBeginResponse, error)
+	RunDeviceProbeFinish(ctx context.Context, in *RunDeviceProbeFinishRequest, opts ...grpc.CallOption) (*RunDeviceProbeFinishResponse, error)
 }
 
 type mainServiceClient struct {
@@ -266,6 +270,26 @@ func (c *mainServiceClient) AuthenticateWithPasskey(ctx context.Context, in *Aut
 	return out, nil
 }
 
+func (c *mainServiceClient) RunDeviceProbeBegin(ctx context.Context, in *RunDeviceProbeBeginRequest, opts ...grpc.CallOption) (*RunDeviceProbeBeginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunDeviceProbeBeginResponse)
+	err := c.cc.Invoke(ctx, MainService_RunDeviceProbeBegin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) RunDeviceProbeFinish(ctx context.Context, in *RunDeviceProbeFinishRequest, opts ...grpc.CallOption) (*RunDeviceProbeFinishResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunDeviceProbeFinishResponse)
+	err := c.cc.Invoke(ctx, MainService_RunDeviceProbeFinish_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
@@ -288,6 +312,8 @@ type MainServiceServer interface {
 	GetAvailableAuthenticator(context.Context, *GetAvailableAuthenticatorRequest) (*GetAvailableAuthenticatorResponse, error)
 	AuthenticateWithPasskeyBegin(context.Context, *AuthenticateWithPasskeyBeginRequest) (*AuthenticateWithPasskeyBeginResponse, error)
 	AuthenticateWithPasskey(context.Context, *AuthenticateWithPasskeyRequest) (*SessionToken, error)
+	RunDeviceProbeBegin(context.Context, *RunDeviceProbeBeginRequest) (*RunDeviceProbeBeginResponse, error)
+	RunDeviceProbeFinish(context.Context, *RunDeviceProbeFinishRequest) (*RunDeviceProbeFinishResponse, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -351,6 +377,12 @@ func (UnimplementedMainServiceServer) AuthenticateWithPasskeyBegin(context.Conte
 }
 func (UnimplementedMainServiceServer) AuthenticateWithPasskey(context.Context, *AuthenticateWithPasskeyRequest) (*SessionToken, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateWithPasskey not implemented")
+}
+func (UnimplementedMainServiceServer) RunDeviceProbeBegin(context.Context, *RunDeviceProbeBeginRequest) (*RunDeviceProbeBeginResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RunDeviceProbeBegin not implemented")
+}
+func (UnimplementedMainServiceServer) RunDeviceProbeFinish(context.Context, *RunDeviceProbeFinishRequest) (*RunDeviceProbeFinishResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RunDeviceProbeFinish not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -697,6 +729,42 @@ func _MainService_AuthenticateWithPasskey_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_RunDeviceProbeBegin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunDeviceProbeBeginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).RunDeviceProbeBegin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_RunDeviceProbeBegin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).RunDeviceProbeBegin(ctx, req.(*RunDeviceProbeBeginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_RunDeviceProbeFinish_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunDeviceProbeFinishRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).RunDeviceProbeFinish(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_RunDeviceProbeFinish_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).RunDeviceProbeFinish(ctx, req.(*RunDeviceProbeFinishRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -775,6 +843,14 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AuthenticateWithPasskey",
 			Handler:    _MainService_AuthenticateWithPasskey_Handler,
+		},
+		{
+			MethodName: "RunDeviceProbeBegin",
+			Handler:    _MainService_RunDeviceProbeBegin_Handler,
+		},
+		{
+			MethodName: "RunDeviceProbeFinish",
+			Handler:    _MainService_RunDeviceProbeFinish_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
