@@ -665,7 +665,6 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 func (s *server) toAuthProbe(p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
 	wp := &authv1.DeviceProbe{
 		Uid:              p.OwnerRef.Uid,
-		Kind:             p.Kind,
 		RequireElevation: p.RequireElevation,
 	}
 	switch t := p.Type.(type) {
