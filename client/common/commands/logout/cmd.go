@@ -21,6 +21,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -73,7 +74,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	if _, err := c.C().Logout(ctx, &authv1.LogoutRequest{}); err != nil {
+	if _, err := c.C().Logout(ctx, &authv1.LogoutRequest{}); err != nil && !grpcerr.IsUnauthenticated(err) {
 		zap.L().Warn("Could not call logout", zap.Error(err))
 	}
 

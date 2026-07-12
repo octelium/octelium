@@ -400,6 +400,9 @@ func (c *Client) doLogout(ctx context.Context) error {
 	}
 
 	_, err := c.c.C().Logout(ctx, &authv1.LogoutRequest{})
+	if err != nil && grpcerr.IsUnauthenticated(err) {
+		return nil
+	}
 	return err
 }
 

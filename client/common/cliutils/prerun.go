@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/common/components"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -77,7 +78,9 @@ func PostRun(cmd *cobra.Command, args []string) error {
 		}
 
 		if _, err := c.C().Logout(ctx, &authv1.LogoutRequest{}); err != nil {
-			return err
+			if !grpcerr.IsUnauthenticated(err) {
+				return err
+			}
 		}
 
 		LineInfo("You are now logged out.\n")
