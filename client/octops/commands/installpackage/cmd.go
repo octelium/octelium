@@ -99,9 +99,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmdArgs.Upgrade {
-		cliutils.LineNotify(`Upgrading the package "%s" has started...\n`, cmdArgs.Package)
+		cliutils.LineNotify("Upgrading the package \"%s\" has started...\n", cmdArgs.Package)
 	} else {
-		cliutils.LineNotify(`Installing the package "%s" has started...\n`, cmdArgs.Package)
+		cliutils.LineNotify("Installing the package \"%s\" has started...\n", cmdArgs.Package)
 	}
 
 	return nil
