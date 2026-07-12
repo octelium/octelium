@@ -28,8 +28,15 @@ import (
 )
 
 const (
-	defaultTimeout   = 15 * time.Second
+	defaultTimeout = 15 * time.Second
+	maxTimeout     = 60 * time.Second
+
 	defaultMaxOutput = 1 << 15
+	maxOutputBytes   = 1 << 16
+
+	maxErrLen = 2048
+
+	cmdWaitDelay = 3 * time.Second
 )
 
 func Run(ctx context.Context, client authv1.MainServiceClient) error {
@@ -40,7 +47,7 @@ func Run(ctx context.Context, client authv1.MainServiceClient) error {
 		}
 		return err
 	}
-	if len(begin.Probes) == 0 {
+	if begin.AttemptUID == "" || len(begin.Probes) == 0 {
 		return nil
 	}
 
@@ -50,7 +57,8 @@ func Run(ctx context.Context, client authv1.MainServiceClient) error {
 	}
 
 	if _, err := client.RunDeviceProbeFinish(ctx, &authv1.RunDeviceProbeFinishRequest{
-		Results: results,
+		AttemptUID: begin.AttemptUID,
+		Results:    results,
 	}); err != nil {
 		if grpcerr.IsUnimplemented(err) {
 			return nil
@@ -61,32 +69,35 @@ func Run(ctx context.Context, client authv1.MainServiceClient) error {
 }
 
 func execute(ctx context.Context, p *authv1.DeviceProbe) *authv1.DeviceProbeResult {
+	if p == nil {
+		return probeErr("", "nil probe")
+	}
 
 	if p.RequireElevation && !isElevated() {
-		return probeErr(p.Uid, "probe requires elevated privileges")
+		return probeErr(p.ProbeID, "probe requires elevated privileges")
 	}
 
 	switch t := p.Type.(type) {
 	case *authv1.DeviceProbe_RunCommand_:
 		out, err := runCommand(ctx, t.RunCommand)
 		if err != nil {
-			return probeErr(p.Uid, err.Error())
+			return probeErr(p.ProbeID, err.Error())
 		}
-		return probeOut(p.Uid, out)
+		return probeOut(p.ProbeID, out)
 	case *authv1.DeviceProbe_ReadFile_:
 		out, err := readFile(t.ReadFile)
 		if err != nil {
-			return probeErr(p.Uid, err.Error())
+			return probeErr(p.ProbeID, err.Error())
 		}
-		return probeOut(p.Uid, out)
+		return probeOut(p.ProbeID, out)
 	case *authv1.DeviceProbe_ReadRegistry_:
 		out, err := readRegistry(t.ReadRegistry)
 		if err != nil {
-			return probeErr(p.Uid, err.Error())
+			return probeErr(p.ProbeID, err.Error())
 		}
-		return probeOut(p.Uid, out)
+		return probeOut(p.ProbeID, out)
 	default:
-		return probeErr(p.Uid, "unknown probe type")
+		return probeErr(p.ProbeID, "unknown probe type")
 	}
 }
 
@@ -99,10 +110,16 @@ func runCommand(ctx context.Context, rc *authv1.DeviceProbe_RunCommand) ([]byte,
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
+	if timeout > maxTimeout {
+		timeout = maxTimeout
+	}
+
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, rc.Command, rc.Args...)
+	cmd.WaitDelay = cmdWaitDelay
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -115,6 +132,10 @@ func runCommand(ctx context.Context, rc *authv1.DeviceProbe_RunCommand) ([]byte,
 	if limit <= 0 {
 		limit = defaultMaxOutput
 	}
+	if limit > maxOutputBytes {
+		limit = maxOutputBytes
+	}
+
 	out, _ := io.ReadAll(io.LimitReader(stdout, limit))
 	waitErr := cmd.Wait()
 	if len(out) == 0 && waitErr != nil {
@@ -132,23 +153,30 @@ func readFile(rf *authv1.DeviceProbe_ReadFile) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
+
 	limit := int64(rf.MaxBytes)
 	if limit <= 0 {
 		limit = defaultMaxOutput
 	}
+	if limit > maxOutputBytes {
+		limit = maxOutputBytes
+	}
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
-func probeOut(uid string, out []byte) *authv1.DeviceProbeResult {
+func probeOut(probeID string, out []byte) *authv1.DeviceProbeResult {
 	return &authv1.DeviceProbeResult{
-		Uid:  uid,
-		Type: &authv1.DeviceProbeResult_Output{Output: out},
+		ProbeID: probeID,
+		Type:    &authv1.DeviceProbeResult_Output{Output: out},
 	}
 }
 
-func probeErr(uid, msg string) *authv1.DeviceProbeResult {
+func probeErr(probeID, msg string) *authv1.DeviceProbeResult {
+	if len(msg) > maxErrLen {
+		msg = msg[:maxErrLen]
+	}
 	return &authv1.DeviceProbeResult{
-		Uid:  uid,
-		Type: &authv1.DeviceProbeResult_Error{Error: msg},
+		ProbeID: probeID,
+		Type:    &authv1.DeviceProbeResult_Error{Error: msg},
 	}
 }

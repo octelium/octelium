@@ -23,6 +23,7 @@ import (
 	"net"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -492,7 +493,13 @@ func (s *server) getDeviceByID(ctx context.Context, id string) (*corev1.Device, 
 	return devList.Items[0], nil
 }
 
-const probeRequestTTL = time.Minute
+const probeAttemptTTL = 10 * time.Minute
+
+const maxProbesPerAttempt = 100
+
+var rgxProbeAttemptUID = regexp.MustCompile(`^[a-z0-9]{32}$`)
+
+var rgxProbeID = regexp.MustCompile(`^(0|[1-9][0-9]{0,2})$`)
 
 func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 	req *authv1.RunDeviceProbeBeginRequest) (*authv1.RunDeviceProbeBeginResponse, error) {
@@ -514,13 +521,32 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		return nil, grpcutils.PermissionDenied("Not a human user")
 	}
 
-	dev, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx,
+		apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
 	if err != nil {
 		return nil, err
 	}
 
-	if isPostureFresh(dev) {
-		return &authv1.RunDeviceProbeBeginResponse{}, nil
+	if binding := dev.Status.Binding; binding != nil {
+		switch binding.State {
+		case corev1.Device_Status_Binding_ACCEPTED,
+			corev1.Device_Status_Binding_REJECTED,
+			corev1.Device_Status_Binding_WAITING_APPROVAL:
+			return &authv1.RunDeviceProbeBeginResponse{}, nil
+		}
+	}
+
+	if attempt := dev.Status.ProbeAttempt; attempt != nil {
+		if len(attempt.Results) > 0 {
+			return &authv1.RunDeviceProbeBeginResponse{}, nil
+		}
+		if attempt.StartedAt.IsValid() &&
+			time.Since(attempt.StartedAt.AsTime()) <= probeAttemptTTL {
+			return &authv1.RunDeviceProbeBeginResponse{
+				AttemptUID: attempt.Uid,
+				Probes:     s.toAuthProbes(attempt.Probes),
+			}, nil
+		}
 	}
 
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
@@ -532,9 +558,6 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
 
-	var probes []*authv1.DeviceProbe
-	var ownerRefs []*metav1.ObjectReference
-
 	inputMap := map[string]any{
 		"ctx": map[string]any{
 			"user":    pbutils.MustConvertToMap(usr),
@@ -543,8 +566,10 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		},
 	}
 
+	var issued []*corev1.ClusterConfig_Status_Device_Probe
+
 	for _, p := range cfg.Probes {
-		if p.GetOwnerRef() == nil || p.OsType != dev.Status.GetOsType() {
+		if p.GetOwnerRef() == nil || p.OsType != dev.Status.OsType {
 			continue
 		}
 		ok, err := s.celEngine.EvalCondition(ctx, p.Condition, inputMap)
@@ -555,25 +580,23 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		if !ok {
 			continue
 		}
-		probes = append(probes, s.toAuthProbe(p))
-		ownerRefs = append(ownerRefs, p.OwnerRef)
+
+		cloned := pbutils.Clone(p).(*corev1.ClusterConfig_Status_Device_Probe)
+		cloned.Condition = nil
+		issued = append(issued, cloned)
+
+		if len(issued) >= maxProbesPerAttempt {
+			break
+		}
 	}
-	if len(probes) == 0 {
+	if len(issued) == 0 {
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
 
-	if len(probes) > 100 {
-		probes = probes[:100]
-	}
-
-	if dev.Status == nil {
-		dev.Status = &corev1.Device_Status{}
-	}
-	dev.Status.Probe = &corev1.Device_Status_Probe{
-		Request: &corev1.Device_Status_Probe_Request{
-			OwnerRefs: ownerRefs,
-		},
-		RequestedAt: pbutils.Now(),
+	dev.Status.ProbeAttempt = &corev1.Device_Status_ProbeAttempt{
+		Uid:       utilrand.GetRandomStringCanonical(32),
+		StartedAt: pbutils.Now(),
+		Probes:    issued,
 	}
 
 	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
@@ -581,7 +604,8 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 	}
 
 	return &authv1.RunDeviceProbeBeginResponse{
-		Probes: probes,
+		AttemptUID: dev.Status.ProbeAttempt.Uid,
+		Probes:     s.toAuthProbes(dev.Status.ProbeAttempt.Probes),
 	}, nil
 }
 
@@ -601,59 +625,67 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 		return nil, grpcutils.InvalidArg("No Device is associated with this Session")
 	}
 
-	dev, err := s.octeliumC.CoreC().GetDevice(ctx, apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx,
+		apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
 	if err != nil {
 		return nil, err
 	}
 
-	if dev.Status == nil {
-		dev.Status = &corev1.Device_Status{}
+	attempt := dev.Status.ProbeAttempt
+	if attempt == nil || attempt.Uid != req.AttemptUID {
+		return nil, grpcutils.InvalidArg("No matching pending probe attempt for this Device")
 	}
 
-	probe := dev.Status.GetProbe()
-	stored := probe.GetRequest()
-	if stored == nil {
-		return nil, grpcutils.InvalidArg("No pending probe request for this Device")
+	if len(attempt.Results) > 0 {
+		return nil, grpcutils.InvalidArg("Probe attempt results have already been submitted")
 	}
-	if probe.RequestedAt == nil || time.Since(probe.RequestedAt.AsTime()) > probeRequestTTL {
-		dev.Status.Probe = nil
+
+	if !attempt.StartedAt.IsValid() ||
+		time.Since(attempt.StartedAt.AsTime()) > probeAttemptTTL {
+		dev.Status.ProbeAttempt = nil
 		if _, uErr := s.octeliumC.CoreC().UpdateDevice(ctx, dev); uErr != nil {
 			return nil, uErr
 		}
-		return nil, grpcutils.InvalidArg("Probe request expired")
+		return nil, grpcutils.InvalidArg("Probe attempt expired")
 	}
 
-	ownerByUID := map[string]*metav1.ObjectReference{}
-	for _, ref := range stored.OwnerRefs {
-		if ref.GetUid() != "" {
-			ownerByUID[ref.Uid] = ref
-		}
+	if len(req.Results) != len(attempt.Probes) {
+		return nil, grpcutils.InvalidArg("Invalid results len")
 	}
 
-	var results []*corev1.Device_Status_Probe_Result
+	seen := map[int]struct{}{}
+	var results []*corev1.Device_Status_ProbeAttempt_Result
+
 	for _, r := range req.Results {
-		ref, ok := ownerByUID[r.Uid]
-		if !ok {
-			continue
+		idx, err := strconv.Atoi(r.ProbeID)
+		if err != nil || idx < 0 || idx >= len(attempt.Probes) {
+			return nil, grpcutils.InvalidArg("Invalid probeID: %s", r.ProbeID)
 		}
-		res := &corev1.Device_Status_Probe_Result{
-			OwnerRef: ref,
+		if _, ok := seen[idx]; ok {
+			return nil, grpcutils.InvalidArg("Duplicate probeID: %s", r.ProbeID)
 		}
+		seen[idx] = struct{}{}
+
+		res := &corev1.Device_Status_ProbeAttempt_Result{
+			ProbeID: r.ProbeID,
+		}
+
 		switch t := r.Type.(type) {
 		case *authv1.DeviceProbeResult_Output:
-			res.Type = &corev1.Device_Status_Probe_Result_Output{Output: t.Output}
+			if maxBytes := probeMaxOutputBytes(attempt.Probes[idx]); len(t.Output) > maxBytes {
+				return nil, grpcutils.InvalidArg("Output is too large for probeID: %s", r.ProbeID)
+			}
+			res.Type = &corev1.Device_Status_ProbeAttempt_Result_Output{Output: t.Output}
 		case *authv1.DeviceProbeResult_Error:
-			res.Type = &corev1.Device_Status_Probe_Result_Error{Error: t.Error}
+			res.Type = &corev1.Device_Status_ProbeAttempt_Result_Error{Error: t.Error}
 		default:
-			continue
+			return nil, grpcutils.InvalidArg("Invalid result type")
 		}
+
 		results = append(results, res)
 	}
 
-	dev.Status.Probe = &corev1.Device_Status_Probe{
-		Results: results,
-		SetAt:   pbutils.Now(),
-	}
+	attempt.Results = results
 
 	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
 		return nil, err
@@ -662,9 +694,17 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 	return &authv1.RunDeviceProbeFinishResponse{}, nil
 }
 
-func (s *server) toAuthProbe(p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
+func (s *server) toAuthProbes(probes []*corev1.ClusterConfig_Status_Device_Probe) []*authv1.DeviceProbe {
+	out := make([]*authv1.DeviceProbe, 0, len(probes))
+	for i, p := range probes {
+		out = append(out, s.toAuthProbe(strconv.Itoa(i), p))
+	}
+	return out
+}
+
+func (s *server) toAuthProbe(probeID string, p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
 	wp := &authv1.DeviceProbe{
-		Uid:              p.OwnerRef.Uid,
+		ProbeID:          probeID,
 		RequireElevation: p.RequireElevation,
 	}
 	switch t := p.Type.(type) {
@@ -689,15 +729,27 @@ func (s *server) toAuthProbe(p *corev1.ClusterConfig_Status_Device_Probe) *authv
 	return wp
 }
 
-func isPostureFresh(dev *corev1.Device) bool {
-	p := dev.GetStatus().GetPosture()
-	if p == nil {
-		return false
+const (
+	defaultProbeMaxOutputBytes = 10000
+	hardProbeMaxOutputBytes    = 65536
+)
+
+func probeMaxOutputBytes(p *corev1.ClusterConfig_Status_Device_Probe) int {
+	declared := 0
+	switch t := p.Type.(type) {
+	case *corev1.ClusterConfig_Status_Device_Probe_RunCommand_:
+		declared = int(t.RunCommand.MaxOutputBytes)
+	case *corev1.ClusterConfig_Status_Device_Probe_ReadFile_:
+		declared = int(t.ReadFile.MaxBytes)
 	}
-	if p.ExpiresAt == nil {
-		return true
+
+	if declared <= 0 {
+		return defaultProbeMaxOutputBytes
 	}
-	return time.Now().Before(p.ExpiresAt.AsTime())
+	if declared > hardProbeMaxOutputBytes {
+		return hardProbeMaxOutputBytes
+	}
+	return declared
 }
 
 func (s *server) validateRunDeviceProbeFinish(req *authv1.RunDeviceProbeFinishRequest) error {
@@ -705,21 +757,29 @@ func (s *server) validateRunDeviceProbeFinish(req *authv1.RunDeviceProbeFinishRe
 		return errors.Errorf("Nil req")
 	}
 
-	if len(req.Results) > 100 {
+	if !rgxProbeAttemptUID.MatchString(req.AttemptUID) {
+		return errors.Errorf("Invalid attemptUID")
+	}
+
+	if len(req.Results) == 0 {
+		return errors.Errorf("Empty results")
+	}
+
+	if len(req.Results) > maxProbesPerAttempt {
 		return errors.Errorf("Too many results")
 	}
 
 	for _, r := range req.Results {
-		if !govalidator.IsUUIDv4(r.Uid) {
-			return errors.Errorf("Invalid UID: %s", r.Uid)
+		if !rgxProbeID.MatchString(r.ProbeID) {
+			return errors.Errorf("Invalid probeID: %s", r.ProbeID)
 		}
 		switch r.Type.(type) {
 		case *authv1.DeviceProbeResult_Output:
-			if len(r.GetOutput()) > 10000 {
+			if len(r.GetOutput()) > hardProbeMaxOutputBytes {
 				return errors.Errorf("Output is too large")
 			}
 		case *authv1.DeviceProbeResult_Error:
-			if len(r.GetError()) > 10000 {
+			if len(r.GetError()) > 2048 {
 				return errors.Errorf("Error is too large")
 			}
 		default:

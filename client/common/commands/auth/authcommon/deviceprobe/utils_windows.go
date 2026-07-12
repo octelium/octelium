@@ -49,6 +49,13 @@ func readRegistry(rr *authv1.DeviceProbe_ReadRegistry) ([]byte, error) {
 	if err != nil && err != registry.ErrShortBuffer {
 		return nil, err
 	}
+	if n > maxOutputBytes {
+		return nil, errors.Errorf("registry value is too large: %d bytes", n)
+	}
+	if n == 0 {
+		return nil, nil
+	}
+
 	buf := make([]byte, n)
 	n, _, err = k.GetValue(rr.Name, buf)
 	if err != nil {
