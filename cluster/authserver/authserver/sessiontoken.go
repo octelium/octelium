@@ -334,6 +334,10 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 		return nil, s.errAlreadyExists("The Session is valid and does not need a refresh")
 	}
 
+	if err := s.checkReauthRateLimit(sess); err != nil {
+		return nil, err
+	}
+
 	if sess.Status.RequiredAuthenticatorRef != nil {
 		return nil, s.errPermissionDenied("This Session has a required Authenticator")
 	}
@@ -527,6 +531,10 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 
 	if !s.needsReAuth(sess) {
 		return nil, s.errAlreadyExists("The Session is valid and does not need a authenticatorFinish")
+	}
+
+	if err := s.checkReauthRateLimit(sess); err != nil {
+		return nil, err
 	}
 
 	usr, err := s.getUserFromSession(ctx, sess)

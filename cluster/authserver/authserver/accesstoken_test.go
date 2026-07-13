@@ -309,73 +309,145 @@ func TestNeedsReAuth(t *testing.T) {
 	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
 	assert.Nil(t, err)
 
+	accessTokenDuration := func(hours int64) *metav1.Duration {
+		return &metav1.Duration{
+			Type: &metav1.Duration_Hours{
+				Hours: uint32(hours),
+			},
+		}
+	}
+
+	assert.True(t, srv.needsReAuth(nil))
+
+	assert.True(t, srv.needsReAuth(&corev1.Session{}))
+
+	assert.True(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{},
+	}))
+
+	assert.True(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{},
+		},
+	}))
+
 	assert.True(t, srv.needsReAuth(&corev1.Session{
 		Status: &corev1.Session_Status{
 			Authentication: &corev1.Session_Status_Authentication{
 				SetAt: pbutils.Now(),
-				AccessTokenDuration: &metav1.Duration{
-					Type: &metav1.Duration_Hours{
-						Hours: 2,
-					},
-				},
 			},
 		},
 	}))
 
 	assert.True(t, srv.needsReAuth(&corev1.Session{
 		Status: &corev1.Session_Status{
-			TotalAuthentications: 1,
 			Authentication: &corev1.Session_Status_Authentication{
-				SetAt: pbutils.Now(),
-				AccessTokenDuration: &metav1.Duration{
-					Type: &metav1.Duration_Hours{
-						Hours: 2,
-					},
-				},
+				AccessTokenDuration: accessTokenDuration(2),
 			},
 		},
+	}))
+
+	assert.False(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{
+				SetAt:               pbutils.Now(),
+				AccessTokenDuration: accessTokenDuration(2),
+			},
+		},
+	}))
+
+	assert.False(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{
+				SetAt:               pbutils.Timestamp(time.Now().Add(-20 * time.Minute)),
+				AccessTokenDuration: accessTokenDuration(2),
+			},
+		},
+	}))
+
+	assert.True(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{
+				SetAt:               pbutils.Timestamp(time.Now().Add(-90 * time.Minute)),
+				AccessTokenDuration: accessTokenDuration(2),
+			},
+		},
+	}))
+
+	assert.True(t, srv.needsReAuth(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{
+				SetAt:               pbutils.Timestamp(time.Now().Add(-3 * time.Hour)),
+				AccessTokenDuration: accessTokenDuration(2),
+			},
+		},
+	}))
+}
+
+func TestCheckReauthRateLimit(t *testing.T) {
+
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	assert.Nil(t, srv.checkReauthRateLimit(&corev1.Session{
+		Status: &corev1.Session_Status{},
 	}))
 
 	lastAuthentications := []*corev1.Session_Status_Authentication{}
 	for i := 0; i < maxAuthenticationsPerHour*2; i++ {
 
-		resp := srv.needsReAuth(&corev1.Session{
+		err := srv.checkReauthRateLimit(&corev1.Session{
 			Status: &corev1.Session_Status{
 				LastAuthentications: lastAuthentications,
-				Authentication: &corev1.Session_Status_Authentication{
-					SetAt: pbutils.Timestamp(time.Now().Add(-30 * time.Minute)),
-					AccessTokenDuration: &metav1.Duration{
-						Type: &metav1.Duration_Hours{
-							Hours: 2,
-						},
-					},
-				},
 			},
 		})
 
 		if i < maxAuthenticationsPerHour {
-			assert.True(t, resp)
+			assert.Nil(t, err, "%d", i)
 		} else {
-			assert.False(t, resp)
+			assert.NotNil(t, err, "%d", i)
 		}
 
 		lastAuthentications = append(lastAuthentications, &corev1.Session_Status_Authentication{
-			SetAt: pbutils.Timestamp(time.Now().Add(time.Duration(-i) * time.Minute)),
+			SetAt: pbutils.Timestamp(time.Now().Add(time.Duration(-i) * time.Second)),
 		})
 	}
 
-	assert.True(t, srv.needsReAuth(&corev1.Session{
+	oldAuthentications := []*corev1.Session_Status_Authentication{}
+	for i := 0; i < maxAuthenticationsPerHour*2; i++ {
+		oldAuthentications = append(oldAuthentications, &corev1.Session_Status_Authentication{
+			SetAt: pbutils.Timestamp(time.Now().Add(-2 * time.Hour)),
+		})
+	}
+	assert.Nil(t, srv.checkReauthRateLimit(&corev1.Session{
 		Status: &corev1.Session_Status{
-			TotalAuthentications: 3,
-			Authentication: &corev1.Session_Status_Authentication{
-				SetAt: pbutils.Timestamp(time.Now().Add(-1000 * time.Minute)),
-				AccessTokenDuration: &metav1.Duration{
-					Type: &metav1.Duration_Hours{
-						Hours: 2,
-					},
-				},
-			},
+			LastAuthentications: oldAuthentications,
 		},
 	}))
 
+	skewedAuthentications := []*corev1.Session_Status_Authentication{
+		nil,
+		{},
+		{SetAt: pbutils.Timestamp(time.Now().Add(-2 * time.Hour))},
+	}
+	for i := 0; i < maxAuthenticationsPerHour; i++ {
+		skewedAuthentications = append(skewedAuthentications, &corev1.Session_Status_Authentication{
+			SetAt: pbutils.Timestamp(time.Now().Add(time.Duration(-i) * time.Second)),
+		})
+	}
+	assert.NotNil(t, srv.checkReauthRateLimit(&corev1.Session{
+		Status: &corev1.Session_Status{
+			LastAuthentications: skewedAuthentications,
+		},
+	}))
 }

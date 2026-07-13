@@ -139,7 +139,12 @@ const maxAuthenticationsPerHour = 5
 
 func (s *server) needsReAuth(sess *corev1.Session) bool {
 
-	if sess.Status.Authentication == nil || sess.Status.Authentication.AccessTokenDuration == nil {
+	if sess == nil ||
+		sess.Status == nil ||
+		sess.Status.Authentication == nil ||
+		sess.Status.Authentication.AccessTokenDuration == nil ||
+		sess.Status.Authentication.SetAt == nil ||
+		!sess.Status.Authentication.SetAt.IsValid() {
 		return true
 	}
 
@@ -147,17 +152,29 @@ func (s *server) needsReAuth(sess *corev1.Session) bool {
 		return true
 	}
 
-	if time.Now().After(sess.Status.Authentication.SetAt.AsTime().
-		Add(umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToGo() / 2)) {
-		return true
-	}
+	halfLife := umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToGo() / 2
 
-	totalRecentAuthCount := 0
-	for _, authC := range sess.Status.LastAuthentications {
-		if time.Now().Before(authC.SetAt.AsTime().Add(1 * time.Hour)) {
-			totalRecentAuthCount = totalRecentAuthCount + 1
+	return time.Now().After(sess.Status.Authentication.SetAt.AsTime().Add(halfLife))
+}
+
+func (s *server) checkReauthRateLimit(sess *corev1.Session) error {
+	count := 0
+
+	now := time.Now()
+
+	for _, auth := range sess.Status.LastAuthentications {
+		if auth == nil || auth.SetAt == nil || !auth.SetAt.IsValid() {
+			continue
+		}
+
+		if auth.SetAt.AsTime().After(now.Add(-time.Hour)) {
+			count++
 		}
 	}
 
-	return totalRecentAuthCount < maxAuthenticationsPerHour
+	if count < maxAuthenticationsPerHour {
+		return nil
+	}
+
+	return s.errPermissionDenied("Too many authentications in the last hour")
 }
