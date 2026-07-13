@@ -340,6 +340,18 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 		if err := apivalidation.ValidateDuration(itm.Spec.Session.ClientlessDuration); err != nil {
 			return err
 		}
+
+		if err := apivalidation.ValidateDuration(itm.Spec.Session.AccessTokenDuration); err != nil {
+			return err
+		}
+
+		if err := apivalidation.ValidateDuration(itm.Spec.Session.RefreshTokenDuration); err != nil {
+			return err
+		}
+
+		if itm.Spec.Session.MaxPerUser > 10000 {
+			return grpcutils.InvalidArg("MaxPerUser is too high: %d", itm.Spec.Session.MaxPerUser)
+		}
 	}
 
 	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {
