@@ -106,7 +106,7 @@ func (s *Server) UpdateSession(ctx context.Context, req *corev1.Session) (*corev
 		return nil, err
 	}
 
-	if err := s.validateSession(req); err != nil {
+	if err := s.validateSession(ctx, req); err != nil {
 		return nil, grpcutils.InvalidArgWithErr(err)
 	}
 
@@ -143,7 +143,7 @@ func (s *Server) UpdateSession(ctx context.Context, req *corev1.Session) (*corev
 	return ret, nil
 }
 
-func (s *Server) validateSession(itm *corev1.Session) error {
+func (s *Server) validateSession(ctx context.Context, itm *corev1.Session) error {
 
 	if itm.Spec == nil {
 		return grpcutils.InvalidArg("You must provide spec")
@@ -154,6 +154,10 @@ func (s *Server) validateSession(itm *corev1.Session) error {
 	switch spec.State {
 	case corev1.Session_Spec_STATE_UNKNOWN:
 		return grpcutils.InvalidArg("State cannot be UNKNOWN")
+	}
+
+	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {
+		return err
 	}
 
 	if !spec.ExpiresAt.IsValid() {
