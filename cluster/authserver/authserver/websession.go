@@ -48,6 +48,13 @@ func (s *server) createOrUpdateSessWeb(r *http.Request,
 		return doCreate()
 	}
 
+	if usr != nil && sess.Status.UserRef.Uid != usr.Metadata.Uid {
+		zap.L().Debug("The Session user does not match the authenticated user. Creating a new webSession",
+			zap.String("sess", sess.Metadata.Name), zap.String("sessUser", sess.Status.UserRef.Uid),
+			zap.String("authUser", usr.Metadata.Uid))
+		return doCreate()
+	}
+
 	deleteSess := func() {
 
 		_, err := s.octeliumC.CoreC().DeleteSession(ctx, apivalidation.ObjectToRDeleteOptions(sess))
