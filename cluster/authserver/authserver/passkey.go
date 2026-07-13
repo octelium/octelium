@@ -239,6 +239,10 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		return retErrStr("FIDO possible cloned Authenticator")
 	}
 
+	if !cred.Flags.UserVerified {
+		return retErrStr("FIDO user verification failed")
+	}
+
 	if usr == nil {
 		return retErrStr("User not set by getWebauthnUser")
 	}
