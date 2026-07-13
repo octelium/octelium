@@ -41,7 +41,6 @@ func MetadataUpdate(to *metav1.Metadata, from *metav1.Metadata) {
 	to.Description = from.Description
 	to.Labels = from.Labels
 	to.Annotations = from.Annotations
-	to.SpecLabels = from.SpecLabels
 	to.PicURL = from.PicURL
 	to.Tags = from.Tags
 }
