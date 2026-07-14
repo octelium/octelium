@@ -141,7 +141,9 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Server, err
 		ret.v6Prefix = &v6Prefix
 	}
 
-	jwkCtl, err := jwkctl.NewJWKController(ctx, octeliumC, nil)
+	jwkCtl, err := jwkctl.NewJWKController(ctx, octeliumC, &jwkctl.Opts{
+		IsVerificationMode: true,
+	})
 	if err != nil {
 		return nil, err
 	}
