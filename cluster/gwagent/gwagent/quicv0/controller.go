@@ -96,7 +96,7 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface, gwName string
 	}
 	var err error
 
-	ret.jwkCtl, err = jwkctl.NewJWKController(ctx, octeliumC)
+	ret.jwkCtl, err = jwkctl.NewJWKController(ctx, octeliumC, nil)
 	if err != nil {
 		return nil, err
 	}

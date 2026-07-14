@@ -46,7 +46,7 @@ func TestIsAuthorized(t *testing.T) {
 	})
 	fakeC := tst.C
 
-	jwkCtl, err := jwkctl.NewJWKController(ctx, fakeC.OcteliumC)
+	jwkCtl, err := jwkctl.NewJWKController(ctx, fakeC.OcteliumC, nil)
 	assert.Nil(t, err)
 
 	getReq := func(sess *corev1.Session, svc *corev1.Service) *coctovigilv1.DownstreamRequest {

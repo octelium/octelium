@@ -86,7 +86,7 @@ func WithUser(
 		}
 	}
 
-	jwkCtl, err := jwkctl.NewJWKController(ctx, octeliumC)
+	jwkCtl, err := jwkctl.NewJWKController(ctx, octeliumC, nil)
 	if err != nil {
 		return nil, err
 	}

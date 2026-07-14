@@ -19,8 +19,13 @@ package jwkctl
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"math/big"
 	"regexp"
 	"sync"
 	"time"
@@ -41,26 +46,44 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	KindEd25519   = "ed25519"
+	KindECDSAP256 = "ecdsa-p256"
+)
+
 type Controller struct {
 	octeliumC octeliumc.ClientInterface
 	ctl       *ctl
 	domain    string
+	opts      *Opts
 }
 
 type jwtKey struct {
-	key crypto.Signer
+	kind      string
+	key       crypto.Signer
+	publicKey crypto.PublicKey
 
 	createdAt time.Time
 	uid       string
 }
 
-func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Controller, error) {
+type Opts struct {
+	IsVerificationMode bool
+}
+
+func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface, o *Opts) (*Controller, error) {
+	if o == nil {
+		o = &Opts{}
+	}
+
 	ret := &Controller{
 		octeliumC: octeliumC,
 		ctl: &ctl{
-			octeliumC: octeliumC,
-			keyMap:    make(map[string]*jwtKey),
+			octeliumC:          octeliumC,
+			keyMap:             make(map[string]*jwtKey),
+			isVerificationMode: o.IsVerificationMode,
 		},
+		opts: o,
 	}
 
 	secrets, err := octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
@@ -73,17 +96,21 @@ func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface) 
 	}
 
 	if len(secrets.Items) < 1 {
-		if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
-			return nil, err
-		}
+		if o.IsVerificationMode {
+			zap.L().Debug("No root Secrets found in verification mode")
+		} else {
+			if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
+				return nil, err
+			}
 
-		secrets, err = octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
-			SystemLabels: map[string]string{
-				"octelium-root-secret": "true",
-			},
-		})
-		if err != nil {
-			return nil, err
+			secrets, err = octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
+				SystemLabels: map[string]string{
+					"octelium-root-secret": "true",
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -113,8 +140,9 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 type ctl struct {
-	octeliumC octeliumc.ClientInterface
-	keyMap    map[string]*jwtKey
+	octeliumC          octeliumc.ClientInterface
+	keyMap             map[string]*jwtKey
+	isVerificationMode bool
 	sync.RWMutex
 }
 
@@ -139,20 +167,32 @@ func (c *ctl) setKey(s *corev1.Secret) error {
 
 	zap.L().Debug("Setting root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
 
-	key, err := utils_cert.ParsePrivateKeyPEM(ucorev1.ToSecret(s).GetValueBytes())
+	signer, err := utils_cert.ParsePrivateKeyPEM(ucorev1.ToSecret(s).GetValueBytes())
 	if err != nil {
 		return err
 	}
 
-	c.Lock()
-	c.keyMap[s.Metadata.Uid] = &jwtKey{
-		key:       key,
+	kind, err := getKeyKind(signer)
+	if err != nil {
+		return err
+	}
+
+	jwk := &jwtKey{
+		kind:      kind,
+		publicKey: signer.Public(),
 		createdAt: s.Metadata.CreatedAt.AsTime(),
 		uid:       s.Metadata.Uid,
 	}
+
+	if !c.isVerificationMode {
+		jwk.key = signer
+	}
+
+	c.Lock()
+	c.keyMap[s.Metadata.Uid] = jwk
 	c.Unlock()
 
-	zap.L().Debug("Successfully root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
+	zap.L().Debug("Successfully set root Secret in jwkCtl", zap.Any("secretMetadata", s.Metadata))
 
 	return nil
 }
@@ -173,6 +213,63 @@ func (c *ctl) onDeleteSecret(ctx context.Context, s *corev1.Secret) error {
 	c.Unlock()
 
 	return nil
+}
+
+func getKeyKind(signer crypto.Signer) (string, error) {
+	switch k := signer.(type) {
+	case ed25519.PrivateKey:
+		return KindEd25519, nil
+	case *ecdsa.PrivateKey:
+		if k.Curve != elliptic.P256() {
+			return "", errors.Errorf("Unsupported ECDSA curve")
+		}
+		return KindECDSAP256, nil
+	default:
+		return "", errors.Errorf("Unsupported key type")
+	}
+}
+
+func signECDSAP256(priv *ecdsa.PrivateKey, content []byte) ([]byte, error) {
+	digest := sha256.Sum256(content)
+
+	r, s, err := ecdsa.Sign(rand.Reader, priv, digest[:])
+	if err != nil {
+		return nil, err
+	}
+
+	n := priv.Curve.Params().N
+	halfN := new(big.Int).Rsh(n, 1)
+	if s.Cmp(halfN) > 0 {
+		s = new(big.Int).Sub(n, s)
+	}
+
+	ret := make([]byte, 64)
+	r.FillBytes(ret[:32])
+	s.FillBytes(ret[32:])
+
+	return ret, nil
+}
+
+func verifyECDSAP256(pub *ecdsa.PublicKey, content, sig []byte) bool {
+	if len(sig) != 64 {
+		return false
+	}
+
+	r := new(big.Int).SetBytes(sig[:32])
+	s := new(big.Int).SetBytes(sig[32:])
+
+	n := pub.Curve.Params().N
+	if r.Sign() <= 0 || s.Sign() <= 0 || r.Cmp(n) >= 0 || s.Cmp(n) >= 0 {
+		return false
+	}
+
+	halfN := new(big.Int).Rsh(n, 1)
+	if s.Cmp(halfN) > 0 {
+		return false
+	}
+
+	digest := sha256.Sum256(content)
+	return ecdsa.Verify(pub, digest[:], r, s)
 }
 
 func (c *Controller) chooseJWK() (*jwtKey, error) {
@@ -217,15 +314,28 @@ func (c *Controller) findKeyByUID(uid string) (*jwtKey, error) {
 }
 
 func (c *Controller) createToken(content *authv1.TokenT0_Content) (string, error) {
+	if c.opts.IsVerificationMode {
+		return "", errors.Errorf("Cannot create tokens in verification mode")
+	}
+
 	key, err := c.chooseJWK()
 	if err != nil {
 		return "", err
 	}
 
+	if key.key == nil {
+		return "", errors.Errorf("No signing key available")
+	}
+
 	ret := &authv1.TokenT0{
 		Content: content,
 	}
-	ret.Content.KeyID = c.uidToBytes(key.uid)
+
+	keyID, err := c.uidToBytes(key.uid)
+	if err != nil {
+		return "", err
+	}
+	ret.Content.KeyID = keyID
 
 	if ret.Content.ExpiresAt.IsValid() {
 		if time.Now().After(ret.Content.ExpiresAt.AsTime()) {
@@ -240,11 +350,25 @@ func (c *Controller) createToken(content *authv1.TokenT0_Content) (string, error
 		return "", err
 	}
 
-	switch key := key.key.(type) {
-	case ed25519.PrivateKey:
-		ret.Signature = ed25519.Sign(key, contentBytes)
+	switch key.kind {
+	case KindEd25519:
+		priv, ok := key.key.(ed25519.PrivateKey)
+		if !ok {
+			return "", errors.Errorf("Invalid ed25519 signing key")
+		}
+		ret.Signature = ed25519.Sign(priv, contentBytes)
+	case KindECDSAP256:
+		priv, ok := key.key.(*ecdsa.PrivateKey)
+		if !ok {
+			return "", errors.Errorf("Invalid ECDSA signing key")
+		}
+		sig, err := signECDSAP256(priv, contentBytes)
+		if err != nil {
+			return "", err
+		}
+		ret.Signature = sig
 	default:
-		return "", errors.Errorf("Unsupported key type")
+		return "", errors.Errorf("Unsupported key kind")
 	}
 
 	tknBytes, err := pbutils.Marshal(ret)
@@ -265,10 +389,19 @@ func (c *Controller) CreateAccessToken(sess *corev1.Session) (string, error) {
 		return "", errors.Errorf("Session authentication field is not set")
 	}
 
+	subject, err := c.uidToBytes(sess.Metadata.Uid)
+	if err != nil {
+		return "", err
+	}
+	tokenID, err := c.uidToBytes(sess.Status.Authentication.TokenID)
+	if err != nil {
+		return "", err
+	}
+
 	return c.createToken(&authv1.TokenT0_Content{
 		Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
-		Subject: c.uidToBytes(sess.Metadata.Uid),
-		TokenID: c.uidToBytes(sess.Status.Authentication.TokenID),
+		Subject: subject,
+		TokenID: tokenID,
 		ExpiresAt: pbutils.Timestamp(sess.Status.Authentication.SetAt.AsTime().
 			Add(umetav1.ToDuration(sess.Status.Authentication.AccessTokenDuration).ToGo())),
 	})
@@ -280,10 +413,19 @@ func (c *Controller) CreateRefreshToken(sess *corev1.Session) (string, error) {
 		return "", errors.Errorf("Session authentication field is not set")
 	}
 
+	subject, err := c.uidToBytes(sess.Metadata.Uid)
+	if err != nil {
+		return "", err
+	}
+	tokenID, err := c.uidToBytes(sess.Status.Authentication.TokenID)
+	if err != nil {
+		return "", err
+	}
+
 	return c.createToken(&authv1.TokenT0_Content{
 		Type:    authv1.TokenT0_Content_REFRESH_TOKEN,
-		Subject: c.uidToBytes(sess.Metadata.Uid),
-		TokenID: c.uidToBytes(sess.Status.Authentication.TokenID),
+		Subject: subject,
+		TokenID: tokenID,
 		ExpiresAt: pbutils.Timestamp(sess.Status.Authentication.SetAt.AsTime().
 			Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo())),
 	})
@@ -294,17 +436,39 @@ func (c *Controller) CreateCredential(cred *corev1.Credential) (string, error) {
 		return "", errors.Errorf("tokenID must be set")
 	}
 
+	subject, err := c.uidToBytes(cred.Metadata.Uid)
+	if err != nil {
+		return "", err
+	}
+	tokenID, err := c.uidToBytes(cred.Status.TokenID)
+	if err != nil {
+		return "", err
+	}
+
 	return c.createToken(&authv1.TokenT0_Content{
 		Type:      authv1.TokenT0_Content_CREDENTIAL,
-		Subject:   c.uidToBytes(cred.Metadata.Uid),
-		TokenID:   c.uidToBytes(cred.Status.TokenID),
+		Subject:   subject,
+		TokenID:   tokenID,
 		ExpiresAt: cred.Spec.ExpiresAt,
 	})
 }
 
-func (c *Controller) uidToBytes(uid string) []byte {
-	ret, _ := uuid.MustParse(uid).MarshalBinary()
-	return ret
+func (c *Controller) uidToBytes(uid string) ([]byte, error) {
+	if !govalidator.IsUUIDv4(uid) {
+		return nil, errors.Errorf("Invalid uid: %s", uid)
+	}
+
+	parsed, err := uuid.Parse(uid)
+	if err != nil {
+		return nil, err
+	}
+
+	ret, err := parsed.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	return ret, nil
 }
 
 var rgxT0 = regexp.MustCompile(`^[A-Za-z0-9-_]{150,220}$`)
@@ -371,13 +535,25 @@ func (c *Controller) parseToken(tknStr string) (*authv1.TokenT0, error) {
 		return nil, err
 	}
 
-	switch key := key.key.(type) {
-	case ed25519.PrivateKey:
-		if isValid := ed25519.Verify(key.Public().(ed25519.PublicKey), contentByte, tkn.Signature); !isValid {
+	switch key.kind {
+	case KindEd25519:
+		pub, ok := key.publicKey.(ed25519.PublicKey)
+		if !ok {
+			return nil, errors.Errorf("Invalid ed25519 public key")
+		}
+		if isValid := ed25519.Verify(pub, contentByte, tkn.Signature); !isValid {
+			return nil, errors.Errorf("Invalid signature")
+		}
+	case KindECDSAP256:
+		pub, ok := key.publicKey.(*ecdsa.PublicKey)
+		if !ok {
+			return nil, errors.Errorf("Invalid ECDSA public key")
+		}
+		if isValid := verifyECDSAP256(pub, contentByte, tkn.Signature); !isValid {
 			return nil, errors.Errorf("Invalid signature")
 		}
 	default:
-		return nil, errors.Errorf("Unsupported key type")
+		return nil, errors.Errorf("Unsupported key kind")
 	}
 
 	if _, err := c.getUID(tkn.Content.Subject); err != nil {

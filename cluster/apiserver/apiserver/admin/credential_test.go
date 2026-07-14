@@ -78,7 +78,7 @@ func TestCredential(t *testing.T) {
 		})
 		assert.Nil(t, err, "%+v", err)
 
-		jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC)
+		jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC, nil)
 		assert.Nil(t, err)
 
 		claims, err := jwkCtl.VerifyCredential(tknResp.GetAuthenticationToken().AuthenticationToken)
@@ -132,7 +132,7 @@ func TestCredential(t *testing.T) {
 		})
 		assert.Nil(t, err)
 
-		jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC)
+		jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC, nil)
 		assert.Nil(t, err)
 
 		claims, err := jwkCtl.VerifyCredential(tknResp.GetOauth2Credentials().ClientSecret)
@@ -172,7 +172,7 @@ func TestCredential(t *testing.T) {
 			})
 			assert.Nil(t, err)
 
-			jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC)
+			jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC, nil)
 			assert.Nil(t, err)
 
 			claims, err := jwkCtl.VerifyAccessToken(tknResp.GetAccessToken().AccessToken)
@@ -192,7 +192,7 @@ func TestCredential(t *testing.T) {
 			})
 			assert.Nil(t, err)
 
-			jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC)
+			jwkCtl, err := jwkctl.NewJWKController(ctx, tst.C.OcteliumC, nil)
 			assert.Nil(t, err)
 
 			claims, err := jwkCtl.VerifyAccessToken(tknResp.GetAccessToken().AccessToken)

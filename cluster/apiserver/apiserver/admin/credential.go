@@ -148,7 +148,7 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
-	jwkCtl, err := jwkctl.NewJWKController(ctx, s.octeliumC)
+	jwkCtl, err := jwkctl.NewJWKController(ctx, s.octeliumC, nil)
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}

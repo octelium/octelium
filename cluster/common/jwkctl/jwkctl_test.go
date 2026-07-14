@@ -18,7 +18,11 @@ package jwkctl
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
+	"math/big"
 	"testing"
 	"time"
 
@@ -46,8 +50,14 @@ func TestToken(t *testing.T) {
 		tst.Destroy()
 	})
 
-	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC)
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC, nil)
 	assert.Nil(t, err)
+
+	uidBytes := func(uid string) []byte {
+		b, err := jwkCtl.uidToBytes(uid)
+		assert.Nil(t, err)
+		return b
+	}
 
 	marshalTknPrefix := func(prefix byte, tkn *authv1.TokenT0) string {
 		tknBytes, err := pbutils.Marshal(tkn)
@@ -116,7 +126,7 @@ func TestToken(t *testing.T) {
 	{
 		tkn := &authv1.TokenT0{
 			Content: &authv1.TokenT0_Content{
-				KeyID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+				KeyID: uidBytes(vutils.UUIDv4()),
 			},
 			Signature: utilrand.GetRandomBytesMust(64),
 		}
@@ -128,7 +138,7 @@ func TestToken(t *testing.T) {
 		assert.Nil(t, err)
 		tkn := &authv1.TokenT0{
 			Content: &authv1.TokenT0_Content{
-				KeyID: jwkCtl.uidToBytes(k.uid),
+				KeyID: uidBytes(k.uid),
 			},
 			Signature: utilrand.GetRandomBytesMust(64),
 		}
@@ -140,9 +150,9 @@ func TestToken(t *testing.T) {
 		assert.Nil(t, err)
 		tkn := &authv1.TokenT0{
 			Content: &authv1.TokenT0_Content{
-				KeyID:   jwkCtl.uidToBytes(k.uid),
-				Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-				TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+				KeyID:   uidBytes(k.uid),
+				Subject: uidBytes(vutils.UUIDv4()),
+				TokenID: uidBytes(vutils.UUIDv4()),
 			},
 			Signature: utilrand.GetRandomBytesMust(64),
 		}
@@ -154,9 +164,9 @@ func TestToken(t *testing.T) {
 		assert.Nil(t, err)
 		tkn := &authv1.TokenT0{
 			Content: &authv1.TokenT0_Content{
-				KeyID:   jwkCtl.uidToBytes(k.uid),
-				Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-				TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+				KeyID:   uidBytes(k.uid),
+				Subject: uidBytes(vutils.UUIDv4()),
+				TokenID: uidBytes(vutils.UUIDv4()),
 				Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
 			},
 			Signature: utilrand.GetRandomBytesMust(64),
@@ -169,9 +179,9 @@ func TestToken(t *testing.T) {
 		assert.Nil(t, err)
 		tkn := &authv1.TokenT0{
 			Content: &authv1.TokenT0_Content{
-				KeyID:     jwkCtl.uidToBytes(k.uid),
-				Subject:   jwkCtl.uidToBytes(vutils.UUIDv4()),
-				TokenID:   jwkCtl.uidToBytes(vutils.UUIDv4()),
+				KeyID:     uidBytes(k.uid),
+				Subject:   uidBytes(vutils.UUIDv4()),
+				TokenID:   uidBytes(vutils.UUIDv4()),
 				Type:      authv1.TokenT0_Content_ACCESS_TOKEN,
 				ExpiresAt: pbutils.Timestamp(time.Now().Add(4 * time.Hour)),
 			},
@@ -184,8 +194,8 @@ func TestToken(t *testing.T) {
 	{
 
 		content := &authv1.TokenT0_Content{
-			Subject:   jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID:   jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject:   uidBytes(vutils.UUIDv4()),
+			TokenID:   uidBytes(vutils.UUIDv4()),
 			Type:      authv1.TokenT0_Content_ACCESS_TOKEN,
 			ExpiresAt: pbutils.Timestamp(time.Now().Add(4 * time.Hour)),
 		}
@@ -201,8 +211,8 @@ func TestToken(t *testing.T) {
 
 	{
 		content := &authv1.TokenT0_Content{
-			Subject:   jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID:   jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject:   uidBytes(vutils.UUIDv4()),
+			TokenID:   uidBytes(vutils.UUIDv4()),
 			Type:      authv1.TokenT0_Content_ACCESS_TOKEN,
 			ExpiresAt: pbutils.Timestamp(time.Now().Add(2 * time.Second)),
 		}
@@ -221,8 +231,8 @@ func TestToken(t *testing.T) {
 
 	{
 		content := &authv1.TokenT0_Content{
-			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject: uidBytes(vutils.UUIDv4()),
+			TokenID: uidBytes(vutils.UUIDv4()),
 			Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
 		}
 
@@ -507,7 +517,7 @@ func TestChooseJWK(t *testing.T) {
 		tst.Destroy()
 	})
 
-	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC)
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC, nil)
 	assert.Nil(t, err)
 
 	{
@@ -570,8 +580,14 @@ func TestMulti(t *testing.T) {
 		tst.Destroy()
 	})
 
-	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC)
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC, nil)
 	assert.Nil(t, err)
+
+	uidBytes := func(uid string) []byte {
+		b, err := jwkCtl.uidToBytes(uid)
+		assert.Nil(t, err)
+		return b
+	}
 
 	var sec1 *corev1.Secret
 	{
@@ -587,8 +603,8 @@ func TestMulti(t *testing.T) {
 	{
 
 		content := &authv1.TokenT0_Content{
-			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject: uidBytes(vutils.UUIDv4()),
+			TokenID: uidBytes(vutils.UUIDv4()),
 			Type:    authv1.TokenT0_Content_CREDENTIAL,
 		}
 
@@ -614,8 +630,8 @@ func TestMulti(t *testing.T) {
 		assert.Equal(t, 2, len(jwkCtl.ctl.keyMap))
 
 		content := &authv1.TokenT0_Content{
-			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject: uidBytes(vutils.UUIDv4()),
+			TokenID: uidBytes(vutils.UUIDv4()),
 			Type:    authv1.TokenT0_Content_CREDENTIAL,
 		}
 
@@ -645,8 +661,8 @@ func TestMulti(t *testing.T) {
 
 	{
 		content := &authv1.TokenT0_Content{
-			Subject: jwkCtl.uidToBytes(vutils.UUIDv4()),
-			TokenID: jwkCtl.uidToBytes(vutils.UUIDv4()),
+			Subject: uidBytes(vutils.UUIDv4()),
+			TokenID: uidBytes(vutils.UUIDv4()),
 			Type:    authv1.TokenT0_Content_CREDENTIAL,
 		}
 
@@ -659,5 +675,306 @@ func TestMulti(t *testing.T) {
 		kUID, err := jwkCtl.getUID(t0.Content.KeyID)
 		assert.Nil(t, err)
 		assert.Equal(t, sec1.Metadata.Uid, kUID)
+	}
+}
+
+func newSession() *corev1.Session {
+	return &corev1.Session{
+		Metadata: &metav1.Metadata{
+			Uid: vutils.UUIDv4(),
+		},
+		Spec: &corev1.Session_Spec{},
+		Status: &corev1.Session_Status{
+			Authentication: &corev1.Session_Status_Authentication{
+				SetAt:   pbutils.Now(),
+				TokenID: vutils.UUIDv4(),
+				AccessTokenDuration: &metav1.Duration{
+					Type: &metav1.Duration_Hours{
+						Hours: 4,
+					},
+				},
+				RefreshTokenDuration: &metav1.Duration{
+					Type: &metav1.Duration_Hours{
+						Hours: 4,
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestVerificationMode(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	signCtl, err := NewJWKController(ctx, tst.C.OcteliumC, nil)
+	assert.Nil(t, err)
+
+	verifyCtl, err := NewJWKController(ctx, tst.C.OcteliumC, &Opts{IsVerificationMode: true})
+	assert.Nil(t, err)
+
+	{
+		verifyCtl.ctl.RLock()
+		assert.True(t, len(verifyCtl.ctl.keyMap) > 0)
+		for _, k := range verifyCtl.ctl.keyMap {
+			assert.Nil(t, k.key)
+			assert.NotNil(t, k.publicKey)
+			assert.NotEmpty(t, k.kind)
+		}
+		verifyCtl.ctl.RUnlock()
+
+		signCtl.ctl.RLock()
+		assert.True(t, len(signCtl.ctl.keyMap) > 0)
+		for _, k := range signCtl.ctl.keyMap {
+			assert.NotNil(t, k.key)
+			assert.NotNil(t, k.publicKey)
+			assert.NotEmpty(t, k.kind)
+		}
+		signCtl.ctl.RUnlock()
+	}
+
+	sess := newSession()
+
+	{
+		tknStr, err := signCtl.CreateAccessToken(sess)
+		assert.Nil(t, err)
+
+		claims, err := verifyCtl.VerifyAccessToken(tknStr)
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+		assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+	}
+
+	{
+		tknStr, err := signCtl.CreateRefreshToken(sess)
+		assert.Nil(t, err)
+
+		claims, err := verifyCtl.VerifyRefreshToken(tknStr)
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+		assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+	}
+
+	{
+		_, err := verifyCtl.CreateAccessToken(sess)
+		assert.NotNil(t, err)
+
+		_, err = verifyCtl.CreateRefreshToken(sess)
+		assert.NotNil(t, err)
+
+		cred := &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Uid: vutils.UUIDv4(),
+			},
+			Spec: &corev1.Credential_Spec{
+				ExpiresAt: pbutils.Timestamp(time.Now().Add(4 * time.Hour)),
+			},
+			Status: &corev1.Credential_Status{
+				TokenID: vutils.UUIDv4(),
+			},
+		}
+		_, err = verifyCtl.CreateCredential(cred)
+		assert.NotNil(t, err)
+
+		subject, err := verifyCtl.uidToBytes(vutils.UUIDv4())
+		assert.Nil(t, err)
+		tokenID, err := verifyCtl.uidToBytes(vutils.UUIDv4())
+		assert.Nil(t, err)
+		_, err = verifyCtl.createToken(&authv1.TokenT0_Content{
+			Subject: subject,
+			TokenID: tokenID,
+			Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		assert.Nil(t, err)
+
+		uid := vutils.UUIDv4()
+
+		signCtl.ctl.Lock()
+		signCtl.ctl.keyMap[uid] = &jwtKey{
+			kind:      KindECDSAP256,
+			key:       priv,
+			publicKey: &priv.PublicKey,
+			createdAt: time.Now().Add(time.Hour),
+			uid:       uid,
+		}
+		signCtl.ctl.Unlock()
+
+		verifyCtl.ctl.Lock()
+		verifyCtl.ctl.keyMap[uid] = &jwtKey{
+			kind:      KindECDSAP256,
+			publicKey: &priv.PublicKey,
+			createdAt: time.Now().Add(time.Hour),
+			uid:       uid,
+		}
+		verifyCtl.ctl.Unlock()
+
+		tknStr, err := signCtl.CreateAccessToken(sess)
+		assert.Nil(t, err)
+
+		t0, err := signCtl.parseToken(tknStr)
+		assert.Nil(t, err)
+		kid, err := signCtl.getUID(t0.Content.KeyID)
+		assert.Nil(t, err)
+		assert.Equal(t, uid, kid)
+
+		claims, err := verifyCtl.VerifyAccessToken(tknStr)
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+		assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+	}
+}
+
+func TestECDSAToken(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	jwkCtl, err := NewJWKController(ctx, tst.C.OcteliumC, nil)
+	assert.Nil(t, err)
+
+	uidBytes := func(uid string) []byte {
+		b, err := jwkCtl.uidToBytes(uid)
+		assert.Nil(t, err)
+		return b
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.Nil(t, err)
+
+	uid := vutils.UUIDv4()
+
+	jwkCtl.ctl.Lock()
+	jwkCtl.ctl.keyMap[uid] = &jwtKey{
+		kind:      KindECDSAP256,
+		key:       priv,
+		publicKey: &priv.PublicKey,
+		createdAt: time.Now().Add(time.Hour),
+		uid:       uid,
+	}
+	jwkCtl.ctl.Unlock()
+
+	{
+		k, err := jwkCtl.chooseJWK()
+		assert.Nil(t, err)
+		assert.Equal(t, uid, k.uid)
+		assert.Equal(t, KindECDSAP256, k.kind)
+	}
+
+	{
+		content := &authv1.TokenT0_Content{
+			Subject:   uidBytes(vutils.UUIDv4()),
+			TokenID:   uidBytes(vutils.UUIDv4()),
+			Type:      authv1.TokenT0_Content_ACCESS_TOKEN,
+			ExpiresAt: pbutils.Timestamp(time.Now().Add(4 * time.Hour)),
+		}
+
+		tknStr, err := jwkCtl.createToken(content)
+		assert.Nil(t, err)
+		assert.Equal(t, 16, len(content.KeyID))
+		assert.True(t, len(tknStr) < 300)
+		assert.True(t, len(tknStr) > 150)
+
+		kid, err := jwkCtl.getUID(content.KeyID)
+		assert.Nil(t, err)
+		assert.Equal(t, uid, kid)
+
+		tkn, err := jwkCtl.parseToken(tknStr)
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(tkn.Content, content))
+		assert.Equal(t, 64, len(tkn.Signature))
+	}
+
+	{
+		sess := newSession()
+
+		tknStr, err := jwkCtl.CreateAccessToken(sess)
+		assert.Nil(t, err)
+
+		claims, err := jwkCtl.VerifyAccessToken(tknStr)
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+		assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+	}
+
+	{
+		content := &authv1.TokenT0_Content{
+			Subject: uidBytes(vutils.UUIDv4()),
+			TokenID: uidBytes(vutils.UUIDv4()),
+			Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
+		}
+
+		tknStr, err := jwkCtl.createToken(content)
+		assert.Nil(t, err)
+
+		tknBytes, err := base64.RawURLEncoding.DecodeString(tknStr)
+		assert.Nil(t, err)
+
+		tkn := &authv1.TokenT0{}
+		err = pbutils.Unmarshal(tknBytes[1:], tkn)
+		assert.Nil(t, err)
+
+		tkn.Signature = utilrand.GetRandomBytesMust(64)
+
+		tamperedBytes, err := pbutils.Marshal(tkn)
+		assert.Nil(t, err)
+
+		finalBytes := make([]byte, len(tamperedBytes)+1)
+		finalBytes[0] = 0x1
+		copy(finalBytes[1:], tamperedBytes)
+
+		_, err = jwkCtl.parseToken(base64.RawURLEncoding.EncodeToString(finalBytes))
+		assert.NotNil(t, err)
+	}
+}
+
+func TestECDSASignVerify(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.Nil(t, err)
+
+	content := utilrand.GetRandomBytesMust(128)
+
+	sig, err := signECDSAP256(priv, content)
+	assert.Nil(t, err)
+	assert.Equal(t, 64, len(sig))
+
+	assert.True(t, verifyECDSAP256(&priv.PublicKey, content, sig))
+
+	assert.False(t, verifyECDSAP256(&priv.PublicKey, utilrand.GetRandomBytesMust(128), sig))
+
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.Nil(t, err)
+	assert.False(t, verifyECDSAP256(&other.PublicKey, content, sig))
+
+	assert.False(t, verifyECDSAP256(&priv.PublicKey, content, sig[:63]))
+	assert.False(t, verifyECDSAP256(&priv.PublicKey, content, append(sig, 0x0)))
+
+	assert.False(t, verifyECDSAP256(&priv.PublicKey, content, make([]byte, 64)))
+
+	{
+		r := new(big.Int).SetBytes(sig[:32])
+		s := new(big.Int).SetBytes(sig[32:])
+		n := priv.Curve.Params().N
+		highS := new(big.Int).Sub(n, s)
+
+		malleable := make([]byte, 64)
+		r.FillBytes(malleable[:32])
+		highS.FillBytes(malleable[32:])
+
+		assert.True(t, s.Cmp(highS) != 0)
+		assert.False(t, verifyECDSAP256(&priv.PublicKey, content, malleable))
 	}
 }
