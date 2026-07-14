@@ -222,8 +222,9 @@ func (c *Connector) HandleCallback(r *http.Request,
 			return nil, errors.Errorf("Could not get userInfo endpoint: %v", err)
 		}
 
-		if userInfo.Subject != "" && userInfo.Subject != idToken.Subject {
-			return nil, errors.Errorf("UserInfo subject mismatch")
+		if userInfo.Subject == "" ||
+			!vutils.SecureStringEqual(userInfo.Subject, idToken.Subject) {
+			return nil, errors.New("UserInfo subject mismatch")
 		}
 
 		userInfoClaims := make(map[string]any)
