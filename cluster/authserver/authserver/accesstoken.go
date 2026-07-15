@@ -157,7 +157,7 @@ func (s *server) needsReAuth(sess *corev1.Session) bool {
 	return time.Now().After(sess.Status.Authentication.SetAt.AsTime().Add(halfLife))
 }
 
-func (s *server) checkReauthRateLimit(sess *corev1.Session) error {
+func (s *server) reauthRateLimitExceeded(sess *corev1.Session) bool {
 	count := 0
 
 	now := time.Now()
@@ -172,9 +172,17 @@ func (s *server) checkReauthRateLimit(sess *corev1.Session) error {
 		}
 	}
 
-	if count < maxAuthenticationsPerHour {
+	return count >= maxAuthenticationsPerHour
+}
+
+func (s *server) checkReauth(sess *corev1.Session) error {
+	if s.needsReAuth(sess) {
 		return nil
 	}
 
-	return s.errPermissionDenied("Too many authentications in the last hour")
+	if !s.reauthRateLimitExceeded(sess) {
+		return nil
+	}
+
+	return s.errAlreadyExists("This Session cannot reauthenticate right now")
 }

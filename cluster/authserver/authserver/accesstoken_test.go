@@ -384,7 +384,7 @@ func TestNeedsReAuth(t *testing.T) {
 	}))
 }
 
-func TestCheckReauthRateLimit(t *testing.T) {
+func TestReauthRateLimitExceeded(t *testing.T) {
 
 	ctx := context.Background()
 	tst, err := tests.Initialize(nil)
@@ -399,23 +399,23 @@ func TestCheckReauthRateLimit(t *testing.T) {
 	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
 	assert.Nil(t, err)
 
-	assert.Nil(t, srv.checkReauthRateLimit(&corev1.Session{
+	assert.False(t, srv.reauthRateLimitExceeded(&corev1.Session{
 		Status: &corev1.Session_Status{},
 	}))
 
 	lastAuthentications := []*corev1.Session_Status_Authentication{}
 	for i := 0; i < maxAuthenticationsPerHour*2; i++ {
 
-		err := srv.checkReauthRateLimit(&corev1.Session{
+		res := srv.reauthRateLimitExceeded(&corev1.Session{
 			Status: &corev1.Session_Status{
 				LastAuthentications: lastAuthentications,
 			},
 		})
 
 		if i < maxAuthenticationsPerHour {
-			assert.Nil(t, err, "%d", i)
+			assert.False(t, res, "%d", i)
 		} else {
-			assert.NotNil(t, err, "%d", i)
+			assert.True(t, res, "%d", i)
 		}
 
 		lastAuthentications = append(lastAuthentications, &corev1.Session_Status_Authentication{
@@ -429,7 +429,7 @@ func TestCheckReauthRateLimit(t *testing.T) {
 			SetAt: pbutils.Timestamp(time.Now().Add(-2 * time.Hour)),
 		})
 	}
-	assert.Nil(t, srv.checkReauthRateLimit(&corev1.Session{
+	assert.False(t, srv.reauthRateLimitExceeded(&corev1.Session{
 		Status: &corev1.Session_Status{
 			LastAuthentications: oldAuthentications,
 		},
@@ -445,7 +445,7 @@ func TestCheckReauthRateLimit(t *testing.T) {
 			SetAt: pbutils.Timestamp(time.Now().Add(time.Duration(-i) * time.Second)),
 		})
 	}
-	assert.NotNil(t, srv.checkReauthRateLimit(&corev1.Session{
+	assert.True(t, srv.reauthRateLimitExceeded(&corev1.Session{
 		Status: &corev1.Session_Status{
 			LastAuthentications: skewedAuthentications,
 		},

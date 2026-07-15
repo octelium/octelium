@@ -330,11 +330,7 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 
 	zap.L().Debug("Got Session from creds", zap.Any("sess", sess))
 
-	if !s.needsReAuth(sess) {
-		return nil, s.errAlreadyExists("The Session is valid and does not need a refresh")
-	}
-
-	if err := s.checkReauthRateLimit(sess); err != nil {
+	if err := s.checkReauth(sess); err != nil {
 		return nil, err
 	}
 
@@ -529,11 +525,7 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	if !s.needsReAuth(sess) {
-		return nil, s.errAlreadyExists("The Session is valid and does not need a authenticatorFinish")
-	}
-
-	if err := s.checkReauthRateLimit(sess); err != nil {
+	if err := s.checkReauth(sess); err != nil {
 		return nil, err
 	}
 
