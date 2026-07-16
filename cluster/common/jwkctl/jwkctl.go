@@ -96,21 +96,17 @@ func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface, 
 	}
 
 	if len(secrets.Items) < 1 {
-		if o.IsVerificationMode {
-			zap.L().Debug("No root Secrets found in verification mode")
-		} else {
-			if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
-				return nil, err
-			}
+		if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
+			return nil, err
+		}
 
-			secrets, err = octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
-				SystemLabels: map[string]string{
-					"octelium-root-secret": "true",
-				},
-			})
-			if err != nil {
-				return nil, err
-			}
+		secrets, err = octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
+			SystemLabels: map[string]string{
+				"octelium-root-secret": "true",
+			},
+		})
+		if err != nil {
+			return nil, err
 		}
 	}
 
