@@ -190,7 +190,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 	}
 
 	reqServices, err := func() ([]*corev1.Session_Status_Connection_ServiceOptions_RequestedService, error) {
-		if req.ServiceOptions == nil || len(req.ServiceOptions.Services) == 0 {
+		if req.ServiceOptions == nil {
 			return nil, nil
 		}
 
@@ -200,8 +200,12 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 			}
 		}
 
-		if len(req.ServiceOptions.Services) > 128 {
-			return nil, serr.InvalidArg("Too many Services to host!")
+		if len(req.ServiceOptions.Services) == 0 {
+			return nil, nil
+		}
+
+		if len(req.ServiceOptions.Services) > 256 {
+			return nil, serr.InvalidArg("Too many Services to serve")
 		}
 
 		var ret []*corev1.Session_Status_Connection_ServiceOptions_RequestedService
