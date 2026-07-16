@@ -45,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -142,7 +143,12 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Server, err
 	}
 
 	jwkCtl, err := jwkctl.NewJWKController(ctx, octeliumC, &jwkctl.Opts{
-		IsVerificationMode: true,
+		IsVerificationMode: func() bool {
+			if ldflags.IsTest() {
+				return false
+			}
+			return true
+		}(),
 	})
 	if err != nil {
 		return nil, err
