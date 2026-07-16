@@ -4,9 +4,15 @@ go 1.26.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
+	github.com/coder/websocket v1.8.15
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/cluster/vigil v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
+	github.com/pkg/errors v0.9.1
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.28.0
 )
 
@@ -139,11 +145,4 @@ replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
 
 replace github.com/octelium/octelium/cluster/octovigil => ../octovigil
 
-require (
-	github.com/coder/websocket v1.8.15
-	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
-	github.com/octelium/octelium/cluster/vigil v0.0.0-20260627142325-0c3881a9b711
-	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
-	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.11.1
-)
+replace github.com/octelium/octelium/cluster/vigil => ../vigil
