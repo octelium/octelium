@@ -497,7 +497,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			for _, ca := range cfg.Tls.TrustedCAs {
 				_, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(ca))
 				if err != nil {
-					return grpcutils.InvalidArg("Invalid trusted CA PEM: %s", ca)
+					return grpcutils.InvalidArg("Invalid trusted CA PEM")
 				}
 			}
 		}
@@ -522,7 +522,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			for _, ca := range cfg.ClientCertificate.TrustedCAs {
 				_, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(ca))
 				if err != nil {
-					return grpcutils.InvalidArg("Invalid trusted CA PEM: %s", ca)
+					return grpcutils.InvalidArg("Invalid trusted CA PEM")
 				}
 			}
 		}
@@ -1222,7 +1222,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 					if conf.Body != nil {
 						switch conf.Body.Type.(type) {
 						case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
-							if len(conf.GetInline()) > 50000 {
+							if len(conf.Body.GetInline()) > 50000 {
 								return grpcutils.InvalidArg("inline is too large")
 							}
 						case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
