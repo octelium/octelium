@@ -123,7 +123,7 @@ gen-go-cluster:
 		--go_out=apis/cluster/cvigilv1 --go-grpc_out=apis/cluster/cvigilv1 $(PROTO_GO_OPT_GRPC)
 
 gen-go-rsc:
-	mkdir -p apis/rsc/rmetav1 apis/rsc/rcorev1 apis/rsc/rcachev1 apis/rsc/rratelimitv1
+	mkdir -p apis/rsc/rmetav1 apis/rsc/rcorev1 apis/rsc/rcachev1 apis/rsc/rratelimitv1 apis/rsc/rlockv1
 	protoc -I . -I $(PROTO_IN_RSC)/metav1 rmetav1.proto \
 		--go_out=apis/rsc/rmetav1 --go-grpc_out=apis/rsc/rmetav1 $(PROTO_GO_OPT)
 	protoc -I . -I $(PROTO_IN_RSC)/corev1 rcorev1.proto \
@@ -132,6 +132,8 @@ gen-go-rsc:
 		--go_out=apis/rsc/rcachev1 --go-grpc_out=apis/rsc/rcachev1 $(PROTO_GO_OPT_GRPC)
 	protoc -I . -I $(PROTO_IN_RSC)/ratelimitv1 rratelimitv1.proto \
 		--go_out=apis/rsc/rratelimitv1 --go-grpc_out=apis/rsc/rratelimitv1 $(PROTO_GO_OPT_GRPC)
+	protoc -I . -I $(PROTO_IN_RSC)/lockv1 rlockv1.proto \
+		--go_out=apis/rsc/rlockv1 --go-grpc_out=apis/rsc/rlockv1 $(PROTO_GO_OPT_GRPC)
 
 
 gen-go-client:
