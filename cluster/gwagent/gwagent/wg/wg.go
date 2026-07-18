@@ -19,6 +19,7 @@ package wg
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -28,17 +29,42 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	k8scorev1 "k8s.io/api/core/v1"
 )
 
+const (
+	opQueueSize            = 20000
+	opTimeout              = 30 * time.Second
+	keyRotationCheckPeriod = 3 * time.Minute
+)
+
+type opType int
+
+const (
+	opTypeAdd opType = iota + 1
+	opTypeUpdate
+	opTypeRemove
+)
+
+type op struct {
+	typ   opType
+	sess  *corev1.Session
+	errCh chan error
+}
+
 type Wg struct {
 	client    *wgctrl.Client
 	octeliumC octeliumc.ClientInterface
 	gwName    string
+
+	opCh   chan *op
+	doneCh chan struct{}
+
+	closeOnce sync.Once
 }
 
 func New(ctx context.Context, node *k8scorev1.Node, octeliumC octeliumc.ClientInterface, initPrivateKey wgtypes.Key) (*Wg, error) {
@@ -50,6 +76,8 @@ func New(ctx context.Context, node *k8scorev1.Node, octeliumC octeliumc.ClientIn
 		client:    client,
 		octeliumC: octeliumC,
 		gwName:    k8sutils.GetGatewayName(node),
+		opCh:      make(chan *op, opQueueSize),
+		doneCh:    make(chan struct{}),
 	}
 
 	gw, err := octeliumC.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ret.gwName})
@@ -82,7 +110,7 @@ func (wg *Wg) initWG(ctx context.Context,
 
 	cfg := wgtypes.Config{
 		PrivateKey:   &privateKey,
-		ListenPort:   utils_types.IntToPtr(int(gw.Status.Wireguard.Port)),
+		ListenPort:   new(int(gw.Status.Wireguard.Port)),
 		ReplacePeers: true,
 		Peers:        []wgtypes.PeerConfig{},
 	}
@@ -102,123 +130,135 @@ func isConnWG(c *corev1.Session_Status_Connection) bool {
 	return c.Type == corev1.Session_Status_Connection_WIREGUARD
 }
 
-func (wg *Wg) AddConnection(sess *corev1.Session) error {
+func getAllowedIPs(sess *corev1.Session) []net.IPNet {
+	ret := []net.IPNet{}
 
 	if sess.Status.Connection == nil {
-		return nil
+		return ret
 	}
 
+	for _, addr := range sess.Status.Connection.Addresses {
+		addrGo := umetav1.ToDualStackNetwork(addr).ToGo()
+		if addrGo.V4 != nil && ucorev1.ToSession(sess).HasV4() {
+			ret = append(ret, *addrGo.V4)
+		}
+		if addrGo.V6 != nil && ucorev1.ToSession(sess).HasV6() {
+			ret = append(ret, *addrGo.V6)
+		}
+	}
+
+	return ret
+}
+
+func (wg *Wg) enqueue(typ opType, sess *corev1.Session) error {
+	o := &op{
+		typ:   typ,
+		sess:  sess,
+		errCh: make(chan error, 1),
+	}
+
+	timer := time.NewTimer(opTimeout)
+	defer timer.Stop()
+
+	select {
+	case wg.opCh <- o:
+	case <-wg.doneCh:
+		return errors.Errorf("The wg controller is closed")
+	case <-timer.C:
+		return errors.Errorf("Timed out while enqueuing the wg operation")
+	}
+
+	select {
+	case err := <-o.errCh:
+		return err
+	case <-wg.doneCh:
+		return errors.Errorf("The wg controller is closed")
+	case <-timer.C:
+		return errors.Errorf("Timed out while waiting for the wg operation")
+	}
+}
+
+func (wg *Wg) AddConnection(sess *corev1.Session) error {
 	if !isConnWG(sess.Status.Connection) {
 		return nil
 	}
 
-	zap.L().Debug("Adding wg for Session", zap.String("sess", sess.Metadata.Name))
-
-	dev, err := wg.client.Device(devName)
-	if err != nil {
-		return err
-	}
-
-	connPubKey, err := wgtypes.NewKey(sess.Status.Connection.X25519PublicKey)
-	if err != nil {
-		return err
-	}
-
-	cfg := wgtypes.Config{
-		ReplacePeers: false,
-		ListenPort:   &dev.ListenPort,
-		PrivateKey:   &dev.PrivateKey,
-		Peers: []wgtypes.PeerConfig{
-			{
-				PublicKey: connPubKey,
-				AllowedIPs: func() []net.IPNet {
-
-					ret := []net.IPNet{}
-
-					for _, addr := range sess.Status.Connection.Addresses {
-						addrGo := umetav1.ToDualStackNetwork(addr).ToGo()
-						if addrGo.V4 != nil && ucorev1.ToSession(sess).HasV4() {
-							ret = append(ret, *addrGo.V4)
-						}
-						if addrGo.V6 != nil && ucorev1.ToSession(sess).HasV6() {
-							ret = append(ret, *addrGo.V6)
-						}
-					}
-
-					return ret
-				}(),
-			},
-		},
-	}
-
-	return wg.client.ConfigureDevice(devName, cfg)
-
+	return wg.enqueue(opTypeAdd, sess)
 }
 
 func (wg *Wg) UpdateConnection(sess *corev1.Session) error {
-	if sess.Status.Connection == nil {
-		return nil
-	}
-
 	if !isConnWG(sess.Status.Connection) {
 		return nil
 	}
 
-	zap.L().Debug("Updating wg for Session", zap.String("sess", sess.Metadata.Name))
-	dev, err := wg.client.Device(devName)
-	if err != nil {
-		return err
+	return wg.enqueue(opTypeUpdate, sess)
+}
+
+func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
+	if !isConnWG(sess.Status.Connection) {
+		return nil
 	}
+
+	return wg.enqueue(opTypeRemove, sess)
+}
+
+func (wg *Wg) doOp(o *op) error {
+	switch o.typ {
+	case opTypeAdd:
+		return wg.doAddConnection(o.sess)
+	case opTypeUpdate:
+		return wg.doUpdateConnection(o.sess)
+	case opTypeRemove:
+		return wg.doRemoveConnection(o.sess)
+	default:
+		return errors.Errorf("Unknown wg operation type: %d", o.typ)
+	}
+}
+
+func (wg *Wg) doAddConnection(sess *corev1.Session) error {
+
+	zap.L().Debug("Adding wg for Session", zap.String("sess", sess.Metadata.Name))
 
 	connPubKey, err := wgtypes.NewKey(sess.Status.Connection.X25519PublicKey)
 	if err != nil {
 		return err
 	}
 
-	cfg := wgtypes.Config{
+	return wg.client.ConfigureDevice(devName, wgtypes.Config{
 		ReplacePeers: false,
-		ListenPort:   &dev.ListenPort,
-		PrivateKey:   &dev.PrivateKey,
+		Peers: []wgtypes.PeerConfig{
+			{
+				PublicKey:         connPubKey,
+				ReplaceAllowedIPs: true,
+				AllowedIPs:        getAllowedIPs(sess),
+			},
+		},
+	})
+}
+
+func (wg *Wg) doUpdateConnection(sess *corev1.Session) error {
+
+	zap.L().Debug("Updating wg for Session", zap.String("sess", sess.Metadata.Name))
+
+	connPubKey, err := wgtypes.NewKey(sess.Status.Connection.X25519PublicKey)
+	if err != nil {
+		return err
+	}
+
+	return wg.client.ConfigureDevice(devName, wgtypes.Config{
+		ReplacePeers: false,
 		Peers: []wgtypes.PeerConfig{
 			{
 				PublicKey:         connPubKey,
 				ReplaceAllowedIPs: true,
 				UpdateOnly:        true,
-				AllowedIPs: func() []net.IPNet {
-
-					ret := []net.IPNet{}
-
-					for _, addr := range sess.Status.Connection.Addresses {
-						addrGo := umetav1.ToDualStackNetwork(addr).ToGo()
-						if addrGo.V4 != nil && ucorev1.ToSession(sess).HasV4() {
-							ret = append(ret, *addrGo.V4)
-						}
-						if addrGo.V6 != nil && ucorev1.ToSession(sess).HasV6() {
-							ret = append(ret, *addrGo.V6)
-						}
-					}
-
-					return ret
-				}(),
+				AllowedIPs:        getAllowedIPs(sess),
 			},
 		},
-	}
-
-	if err := wg.client.ConfigureDevice(devName, cfg); err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
 
-func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
-	if sess.Status.Connection == nil {
-		return nil
-	}
-
-	if !isConnWG(sess.Status.Connection) {
-		return nil
-	}
+func (wg *Wg) doRemoveConnection(sess *corev1.Session) error {
 
 	zap.L().Debug("Deleting wg for Session", zap.String("sess", sess.Metadata.Name))
 
@@ -227,14 +267,7 @@ func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
 		return err
 	}
 
-	dev, err := wg.client.Device(devName)
-	if err != nil {
-		return err
-	}
-
-	if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
-		PrivateKey:   &dev.PrivateKey,
-		ListenPort:   &dev.ListenPort,
+	return wg.client.ConfigureDevice(devName, wgtypes.Config{
 		ReplacePeers: false,
 		Peers: []wgtypes.PeerConfig{
 			{
@@ -242,35 +275,55 @@ func (wg *Wg) RemoveConnection(sess *corev1.Session) error {
 				Remove:    true,
 			},
 		},
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
 
-func (wg *Wg) Cleanup() error {
+func (wg *Wg) runLoop(ctx context.Context) {
+	defer close(wg.doneCh)
 
-	if err := doCleanupDev(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (wg *Wg) runKeyRotation(ctx context.Context) {
-	tickerCh := time.NewTicker(3 * time.Minute)
+	tickerCh := time.NewTicker(keyRotationCheckPeriod)
 	defer tickerCh.Stop()
+
+	zap.L().Debug("Starting the wg operation loop")
+
 	for {
 		select {
 		case <-ctx.Done():
+			zap.L().Debug("Exiting the wg operation loop")
 			return
+		case o := <-wg.opCh:
+			err := wg.doOp(o)
+			if err != nil {
+				zap.L().Warn("Could not apply the wg operation",
+					zap.Int("type", int(o.typ)), zap.Error(err))
+			}
+			select {
+			case o.errCh <- err:
+			default:
+			}
 		case <-tickerCh.C:
 			if err := wg.doUpdateGatewayKey(ctx); err != nil {
 				zap.L().Warn("Could not doUpdateGatewayKey", zap.Error(err))
 			}
 		}
 	}
+}
+
+func (wg *Wg) Cleanup() error {
+
+	wg.closeOnce.Do(func() {
+		if wg.client != nil {
+			if err := wg.client.Close(); err != nil {
+				zap.L().Warn("Could not close the wgctrl client", zap.Error(err))
+			}
+		}
+	})
+
+	if err := doCleanupDev(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (wg *Wg) doUpdateGatewayKey(ctx context.Context) error {
@@ -317,11 +370,10 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 		return err
 	}
 
-	oldPrivateKey, _ := wgtypes.ParseKey(dev.PrivateKey.String())
+	oldPrivateKey := dev.PrivateKey
 
 	if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
 		PrivateKey:   &privateKey,
-		ListenPort:   &dev.ListenPort,
 		ReplacePeers: false,
 	}); err != nil {
 		return err
@@ -336,7 +388,6 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 			zap.String("gw", gw.Metadata.Name), zap.Error(err))
 		if err := wg.client.ConfigureDevice(devName, wgtypes.Config{
 			PrivateKey:   &oldPrivateKey,
-			ListenPort:   &dev.ListenPort,
 			ReplacePeers: false,
 		}); err != nil {
 			return err
@@ -351,6 +402,6 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 }
 
 func (wg *Wg) Run(ctx context.Context) error {
-	go wg.runKeyRotation(ctx)
+	go wg.runLoop(ctx)
 	return nil
 }
