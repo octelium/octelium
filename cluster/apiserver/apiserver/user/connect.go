@@ -97,8 +97,8 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		s.doDisconnect(ctx, i)
 	}()
 
-	s.connServer.addConnectedSess(i.Session, stream)
-	defer s.connServer.removeConnectedSess(i.Session.Metadata.Uid)
+	cs := s.connServer.addConnectedSess(stream.Context(), i.Session, stream)
+	defer s.connServer.removeConnectedSess(cs)
 
 	recvErrCh := make(chan error, 1)
 	go func() {
@@ -120,6 +120,10 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		case <-ctx.Done():
 			zap.L().Debug("Exiting GetConnectionState",
 				zap.String("sessName", i.Session.Metadata.Name), zap.Error(ctx.Err()))
+			return nil
+		case <-cs.Done():
+			zap.L().Debug("connectedSession closed",
+				zap.String("sessName", i.Session.Metadata.Name))
 			return nil
 		case err := <-recvErrCh:
 			zap.L().Debug("Client stream closed", zap.Error(err))

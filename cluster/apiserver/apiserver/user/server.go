@@ -17,13 +17,20 @@
 package user
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
+)
+
+const (
+	sessionSendQueueSize = 256
+	sessionSendTimeout   = 15 * time.Second
 )
 
 type Server struct {
@@ -54,11 +61,84 @@ type ConnServerI interface {
 type connectedSession struct {
 	sess   *corev1.Session
 	stream userv1.MainService_ConnectServer
+
+	sendCh chan *userv1.ConnectResponse
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (cs *connectedSession) Done() <-chan struct{} {
+	return cs.ctx.Done()
+}
+
+func (cs *connectedSession) enqueue(msg *userv1.ConnectResponse) bool {
+	select {
+	case cs.sendCh <- msg:
+		return true
+	default:
+		return false
+	}
+}
+
+func (cs *connectedSession) runSendLoop() {
+	for {
+		select {
+		case <-cs.ctx.Done():
+			return
+		case msg := <-cs.sendCh:
+			timer := time.AfterFunc(sessionSendTimeout, cs.cancel)
+			err := cs.stream.Send(msg)
+			timer.Stop()
+			if err != nil {
+				zap.L().Debug("Could not send message to Session stream, closing",
+					zap.String("sessUID", cs.sess.Metadata.Uid), zap.Error(err))
+				cs.cancel()
+				return
+			}
+		}
+	}
 }
 
 type connServer struct {
 	sync.RWMutex
 	connectedSessMap map[string]*connectedSession
+}
+
+func (s *connServer) addConnectedSess(
+	streamCtx context.Context,
+	sess *corev1.Session,
+	stream userv1.MainService_ConnectServer,
+) *connectedSession {
+	ctx, cancel := context.WithCancel(streamCtx)
+
+	cs := &connectedSession{
+		sess:   sess,
+		stream: stream,
+		sendCh: make(chan *userv1.ConnectResponse, sessionSendQueueSize),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	s.Lock()
+	if old, ok := s.connectedSessMap[sess.Metadata.Uid]; ok {
+		old.cancel()
+	}
+	s.connectedSessMap[sess.Metadata.Uid] = cs
+	s.Unlock()
+
+	go cs.runSendLoop()
+
+	return cs
+}
+
+func (s *connServer) removeConnectedSess(cs *connectedSession) {
+	s.Lock()
+	if cur, ok := s.connectedSessMap[cs.sess.Metadata.Uid]; ok && cur == cs {
+		delete(s.connectedSessMap, cs.sess.Metadata.Uid)
+	}
+	s.Unlock()
+
+	cs.cancel()
 }
 
 func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
@@ -76,9 +156,10 @@ func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
 	s.RUnlock()
 
 	for _, conn := range conns {
-		if err := conn.stream.Send(msg); err != nil {
-			zap.L().Debug("Could not send broadcast message",
-				zap.String("sessUID", conn.sess.Metadata.Uid), zap.Error(err))
+		if !conn.enqueue(msg) {
+			zap.L().Warn("Session send queue is full",
+				zap.String("sessUID", conn.sess.Metadata.Uid))
+			conn.cancel()
 		}
 	}
 
@@ -87,31 +168,23 @@ func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
 
 func (s *connServer) SendMessage(msg *userv1.ConnectResponse, sessUID string) error {
 	s.RLock()
-	defer s.RUnlock()
 	conn, ok := s.connectedSessMap[sessUID]
+	s.RUnlock()
 	if !ok {
 		return nil
 	}
 
-	zap.L().Debug("Sending unicast msg", zap.Any("msg", msg), zap.String("sessUID", sessUID))
 	if msg.CreatedAt == nil {
 		msg.CreatedAt = pbutils.Now()
 	}
 
-	return conn.stream.Send(msg)
-}
+	zap.L().Debug("Sending unicast msg", zap.Any("msg", msg), zap.String("sessUID", sessUID))
 
-func (s *connServer) addConnectedSess(sess *corev1.Session, stream userv1.MainService_ConnectServer) {
-	s.Lock()
-	s.connectedSessMap[sess.Metadata.Uid] = &connectedSession{
-		sess:   sess,
-		stream: stream,
+	if !conn.enqueue(msg) {
+		zap.L().Warn("Session send queue is full. Dropping msg",
+			zap.String("sessUID", sessUID))
+		conn.cancel()
 	}
-	s.Unlock()
-}
 
-func (s *connServer) removeConnectedSess(sessUID string) {
-	s.Lock()
-	delete(s.connectedSessMap, sessUID)
-	s.Unlock()
+	return nil
 }
