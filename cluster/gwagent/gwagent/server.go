@@ -124,10 +124,6 @@ func (s *Server) Run(ctx context.Context) error {
 		return errors.Errorf("Could not init Gateway: %+v", err)
 	}
 
-	if err := untaintNode(ctx, s.k8sC, node); err != nil {
-		zap.L().Warn("Could not untaint node", zap.Error(err))
-	}
-
 	wgC, err := wg.New(ctx, node, s.octeliumC, initWGPrivateKey)
 	if err != nil {
 		return err
@@ -175,6 +171,10 @@ func (s *Server) Run(ctx context.Context) error {
 		if err := watcher.Secret(ctx, nil, secretCtl.OnAdd, secretCtl.OnUpdate, secretCtl.OnDelete); err != nil {
 			return err
 		}
+	}
+
+	if err := untaintNode(ctx, s.k8sC, node); err != nil {
+		zap.L().Warn("Could not untaint node", zap.Error(err))
 	}
 
 	zap.L().Debug("Gateway agent is now running", zap.String("node", s.nodeName))
