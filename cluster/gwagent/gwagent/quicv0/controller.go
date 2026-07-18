@@ -96,7 +96,9 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface, gwName string
 	}
 	var err error
 
-	ret.jwkCtl, err = jwkctl.NewJWKController(ctx, octeliumC, nil)
+	ret.jwkCtl, err = jwkctl.NewJWKController(ctx, octeliumC, &jwkctl.Opts{
+		IsVerificationMode: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -326,110 +328,6 @@ func encodeMsg(resp pbutils.Message, typ uint32) ([]byte, error) {
 
 	return buf, nil
 }
-
-/*
-func (c *QUICController) doHandleConnection(ctx context.Context, conn quic.Connection) error {
-	initCtx, cancelFn := context.WithTimeout(ctx, 3*time.Second)
-	defer cancelFn()
-	zap.L().Debug("Accepting new stream", zap.String("conn", conn.RemoteAddr().String()))
-	initStream, err := conn.AcceptStream(initCtx)
-	if err != nil {
-		return err
-	}
-	defer initStream.Close()
-
-	if err := initStream.SetDeadline(time.Now().Add(4 * time.Second)); err != nil {
-		return err
-	}
-
-	buf := make([]byte, 1024)
-	n, err := initStream.Read(buf)
-	if err != nil {
-		return errors.Errorf("Could not read init stream req: %+v", err)
-	}
-	if n == 0 || n >= 1024 {
-		return errors.Errorf("Invalid init stream req size: %d", n)
-	}
-
-	req := &pbauth.InitiateGatewaySessionRequest{}
-
-	if err := pbutils.Unmarshal(buf[:n], req); err != nil {
-		return err
-	}
-
-	claims, err := c.jwkCtl.VerifyAccessToken(req.AccessToken)
-	if err != nil {
-		return err
-	}
-
-	sess, err := c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: claims.Subject})
-	if err != nil {
-		return err
-	}
-
-	if !claims.IsValid(sess) {
-		return errors.Errorf("Invalid claims")
-	}
-
-	zap.L().Debug("Found Session", zap.String("session", sess.Metadata.Uid))
-
-	if !ucorev1.ToSession(sess).IsClient() {
-		return errors.Errorf("Not a CLIENT Session")
-	}
-
-	if c.hasActiveSessionUID(sess.Metadata.Uid) {
-		return errors.Errorf("Session already has another active Connection")
-	}
-
-	if sess.Status.Connection == nil {
-		return errors.Errorf("Nil Connection")
-	}
-
-	if sess.Status.Connection.Type != corev1.Session_Status_Connection_QUICV0 {
-		return errors.Errorf("Not a QUIC connection")
-	}
-
-	resp := &pbauth.InitiateGatewaySessionResponse{
-		Type: pbauth.InitiateGatewaySessionResponse_OK,
-	}
-
-	respBytes, err := pbutils.Marshal(resp)
-	if err != nil {
-		return err
-	}
-
-	zap.L().Debug("Writing accept response", zap.String("session", sess.Metadata.Uid))
-	if _, err := initStream.Write(respBytes); err != nil {
-		return err
-	}
-
-	dctx := newDctx(sess, conn, c.tunWriteCh, c.svcCIDRs, c.mtu)
-
-	c.dctxMap.Lock()
-	c.dctxMap.dctxMap[dctx.id] = dctx
-	c.dctxMap.Unlock()
-
-	c.lookupMap.Lock()
-	for _, addr := range dctx.addrs {
-		c.lookupMap.lookupMap[addr.Addr().String()] = dctx
-	}
-	c.lookupMap.Unlock()
-
-	err = dctx.runAndWait(ctx)
-
-	c.dctxMap.Lock()
-	delete(c.dctxMap.dctxMap, dctx.id)
-	c.dctxMap.Unlock()
-
-	c.lookupMap.Lock()
-	for _, addr := range dctx.addrs {
-		delete(c.lookupMap.lookupMap, addr.Addr().String())
-	}
-	c.lookupMap.Unlock()
-
-	return err
-}
-*/
 
 func (c *QUICController) doHandleConnection(ctx context.Context, conn *quic.Conn) error {
 	initCtx, cancelFn := context.WithTimeout(ctx, 3*time.Second)
