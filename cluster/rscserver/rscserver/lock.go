@@ -18,6 +18,7 @@ package rscserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,6 +97,20 @@ func (s *srvLock) getTTL(arg *umetav1.Duration) (time.Duration, error) {
 	return ttl, nil
 }
 
+func (s *srvLock) toGRPCErr(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return status.FromContextError(ctxErr).Err()
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return status.FromContextError(err).Err()
+	}
+
+	zap.L().Warn("lock redis err", zap.Error(err))
+
+	return grpcutils.InternalWithErr(err)
+}
+
 func (s *srvLock) Lock(ctx context.Context, req *rlockv1.LockRequest) (*rlockv1.LockResponse, error) {
 	if err := s.validateKey(req.Key); err != nil {
 		return nil, err
@@ -164,8 +179,7 @@ func (s *srvLock) doTryLock(ctx context.Context,
 	redisKey string, leaseID []byte, ttl time.Duration) (bool, error) {
 	res, err := s.redisC.SetNX(ctx, redisKey, leaseID, ttl).Result()
 	if err != nil {
-		zap.L().Warn("lock err", zap.Error(err))
-		return false, grpcutils.InternalWithErr(err)
+		return false, s.toGRPCErr(ctx, err)
 	}
 	return res, nil
 }
@@ -182,8 +196,7 @@ func (s *srvLock) Unlock(ctx context.Context, req *rlockv1.UnlockRequest) (*rloc
 	res, err := scriptUnlock.Run(ctx, s.redisC,
 		[]string{s.getRedisLockKey(req.Key)}, req.LeaseID).Int64()
 	if err != nil {
-		zap.L().Warn("unlock err", zap.Error(err))
-		return nil, grpcutils.InternalWithErr(err)
+		return nil, s.toGRPCErr(ctx, err)
 	}
 
 	return &rlockv1.UnlockResponse{Released: res == 1}, nil
@@ -206,8 +219,7 @@ func (s *srvLock) Refresh(ctx context.Context, req *rlockv1.RefreshRequest) (*rl
 	res, err := scriptRefresh.Run(ctx, s.redisC,
 		[]string{s.getRedisLockKey(req.Key)}, req.LeaseID, ttl.Milliseconds()).Int64()
 	if err != nil {
-		zap.L().Warn("refresh err", zap.Error(err))
-		return nil, grpcutils.InternalWithErr(err)
+		return nil, s.toGRPCErr(ctx, err)
 	}
 
 	return &rlockv1.RefreshResponse{Refreshed: res == 1}, nil
