@@ -21,12 +21,11 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-	"sync"
-	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -37,8 +36,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
-
-var sysConnMutex sync.Mutex
 
 func setConnectionUpstreamsListener(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
@@ -123,11 +120,12 @@ func AddAddressToConnection(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session) error {
 
-	ctx, cancel := context.WithTimeout(ctx, sysConnTimeout)
-	defer cancel()
+	leaseID, err := doLock(ctx, octeliumC)
+	if err != nil {
+		return err
+	}
 
-	sysConnMutex.Lock()
-	defer sysConnMutex.Unlock()
+	defer doUnlock(ctx, octeliumC, leaseID)
 
 	conn := sess.Status.Connection
 	if conn == nil {
@@ -250,7 +248,45 @@ func AddAddressToConnection(ctx context.Context,
 	return nil
 }
 
-const sysConnTimeout = 30 * time.Second
+func getLockKey() []byte {
+	return []byte("sys-conn-addr")
+}
+
+func doLock(ctx context.Context, octeliumC octeliumc.ClientInterface) ([]byte, error) {
+	res, err := octeliumC.LockC().Lock(ctx, &rlockv1.LockRequest{
+		Key: getLockKey(),
+		Ttl: &metav1.Duration{
+			Type: &metav1.Duration_Seconds{
+				Seconds: 5,
+			},
+		},
+		Wait: &metav1.Duration{
+			Type: &metav1.Duration_Seconds{
+				Seconds: 10,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if !res.Acquired {
+		return nil, errors.Errorf("Could not acquire sys-conn lock")
+	}
+
+	return res.LeaseID, nil
+}
+
+func doUnlock(ctx context.Context, octeliumC octeliumc.ClientInterface, leaseID []byte) {
+
+	if _, err := octeliumC.LockC().Unlock(ctx, &rlockv1.UnlockRequest{
+		Key:     getLockKey(),
+		LeaseID: leaseID,
+	}); err != nil {
+		zap.L().Warn("Could not doUnlock", zap.Error(err))
+	}
+
+}
 
 func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session, idx int) error {
@@ -258,11 +294,12 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, sysConnTimeout)
-	defer cancel()
+	leaseID, err := doLock(ctx, octeliumC)
+	if err != nil {
+		return err
+	}
 
-	sysConnMutex.Lock()
-	defer sysConnMutex.Unlock()
+	defer doUnlock(ctx, octeliumC, leaseID)
 
 	/*
 		zap.L().Debug("Removing an address from Session",
