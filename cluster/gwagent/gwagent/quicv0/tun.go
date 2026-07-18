@@ -143,7 +143,10 @@ func (s *QUICController) createTunDev(ctx context.Context, gw *corev1.Gateway, c
 	zap.L().Debug("Setting QUICv0 dev routes")
 
 	if hasV4 {
-		_, routeNet, _ := net.ParseCIDR(cc.Status.Network.QuicConnSubnet.V4)
+		_, routeNet, err := net.ParseCIDR(cc.Status.Network.QuicConnSubnet.V4)
+		if err != nil {
+			return err
+		}
 
 		if err := netlink.RouteAdd(&netlink.Route{
 			LinkIndex: l.Attrs().Index,
@@ -155,7 +158,10 @@ func (s *QUICController) createTunDev(ctx context.Context, gw *corev1.Gateway, c
 	}
 
 	if hasV6 {
-		_, routeNet, _ := net.ParseCIDR(cc.Status.Network.QuicConnSubnet.V6)
+		_, routeNet, err := net.ParseCIDR(cc.Status.Network.QuicConnSubnet.V6)
+		if err != nil {
+			return err
+		}
 
 		if err := netlink.RouteAdd(&netlink.Route{
 			LinkIndex: l.Attrs().Index,

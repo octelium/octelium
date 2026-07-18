@@ -159,7 +159,10 @@ func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 	}
 
 	if hasV4 {
-		_, routeNet, _ := net.ParseCIDR(cc.Status.Network.WgConnSubnet.V4)
+		_, routeNet, err := net.ParseCIDR(cc.Status.Network.WgConnSubnet.V4)
+		if err != nil {
+			return err
+		}
 
 		if err := netlink.RouteAdd(&netlink.Route{
 			LinkIndex: l.Attrs().Index,
@@ -171,7 +174,10 @@ func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 	}
 
 	if hasV6 {
-		_, routeNet, _ := net.ParseCIDR(cc.Status.Network.WgConnSubnet.V6)
+		_, routeNet, err := net.ParseCIDR(cc.Status.Network.WgConnSubnet.V6)
+		if err != nil {
+			return err
+		}
 
 		if err := netlink.RouteAdd(&netlink.Route{
 			LinkIndex: l.Attrs().Index,
