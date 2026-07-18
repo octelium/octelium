@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -184,9 +183,9 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 				},
 
 				SecurityContext: &k8scorev1.SecurityContext{
-					Privileged:               utils_types.BoolToPtr(false),
-					AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
-					ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
+					Privileged:               new(false),
+					AllowPrivilegeEscalation: new(false),
+					ReadOnlyRootFilesystem:   new(true),
 					Capabilities: &k8scorev1.Capabilities{
 						Drop: []k8scorev1.Capability{
 							"all",
@@ -282,11 +281,11 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 					ImagePullPolicy: k8sutils.GetImagePullPolicy(),
 					Env:             envVars,
 					SecurityContext: &k8scorev1.SecurityContext{
-						Privileged:               utils_types.BoolToPtr(false),
-						AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+						Privileged:               new(false),
+						AllowPrivilegeEscalation: new(false),
 						ReadOnlyRootFilesystem: func() *bool {
 							if svc.Status.ManagedService.ReadOnlyFileSystem {
-								return utils_types.BoolToPtr(true)
+								return new(true)
 							}
 							return nil
 						}(),
@@ -435,7 +434,7 @@ func (c *Controller) newDeployment(svc *corev1.Service, ownerCM *k8scorev1.Confi
 					return nil
 				}
 
-				return utils_types.Int32ToPtr(int32(svc.Spec.Deployment.Replicas))
+				return new(int32(svc.Spec.Deployment.Replicas))
 			}(),
 			Selector: &k8smetav1.LabelSelector{
 				MatchLabels: labels,

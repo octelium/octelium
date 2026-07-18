@@ -28,7 +28,6 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
@@ -222,7 +221,7 @@ func (c *Controller) getK8sUpstreamDeployment(ctx context.Context, svc *corev1.S
 					return nil
 				}
 
-				return utils_types.Int32ToPtr(int32(spec.Replicas))
+				return new(int32(spec.Replicas))
 			}(),
 			Selector: &k8smetav1.LabelSelector{
 				MatchLabels: labels,
@@ -250,8 +249,8 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 	spec := cfg.GetUpstream().GetContainer()
 
 	ret := &k8scorev1.PodSpec{
-		AutomountServiceAccountToken: utils_types.BoolToPtr(false),
-		EnableServiceLinks:           utils_types.BoolToPtr(false),
+		AutomountServiceAccountToken: new(false),
+		EnableServiceLinks:           new(false),
 		DNSPolicy:                    k8scorev1.DNSNone,
 		DNSConfig: &k8scorev1.PodDNSConfig{
 			Nameservers: []string{"8.8.8.8", "1.1.1.1"},
@@ -370,21 +369,21 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 				Limits: limits,
 			},
 			SecurityContext: &k8scorev1.SecurityContext{
-				Privileged:               utils_types.BoolToPtr(false),
-				AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+				Privileged:               new(false),
+				AllowPrivilegeEscalation: new(false),
 				RunAsUser: func() *int64 {
 					if spec.SecurityContext == nil ||
 						spec.SecurityContext.RunAsUser == 0 ||
 						spec.SecurityContext.RunAsUser > 1000000 {
 						return nil
 					}
-					return utils_types.Int64ToPtr(int64(spec.SecurityContext.RunAsUser))
+					return new(int64(spec.SecurityContext.RunAsUser))
 				}(),
 				ReadOnlyRootFilesystem: func() *bool {
 					if spec.SecurityContext == nil {
 						return nil
 					}
-					return utils_types.BoolToPtr(spec.SecurityContext.ReadOnlyRootFilesystem)
+					return new(spec.SecurityContext.ReadOnlyRootFilesystem)
 				}(),
 
 				Capabilities: func() *k8scorev1.Capabilities {
