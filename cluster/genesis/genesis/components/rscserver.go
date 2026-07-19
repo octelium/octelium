@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -79,7 +78,7 @@ func getRscServerDeployment(o *CommonOpts) *appsv1.Deployment {
 					Annotations: getAnnotations(),
 				},
 				Spec: k8scorev1.PodSpec{
-					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
+					AutomountServiceAccountToken: new(false),
 					NodeSelector:                 getNodeSelectorControlPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{

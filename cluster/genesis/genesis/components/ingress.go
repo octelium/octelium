@@ -25,7 +25,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -186,7 +185,7 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 					Annotations: getAnnotations(),
 				},
 				Spec: k8scorev1.PodSpec{
-					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
+					AutomountServiceAccountToken: new(false),
 					NodeSelector:                 getNodeSelectorControlPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{
@@ -253,7 +252,7 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 				},
 
 				Spec: k8scorev1.PodSpec{
-					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
+					AutomountServiceAccountToken: new(false),
 					NodeSelector:                 getNodeSelectorDataPlane(c),
 					Volumes: []k8scorev1.Volume{
 						{
@@ -306,12 +305,12 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 							},
 
 							SecurityContext: &k8scorev1.SecurityContext{
-								Privileged:               utils_types.BoolToPtr(false),
-								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
-								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
-								RunAsNonRoot:             utils_types.BoolToPtr(true),
-								RunAsUser:                utils_types.Int64ToPtr(34567),
-								RunAsGroup:               utils_types.Int64ToPtr(34567),
+								Privileged:               new(false),
+								AllowPrivilegeEscalation: new(false),
+								ReadOnlyRootFilesystem:   new(true),
+								RunAsNonRoot:             new(true),
+								RunAsUser:                new(int64(34567)),
+								RunAsGroup:               new(int64(34567)),
 								Capabilities: &k8scorev1.Capabilities{
 									Drop: []k8scorev1.Capability{
 										"all",

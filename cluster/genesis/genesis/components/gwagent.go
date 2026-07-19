@@ -21,7 +21,6 @@ import (
 
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -109,11 +108,11 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 								MountPath: "/lib/modules",
 							}},
 							SecurityContext: &k8scorev1.SecurityContext{
-								// ReadOnlyRootFilesystem:   utils_types.BoolToPtr(false),
-								// AllowPrivilegeEscalation: utils_types.BoolToPtr(true),
-								// RunAsNonRoot:             utils_types.BoolToPtr(false),
-								// RunAsUser:                utils_types.Int64ToPtr(0),
-								Privileged: utils_types.BoolToPtr(true),
+								// ReadOnlyRootFilesystem:   new(false),
+								// AllowPrivilegeEscalation: new(true),
+								// RunAsNonRoot:             new(false),
+								// RunAsUser:                new(int64(0)),
+								Privileged: new(true),
 
 								/*
 									Capabilities: &k8scorev1.Capabilities{
@@ -172,10 +171,10 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 								},
 							},
 							SecurityContext: &k8scorev1.SecurityContext{
-								ReadOnlyRootFilesystem:   utils_types.BoolToPtr(false),
-								AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
-								RunAsNonRoot:             utils_types.BoolToPtr(false),
-								RunAsUser:                utils_types.Int64ToPtr(0),
+								ReadOnlyRootFilesystem:   new(false),
+								AllowPrivilegeEscalation: new(false),
+								RunAsNonRoot:             new(false),
+								RunAsUser:                new(int64(0)),
 								Capabilities: &k8scorev1.Capabilities{
 
 									/*

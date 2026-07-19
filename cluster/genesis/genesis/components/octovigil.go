@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -75,7 +74,7 @@ func getOctovigilDeployment(o *CommonOpts) *appsv1.Deployment {
 					Annotations: getAnnotations(),
 				},
 				Spec: k8scorev1.PodSpec{
-					AutomountServiceAccountToken: utils_types.BoolToPtr(false),
+					AutomountServiceAccountToken: new(false),
 					NodeSelector:                 getNodeSelectorDataPlane(o.ClusterConfig),
 
 					Containers: []k8scorev1.Container{

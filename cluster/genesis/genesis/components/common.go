@@ -24,7 +24,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -404,7 +403,7 @@ func MainLivenessProbe() *k8scorev1.Probe {
 
 func MainSecurityContext() *k8scorev1.SecurityContext {
 	return &k8scorev1.SecurityContext{
-		ReadOnlyRootFilesystem:   utils_types.BoolToPtr(true),
-		AllowPrivilegeEscalation: utils_types.BoolToPtr(false),
+		ReadOnlyRootFilesystem:   new(true),
+		AllowPrivilegeEscalation: new(false),
 	}
 }
