@@ -38,7 +38,7 @@ const (
 	lockMinTTL = 1 * time.Second
 	lockMaxTTL = 5 * time.Minute
 
-	lockMaxWait    = 10 * time.Second
+	lockMaxWait    = 60 * time.Second
 	lockPollPeriod = 100 * time.Millisecond
 )
 
