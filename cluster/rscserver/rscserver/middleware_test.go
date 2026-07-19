@@ -19,6 +19,8 @@ package rscserver
 import (
 	"testing"
 
+	"github.com/octelium/octelium/cluster/common/redisutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 
@@ -104,6 +106,12 @@ func TestGetRequestInfo(t *testing.T) {
 	}
 }
 
+const (
+	eventTypeCreate = "create"
+	eventTypeUpdate = "update"
+	eventTypeDelete = "delete"
+)
+
 type fakeStream struct {
 	ctx context.Context
 
@@ -156,23 +164,58 @@ func (s *fakeStream) getMsgs() []*rmetav1.WatchEvent {
 	return append([]*rmetav1.WatchEvent{}, s.msgs...)
 }
 
-func (s *fakeStream) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return len(s.msgs)
-}
-
-func (s *fakeStream) waitForCount(n int, d time.Duration) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if s.count() >= n {
-			return true
+func (s *fakeStream) find(typ, uid string, newObj func() proto.Message) *rmetav1.WatchEvent {
+	for _, ev := range s.getMsgs() {
+		if getEventType(ev) != typ {
+			continue
 		}
-		time.Sleep(50 * time.Millisecond)
+		if getEventItemUID(ev, newObj()) == uid {
+			return ev
+		}
 	}
 
-	return s.count() >= n
+	return nil
+}
+
+func (s *fakeStream) waitFor(typ, uid string,
+	newObj func() proto.Message, d time.Duration) *rmetav1.WatchEvent {
+
+	deadline := time.Now().Add(d)
+
+	for {
+		if ev := s.find(typ, uid, newObj); ev != nil {
+			return ev
+		}
+
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (s *fakeStream) getKinds() map[string]bool {
+	ret := make(map[string]bool)
+
+	for _, ev := range s.getMsgs() {
+		ret[ev.GetEvent().Kind] = true
+	}
+
+	return ret
+}
+
+func getEventType(ev *rmetav1.WatchEvent) string {
+	switch {
+	case ev.GetEvent().GetCreate() != nil:
+		return eventTypeCreate
+	case ev.GetEvent().GetUpdate() != nil:
+		return eventTypeUpdate
+	case ev.GetEvent().GetDelete() != nil:
+		return eventTypeDelete
+	default:
+		return ""
+	}
 }
 
 func getEventItemUID(ev *rmetav1.WatchEvent, obj proto.Message) string {
@@ -201,6 +244,22 @@ func getEventItemUID(ev *rmetav1.WatchEvent, obj proto.Message) string {
 	return rsc.GetMetadata().Uid
 }
 
+func newUserMsg() proto.Message {
+	return &corev1.User{}
+}
+
+func newGroupMsg() proto.Message {
+	return &corev1.Group{}
+}
+
+func newServiceMsg() proto.Message {
+	return &corev1.Service{}
+}
+
+func newPolicyMsg() proto.Message {
+	return &corev1.Policy{}
+}
+
 func TestWatchInitialAndLive(t *testing.T) {
 
 	tst, err := initTest()
@@ -219,15 +278,12 @@ func TestWatchInitialAndLive(t *testing.T) {
 	version := "v1"
 	kind := ucorev1.KindUser
 
-	srv.redisC.Del(ctx, getRscStreamKey(api, version, kind))
-
 	assert.Nil(t, srv.eventHub.Start(ctx))
 	defer srv.eventHub.Stop()
 
-	initialCount := 5
 	var initialUIDs []string
 
-	for range initialCount {
+	for range 5 {
 		obj := newTestResource(kind)
 		obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
 		out, err := srv.doCreate(ctx, obj, api, version, kind)
@@ -245,16 +301,8 @@ func TestWatchInitialAndLive(t *testing.T) {
 		errCh <- srv.doHandleStreamRequest(&rmetav1.WatchOptions{}, stream, api, version, kind)
 	}()
 
-	assert.True(t, stream.waitForCount(initialCount, 30*time.Second))
-
-	gotInitial := make(map[string]bool)
-	for _, ev := range stream.getMsgs() {
-		assert.NotNil(t, ev.GetEvent().GetCreate())
-		gotInitial[getEventItemUID(ev, &corev1.User{})] = true
-	}
-
 	for _, uid := range initialUIDs {
-		assert.True(t, gotInitial[uid])
+		assert.NotNil(t, stream.waitFor(eventTypeCreate, uid, newUserMsg, 30*time.Second), uid)
 	}
 
 	liveObj := newTestResource(kind)
@@ -262,37 +310,34 @@ func TestWatchInitialAndLive(t *testing.T) {
 	liveOut, err := srv.doCreate(ctx, liveObj, api, version, kind)
 	assert.Nil(t, err)
 
-	assert.True(t, stream.waitForCount(initialCount+1, 30*time.Second))
+	liveUID := liveOut.GetMetadata().Uid
 
-	liveEv := stream.getMsgs()[initialCount]
-	assert.NotNil(t, liveEv.GetEvent().GetCreate())
-	assert.Equal(t, liveOut.GetMetadata().Uid, getEventItemUID(liveEv, &corev1.User{}))
+	assert.NotNil(t, stream.waitFor(eventTypeCreate, liveUID, newUserMsg, 30*time.Second))
 
 	liveOut.GetMetadata().Labels = map[string]string{
 		"key": "val",
 	}
 	updated, _, err := srv.doUpdate(ctx, liveOut, api, version, kind)
 	assert.Nil(t, err)
+	assert.Equal(t, liveUID, updated.GetMetadata().Uid)
 
-	assert.True(t, stream.waitForCount(initialCount+2, 30*time.Second))
+	updateEv := stream.waitFor(eventTypeUpdate, liveUID, newUserMsg, 30*time.Second)
+	assert.NotNil(t, updateEv)
 
-	updateEv := stream.getMsgs()[initialCount+1]
-	assert.NotNil(t, updateEv.GetEvent().GetUpdate())
-	assert.Equal(t, updated.GetMetadata().Uid, getEventItemUID(updateEv, &corev1.User{}))
+	oldItem := &corev1.User{}
+	assert.Nil(t, updateEv.GetEvent().GetUpdate().GetOldItem().UnmarshalTo(oldItem))
+	assert.Equal(t, liveUID, oldItem.Metadata.Uid)
 
 	_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{
-		Uid: updated.GetMetadata().Uid,
+		Uid: liveUID,
 	}, api, version, kind)
 	assert.Nil(t, err)
 
-	assert.True(t, stream.waitForCount(initialCount+3, 30*time.Second))
-
-	deleteEv := stream.getMsgs()[initialCount+2]
-	assert.NotNil(t, deleteEv.GetEvent().GetDelete())
-	assert.Equal(t, updated.GetMetadata().Uid, getEventItemUID(deleteEv, &corev1.User{}))
+	assert.NotNil(t, stream.waitFor(eventTypeDelete, liveUID, newUserMsg, 30*time.Second))
 
 	for _, ev := range stream.getMsgs() {
 		assert.Equal(t, kind, ev.GetEvent().Kind)
+		assert.Equal(t, vutils.GetApiVersion(api, version), ev.GetEvent().ApiVersion)
 	}
 
 	cancelStream()
@@ -323,16 +368,17 @@ func TestWatchSkipInitial(t *testing.T) {
 	version := "v1"
 	kind := ucorev1.KindGroup
 
-	srv.redisC.Del(ctx, getRscStreamKey(api, version, kind))
-
 	assert.Nil(t, srv.eventHub.Start(ctx))
 	defer srv.eventHub.Stop()
+
+	var preUIDs []string
 
 	for range 3 {
 		obj := newTestResource(kind)
 		obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
-		_, err := srv.doCreate(ctx, obj, api, version, kind)
+		out, err := srv.doCreate(ctx, obj, api, version, kind)
 		assert.Nil(t, err)
+		preUIDs = append(preUIDs, out.GetMetadata().Uid)
 	}
 
 	streamCtx, cancelStream := context.WithCancel(ctx)
@@ -348,21 +394,21 @@ func TestWatchSkipInitial(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	assert.Equal(t, 0, stream.count())
+	for _, uid := range preUIDs {
+		assert.Nil(t, stream.find(eventTypeCreate, uid, newGroupMsg), uid)
+	}
 
 	obj := newTestResource(kind)
 	obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
 	out, err := srv.doCreate(ctx, obj, api, version, kind)
 	assert.Nil(t, err)
 
-	assert.True(t, stream.waitForCount(1, 30*time.Second))
+	assert.NotNil(t, stream.waitFor(eventTypeCreate,
+		out.GetMetadata().Uid, newGroupMsg, 30*time.Second))
 
-	ev := stream.getMsgs()[0]
-	assert.NotNil(t, ev.GetEvent().GetCreate())
-
-	grp := &corev1.Group{}
-	assert.Nil(t, ev.GetEvent().GetCreate().GetItem().UnmarshalTo(grp))
-	assert.Equal(t, out.GetMetadata().Uid, grp.Metadata.Uid)
+	for _, uid := range preUIDs {
+		assert.Nil(t, stream.find(eventTypeCreate, uid, newGroupMsg), uid)
+	}
 }
 
 func TestWatchKindIsolation(t *testing.T) {
@@ -381,10 +427,6 @@ func TestWatchKindIsolation(t *testing.T) {
 
 	api := "core"
 	version := "v1"
-
-	srv.redisC.Del(ctx,
-		getRscStreamKey(api, version, ucorev1.KindUser),
-		getRscStreamKey(api, version, ucorev1.KindService))
 
 	assert.Nil(t, srv.eventHub.Start(ctx))
 	defer srv.eventHub.Stop()
@@ -411,22 +453,32 @@ func TestWatchKindIsolation(t *testing.T) {
 
 	svcObj := newTestResource(ucorev1.KindService)
 	svcObj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
-	_, err = srv.doCreate(ctx, svcObj, api, version, ucorev1.KindService)
+	svcOut, err := srv.doCreate(ctx, svcObj, api, version, ucorev1.KindService)
 	assert.Nil(t, err)
 
-	assert.True(t, svcStream.waitForCount(1, 30*time.Second))
-	assert.Equal(t, 0, usrStream.count())
+	svcUID := svcOut.GetMetadata().Uid
+
+	assert.NotNil(t, svcStream.waitFor(eventTypeCreate, svcUID, newServiceMsg, 30*time.Second))
 
 	usrObj := newTestResource(ucorev1.KindUser)
 	usrObj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
-	_, err = srv.doCreate(ctx, usrObj, api, version, ucorev1.KindUser)
+	usrOut, err := srv.doCreate(ctx, usrObj, api, version, ucorev1.KindUser)
 	assert.Nil(t, err)
 
-	assert.True(t, usrStream.waitForCount(1, 30*time.Second))
-	assert.Equal(t, 1, svcStream.count())
+	usrUID := usrOut.GetMetadata().Uid
 
-	assert.Equal(t, ucorev1.KindService, svcStream.getMsgs()[0].GetEvent().Kind)
-	assert.Equal(t, ucorev1.KindUser, usrStream.getMsgs()[0].GetEvent().Kind)
+	assert.NotNil(t, usrStream.waitFor(eventTypeCreate, usrUID, newUserMsg, 30*time.Second))
+
+	assert.Nil(t, usrStream.find(eventTypeCreate, svcUID, newServiceMsg))
+	assert.Nil(t, svcStream.find(eventTypeCreate, usrUID, newUserMsg))
+
+	usrKinds := usrStream.getKinds()
+	assert.True(t, usrKinds[ucorev1.KindUser])
+	assert.False(t, usrKinds[ucorev1.KindService])
+
+	svcKinds := svcStream.getKinds()
+	assert.True(t, svcKinds[ucorev1.KindService])
+	assert.False(t, svcKinds[ucorev1.KindUser])
 }
 
 func TestWatchNoPreSubscriptionReplay(t *testing.T) {
@@ -447,12 +499,11 @@ func TestWatchNoPreSubscriptionReplay(t *testing.T) {
 	version := "v1"
 	kind := ucorev1.KindPolicy
 
-	srv.redisC.Del(ctx, getRscStreamKey(api, version, kind))
-
 	assert.Nil(t, srv.eventHub.Start(ctx))
 	defer srv.eventHub.Stop()
 
 	var preUIDs []string
+
 	for range 4 {
 		obj := newTestResource(kind)
 		obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
@@ -475,55 +526,46 @@ func TestWatchNoPreSubscriptionReplay(t *testing.T) {
 		srv.doHandleStreamRequest(&rmetav1.WatchOptions{}, stream, api, version, kind)
 	}()
 
-	time.Sleep(5 * time.Second)
-
-	for _, ev := range stream.getMsgs() {
-		assert.Nil(t, ev.GetEvent().GetDelete())
-	}
-
 	obj := newTestResource(kind)
 	obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
 	out, err := srv.doCreate(ctx, obj, api, version, kind)
 	assert.Nil(t, err)
 
-	assert.True(t, stream.waitForCount(1, 30*time.Second))
+	assert.NotNil(t, stream.waitFor(eventTypeCreate,
+		out.GetMetadata().Uid, newPolicyMsg, 30*time.Second))
 
-	msgs := stream.getMsgs()
-	assert.Equal(t, out.GetMetadata().Uid, getEventItemUID(msgs[len(msgs)-1], &corev1.Policy{}))
+	for _, uid := range preUIDs {
+		assert.Nil(t, stream.find(eventTypeDelete, uid, newPolicyMsg), uid)
+		assert.Nil(t, stream.find(eventTypeCreate, uid, newPolicyMsg), uid)
+	}
 }
 
 func TestWatchSubscriberOverflowAborts(t *testing.T) {
-
-	tst, err := initTest()
-	assert.Nil(t, err)
-
 	ctx := context.Background()
 
-	srv, err := NewServer(ctx, nil)
-	assert.Nil(t, err)
+	redisC := redisutils.NewClient()
 
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
+	h := newEventHub(redisC)
+	assert.Nil(t, h.Start(ctx))
+	defer h.Stop()
 
 	api := "core"
 	version := "v1"
-	kind := ucorev1.KindDevice
+	kind := newTestKind()
 	streamKey := getRscStreamKey(api, version, kind)
 
-	srv.redisC.Del(ctx, streamKey)
+	t.Cleanup(func() {
+		redisC.Del(context.Background(), streamKey)
+	})
 
-	assert.Nil(t, srv.eventHub.Start(ctx))
-	defer srv.eventHub.Stop()
-
-	sub, err := srv.eventHub.subscribe(ctx, api, version, kind)
+	sub, err := h.subscribe(ctx, api, version, kind)
 	assert.Nil(t, err)
 
 	for i := range watchQueueSize + 100 {
-		srv.eventHub.dispatch(streamKey, fmt.Sprintf("9%d-%d", i, i+1),
+		h.dispatch(streamKey, fmt.Sprintf("%d-1", i+1),
 			newTestWatchEvent(api, version, kind, "flood"))
 	}
 
 	assert.True(t, waitForDone(sub, 5*time.Second))
-	assert.False(t, srv.eventHub.hasSubscribers(streamKey))
+	assert.False(t, h.hasSubscribers(streamKey))
 }
