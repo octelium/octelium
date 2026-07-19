@@ -57,6 +57,8 @@ type Server struct {
 	redisC  *redis.Client
 	grpcSrv *grpc.Server
 
+	eventHub *eventHub
+
 	opts          *Opts
 	commonMetrics *commonMetrics
 
@@ -104,6 +106,7 @@ func NewServer(ctx context.Context, o *Opts) (*Server, error) {
 	ret := &Server{
 		db:            db,
 		redisC:        redisC,
+		eventHub:      newEventHub(redisC),
 		opts:          o,
 		commonMetrics: commonMetrics,
 	}
@@ -242,6 +245,11 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.eventHub.Start(ctx); err != nil {
+		lis.Close()
+		return err
+	}
+
 	go func() {
 		s.grpcSrv.Serve(lis)
 	}()
@@ -250,7 +258,12 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) Stop() {
-	s.grpcSrv.Stop()
+	s.eventHub.Stop()
+
+	if s.grpcSrv != nil {
+		s.grpcSrv.Stop()
+	}
+
 	s.redisC.Close()
 }
 

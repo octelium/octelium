@@ -19,13 +19,43 @@ package rscserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 )
 
-func getRedisRscChannel(api, version, kind string) string {
-	return fmt.Sprintf("octelium.rsc.%s.%s.%s", api, version, kind)
+const (
+	rscStreamMaxLen = 10000
+
+	rscStreamPrefix    = "octelium:rsc:stream:"
+	rscStreamFieldData = "d"
+)
+
+func getRscStreamKey(api, version, kind string) string {
+	return fmt.Sprintf("%s%s:%s:%s", rscStreamPrefix, api, version, kind)
+}
+
+func parseRscStreamKey(streamKey string) (string, string, string, error) {
+	rest, found := strings.CutPrefix(streamKey, rscStreamPrefix)
+	if !found {
+		return "", "", "", errors.Errorf("Invalid stream key: %s", streamKey)
+	}
+
+	args := strings.Split(rest, ":")
+	if len(args) != 3 {
+		return "", "", "", errors.Errorf("Invalid stream key: %s", streamKey)
+	}
+
+	for _, arg := range args {
+		if arg == "" {
+			return "", "", "", errors.Errorf("Invalid stream key: %s", streamKey)
+		}
+	}
+
+	return args[0], args[1], args[2], nil
 }
 
 func (s *Server) publishMessage(ctx context.Context, api, version, kind string, msg proto.Message) error {
@@ -35,7 +65,13 @@ func (s *Server) publishMessage(ctx context.Context, api, version, kind string, 
 		return err
 	}
 
-	if _, err := s.redisC.Publish(ctx, getRedisRscChannel(api, version, kind), string(data)).Result(); err != nil {
+	if err := s.redisC.XAdd(ctx, &redis.XAddArgs{
+		Stream:       getRscStreamKey(api, version, kind),
+		MaxLenApprox: rscStreamMaxLen,
+		Values: map[string]any{
+			rscStreamFieldData: string(data),
+		},
+	}).Err(); err != nil {
 		return err
 	}
 

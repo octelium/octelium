@@ -19,9 +19,7 @@ package rscserver
 import (
 	"context"
 	"regexp"
-	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -29,8 +27,9 @@ import (
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type regexResult struct {
@@ -150,40 +149,38 @@ func (s *Server) handleStreamRequest(srv any, stream grpc.ServerStream, info *gr
 	return s.doHandleStreamRequest(initReq, stream, i.api, i.version, i.kind)
 }
 
-func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.ServerStream, api, version, kind string) error {
-	ctx := stream.Context()
+const (
+	maxWatchInitialPages    = 5000
+	watchInitialItemsPerPag = 500
+)
 
-	processCh := make(chan []byte, 8000)
+var errWatchSubscriberClosed = status.Error(codes.Aborted,
+	"The Watch subscriber fell too far behind. Please reconnect")
 
-	if !req.SkipInitial {
+func (s *Server) sendInitialState(ctx context.Context,
+	sub *eventSubscriber, stream grpc.ServerStream, api, version, kind string) error {
 
-		itmList, err := func() ([]umetav1.ResourceObjectI, error) {
-			var ret []umetav1.ResourceObjectI
-			var page uint32
-			for {
-				itmList, listRes, err := s.doList(ctx, &rmetav1.ListOptions{
-					Paginate:     true,
-					ItemsPerPage: 500,
-					Page:         page,
-				}, api, version, kind)
-				if err != nil {
-					return nil, err
-				}
+	var page uint32
 
-				ret = append(ret, itmList...)
-				if listRes == nil || !listRes.HasMore || page > 5000 {
-					return ret, nil
-				}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-sub.Done():
+			return errWatchSubscriberClosed
+		default:
+		}
 
-				page = page + 1
-			}
-		}()
+		itmList, listRes, err := s.doList(ctx, &rmetav1.ListOptions{
+			Paginate:     true,
+			ItemsPerPage: watchInitialItemsPerPag,
+			Page:         page,
+		}, api, version, kind)
 		if err != nil {
 			return err
 		}
 
 		for _, itm := range itmList {
-
 			msg := &rmetav1.WatchEvent{
 				Event: &rmetav1.WatchEvent_Event{
 					ApiVersion: vutils.GetApiVersion(api, version),
@@ -200,62 +197,45 @@ func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.Se
 				return err
 			}
 		}
-	}
 
-	sub := s.redisC.Subscribe(ctx, getRedisRscChannel(api, version, kind))
-	defer sub.Close()
+		if listRes == nil || !listRes.HasMore {
+			return nil
+		}
 
-	go s.startStreamRecvLoop(ctx, sub, processCh)
-	go s.startStreamSendLoop(ctx, processCh, stream, api, version, kind)
+		page = page + 1
 
-	<-ctx.Done()
-	return nil
-}
-
-func (s *Server) startStreamSendLoop(ctx context.Context, ch <-chan []byte,
-	stream grpc.ServerStream, api, version, kind string) {
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg := <-ch:
-			if err := s.doProcessMsg(msg, stream, api, version, kind); err != nil {
-				zap.L().Warn("Could not process msg", zap.Error(err))
-			}
+		if page > maxWatchInitialPages {
+			return status.Errorf(codes.ResourceExhausted,
+				"Too many %s.%s.%s items to send the initial Watch state", api, version, kind)
 		}
 	}
 }
 
-func (s *Server) doProcessMsg(msg []byte, stream grpc.ServerStream, api, version, kind string) error {
-	resp := &rmetav1.WatchEvent{}
+func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.ServerStream, api, version, kind string) error {
+	ctx := stream.Context()
 
-	if err := pbutils.Unmarshal(msg, resp); err != nil {
-		return err
+	sub, err := s.eventHub.subscribe(ctx, api, version, kind)
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "Could not start the Watch: %+v", err)
 	}
+	defer s.eventHub.unsubscribe(sub)
 
-	if err := stream.SendMsg(resp); err != nil {
-		zap.L().Error("Could not send msg", zap.Error(err))
-		return err
+	if !req.SkipInitial {
+		if err := s.sendInitialState(ctx, sub, stream, api, version, kind); err != nil {
+			return err
+		}
 	}
-
-	return nil
-}
-
-func (s *Server) startStreamRecvLoop(ctx context.Context, pubsub *redis.PubSub, processCh chan<- []byte) {
-
-	ch := pubsub.Channel()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case msg := <-ch:
-			if msg == nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
+			return nil
+		case <-sub.Done():
+			return errWatchSubscriberClosed
+		case ev := <-sub.ch:
+			if err := stream.SendMsg(ev); err != nil {
+				return err
 			}
-			processCh <- []byte(msg.Payload)
 		}
 	}
 }
