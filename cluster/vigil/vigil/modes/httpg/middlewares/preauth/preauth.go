@@ -24,8 +24,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
+	"github.com/go-faster/errors"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -61,6 +64,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if svc.Spec.IsDisabled {
 		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := cleanRequest(req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -290,4 +298,195 @@ func getMaxBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
 		return int64(configured)
 	}
 	return defaultMaxBodySize
+}
+
+func cleanRequest(req *http.Request) error {
+	if req == nil {
+		return errors.Errorf("Nil request")
+	}
+
+	if req.URL == nil {
+		return errors.Errorf("Nil request URL")
+	}
+
+	if req.RequestURI == "*" {
+		if req.Method != http.MethodOptions {
+			return errors.Errorf("Asterisk-form request target requires OPTIONS")
+		}
+		return nil
+	}
+
+	if req.URL.Path == "" {
+		return nil
+	}
+
+	if !strings.HasPrefix(req.URL.Path, "/") {
+		return errors.Errorf("The request path is not absolute")
+	}
+
+	if err := checkPathChars(req.URL.Path); err != nil {
+		return err
+	}
+
+	if !hasDotSegmentCandidate(req.URL.Path) {
+		return nil
+	}
+
+	if hasBackslashDotSegment(req.URL.Path) {
+		return errors.Errorf("The request path contains an ambiguous backslash dot-segment")
+	}
+
+	escapedPath := req.URL.EscapedPath()
+	if !strings.HasPrefix(escapedPath, "/") {
+		return errors.Errorf("The escaped request path is not absolute")
+	}
+
+	cleanedPath, pathChanged := removeDotSegments(req.URL.Path)
+
+	cleanedEscapedPath, escapedPathChanged, err := removeEscapedDotSegments(escapedPath)
+	if err != nil {
+		return err
+	}
+
+	decodedEscapedPath, err := url.PathUnescape(cleanedEscapedPath)
+	if err != nil {
+		return errors.Errorf("The request path contains invalid percent-encoding")
+	}
+
+	if decodedEscapedPath != cleanedPath {
+		return errors.Errorf("The request path contains ambiguous percent-encoded separators")
+	}
+
+	if !pathChanged && !escapedPathChanged {
+		return nil
+	}
+
+	req.URL.Path = cleanedPath
+	req.URL.RawPath = cleanedEscapedPath
+
+	if req.URL.EscapedPath() != cleanedEscapedPath {
+		return errors.Errorf("Could not preserve the escaped request path")
+	}
+
+	canonicalURL := *req.URL
+	canonicalURL.RawPath = ""
+	if canonicalURL.EscapedPath() == cleanedEscapedPath {
+		req.URL.RawPath = ""
+	}
+
+	req.RequestURI = req.URL.RequestURI()
+
+	return nil
+}
+
+func checkPathChars(path string) error {
+	for i := range len(path) {
+		c := path[i]
+		if c < 0x20 || c == 0x7f {
+			return errors.Errorf("The request path contains an invalid control character")
+		}
+	}
+
+	return nil
+}
+
+func hasDotSegmentCandidate(path string) bool {
+	return strings.Contains(path, "/.") || strings.Contains(path, "\\.")
+}
+
+func hasBackslashDotSegment(path string) bool {
+	start := 0
+
+	for i := 0; i <= len(path); i++ {
+		if i != len(path) && path[i] != '/' && path[i] != '\\' {
+			continue
+		}
+
+		segment := path[start:i]
+		if segment == "." || segment == ".." {
+			leftBackslash := start > 0 && path[start-1] == '\\'
+			rightBackslash := i < len(path) && path[i] == '\\'
+
+			if leftBackslash || rightBackslash {
+				return true
+			}
+		}
+
+		start = i + 1
+	}
+
+	return false
+}
+
+func removeDotSegments(path string) (string, bool) {
+	segments := strings.Split(path, "/")
+	out := make([]string, 1, len(segments))
+	changed := false
+
+	for i, segment := range segments[1:] {
+		isLast := i == len(segments)-2
+
+		switch segment {
+		case ".":
+			changed = true
+			if isLast {
+				out = append(out, "")
+			}
+		case "..":
+			changed = true
+			if len(out) > 1 {
+				out = out[:len(out)-1]
+			}
+			if isLast {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, segment)
+		}
+	}
+
+	if !changed {
+		return path, false
+	}
+
+	return strings.Join(out, "/"), true
+}
+
+func removeEscapedDotSegments(escapedPath string) (string, bool, error) {
+	segments := strings.Split(escapedPath, "/")
+	out := make([]string, 1, len(segments))
+	changed := false
+
+	for i, segment := range segments[1:] {
+		decodedSegment, err := url.PathUnescape(segment)
+		if err != nil {
+			return "", false, errors.Errorf("The request path contains invalid percent-encoding")
+		}
+
+		isLast := i == len(segments)-2
+
+		switch decodedSegment {
+		case ".":
+			changed = true
+			if isLast {
+				out = append(out, "")
+			}
+		case "..":
+			changed = true
+			if len(out) > 1 {
+				out = out[:len(out)-1]
+			}
+			if isLast {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, segment)
+		}
+	}
+
+	if !changed {
+		return escapedPath, false, nil
+	}
+
+	return strings.Join(out, "/"), true, nil
 }
