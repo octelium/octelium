@@ -19,6 +19,7 @@ package authserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
@@ -37,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -824,5 +827,614 @@ func TestDoPostAuthenticationRules(t *testing.T) {
 		assert.NotNil(t, err)
 
 		idp.Spec.PostAuthenticationRules = nil
+	}
+}
+
+func encodeLoginReq(t *testing.T, req *authv1.ClientLoginRequest) string {
+	b, err := pbutils.Marshal(req)
+	assert.Nil(t, err)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func TestGetLoginReq(t *testing.T) {
+
+	{
+		_, err := getLoginReq("")
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(utilrand.GetRandomString(600))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(base64.RawURLEncoding.EncodeToString(utilrand.GetRandomBytesMust(64)))
+		assert.NotNil(t, err)
+	}
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcd",
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "abcd", ret.CallbackSuffix)
+	}
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   65535,
+			CallbackSuffix: "abcdefgh",
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "abcdefgh", ret.CallbackSuffix)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			CallbackPort:   12345,
+			CallbackSuffix: "abcd",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   9999,
+			CallbackSuffix: "abcd",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   0,
+			CallbackSuffix: "abcd",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abc",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefghi",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "日本語テスト",
+		}))
+		assert.NotNil(t, err)
+	}
+}
+
+func TestValidateLoginQuery(t *testing.T) {
+
+	assert.Nil(t, validateLoginQuery("redirect=https%3A%2F%2Fexample.com"))
+	assert.Nil(t, validateLoginQuery("a=1&b=2"))
+
+	assert.NotNil(t, validateLoginQuery(utilrand.GetRandomStringCanonical(1200)))
+
+	assert.Nil(t, validateLoginQuery(fmt.Sprintf("octelium_req=%s",
+		encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcd",
+		}))))
+
+	assert.NotNil(t, validateLoginQuery(fmt.Sprintf("octelium_req=%s",
+		encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   80,
+			CallbackSuffix: "abcd",
+		}))))
+
+	assert.NotNil(t, validateLoginQuery("octelium_req=xxxx"))
+}
+
+func TestValidatePostAuthReq(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	defaultUA := "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
+
+	assert.NotNil(t, srv.validatePostAuthReq(nil))
+
+	assert.NotNil(t, srv.validatePostAuthReq(&postAuthReq{}))
+
+	assert.NotNil(t, srv.validatePostAuthReq(&postAuthReq{
+		UID:       vutils.UUIDv4(),
+		UserAgent: "",
+	}))
+
+	assert.NotNil(t, srv.validatePostAuthReq(&postAuthReq{
+		UID:       utilrand.GetRandomStringCanonical(8),
+		UserAgent: defaultUA,
+	}))
+
+	assert.Nil(t, srv.validatePostAuthReq(&postAuthReq{
+		UID:       vutils.UUIDv4(),
+		UserAgent: defaultUA,
+	}))
+
+	assert.NotNil(t, srv.validatePostAuthReq(&postAuthReq{
+		UID:       vutils.UUIDv4(),
+		UserAgent: defaultUA,
+		Query:     utilrand.GetRandomStringCanonical(1200),
+	}))
+
+	assert.Nil(t, srv.validatePostAuthReq(&postAuthReq{
+		UID:       vutils.UUIDv4(),
+		UserAgent: defaultUA,
+		Query:     "redirect=https%3A%2F%2Fexample.com",
+	}))
+}
+
+func TestCheckXOcteliumOrigin(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
+		assert.NotNil(t, srv.checkXOcteliumOrigin(req))
+	}
+
+	{
+		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
+		req.Header.Set("X-Octelium-Origin", "https://evil.example.com")
+		assert.NotNil(t, srv.checkXOcteliumOrigin(req))
+	}
+
+	{
+		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
+		req.Header.Set("X-Octelium-Origin", fmt.Sprintf("%s.evil.com", srv.rootURL))
+		assert.NotNil(t, srv.checkXOcteliumOrigin(req))
+	}
+
+	{
+		req := httptest.NewRequest("POST", "http://localhost/begin", nil)
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
+		assert.Nil(t, srv.checkXOcteliumOrigin(req))
+	}
+}
+
+func TestGenerateCallbackURL(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+		callbackURL, isApp, err := srv.generateCallbackURL("")
+		assert.Nil(t, err)
+		assert.Equal(t, "", callbackURL)
+		assert.False(t, isApp)
+	}
+
+	{
+		callbackURL, isApp, err := srv.generateCallbackURL("a=1&b=2")
+		assert.Nil(t, err)
+		assert.Equal(t, "", callbackURL)
+		assert.False(t, isApp)
+	}
+
+	{
+		redirect := fmt.Sprintf("https://%s.%s", utilrand.GetRandomStringCanonical(8), srv.domain)
+		callbackURL, isApp, err := srv.generateCallbackURL(fmt.Sprintf("redirect=%s", redirect))
+		assert.Nil(t, err)
+		assert.Equal(t, redirect, callbackURL)
+		assert.False(t, isApp)
+	}
+
+	{
+		redirect := fmt.Sprintf("https://%s.com", utilrand.GetRandomStringCanonical(8))
+		callbackURL, isApp, err := srv.generateCallbackURL(fmt.Sprintf("redirect=%s", redirect))
+		assert.Nil(t, err)
+		assert.Equal(t, "", callbackURL)
+		assert.False(t, isApp)
+	}
+
+	{
+		callbackURL, isApp, err := srv.generateCallbackURL(fmt.Sprintf("octelium_req=%s",
+			encodeLoginReq(t, &authv1.ClientLoginRequest{
+				ApiVersion:     authv1.ClientLoginRequest_V1,
+				CallbackPort:   12345,
+				CallbackSuffix: "abcd",
+			})))
+		assert.Nil(t, err)
+		assert.True(t, isApp)
+		assert.Equal(t, "http://localhost:12345/callback/success/abcd", callbackURL)
+	}
+
+	{
+		_, _, err := srv.generateCallbackURL("octelium_req=invalid")
+		assert.NotNil(t, err)
+	}
+
+	{
+		redirect := fmt.Sprintf("https://%s.%s", utilrand.GetRandomStringCanonical(8), srv.domain)
+		callbackURL, isApp, err := srv.generateCallbackURL(fmt.Sprintf("redirect=%s&octelium_req=%s",
+			redirect,
+			encodeLoginReq(t, &authv1.ClientLoginRequest{
+				ApiVersion:     authv1.ClientLoginRequest_V1,
+				CallbackPort:   12345,
+				CallbackSuffix: "abcd",
+			})))
+		assert.Nil(t, err)
+		assert.True(t, isApp)
+		assert.Equal(t, "http://localhost:12345/callback/success/abcd", callbackURL)
+	}
+}
+
+func TestGetLogoutCookies(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	cookies := srv.getLogoutCookies()
+	assert.Equal(t, 3, len(cookies))
+
+	found := map[string]bool{}
+
+	for _, cookie := range cookies {
+		found[cookie.Name] = true
+		assert.Equal(t, "", cookie.Value)
+		assert.Equal(t, -1, cookie.MaxAge)
+		assert.True(t, cookie.HttpOnly)
+		assert.True(t, cookie.Secure)
+		assert.Equal(t, srv.domain, cookie.Domain)
+		assert.Equal(t, "/", cookie.Path)
+	}
+
+	assert.True(t, found["octelium_auth"])
+	assert.True(t, found["octelium_rt"])
+	assert.True(t, found["octelium_login_state"])
+
+	w := httptest.NewRecorder()
+	srv.setLogoutCookies(w)
+	assert.Equal(t, 3, len(w.Result().Cookies()))
+}
+
+func TestSetLoginCookies(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+	assert.Nil(t, err)
+
+	accessToken, err := srv.generateAccessToken(usrT.Session)
+	assert.Nil(t, err)
+	refreshToken, err := srv.generateRefreshToken(usrT.Session)
+	assert.Nil(t, err)
+
+	w := httptest.NewRecorder()
+	srv.setLoginCookies(w, accessToken, refreshToken, usrT.Session)
+
+	cookies := w.Result().Cookies()
+	assert.Equal(t, 3, len(cookies))
+
+	byName := map[string]*http.Cookie{}
+	for _, cookie := range cookies {
+		byName[cookie.Name] = cookie
+	}
+
+	assert.Equal(t, accessToken, byName["octelium_auth"].Value)
+	assert.Equal(t, refreshToken, byName["octelium_rt"].Value)
+	assert.Equal(t, "", byName["octelium_login_state"].Value)
+
+	assert.True(t, byName["octelium_auth"].HttpOnly)
+	assert.True(t, byName["octelium_auth"].Secure)
+	assert.Equal(t, srv.domain, byName["octelium_auth"].Domain)
+
+	assert.True(t, byName["octelium_rt"].HttpOnly)
+	assert.True(t, byName["octelium_rt"].Secure)
+
+	assert.True(t, byName["octelium_rt"].Expires.After(byName["octelium_auth"].Expires))
+}
+
+func TestCheckSessionValid(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newSession := func() *corev1.Session {
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+		return usrT.Session
+	}
+
+	{
+		assert.Nil(t, srv.checkSessionValid(newSession()))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.IsLocked = true
+		assert.NotNil(t, srv.checkSessionValid(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
+		assert.NotNil(t, srv.checkSessionValid(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_REGISTRATION_REQUIRED
+		assert.Nil(t, srv.checkSessionValid(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_RECOMMENDED
+		assert.Nil(t, srv.checkSessionValid(sess))
+	}
+}
+
+func TestDoAuthenticatorEnforcementRule(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+	assert.Nil(t, err)
+
+	authnList := &corev1.AuthenticatorList{}
+
+	{
+		ret := srv.doAuthenticatorEnforcementRule(ctx, nil, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, ret)
+	}
+
+	{
+		ret := srv.doAuthenticatorEnforcementRule(ctx,
+			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{
+							MatchAny: true,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE, ret)
+	}
+
+	{
+		ret := srv.doAuthenticatorEnforcementRule(ctx,
+			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: fmt.Sprintf(`ctx.user.metadata.name == "%s"`, usrT.Usr.Metadata.Name),
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+				},
+			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND, ret)
+	}
+
+	{
+		ret := srv.doAuthenticatorEnforcementRule(ctx,
+			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.user.metadata.name == "does-not-exist"`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, ret)
+	}
+
+	{
+		ret := srv.doAuthenticatorEnforcementRule(ctx,
+			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `invalid CEL expr`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{
+							MatchAny: true,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
+				},
+			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE, ret)
+	}
+}
+
+func TestHandleAuthenticatorEndpointsUnauthenticated(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	handlers := map[string]func(http.ResponseWriter, *http.Request){
+		"authenticate": srv.handleAuthenticatorAuthenticate,
+		"register":     srv.handleAuthenticatorRegister,
+		"list":         srv.handleAuthenticatorList,
+		"denied":       srv.handleDenied,
+	}
+
+	for name, handler := range handlers {
+		req := httptest.NewRequest("GET", "http://localhost/authenticators", nil)
+		w := httptest.NewRecorder()
+		handler(w, req)
+		resp := w.Result()
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode, "%s", name)
+		assert.Equal(t, fmt.Sprintf("%s/login", srv.rootURL), resp.Header.Get("Location"), "%s", name)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	for name, handler := range handlers {
+		req := httptest.NewRequest("GET", "http://localhost/authenticators", nil)
+		req.AddCookie(&http.Cookie{
+			Name:  "octelium_rt",
+			Value: string(usrT.GetAccessToken().RefreshToken),
+			Path:  "/",
+		})
+
+		w := httptest.NewRecorder()
+		handler(w, req)
+		resp := w.Result()
+
+		assert.NotEqual(t, fmt.Sprintf("%s/login", srv.rootURL),
+			resp.Header.Get("Location"), "%s", name)
 	}
 }
