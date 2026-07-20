@@ -35,80 +35,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-/*
-func TestParseAuthenticationToken(t *testing.T) {
-
-	ctx := context.Background()
-
-	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
-	fakeC := tst.C
-	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	assert.Nil(t, err)
-
-	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
-	assert.Nil(t, err)
-
-	adminSrv := admin.NewServer(&admin.Opts{
-		OcteliumC:  fakeC.OcteliumC,
-		IsEmbedded: true,
-	})
-
-	invalidVals := []string{
-		"",
-		".",
-		"..",
-		"...",
-		"....",
-		"aa.aa.aa.aa",
-		"a.b",
-		"a.b.c",
-		utilrand.GetRandomString(2),
-		utilrand.GetRandomString(1000),
-		string(utilrand.GetRandomBytesMust(40)),
-		fmt.Sprintf("%s.%s.%s", utilrand.GetRandomStringLowercase(10), utilrand.GetRandomStringLowercase(32), utilrand.GetRandomStringLowercase(10)),
-	}
-
-	for _, v := range invalidVals {
-		_, _, err := srv.parseAuthenticationToken(v)
-		assert.NotNil(t, err)
-	}
-
-	{
-
-		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
-		assert.Nil(t, err)
-
-		cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
-			Metadata: &metav1.Metadata{
-				Name: utilrand.GetRandomStringCanonical(8),
-			},
-			Spec: &corev1.Credential_Spec{
-				User:        usrT.Usr.Metadata.Name,
-				Type:        corev1.Credential_Spec_AUTH_TOKEN,
-				SessionType: corev1.Session_Status_CLIENT,
-				ExpiresAt:   pbutils.Timestamp(time.Now().Add(1 * time.Hour)),
-			},
-		})
-		assert.Nil(t, err)
-
-		tknResp, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
-			CredentialRef: umetav1.GetObjectReference(cred),
-		})
-		assert.Nil(t, err)
-
-		claims, err := srv.jwkCtl.VerifyCredential(tknResp.GetAuthenticationToken().AuthenticationToken)
-		assert.Nil(t, err)
-		tkn, err := adminSrv.GetCredential(ctx, &metav1.GetOptions{Uid: claims.UID})
-		assert.Nil(t, err)
-		assert.Equal(t, claims.TokenID, tkn.Status.TokenID)
-	}
-}
-*/
-
 func TestGetAuthenticationToken(t *testing.T) {
 
 	ctx := context.Background()
@@ -450,4 +376,352 @@ func TestReauthRateLimitExceeded(t *testing.T) {
 			LastAuthentications: skewedAuthentications,
 		},
 	}))
+}
+
+func TestCheckReauth(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	newAuthentication := func(setAt time.Time, hours uint32) *corev1.Session_Status_Authentication {
+		return &corev1.Session_Status_Authentication{
+			SetAt: pbutils.Timestamp(setAt),
+			AccessTokenDuration: &metav1.Duration{
+				Type: &metav1.Duration_Hours{
+					Hours: hours,
+				},
+			},
+		}
+	}
+
+	newRecentAuthentications := func(n int) []*corev1.Session_Status_Authentication {
+		ret := []*corev1.Session_Status_Authentication{}
+		for i := 0; i < n; i++ {
+			ret = append(ret, &corev1.Session_Status_Authentication{
+				SetAt: pbutils.Timestamp(time.Now().Add(time.Duration(-i) * time.Second)),
+			})
+		}
+		return ret
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(nil))
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{},
+		}))
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:      newAuthentication(time.Now().Add(-3*time.Hour), 2),
+				LastAuthentications: newRecentAuthentications(maxAuthenticationsPerHour + 2),
+			},
+		}))
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:      newAuthentication(time.Now().Add(-90*time.Minute), 2),
+				LastAuthentications: newRecentAuthentications(maxAuthenticationsPerHour),
+			},
+		}))
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:      newAuthentication(time.Now(), 2),
+				LastAuthentications: newRecentAuthentications(maxAuthenticationsPerHour - 1),
+			},
+		}))
+	}
+
+	{
+		assert.Nil(t, srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication: newAuthentication(time.Now(), 2),
+			},
+		}))
+	}
+
+	{
+		err := srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:      newAuthentication(time.Now(), 2),
+				LastAuthentications: newRecentAuthentications(maxAuthenticationsPerHour),
+			},
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		err := srv.checkReauth(&corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:      newAuthentication(time.Now().Add(-20*time.Minute), 2),
+				LastAuthentications: newRecentAuthentications(maxAuthenticationsPerHour * 2),
+			},
+		})
+		assert.NotNil(t, err)
+	}
+}
+
+func TestGetSessionFromRefreshToken(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newUser := func() *tstuser.User {
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+		return usrT
+	}
+
+	{
+		_, err := srv.getSessionFromRefreshToken(ctx, "")
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := srv.getSessionFromRefreshToken(ctx, utilrand.GetRandomString(180))
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		accessToken, err := srv.generateAccessToken(usrT.Session)
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, accessToken)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		sess, err := srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, usrT.Session.Metadata.Uid, sess.Metadata.Uid)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		_, err = fakeC.OcteliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		sess, err := fakeC.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		sess.Status.Authentication.TokenID = vutils.UUIDv4()
+		_, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		sess, err := fakeC.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		sess.Status.IsLocked = true
+		_, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		sess, err := fakeC.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		sess.Spec.State = corev1.Session_Spec_REJECTED
+		_, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT := newUser()
+
+		refreshToken, err := srv.generateRefreshToken(usrT.Session)
+		assert.Nil(t, err)
+
+		sess, err := fakeC.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		sess.Spec.ExpiresAt = pbutils.Timestamp(time.Now().Add(-1 * time.Hour))
+		_, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		_, err = srv.getSessionFromRefreshToken(ctx, refreshToken)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestGetCredentialFromTokenState(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newCredentialToken := func() (*corev1.Credential, string) {
+		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Credential_Spec{
+				User:        usrT.Usr.Metadata.Name,
+				Type:        corev1.Credential_Spec_AUTH_TOKEN,
+				SessionType: corev1.Session_Status_CLIENT,
+				ExpiresAt:   pbutils.Timestamp(time.Now().Add(1 * time.Hour)),
+			},
+		})
+		assert.Nil(t, err)
+
+		tknResp, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		return cred, tknResp.GetAuthenticationToken().AuthenticationToken
+	}
+
+	{
+		cred, tkn := newCredentialToken()
+
+		_, err := srv.getCredentialFromToken(ctx, tkn)
+		assert.Nil(t, err)
+
+		cred, err = srv.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
+			Uid: cred.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		cred.Spec.IsDisabled = true
+		_, err = srv.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tkn)
+		assert.NotNil(t, err)
+	}
+
+	{
+		cred, tkn := newCredentialToken()
+
+		cred, err := srv.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{
+			Uid: cred.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		cred.Status.IsLocked = true
+		_, err = srv.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tkn)
+		assert.NotNil(t, err)
+	}
+
+	{
+		cred, tkn := newCredentialToken()
+
+		_, err := srv.octeliumC.CoreC().DeleteCredential(ctx, &rmetav1.DeleteOptions{
+			Uid: cred.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.getCredentialFromToken(ctx, tkn)
+		assert.NotNil(t, err)
+	}
 }
