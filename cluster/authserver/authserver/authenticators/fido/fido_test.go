@@ -18,8 +18,10 @@ package fido
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -28,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -52,20 +55,6 @@ func TestBegin(t *testing.T) {
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
 	assert.Nil(t, err)
 
-	/*
-		fctr, err := fakeC.OcteliumC.CoreC().CreateIdentityProvider(ctx, &corev1.IdentityProvider{
-			Metadata: &metav1.Metadata{
-				Name: utilrand.GetRandomStringCanonical(7),
-			},
-			Spec: &corev1.IdentityProvider_Spec{
-				Type: &corev1.IdentityProvider_Spec_Webauthn_{
-					Webauthn: &corev1.IdentityProvider_Spec_Webauthn{},
-				},
-			},
-		})
-		assert.Nil(t, err)
-	*/
-
 	authn, err := tst.C.OcteliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
 		Metadata: &metav1.Metadata{
 			Name: utilrand.GetRandomStringCanonical(8),
@@ -74,7 +63,6 @@ func TestBegin(t *testing.T) {
 			State: corev1.Authenticator_Spec_ACTIVE,
 		},
 		Status: &corev1.Authenticator_Status{
-			// IdentityProviderRef: umetav1.GetObjectReference(fctr),
 			UserRef:               umetav1.GetObjectReference(usr.Usr),
 			AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{},
 		},
@@ -109,67 +97,527 @@ func TestBegin(t *testing.T) {
 	})
 }
 
-/*
-func TestFinish(t *testing.T) {
+func newTestClusterConfig() *corev1.ClusterConfig {
+	return &corev1.ClusterConfig{
+		Metadata: &metav1.Metadata{},
+		Spec:     &corev1.ClusterConfig_Spec{},
+		Status: &corev1.ClusterConfig_Status{
+			Domain: "octeliumdomain.xyz",
+		},
+	}
+}
+
+func newTestAuthn(displayName string) *corev1.Authenticator {
+	return &corev1.Authenticator{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+			Uid:  vutils.UUIDv4(),
+		},
+		Spec: &corev1.Authenticator_Spec{
+			State:       corev1.Authenticator_Spec_ACTIVE,
+			DisplayName: displayName,
+		},
+		Status: &corev1.Authenticator_Status{
+			Type:                  corev1.Authenticator_Status_FIDO,
+			AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{},
+		},
+	}
+}
+
+func newTestUsr(email, displayName string) *corev1.User {
+	return &corev1.User{
+		Metadata: &metav1.Metadata{
+			Name:        utilrand.GetRandomStringCanonical(8),
+			Uid:         vutils.UUIDv4(),
+			DisplayName: displayName,
+		},
+		Spec: &corev1.User_Spec{
+			Type:  corev1.User_Spec_HUMAN,
+			Email: email,
+		},
+	}
+}
+
+func TestWebauthnUserID(t *testing.T) {
+
+	{
+		usr := newTestUsr("", "")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+
+		id := wu.WebAuthnID()
+		assert.Equal(t, 16, len(id))
+
+		parsed, err := uuid.Parse(usr.Metadata.Uid)
+		assert.Nil(t, err)
+		assert.Equal(t, parsed[:], id)
+	}
+
+	{
+		usr := newTestUsr("", "")
+		usr.Metadata.Uid = "not-a-uuid"
+
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+
+		id := wu.WebAuthnID()
+		assert.Equal(t, 16, len(id))
+		assert.Equal(t, make([]byte, 16), id)
+	}
+}
+
+func TestWebauthnUserName(t *testing.T) {
+
+	{
+		usr := newTestUsr("User@Example.COM", "")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+		assert.Equal(t, "user@example.com", wu.WebAuthnName())
+	}
+
+	{
+		usr := newTestUsr("", "")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+		assert.Equal(t, usr.Metadata.Name, wu.WebAuthnName())
+	}
+}
+
+func TestWebauthnUserDisplayName(t *testing.T) {
+
+	{
+		usr := newTestUsr("User@Example.COM", "Meta Display")
+		wu := NewWebAuthnUsr(newTestAuthn("Authn Display"), usr)
+		assert.Equal(t, "Authn Display", wu.WebAuthnDisplayName())
+	}
+
+	{
+		usr := newTestUsr("User@Example.COM", "Meta Display")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+		assert.Equal(t, "user@example.com", wu.WebAuthnDisplayName())
+	}
+
+	{
+		usr := newTestUsr("", "Meta Display")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+		assert.Equal(t, "Meta Display", wu.WebAuthnDisplayName())
+	}
+
+	{
+		usr := newTestUsr("", "")
+		wu := NewWebAuthnUsr(newTestAuthn(""), usr)
+		assert.Equal(t, usr.Metadata.Name, wu.WebAuthnDisplayName())
+	}
+}
+
+func TestWebauthnUserCredentials(t *testing.T) {
+
+	{
+		wu := NewWebAuthnUsr(newTestAuthn(""), newTestUsr("", ""))
+		assert.Nil(t, wu.WebAuthnCredentials())
+	}
+
+	{
+		authn := newTestAuthn("")
+		authn.Status.Info = &corev1.Authenticator_Status_Info{}
+
+		wu := NewWebAuthnUsr(authn, newTestUsr("", ""))
+		assert.Nil(t, wu.WebAuthnCredentials())
+	}
+
+	{
+		aaguid := vutils.UUIDv4()
+		credID := utilrand.GetRandomBytesMust(32)
+		pubKey := utilrand.GetRandomBytesMust(64)
+
+		authn := newTestAuthn("")
+		authn.Status.Info = &corev1.Authenticator_Status_Info{
+			Type: &corev1.Authenticator_Status_Info_Fido{
+				Fido: &corev1.Authenticator_Status_Info_FIDO{
+					Id:             credID,
+					PublicKey:      pubKey,
+					Aaguid:         aaguid,
+					SignCount:      42,
+					BackupEligible: true,
+				},
+			},
+		}
+
+		wu := NewWebAuthnUsr(authn, newTestUsr("", ""))
+
+		creds := wu.WebAuthnCredentials()
+		assert.Equal(t, 1, len(creds))
+
+		cred := creds[0]
+		assert.Equal(t, credID, cred.ID)
+		assert.Equal(t, pubKey, cred.PublicKey)
+		assert.True(t, cred.Flags.BackupEligible)
+		assert.Equal(t, uint32(42), cred.Authenticator.SignCount)
+		assert.Equal(t, "none", cred.AttestationType)
+
+		parsed, err := uuid.Parse(aaguid)
+		assert.Nil(t, err)
+		assert.Equal(t, parsed[:], cred.Authenticator.AAGUID)
+	}
+
+	{
+		authn := newTestAuthn("")
+		authn.Status.Info = &corev1.Authenticator_Status_Info{
+			Type: &corev1.Authenticator_Status_Info_Fido{
+				Fido: &corev1.Authenticator_Status_Info_FIDO{
+					Id:     utilrand.GetRandomBytesMust(32),
+					Aaguid: "not-a-uuid",
+				},
+			},
+		}
+
+		wu := NewWebAuthnUsr(authn, newTestUsr("", ""))
+
+		creds := wu.WebAuthnCredentials()
+		assert.Equal(t, 1, len(creds))
+		assert.Equal(t, 16, len(creds[0].Authenticator.AAGUID))
+	}
+}
+
+func TestDefaultTimeout(t *testing.T) {
+	ret := DefaultTimeout()
+	assert.True(t, ret.Enforce)
+	assert.True(t, ret.Timeout > 0)
+	assert.True(t, ret.TimeoutUVD > 0)
+	assert.Equal(t, ret.Timeout, ret.TimeoutUVD)
+}
+
+func TestGetWebauthnCtl(t *testing.T) {
+
+	ctx := context.Background()
 
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
 	t.Cleanup(func() {
 		tst.Destroy()
 	})
+	fakeC := tst.C
 
-	t.Run("valid", func(t *testing.T) {
+	newCtl := func(authn *corev1.Authenticator, cc *corev1.ClusterConfig) *WebAuthNFactor {
+		ctl, err := NewFactor(ctx, &authenticators.Opts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: newTestClusterConfig(),
+			Authenticator: authn,
+			User:          newTestUsr("", ""),
+		}, nil)
+		assert.Nil(t, err)
+		return ctl
+	}
 
-		reqBody := `
-{"id":"pNeE0iBONTcZ9gyjyO5q62PYen3Jq0i8q2PdH6HAqxJDmULaArxpumQ1AEMQAxRnYcCGvY9HhS_lGMQzFUUGeOgoSIUvSRjZzmRHX3YnzbOvrH-QDpzgAMilejPCFYIMEtWo_lZYPHlRM7LsM2S2IUULaL5DqOJ8R5E-E8qnfA5l7AsVoJnpoocxuRVHV_jX3FjCrykA_o2pfx1tG-xderd43sgTTDu8i1b4ZTUzB8lxEFOe71MJE268gBeQ6C-MCpTdp5QzVoaCUuDhMxdCrSt781mPOEnynONXOAIhEEpYhvtRjrckPjElAtSMIC739SgUeMcHDZ-PqdL-V7fC","rawId":"pNeE0iBONTcZ9gyjyO5q62PYen3Jq0i8q2PdH6HAqxJDmULaArxpumQ1AEMQAxRnYcCGvY9HhS_lGMQzFUUGeOgoSIUvSRjZzmRHX3YnzbOvrH-QDpzgAMilejPCFYIMEtWo_lZYPHlRM7LsM2S2IUULaL5DqOJ8R5E-E8qnfA5l7AsVoJnpoocxuRVHV_jX3FjCrykA_o2pfx1tG-xderd43sgTTDu8i1b4ZTUzB8lxEFOe71MJE268gBeQ6C-MCpTdp5QzVoaCUuDhMxdCrSt781mPOEnynONXOAIhEEpYhvtRjrckPjElAtSMIC739SgUeMcHDZ-PqdL-V7fC","type":"public-key","response":{"attestationObject":"o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBg2YuYlDbcmjIlP1Rxpu4VkPFHd37oT5SOlbW7AXfjCRaQQAAAAAAAAAAAAAAAAAAAAAAAAAAAP-k14TSIE41Nxn2DKPI7mrrY9h6fcmrSLyrY90focCrEkOZQtoCvGm6ZDUAQxADFGdhwIa9j0eFL-UYxDMVRQZ46ChIhS9JGNnOZEdfdifNs6-sf5AOnOAAyKV6M8IVggwS1aj-Vlg8eVEzsuwzZLYhRQtovkOo4nxHkT4Tyqd8DmXsCxWgmemihzG5FUdX-NfcWMKvKQD-jal_HW0b7F16t3jeyBNMO7yLVvhlNTMHyXEQU57vUwkTbryAF5DoL4wKlN2nlDNWhoJS4OEzF0KtK3vzWY84SfKc41c4AiEQSliG-1GOtyQ-MSUC1IwgLvf1KBR4xwcNn4-p0v5Xt8KlAQIDJiABIVgg4wa4h47Wtuu1LvGhOQVA2mABhppPubzZk8_6Srqg7CkiWCAYJPqb1zdsMpjZnkElWWLZpiqKXXL-q-3jmrwfKoS31Q","clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiTlhSak5FUTVXRzE2ZFVWRk5YTmhXbTlPTjBwMk1tcE9aVEp4Y2tjMFUxTldaM0ZJVEZoMlUzSlhZejAiLCJvcmlnaW4iOiJodHRwczovL3ZlcGVuZG9tYWluLnh5eiIsImNyb3NzT3JpZ2luIjpmYWxzZX0"}}
-		`
+	attestations := []corev1.ClusterConfig_Spec_Authenticator_FIDO_AttestationConveyancePreference{
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_ATTESTATION_CONVEYANCE_PREFERENCE_UNSET,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_DIRECT,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_INDIRECT,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_ENTERPRISE,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_NONE,
+	}
 
+	for _, attestation := range attestations {
+		authn := newTestAuthn("")
+		ctl := newCtl(authn, nil)
 
-
-
-
-
-
-
-		fctr := &corev1.IdentityProvider{
-			Metadata: &metav1.Metadata{
-				Name: utilrand.GetRandomStringCanonical(7),
+		cc := newTestClusterConfig()
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			Fido: &corev1.ClusterConfig_Spec_Authenticator_FIDO{
+				AttestationConveyancePreference: attestation,
 			},
-			Spec: &corev1.IdentityProvider_Spec{
-				Type: &corev1.IdentityProvider_Spec_Webauthn_{
-					Webauthn: &corev1.IdentityProvider_Spec_Webauthn{},
+		}
+
+		ret, err := ctl.getWebauthnCtl(authn, cc)
+		assert.Nil(t, err, "%v", attestation)
+		assert.NotNil(t, ret, "%v", attestation)
+	}
+
+	{
+		authn := newTestAuthn("")
+		ctl := newCtl(authn, nil)
+
+		ret, err := ctl.getWebauthnCtl(authn, nil)
+		assert.Nil(t, err)
+		assert.NotNil(t, ret)
+	}
+
+	{
+		authn := newTestAuthn("")
+		authn.Status.IsRegistered = true
+		authn.Status.Info = &corev1.Authenticator_Status_Info{
+			Type: &corev1.Authenticator_Status_Info_Fido{
+				Fido: &corev1.Authenticator_Status_Info_FIDO{
+					Type: corev1.Authenticator_Status_Info_FIDO_PLATFORM,
 				},
 			},
 		}
 
-		cc := &corev1.ClusterConfig{
-			Metadata: &metav1.Metadata{
-				Domain: "octeliumdomain.xyz",
-			},
-			Spec: &corev1.ClusterConfig_Spec{
-				Identity: &corev1.ClusterConfig_Spec_Authentication{},
+		ctl := newCtl(authn, nil)
+
+		ret, err := ctl.getWebauthnCtl(authn, newTestClusterConfig())
+		assert.Nil(t, err)
+		assert.NotNil(t, ret)
+	}
+
+	{
+		authn := newTestAuthn("")
+		authn.Status.IsRegistered = true
+		authn.Status.Info = &corev1.Authenticator_Status_Info{
+			Type: &corev1.Authenticator_Status_Info_Fido{
+				Fido: &corev1.Authenticator_Status_Info_FIDO{
+					Type: corev1.Authenticator_Status_Info_FIDO_ROAMING,
+				},
 			},
 		}
 
-		webauthnctl, err := NewFactor(cc, fctr)
+		ctl := newCtl(authn, nil)
+
+		ret, err := ctl.getWebauthnCtl(authn, newTestClusterConfig())
 		assert.Nil(t, err)
-
-		 err = webauthnctl.Finish(context.Background(), &corev1.User{
-			Metadata: &metav1.Metadata{
-				Uid:  "e01d2308-3ef1-42e7-aa28-7c9e87f651a6",
-				Name: "usr1",
-			},
-		},
-			&corev1.Device{
-				Metadata: &metav1.Metadata{
-					Uid: "96dc880d-984a-4d02-a05b-d000e6bc0594",
-				},
-			}, nil, fctr)
-		assert.Nil(t, err)
-
-
-		zap.S().Debugf("RESP: %+v", resp)
-	})
+		assert.NotNil(t, ret)
+	}
 }
 
-*/
+func TestFinishInvalidResponse(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	cc := newTestClusterConfig()
+	authn := newTestAuthn("")
+
+	ctl, err := NewFactor(ctx, &authenticators.Opts{
+		OcteliumC:     fakeC.OcteliumC,
+		ClusterConfig: cc,
+		Authenticator: authn,
+		User:          newTestUsr("", ""),
+	}, nil)
+	assert.Nil(t, err)
+
+	{
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			Resp:          &authv1.AuthenticateWithAuthenticatorRequest{},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: "",
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{}
+
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: utilrand.GetRandomStringCanonical(200),
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{
+			DataMap: map[string][]byte{
+				"session": []byte("not valid json"),
+			},
+		}
+
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: utilrand.GetRandomStringCanonical(200),
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{
+			DataMap: map[string][]byte{
+				"session": []byte(`{"challenge":"abc","user_id":"eHh4"}`),
+			},
+		}
+
+		_, err := ctl.Finish(ctx, &authenticators.FinishReq{
+			Resp: &authv1.AuthenticateWithAuthenticatorRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: strings.Repeat("a", 200),
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+}
+
+func TestFinishRegistrationInvalidResponse(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	cc := newTestClusterConfig()
+	authn := newTestAuthn("")
+
+	ctl, err := NewFactor(ctx, &authenticators.Opts{
+		OcteliumC:     fakeC.OcteliumC,
+		ClusterConfig: cc,
+		Authenticator: authn,
+		User:          newTestUsr("", ""),
+	}, nil)
+	assert.Nil(t, err)
+
+	{
+		_, err := ctl.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		_, err := ctl.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+			Resp:          &authv1.RegisterAuthenticatorFinishRequest{},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		_, err := ctl.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+			Resp: &authv1.RegisterAuthenticatorFinishRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: "",
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+
+	{
+		authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{
+			DataMap: map[string][]byte{
+				"session": []byte(`{"challenge":"abc","user_id":"eHh4"}`),
+			},
+		}
+
+		_, err := ctl.FinishRegistration(ctx, &authenticators.FinishRegistrationReq{
+			Resp: &authv1.RegisterAuthenticatorFinishRequest{
+				ChallengeResponse: &authv1.ChallengeResponse{
+					Type: &authv1.ChallengeResponse_Fido{
+						Fido: &authv1.ChallengeResponse_FIDO{
+							Response: strings.Repeat("a", 200),
+						},
+					},
+				},
+			},
+			ClusterConfig: cc,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, authenticators.IsErrInvalidAuth(err))
+	}
+}
+
+func TestBeginRegistrationDataMap(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	cc := newTestClusterConfig()
+	authn := newTestAuthn("")
+	authn.Status.AuthenticationAttempt = &corev1.Authenticator_Status_AuthenticationAttempt{}
+
+	ctl, err := NewFactor(ctx, &authenticators.Opts{
+		OcteliumC:     fakeC.OcteliumC,
+		ClusterConfig: cc,
+		Authenticator: authn,
+		User:          newTestUsr("usr@example.com", ""),
+	}, nil)
+	assert.Nil(t, err)
+
+	resp, err := ctl.BeginRegistration(ctx, &authenticators.BeginRegistrationReq{
+		Req:           &authv1.RegisterAuthenticatorBeginRequest{},
+		ClusterConfig: cc,
+	})
+	assert.Nil(t, err, "%+v", err)
+	assert.NotNil(t, resp.Response.ChallengeRequest.GetFido())
+	assert.True(t, len(resp.Response.ChallengeRequest.GetFido().Request) > 0)
+
+	assert.NotNil(t, authn.Status.AuthenticationAttempt.DataMap)
+	assert.True(t, len(authn.Status.AuthenticationAttempt.DataMap["session"]) > 0)
+
+	{
+		resp2, err := ctl.BeginRegistration(ctx, &authenticators.BeginRegistrationReq{
+			Req:           &authv1.RegisterAuthenticatorBeginRequest{},
+			ClusterConfig: cc,
+		})
+		assert.Nil(t, err)
+		assert.NotEqual(t,
+			resp.Response.ChallengeRequest.GetFido().Request,
+			resp2.Response.ChallengeRequest.GetFido().Request)
+	}
+}
