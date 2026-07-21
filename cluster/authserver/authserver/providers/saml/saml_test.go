@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlidp"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -260,4 +261,293 @@ func extractFormFields(htmlBody []byte) (samlResponse, relayState string, err er
 
 	traverse(doc)
 	return
+}
+
+func newTestIDPMetadata(t *testing.T) string {
+
+	ca, err := utils_cert.GenerateCARoot()
+	assert.Nil(t, err)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.Nil(t, err)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Example Corp"},
+			CommonName:   "example.com",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	crt, err := utils_cert.GenerateCertificate(&template, ca.Certificate, ca.PrivateKey, true)
+	assert.Nil(t, err)
+
+	samlIDP, err := samlidp.New(samlidp.Options{
+		Certificate: crt.Certificate,
+		Key:         privateKey,
+		Store:       &samlidp.MemoryStore{},
+		URL:         url.URL{Scheme: "https", Host: "idp.example.com"},
+	})
+	assert.Nil(t, err)
+
+	md, err := xml.Marshal(samlIDP.IDP.Metadata())
+	assert.Nil(t, err)
+
+	return string(md)
+}
+
+func newSAMLIDP(metadata string, entityID string,
+	identifierAttribute string) *corev1.IdentityProvider {
+	return &corev1.IdentityProvider{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+			Uid:  utilrand.GetRandomStringCanonical(16),
+		},
+		Spec: &corev1.IdentityProvider_Spec{
+			Type: &corev1.IdentityProvider_Spec_Saml{
+				Saml: &corev1.IdentityProvider_Spec_SAML{
+					EntityID:            entityID,
+					IdentifierAttribute: identifierAttribute,
+					MetadataType: &corev1.IdentityProvider_Spec_SAML_Metadata{
+						Metadata: metadata,
+					},
+				},
+			},
+		},
+		Status: &corev1.IdentityProvider_Status{
+			Type: corev1.IdentityProvider_Status_SAML,
+		},
+	}
+}
+
+func TestGetAttrIdentifier(t *testing.T) {
+
+	{
+		ret := getAttrIdentifier(&corev1.IdentityProvider_Spec_SAML{})
+		assert.Equal(t, defaultEmailAttr, ret)
+	}
+
+	{
+		ret := getAttrIdentifier(&corev1.IdentityProvider_Spec_SAML{
+			IdentifierAttribute: "",
+		})
+		assert.Equal(t, defaultEmailAttr, ret)
+	}
+
+	{
+		ret := getAttrIdentifier(&corev1.IdentityProvider_Spec_SAML{
+			IdentifierAttribute: "urn:oid:0.9.2342.19200300.100.1.1",
+		})
+		assert.Equal(t, "urn:oid:0.9.2342.19200300.100.1.1", ret)
+	}
+}
+
+func TestGetValStr(t *testing.T) {
+
+	newAssertion := func(statements ...saml.AttributeStatement) *saml.Assertion {
+		return &saml.Assertion{
+			AttributeStatements: statements,
+		}
+	}
+
+	newAttr := func(name string, values ...string) saml.Attribute {
+		attr := saml.Attribute{
+			Name: name,
+		}
+		for _, v := range values {
+			attr.Values = append(attr.Values, saml.AttributeValue{
+				Value: v,
+			})
+		}
+		return attr
+	}
+
+	{
+		assert.Equal(t, "", getValStr(newAssertion(), "any"))
+	}
+
+	{
+		assertion := newAssertion(saml.AttributeStatement{
+			Attributes: []saml.Attribute{
+				newAttr("email", "usr@example.com"),
+			},
+		})
+		assert.Equal(t, "usr@example.com", getValStr(assertion, "email"))
+		assert.Equal(t, "", getValStr(assertion, "other"))
+	}
+
+	{
+		assertion := newAssertion(saml.AttributeStatement{
+			Attributes: []saml.Attribute{
+				newAttr("email"),
+			},
+		})
+		assert.Equal(t, "", getValStr(assertion, "email"))
+	}
+
+	{
+		assertion := newAssertion(saml.AttributeStatement{
+			Attributes: []saml.Attribute{
+				newAttr("email", "first@example.com", "second@example.com"),
+			},
+		})
+		assert.Equal(t, "first@example.com", getValStr(assertion, "email"))
+	}
+
+	{
+		assertion := newAssertion(
+			saml.AttributeStatement{
+				Attributes: []saml.Attribute{
+					newAttr("name", "usr1"),
+				},
+			},
+			saml.AttributeStatement{
+				Attributes: []saml.Attribute{
+					newAttr("email", "usr@example.com"),
+				},
+			},
+		)
+		assert.Equal(t, "usr@example.com", getValStr(assertion, "email"))
+		assert.Equal(t, "usr1", getValStr(assertion, "name"))
+	}
+
+	{
+		assertion := newAssertion(saml.AttributeStatement{
+			Attributes: []saml.Attribute{
+				newAttr(defaultEmailAttr, "usr@example.com"),
+			},
+		})
+		assert.Equal(t, "usr@example.com", getValStr(assertion, defaultEmailAttr))
+	}
+}
+
+func TestNewConnectorErrors(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	{
+		_, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider: &corev1.IdentityProvider{
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+				Spec: &corev1.IdentityProvider_Spec{},
+			},
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider: &corev1.IdentityProvider{
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_Saml{
+						Saml: &corev1.IdentityProvider_Spec_SAML{},
+					},
+				},
+			},
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider:      newSAMLIDP("this is not valid xml", "", ""),
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider: &corev1.IdentityProvider{
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_Saml{
+						Saml: &corev1.IdentityProvider_Spec_SAML{
+							MetadataType: &corev1.IdentityProvider_Spec_SAML_MetadataURL{
+								MetadataURL: "://not-a-valid-url",
+							},
+						},
+					},
+				},
+			},
+		})
+		assert.NotNil(t, err)
+	}
+}
+
+func TestNewConnectorEntityID(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	metadata := newTestIDPMetadata(t)
+
+	{
+		idp := newSAMLIDP(metadata, "", "")
+
+		c, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider:      idp,
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		assert.Equal(t, fmt.Sprintf("https://%s", cc.Status.Domain), c.sp.EntityID)
+		assert.Equal(t, utils.GetCallbackURL(cc.Status.Domain), c.sp.AcsURL.String())
+
+		assert.Equal(t, idp.Metadata.Name, c.Name())
+		assert.Equal(t, "saml", c.Type())
+		assert.Equal(t, idp.Metadata.Uid, c.Provider().Metadata.Uid)
+	}
+
+	{
+		entityID := fmt.Sprintf("https://%s.example.com/sp", utilrand.GetRandomStringCanonical(8))
+
+		c, err := NewConnector(ctx, &utils.ProviderOpts{
+			OcteliumC:     fakeC.OcteliumC,
+			ClusterConfig: cc,
+			Provider:      newSAMLIDP(metadata, entityID, ""),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, entityID, c.sp.EntityID)
+	}
 }
