@@ -143,14 +143,14 @@ func NewSession(ctx context.Context,
 		case corev1.User_Spec_HUMAN:
 			switch o.SessType {
 			case corev1.Session_Status_CLIENTLESS:
-				return time.Hour * 16
+				return time.Hour * 21
 			case corev1.Session_Status_CLIENT:
-				return time.Hour * 16
+				return time.Hour * 21
 			}
 		case corev1.User_Spec_WORKLOAD:
 			switch sessType {
 			case corev1.Session_Status_CLIENTLESS:
-				return time.Hour * 2
+				return time.Hour * 24 * 30 * 3
 			case corev1.Session_Status_CLIENT:
 				return time.Hour * 24 * 30 * 3
 			}
