@@ -39,6 +39,11 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 )
 
+const (
+	credMaxAuthentications = 1000000
+	credMaxExpiryDuration  = time.Hour * 24 * 365 * 2
+)
+
 func (s *Server) CreateCredential(ctx context.Context, req *corev1.Credential) (*corev1.Credential, error) {
 
 	if err := s.validateCredential(ctx, req); err != nil {
@@ -87,7 +92,7 @@ func (s *Server) DeleteCredential(ctx context.Context, req *metav1.DeleteOptions
 
 	_, err = s.octeliumC.CoreC().DeleteCredential(ctx, apivalidation.ObjectToRDeleteOptions(tkn))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return &metav1.OperationResult{}, nil
@@ -103,14 +108,14 @@ func (s *Server) ListCredential(ctx context.Context, req *corev1.ListCredentialO
 		}
 		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(req.UserRef))
 		if err != nil {
-			return nil, err
+			return nil, serr.K8sNotFoundOrInternalWithErr(err)
 		}
 		listOpts = append(listOpts, urscsrv.FilterStatusUserUID(usr.Metadata.Uid))
 	}
 
 	itemList, err := s.octeliumC.CoreC().ListCredential(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return itemList, nil
@@ -130,6 +135,7 @@ func (s *Server) GetCredential(ctx context.Context, req *metav1.GetOptions) (*co
 }
 
 func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.GenerateCredentialTokenRequest) (*corev1.CredentialToken, error) {
+
 	if err := apivalidation.CheckObjectRef(req.CredentialRef, nil); err != nil {
 		return nil, err
 	}
@@ -137,6 +143,22 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 	cred, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.ObjectReferenceToRGetOptions(req.CredentialRef))
 	if err != nil {
 		return nil, serr.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	if cred.Spec.IsDisabled {
+		return nil, grpcutils.InvalidArg("The Credential is disabled")
+	}
+
+	if cred.Status.IsLocked {
+		return nil, grpcutils.InvalidArg("The Credential is locked")
+	}
+
+	if cred.Spec.ExpiresAt.IsValid() && !time.Now().Before(cred.Spec.ExpiresAt.AsTime()) {
+		return nil, grpcutils.InvalidArg("The Credential is expired")
+	}
+
+	if cred.Status.UserRef == nil {
+		return nil, serr.Internal("The Credential has no User")
 	}
 
 	cred.Status.TokenID = vutils.UUIDv4()
@@ -303,20 +325,55 @@ func (s *Server) validateCredential(ctx context.Context, req *corev1.Credential)
 	}
 
 	switch req.Spec.Type {
+	case corev1.Credential_Spec_AUTH_TOKEN,
+		corev1.Credential_Spec_OAUTH2,
+		corev1.Credential_Spec_ACCESS_TOKEN:
 	case corev1.Credential_Spec_TYPE_UNKNOWN:
 		return grpcutils.InvalidArg("Credential type must be set")
+	default:
+		return grpcutils.InvalidArg("Invalid Credential type")
+	}
+
+	switch req.Spec.SessionType {
+	case corev1.Session_Status_TYPE_UNKNOWN,
+		corev1.Session_Status_CLIENT,
+		corev1.Session_Status_CLIENTLESS:
+	default:
+		return grpcutils.InvalidArg("Invalid Credential sessionType")
+	}
+
+	if req.Spec.MaxAuthentications > credMaxAuthentications {
+		return grpcutils.InvalidArg("maxAuthentications is too large: %d", req.Spec.MaxAuthentications)
+	}
+
+	if req.Spec.AutoDelete && req.Spec.MaxAuthentications == 0 {
+		return grpcutils.InvalidArg("autoDelete requires maxAuthentications to be set")
 	}
 
 	req.Status = &corev1.Credential_Status{}
 
-	if req.Spec.ExpiresAt.IsValid() {
-		if time.Now().After(req.Spec.ExpiresAt.AsTime()) {
+	if req.Spec.ExpiresAt != nil {
+		if !req.Spec.ExpiresAt.IsValid() {
+			return grpcutils.InvalidArg("Invalid expiresAt")
+		}
+
+		expiresAt := req.Spec.ExpiresAt.AsTime()
+
+		if !time.Now().Before(expiresAt) {
 			return grpcutils.InvalidArg("Credential expiry time exceeded")
+		}
+
+		if expiresAt.After(time.Now().Add(credMaxExpiryDuration)) {
+			return grpcutils.InvalidArg("Credential expiry time is too far in the future")
 		}
 	}
 
 	if req.Spec.User == "" {
 		return serr.InvalidArg("User must be specified")
+	}
+
+	if err := apivalidation.ValidateName(req.Spec.User, 0, 0); err != nil {
+		return serr.InvalidArg("Invalid User name")
 	}
 
 	usr, err := s.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
@@ -354,11 +411,19 @@ func (s *Server) UpdateCredential(ctx context.Context, req *corev1.Credential) (
 
 	item, err := s.octeliumC.CoreC().GetCredential(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(item); err != nil {
 		return nil, err
+	}
+
+	if item.Spec.Type != req.Spec.Type {
+		return nil, grpcutils.InvalidArg("The Credential type cannot be modified")
+	}
+
+	if item.Status.UserRef != nil && item.Status.UserRef.Uid != req.Status.UserRef.Uid {
+		return nil, grpcutils.InvalidArg("The Credential User cannot be modified")
 	}
 
 	common.MetadataUpdate(item.Metadata, req.Metadata)
@@ -367,7 +432,7 @@ func (s *Server) UpdateCredential(ctx context.Context, req *corev1.Credential) (
 
 	item, err = s.octeliumC.CoreC().UpdateCredential(ctx, item)
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return item, nil
