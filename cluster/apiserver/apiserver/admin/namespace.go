@@ -34,7 +34,7 @@ import (
 
 func (s *Server) UpdateNamespace(ctx context.Context, req *corev1.Namespace) (*corev1.Namespace, error) {
 	if err := s.validateNamespace(ctx, req); err != nil {
-		return nil, serr.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	item, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.ObjectToRGetOptions(req))
@@ -59,7 +59,7 @@ func (s *Server) UpdateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 
 func (s *Server) CreateNamespace(ctx context.Context, req *corev1.Namespace) (*corev1.Namespace, error) {
 	if err := s.validateNamespace(ctx, req); err != nil {
-		return nil, serr.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	if err := checkInvalidServiceNamespaceNames(req.Metadata.Name); err != nil {
@@ -72,7 +72,7 @@ func (s *Server) CreateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 		return nil, grpcutils.InvalidArg("Cannot use the name: %s while having a Service with the same name in the default Namespace",
 			req.Metadata.Name)
 	} else if !grpcerr.IsNotFound(err) {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	_, err := s.octeliumC.CoreC().GetNamespace(ctx, apivalidation.ObjectToRGetOptions(req))
@@ -80,7 +80,7 @@ func (s *Server) CreateNamespace(ctx context.Context, req *corev1.Namespace) (*c
 		return nil, grpcutils.AlreadyExists("The Namespace %s already exists", req.Metadata.Name)
 	}
 	if !grpcerr.IsNotFound(err) {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	item := &corev1.Namespace{
@@ -132,9 +132,10 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *metav1.DeleteOptions)
 }
 
 func (s *Server) ListNamespace(ctx context.Context, req *corev1.ListNamespaceOptions) (*corev1.NamespaceList, error) {
+
 	itemList, err := s.octeliumC.CoreC().ListNamespace(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return itemList, nil
@@ -185,6 +186,7 @@ func checkInvalidServiceNamespaceNames(arg string) error {
 	invalidPrefixes := []string{
 		"octelium",
 		"local",
+		"cordium",
 	}
 
 	for _, prefix := range invalidPrefixes {
