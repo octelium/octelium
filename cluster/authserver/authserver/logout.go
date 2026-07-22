@@ -18,7 +18,6 @@ package authserver
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -29,37 +28,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
-
-func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-
-	if err := s.checkXOcteliumOrigin(r); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	ctx := r.Context()
-
-	_, err = s.octeliumC.CoreC().DeleteSession(ctx,
-		apivalidation.ObjectToRDeleteOptions(sess))
-	if err == nil || grpcerr.IsNotFound(err) {
-		s.setLogoutCookies(w)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if grpcerr.IsCanceled(err) {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	w.WriteHeader(http.StatusInternalServerError)
-}
 
 func (s *server) doLogout(ctx context.Context, _ *authv1.LogoutRequest) (*authv1.LogoutResponse, error) {
 

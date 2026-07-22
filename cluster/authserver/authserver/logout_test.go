@@ -18,10 +18,10 @@ package authserver
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestHandleLogout(t *testing.T) {
+func TestDoLogout(t *testing.T) {
 
 	ctx := context.Background()
 
@@ -52,71 +52,51 @@ func TestHandleLogout(t *testing.T) {
 	})
 
 	{
-		reqHTTP := httptest.NewRequest("GET", "http://localhost/logout", nil)
-		w := httptest.NewRecorder()
-		srv.handleLogout(w, reqHTTP)
-		resp := w.Result()
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		_, err := srv.doLogout(ctx, &authv1.LogoutRequest{})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthenticated(err), "%+v", err)
 	}
 
 	{
-		reqHTTP := httptest.NewRequest("GET", "http://localhost/logout", nil)
-		reqHTTP.Header.Set("X-Octelium-Origin", srv.rootURL)
-		w := httptest.NewRecorder()
-		srv.handleLogout(w, reqHTTP)
-		resp := w.Result()
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		_, err = srv.doLogout(getCtxRT(usrT), &authv1.LogoutRequest{})
+		assert.Nil(t, err, "%+v", err)
+
+		_, err = srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err))
 	}
 
 	{
 		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
-		{
-			req := httptest.NewRequest("GET", "http://localhost/auth/v1/logout", nil)
-			req.Header.Set("X-Octelium-Origin", srv.rootURL)
-			w := httptest.NewRecorder()
-			req.AddCookie(&http.Cookie{
-				Name:  "octelium_rt",
-				Value: string(usrT.GetAccessToken().RefreshToken),
-				Path:  "/",
-			})
+		_, err = srv.doLogout(getCtxRT(usrT), &authv1.LogoutRequest{})
+		assert.Nil(t, err, "%+v", err)
 
-			srv.handleLogout(w, req)
-			resp := w.Result()
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-			_, err = srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: usrT.Session.Metadata.Uid})
-			assert.NotNil(t, err)
-			assert.True(t, grpcerr.IsNotFound(err))
-		}
-
+		_, err = srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err))
 	}
 
-	/*
-		{
-			usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
-			assert.Nil(t, err)
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
 
-			{
+		logoutCtx := getCtxRT(usrT)
 
-				reqBytes, err := pbutils.MarshalJSON(&authv1.LogoutRequest{
-					RefreshToken: usrT.GetAccessToken().RefreshToken,
-				}, false)
-				assert.Nil(t, err)
-				req := httptest.NewRequest("GET", "http://localhost/auth/v1/logout", bytes.NewBuffer(reqBytes))
-				w := httptest.NewRecorder()
+		_, err = srv.doLogout(logoutCtx, &authv1.LogoutRequest{})
+		assert.Nil(t, err, "%+v", err)
 
-				srv.handleLogout(w, req)
-				resp := w.Result()
-				assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-				_, err = srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: usrT.Session.Metadata.Uid})
-				assert.NotNil(t, err)
-				assert.True(t, grpcerr.IsNotFound(err))
-			}
-
-		}
-	*/
-
+		_, err = srv.doLogout(logoutCtx, &authv1.LogoutRequest{})
+		assert.NotNil(t, err)
+	}
 }
