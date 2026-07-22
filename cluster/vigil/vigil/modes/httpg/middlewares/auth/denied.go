@@ -113,14 +113,13 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 				if svc.Spec.IsPublic {
 					q := loginURL.Query()
 
+					forwardedHost := req.Header.Get("X-Forwarded-Host")
 					if ucorev1.ToService(svc).IsManagedService() &&
 						svc.Status.ManagedService != nil &&
 						svc.Status.ManagedService.ForwardHost &&
-						strings.HasSuffix(req.Header.Get("X-Forwarded-Host"), m.domain) {
+						(forwardedHost == m.domain || strings.HasSuffix(forwardedHost, "."+m.domain)) {
 
-						u := fmt.Sprintf("https://%s%s",
-							req.Header.Get("X-Forwarded-Host"),
-							getDecodedPathWithQuery(req.URL))
+						u := fmt.Sprintf("https://%s%s", forwardedHost, getDecodedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
 						q.Set("redirect", u)
 						loginURL.RawQuery = q.Encode()
