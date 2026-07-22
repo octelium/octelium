@@ -65,7 +65,7 @@ const (
 )
 
 const (
-	maxBodyLen     = 3 * 1024 * 1024
+	maxBodyLen     = 32 * 1024
 	maxSSEEventLog = 10
 	sseLogInterval = 30 * time.Second
 )
