@@ -198,6 +198,8 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	q := r.Question[0]
 
+	canonicalName := strings.ToLower(dns.Fqdn(q.Name))
+
 	req := &coctovigilv1.DownstreamRequest{
 		Source: &coctovigilv1.DownstreamRequest_Source{
 			Address: address,
@@ -206,7 +208,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		Request: &corev1.RequestContext_Request{
 			Type: &corev1.RequestContext_Request_Dns{
 				Dns: &corev1.RequestContext_Request_DNS{
-					Name:   q.Name,
+					Name:   canonicalName,
 					TypeID: int32(q.Qtype),
 				},
 			},
@@ -258,7 +260,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				}
 			}(),
 			TypeID: int64(q.Qtype),
-			Name:   q.Name,
+			Name:   canonicalName,
 		},
 	}
 
