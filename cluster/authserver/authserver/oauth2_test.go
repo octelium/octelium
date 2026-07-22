@@ -22,10 +22,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -425,5 +427,545 @@ func TestHandleOAuth2Assertion(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+type oauth2TestResult struct {
+	statusCode int
+	token      *oauthAccessTokenResponse
+	errResp    *oauth2ErrorResponse
+}
+
+func doOAuth2TokenReq(t *testing.T, srv *server, data url.Values) *oauth2TestResult {
+	req := httptest.NewRequest("POST", "http://localhost/oauth2/token",
+		strings.NewReader(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	w := httptest.NewRecorder()
+	srv.handleOAuth2Token(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	bb, err := io.ReadAll(resp.Body)
+	assert.Nil(t, err)
+
+	ret := &oauth2TestResult{
+		statusCode: resp.StatusCode,
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		ret.token = &oauthAccessTokenResponse{}
+		assert.Nil(t, json.Unmarshal(bb, ret.token))
+		return ret
+	}
+
+	ret.errResp = &oauth2ErrorResponse{}
+	json.Unmarshal(bb, ret.errResp)
+
+	return ret
+}
+
+func newOAuth2Credential(t *testing.T, ctx context.Context,
+	adminSrv *admin.Server, usrName string) (*corev1.Credential, string, string) {
+
+	cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Credential_Spec{
+			User:        usrName,
+			Type:        corev1.Credential_Spec_OAUTH2,
+			SessionType: corev1.Session_Status_CLIENTLESS,
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	tknResp, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+		CredentialRef: umetav1.GetObjectReference(cred),
+	})
+	assert.Nil(t, err)
+
+	return cred,
+		tknResp.GetOauth2Credentials().ClientID,
+		tknResp.GetOauth2Credentials().ClientSecret
+}
+
+func TestCheckAndGetOAuthScopeStr(t *testing.T) {
+
+	{
+		scopes, err := checkAndGetOAuthScopeStr("")
+		assert.Nil(t, err)
+		assert.Nil(t, scopes)
+	}
+
+	{
+		_, err := checkAndGetOAuthScopeStr(utilrand.GetRandomStringCanonical(2049))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := checkAndGetOAuthScopeStr(strings.Repeat("a", 2049))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := checkAndGetOAuthScopeStr("日本語テスト")
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := checkAndGetOAuthScopeStr(fmt.Sprintf("valid %s", strings.Repeat("日", 10)))
+		assert.NotNil(t, err)
+	}
+}
+
+func TestReturnOAuth2Err(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	type entry struct {
+		errCode    string
+		statusCode int
+	}
+
+	entries := []entry{
+		{"invalid_request", 400},
+		{"invalid_client", 401},
+		{"invalid_scope", 401},
+		{"unsupported_grant_type", 400},
+		{"server_error", 500},
+	}
+
+	for _, e := range entries {
+		w := httptest.NewRecorder()
+		srv.returnOAuth2Err(w, e.errCode, e.statusCode)
+
+		resp := w.Result()
+		assert.Equal(t, e.statusCode, resp.StatusCode, "%s", e.errCode)
+
+		bb, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+		resp.Body.Close()
+
+		ret := &oauth2ErrorResponse{}
+		assert.Nil(t, json.Unmarshal(bb, ret), "%s", e.errCode)
+		assert.Equal(t, e.errCode, ret.Error)
+	}
+}
+
+func TestHandleOAuth2TokenGrantType(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+		data := url.Values{}
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "unsupported_grant_type", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "authorization_code")
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "unsupported_grant_type", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "password")
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "unsupported_grant_type", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "refresh_token")
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "unsupported_grant_type", res.errResp.Error)
+	}
+}
+
+func TestHandleOAuth2TokenRejections(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newWorkloadUser := func() *tstuser.User {
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_WORKLOAD, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+		return usrT
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", utilrand.GetRandomStringCanonical(8))
+		data.Set("client_secret", utilrand.GetRandomString(200))
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", utilrand.GetRandomStringCanonical(8))
+		data.Set("client_secret", "")
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		usrT := newWorkloadUser()
+
+		cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Credential_Spec{
+				User:        usrT.Usr.Metadata.Name,
+				Type:        corev1.Credential_Spec_AUTH_TOKEN,
+				SessionType: corev1.Session_Status_CLIENTLESS,
+			},
+		})
+		assert.Nil(t, err)
+
+		tknResp, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.Nil(t, err)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", cred.Status.Id)
+		data.Set("client_secret", tknResp.GetAuthenticationToken().AuthenticationToken)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		usrT := newWorkloadUser()
+		_, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+		data.Set("scope", strings.Repeat("a", 2049))
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_scope", res.errResp.Error)
+	}
+
+	{
+		usrT := newWorkloadUser()
+		_, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		usr, err := srv.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Usr.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+		usr.Spec.Type = corev1.User_Spec_HUMAN
+		_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_request", res.errResp.Error)
+	}
+
+	{
+		usrT := newWorkloadUser()
+		_, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		usr, err := srv.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Usr.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+		usr.Spec.IsDisabled = true
+		_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_request", res.errResp.Error)
+	}
+
+	{
+		usrT := newWorkloadUser()
+		_, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		usr, err := srv.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Usr.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+		usr.Status.IsLocked = true
+		_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr)
+		assert.Nil(t, err)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_request", res.errResp.Error)
+	}
+}
+
+func TestHandleOAuth2TokenSessionState(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	getCredSession := func(cred *corev1.Credential) *corev1.Session {
+		sessList, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{
+				urscsrv.FilterFieldEQValStr("status.credentialRef.uid", cred.Metadata.Uid),
+			},
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(sessList.Items))
+		return sessList.Items[0]
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_WORKLOAD, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		cred, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+		assert.Equal(t, "Bearer", res.token.TokenType)
+		assert.True(t, res.token.ExpiresIn > 0)
+		assert.Equal(t, "", res.token.RefreshToken)
+
+		sess := getCredSession(cred)
+
+		sess.Status.IsLocked = true
+		_, err = srv.octeliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		res = doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_WORKLOAD, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		cred, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+
+		sess := getCredSession(cred)
+
+		sess.Spec.State = corev1.Session_Spec_REJECTED
+		_, err = srv.octeliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		res = doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+}
+
+func TestHandleOAuth2MetadataFields(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	req := httptest.NewRequest("GET",
+		"http://localhost/.well-known/oauth-authorization-server", nil)
+	w := httptest.NewRecorder()
+	srv.handleOAuth2Metadata(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+
+	bb, err := io.ReadAll(resp.Body)
+	assert.Nil(t, err)
+
+	ret := &oauth2Metadata{}
+	assert.Nil(t, json.Unmarshal(bb, ret))
+
+	assert.Equal(t, srv.rootURL, ret.Issuer)
+	assert.Equal(t, fmt.Sprintf("%s/oauth2/token", srv.rootURL), ret.TokenEndpoint)
+	assert.True(t, strings.HasPrefix(ret.TokenEndpoint, ret.Issuer))
+
+	assert.True(t, slices.Contains(ret.GrantTypesSupported, "client_credentials"))
+	assert.False(t, slices.Contains(ret.GrantTypesSupported, "password"))
+	assert.False(t, slices.Contains(ret.GrantTypesSupported, "implicit"))
+
+	assert.True(t, slices.Contains(ret.ResponseTypesSupported, "code"))
+	assert.True(t, slices.Contains(ret.TokenEndpointAuthMethodsSupported, "client_secret_post"))
+}
+
+func TestHandleOAuth2AssertionRejections(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_assertion_type", assertionTypeJWTBearer)
+		data.Set("client_assertion", "")
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_assertion_type", assertionTypeJWTBearer)
+		data.Set("client_assertion", utilrand.GetRandomString(200))
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_assertion_type", assertionTypeJWTBearer)
+		data.Set("client_assertion", "aaa.bbb.ccc")
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_assertion_type", "urn:some:other:type")
+		data.Set("client_assertion", "aaa.bbb.ccc")
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
 	}
 }
