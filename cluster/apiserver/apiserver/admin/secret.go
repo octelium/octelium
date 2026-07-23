@@ -30,6 +30,8 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 )
 
+const secretMaxDataSize = 512 * 1024
+
 func (s *Server) CreateSecret(ctx context.Context, req *corev1.Secret) (*corev1.Secret, error) {
 	if err := s.validateSecret(ctx, req); err != nil {
 		return nil, grpcutils.InvalidArgWithErr(err)
@@ -64,9 +66,13 @@ func (s *Server) CreateSecret(ctx context.Context, req *corev1.Secret) (*corev1.
 
 func (s *Server) ListSecret(ctx context.Context, req *corev1.ListSecretOptions) (*corev1.SecretList, error) {
 
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+
 	vSecrets, err := s.octeliumC.CoreC().ListSecret(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	for _, secret := range vSecrets.Items {
@@ -83,7 +89,7 @@ func (s *Server) DeleteSecret(ctx context.Context, req *metav1.DeleteOptions) (*
 
 	sec, err := s.octeliumC.CoreC().GetSecret(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(sec); err != nil {
@@ -133,6 +139,7 @@ func (s *Server) UpdateSecret(ctx context.Context, req *corev1.Secret) (*corev1.
 
 	sec.Spec = req.Spec
 	sec.Data = req.Data
+	common.MetadataUpdate(sec.Metadata, req.Metadata)
 
 	item, err := s.octeliumC.CoreC().UpdateSecret(ctx, sec)
 	if err != nil {
@@ -144,7 +151,7 @@ func (s *Server) UpdateSecret(ctx context.Context, req *corev1.Secret) (*corev1.
 	return item, nil
 }
 
-func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
+func (s *Server) validateSecret(_ context.Context, itm *corev1.Secret) error {
 
 	if err := apivalidation.ValidateCommon(itm, &apivalidation.ValidateCommonOpts{
 		ValidateMetadataOpts: apivalidation.ValidateMetadataOpts{
@@ -166,12 +173,12 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 		switch itm.Spec.Data.Type.(type) {
 		case *corev1.Secret_Spec_Data_Value:
 			lenVal := len(itm.Spec.Data.GetValue())
-			if lenVal == 0 || lenVal > 512*1024 {
+			if lenVal == 0 || lenVal > secretMaxDataSize {
 				return grpcutils.InvalidArg("Invalid Secret size")
 			}
 		case *corev1.Secret_Spec_Data_ValueBytes:
 			lenVal := len(itm.Spec.Data.GetValueBytes())
-			if lenVal == 0 || lenVal > 512*1024 {
+			if lenVal == 0 || lenVal > secretMaxDataSize {
 				return grpcutils.InvalidArg("Invalid Secret size")
 			}
 		default:
@@ -183,12 +190,12 @@ func (s *Server) validateSecret(ctx context.Context, itm *corev1.Secret) error {
 	switch itm.Data.Type.(type) {
 	case *corev1.Secret_Data_Value:
 		lenVal := len(itm.Data.GetValue())
-		if lenVal == 0 || lenVal > 512*1024 {
+		if lenVal == 0 || lenVal > secretMaxDataSize {
 			return grpcutils.InvalidArg("Invalid Secret size")
 		}
 	case *corev1.Secret_Data_ValueBytes:
 		lenVal := len(itm.Data.GetValueBytes())
-		if lenVal == 0 || lenVal > 512*1024 {
+		if lenVal == 0 || lenVal > secretMaxDataSize {
 			return grpcutils.InvalidArg("Invalid Secret size")
 		}
 	default:

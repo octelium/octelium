@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -26,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -84,6 +86,187 @@ func TestSecret(t *testing.T) {
 
 		_, err = srv.DeleteSecret(ctx, &metav1.DeleteOptions{Name: secretName})
 		assert.Nil(t, err)
+
+		_, err = srv.DeleteSecret(ctx, &metav1.DeleteOptions{Name: secretName})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err))
 	}
 
+	{
+		_, err = srv.GetSecret(ctx, &metav1.GetOptions{})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err = srv.GetSecret(ctx, &metav1.GetOptions{Name: utilrand.GetRandomStringCanonical(8)})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err))
+	}
+
+	{
+		_, err = srv.ListSecret(ctx, nil)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestValidateSecret(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	invalids := []*corev1.Secret{
+		{},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		},
+		{
+			Spec: &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(8),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(8),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data:     &corev1.Secret_Data{},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: "",
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_ValueBytes{
+					ValueBytes: []byte{},
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: strings.Repeat("a", secretMaxDataSize+1),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_ValueBytes{
+					ValueBytes: make([]byte, secretMaxDataSize+1),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.Secret_Spec{
+				Data: &corev1.Secret_Spec_Data{
+					Type: &corev1.Secret_Spec_Data_Value{
+						Value: "",
+					},
+				},
+			},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(8),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.Secret_Spec{
+				Data: &corev1.Secret_Spec_Data{
+					Type: &corev1.Secret_Spec_Data_ValueBytes{
+						ValueBytes: make([]byte, secretMaxDataSize+1),
+					},
+				},
+			},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(8),
+				},
+			},
+		},
+	}
+
+	for _, invalid := range invalids {
+		_, err = srv.CreateSecret(ctx, invalid)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	valids := []*corev1.Secret{
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(32),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec:     &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_ValueBytes{
+					ValueBytes: []byte(utilrand.GetRandomString(32)),
+				},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.Secret_Spec{
+				Data: &corev1.Secret_Spec_Data{
+					Type: &corev1.Secret_Spec_Data_Value{
+						Value: utilrand.GetRandomString(16),
+					},
+				},
+			},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(32),
+				},
+			},
+		},
+	}
+
+	for _, valid := range valids {
+		item, err := srv.CreateSecret(ctx, valid)
+		assert.Nil(t, err, "%+v", err)
+		assert.Nil(t, item.Data)
+
+		_, err = srv.CreateSecret(ctx, valid)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+	}
 }
