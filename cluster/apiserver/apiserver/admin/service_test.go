@@ -32,7 +32,6 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestCreateService(t *testing.T) {
@@ -104,7 +103,6 @@ func TestCreateService(t *testing.T) {
 	}
 
 	{
-
 		secretName := fmt.Sprintf("secret-%s", utilrand.GetRandomStringCanonical(5))
 		_, err := srv.CreateSecret(ctx, &corev1.Secret{
 			Metadata: &metav1.Metadata{
@@ -241,7 +239,7 @@ func TestCreateService(t *testing.T) {
 		res, err := srv.CreateService(ctx, req)
 		assert.Nil(t, err, "%+v", err)
 
-		assert.True(t, proto.Equal(res.Spec, req.Spec))
+		assert.True(t, pbutils.IsEqual(res.Spec, req.Spec))
 	}
 
 	{
@@ -326,34 +324,6 @@ func TestCreateService(t *testing.T) {
 		assert.Equal(t, svc.Metadata.Labels, nSvc.Metadata.Labels)
 		assert.Equal(t, svc.Metadata.Annotations, nSvc.Metadata.Annotations)
 	}
-
-	/*
-		{
-			svc, err := srv.CreateService(ctx, &corev1.Service{
-				Metadata: &metav1.Metadata{
-					Name: fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5)),
-				},
-				Spec: &corev1.Service_Spec{
-					Port: 80,
-					Backend: &corev1.Service_Spec_Config_Upstream_{
-						Upstream: &corev1.Service_Spec_Config_Upstream{
-							Type: &corev1.Service_Spec_Config_Upstream_ManagedService_{
-								ManagedService: &corev1.Service_Spec_Config_Upstream_ManagedService{
-									Type: corev1.Service_Spec_Config_Upstream_ManagedService_WORKSPACE,
-								},
-							},
-						},
-					},
-				},
-			})
-			assert.Nil(t, err)
-
-			svcV, err := tst.C.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
-			assert.Nil(t, err)
-			assert.True(t, svcV.IsManagedServiceWorkspace())
-			assert.True(t, pbutils.IsEqual(svc, svcV))
-		}
-	*/
 
 	{
 		name := fmt.Sprintf("svc-%s", utilrand.GetRandomStringLowercase(5))
@@ -662,7 +632,6 @@ func TestServiceMode(t *testing.T) {
 	srv := newFakeServer(tst.C)
 
 	{
-
 		svc, err := srv.CreateService(ctx, &corev1.Service{
 			Metadata: &metav1.Metadata{
 				Name: utilrand.GetRandomStringCanonical(8),
@@ -744,7 +713,6 @@ func TestServiceMode(t *testing.T) {
 
 		assert.Nil(t, err)
 		assert.Equal(t, corev1.Service_Spec_HTTP, ucorev1.ToService(svc).GetMode())
-
 	}
 
 	{
@@ -766,7 +734,6 @@ func TestServiceMode(t *testing.T) {
 
 		assert.Nil(t, err)
 		assert.Equal(t, corev1.Service_Spec_HTTP, ucorev1.ToService(svc).GetMode())
-
 	}
 
 	{
@@ -931,9 +898,7 @@ func TestServiceCEL(t *testing.T) {
 										{
 											Effect: corev1.Policy_Spec_Rule_ALLOW,
 											Condition: &corev1.Condition{
-
 												Type: &corev1.Condition_All_{
-
 													All: &corev1.Condition_All{
 														Of: []*corev1.Condition{
 															{
@@ -960,7 +925,6 @@ func TestServiceCEL(t *testing.T) {
 			})
 			assert.NotNil(t, err)
 		}
-
 	}
 }
 
@@ -990,17 +954,6 @@ func TestValidateService(t *testing.T) {
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 		},
-
-		/*
-			{
-				Metadata: &metav1.Metadata{Name: "svc.ns1"},
-				Spec:     &corev1.Service_Spec{},
-			},
-			{
-				Metadata: &metav1.Metadata{Name: "svc.ns1"},
-				Spec:     &corev1.Service_Spec{},
-			},
-		*/
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 			Spec: &corev1.Service_Spec{
@@ -1037,7 +990,6 @@ func TestValidateService(t *testing.T) {
 				},
 			},
 		},
-
 		{
 			Metadata: &metav1.Metadata{Name: "svc.ns1"},
 			Spec: &corev1.Service_Spec{
@@ -1162,7 +1114,6 @@ func TestEmbedded(t *testing.T) {
 	assert.True(t, svc.Metadata.IsSystem)
 	assert.Equal(t, "apiserver", svc.Status.ManagedService.Type)
 	assert.True(t, pbutils.IsEqual(svc.Status.ManagedService, req.Status.ManagedService))
-	// assert.Equal(t, "true", svc.Metadata.SpecLabels["enable-public"])
 }
 
 func TestServiceDynamicConfig(t *testing.T) {
@@ -1377,7 +1328,6 @@ func TestServiceDynamicConfig(t *testing.T) {
 		_, err = srv.CreateService(ctx, req)
 		assert.Nil(t, err, "%+v", err)
 	}
-
 }
 
 func TestServiceDirectResponse(t *testing.T) {
@@ -1593,7 +1543,6 @@ func TestMergedServiceConfig(t *testing.T) {
 	}
 
 	{
-		// Test with a dynamic config parent
 		req := &corev1.Service{
 			Metadata: &metav1.Metadata{
 				Name: fmt.Sprintf("%s.%s", utilrand.GetRandomStringCanonical(8), ns.Metadata.Name),

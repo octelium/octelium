@@ -1046,6 +1046,28 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			}
 		}
 
+		if cfg.GetHttp().Retry != nil {
+			retry := cfg.GetHttp().Retry
+			if retry.MaxRetries > 100 {
+				return grpcutils.InvalidArg("Too many maxRetries: %d", retry.MaxRetries)
+			}
+			for _, d := range []*metav1.Duration{retry.InitialInterval, retry.MaxInterval, retry.MaxElapsedTime} {
+				if d != nil {
+					if err := apivalidation.ValidateDuration(d); err != nil {
+						return err
+					}
+				}
+			}
+			if len(retry.StatusCodes) > 64 {
+				return grpcutils.InvalidArg("Too many retry statusCodes")
+			}
+			for _, code := range retry.StatusCodes {
+				if err := apivalidation.ValidateHTTPStatusCode(int64(code)); err != nil {
+					return err
+				}
+			}
+		}
+
 		if cfg.GetHttp().Response != nil {
 			resp := cfg.GetHttp().Response
 			switch resp.Type.(type) {
@@ -1473,6 +1495,13 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			if err := apivalidation.ValidateGenASCII(mysql.Database); err != nil {
 				return err
 			}
+		}
+	}
+
+	if spec.Deployment != nil {
+		if spec.Deployment.Replicas > 100 {
+			return grpcutils.InvalidArg("Too many replicas: %d", spec.Deployment.Replicas)
+
 		}
 	}
 
