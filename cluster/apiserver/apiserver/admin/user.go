@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/gosimple/slug"
@@ -35,6 +36,14 @@ import (
 	"github.com/octelium/octelium/pkg/common/rgx"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+)
+
+const (
+	userMaxSessionsPerUser = 10000
+	userMaxIdentities      = 100
+	userMaxEmailLen        = 150
+	userMaxIdentifierLen   = 256
+	userMaxInfoLen         = 256
 )
 
 func (s *Server) CreateUser(ctx context.Context, req *corev1.User) (*corev1.User, error) {
@@ -112,9 +121,13 @@ func (s *Server) UpdateUser(ctx context.Context, req *corev1.User) (*corev1.User
 
 func (s *Server) ListUser(ctx context.Context, req *corev1.ListUserOptions) (*corev1.UserList, error) {
 
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+
 	itemList, err := s.octeliumC.CoreC().ListUser(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return itemList, nil
@@ -146,7 +159,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *metav1.DeleteOptions) (*me
 
 	_, err = s.octeliumC.CoreC().DeleteUser(ctx, apivalidation.ObjectToRDeleteOptions(usr))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return &metav1.OperationResult{}, nil
@@ -287,8 +300,12 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 		return err
 	}
 
-	if itm.Spec.Type == corev1.User_Spec_TYPE_UNKNOWN {
+	switch itm.Spec.Type {
+	case corev1.User_Spec_HUMAN, corev1.User_Spec_WORKLOAD:
+	case corev1.User_Spec_TYPE_UNKNOWN:
 		return grpcutils.InvalidArg("You must set the User type (i.e. either `HUMAN` or `WORKLOAD`)")
+	default:
+		return grpcutils.InvalidArg("Invalid User type")
 	}
 
 	if itm.Spec.Email != "" {
@@ -305,13 +322,29 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 		if !govalidator.IsLowerCase(itm.Spec.Email) {
 			return grpcutils.InvalidArg("Email must be lowercase: %s", itm.Spec.Email)
 		}
-		if len(itm.Spec.Email) > 150 {
+		if len(itm.Spec.Email) > userMaxEmailLen {
 			return grpcutils.InvalidArg("Email is too long: %s", itm.Spec.Email)
 		}
 	}
 
+	if itm.Spec.Info != nil {
+		info := itm.Spec.Info
+		infoFields := []string{
+			info.Locale, info.Phone, info.FirstName, info.MiddleName,
+			info.LastName, info.Website, info.Country,
+		}
+		for _, v := range infoFields {
+			if len(v) > userMaxInfoLen {
+				return grpcutils.InvalidArg("User info field is too long")
+			}
+			if !utf8.ValidString(v) {
+				return grpcutils.InvalidArg("User info field must be valid UTF-8")
+			}
+		}
+	}
+
 	if itm.Spec.Authentication != nil {
-		if len(itm.Spec.Authentication.Identities) > 100 {
+		if len(itm.Spec.Authentication.Identities) > userMaxIdentities {
 			return grpcutils.InvalidArg("Too many identities")
 		}
 
@@ -323,6 +356,22 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 			if acc.IdentityProvider == "" {
 				return grpcutils.InvalidArg("Empty Identity Provider")
 			}
+
+			if len(acc.Identifier) > userMaxIdentifierLen {
+				return grpcutils.InvalidArg("Identifier is too long")
+			}
+
+			if len(acc.IdentityProvider) > userMaxIdentifierLen {
+				return grpcutils.InvalidArg("Identity Provider is too long")
+			}
+		}
+
+		switch itm.Spec.Authentication.AuthenticatorDefaultState {
+		case corev1.Authenticator_Spec_STATE_UNKNOWN,
+			corev1.Authenticator_Spec_ACTIVE,
+			corev1.Authenticator_Spec_PENDING:
+		default:
+			return grpcutils.InvalidArg("Invalid authenticatorDefaultState")
 		}
 	}
 
@@ -349,8 +398,16 @@ func (s *Server) validateUser(ctx context.Context, itm *corev1.User) error {
 			return err
 		}
 
-		if itm.Spec.Session.MaxPerUser > 10000 {
+		if itm.Spec.Session.MaxPerUser > userMaxSessionsPerUser {
 			return grpcutils.InvalidArg("MaxPerUser is too high: %d", itm.Spec.Session.MaxPerUser)
+		}
+
+		switch itm.Spec.Session.DefaultState {
+		case corev1.Session_Spec_STATE_UNKNOWN,
+			corev1.Session_Spec_ACTIVE,
+			corev1.Session_Spec_PENDING:
+		default:
+			return grpcutils.InvalidArg("Invalid Session defaultState")
 		}
 	}
 

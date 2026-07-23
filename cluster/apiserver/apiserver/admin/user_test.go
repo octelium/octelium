@@ -34,8 +34,6 @@ import (
 )
 
 func TestCreateUser(t *testing.T) {
-	t.Log("Testing CreateUser")
-
 	ctx := context.Background()
 
 	tst, err := tests.Initialize(nil)
@@ -55,20 +53,13 @@ func TestCreateUser(t *testing.T) {
 	}
 
 	for _, usr := range validUsers {
-
 		outUsr, err := srv.CreateUser(ctx, usr)
-		if err != nil {
-			t.Fatalf("Could not create valid user: %+v", err)
-		}
-
+		assert.Nil(t, err, "%+v", err)
 		assert.True(t, pbutils.IsEqual(usr.Spec, outUsr.Spec))
 	}
-
 }
 
 func TestListUser(t *testing.T) {
-	t.Log("Testing CreateUser")
-
 	ctx := context.Background()
 
 	tst, err := tests.Initialize(nil)
@@ -134,24 +125,18 @@ func TestDeleteUser(t *testing.T) {
 	})
 	srv := newFakeServer(tst.C)
 
-	{
-		usr := &corev1.User{
-			Metadata: &metav1.Metadata{Name: "usr-1"},
-			Spec: &corev1.User_Spec{
-				Type: corev1.User_Spec_WORKLOAD,
-			},
-		}
-
-		_, err = srv.CreateUser(ctx, usr)
-		if err != nil {
-			t.Fatalf("Could not create user: %+v", err)
-		}
-
-		_, err = srv.DeleteUser(ctx, &metav1.DeleteOptions{Name: "usr-1"})
-		if err != nil {
-			t.Fatalf("Could not delete user: %+v", err)
-		}
+	usr := &corev1.User{
+		Metadata: &metav1.Metadata{Name: "usr-1"},
+		Spec: &corev1.User_Spec{
+			Type: corev1.User_Spec_WORKLOAD,
+		},
 	}
+
+	_, err = srv.CreateUser(ctx, usr)
+	assert.Nil(t, err, "%+v", err)
+
+	_, err = srv.DeleteUser(ctx, &metav1.DeleteOptions{Name: "usr-1"})
+	assert.Nil(t, err, "%+v", err)
 }
 
 func TestIdentity(t *testing.T) {
@@ -184,14 +169,6 @@ func TestIdentity(t *testing.T) {
 
 	cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	assert.Nil(t, err)
-
-	/*
-		cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
-			WebIdentityProviders: []string{
-				"github", "oidc1",
-			},
-		}
-	*/
 
 	sec, err := srv.octeliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
@@ -271,6 +248,7 @@ func TestIdentity(t *testing.T) {
 	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, srv, nil, nil,
 		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
 	assert.Nil(t, err)
+
 	{
 		usr1V, err := tst.C.OcteliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Uid: usr1.Metadata.Uid})
 		assert.Nil(t, err)
@@ -317,7 +295,6 @@ func TestIdentity(t *testing.T) {
 		assert.Equal(t, usr.Metadata.SpecLabels["email"], slug.Make(usr.Spec.Email))
 
 		{
-
 			usr2T, err := tstuser.NewUserWithType(tst.C.OcteliumC, srv, nil, nil,
 				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
 			assert.Nil(t, err)
