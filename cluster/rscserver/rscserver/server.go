@@ -264,7 +264,13 @@ func (s *Server) Stop() {
 		s.grpcSrv.Stop()
 	}
 
-	s.redisC.Close()
+	if s.redisC != nil {
+		s.redisC.Close()
+	}
+
+	if s.db != nil {
+		s.db.Close()
+	}
 }
 
 func (s *Server) getClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {
