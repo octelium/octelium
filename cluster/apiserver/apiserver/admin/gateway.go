@@ -25,10 +25,15 @@ import (
 	apisrvcommon "github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 )
 
 func (s *Server) ListGateway(ctx context.Context, req *corev1.ListGatewayOptions) (*corev1.GatewayList, error) {
+
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
 
 	var listOpts []*rmetav1.ListOptions_Filter
 
@@ -39,7 +44,7 @@ func (s *Server) ListGateway(ctx context.Context, req *corev1.ListGatewayOptions
 
 		rgn, err := s.octeliumC.CoreC().GetRegion(ctx, apivalidation.ObjectReferenceToRGetOptions(req.RegionRef))
 		if err != nil {
-			return nil, err
+			return nil, serr.K8sNotFoundOrInternalWithErr(err)
 		}
 
 		listOpts = append(listOpts, urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid))
@@ -47,7 +52,7 @@ func (s *Server) ListGateway(ctx context.Context, req *corev1.ListGatewayOptions
 
 	lst, err := s.octeliumC.CoreC().ListGateway(ctx, urscsrv.GetPublicListOptions(req, listOpts...))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return lst, nil
