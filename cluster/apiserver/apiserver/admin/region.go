@@ -24,14 +24,19 @@ import (
 	apisrvcommon "github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 )
 
 func (s *Server) ListRegion(ctx context.Context, req *corev1.ListRegionOptions) (*corev1.RegionList, error) {
 
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+
 	vRegions, err := s.octeliumC.CoreC().ListRegion(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return vRegions, nil
