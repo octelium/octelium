@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -342,5 +343,257 @@ func TestPolicyConditionDepth(t *testing.T) {
 			utilrand.GetRandomStringCanonical(8), genNestedAllCondition(maxConditionDepth*4)))
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+}
+
+func newCondMatch(arg string) *corev1.Condition {
+	return &corev1.Condition{
+		Type: &corev1.Condition_Match{Match: arg},
+	}
+}
+
+func newCondList(n int) []*corev1.Condition {
+	var ret []*corev1.Condition
+	for i := 0; i < n; i++ {
+		ret = append(ret, &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{MatchAny: true},
+		})
+	}
+	return ret
+}
+
+func TestConditionTypes(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	invalids := []*corev1.Condition{
+		nil,
+		{},
+		newCondMatch(""),
+		newCondMatch("   "),
+		newCondMatch("!!!!"),
+		newCondMatch(strings.Repeat("a", maxCELExpressionLen+1)),
+		{
+			Type: &corev1.Condition_Not{Not: ""},
+		},
+		{
+			Type: &corev1.Condition_Not{Not: "!!!!"},
+		},
+		{
+			Type: &corev1.Condition_All_{
+				All: &corev1.Condition_All{},
+			},
+		},
+		{
+			Type: &corev1.Condition_Any_{
+				Any: &corev1.Condition_Any{},
+			},
+		},
+		{
+			Type: &corev1.Condition_None_{
+				None: &corev1.Condition_None{},
+			},
+		},
+		{
+			Type: &corev1.Condition_All_{
+				All: &corev1.Condition_All{
+					Of: newCondList(maxConditionChildren + 1),
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Any_{
+				Any: &corev1.Condition_Any{
+					Of: newCondList(maxConditionChildren + 1),
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_None_{
+				None: &corev1.Condition_None{
+					Of: newCondList(maxConditionChildren + 1),
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_All_{
+				All: &corev1.Condition_All{
+					Of: []*corev1.Condition{nil},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Any_{
+				Any: &corev1.Condition_Any{
+					Of: []*corev1.Condition{
+						newCondMatch("true"),
+						newCondMatch("!!!!"),
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{},
+			},
+		},
+		{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{Inline: ""},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{Inline: "   "},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{Inline: "!!!!"},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{
+						Inline: strings.Repeat("a", maxOPAScriptLen+1),
+					},
+				},
+			},
+		},
+	}
+
+	for _, cond := range invalids {
+		err := srv.validateCondition(ctx, cond)
+		assert.NotNil(t, err, "%+v", cond)
+	}
+
+	valids := []*corev1.Condition{
+		{
+			Type: &corev1.Condition_MatchAny{MatchAny: true},
+		},
+		newCondMatch("true"),
+		{
+			Type: &corev1.Condition_Not{Not: "true"},
+		},
+		{
+			Type: &corev1.Condition_All_{
+				All: &corev1.Condition_All{
+					Of: []*corev1.Condition{
+						newCondMatch("true"),
+						{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_Any_{
+				Any: &corev1.Condition_Any{
+					Of: newCondList(maxConditionChildren),
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_None_{
+				None: &corev1.Condition_None{
+					Of: []*corev1.Condition{
+						newCondMatch("true"),
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Condition_All_{
+				All: &corev1.Condition_All{
+					Of: []*corev1.Condition{
+						{
+							Type: &corev1.Condition_Any_{
+								Any: &corev1.Condition_Any{
+									Of: []*corev1.Condition{
+										{
+											Type: &corev1.Condition_None_{
+												None: &corev1.Condition_None{
+													Of: []*corev1.Condition{
+														newCondMatch("true"),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, cond := range valids {
+		err := srv.validateCondition(ctx, cond)
+		assert.Nil(t, err, "%+v", err)
+	}
+}
+
+func TestConditionMixedNestingDepth(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	wrap := func(depth int) *corev1.Condition {
+		c := newCondMatch("true")
+		for i := 0; i < depth; i++ {
+			switch i % 3 {
+			case 0:
+				c = &corev1.Condition{
+					Type: &corev1.Condition_All_{
+						All: &corev1.Condition_All{Of: []*corev1.Condition{c}},
+					},
+				}
+			case 1:
+				c = &corev1.Condition{
+					Type: &corev1.Condition_Any_{
+						Any: &corev1.Condition_Any{Of: []*corev1.Condition{c}},
+					},
+				}
+			default:
+				c = &corev1.Condition{
+					Type: &corev1.Condition_None_{
+						None: &corev1.Condition_None{Of: []*corev1.Condition{c}},
+					},
+				}
+			}
+		}
+		return c
+	}
+
+	{
+		err := srv.validateCondition(ctx, wrap(maxConditionDepth))
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		err := srv.validateCondition(ctx, wrap(maxConditionDepth+1))
+		assert.NotNil(t, err)
+	}
+
+	{
+		err := srv.validateCondition(ctx, wrap(maxConditionDepth*8))
+		assert.NotNil(t, err)
 	}
 }
