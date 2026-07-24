@@ -23,12 +23,25 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 )
 
+const (
+	maxGenStrLen = 256
+)
+
 func checkCELExpression(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty CEL expression")
+	}
+
+	if len(arg) > maxCELExpressionLen {
+		return grpcutils.InvalidArg("CEL expression is too long")
+	}
+
 	engine, err := celengine.New(ctx, &celengine.Opts{})
 	if err != nil {
 		return grpcutils.InternalWithErr(err)
@@ -41,6 +54,14 @@ func checkCELExpression(ctx context.Context, arg string) error {
 }
 
 func checkOPAMapAny(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty OPA script")
+	}
+
+	if len(arg) > maxOPAScriptLen {
+		return grpcutils.InvalidArg("OPA script is too large")
+	}
+
 	engine, err := celengine.New(ctx, &celengine.Opts{})
 	if err != nil {
 		return grpcutils.InternalWithErr(err)
@@ -54,6 +75,14 @@ func checkOPAMapAny(ctx context.Context, arg string) error {
 }
 
 func checkOPACondition(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty OPA script")
+	}
+
+	if len(arg) > maxOPAScriptLen {
+		return grpcutils.InvalidArg("OPA script is too large")
+	}
+
 	engine, err := celengine.New(ctx, &celengine.Opts{})
 	if err != nil {
 		return grpcutils.InternalWithErr(err)
@@ -68,7 +97,18 @@ func checkOPACondition(ctx context.Context, arg string) error {
 
 func getNamespace(name string) (string, error) {
 
+	if name == "" {
+		return "", serr.InvalidArg("Empty Service name")
+	}
+
 	args := strings.Split(name, ".")
+
+	for _, arg := range args {
+		if arg == "" {
+			return "", serr.InvalidArg("Invalid Namespace name")
+		}
+	}
+
 	if len(args) == 1 {
 		return "default", nil
 	}
@@ -86,8 +126,9 @@ func (s *Server) validateSecretOwner(ctx context.Context, secOwner secretOwner) 
 	if secOwner == nil {
 		return grpcutils.InvalidArg("You must set fromSecret")
 	}
-	if secOwner.GetFromSecret() == "" {
-		return grpcutils.InvalidArg("Empty Secret name")
+
+	if err := apivalidation.ValidateName(secOwner.GetFromSecret(), 0, 0); err != nil {
+		return grpcutils.InvalidArg("Invalid Secret name")
 	}
 
 	_, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: secOwner.GetFromSecret()})
@@ -110,7 +151,7 @@ func (s *Server) validateGenStr(arg string, required bool, name string) error {
 		return nil
 	}
 
-	if len(arg) > 256 {
+	if len(arg) > maxGenStrLen {
 		return grpcutils.InvalidArg("%s is too long", name)
 	}
 	if !govalidator.IsASCII(arg) {
