@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"unicode/utf8"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -29,9 +30,15 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 )
 
+const (
+	cfgMaxDataSize    = 3 * 1024 * 1024
+	cfgMaxDataMapKeys = 256
+	cfgMaxDataMapKey  = 256
+)
+
 func (s *Server) CreateConfig(ctx context.Context, req *corev1.Config) (*corev1.Config, error) {
 	if err := s.validateConfig(ctx, req); err != nil {
-		return nil, grpcutils.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	{
@@ -63,13 +70,17 @@ func (s *Server) CreateConfig(ctx context.Context, req *corev1.Config) (*corev1.
 
 func (s *Server) ListConfig(ctx context.Context, req *corev1.ListConfigOptions) (*corev1.ConfigList, error) {
 
-	vConfigs, err := s.octeliumC.CoreC().ListConfig(ctx, urscsrv.GetPublicListOptions(req))
-	if err != nil {
-		return nil, err
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
 	}
 
-	for _, secret := range vConfigs.Items {
-		secret.Data = nil
+	vConfigs, err := s.octeliumC.CoreC().ListConfig(ctx, urscsrv.GetPublicListOptions(req))
+	if err != nil {
+		return nil, serr.InternalWithErr(err)
+	}
+
+	for _, itm := range vConfigs.Items {
+		itm.Data = nil
 	}
 
 	return vConfigs, nil
@@ -80,16 +91,16 @@ func (s *Server) DeleteConfig(ctx context.Context, req *metav1.DeleteOptions) (*
 		return nil, err
 	}
 
-	sec, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
+	itm, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
-	if err := apivalidation.CheckIsSystem(sec); err != nil {
+	if err := apivalidation.CheckIsSystem(itm); err != nil {
 		return nil, err
 	}
 
-	_, err = s.octeliumC.CoreC().DeleteConfig(ctx, apivalidation.ObjectToRDeleteOptions(sec))
+	_, err = s.octeliumC.CoreC().DeleteConfig(ctx, apivalidation.ObjectToRDeleteOptions(itm))
 	if err != nil {
 		return nil, serr.InternalWithErr(err)
 	}
@@ -118,7 +129,7 @@ func (s *Server) GetConfig(ctx context.Context, req *metav1.GetOptions) (*corev1
 
 func (s *Server) UpdateConfig(ctx context.Context, req *corev1.Config) (*corev1.Config, error) {
 	if err := s.validateConfig(ctx, req); err != nil {
-		return nil, grpcutils.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	itm, err := s.octeliumC.CoreC().GetConfig(ctx, apivalidation.ObjectToRGetOptions(req))
@@ -130,6 +141,7 @@ func (s *Server) UpdateConfig(ctx context.Context, req *corev1.Config) (*corev1.
 		return nil, err
 	}
 
+	common.MetadataUpdate(itm.Metadata, req.Metadata)
 	itm.Spec = req.Spec
 	itm.Data = req.Data
 
@@ -164,13 +176,53 @@ func (s *Server) validateConfig(_ context.Context, itm *corev1.Config) error {
 	switch itm.Data.Type.(type) {
 	case *corev1.Config_Data_Value:
 		lenVal := len(itm.Data.GetValue())
-		if lenVal == 0 || lenVal > 3*1024*1024 {
+		if lenVal == 0 || lenVal > cfgMaxDataSize {
 			return grpcutils.InvalidArg("Invalid Config size: %d", lenVal)
 		}
 	case *corev1.Config_Data_ValueBytes:
 		lenVal := len(itm.Data.GetValueBytes())
-		if lenVal == 0 || lenVal > 3*1024*1024 {
+		if lenVal == 0 || lenVal > cfgMaxDataSize {
 			return grpcutils.InvalidArg("Invalid Config size: %d", lenVal)
+		}
+	case *corev1.Config_Data_DataMap_:
+		dataMap := itm.Data.GetDataMap()
+		if dataMap == nil || len(dataMap.Map) == 0 {
+			return grpcutils.InvalidArg("Empty Config dataMap")
+		}
+
+		if len(dataMap.Map) > cfgMaxDataMapKeys {
+			return grpcutils.InvalidArg("Too many Config dataMap keys: %d", len(dataMap.Map))
+		}
+
+		totalLen := 0
+		for k, v := range dataMap.Map {
+			if k == "" {
+				return grpcutils.InvalidArg("Empty Config dataMap key")
+			}
+			if len(k) > cfgMaxDataMapKey {
+				return grpcutils.InvalidArg("Config dataMap key is too long")
+			}
+			if !utf8.ValidString(k) {
+				return grpcutils.InvalidArg("Config dataMap key must be valid UTF-8")
+			}
+			if len(v) == 0 {
+				return grpcutils.InvalidArg("Empty Config dataMap value for the key: %s", k)
+			}
+
+			totalLen = totalLen + len(k) + len(v)
+		}
+
+		if totalLen > cfgMaxDataSize {
+			return grpcutils.InvalidArg("Invalid Config size: %d", totalLen)
+		}
+	case *corev1.Config_Data_Attrs:
+		attrs := itm.Data.GetAttrs()
+		if attrs == nil || len(attrs.GetFields()) == 0 {
+			return grpcutils.InvalidArg("Empty Config attrs")
+		}
+
+		if err := apivalidation.ValidateAttrs(attrs); err != nil {
+			return err
 		}
 	default:
 		return grpcutils.InvalidArg("Invalid Config data type")
