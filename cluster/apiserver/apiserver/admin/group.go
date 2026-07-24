@@ -33,7 +33,7 @@ import (
 func (s *Server) CreateGroup(ctx context.Context, req *corev1.Group) (*corev1.Group, error) {
 
 	if err := s.validateGroup(ctx, req); err != nil {
-		return nil, grpcutils.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	_, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.ObjectToRGetOptions(req))
@@ -62,12 +62,12 @@ func (s *Server) CreateGroup(ctx context.Context, req *corev1.Group) (*corev1.Gr
 func (s *Server) UpdateGroup(ctx context.Context, req *corev1.Group) (*corev1.Group, error) {
 
 	if err := s.validateGroup(ctx, req); err != nil {
-		return nil, grpcutils.InvalidArgWithErr(err)
+		return nil, err
 	}
 
 	item, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.ObjectToRGetOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(item); err != nil {
@@ -87,9 +87,13 @@ func (s *Server) UpdateGroup(ctx context.Context, req *corev1.Group) (*corev1.Gr
 
 func (s *Server) ListGroup(ctx context.Context, req *corev1.ListGroupOptions) (*corev1.GroupList, error) {
 
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+
 	itemList, err := s.octeliumC.CoreC().ListGroup(ctx, urscsrv.GetPublicListOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.InternalWithErr(err)
 	}
 
 	return itemList, nil
@@ -102,7 +106,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req *metav1.DeleteOptions) (*m
 
 	g, err := s.octeliumC.CoreC().GetGroup(ctx, apivalidation.DeleteOptionsToRGetOptions(req))
 	if err != nil {
-		return nil, err
+		return nil, serr.K8sNotFoundOrInternalWithErr(err)
 	}
 
 	if err := apivalidation.CheckIsSystem(g); err != nil {
