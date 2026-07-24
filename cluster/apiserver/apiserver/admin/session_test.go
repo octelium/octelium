@@ -224,3 +224,215 @@ func TestSession(t *testing.T) {
 		assert.NotNil(t, err)
 	}
 }
+
+func newSessionItem(ctx context.Context, t *testing.T, srv *Server, usr *corev1.User) *corev1.Session {
+	sess, err := srv.octeliumC.CoreC().CreateSession(ctx, &corev1.Session{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Session_Spec{
+			State:     corev1.Session_Spec_ACTIVE,
+			ExpiresAt: pbutils.Timestamp(time.Now().Add(time.Hour)),
+		},
+		Status: &corev1.Session_Status{
+			UserRef: umetav1.GetObjectReference(usr),
+			Type:    corev1.Session_Status_CLIENT,
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+	return sess
+}
+
+func TestSessionSpecStates(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	usr, err := srv.CreateUser(ctx, tests.GenUser(nil))
+	assert.Nil(t, err, "%+v", err)
+
+	states := []corev1.Session_Spec_State{
+		corev1.Session_Spec_ACTIVE,
+		corev1.Session_Spec_PENDING,
+		corev1.Session_Spec_REJECTED,
+	}
+
+	for _, state := range states {
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.State = state
+
+		out, err := srv.UpdateSession(ctx, sess)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, state, out.Spec.State)
+
+		ret, err := srv.GetSession(ctx, &metav1.GetOptions{Uid: sess.Metadata.Uid})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, state, ret.Spec.State)
+	}
+}
+
+func TestSessionSpecAuthorization(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	usr, err := srv.CreateUser(ctx, tests.GenUser(nil))
+	assert.Nil(t, err, "%+v", err)
+
+	policy, err := srv.CreatePolicy(ctx, &corev1.Policy{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Policy_Spec{
+			Rules: []*corev1.Policy_Spec_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{MatchAny: true},
+					},
+					Effect: corev1.Policy_Spec_Rule_ALLOW,
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.Authorization = &corev1.Session_Spec_Authorization{
+			Policies: []string{utilrand.GetRandomStringCanonical(8)},
+		}
+		_, err = srv.UpdateSession(ctx, sess)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.Authorization = &corev1.Session_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Name: utilrand.GetRandomStringCanonical(8),
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{Match: "!!!!"},
+								},
+								Effect: corev1.Policy_Spec_Rule_ALLOW,
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err = srv.UpdateSession(ctx, sess)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.Authorization = &corev1.Session_Spec_Authorization{
+			Policies: []string{policy.Metadata.Name},
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Name: utilrand.GetRandomStringCanonical(8),
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{MatchAny: true},
+								},
+								Effect: corev1.Policy_Spec_Rule_DENY,
+							},
+						},
+					},
+				},
+			},
+		}
+
+		out, err := srv.UpdateSession(ctx, sess)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(out.Spec.Authorization.Policies))
+		assert.Equal(t, 1, len(out.Spec.Authorization.InlinePolicies))
+	}
+}
+
+func TestSessionSpecExpiry(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	usr, err := srv.CreateUser(ctx, tests.GenUser(nil))
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.ExpiresAt = nil
+		_, err = srv.UpdateSession(ctx, sess)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		sess.Spec.ExpiresAt = pbutils.Timestamp(time.Now().Add(-time.Minute))
+		_, err = srv.UpdateSession(ctx, sess)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+
+	{
+		sess := newSessionItem(ctx, t, srv, usr)
+		expiresAt := time.Now().Add(time.Hour * 48)
+		sess.Spec.ExpiresAt = pbutils.Timestamp(expiresAt)
+
+		out, err := srv.UpdateSession(ctx, sess)
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, out.Spec.ExpiresAt.AsTime().After(time.Now().Add(time.Hour*47)))
+	}
+}
+
+func TestSessionListFilters(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	usr, err := srv.CreateUser(ctx, tests.GenUser(nil))
+	assert.Nil(t, err, "%+v", err)
+
+	for i := 0; i < 3; i++ {
+		newSessionItem(ctx, t, srv, usr)
+	}
+
+	{
+		itemList, err := srv.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(usr),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 3, len(itemList.Items))
+	}
+
+	{
+		_, err = srv.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: &metav1.ObjectReference{
+				Uid: utilrand.GetRandomStringCanonical(8),
+			},
+		})
+		assert.NotNil(t, err)
+	}
+}
