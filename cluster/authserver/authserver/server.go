@@ -19,13 +19,14 @@ package authserver
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
-	"github.com/go-webauthn/webauthn/metadata/providers/cached"
+	"github.com/go-webauthn/webauthn/metadata/providers/memory"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -49,7 +50,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -204,13 +204,10 @@ func initServer(ctx context.Context,
 		return nil, err
 	}
 
-	ret.mdsProvider, err = cached.New(
-		cached.WithPath(fmt.Sprintf("/tmp/mds-%s", utilrand.GetRandomStringCanonical(8))),
-		cached.WithForceUpdate(true),
-		cached.WithUpdate(true),
-	)
+	ret.mdsProvider, err = newInMemoryMDSProvider(ctx)
 	if err != nil {
-		zap.L().Warn("Could not create MDS provider", zap.Error(err))
+		zap.L().Warn("Could not create in-memory MDS provider", zap.Error(err))
+		ret.mdsProvider = nil
 	}
 
 	ret.geoipCtl, err = geoipctl.New(ctx, &geoipctl.Opts{
@@ -614,4 +611,56 @@ func GetAuthGRPCServer(ctx context.Context, octeliumC octeliumc.ClientInterface)
 		s: s,
 	}
 	return authSrv, nil
+}
+
+func newInMemoryMDSProvider(ctx context.Context) (metadata.Provider, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadata.ProductionMDSURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, errors.Errorf("could not fetch FIDO MDS metadata: unexpected status code: %d", resp.StatusCode)
+	}
+
+	return newInMemoryMDSProviderFromReader(resp.Body)
+}
+
+func newInMemoryMDSProviderFromReader(r io.Reader) (metadata.Provider, error) {
+	decoder, err := metadata.NewDecoder(metadata.WithIgnoreEntryParsingErrors())
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := decoder.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	mds, err := decoder.Parse(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return memory.New(
+		memory.WithMetadata(mds.ToMap()),
+		memory.WithValidateEntry(true),
+		memory.WithValidateEntryPermitZeroAAGUID(false),
+		memory.WithValidateTrustAnchor(true),
+		memory.WithValidateStatus(true),
+	)
 }
