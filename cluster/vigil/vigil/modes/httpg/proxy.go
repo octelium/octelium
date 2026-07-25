@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"slices"
 	"strings"
 	"time"
 
@@ -123,11 +124,11 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		BufferPool: newBufferPool(),
 		Transport:  roundTripper,
 		ErrorLog:   s.reverseProxyErrLogger,
-		Director: func(outReq *http.Request) {
-			forwardedScheme := outReq.URL.Scheme
-			if svc.Spec.IsPublic {
-				forwardedScheme = "https"
-			}
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			inReq := pr.In
+			outReq := pr.Out
+
+			forwardedScheme := getForwardedScheme(inReq, svc)
 
 			switch upstream.URL.Scheme {
 			case "https", "http":
@@ -139,8 +140,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 			case "wss":
 				outReq.URL.Scheme = "https"
 			default:
-				if cfg != nil && (cfg.ClientCertificate != nil ||
-					(cfg.Tls != nil && cfg.Tls.ClientCertificate != nil)) {
+				if cfg != nil &&
+					(cfg.ClientCertificate != nil ||
+						(cfg.Tls != nil && cfg.Tls.ClientCertificate != nil)) {
 					outReq.URL.Scheme = "https"
 				} else {
 					outReq.URL.Scheme = "http"
@@ -149,21 +151,29 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 			if httpCfg != nil && httpCfg.Header != nil && httpCfg.Header.Host != nil {
 				hostCfg := httpCfg.Header.Host
-				if hostCfg.GetPreserve() {
+
+				switch {
+				case hostCfg.GetPreserve():
 					outReq.Host = vutils.GetServicePublicFQDN(svc, s.domain)
-				} else if val := hostCfg.GetValue(); val != "" {
-					outReq.Host = val
-				} else if val := hostCfg.GetEval(); val != "" {
-					res, err := s.celEngine.EvalPolicyString(ctx, val, reqCtx.ReqCtxMap)
+
+				case hostCfg.GetValue() != "":
+					outReq.Host = hostCfg.GetValue()
+
+				case hostCfg.GetEval() != "":
+					res, err := s.celEngine.EvalPolicyString(
+						inReq.Context(),
+						hostCfg.GetEval(),
+						reqCtx.ReqCtxMap,
+					)
 					if err == nil && res != "" {
 						outReq.Host = res
 					} else {
 						outReq.Host = upstream.URL.Host
 					}
-				} else {
+
+				default:
 					outReq.Host = upstream.URL.Host
 				}
-
 			} else {
 				outReq.Host = upstream.URL.Host
 			}
@@ -181,7 +191,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Header.Set("User-Agent", "octelium")
 			}
 
-			fixWebSocketHeaders(outReq)
+			if isWebSocketUpgrade(inReq) {
+				fixWebSocketHeaderCasing(outReq)
+			}
 
 			if isHTTP2RequestUpstream(outReq, svc) {
 				outReq.Proto = "HTTP/2"
@@ -193,79 +205,59 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.ProtoMinor = 1
 			}
 
-			if !isManagedSvc {
+			applyForwardedHeaders(
+				pr,
+				svc,
+				httpCfg,
+				isManagedSvc,
+				forwardedScheme,
+				s.domain,
+				s.forwardedObfuscatedID,
+			)
 
-				if httpCfg != nil && httpCfg.Header != nil {
-					switch httpCfg.Header.ForwardedMode {
-					case corev1.Service_Spec_Config_HTTP_Header_DROP,
-						corev1.Service_Spec_Config_HTTP_Header_UNSET:
-						removeAllForwardedHeaders(outReq)
-					case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
-					case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
-						forwardedHost := vutils.GetServicePublicFQDN(svc, s.domain)
-						forwardedVal := fmt.Sprintf("for=_octelium-%s;by=%s;proto=%s;host=%s",
-							utilrand.GetRandomStringLowercase(8),
-							s.forwardedObfuscatedID,
-							forwardedScheme,
-							forwardedHost)
-						outReq.Header.Set("Forwarded", forwardedVal)
-
-						outReq.Header.Set("X-Forwarded-Proto", forwardedScheme)
-						outReq.Header.Set("X-Forwarded-Host", forwardedHost)
-						outReq.Header.Set("X-Forwarded-For", "10.0.0.1")
-
-					default:
-						removeAllForwardedHeaders(outReq)
-					}
-
-				} else {
-					removeAllForwardedHeaders(outReq)
-				}
-			}
-
-			/*
-				if outReq.Header.Get("Origin") != "" {
-					outReq.Header.Set("Origin", upstream.URL.String())
-				}
-			*/
-
-			if httpCfg != nil && httpCfg.GetAuth() != nil &&
+			if httpCfg != nil &&
+				httpCfg.GetAuth() != nil &&
 				httpCfg.GetAuth().GetSigv4() != nil {
 
 				sigv4Opts := httpCfg.GetAuth().GetSigv4()
-				secret, err := s.secretMan.GetByName(ctx, sigv4Opts.GetSecretAccessKey().GetFromSecret())
-				if err == nil {
-					signer := sigv4.NewSigner()
 
-					payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(reqCtx.Body)))
-					outReq.Header.Set("X-Amz-Content-Sha256", payloadHash)
-
-					if err := signer.SignHTTP(ctx,
-						aws.Credentials{
-							AccessKeyID:     sigv4Opts.AccessKeyID,
-							SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
-						},
-						outReq,
-						payloadHash,
-						sigv4Opts.Service, sigv4Opts.Region,
-						time.Now(),
-					); err != nil {
-						zap.L().Warn("Could not signHTTP for sigv4", zap.Error(err))
-						return
-					}
-				} else {
+				secret, err := s.secretMan.GetByName(inReq.Context(),
+					sigv4Opts.GetSecretAccessKey().GetFromSecret())
+				if err != nil {
 					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
+					return
 				}
 
+				signer := sigv4.NewSigner()
+
+				payloadHash := fmt.Sprintf(
+					"%x",
+					sha256.Sum256([]byte(reqCtx.Body)),
+				)
+				outReq.Header.Set(
+					"X-Amz-Content-Sha256",
+					payloadHash,
+				)
+
+				if err := signer.SignHTTP(
+					inReq.Context(),
+					aws.Credentials{
+						AccessKeyID:     sigv4Opts.AccessKeyID,
+						SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
+					},
+					outReq,
+					payloadHash,
+					sigv4Opts.Service,
+					sigv4Opts.Region,
+					time.Now(),
+				); err != nil {
+					zap.L().Warn(
+						"Could not signHTTP for sigv4",
+						zap.Error(err),
+					)
+					return
+				}
 			}
-
-			/*
-				if ldflags.IsDev() {
-					zap.L().Debug("Outgoing req",
-						zap.Any("headers", outReq.Header),
-						zap.String("url", outReq.URL.String()))
-				}
-			*/
 		},
 
 		FlushInterval: time.Duration(100 * time.Millisecond),
@@ -309,31 +301,26 @@ func isWebSocketUpgrade(req *http.Request) bool {
 	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket")
 }
 
-func removeAllForwardedHeaders(outReq *http.Request) {
-	hdr := outReq.Header
-
-	hdr.Del("Forwarded")
-
-	hdr.Del("X-Forwarded-For")
-	hdr.Del("X-Forwarded-Host")
-	hdr.Del("X-Forwarded-Proto")
-}
-
-func fixWebSocketHeaders(outReq *http.Request) {
-	if !isWebSocketUpgrade(outReq) {
+func fixWebSocketHeaderCasing(outReq *http.Request) {
+	if outReq == nil {
 		return
 	}
 
-	outReq.Header["Sec-WebSocket-Key"] = outReq.Header["Sec-Websocket-Key"]
-	outReq.Header["Sec-WebSocket-Extensions"] = outReq.Header["Sec-Websocket-Extensions"]
-	outReq.Header["Sec-WebSocket-Accept"] = outReq.Header["Sec-Websocket-Accept"]
-	outReq.Header["Sec-WebSocket-Protocol"] = outReq.Header["Sec-Websocket-Protocol"]
-	outReq.Header["Sec-WebSocket-Version"] = outReq.Header["Sec-Websocket-Version"]
-	delete(outReq.Header, "Sec-Websocket-Key")
-	delete(outReq.Header, "Sec-Websocket-Extensions")
-	delete(outReq.Header, "Sec-Websocket-Accept")
-	delete(outReq.Header, "Sec-Websocket-Protocol")
-	delete(outReq.Header, "Sec-Websocket-Version")
+	copyCanonicalHeader := func(canonicalName string, legacyName string) {
+		values, ok := outReq.Header[legacyName]
+		if !ok {
+			return
+		}
+
+		outReq.Header[canonicalName] = slices.Clone(values)
+		delete(outReq.Header, legacyName)
+	}
+
+	copyCanonicalHeader("Sec-WebSocket-Key", "Sec-Websocket-Key")
+	copyCanonicalHeader("Sec-WebSocket-Extensions", "Sec-Websocket-Extensions")
+	copyCanonicalHeader("Sec-WebSocket-Accept", "Sec-Websocket-Accept")
+	copyCanonicalHeader("Sec-WebSocket-Protocol", "Sec-Websocket-Protocol")
+	copyCanonicalHeader("Sec-WebSocket-Version", "Sec-Websocket-Version")
 }
 
 type zapWriter struct {
@@ -343,4 +330,100 @@ type zapWriter struct {
 func (w zapWriter) Write(p []byte) (n int, err error) {
 	w.log.Warn("httputil reverseProxy err", zap.String("msg", string(p)))
 	return len(p), nil
+}
+
+var forwardedHeaderNames = []string{
+	"Forwarded",
+	"X-Forwarded-For",
+	"X-Forwarded-Host",
+	"X-Forwarded-Proto",
+	"X-Forwarded-Port",
+	"X-Forwarded-Server",
+	"X-Real-IP",
+}
+
+func getForwardedScheme(req *http.Request, svc *corev1.Service) string {
+
+	if svc != nil && svc.Spec.IsPublic {
+		return "https"
+	}
+
+	if req != nil && req.TLS != nil {
+		return "https"
+	}
+
+	return "http"
+}
+
+func applyForwardedHeaders(
+	pr *httputil.ProxyRequest,
+	svc *corev1.Service,
+	httpCfg *corev1.Service_Spec_Config_HTTP,
+	isManagedSvc bool,
+	forwardedScheme string,
+	domain string,
+	obfuscatedID string,
+) {
+	inReq := pr.In
+	outReq := pr.Out
+
+	removeAllForwardedHeaders(outReq)
+
+	if isManagedSvc {
+		copyForwardedHeaders(outReq.Header, inReq.Header)
+		return
+	}
+
+	var mode corev1.Service_Spec_Config_HTTP_Header_ForwardedMode
+	if httpCfg != nil && httpCfg.Header != nil {
+		mode = httpCfg.Header.ForwardedMode
+	}
+
+	switch mode {
+	case corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT:
+		copyForwardedHeaders(outReq.Header, inReq.Header)
+	case corev1.Service_Spec_Config_HTTP_Header_OBFUSCATE:
+		forwardedHost := vutils.GetServicePublicFQDN(svc, domain)
+
+		forwardedValue := fmt.Sprintf(
+			"for=_octelium-%s;by=%s;proto=%s;host=%s",
+			utilrand.GetRandomStringLowercase(8),
+			obfuscatedID,
+			forwardedScheme,
+			forwardedHost,
+		)
+
+		outReq.Header.Set("Forwarded", forwardedValue)
+		outReq.Header.Set("X-Forwarded-Proto", forwardedScheme)
+		outReq.Header.Set("X-Forwarded-Host", forwardedHost)
+		outReq.Header.Set("X-Forwarded-For", "10.0.0.1")
+		outReq.Header.Set("X-Real-IP", "10.0.0.1")
+
+	case corev1.Service_Spec_Config_HTTP_Header_DROP,
+		corev1.Service_Spec_Config_HTTP_Header_UNSET:
+	default:
+	}
+}
+
+func removeAllForwardedHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+
+	for _, name := range forwardedHeaderNames {
+		req.Header.Del(name)
+	}
+}
+
+func copyForwardedHeaders(dst http.Header, src http.Header) {
+	for _, name := range forwardedHeaderNames {
+		key := http.CanonicalHeaderKey(name)
+
+		values, ok := src[key]
+		if !ok {
+			continue
+		}
+
+		dst[key] = slices.Clone(values)
+	}
 }
