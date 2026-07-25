@@ -79,6 +79,7 @@ func (s *server) generateSessionTokenResponse(ctx context.Context, sess *corev1.
 			Value:    ret.RefreshToken,
 			Secure:   true,
 			HttpOnly: true,
+			Domain:   s.domain,
 			Path:     "/",
 			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Now().Add(umetav1.ToDuration(sess.Status.Authentication.RefreshTokenDuration).ToGo()),
