@@ -415,7 +415,7 @@ func checkMaxSessionsPerUser(ctx context.Context, octeliumC octeliumc.ClientInte
 		return grpcutils.InternalWithErr(err)
 	}
 
-	if uint32(len(sessList.Items)) >= maxSess {
+	if sessList.GetListResponseMeta().GetTotalCount() >= maxSess {
 		return grpcutils.Unauthorized("Session per User limit exceeded")
 	}
 
