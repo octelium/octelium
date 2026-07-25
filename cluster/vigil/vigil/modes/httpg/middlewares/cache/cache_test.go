@@ -139,7 +139,7 @@ func TestMiddleware(t *testing.T) {
 
 				assert.Equal(t, respBody, string(bb))
 				assert.Equal(t, hdr1Val, resp.Header.Get("X-Custom-1"))
-				assert.Equal(t, "", resp.Header.Get("X-Cache"))
+				assert.Equal(t, "MISS", resp.Header.Get("X-Cache"))
 			}
 
 			{
@@ -171,7 +171,7 @@ func TestMiddleware(t *testing.T) {
 
 				assert.Equal(t, respBody, string(bb))
 				assert.Equal(t, hdr1Val, resp.Header.Get("X-Custom-1"))
-				assert.Equal(t, "", resp.Header.Get("X-Cache"))
+				assert.Equal(t, "MISS", resp.Header.Get("X-Cache"))
 			}
 
 			{
