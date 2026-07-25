@@ -591,7 +591,7 @@ func (s *server) checkMaxSessionsPerUser(ctx context.Context, usr *corev1.User, 
 	if err != nil {
 		return s.errInternalErr(err)
 	}
-	if uint32(len(sessList.Items)) >= maxSess {
+	if sessList.GetListResponseMeta().GetTotalCount() >= maxSess {
 		return s.errPermissionDenied("Session per User limit exceeded")
 	}
 
