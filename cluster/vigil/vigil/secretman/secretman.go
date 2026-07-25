@@ -231,6 +231,21 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 				doAppend(cfg.GetRdp().GetAuth().GetPassword().GetFromSecret())
 			}
 		}
+
+		if cfg.GetMysql() != nil {
+			if cfg.GetMysql().GetAuth() != nil && cfg.GetMysql().GetAuth().GetPassword() != nil &&
+				cfg.GetMysql().GetAuth().GetPassword().GetFromSecret() != "" {
+				doAppend(cfg.GetMysql().GetAuth().GetPassword().GetFromSecret())
+			}
+		}
+
+		if cfg.GetSocks5() != nil {
+			if cfg.GetSocks5().GetAuth() != nil && cfg.GetSocks5().GetAuth().GetUsernamePassword() != nil &&
+				cfg.GetSocks5().GetAuth().GetUsernamePassword().GetPassword() != nil &&
+				cfg.GetSocks5().GetAuth().GetUsernamePassword().GetPassword().GetFromSecret() != "" {
+				doAppend(cfg.GetSocks5().GetAuth().GetUsernamePassword().GetPassword().GetFromSecret())
+			}
+		}
 	}
 
 	doSetCfgSecrets(svc.Spec.Config)
