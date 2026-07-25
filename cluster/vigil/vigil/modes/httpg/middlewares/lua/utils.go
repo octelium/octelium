@@ -115,6 +115,10 @@ func convertLuaTableToGoMapOrSlice(lt *lua.LTable) any {
 		isSlice = false
 	}
 
+	if maxIndex > 5000 {
+		maxIndex = 5000
+	}
+
 	if isSlice {
 		sliceValues := make([]any, maxIndex)
 		allConsecutive := true
