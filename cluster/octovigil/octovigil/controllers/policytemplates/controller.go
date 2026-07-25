@@ -46,5 +46,5 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.PolicyTrigge
 }
 
 func (c *Controller) OnDelete(ctx context.Context, p *corev1.PolicyTrigger) error {
-	return c.c.SetPolicyTrigger(p)
+	return c.c.DeletePolicyTrigger(p)
 }
