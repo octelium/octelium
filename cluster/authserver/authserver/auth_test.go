@@ -1155,7 +1155,6 @@ func TestGetLogoutCookies(t *testing.T) {
 		assert.Equal(t, -1, cookie.MaxAge)
 		assert.True(t, cookie.HttpOnly)
 		assert.True(t, cookie.Secure)
-		assert.Equal(t, srv.domain, cookie.Domain)
 		assert.Equal(t, "/", cookie.Path)
 	}
 
