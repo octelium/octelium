@@ -205,10 +205,11 @@ func TestGetDisplayName(t *testing.T) {
 	newAuthn := func(name, displayName string) *corev1.Authenticator {
 		return &corev1.Authenticator{
 			Metadata: &metav1.Metadata{
-				Name:        name,
+				Name: name,
+			},
+			Spec: &corev1.Authenticator_Spec{
 				DisplayName: displayName,
 			},
-			Spec:   &corev1.Authenticator_Spec{},
 			Status: &corev1.Authenticator_Status{},
 		}
 	}

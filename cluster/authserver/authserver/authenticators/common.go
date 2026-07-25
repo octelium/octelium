@@ -189,6 +189,13 @@ func DecryptData(ctx context.Context, octeliumC octeliumc.ClientInterface,
 }
 
 func GetDisplayName(authn *corev1.Authenticator, usr *corev1.User) string {
+	if authn.Spec.DisplayName != "" {
+		if usr != nil && usr.Spec.Email != "" {
+			return fmt.Sprintf("%s (%s)", usr.Spec.Email, authn.Spec.DisplayName)
+		}
+		return authn.Spec.DisplayName
+	}
+
 	if authn.Metadata.DisplayName != "" {
 		if usr != nil && usr.Spec.Email != "" {
 			return fmt.Sprintf("%s (%s)", usr.Spec.Email, authn.Metadata.DisplayName)
