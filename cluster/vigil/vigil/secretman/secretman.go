@@ -246,6 +246,13 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 				doAppend(cfg.GetSocks5().GetAuth().GetUsernamePassword().GetPassword().GetFromSecret())
 			}
 		}
+
+		if cfg.GetTls() != nil {
+			if cfg.GetTls().GetClientCertificate() != nil &&
+				cfg.GetTls().GetClientCertificate().GetFromSecret() != "" {
+				doAppend(cfg.GetTls().GetClientCertificate().GetFromSecret())
+			}
+		}
 	}
 
 	doSetCfgSecrets(svc.Spec.Config)
