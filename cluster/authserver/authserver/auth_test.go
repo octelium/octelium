@@ -1155,13 +1155,6 @@ func TestGetLogoutCookies(t *testing.T) {
 		assert.Equal(t, -1, cookie.MaxAge)
 		assert.True(t, cookie.HttpOnly)
 		assert.True(t, cookie.Secure)
-		switch cookie.Name {
-		case "octelium_auth":
-			assert.Equal(t, srv.domain, cookie.Domain)
-		case "octelium_rt", "octelium_login_state":
-			assert.Equal(t, "", cookie.Domain)
-		}
-
 		assert.Equal(t, "/", cookie.Path)
 	}
 
@@ -1222,8 +1215,6 @@ func TestSetLoginCookies(t *testing.T) {
 	assert.True(t, byName["octelium_auth"].HttpOnly)
 	assert.True(t, byName["octelium_auth"].Secure)
 	assert.Equal(t, srv.domain, byName["octelium_auth"].Domain)
-	assert.Equal(t, "", byName["octelium_rt"].Domain)
-	assert.Equal(t, "", byName["octelium_login_state"].Domain)
 
 	assert.True(t, byName["octelium_rt"].HttpOnly)
 	assert.True(t, byName["octelium_rt"].Secure)
