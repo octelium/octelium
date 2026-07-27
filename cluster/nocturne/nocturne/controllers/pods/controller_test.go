@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -140,4 +142,130 @@ func TestController(t *testing.T) {
 		return svcV.Status.Addresses[0].PodRef.Uid == string(pod2.UID) &&
 			svcV.Status.Addresses[0].DualStackIP.Ipv4 == "2.3.4.5"
 	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestGetPodIP(t *testing.T) {
+
+	{
+		ip, err := getPodIP([]networkStatus{
+			{
+				Name: "octelium/octelium",
+				IPs:  []string{"1.2.3.4"},
+			},
+		}, "svc")
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "1.2.3.4", ip.Ipv4)
+		assert.Equal(t, "", ip.Ipv6)
+	}
+
+	{
+		ip, err := getPodIP([]networkStatus{
+			{
+				Name: "octelium/octelium",
+				IPs:  []string{"1.2.3.4", "fd00::1"},
+			},
+		}, "svc")
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "1.2.3.4", ip.Ipv4)
+		assert.Equal(t, "fd00::1", ip.Ipv6)
+	}
+
+	{
+		ip, err := getPodIP([]networkStatus{
+			{
+				Name: "some/other",
+				IPs:  []string{"1.2.3.4"},
+			},
+		}, "svc")
+		assert.NotNil(t, err)
+		assert.Nil(t, ip)
+	}
+
+	{
+		ip, err := getPodIP([]networkStatus{
+			{
+				Name: "octelium/octelium",
+				IPs:  []string{"not-an-ip"},
+			},
+		}, "svc")
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "", ip.Ipv4)
+		assert.Equal(t, "", ip.Ipv6)
+	}
+}
+
+func TestAddressesEqualMap(t *testing.T) {
+
+	addr := func(uid, ipv4, ipv6 string) *corev1.Service_Status_Address {
+		return &corev1.Service_Status_Address{
+			DualStackIP: &metav1.DualStackIP{
+				Ipv4: ipv4,
+				Ipv6: ipv6,
+			},
+			PodRef: &metav1.ObjectReference{
+				Uid: uid,
+			},
+		}
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{addr("a", "1.1.1.1", "")}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": addr("a", "1.1.1.1", ""),
+		}
+		assert.True(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{
+			addr("a", "1.1.1.1", ""),
+			addr("b", "2.2.2.2", ""),
+		}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": addr("a", "1.1.1.1", ""),
+		}
+		assert.False(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{addr("a", "1.1.1.1", "")}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": addr("a", "9.9.9.9", ""),
+		}
+		assert.False(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{addr("a", "1.1.1.1", "")}
+		desired := map[string]*corev1.Service_Status_Address{
+			"b": addr("b", "1.1.1.1", ""),
+		}
+		assert.False(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{
+			{
+				DualStackIP: &metav1.DualStackIP{Ipv4: "1.1.1.1"},
+			},
+		}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": addr("a", "1.1.1.1", ""),
+		}
+		assert.False(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{
+			{
+				PodRef: &metav1.ObjectReference{Uid: "a"},
+			},
+		}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": {
+				PodRef: &metav1.ObjectReference{Uid: "a"},
+			},
+		}
+		assert.True(t, addressesEqualMap(current, desired))
+	}
 }
