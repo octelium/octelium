@@ -23,7 +23,9 @@ import (
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -171,5 +173,63 @@ func TestController(t *testing.T) {
 			assert.Equal(t, string(k8sSec.Data["tls.key"]), ucorev1.ToSecret(sec).GetValueStr())
 			assert.Equal(t, string(k8sSec.Data["tls.key"]), ucorev1.ToSecret(sec).GetValueStr())
 		}
+	}
+}
+
+func TestSetCertRouting(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	{
+		_, _ = fakeC.OcteliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{
+			Name: vutils.ClusterCertSecretName,
+		})
+	}
+
+	assertNoClusterCert := func() {
+		_, err := fakeC.OcteliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+			Name: vutils.ClusterCertSecretName,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err))
+	}
+
+	genK8sSecret := func(name, namespace string) *k8scorev1.Secret {
+		return &k8scorev1.Secret{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{
+				"tls.crt": utilrand.GetRandomBytesMust(200),
+				"tls.key": utilrand.GetRandomBytesMust(200),
+			},
+		}
+	}
+
+	{
+		err := setCert(ctx, fakeC.OcteliumC, genK8sSecret("cert-cluster", "not-octelium"))
+		assert.Nil(t, err, "%+v", err)
+		assertNoClusterCert()
+	}
+
+	{
+		err := setCert(ctx, fakeC.OcteliumC,
+			genK8sSecret(utilrand.GetRandomStringCanonical(8), vutils.K8sNS))
+		assert.Nil(t, err, "%+v", err)
+		assertNoClusterCert()
+	}
+
+	{
+		err := setCert(ctx, fakeC.OcteliumC, genK8sSecret("cert-ns-", vutils.K8sNS))
+		assert.Nil(t, err, "%+v", err)
+		assertNoClusterCert()
 	}
 }
