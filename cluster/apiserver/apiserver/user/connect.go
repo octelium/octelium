@@ -499,7 +499,7 @@ func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.
 		maxLen := 100
 
 		if len(sess.Status.LastConnections) >= maxLen {
-			sess.Status.LastConnections = sess.Status.LastConnections[:maxLen-2]
+			sess.Status.LastConnections = sess.Status.LastConnections[:maxLen-1]
 		}
 
 		sess.Status.LastConnections = append([]*corev1.Session_Status_LastConnection{
