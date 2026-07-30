@@ -17,7 +17,6 @@ package l3mode
 import (
 	"net"
 
-	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"go.uber.org/zap"
 )
@@ -56,27 +55,28 @@ func isSupported(isV6 bool) (bool, error) {
 	}
 
 	for _, i := range ifaces {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
 		addrs, err := i.Addrs()
 		if err != nil {
-			return false, err
+			continue
 		}
 		for _, addr := range addrs {
-			mip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				return false, err
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
 			}
-
-			if isV6 {
-				if govalidator.IsIPv6(mip.String()) {
-					return true, nil
-				}
-			} else {
-				if govalidator.IsIPv4(mip.String()) {
-					return true, nil
-				}
+			ip := ipNet.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+				ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				continue
 			}
-
+			if isV6 == (ip.To4() == nil) {
+				return true, nil
+			}
 		}
 	}
+
 	return false, nil
 }
