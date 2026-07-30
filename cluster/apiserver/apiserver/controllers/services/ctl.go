@@ -31,8 +31,6 @@ type Controller struct {
 	ctlI      CtlI
 }
 
-const ns = "octelium"
-
 type CtlI interface {
 	BroadcastMessage(msg *userv1.ConnectResponse) error
 	SendMessage(msg *userv1.ConnectResponse, sessUID string) error

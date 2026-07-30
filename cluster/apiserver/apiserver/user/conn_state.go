@@ -149,7 +149,7 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 		})
 	} else {
 		zap.L().Warn("Could not do GetCAPublicKey", zap.Error(err))
-		return nil, serr.InternalWithErr(err)
+		// return nil, serr.InternalWithErr(err)
 	}
 
 	return &userv1.ConnectResponse{

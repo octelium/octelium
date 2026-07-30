@@ -146,7 +146,7 @@ func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
 		msg.CreatedAt = pbutils.Now()
 	}
 
-	zap.L().Debug("Broadcasting message", zap.Any("msg", msg))
+	// zap.L().Debug("Broadcasting message", zap.Any("msg", msg))
 
 	s.RLock()
 	conns := make([]*connectedSession, 0, len(s.connectedSessMap))
@@ -178,7 +178,7 @@ func (s *connServer) SendMessage(msg *userv1.ConnectResponse, sessUID string) er
 		msg.CreatedAt = pbutils.Now()
 	}
 
-	zap.L().Debug("Sending unicast msg", zap.Any("msg", msg), zap.String("sessUID", sessUID))
+	// zap.L().Debug("Sending unicast msg", zap.Any("msg", msg), zap.String("sessUID", sessUID))
 
 	if !conn.enqueue(msg) {
 		zap.L().Warn("Session send queue is full. Dropping msg",
