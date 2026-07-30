@@ -197,18 +197,18 @@ func runDetached(cmd *cobra.Command, domain string) error {
 	args := []string{"connect", fmt.Sprintf("--domain=%s", domain)}
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-
-		if f.Value.Type() == "bool" && f.Value.String() == "false" {
-			return
-		}
-		if f.Value.Type() == "string" && f.Value.String() == "" {
-			return
-		}
-		if f.Value.Type() == "stringSlice" && f.Value.String() == "[]" {
-			return
-		}
 		switch f.Name {
-		case "detach", "homedir", "domain":
+		case "detach", "homedir", "domain", "auth-token", "assertion":
+			return
+		}
+		if !f.Changed {
+			return
+		}
+
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			for _, v := range sv.GetSlice() {
+				args = append(args, fmt.Sprintf("--%s=%s", f.Name, v))
+			}
 			return
 		}
 
