@@ -17,12 +17,14 @@
 package oscope
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -947,4 +949,391 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		assert.Equal(t, tstV.isAuthorized, IsAuthorizedByScopes(req), "req: %+v", req)
 	}
 
+}
+
+func tstSvcNS(name, ns string) *corev1.Service {
+	return &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: name,
+		},
+		Spec: &corev1.Service_Spec{},
+		Status: &corev1.Service_Status{
+			NamespaceRef: &metav1.ObjectReference{
+				Name: ns,
+			},
+		},
+	}
+}
+
+func tstGrpcReq(pkg, svc, method string) *corev1.RequestContext_Request {
+	return &corev1.RequestContext_Request{
+		Type: &corev1.RequestContext_Request_Grpc{
+			Grpc: &corev1.RequestContext_Request_GRPC{
+				Package: pkg,
+				Service: svc,
+				Method:  method,
+			},
+		},
+	}
+}
+
+func TestIsInListOrAny(t *testing.T) {
+
+	assert.False(t, isInListOrAny(nil, "a"))
+	assert.False(t, isInListOrAny([]string{}, "a"))
+
+	assert.True(t, isInListOrAny([]string{"a", "b"}, "a"))
+	assert.True(t, isInListOrAny([]string{"a", "b"}, "b"))
+	assert.False(t, isInListOrAny([]string{"a", "b"}, "c"))
+
+	assert.True(t, isInListOrAny([]string{"*"}, "anything"))
+	assert.True(t, isInListOrAny([]string{"a", "*"}, "zzz"))
+	assert.True(t, isInListOrAny([]string{"*"}, ""))
+}
+
+func TestVerifyScopes(t *testing.T) {
+
+	assert.Nil(t, VerifyScopes(nil))
+	assert.Nil(t, VerifyScopes([]string{"api:core"}))
+	assert.Nil(t, VerifyScopes([]string{"api:*", "service:*"}))
+
+	assert.NotNil(t, VerifyScopes([]string{}))
+	assert.NotNil(t, VerifyScopes([]string{""}))
+	assert.NotNil(t, VerifyScopes([]string{"invalid"}))
+	assert.NotNil(t, VerifyScopes([]string{"api:core", "api:core"}))
+	assert.NotNil(t, VerifyScopes([]string{" api:core"}))
+	assert.NotNil(t, VerifyScopes([]string{"api:core "}))
+	assert.NotNil(t, VerifyScopes([]string{"unknown:core"}))
+	assert.NotNil(t, VerifyScopes([]string{strings.Repeat("a", 300)}))
+}
+
+func TestGetScopesLimits(t *testing.T) {
+
+	{
+		ret, err := GetScopes(nil)
+		assert.Nil(t, err, "%+v", err)
+		assert.Nil(t, ret)
+	}
+
+	{
+		_, err := GetScopes([]string{})
+		assert.NotNil(t, err)
+	}
+
+	{
+		var scopes []string
+		for i := range 128 {
+			scopes = append(scopes, "service:"+utilrand.GetRandomStringCanonical(10)+
+				strings.Repeat("", i))
+		}
+
+		ret, err := GetScopes(scopes)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 128, len(ret))
+	}
+
+	{
+		var scopes []string
+		for range 129 {
+			scopes = append(scopes, "service:"+utilrand.GetRandomStringCanonical(10))
+		}
+
+		_, err := GetScopes(scopes)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestIsAuthorizedByScopeService(t *testing.T) {
+
+	svc := tstSvcNS("svc", "default")
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_All_{
+				All: &corev1.Scope_Service_All{},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{
+				Filter: &corev1.Scope_Service_Filter{
+					Names:      []string{"svc"},
+					Namespaces: []string{"default"},
+				},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{
+				Filter: &corev1.Scope_Service_Filter{
+					Names:      []string{"other"},
+					Namespaces: []string{"default"},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{
+				Filter: &corev1.Scope_Service_Filter{
+					Names:      []string{"svc"},
+					Namespaces: []string{"other"},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{
+				Filter: &corev1.Scope_Service_Filter{
+					Names:      []string{"*"},
+					Namespaces: []string{"default"},
+				},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{
+				Filter: &corev1.Scope_Service_Filter{},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+
+	{
+		scope := &corev1.Scope_Service{
+			Type: &corev1.Scope_Service_Filter_{},
+		}
+		assert.False(t, IsAuthorizedByScopeService(scope, svc, nil))
+	}
+}
+
+func TestIsAuthorizedByScopeAPIServer(t *testing.T) {
+
+	svc := tstSvcNS("api", "octelium-api")
+	req := tstGrpcReq("octelium.api.main.core.v1", "MainService", "ListUser")
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_All_{
+				All: &corev1.Scope_API_All{},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{
+					Packages: []string{"octelium.api.main.core.v1"},
+					Services: []string{"*"},
+					Methods:  []string{"*"},
+				},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{
+					Packages: []string{"octelium.api.main.auth.v1"},
+					Services: []string{"*"},
+					Methods:  []string{"*"},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{
+					Packages: []string{"octelium.api.main.core.v1"},
+					Services: []string{"OtherService"},
+					Methods:  []string{"*"},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{
+					Packages: []string{"octelium.api.main.core.v1"},
+					Services: []string{"MainService"},
+					Methods:  []string{"GetUser"},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{
+					Packages: []string{"octelium.api.main.core.v1"},
+					Services: []string{"MainService"},
+					Methods:  []string{"ListUser"},
+				},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{
+				Filter: &corev1.Scope_API_Filter{},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+
+	{
+		scope := &corev1.Scope_API{
+			Type: &corev1.Scope_API_Filter_{},
+		}
+		assert.False(t, IsAuthorizedByScopeAPIServer(scope, svc, req))
+	}
+}
+
+func TestIsAuthorizedByScopesGuards(t *testing.T) {
+
+	assert.False(t, IsAuthorizedByScopes(nil))
+
+	assert.False(t, IsAuthorizedByScopes(&corev1.RequestContext{}))
+
+	assert.False(t, IsAuthorizedByScopes(&corev1.RequestContext{
+		Session: &corev1.Session{},
+	}))
+
+	{
+		req := &corev1.RequestContext{
+			Session: &corev1.Session{
+				Status: &corev1.Session_Status{},
+			},
+		}
+		assert.True(t, IsAuthorizedByScopes(req))
+	}
+
+	{
+		req := &corev1.RequestContext{
+			Session: &corev1.Session{
+				Status: &corev1.Session_Status{
+					Scopes: []*corev1.Scope{
+						{
+							Type: &corev1.Scope_Service_{
+								Service: &corev1.Scope_Service{
+									Type: &corev1.Scope_Service_All_{
+										All: &corev1.Scope_Service_All{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		assert.False(t, IsAuthorizedByScopes(req))
+	}
+
+	{
+		req := &corev1.RequestContext{
+			Session: &corev1.Session{
+				Status: &corev1.Session_Status{
+					Scopes: []*corev1.Scope{
+						{
+							Type: &corev1.Scope_Service_{
+								Service: &corev1.Scope_Service{
+									Type: &corev1.Scope_Service_All_{
+										All: &corev1.Scope_Service_All{},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Service: tstSvcNS("svc", "default"),
+		}
+		assert.True(t, IsAuthorizedByScopes(req))
+	}
+}
+
+func TestDoIsAuthorizedByScopes(t *testing.T) {
+
+	svc := tstSvcNS("svc", "default")
+
+	assert.True(t, doIsAuthorizedByScopes(nil, svc, nil))
+	assert.True(t, doIsAuthorizedByScopes([]*corev1.Scope{}, svc, nil))
+
+	assert.False(t, doIsAuthorizedByScopes([]*corev1.Scope{nil}, svc, nil))
+
+	assert.False(t, doIsAuthorizedByScopes([]*corev1.Scope{{}}, svc, nil))
+
+	{
+		scopes := []*corev1.Scope{
+			{
+				Type: &corev1.Scope_Api{
+					Api: &corev1.Scope_API{
+						Type: &corev1.Scope_API_All_{
+							All: &corev1.Scope_API_All{},
+						},
+					},
+				},
+			},
+		}
+		assert.False(t, doIsAuthorizedByScopes(scopes, svc,
+			tstGrpcReq("octelium.api.main.core.v1", "MainService", "ListUser")))
+	}
+
+	{
+		scopes := []*corev1.Scope{
+			{
+				Type: &corev1.Scope_Service_{
+					Service: &corev1.Scope_Service{
+						Type: &corev1.Scope_Service_Filter_{
+							Filter: &corev1.Scope_Service_Filter{
+								Names:      []string{"other"},
+								Namespaces: []string{"default"},
+							},
+						},
+					},
+				},
+			},
+			{
+				Type: &corev1.Scope_Service_{
+					Service: &corev1.Scope_Service{
+						Type: &corev1.Scope_Service_Filter_{
+							Filter: &corev1.Scope_Service_Filter{
+								Names:      []string{"svc"},
+								Namespaces: []string{"default"},
+							},
+						},
+					},
+				},
+			},
+		}
+		assert.True(t, doIsAuthorizedByScopes(scopes, svc, nil))
+	}
 }
