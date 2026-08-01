@@ -195,7 +195,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				fixWebSocketHeaderCasing(outReq)
 			}
 
-			if isHTTP2RequestUpstream(outReq, svc) {
+			if isHTTP2RequestUpstream(outReq, svc, cfg) {
 				outReq.Proto = "HTTP/2"
 				outReq.ProtoMajor = 2
 				outReq.ProtoMinor = 0

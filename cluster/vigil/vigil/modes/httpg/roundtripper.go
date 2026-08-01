@@ -103,7 +103,7 @@ func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, er
 	svc := reqCtx.Service
 	svcCfg := reqCtx.ServiceConfig
 
-	mode := r.getTransportMode(req, svc)
+	mode := getTransportMode(req, svc, svcCfg)
 
 	isTLS := strings.EqualFold(req.URL.Scheme, "https")
 
@@ -125,9 +125,14 @@ func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, er
 
 		case transportModeHTTP2TLS:
 			rt := newUpstreamTransportHTTP1(tlsCfg)
-			if _, err := http2.ConfigureTransports(rt); err != nil {
+			t2, err := http2.ConfigureTransports(rt)
+			if err != nil {
 				return nil, nil, err
 			}
+			t2.IdleConnTimeout = upstreamIdleConnTimeout
+			t2.ReadIdleTimeout = 0
+			t2.PingTimeout = 0
+
 			return rt, rt.CloseIdleConnections, nil
 
 		default:
@@ -137,16 +142,43 @@ func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, er
 	})
 }
 
-func (r *roundTripper) getTransportMode(req *http.Request, svc *corev1.Service) transportMode {
-	if !isHTTP2RequestUpstream(req, svc) {
+func getTransportMode(req *http.Request,
+	svc *corev1.Service, svcCfg *corev1.Service_Spec_Config) transportMode {
+
+	if !isHTTP2RequestUpstream(req, svc, svcCfg) {
 		return transportModeHTTP1
 	}
 
-	if isUpstreamH2(svc) {
+	if isUpstreamH2(svc, svcCfg) {
 		return transportModeH2
 	}
 
 	return transportModeHTTP2TLS
+}
+
+func isHTTP2RequestUpstream(req *http.Request,
+	svc *corev1.Service, svcCfg *corev1.Service_Spec_Config) bool {
+
+	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
+		return false
+	}
+
+	return ucorev1.ToService(svc).IsUpstreamHTTP2ByConfig(svcCfg)
+}
+
+func isUpstreamH2(svc *corev1.Service, svcCfg *corev1.Service_Spec_Config) bool {
+	s := ucorev1.ToService(svc)
+
+	if s.IsGRPC() {
+		return true
+	}
+
+	switch s.BackendSchemeByConfig(svcCfg) {
+	case "grpc", "h2c":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *roundTripper) getTransportKey(
@@ -154,7 +186,6 @@ func (r *roundTripper) getTransportKey(
 	svcCfg *corev1.Service_Spec_Config,
 	mode transportMode,
 	isTLS bool) (string, error) {
-
 	cfgHash, err := r.transports.cfgHasher.get(svcCfg)
 	if err != nil {
 		return "", errors.Errorf("Could not fingerprint the Service config: %+v", err)
@@ -164,7 +195,6 @@ func (r *roundTripper) getTransportKey(
 
 	fmt.Fprintf(h, "svc=%s;", svc.Metadata.Uid)
 	fmt.Fprintf(h, "mode=%s;tls=%t;", mode.String(), isTLS)
-	fmt.Fprintf(h, "backendScheme=%s;", ucorev1.ToService(svc).BackendScheme())
 
 	if r.upstream != nil {
 		fmt.Fprintf(h, "isUser=%t;host=%s;", r.upstream.IsUser, r.upstream.HostPort)
@@ -182,17 +212,6 @@ func (r *roundTripper) getTransportKey(
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func isHTTP2RequestUpstream(req *http.Request, svc *corev1.Service) bool {
-	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
-		return false
-	}
-	return ucorev1.ToService(svc).IsUpstreamHTTP2()
-}
-
-func isUpstreamH2(svc *corev1.Service) bool {
-	return ucorev1.ToService(svc).BackendScheme() == "h2c" || ucorev1.ToService(svc).IsGRPC()
-}
-
 func newUpstreamDialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:   upstreamDialTimeout,
@@ -203,6 +222,10 @@ func newUpstreamDialer() *net.Dialer {
 func newUpstreamTransportHTTP1(tlsCfg *tls.Config) *http.Transport {
 
 	dialer := newUpstreamDialer()
+
+	if tlsCfg != nil {
+		tlsCfg = tlsCfg.Clone()
+	}
 
 	return &http.Transport{
 		TLSClientConfig: tlsCfg,
@@ -220,16 +243,22 @@ func newUpstreamTransportHTTP1(tlsCfg *tls.Config) *http.Transport {
 		MaxIdleConns:        upstreamMaxIdleConns,
 		MaxIdleConnsPerHost: upstreamMaxIdleConnsPerHost,
 
-		MaxConnsPerHost:       0,
+		MaxConnsPerHost: 0,
+
 		ResponseHeaderTimeout: 0,
-		ReadBufferSize:        upstreamReadBufferSize,
-		WriteBufferSize:       upstreamWriteBufferSize,
+
+		ReadBufferSize:  upstreamReadBufferSize,
+		WriteBufferSize: upstreamWriteBufferSize,
 	}
 }
 
 func newUpstreamTransportH2(tlsCfg *tls.Config, isTLS bool) *http2.Transport {
 
 	dialer := newUpstreamDialer()
+
+	if tlsCfg != nil {
+		tlsCfg = tlsCfg.Clone()
+	}
 
 	return &http2.Transport{
 		TLSClientConfig: tlsCfg,
@@ -246,9 +275,10 @@ func newUpstreamTransportH2(tlsCfg *tls.Config, isTLS bool) *http2.Transport {
 			}).DialContext(ctx, network, addr)
 		},
 
-		IdleConnTimeout:            upstreamIdleConnTimeout,
-		ReadIdleTimeout:            0,
-		PingTimeout:                0,
+		IdleConnTimeout: upstreamIdleConnTimeout,
+		ReadIdleTimeout: 0,
+		PingTimeout:     0,
+
 		StrictMaxConcurrentStreams: false,
 	}
 }

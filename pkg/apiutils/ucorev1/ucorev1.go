@@ -756,38 +756,6 @@ func (s *Service) IsGRPC() bool {
 	return s.Spec.Mode == corev1.Service_Spec_GRPC
 }
 
-func (s *Service) IsUpstreamHTTP2() bool {
-	if s.IsGRPC() {
-		return true
-	}
-
-	if !s.IsHTTP() {
-		return false
-	}
-
-	if s.Spec != nil && s.Spec.Config != nil &&
-		s.Spec.Config.GetHttp() != nil &&
-		s.Spec.Config.GetHttp().IsUpstreamHTTP2 {
-		return true
-	}
-
-	switch s.BackendScheme() {
-	case "grpc", "h2c":
-		return true
-	default:
-		return false
-	}
-}
-
-func (l *Service) BackendScheme() string {
-	u := l.getFirstURL()
-	if u == nil {
-		return "tcp"
-	}
-
-	return u.Scheme
-}
-
 func (l *Service) GetMode() corev1.Service_Spec_Mode {
 	if l.Spec.Mode != corev1.Service_Spec_MODE_UNSET {
 		return l.Spec.Mode
@@ -1000,4 +968,42 @@ func (s *Config) GetValueStr() string {
 
 func (s *Config) GetValueBytes() []byte {
 	return []byte(s.GetValueStr())
+}
+
+func (l *Service) BackendSchemeByConfig(cfg *corev1.Service_Spec_Config) string {
+	eps := l.GetAllUpstreamEndpointsByConfig(cfg)
+	if len(eps) == 0 {
+		return "tcp"
+	}
+	u, err := url.Parse(eps[0].Url)
+	if err != nil || u == nil {
+		return "tcp"
+	}
+	return u.Scheme
+}
+
+func (l *Service) BackendScheme() string {
+	return l.BackendSchemeByConfig(l.Spec.Config)
+}
+
+func (s *Service) IsUpstreamHTTP2ByConfig(cfg *corev1.Service_Spec_Config) bool {
+	if s.IsGRPC() {
+		return true
+	}
+	if !s.IsHTTP() {
+		return false
+	}
+	if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().IsUpstreamHTTP2 {
+		return true
+	}
+	switch s.BackendSchemeByConfig(cfg) {
+	case "grpc", "h2c":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) IsUpstreamHTTP2() bool {
+	return s.IsUpstreamHTTP2ByConfig(s.Spec.Config)
 }
