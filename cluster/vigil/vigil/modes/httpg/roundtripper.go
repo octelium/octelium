@@ -18,9 +18,13 @@ package httpg
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -29,20 +33,52 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/mtls"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/pkg/errors"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 )
 
-type roundTripper struct {
-	upstream  *loadbalancer.Upstream
-	secretMan *secretman.SecretManager
+const (
+	upstreamIdleConnTimeout     = 90 * time.Second
+	upstreamMaxIdleConns        = 256
+	upstreamMaxIdleConnsPerHost = 32
+	upstreamDialTimeout         = 30 * time.Second
+	upstreamDialKeepAlive       = 30 * time.Second
+	upstreamTLSHandshakeTimeout = 10 * time.Second
+	upstreamReadBufferSize      = 32 * 1024
+	upstreamWriteBufferSize     = 32 * 1024
+)
+
+type transportMode int
+
+const (
+	transportModeHTTP1 transportMode = iota
+	transportModeHTTP2TLS
+	transportModeH2
+)
+
+func (m transportMode) String() string {
+	switch m {
+	case transportModeHTTP2TLS:
+		return "h2-tls"
+	case transportModeH2:
+		return "h2"
+	default:
+		return "http1"
+	}
 }
 
-func (s *Server) getRoundTripper(
-	upstream *loadbalancer.Upstream) (*roundTripper, error) {
+type roundTripper struct {
+	upstream   *loadbalancer.Upstream
+	secretMan  *secretman.SecretManager
+	transports *transportCache
+}
+
+func (s *Server) getRoundTripper(upstream *loadbalancer.Upstream) (*roundTripper, error) {
 	return &roundTripper{
-		upstream:  upstream,
-		secretMan: s.secretMan,
+		upstream:   upstream,
+		secretMan:  s.secretMan,
+		transports: s.transports,
 	}, nil
 }
 
@@ -58,20 +94,92 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, error) {
 	ctx := req.Context()
+
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
+	if reqCtx == nil || reqCtx.Service == nil {
+		return nil, errors.Errorf("Could not get the RequestContext")
+	}
+
 	svc := reqCtx.Service
 	svcCfg := reqCtx.ServiceConfig
 
-	tlsCfg, err := mtls.GetClientTLSCfg(ctx, svc, svcCfg, r.secretMan, r.upstream)
+	mode := r.getTransportMode(req, svc)
+
+	isTLS := strings.EqualFold(req.URL.Scheme, "https")
+
+	key, err := r.getTransportKey(svc, svcCfg, mode, isTLS)
 	if err != nil {
 		return nil, err
 	}
 
-	if isHTTP2RequestUpstream(req, svc) {
-		return r.getRoundTripperHTTP2(req, svc, tlsCfg)
+	return r.transports.getOrCreate(key, func() (http.RoundTripper, func(), error) {
+		tlsCfg, err := mtls.GetClientTLSCfg(ctx, svc, svcCfg, r.secretMan, r.upstream)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		switch mode {
+		case transportModeH2:
+			rt := newUpstreamTransportH2(tlsCfg, isTLS)
+			return rt, rt.CloseIdleConnections, nil
+
+		case transportModeHTTP2TLS:
+			rt := newUpstreamTransportHTTP1(tlsCfg)
+			if _, err := http2.ConfigureTransports(rt); err != nil {
+				return nil, nil, err
+			}
+			return rt, rt.CloseIdleConnections, nil
+
+		default:
+			rt := newUpstreamTransportHTTP1(tlsCfg)
+			return rt, rt.CloseIdleConnections, nil
+		}
+	})
+}
+
+func (r *roundTripper) getTransportMode(req *http.Request, svc *corev1.Service) transportMode {
+	if !isHTTP2RequestUpstream(req, svc) {
+		return transportModeHTTP1
 	}
 
-	return r.getRoundTripperHTTP1(req, svc, tlsCfg)
+	if isUpstreamH2(svc) {
+		return transportModeH2
+	}
+
+	return transportModeHTTP2TLS
+}
+
+func (r *roundTripper) getTransportKey(
+	svc *corev1.Service,
+	svcCfg *corev1.Service_Spec_Config,
+	mode transportMode,
+	isTLS bool) (string, error) {
+
+	cfgHash, err := r.transports.cfgHasher.get(svcCfg)
+	if err != nil {
+		return "", errors.Errorf("Could not fingerprint the Service config: %+v", err)
+	}
+
+	h := sha256.New()
+
+	fmt.Fprintf(h, "svc=%s;", svc.Metadata.Uid)
+	fmt.Fprintf(h, "mode=%s;tls=%t;", mode.String(), isTLS)
+	fmt.Fprintf(h, "backendScheme=%s;", ucorev1.ToService(svc).BackendScheme())
+
+	if r.upstream != nil {
+		fmt.Fprintf(h, "isUser=%t;host=%s;", r.upstream.IsUser, r.upstream.HostPort)
+		if r.upstream.URL != nil {
+			fmt.Fprintf(h, "upScheme=%s;upHost=%s;", strings.ToLower(r.upstream.URL.Scheme), r.upstream.URL.Host)
+		}
+
+		if r.upstream.SessionRef != nil {
+			fmt.Fprintf(h, "session=%s;", r.upstream.SessionRef.Uid)
+		}
+	}
+
+	fmt.Fprintf(h, "cfg=%s;", cfgHash)
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func isHTTP2RequestUpstream(req *http.Request, svc *corev1.Service) bool {
@@ -81,54 +189,66 @@ func isHTTP2RequestUpstream(req *http.Request, svc *corev1.Service) bool {
 	return ucorev1.ToService(svc).IsUpstreamHTTP2()
 }
 
-func (r *roundTripper) getRoundTripperHTTP2(req *http.Request, svc *corev1.Service, tlsCfg *tls.Config) (http.RoundTripper, error) {
-	ret, err := r.getRoundTripperHTTP1(req, svc, tlsCfg)
-	if err != nil {
-		return nil, err
-	}
-	_, err = http2.ConfigureTransports(ret)
-	if err != nil {
-		return nil, err
-	}
-
-	if ucorev1.ToService(svc).BackendScheme() == "h2c" || ucorev1.ToService(svc).IsGRPC() {
-
-		return &http2.Transport{
-			TLSClientConfig: tlsCfg,
-			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
-				dialer := &net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
-			AllowHTTP: true,
-		}, nil
-	}
-
-	return ret, nil
+func isUpstreamH2(svc *corev1.Service) bool {
+	return ucorev1.ToService(svc).BackendScheme() == "h2c" || ucorev1.ToService(svc).IsGRPC()
 }
 
-func (r *roundTripper) getRoundTripperHTTP1(req *http.Request, svc *corev1.Service, tlsCfg *tls.Config) (*http.Transport, error) {
+func newUpstreamDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   upstreamDialTimeout,
+		KeepAlive: upstreamDialKeepAlive,
+	}
+}
 
-	ret := &http.Transport{
+func newUpstreamTransportHTTP1(tlsCfg *tls.Config) *http.Transport {
+
+	dialer := newUpstreamDialer()
+
+	return &http.Transport{
 		TLSClientConfig: tlsCfg,
-		Proxy:           http.ProxyFromEnvironment,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			dialer := &net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}
 
+		Proxy: http.ProxyFromEnvironment,
+
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.DialContext(ctx, network, addr)
 		},
 
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		IdleConnTimeout:       upstreamIdleConnTimeout,
+		TLSHandshakeTimeout:   upstreamTLSHandshakeTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
-		ReadBufferSize:        64 * 1024,
-		WriteBufferSize:       64 * 1024,
-	}
 
-	return ret, nil
+		MaxIdleConns:        upstreamMaxIdleConns,
+		MaxIdleConnsPerHost: upstreamMaxIdleConnsPerHost,
+
+		MaxConnsPerHost:       0,
+		ResponseHeaderTimeout: 0,
+		ReadBufferSize:        upstreamReadBufferSize,
+		WriteBufferSize:       upstreamWriteBufferSize,
+	}
+}
+
+func newUpstreamTransportH2(tlsCfg *tls.Config, isTLS bool) *http2.Transport {
+
+	dialer := newUpstreamDialer()
+
+	return &http2.Transport{
+		TLSClientConfig: tlsCfg,
+		AllowHTTP:       !isTLS,
+
+		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+			if !isTLS {
+				return dialer.DialContext(ctx, network, addr)
+			}
+
+			return (&tls.Dialer{
+				NetDialer: dialer,
+				Config:    cfg,
+			}).DialContext(ctx, network, addr)
+		},
+
+		IdleConnTimeout:            upstreamIdleConnTimeout,
+		ReadIdleTimeout:            0,
+		PingTimeout:                0,
+		StrictMaxConcurrentStreams: false,
+	}
 }

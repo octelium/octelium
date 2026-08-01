@@ -99,6 +99,8 @@ type Server struct {
 	forwardedObfuscatedID string
 
 	svcUID string
+
+	transports *transportCache
 }
 
 type metricsStore struct {
@@ -131,6 +133,7 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		}, "", 0),
 		forwardedObfuscatedID: fmt.Sprintf("_octelium-%s", utilrand.GetRandomStringLowercase(6)),
 		svcUID:                opts.VCache.GetService().Metadata.Uid,
+		transports:            newTransportCache(),
 	}
 
 	var err error
@@ -250,6 +253,8 @@ func (s *Server) Run(ctx context.Context) error {
 
 	ctx, cancelFn := context.WithCancel(ctx)
 	s.cancelFn = cancelFn
+
+	s.transports.startSweepLoop(ctx)
 
 	if err := s.serve(ctx); err != nil {
 		return err

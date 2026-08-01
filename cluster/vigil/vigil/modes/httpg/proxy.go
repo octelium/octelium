@@ -121,7 +121,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	}
 
 	ret := &httputil.ReverseProxy{
-		BufferPool: newBufferPool(),
+		BufferPool: sharedBufferPool,
 		Transport:  roundTripper,
 		ErrorLog:   s.reverseProxyErrLogger,
 		Rewrite: func(pr *httputil.ProxyRequest) {
