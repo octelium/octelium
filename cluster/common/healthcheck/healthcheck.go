@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 )
 
 type Server struct {
@@ -63,7 +65,17 @@ func RunWithAddr(addr string) {
 
 func doRun(addr string) error {
 	grpcSrv := grpc.NewServer(
-		grpc.MaxConcurrentStreams(1000000),
+		grpc.MaxConcurrentStreams(64),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle: 2 * time.Minute,
+			MaxConnectionAge:  10 * time.Minute,
+			Time:              30 * time.Second,
+			Timeout:           10 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 
 	grpc_health_v1.RegisterHealthServer(grpcSrv, NewServer())
