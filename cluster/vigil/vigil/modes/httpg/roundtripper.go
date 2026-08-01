@@ -194,7 +194,7 @@ func (r *roundTripper) getTransportKey(
 	h := sha256.New()
 
 	fmt.Fprintf(h, "svc=%s;", svc.Metadata.Uid)
-	fmt.Fprintf(h, "mode=%s;tls=%t;", mode.String(), isTLS)
+	fmt.Fprintf(h, "mode=%s;tls=%t;secretManGen=%d;", mode.String(), isTLS, r.secretMan.Generation())
 
 	if r.upstream != nil {
 		fmt.Fprintf(h, "isUser=%t;host=%s;", r.upstream.IsUser, r.upstream.HostPort)

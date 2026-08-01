@@ -42,10 +42,9 @@ type transportEntry struct {
 }
 
 type transportCache struct {
-	mu         sync.Mutex
-	m          map[string]*transportEntry
-	generation uint64
-	cfgHasher  configHasher
+	mu        sync.Mutex
+	m         map[string]*transportEntry
+	cfgHasher configHasher
 }
 
 func newTransportCache() *transportCache {
@@ -65,7 +64,6 @@ func (c *transportCache) getOrCreate(key string, build transportBuilderFn) (http
 		c.mu.Unlock()
 		return rt, nil
 	}
-	generation := c.generation
 	c.mu.Unlock()
 
 	rt, closeIdle, err := build()
@@ -84,13 +82,6 @@ func (c *transportCache) getOrCreate(key string, build transportBuilderFn) (http
 			closeIdle()
 		}
 		return winner, nil
-	}
-
-	if c.generation != generation {
-		c.mu.Unlock()
-
-		zap.L().Debug("Not caching an upstream transport built before a purge")
-		return rt, nil
 	}
 
 	if len(c.m) >= transportCacheMaxEntries {
@@ -152,9 +143,8 @@ func (c *transportCache) sweep() {
 	}
 }
 
-func (c *transportCache) PurgeAll() {
+func (c *transportCache) closeAll() {
 	c.mu.Lock()
-	c.generation++
 	retired := make([]*transportEntry, 0, len(c.m))
 	for k, v := range c.m {
 		retired = append(retired, v)
@@ -166,7 +156,8 @@ func (c *transportCache) PurgeAll() {
 		return
 	}
 
-	zap.L().Debug("Purging the upstream transport cache", zap.Int("entries", len(retired)))
+	zap.L().Debug("Closing all the cached upstream transports",
+		zap.Int("entries", len(retired)))
 
 	for _, entry := range retired {
 		if entry.closeIdle != nil {
@@ -189,7 +180,7 @@ func (c *transportCache) startSweepLoop(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.PurgeAll()
+				c.closeAll()
 				return
 			case <-ticker.C:
 				c.sweep()

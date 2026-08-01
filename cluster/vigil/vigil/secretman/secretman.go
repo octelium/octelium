@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -47,6 +48,7 @@ type SecretManager struct {
 		sync.Mutex
 		oauth2ccMap map[string]*oauth2ClientCredentialsInfo
 	}
+	generation atomic.Uint64
 }
 
 type oauth2ClientCredentialsInfo struct {
@@ -87,6 +89,7 @@ func (s *SecretManager) Set(secret *corev1.Secret) {
 	}
 
 	s.c.Set(secret.Metadata.Name, secret, 0)
+	s.generation.Add(1)
 
 	/*
 		if s.oauth2CCSecret != nil && s.oauth2CCSecret.name == secret.Metadata.Name {
@@ -107,6 +110,8 @@ func (s *SecretManager) Delete(secret *corev1.Secret) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	defer s.generation.Add(1)
 
 	for i := len(s.secretNames) - 1; i >= 0; i-- {
 		if s.secretNames[i] == secret.Metadata.Name {
@@ -130,6 +135,7 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 	zap.L().Debug("Apply Service Secrets")
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.generation.Add(1)
 	zap.L().Debug("Initial secret names", zap.Strings("names", s.secretNames))
 	s.secretNames = nil
 
@@ -368,4 +374,8 @@ func (r *GetOAuth2CCTokenReq) getID() string {
 	shaHash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s",
 		r.ClientID, r.SecretName, r.TokenURL, strings.Join(r.Scopes, "-"))))
 	return base64.StdEncoding.EncodeToString(shaHash[:16])
+}
+
+func (s *SecretManager) Generation() uint64 {
+	return s.generation.Load()
 }
