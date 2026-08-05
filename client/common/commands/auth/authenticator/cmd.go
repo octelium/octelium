@@ -19,9 +19,9 @@ import (
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/commands/auth/authcommon"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"

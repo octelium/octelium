@@ -24,8 +24,8 @@ import (
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/client/common/client/middleware/auth"
-	"github.com/octelium/octelium/octelium-go/authc"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"

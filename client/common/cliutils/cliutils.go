@@ -25,7 +25,7 @@ import (
 
 	"github.com/manifoldco/promptui"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/octelium-go/authc"
+	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"

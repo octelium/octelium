@@ -14,7 +14,6 @@ require (
 	github.com/hashicorp/go-version v1.8.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
-	github.com/octelium/octelium/octelium-go v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/olekukonko/tablewriter v1.1.3
 	github.com/pkg/errors v0.9.1
