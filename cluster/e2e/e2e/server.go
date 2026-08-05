@@ -2256,13 +2256,12 @@ func (s *server) runSDK(ctx context.Context) error {
 		})
 		assert.Nil(t, err)
 
-		oC, err := octelium.NewClient(ctx, &octelium.ClientConfig{
-			Domain:              s.domain,
-			AuthenticationToken: tkn.GetAuthenticationToken().AuthenticationToken,
-		})
+		oC, err := octelium.NewClient(ctx,
+			octelium.WithDomain(s.domain),
+			octelium.WithAuthenticator(octelium.AuthenticationToken(tkn.GetAuthenticationToken().AuthenticationToken)))
 		assert.Nil(t, err)
 
-		grpcC, err := oC.GRPC().GetConn(ctx)
+		grpcC, err := oC.Conn(ctx)
 		assert.Nil(t, err)
 
 		uC := corev1.NewMainServiceClient(grpcC)
@@ -2335,7 +2334,7 @@ func (s *server) runSDK(ctx context.Context) error {
 
 		time.Sleep(1 * time.Second)
 
-		accessToken, err := oC.GetAccessToken(ctx)
+		accessToken, err := oC.AccessToken(ctx)
 		assert.Nil(t, err)
 		s.httpCPublicAccessTokenCheck(svc.Metadata.Name, accessToken)
 
