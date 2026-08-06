@@ -53,17 +53,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if vReq := r.URL.Query().Get("octelium_req"); vReq != "" {
-
-			loginReq, err := getLoginReq(vReq)
-			if err != nil {
-				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
-				return
-			}
-
-			if err := s.savePendingClientAuth(ctx, sess, &pendingClientAuth{
-				CallbackURL:   getLoginReqCallbackURL(loginReq),
-				CodeChallenge: loginReq.CodeChallenge,
-			}); err != nil {
+			if err := s.savePendingClientAuthFromQuery(ctx, sess, r.URL.Query()); err != nil {
 				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 				return
 			}
@@ -94,6 +84,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case info.GetAuthenticator() != nil:
+		if err := s.savePendingClientAuthFromQuery(ctx, sess, r.URL.Query()); err != nil {
+			http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
+			return
+		}
+
 		s.redirectToAuthenticatorAuthenticate(w, r)
 		return
 	case info.GetIdentityProvider() != nil:

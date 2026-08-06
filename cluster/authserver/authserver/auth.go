@@ -148,6 +148,25 @@ func getLoginReqCallbackURL(req *authv1.ClientLoginRequest) string {
 		req.CallbackPort, req.CallbackSuffix)
 }
 
+func (s *server) savePendingClientAuthFromQuery(ctx context.Context,
+	sess *corev1.Session, vals url.Values) error {
+
+	vReq := vals.Get("octelium_req")
+	if vReq == "" {
+		return nil
+	}
+
+	loginReq, err := getLoginReq(vReq)
+	if err != nil {
+		return err
+	}
+
+	return s.savePendingClientAuth(ctx, sess, &pendingClientAuth{
+		CallbackURL:   getLoginReqCallbackURL(loginReq),
+		CodeChallenge: loginReq.CodeChallenge,
+	})
+}
+
 func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()

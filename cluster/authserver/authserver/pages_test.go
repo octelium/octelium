@@ -30,6 +30,8 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
@@ -350,4 +352,92 @@ func TestHandleLoginClientRequest(t *testing.T) {
 		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
 		assert.NotNil(t, err)
 	})
+}
+
+func TestHandleLoginClientRequestAuthenticatorReauth(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	authnInfo := &corev1.Session_Status_Authentication_Info{
+		Type: corev1.Session_Status_Authentication_Info_AUTHENTICATOR,
+		Details: &corev1.Session_Status_Authentication_Info_Authenticator_{
+			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
+				Type: corev1.Authenticator_Status_FIDO,
+			},
+		},
+	}
+
+	usrT.Session.Status.InitialAuthentication.Info = authnInfo
+	usrT.Session.Status.Authentication.Info = authnInfo
+	usrT.Session.Status.Authentication.SetAt = pbutils.Timestamp(time.Now().Add(
+		-umetav1.ToDuration(usrT.Session.Status.Authentication.AccessTokenDuration).ToGo()))
+	usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+	assert.Nil(t, err)
+
+	assert.True(t, ucorev1.ToSession(usrT.Session).ShouldRefresh())
+	assert.True(t, ucorev1.ToSession(usrT.Session).HasValidRefreshToken())
+
+	cookie := &http.Cookie{
+		Name:  "octelium_rt",
+		Value: string(usrT.GetAccessToken().RefreshToken),
+		Path:  "/",
+	}
+
+	codeVerifier, err := opkce.NewVerifier()
+	assert.Nil(t, err)
+	codeChallenge := opkce.GetChallenge(codeVerifier)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("http://localhost/login?octelium_req=%s", encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge,
+		})), nil)
+	req.AddCookie(cookie)
+
+	w := httptest.NewRecorder()
+	srv.handleLogin(w, req)
+	resp := w.Result()
+
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Location"), "/authenticators/authenticate")
+
+	state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, "http://localhost:12345/callback/success/abcdefgh", state.CallbackURL)
+	assert.Equal(t, codeChallenge, state.CodeChallenge)
+
+	usrT.Session.Status.Authentication.SetAt = pbutils.Timestamp(time.Now())
+	usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+	assert.Nil(t, err)
+
+	req = httptest.NewRequest("GET", "http://localhost/callback/success", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	srv.handleAuthSuccess(w, req)
+
+	assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
+	assert.Equal(t, fmt.Sprintf("%s/callback/success/approval", srv.rootURL),
+		w.Result().Header.Get("Location"))
 }
