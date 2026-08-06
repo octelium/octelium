@@ -42,6 +42,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -188,11 +190,15 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	})
 	if err != nil {
 		zap.L().Debug("Could not auth conn", zap.Error(err))
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
@@ -210,6 +216,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			},
 		}
 		otelutils.EmitAccessLog(logE)
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		c.Close()
 		return
 	}
@@ -238,7 +249,8 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	s.metricsStore.AtRequestStart()
 	dctx.serve(ctx, s.lbManager, svc, s.secretMan)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	s.metricsStore.AddBytesTransferred(dctx.proxy.recvBytes, dctx.proxy.sentBytes)
 
 	dctx.close()
 

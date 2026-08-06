@@ -46,6 +46,8 @@ type CommonMetrics struct {
 	TotalRequests      metric.Int64Counter
 	ActiveRequests     metric.Int64UpDownCounter
 	RequestDuration    metric.Float64Histogram
+	BytesSent          metric.Int64Counter
+	BytesReceived      metric.Int64Counter
 	CommonAttributeSet attribute.Set
 }
 
@@ -73,6 +75,18 @@ func NewCommonMetrics(ctx context.Context, svc *corev1.Service) (*CommonMetrics,
 		return nil, err
 	}
 
+	ret.BytesSent, err = meter.Int64Counter("req.bytes_sent",
+		metric.WithUnit("bytes"), metric.WithDescription("Total bytes sent downstream"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.BytesReceived, err = meter.Int64Counter("req.bytes_received",
+		metric.WithUnit("bytes"), metric.WithDescription("Total bytes received from downstream"))
+	if err != nil {
+		return nil, err
+	}
+
 	ret.CommonAttributeSet = GetServiceAttributes(svc)
 
 	return ret, nil
@@ -88,10 +102,26 @@ func (m *CommonMetrics) AtRequestEnd(startTime time.Time, additionalAttrSet metr
 	m.ActiveRequests.Add(ctx, -1,
 		metric.WithAttributeSet(m.CommonAttributeSet))
 
-	m.RequestDuration.Record(ctx,
-		float64(time.Since(startTime).Nanoseconds())/1000000,
-		metric.WithAttributeSet(m.CommonAttributeSet),
-	)
-	m.TotalRequests.Add(ctx, 1,
-		metric.WithAttributeSet(m.CommonAttributeSet))
+	durationMs := float64(time.Since(startTime).Nanoseconds()) / 1000000
+
+	if additionalAttrSet == nil {
+		m.RequestDuration.Record(ctx, durationMs, metric.WithAttributeSet(m.CommonAttributeSet))
+		m.TotalRequests.Add(ctx, 1, metric.WithAttributeSet(m.CommonAttributeSet))
+		return
+	}
+
+	m.RequestDuration.Record(ctx, durationMs, metric.WithAttributeSet(m.CommonAttributeSet), additionalAttrSet)
+	m.TotalRequests.Add(ctx, 1, metric.WithAttributeSet(m.CommonAttributeSet), additionalAttrSet)
+}
+
+func (m *CommonMetrics) AddBytesTransferred(sent, received int64) {
+	ctx := context.Background()
+
+	if sent > 0 {
+		m.BytesSent.Add(ctx, sent, metric.WithAttributeSet(m.CommonAttributeSet))
+	}
+
+	if received > 0 {
+		m.BytesReceived.Add(ctx, received, metric.WithAttributeSet(m.CommonAttributeSet))
+	}
 }

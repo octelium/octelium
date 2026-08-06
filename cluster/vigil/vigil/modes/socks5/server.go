@@ -47,6 +47,8 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -322,17 +324,26 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 	})
 	if err != nil {
 		zap.L().Debug("Could not authenticate/authorize SOCKS5 request", zap.Error(err))
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		gosocks5.SendReply(writer, statute.RepServerFailure, nil)
 		return err
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		gosocks5.SendReply(writer, statute.RepRuleFailure, nil)
 		return errors.Errorf("SOCKS5 request is not authenticated")
 	}
 
 	if !authResp.IsAuthorized {
 		s.emitConnectLog(startTime, "", authResp, target, false)
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		gosocks5.SendReply(writer, statute.RepRuleFailure, nil)
 		return errors.Errorf("SOCKS5 request is not authorized")
 	}
@@ -367,7 +378,8 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 
 	s.metricsStore.AtRequestStart()
 	err = dctx.serve(ctx, s.lbManager, svc, s.secretMan)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	s.metricsStore.AddBytesTransferred(dctx.proxy.sentBytes, dctx.proxy.recvBytes)
 
 	s.emitEndLog(startTime, dctx, authResp, target)
 

@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -57,11 +58,14 @@ type dctx struct {
 
 	svcConfig *corev1.Service_Spec_Config
 	authResp  *coctovigilv1.AuthenticateAndAuthorizeResponse
+
+	commonMetrics *metricutils.CommonMetrics
 }
 
 func newDctx(ctx context.Context, conn net.Conn,
 	i *corev1.RequestContext, secretMan *secretman.SecretManager,
 	downstreamConnSQL *server.Conn,
+	commonMetrics *metricutils.CommonMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse) *dctx {
 
 	return &dctx{
@@ -76,8 +80,9 @@ func newDctx(ctx context.Context, conn net.Conn,
 		downstreamCh: make(chan error, 1),
 		upstreamCh:   make(chan error, 1),
 
-		svcConfig: vigilutils.GetServiceConfig(ctx, authResp),
-		authResp:  authResp,
+		svcConfig:     vigilutils.GetServiceConfig(ctx, authResp),
+		authResp:      authResp,
+		commonMetrics: commonMetrics,
 	}
 }
 
@@ -207,6 +212,11 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 	zap.L().Debug("Starting downstreamLoop")
 	defer zap.L().Debug("downstreamLoop exited...")
 
+	var bytesFromClient int64
+	defer func() {
+		c.commonMetrics.AddBytesTransferred(0, bytesFromClient)
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -218,6 +228,7 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				c.downstreamCh <- errors.Errorf("Could not read downstream packet: %+v", err)
 				return
 			}
+			bytesFromClient += int64(len(packetBytes))
 
 			pkt, err := decodePacket(packetBytes[4:])
 			if err != nil {
@@ -255,6 +266,11 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 	defer zap.L().Debug("upstreamLoop exited...")
 	zap.L().Debug("Starting upstreamLoop")
 
+	var bytesToClient int64
+	defer func() {
+		c.commonMetrics.AddBytesTransferred(bytesToClient, 0)
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -266,6 +282,7 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 				c.upstreamCh <- err
 				return
 			}
+			bytesToClient += int64(len(packetBytes))
 
 			if err := writePacket(packetBytes, c.downstreamConnSQL); err != nil {
 				c.upstreamCh <- err

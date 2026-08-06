@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/sshutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
@@ -71,11 +72,13 @@ type dctx struct {
 	reasonInit *corev1.AccessLog_Entry_Common_Reason
 	authResp   *coctovigilv1.AuthenticateAndAuthorizeResponse
 	opts       *modes.Opts
+
+	commonMetrics *metricutils.CommonMetrics
 }
 
 func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn net.Conn, sshConn *ssh.ServerConn, i *corev1.RequestContext,
 	upstreamSession *corev1.Session,
-
+	commonMetrics *metricutils.CommonMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse, reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	ret := &dctx{
 		id:          vutils.GenerateLogID(),
@@ -91,6 +94,7 @@ func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn ne
 		svcConfig:       vigilutils.GetServiceConfig(ctx, authResp),
 		reasonInit:      reasonInit,
 		opts:            opts,
+		commonMetrics:   commonMetrics,
 	}
 
 	svcCfg := ret.svcConfig

@@ -41,7 +41,57 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
+	prevProvider := otel.GetMeterProvider()
+	t.Cleanup(func() {
+		otel.SetMeterProvider(prevProvider)
+	})
+
+	reader := sdkmetric.NewManualReader()
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+
+	return reader
+}
+
+func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			assert.True(t, ok, name)
+			for _, dp := range sum.DataPoints {
+				stateVal, ok := dp.Attributes.Value("state")
+				if ok && stateVal.AsString() == state {
+					return dp, true
+				}
+			}
+		}
+	}
+	return metricdata.DataPoint[int64]{}, false
+}
+
+func findSumDataPoint(t *testing.T, rm *metricdata.ResourceMetrics, name string) metricdata.DataPoint[int64] {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			assert.True(t, ok, name)
+			assert.Len(t, sum.DataPoints, 1)
+			return sum.DataPoints[0]
+		}
+	}
+	t.Fatalf("metric %s not found", name)
+	return metricdata.DataPoint[int64]{}
+}
 
 type echoServer struct {
 	lis net.Listener
@@ -229,6 +279,8 @@ func TestServer(t *testing.T) {
 	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
 	assert.Nil(t, err)
 
+	metricsReader := setTestMeterProvider(t)
+
 	srv, err := New(ctx, &modes.Opts{
 		OcteliumC:  fakeC.OcteliumC,
 		VCache:     vCache,
@@ -248,6 +300,15 @@ func TestServer(t *testing.T) {
 		if conn != nil {
 			conn.Close()
 		}
+	}
+
+	{
+		var rm metricdata.ResourceMetrics
+		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+
+		dp, found := findSumDataPointByState(t, &rm, "req.total", "DENIED")
+		assert.True(t, found)
+		assert.True(t, dp.Value > 0)
 	}
 
 	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
@@ -281,6 +342,23 @@ func TestServer(t *testing.T) {
 		roundTrip(t, conn)
 		err = conn.Close()
 		assert.Nil(t, err)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	{
+		var rm metricdata.ResourceMetrics
+		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+
+		dp, found := findSumDataPointByState(t, &rm, "req.total", "ALLOWED")
+		assert.True(t, found)
+		assert.Equal(t, int64(1), dp.Value)
+
+		sentDP := findSumDataPoint(t, &rm, "req.bytes_sent")
+		assert.True(t, sentDP.Value > 0)
+
+		receivedDP := findSumDataPoint(t, &rm, "req.bytes_received")
+		assert.True(t, receivedDP.Value > 0)
 	}
 
 	{

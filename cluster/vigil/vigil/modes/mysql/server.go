@@ -46,6 +46,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -171,11 +173,15 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	})
 	if err != nil {
 		zap.L().Warn("Could not auth conn", zap.Error(err))
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
@@ -193,6 +199,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			},
 		}
 		otelutils.EmitAccessLog(logE)
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		c.Close()
 		return
 	}
@@ -209,7 +220,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	zap.L().Debug("Got downstream conn", zap.Int("seq", int(downstreamConn.Sequence)))
 
-	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn, authResp)
+	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn, s.metricsStore.CommonMetrics, authResp)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
 		zap.L().Error("Could not connect", zap.Error(err), zap.String("id", dctx.id))
 		downstreamConn.Close()
@@ -242,7 +253,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	s.metricsStore.AtRequestStart()
 	dctx.serve(ctx)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
 
 	defer dctx.close()
 

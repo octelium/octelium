@@ -42,6 +42,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -225,12 +227,16 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	})
 	if err != nil {
 		zap.L().Debug("Could not auth conn. Closing...", zap.Error(err))
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		sshConn.Close()
 		c.Close()
 		return
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		sshConn.Close()
 		c.Close()
 		return
@@ -249,6 +255,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			},
 		}
 		otelutils.EmitAccessLog(logE)
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		sshConn.Close()
 		c.Close()
 		return
@@ -282,6 +293,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 				Reason:          authResp.AuthorizationDecisionReason,
 			})
 			otelutils.EmitAccessLog(logE)
+			s.metricsStore.AtRequestStart()
+			s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+				attribute.String("state", "DENIED"),
+				attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+			)))
 			return
 		}
 	}
@@ -320,6 +336,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		s.opts,
 		c, sshConn, i,
 		upstreamSession,
+		s.metricsStore.CommonMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.octeliumC, svc, s.lbManager, s.userSigner, s.secretMan); err != nil {
 		zap.L().Warn("Could not connect to upstream", zap.Error(err))
@@ -379,7 +396,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		s.dctxMap.mu.Unlock()
 	}()
 
-	defer s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	defer s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
 
 	go dctx.startKeepAliveUpstreamLoop(ctx)
 

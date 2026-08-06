@@ -45,6 +45,8 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -167,6 +169,9 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	cc := newCountingConn(c)
+	c = cc
+
 	startupMessage, pgBackend, err := s.getStartupMessage(ctx, svc, c)
 	if err != nil {
 		zap.L().Debug("Could not get startup msg", zap.Error(err))
@@ -183,11 +188,15 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	})
 	if err != nil {
 		zap.L().Warn("Could not auth conn", zap.Error(err))
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		c.Close()
 		return
 	}
@@ -205,6 +214,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			},
 		}
 		otelutils.EmitAccessLog(logE)
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		c.Close()
 		return
 	}
@@ -216,6 +230,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	dctx := newDctx(ctx,
 		c, i, s.secretMan, pgBackend, startupMessage,
 		s.octovigilC, s.vCache,
+		cc, s.metricsStore.CommonMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
 		zap.L().Error("Could not connect", zap.Error(err), zap.String("id", dctx.id))
@@ -257,7 +272,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	s.metricsStore.AtRequestStart()
 	dctx.serve(ctx)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
 
 	defer dctx.close()
 

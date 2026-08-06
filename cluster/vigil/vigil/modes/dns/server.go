@@ -40,8 +40,42 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
+
+func qtypeString(qtype uint16) string {
+	switch qtype {
+	case dns.TypeA:
+		return "A"
+	case dns.TypeAAAA:
+		return "AAAA"
+	case dns.TypeTXT:
+		return "TXT"
+	case dns.TypeMX:
+		return "MX"
+	case dns.TypeCNAME:
+		return "CNAME"
+	default:
+		return "OTHER"
+	}
+}
+
+func rcodeClassOf(rcode int) string {
+	switch rcode {
+	case dns.RcodeSuccess:
+		return "NOERROR"
+	case dns.RcodeNameError:
+		return "NXDOMAIN"
+	case dns.RcodeRefused:
+		return "REFUSED"
+	case dns.RcodeServerFailure:
+		return "SERVFAIL"
+	default:
+		return "OTHER"
+	}
+}
 
 type Server struct {
 	octovigilC *octovigilc.Client
@@ -165,8 +199,29 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	var (
+		state      = "DENIED"
+		reason     string
+		qtype      string
+		rcodeClass string
+	)
+
 	s.metricsStore.AtRequestStart()
-	defer s.metricsStore.AtRequestEnd(startedAt, nil)
+	defer func() {
+		attrs := []attribute.KeyValue{
+			attribute.String("state", state),
+		}
+		if reason != "" {
+			attrs = append(attrs, attribute.String("reason", reason))
+		}
+		if qtype != "" {
+			attrs = append(attrs, attribute.String("qtype", qtype))
+		}
+		if rcodeClass != "" {
+			attrs = append(attrs, attribute.String("rcode_class", rcodeClass))
+		}
+		s.metricsStore.AtRequestEnd(startedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
+	}()
 
 	svc := s.vCache.GetService()
 	if svc == nil || svc.Spec.IsDisabled {
@@ -197,6 +252,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	q := r.Question[0]
+	qtype = qtypeString(q.Qtype)
 
 	canonicalName := strings.ToLower(dns.Fqdn(q.Name))
 
@@ -220,6 +276,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	})
 	if err != nil {
 		zap.L().Warn("Could not get AuthenticateAndAuthorize", zap.Error(err))
+		rcodeClass = rcodeClassOf(dns.RcodeServerFailure)
 		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(msg)
@@ -227,6 +284,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if !authResp.IsAuthenticated {
+		rcodeClass = rcodeClassOf(dns.RcodeRefused)
 		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeRefused)
 		_ = w.WriteMsg(msg)
@@ -265,6 +323,8 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if !authResp.IsAuthorized {
+		rcodeClass = rcodeClassOf(dns.RcodeRefused)
+		reason = authResp.AuthorizationDecisionReason.GetType().String()
 		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeRefused)
 		otelutils.EmitAccessLog(logE)
 		msg := new(dns.Msg)
@@ -273,9 +333,12 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	state = "ALLOWED"
+
 	upstream, err := s.lbManager.GetUpstream(ctx, authResp)
 	if err != nil {
 		zap.L().Warn("Could not get lb upstream", zap.Error(err))
+		rcodeClass = rcodeClassOf(dns.RcodeServerFailure)
 		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeServerFailure)
 		otelutils.EmitAccessLog(logE)
 
@@ -307,6 +370,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	proxiedMsg, _, err := client.Exchange(clientReq, upstream.HostPort)
 	if err != nil || proxiedMsg == nil {
 		zap.L().Warn("Could not do exchange", zap.Error(err), zap.String("upstream", upstream.HostPort))
+		rcodeClass = rcodeClassOf(dns.RcodeServerFailure)
 		logE.Entry.Info.GetDns().Rcode = int64(dns.RcodeServerFailure)
 		otelutils.EmitAccessLog(logE)
 
@@ -327,6 +391,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	_ = w.WriteMsg(resp)
 
+	rcodeClass = rcodeClassOf(resp.Rcode)
 	logE.Entry.Info.GetDns().Rcode = int64(resp.Rcode)
 	if len(resp.Answer) > 0 {
 		answer := resp.Answer[0]

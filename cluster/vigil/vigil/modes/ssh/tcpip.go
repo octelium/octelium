@@ -117,12 +117,14 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 	errCh := make(chan error, 2)
 
 	go func() {
-		_, err := io.Copy(ch, conn)
+		n, err := io.Copy(ch, conn)
+		c.commonMetrics.AddBytesTransferred(n, 0)
 		errCh <- err
 	}()
 
 	go func() {
-		_, err := io.Copy(conn, ch)
+		n, err := io.Copy(conn, ch)
+		c.commonMetrics.AddBytesTransferred(0, n)
 		errCh <- err
 	}()
 

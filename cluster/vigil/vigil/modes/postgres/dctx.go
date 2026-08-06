@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -31,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
@@ -39,6 +41,35 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+// countingConn wraps the downstream (client-facing) net.Conn to count bytes read from and
+// written to the client, regardless of TLS: it is always the innermost layer touching the
+// socket, so it sees raw wire bytes even when pgproto3.NewBackend ends up wrapped in TLS.
+type countingConn struct {
+	net.Conn
+	bytesRead    atomic.Int64
+	bytesWritten atomic.Int64
+}
+
+func newCountingConn(c net.Conn) *countingConn {
+	return &countingConn{Conn: c}
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.bytesRead.Add(int64(n))
+	}
+	return n, err
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.bytesWritten.Add(int64(n))
+	}
+	return n, err
+}
 
 type dctx struct {
 	id      string
@@ -73,6 +104,9 @@ type dctx struct {
 	authResp   *coctovigilv1.AuthenticateAndAuthorizeResponse
 
 	lastTxStatus byte
+
+	downstreamConn *countingConn
+	commonMetrics  *metricutils.CommonMetrics
 }
 
 func newDctx(ctx context.Context, conn net.Conn,
@@ -80,6 +114,8 @@ func newDctx(ctx context.Context, conn net.Conn,
 	pgBackend *pgproto3.Backend, startupMessage pgproto3.FrontendMessage,
 	octovigilC *octovigilc.Client,
 	vCache *vcache.Cache,
+	downstreamConn *countingConn,
+	commonMetrics *metricutils.CommonMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
 	reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	return &dctx{
@@ -101,6 +137,9 @@ func newDctx(ctx context.Context, conn net.Conn,
 		authResp:       authResp,
 		reasonInit:     reasonInit,
 		lastTxStatus:   'I',
+
+		downstreamConn: downstreamConn,
+		commonMetrics:  commonMetrics,
 	}
 }
 
@@ -243,6 +282,10 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 	zap.L().Debug("Starting downstreamLoop")
 	defer zap.L().Debug("downstreamLoop exited...")
 
+	defer func() {
+		c.commonMetrics.AddBytesTransferred(0, c.downstreamConn.bytesRead.Load())
+	}()
+
 	var pendingSync bool
 
 	for {
@@ -362,6 +405,11 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 func (c *dctx) startUpstreamLoop(ctx context.Context) {
 	defer zap.L().Debug("upstreamLoop exited...")
 	zap.L().Debug("Starting upstreamLoop")
+
+	defer func() {
+		c.commonMetrics.AddBytesTransferred(c.downstreamConn.bytesWritten.Load(), 0)
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():

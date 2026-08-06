@@ -38,6 +38,8 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -157,6 +159,8 @@ func (s *Server) closeDctx(dctx *dctx) {
 	}
 	otelutils.EmitAccessLog(logE)
 
+	s.metricsStore.AddBytesTransferred(dctx.bytesToClient.Load(), dctx.bytesFromClient.Load())
+
 	s.dctxMap.mu.Lock()
 	delete(s.dctxMap.dctxMap, dctx.addr.String())
 	s.dctxMap.mu.Unlock()
@@ -166,7 +170,7 @@ func (s *Server) closeDctx(dctx *dctx) {
 func (s *Server) replyLoop(dctx *dctx) {
 	s.metricsStore.AtRequestStart()
 	defer s.closeDctx(dctx)
-	defer s.metricsStore.AtRequestEnd(dctx.createdAt, nil)
+	defer s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       dctx.createdAt,
@@ -196,6 +200,7 @@ func (s *Server) replyLoop(dctx *dctx) {
 			}
 			i += written
 		}
+		dctx.bytesToClient.Add(int64(read))
 	}
 }
 
@@ -242,14 +247,20 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 
 	zap.L().Debug("Authenticating downstream", zap.Any("req", req))
 
+	startTime := time.Now()
+
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: req,
 	})
 	if err != nil {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		return err
 	}
 
 	if !authResp.IsAuthenticated {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributes(attribute.String("state", "DENIED")))
 		return nil
 	}
 
@@ -268,6 +279,11 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 
 	otelutils.EmitAccessLog(logE)
 	if !authResp.IsAuthorized {
+		s.metricsStore.AtRequestStart()
+		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("state", "DENIED"),
+			attribute.String("reason", authResp.AuthorizationDecisionReason.GetType().String()),
+		)))
 		return nil
 	}
 
@@ -314,6 +330,7 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		}
 		i += written
 	}
+	dctx.bytesFromClient.Add(int64(n))
 
 	return nil
 }

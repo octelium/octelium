@@ -52,6 +52,7 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	go func() {
 		mult := io.MultiWriter(downstreamCh, stdoutWriter)
 		n, err := io.Copy(mult, upstreamCh)
+		c.commonMetrics.AddBytesTransferred(n, 0)
 		if err == nil || errors.Is(err, io.EOF) {
 			if err := downstreamCh.CloseWrite(); err != nil {
 				zap.L().Debug("Could not downstream closeWrite", zap.String("id", c.id), zap.Error(err))
@@ -66,6 +67,7 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	go func() {
 		mult := io.MultiWriter(upstreamCh, stdinWriter)
 		n, err := io.Copy(mult, downstreamCh)
+		c.commonMetrics.AddBytesTransferred(0, n)
 		if err == nil || errors.Is(err, io.EOF) {
 			if err := upstreamCh.CloseWrite(); err != nil {
 				zap.L().Debug("Could not upstream closeWrite", zap.String("id", c.id), zap.Error(err))

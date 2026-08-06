@@ -78,6 +78,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		},
 	}
 
+	if !reqCtx.IsAuthorized {
+		attrs = append(attrs, attribute.KeyValue{
+			Key:   "reason",
+			Value: attribute.StringValue(reqCtx.DecisionReason.GetType().String()),
+		})
+	}
+
 	m.commonMetrics.AtRequestEnd(reqCtx.CreatedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
 }
 

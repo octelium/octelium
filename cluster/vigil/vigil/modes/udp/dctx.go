@@ -18,6 +18,7 @@ package udp
 
 import (
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -36,6 +37,9 @@ type dctx struct {
 
 	ready chan struct{}
 	err   error
+
+	bytesToClient   atomic.Int64
+	bytesFromClient atomic.Int64
 }
 
 func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {
