@@ -339,8 +339,17 @@ var forwardedHeaderNames = []string{
 	"X-Forwarded-Proto",
 	"X-Forwarded-Port",
 	"X-Forwarded-Server",
+	"X-Forwarded-Prefix",
+	"X-Forwarded-Uri",
+	"X-Forwarded-Scheme",
 	"X-Real-IP",
 }
+
+var alwaysRemovedRequestHeaders = []string{
+	"X-Forwarded-Client-Cert",
+}
+
+const envoyHeaderPrefix = "x-envoy-"
 
 func getForwardedScheme(req *http.Request, svc *corev1.Service) string {
 
@@ -368,6 +377,7 @@ func applyForwardedHeaders(
 	outReq := pr.Out
 
 	removeAllForwardedHeaders(outReq)
+	removeInfraRequestHeaders(outReq)
 
 	if isManagedSvc {
 		copyForwardedHeaders(outReq.Header, inReq.Header)
@@ -412,6 +422,23 @@ func removeAllForwardedHeaders(req *http.Request) {
 
 	for _, name := range forwardedHeaderNames {
 		req.Header.Del(name)
+	}
+}
+
+func removeInfraRequestHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+
+	for _, name := range alwaysRemovedRequestHeaders {
+		req.Header.Del(name)
+	}
+
+	for name := range req.Header {
+		if len(name) >= len(envoyHeaderPrefix) &&
+			strings.EqualFold(name[:len(envoyHeaderPrefix)], envoyHeaderPrefix) {
+			delete(req.Header, name)
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
@@ -702,5 +703,159 @@ func TestMiddleware(t *testing.T) {
 		mdlwr.ServeHTTP(rw, req)
 
 		assert.Equal(t, sec.Data.GetValue(), strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+	}
+}
+
+func newScrubReqCtx(isManagedSvc bool, isAnonymous bool) *middlewares.RequestContext {
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "tst.default"},
+		Spec:     &corev1.Service_Spec{IsAnonymous: isAnonymous},
+		Status:   &corev1.Service_Status{},
+	}
+	if isManagedSvc {
+		svc.Status.ManagedService = &corev1.Service_Status_ManagedService{Type: "authserver"}
+	}
+
+	return &middlewares.RequestContext{
+		CreatedAt: time.Now(),
+		Service:   svc,
+		ReqCtxMap: map[string]any{},
+	}
+}
+
+func newScrubRequest(t *testing.T, reqCtx *middlewares.RequestContext) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+	return req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, reqCtx))
+}
+
+func TestOcteliumHeadersStrippedForOrdinaryServices(t *testing.T) {
+	reqCtx := newScrubReqCtx(false, false)
+	req := newScrubRequest(t, reqCtx)
+
+	for _, name := range []string{
+		"X-Octelium-Auth",
+		"X-Octelium-Refresh-Token",
+		"X-Octelium-Origin",
+		"X-Octelium-Session-Ref",
+		"X-Octelium-Session-Uid",
+		"X-Octelium-Req-Path",
+		"X-Octelium-Client-Address",
+		"X-Octelium-Something-New",
+	} {
+		req.Header.Set(name, "downstream")
+	}
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	for name := range req.Header {
+		assert.False(t, isOcteliumHeader(name))
+	}
+}
+
+func TestManagedServicesKeepOnlyAllowedHeaders(t *testing.T) {
+	reqCtx := newScrubReqCtx(true, true)
+	req := newScrubRequest(t, reqCtx)
+
+	req.Header.Set("X-Octelium-Auth", "access-token")
+	req.Header.Set("X-Octelium-Refresh-Token", "refresh-token")
+	req.Header.Set(vutils.GetDownstreamIPHeaderCanonical(), "203.0.113.7")
+	req.Header.Set("X-Octelium-Origin", "https://spoofed.example.com")
+	req.Header.Set("X-Octelium-Session-Ref", `{"uid":"spoofed"}`)
+	req.Header.Set("X-Octelium-Session-Uid", "spoofed")
+	req.Header.Set("X-Octelium-Req-Path", "/spoofed")
+	req.Header.Set("X-Octelium-Something-New", "spoofed")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "access-token", req.Header.Get("X-Octelium-Auth"))
+	assert.Equal(t, "refresh-token", req.Header.Get("X-Octelium-Refresh-Token"))
+	assert.Equal(t, "203.0.113.7", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Origin"))
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Session-Ref"))
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Session-Uid"))
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Req-Path"))
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Something-New"))
+}
+
+func TestXOcteliumOriginNotForgeableWithoutOriginHeader(t *testing.T) {
+	reqCtx := newScrubReqCtx(true, true)
+	req := newScrubRequest(t, reqCtx)
+
+	req.Header.Set("X-Octelium-Origin", "https://spoofed.example.com")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "", req.Header.Get("X-Octelium-Origin"))
+}
+
+func TestXOcteliumOriginSetFromOriginHeader(t *testing.T) {
+	reqCtx := newScrubReqCtx(true, true)
+	req := newScrubRequest(t, reqCtx)
+
+	req.Header.Set("X-Octelium-Origin", "https://spoofed.example.com")
+	req.Header.Set("Origin", "https://real.example.com")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "https://real.example.com", req.Header.Get("X-Octelium-Origin"))
+}
+
+func TestClientAddressStrippedForOrdinaryServices(t *testing.T) {
+	reqCtx := newScrubReqCtx(false, false)
+	req := newScrubRequest(t, reqCtx)
+	req.Header.Set(vutils.GetDownstreamIPHeaderCanonical(), "203.0.113.7")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+}
+
+func TestSessionHeadersAreSetByVigil(t *testing.T) {
+	reqCtx := newScrubReqCtx(true, false)
+	reqCtx.DownstreamInfo = &corev1.RequestContext{
+		Session: &corev1.Session{
+			Metadata: &metav1.Metadata{Uid: "real-session-uid", Name: "sess"},
+		},
+	}
+
+	req := newScrubRequest(t, reqCtx)
+	req.Header.Set("X-Octelium-Session-Uid", "spoofed")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "real-session-uid", req.Header.Get("X-Octelium-Session-Uid"))
+	assert.Equal(t, "/v1", req.Header.Get("X-Octelium-Req-Path"))
+}
+
+func TestScrubIsCaseInsensitive(t *testing.T) {
+	reqCtx := newScrubReqCtx(false, false)
+	req := newScrubRequest(t, reqCtx)
+
+	req.Header["x-octelium-session-uid"] = []string{"spoofed"}
+	req.Header["X-OCTELIUM-ORIGIN"] = []string{"spoofed"}
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Empty(t, req.Header["x-octelium-session-uid"])
+	assert.Empty(t, req.Header["X-OCTELIUM-ORIGIN"])
+}
+
+func TestIsOcteliumHeader(t *testing.T) {
+	for name, expected := range map[string]bool{
+		"X-Octelium-Auth":    true,
+		"x-octelium-auth":    true,
+		"X-OCTELIUM-AUTH":    true,
+		"X-Octelium-":        true,
+		"X-Octelium":         false,
+		"X-OcteliumFoo":      false,
+		"Authorization":      false,
+		"X-Forwarded-For":    false,
+		"X-Octelium-Unknown": true,
+	} {
+		assert.Equal(t, expected, isOcteliumHeader(name), name)
 	}
 }

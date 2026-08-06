@@ -69,8 +69,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 	isAnonymous := svc.Spec.IsAnonymous
 
-	req.Header.Del("X-Envoy-Internal")
 	req.Header.Del("X-Request-Id")
+
+	scrubOcteliumRequestHeaders(req, isManagedSvc)
 
 	inputMap := reqCtx.ReqCtxMap
 
@@ -171,20 +172,6 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				zap.L().Warn("Could not get oauth2 client credentials access token", zap.Error(err))
 			}
 		}
-	}
-
-	if !isManagedSvc {
-		req.Header.Del("X-Octelium-Auth")
-		req.Header.Del("X-Envoy-External-Address")
-		req.Header.Del(vutils.GetDownstreamIPHeaderCanonical())
-
-		for name, _ := range req.Header {
-			if strings.HasPrefix(name, "X-Octelium") {
-				req.Header.Del(name)
-			}
-		}
-
-		removeOcteliumCookie(req)
 	}
 
 	if !isAnonymous && isManagedSvc &&
@@ -330,6 +317,40 @@ func (m *middleware) isOriginAllowed(origin string, allowOriginList []string) (b
 	}
 
 	return false, ""
+}
+
+const octeliumHeaderPrefix = "x-octelium-"
+
+var managedServiceAllowedHeaders = map[string]struct{}{
+	"X-Octelium-Auth":          {},
+	"X-Octelium-Refresh-Token": {},
+
+	http.CanonicalHeaderKey(vutils.GetDownstreamIPHeaderCanonical()): {},
+}
+
+func scrubOcteliumRequestHeaders(req *http.Request, isManagedSvc bool) {
+	for name := range req.Header {
+		if !isOcteliumHeader(name) {
+			continue
+		}
+
+		if isManagedSvc {
+			if _, ok := managedServiceAllowedHeaders[http.CanonicalHeaderKey(name)]; ok {
+				continue
+			}
+		}
+
+		delete(req.Header, name)
+	}
+
+	if !isManagedSvc {
+		removeOcteliumCookie(req)
+	}
+}
+
+func isOcteliumHeader(name string) bool {
+	return len(name) >= len(octeliumHeaderPrefix) &&
+		strings.EqualFold(name[:len(octeliumHeaderPrefix)], octeliumHeaderPrefix)
 }
 
 func removeOcteliumCookie(req *http.Request) {
