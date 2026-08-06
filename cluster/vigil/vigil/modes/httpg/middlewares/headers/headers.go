@@ -17,11 +17,15 @@
 package headers
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
@@ -57,8 +61,79 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	m.setRequestHeaders(req, reqCtx)
-	m.next.ServeHTTP(rw, req)
-	m.postRequestModifyResponseHeaders(rw, req, reqCtx)
+
+	crw := &responseWriter{
+		ResponseWriter: rw,
+		modify: func(hdr http.Header) {
+			m.modifyResponseHeaders(hdr, req, reqCtx)
+		},
+	}
+
+	m.next.ServeHTTP(crw, req)
+
+	if !crw.wroteHeader && !crw.hijacked {
+		m.modifyResponseHeaders(rw.Header(), req, reqCtx)
+	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	modify      func(http.Header)
+	wroteHeader bool
+	hijacked    bool
+}
+
+func (w *responseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *responseWriter) WriteHeader(statusCode int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.modify(w.ResponseWriter.Header())
+	}
+
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseWriter) Flush() {
+	if !w.wroteHeader && !w.hijacked {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.Errorf("ResponseWriter is not a Hijacker")
+	}
+
+	conn, brw, err := hj.Hijack()
+	if err == nil {
+		w.hijacked = true
+	}
+
+	return conn, brw, err
+}
+
+func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+
+	return http.ErrNotSupported
 }
 
 func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.RequestContext) {
@@ -253,10 +328,9 @@ func (m *middleware) processCORSHeaders(rw http.ResponseWriter, req *http.Reques
 	return false
 }
 
-func (m *middleware) postRequestModifyResponseHeaders(rw http.ResponseWriter, req *http.Request, reqCtx *middlewares.RequestContext) {
+func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request, reqCtx *middlewares.RequestContext) {
 	svcCfg := reqCtx.ServiceConfig
 
-	rwHdr := rw.Header()
 	ctx := req.Context()
 	inputMap := reqCtx.ReqCtxMap
 
@@ -354,25 +428,47 @@ func isOcteliumHeader(name string) bool {
 }
 
 func removeOcteliumCookie(req *http.Request) {
-
-	var cookieHdr string
-
-	cookies := req.Cookies()
-	if len(cookies) == 0 {
+	values, ok := req.Header["Cookie"]
+	if !ok {
 		return
 	}
 
-	for _, cookie := range cookies {
-		switch cookie.Name {
-		case "octelium_auth", "octelium_rt":
-			continue
-		}
-		if cookieHdr == "" {
-			cookieHdr = fmt.Sprintf("%s=%s", cookie.Name, cookie.Value)
-		} else {
-			cookieHdr = fmt.Sprintf("%s; %s=%s", cookieHdr, cookie.Name, cookie.Value)
+	var ret []string
+	for _, value := range values {
+		if filtered := filterOcteliumCookies(value); filtered != "" {
+			ret = append(ret, filtered)
 		}
 	}
 
-	req.Header.Set("Cookie", cookieHdr)
+	if len(ret) == 0 {
+		req.Header.Del("Cookie")
+		return
+	}
+
+	req.Header["Cookie"] = ret
+}
+
+func filterOcteliumCookies(value string) string {
+	var ret []string
+
+	for _, pair := range strings.Split(value, ";") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		name := pair
+		if idx := strings.Index(pair, "="); idx >= 0 {
+			name = pair[:idx]
+		}
+
+		switch strings.TrimSpace(name) {
+		case "octelium_auth", "octelium_rt":
+			continue
+		}
+
+		ret = append(ret, pair)
+	}
+
+	return strings.Join(ret, "; ")
 }

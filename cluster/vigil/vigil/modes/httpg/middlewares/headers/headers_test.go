@@ -859,3 +859,202 @@ func TestIsOcteliumHeader(t *testing.T) {
 		assert.Equal(t, expected, isOcteliumHeader(name), name)
 	}
 }
+
+func newResponseHeaderCfg() *corev1.Service_Spec_Config {
+	return &corev1.Service_Spec_Config{
+		Type: &corev1.Service_Spec_Config_Http{
+			Http: &corev1.Service_Spec_Config_HTTP{
+				Header: &corev1.Service_Spec_Config_HTTP_Header{
+					AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+						{
+							Key:  "X-Added",
+							Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "yes"},
+						},
+					},
+					RemoveResponseHeaders: []string{"X-Leak"},
+				},
+			},
+		},
+	}
+}
+
+func serveWithResponseCfg(t *testing.T, next http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+
+	reqCtx := newScrubReqCtx(false, false)
+	reqCtx.ServiceConfig = newResponseHeaderCfg()
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, reqCtx))
+
+	rw := httptest.NewRecorder()
+	(&middleware{next: next}).ServeHTTP(rw, req)
+
+	return rw
+}
+
+func TestResponseHeadersAppliedBeforeCommit(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Leak", "secret")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("body"))
+	})
+
+	res := serveWithResponseCfg(t, next).Result()
+
+	assert.Equal(t, "yes", res.Header.Get("X-Added"))
+	assert.Equal(t, "", res.Header.Get("X-Leak"))
+	assert.Equal(t, "octelium", res.Header.Get("Server"))
+}
+
+func TestResponseHeadersAppliedOnImplicitWrite(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Leak", "secret")
+		w.Write([]byte("body"))
+	})
+
+	res := serveWithResponseCfg(t, next).Result()
+
+	assert.Equal(t, "yes", res.Header.Get("X-Added"))
+	assert.Equal(t, "", res.Header.Get("X-Leak"))
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+}
+
+func TestResponseHeadersAppliedOnFlush(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Leak", "secret")
+		w.(http.Flusher).Flush()
+		w.Write([]byte("stream"))
+	})
+
+	res := serveWithResponseCfg(t, next).Result()
+
+	assert.Equal(t, "yes", res.Header.Get("X-Added"))
+	assert.Equal(t, "", res.Header.Get("X-Leak"))
+}
+
+func TestResponseHeadersAppliedWhenNothingWritten(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Leak", "secret")
+	})
+
+	rw := serveWithResponseCfg(t, next)
+
+	assert.Equal(t, "yes", rw.Header().Get("X-Added"))
+	assert.Equal(t, "", rw.Header().Get("X-Leak"))
+}
+
+func TestResponseStatusCodePreserved(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+
+	res := serveWithResponseCfg(t, next).Result()
+
+	assert.Equal(t, http.StatusTeapot, res.StatusCode)
+	assert.Equal(t, "yes", res.Header.Get("X-Added"))
+}
+
+func TestRemoveOcteliumCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      string
+		out     string
+		present bool
+	}{
+		{
+			name: "allOcteliumCookies",
+			in:   "octelium_auth=a; octelium_rt=b",
+		},
+		{
+			name:    "quotedValuePreserved",
+			in:      `sess="quoted value"; octelium_auth=a`,
+			out:     `sess="quoted value"`,
+			present: true,
+		},
+		{
+			name:    "unparseableCookieKept",
+			in:      "a=1; bad name=2; b=3",
+			out:     "a=1; bad name=2; b=3",
+			present: true,
+		},
+		{
+			name:    "octeliumRemovedOthersKept",
+			in:      "a=1; octelium_auth=tkn; b=2; octelium_rt=rt; c=3",
+			out:     "a=1; b=2; c=3",
+			present: true,
+		},
+		{
+			name:    "valueContainingEquals",
+			in:      "a=1=2; octelium_auth=x",
+			out:     "a=1=2",
+			present: true,
+		},
+		{
+			name:    "prefixNotMatched",
+			in:      "octelium_auth_x=1; octelium_authy=2; octelium_auth=3",
+			out:     "octelium_auth_x=1; octelium_authy=2",
+			present: true,
+		},
+		{
+			name:    "emptyValuePreserved",
+			in:      "a=; octelium_rt=b",
+			out:     "a=",
+			present: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+			req.Header.Set("Cookie", tc.in)
+
+			removeOcteliumCookie(req)
+
+			got, present := req.Header["Cookie"]
+			assert.Equal(t, tc.present, present)
+			if tc.present {
+				assert.Equal(t, []string{tc.out}, got)
+			}
+		})
+	}
+}
+
+func TestRemoveOcteliumCookieNoCookieHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+
+	removeOcteliumCookie(req)
+
+	_, present := req.Header["Cookie"]
+	assert.False(t, present)
+}
+
+func TestRemoveOcteliumCookieMultipleHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+	req.Header.Add("Cookie", "a=1; octelium_auth=x")
+	req.Header.Add("Cookie", "octelium_rt=y")
+	req.Header.Add("Cookie", "b=2")
+
+	removeOcteliumCookie(req)
+
+	assert.Equal(t, []string{"a=1", "b=2"}, req.Header["Cookie"])
+}
+
+func TestOcteliumCookiesKeptForManagedServices(t *testing.T) {
+	reqCtx := newScrubReqCtx(true, true)
+	req := newScrubRequest(t, reqCtx)
+	req.Header.Set("Cookie", "a=1; octelium_auth=tkn")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "a=1; octelium_auth=tkn", req.Header.Get("Cookie"))
+}
+
+func TestOcteliumCookiesRemovedForOrdinaryServices(t *testing.T) {
+	reqCtx := newScrubReqCtx(false, false)
+	req := newScrubRequest(t, reqCtx)
+	req.Header.Set("Cookie", "a=1; octelium_auth=tkn")
+
+	(&middleware{}).setRequestHeaders(req, reqCtx)
+
+	assert.Equal(t, "a=1", req.Header.Get("Cookie"))
+}
