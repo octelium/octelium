@@ -83,7 +83,7 @@ end
 			},
 		},
 	}
-	reqCtxLVal := mdlwr.getRequestContextLValue(reqCtx)
+	reqCtxMap := pbutils.MustConvertToMap(reqCtx)
 
 	bodyReq := utilrand.GetRandomString(32)
 	bodyResp := utilrand.GetRandomString(32)
@@ -99,10 +99,10 @@ end
 			CreatedAt: time.Now()}))
 
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:          req,
-		fnProto:      fnProto,
-		reqCtxLValue: reqCtxLVal,
-		rw:           newResponseWriter(rw),
+		req:       req,
+		fnProto:   fnProto,
+		reqCtxMap: reqCtxMap,
+		rw:        newResponseWriter(rw),
 	})
 	assert.Nil(t, err)
 
@@ -185,7 +185,7 @@ end
 			},
 		},
 	}
-	reqCtxLVal := mdlwr.getRequestContextLValue(reqCtx)
+	reqCtxMap := pbutils.MustConvertToMap(reqCtx)
 
 	reqCtxJSON, err := pbutils.MarshalJSON(reqCtx, false)
 	assert.Nil(t, err)
@@ -198,10 +198,10 @@ end
 			CreatedAt: time.Now()}))
 
 	luaCtx, err := newCtx(&newCtxOpts{
-		req:          req,
-		fnProto:      fnProto,
-		reqCtxLValue: reqCtxLVal,
-		rw:           newResponseWriter(rw),
+		req:       req,
+		fnProto:   fnProto,
+		reqCtxMap: reqCtxMap,
+		rw:        newResponseWriter(rw),
 	})
 	assert.Nil(t, err)
 

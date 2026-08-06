@@ -17,20 +17,31 @@
 package lua
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/kaptinlin/jsonschema"
+	"github.com/octelium/octelium/cluster/common/jsonschemautils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/base64"
 	httpm "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/http"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/regexp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/strings"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua/modules/table"
-	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 	"go.uber.org/zap"
 )
+
+const defaultPhaseTimeout = 10 * time.Second
+
+var luaStateOptions = lua.Options{
+	SkipOpenLibs:        true,
+	MinimizeStackMemory: true,
+	CallStackSize:       200,
+	RegistrySize:        256,
+	RegistryGrowStep:    256,
+	RegistryMaxSize:     256 * 20,
+}
 
 type luaCtx struct {
 	req          *http.Request
@@ -39,29 +50,40 @@ type luaCtx struct {
 	fnProto      *lua.FunctionProto
 	reqCtxLValue lua.LValue
 	isExit       bool
+
+	pluginName string
+	timeout    time.Duration
+
+	hasOnRequest  bool
+	hasOnResponse bool
+	failed        bool
 }
 
 type newCtxOpts struct {
-	req          *http.Request
-	rw           *responseWriter
-	fnProto      *lua.FunctionProto
-	reqCtxLValue lua.LValue
+	req        *http.Request
+	rw         *responseWriter
+	fnProto    *lua.FunctionProto
+	reqCtxMap  map[string]any
+	pluginName string
+	timeout    time.Duration
 }
 
-var jsonCompiler = jsonschema.NewCompiler()
+var schemaCache = jsonschemautils.NewCache()
 
 func newCtx(o *newCtxOpts) (*luaCtx, error) {
 
 	ret := &luaCtx{
-		req:          o.req,
-		rw:           o.rw,
-		fnProto:      o.fnProto,
-		reqCtxLValue: o.reqCtxLValue,
+		req:        o.req,
+		rw:         o.rw,
+		fnProto:    o.fnProto,
+		pluginName: o.pluginName,
+		timeout:    o.timeout,
 	}
-	ret.state = lua.NewState(lua.Options{
-		SkipOpenLibs: true,
-	})
-	ret.state.SetContext(o.req.Context())
+	if ret.timeout <= 0 {
+		ret.timeout = defaultPhaseTimeout
+	}
+
+	ret.state = lua.NewState(luaStateOptions)
 
 	// lua.OpenString(ret.state)
 	lua.OpenMath(ret.state)
@@ -69,11 +91,28 @@ func newCtx(o *newCtxOpts) (*luaCtx, error) {
 	ret.loadGlobalFns()
 	ret.loadModules()
 
-	if err := ret.loadFromProto(); err != nil {
+	ret.reqCtxLValue = toLuaValue(ret.state, o.reqCtxMap)
+
+	if err := ret.withBudget(ret.loadFromProto); err != nil {
+		ret.close()
 		return nil, err
 	}
 
+	ret.hasOnRequest = ret.state.GetGlobal("onRequest").Type() == lua.LTFunction
+	ret.hasOnResponse = ret.state.GetGlobal("onResponse").Type() == lua.LTFunction
+
 	return ret, nil
+}
+
+func (c *luaCtx) withBudget(fn func() error) error {
+	ctx, cancel := context.WithTimeout(c.req.Context(), c.timeout)
+	defer cancel()
+
+	c.state.SetContext(ctx)
+	err := fn()
+	c.state.RemoveContext()
+
+	return err
 }
 
 func (l *luaCtx) close() {
@@ -88,44 +127,39 @@ func (c *luaCtx) loadFromProto() error {
 	return c.state.PCall(0, lua.MultRet, nil)
 }
 
-func (c *luaCtx) callOnRequest() error {
-	f := c.state.GetGlobal("onRequest")
+func (c *luaCtx) callHook(name string) error {
+	if c.failed {
+		return nil
+	}
 
+	f := c.state.GetGlobal(name)
 	if f.Type() != lua.LTFunction {
-		return errors.Errorf("onRequest function is not defined")
+		return nil
 	}
 
 	startedAt := time.Now()
-	c.state.Push(f)
-	c.state.Push(c.reqCtxLValue)
 
-	if err := c.state.PCall(1, 0, nil); err != nil {
+	err := c.withBudget(func() error {
+		c.state.Push(f)
+		c.state.Push(c.reqCtxLValue)
+		return c.state.PCall(1, 0, nil)
+	})
+	if err != nil {
+		c.failed = true
 		return err
 	}
 
-	zap.L().Debug("onRequest done",
+	zap.L().Debug(name+" done",
 		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
 	return nil
 }
 
+func (c *luaCtx) callOnRequest() error {
+	return c.callHook("onRequest")
+}
+
 func (c *luaCtx) callOnResponse() error {
-	f := c.state.GetGlobal("onResponse")
-
-	if f.Type() != lua.LTFunction {
-		return errors.Errorf("onResponse function is not defined")
-	}
-
-	startedAt := time.Now()
-	c.state.Push(f)
-	c.state.Push(c.reqCtxLValue)
-
-	if err := c.state.PCall(1, 0, nil); err != nil {
-		return err
-	}
-
-	zap.L().Debug("onResponse done",
-		zap.Float32("timeMicroSec", float32(time.Since(startedAt).Nanoseconds())/1000))
-	return nil
+	return c.callHook("onResponse")
 }
 
 func (c *luaCtx) jsonEncode(L *lua.LState) int {
@@ -177,7 +211,7 @@ func (c *luaCtx) jsonIsSchemaValid(L *lua.LState) int {
 		return 1
 	}
 
-	schema, err := jsonCompiler.Compile([]byte(jsonSchema))
+	schema, err := schemaCache.Compile([]byte(jsonSchema))
 	if err != nil {
 		L.Push(lua.LBool(false))
 		return 1
@@ -288,4 +322,8 @@ func (c *luaCtx) loadGlobalFns() {
 	L.SetGlobal("print", L.NewFunction(doGlobalFnPrint))
 	L.SetGlobal("ipairs", L.NewClosure(doIpairs, L.NewFunction(ipairsaux)))
 	L.SetGlobal("pairs", L.NewClosure(doPairs, L.NewFunction(pairsaux)))
+	L.SetGlobal("pcall", L.NewFunction(doGlobalFnPCall))
+	L.SetGlobal("tostring", L.NewFunction(doGlobalFnToString))
+	L.SetGlobal("tonumber", L.NewFunction(doGlobalFnToNumber))
+	L.SetGlobal("select", L.NewFunction(doGlobalFnSelect))
 }

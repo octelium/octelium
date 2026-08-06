@@ -27,6 +27,7 @@ import (
 	"github.com/kaptinlin/jsonschema"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
+	"github.com/octelium/octelium/cluster/common/jsonschemautils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 )
@@ -35,7 +36,6 @@ type middleware struct {
 	next http.Handler
 	sync.RWMutex
 	cMap      map[string]*jsonschema.Schema
-	compiler  *jsonschema.Compiler
 	celEngine *celengine.CELEngine
 	phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
 }
@@ -46,7 +46,6 @@ func New(ctx context.Context, next http.Handler, celEngine *celengine.CELEngine,
 		phase:     phase,
 		celEngine: celEngine,
 		cMap:      make(map[string]*jsonschema.Schema),
-		compiler:  jsonschema.NewCompiler(),
 	}, nil
 }
 
@@ -141,7 +140,7 @@ func (m *middleware) getSchema(arg string) *jsonschema.Schema {
 
 func (m *middleware) setAndGetSchema(arg string) *jsonschema.Schema {
 
-	schema, err := m.compiler.Compile([]byte(arg))
+	schema, err := jsonschemautils.Compile([]byte(arg))
 	if err != nil {
 		return nil
 	}

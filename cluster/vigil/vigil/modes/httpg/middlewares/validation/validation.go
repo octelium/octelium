@@ -24,21 +24,20 @@ import (
 	"sync"
 
 	"github.com/kaptinlin/jsonschema"
+	"github.com/octelium/octelium/cluster/common/jsonschemautils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 )
 
 type middleware struct {
 	next http.Handler
 	sync.RWMutex
-	cMap     map[string]*jsonschema.Schema
-	compiler *jsonschema.Compiler
+	cMap map[string]*jsonschema.Schema
 }
 
 func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 	return &middleware{
-		next:     next,
-		cMap:     make(map[string]*jsonschema.Schema),
-		compiler: jsonschema.NewCompiler(),
+		next: next,
+		cMap: make(map[string]*jsonschema.Schema),
 	}, nil
 }
 
@@ -86,7 +85,7 @@ func (m *middleware) getSchema(arg string) *jsonschema.Schema {
 
 func (m *middleware) setAndGetSchema(arg string) *jsonschema.Schema {
 
-	schema, err := m.compiler.Compile([]byte(arg))
+	schema, err := jsonschemautils.Compile([]byte(arg))
 	if err != nil {
 		return nil
 	}

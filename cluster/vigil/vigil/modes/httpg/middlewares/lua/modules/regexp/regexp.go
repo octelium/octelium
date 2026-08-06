@@ -17,10 +17,52 @@
 package regexp
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"regexp"
+	"sync"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+const (
+	maxPatternLen = 4096
+
+	maxSubmatches = 1000
+
+	maxCachedPatterns = 1024
+)
+
+var patternCache sync.Map
+
+func compilePattern(pattern string) (*regexp.Regexp, error) {
+	if len(pattern) > maxPatternLen {
+		return nil, fmt.Errorf("regexp pattern is larger than the %d byte limit", maxPatternLen)
+	}
+
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(pattern)))
+	if v, ok := patternCache.Load(key); ok {
+		return v.(*regexp.Regexp), nil
+	}
+
+	rgx, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	count := 0
+	patternCache.Range(func(_, _ any) bool {
+		count++
+		return count < maxCachedPatterns
+	})
+	if count >= maxCachedPatterns {
+		patternCache.Clear()
+	}
+
+	patternCache.Store(key, rgx)
+
+	return rgx, nil
+}
 
 func Register(L *lua.LState) int {
 	mod := L.RegisterModule("regexp", fns).(*lua.LTable)
@@ -44,7 +86,7 @@ var fns = map[string]lua.LGFunction{
 }
 
 func doCompile(L *lua.LState) int {
-	rgx, err := regexp.Compile(L.CheckString(1))
+	rgx, err := compilePattern(L.CheckString(1))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -61,14 +103,14 @@ func doCompile(L *lua.LState) int {
 
 func doMatch(L *lua.LState) int {
 
-	isMatched, err := regexp.MatchString(L.CheckString(1), L.CheckString(2))
+	rgx, err := compilePattern(L.CheckString(1))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
 
-	L.Push(lua.LBool(isMatched))
+	L.Push(lua.LBool(rgx.MatchString(L.CheckString(2))))
 	return 1
 }
 
@@ -93,7 +135,7 @@ func doFindAllStringSubmatch(L *lua.LState) int {
 	reg := checkRegexp(L)
 	result := L.NewTable()
 
-	for _, t := range reg.FindAllStringSubmatch(L.CheckString(2), -1) {
+	for _, t := range reg.FindAllStringSubmatch(L.CheckString(2), maxSubmatches) {
 		row := L.NewTable()
 		for _, v := range t {
 			row.Append(lua.LString(v))

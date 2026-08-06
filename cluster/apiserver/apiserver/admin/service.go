@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/asaskevich/govalidator"
-	"github.com/kaptinlin/jsonschema"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -36,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/jsonschemautils"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/rscutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -1012,7 +1012,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 						if len(val) > 30000 {
 							return grpcutils.InvalidArg("jsonSchema is too large")
 						}
-						if _, err := jsonschema.NewCompiler().Compile([]byte(val)); err != nil {
+						if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
 							return grpcutils.InvalidArg("invalid jsonSchema")
 						}
 
@@ -1223,7 +1223,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 						if len(val) > 30000 {
 							return grpcutils.InvalidArg("jsonSchema is too large")
 						}
-						if _, err := jsonschema.NewCompiler().Compile([]byte(val)); err != nil {
+						if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
 							return grpcutils.InvalidArg("invalid jsonSchema")
 						}
 
