@@ -451,11 +451,19 @@ func (s *Server) isAuthorizedWithMetrics(ctx context.Context,
 	startedAt := time.Now()
 	s.commonMetrics.atAuthorizationRequestStart()
 	isAuthorized, reason, err := s.isAuthorized(ctx, req, additional)
-	s.commonMetrics.atAuthorizationRequestEnd(startedAt,
-		metric.WithAttributeSet(
-			attribute.NewSet(
-				attribute.Bool("req.authorized", isAuthorized),
-				attribute.Bool("req.error", err != nil))))
+
+	attrs := []attribute.KeyValue{
+		attribute.Bool("req.authorized", isAuthorized),
+		attribute.Bool("req.error", err != nil),
+		attribute.String("namespace", req.GetNamespace().GetMetadata().GetName()),
+		attribute.String("service", req.GetService().GetMetadata().GetName()),
+	}
+
+	if !isAuthorized {
+		attrs = append(attrs, attribute.String("reason", reason.GetType().String()))
+	}
+
+	s.commonMetrics.atAuthorizationRequestEnd(startedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
 	return isAuthorized, reason, err
 }
 
