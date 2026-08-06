@@ -175,6 +175,28 @@ func (l *listener) close() error {
 	return nil
 }
 
+func (l *listener) setLis(lis net.Listener) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.isClosed {
+		return false
+	}
+	l.lis = lis
+
+	return true
+}
+
+func (l *listener) setUDPLis(lis *udp.Listener) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.isClosed {
+		return false
+	}
+	l.udpLis = lis
+
+	return true
+}
+
 func (l *listener) startUDP(ctx context.Context) error {
 	go l.doStartUDP(ctx)
 	return nil
@@ -195,10 +217,13 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 
 	listenerAddr := net.JoinHostPort(l.address, fmt.Sprintf("%d", l.port))
 
-	l.lis, err = func() (net.Listener, error) {
+	lis, err := func() (net.Listener, error) {
 		var err error
 		var listener net.Listener
 		for i := 0; i < 100; i++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 
 			gonet := l.opts.goNetCtl.GetGoNet()
 
@@ -233,6 +258,11 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		return err
 	}
 
+	if !l.setLis(lis) {
+		zap.S().Debugf("TCP listener %s was closed before it started", listenerAddr)
+		return lis.Close()
+	}
+
 	zap.S().Debugf("TCP listener %s successfully started", listenerAddr)
 
 	defer l.close()
@@ -243,7 +273,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 			zap.S().Debugf("shutting down proxy for %s", listenerAddr)
 			return nil
 		default:
-			conn, err := l.lis.Accept()
+			conn, err := lis.Accept()
 			if err != nil {
 				zap.S().Debugf("Could not accept conn: %+v", err)
 				time.Sleep(100 * time.Millisecond)
@@ -291,10 +321,15 @@ func (l *listener) doStartUDP(ctx context.Context) error {
 		return err
 	}
 
-	l.udpLis, err = udp.Listen("udp", addrL)
+	udpLis, err := udp.Listen("udp", addrL)
 	if err != nil {
 		zap.S().Errorf("Could not listen on UDP addr %s", listenerAddr)
 		return err
+	}
+
+	if !l.setUDPLis(udpLis) {
+		zap.S().Debugf("UDP listener %s was closed before it started", listenerAddr)
+		return udpLis.Close()
 	}
 
 	defer l.close()
@@ -305,7 +340,7 @@ func (l *listener) doStartUDP(ctx context.Context) error {
 			zap.S().Debugf("shutting down proxy for %s", listenerAddr)
 			return nil
 		default:
-			conn, err := l.udpLis.Accept()
+			conn, err := udpLis.Accept()
 			if err != nil {
 				zap.S().Debugf("Could not accept conn: %+v", err)
 				time.Sleep(100 * time.Millisecond)

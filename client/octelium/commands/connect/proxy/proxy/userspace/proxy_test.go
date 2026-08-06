@@ -111,6 +111,42 @@ func TestProxyTCP(t *testing.T) {
 	}
 }
 
+func TestProxyCloseWhileListenerNotReady(t *testing.T) {
+
+	listenPort := uint32(18093)
+	listenAddr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", listenPort))
+
+	blocker, err := net.Listen("tcp", listenAddr)
+	assert.Nil(t, err)
+
+	proxy := NewProxyFromServiceListener(&userv1.HostedService{
+		Port:   listenPort,
+		L4Type: userv1.HostedService_TCP,
+		Name:   "svc-close",
+		Upstream: &userv1.HostedService_Upstream{
+			Host: "localhost",
+			Port: int32(testServerPort),
+		},
+	}, &metav1.DualStackIP{
+		Ipv4: "127.0.0.1",
+	}, &ccommon.TestGoNetCtl{}, true, false)
+
+	assert.Nil(t, proxy.Start(context.Background()))
+
+	time.Sleep(500 * time.Millisecond)
+
+	assert.Nil(t, proxy.Close())
+	assert.Nil(t, blocker.Close())
+
+	time.Sleep(2 * time.Second)
+
+	lis, err := net.Listen("tcp", listenAddr)
+	assert.Nil(t, err, "%s is still bound after Close", listenAddr)
+	if lis != nil {
+		lis.Close()
+	}
+}
+
 func initTCPServer(sig chan struct{}) error {
 	l, err := net.Listen("tcp", net.JoinHostPort("localhost", fmt.Sprintf("%d", testServerPort)))
 	if err != nil {

@@ -123,6 +123,17 @@ func (l *listener) close() error {
 	return nil
 }
 
+func (l *listener) setLis(lis net.Listener) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.isClosed {
+		return false
+	}
+	l.lis = lis
+
+	return true
+}
+
 func newListener(svc *cliconfigv1.Connection_Preferences_PublishedService, ctl *Controller) *listener {
 	return &listener{
 		ctl:      ctl,
@@ -156,11 +167,15 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 
 	listenerAddr := net.JoinHostPort(l.hostAddress, fmt.Sprintf("%d", l.hostPort))
 
-	l.lis, err = func() (net.Listener, error) {
+	lis, err := func() (net.Listener, error) {
 
 		var err error
 		var listener net.Listener
 		for i := range 100 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
 			listener, err = net.Listen("tcp", listenerAddr)
 			if err == nil {
 				return listener, nil
@@ -177,6 +192,11 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		return err
 	}
 
+	if !l.setLis(lis) {
+		zap.L().Debug("TCP listener was closed before it started", zap.String("addr", listenerAddr))
+		return lis.Close()
+	}
+
 	zap.L().Debug("TCP listener successfully started", zap.String("addr", listenerAddr))
 
 	defer l.close()
@@ -186,7 +206,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		default:
-			conn, err := l.lis.Accept()
+			conn, err := lis.Accept()
 			if err != nil {
 				zap.L().Debug("Could not accept conn", zap.String("addr", listenerAddr), zap.Error(err))
 				time.Sleep(100 * time.Millisecond)
