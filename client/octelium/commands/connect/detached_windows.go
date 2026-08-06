@@ -61,13 +61,22 @@ func doRunDetached(domain string, args []string) error {
 			return err
 		}
 
+		deadline := time.Now().Add(30 * time.Second)
 		for {
 			zap.L().Debug("service loop")
 			service, err = m.OpenService(svcName)
-			if err != nil && err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
-				break
+			if err != nil {
+				if err != windows.ERROR_SERVICE_MARKED_FOR_DELETE {
+					break
+				}
+			} else {
+				service.Close()
 			}
-			service.Close()
+
+			if !time.Now().Before(deadline) {
+				return errors.Errorf("timeout waiting for the existing service %s to be deleted", svcName)
+			}
+
 			time.Sleep(time.Second / 3)
 		}
 	}
