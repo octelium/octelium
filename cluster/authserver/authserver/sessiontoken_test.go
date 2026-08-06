@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -847,4 +848,143 @@ func TestAuthenticateWithAuthenticator(t *testing.T) {
 			assert.NotNil(t, postResp, "%+v", err)
 		}
 	}
+}
+
+func TestCheckCredentialPKCE(t *testing.T) {
+
+	codeVerifier, err := opkce.NewVerifier()
+	assert.Nil(t, err)
+	codeChallenge := opkce.GetChallenge(codeVerifier)
+
+	newCred := func(pkce *corev1.Credential_Status_PKCE) *corev1.Credential {
+		return &corev1.Credential{
+			Status: &corev1.Credential_Status{
+				Pkce: pkce,
+			},
+		}
+	}
+
+	boundCred := newCred(&corev1.Credential_Status_PKCE{
+		CodeChallenge: codeChallenge,
+	})
+
+	assert.Nil(t, checkCredentialPKCE(newCred(nil), nil))
+
+	assert.NotNil(t, checkCredentialPKCE(newCred(nil), codeVerifier))
+
+	assert.Nil(t, checkCredentialPKCE(boundCred, codeVerifier))
+
+	assert.NotNil(t, checkCredentialPKCE(boundCred, nil))
+
+	{
+		other, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+		assert.NotNil(t, checkCredentialPKCE(boundCred, other))
+	}
+
+	assert.NotNil(t, checkCredentialPKCE(boundCred, codeVerifier[:opkce.VerifierLen-1]))
+	assert.NotNil(t, checkCredentialPKCE(boundCred, append(codeVerifier, 0x0)))
+
+	assert.NotNil(t, checkCredentialPKCE(newCred(&corev1.Credential_Status_PKCE{}), codeVerifier))
+}
+
+func TestAuthenticateWithAuthenticationTokenPKCE(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newAuthToken := func(codeChallenge []byte) string {
+		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		sess, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		u, err := srv.generateClientCallbackURL(ctx, sess,
+			"http://localhost:12345/callback/success/abcdefgh", codeChallenge)
+		assert.Nil(t, err, "%+v", err)
+
+		return decodeLoginResp(t, u).AuthenticationToken
+	}
+
+	t.Run("matching-verifier", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		resp, err := srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: newAuthToken(opkce.GetChallenge(codeVerifier)),
+				CodeVerifier:        codeVerifier,
+			})
+		assert.Nil(t, err, "%+v", err)
+		assert.NotEmpty(t, resp.AccessToken)
+	})
+
+	t.Run("missing-verifier", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		_, err = srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: newAuthToken(opkce.GetChallenge(codeVerifier)),
+			})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthenticated(err))
+	})
+
+	t.Run("wrong-verifier", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		other, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		_, err = srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: newAuthToken(opkce.GetChallenge(codeVerifier)),
+				CodeVerifier:        other,
+			})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthenticated(err))
+	})
+
+	t.Run("unbound-token-with-verifier", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		_, err = srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: newAuthToken(nil),
+				CodeVerifier:        codeVerifier,
+			})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthenticated(err))
+	})
+
+	t.Run("unbound-token-without-verifier", func(t *testing.T) {
+		resp, err := srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: newAuthToken(nil),
+			})
+		assert.Nil(t, err, "%+v", err)
+		assert.NotEmpty(t, resp.AccessToken)
+	})
 }

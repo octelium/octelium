@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -113,6 +114,10 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		return nil, s.errUnauthenticated("Not an AUTH TOKEN")
 	}
 
+	if err := checkCredentialPKCE(tkn, req.CodeVerifier); err != nil {
+		return nil, s.errUnauthenticatedErr(err)
+	}
+
 	usr, err := s.getUserFromUserRef(ctx, tkn.Status.UserRef)
 	if err != nil {
 		return nil, err
@@ -189,6 +194,23 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 	}
 
 	return ret, nil
+}
+
+func checkCredentialPKCE(tkn *corev1.Credential, codeVerifier []byte) error {
+	pkce := tkn.Status.GetPkce()
+
+	switch {
+	case pkce == nil && len(codeVerifier) == 0:
+		return nil
+	case pkce == nil:
+		return errors.Errorf("A code verifier is supplied for a Credential that is not bound to a code challenge")
+	case len(codeVerifier) == 0:
+		return errors.Errorf("The Credential is bound to a code challenge but no code verifier is supplied")
+	case !opkce.Verify(pkce.CodeChallenge, codeVerifier):
+		return errors.Errorf("The code verifier does not match the code challenge")
+	default:
+		return nil
+	}
 }
 
 func (s *server) updateAndAutoDeleteCredential(ctx context.Context, tkn *corev1.Credential) error {

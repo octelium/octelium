@@ -1,4 +1,5 @@
 import { RouteObject } from "react-router-dom";
+import routerApproval from "./Approval/router";
 import routerAuthenticator from "./Authenticator/router";
 import Denied from "./Denied";
 import Home from "./Home";
@@ -21,6 +22,7 @@ export default (): RouteObject => {
 
       routerLogin(),
       routerAuthenticator(),
+      routerApproval(),
     ],
   };
 };

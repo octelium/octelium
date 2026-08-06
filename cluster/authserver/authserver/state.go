@@ -39,6 +39,8 @@ type loginState struct {
 	CallbackURL string
 	IsApp       bool
 
+	CodeChallenge []byte
+
 	UID string
 
 	Login *idputils.GetLoginResponse
@@ -48,7 +50,14 @@ type authenticatorCallbackState struct {
 	CallbackURL string
 	IsApp       bool
 
+	CodeChallenge []byte
+
 	UID string
+}
+
+type pendingClientAuth struct {
+	CallbackURL   string
+	CodeChallenge []byte
 }
 
 func (s *server) saveLoginState(ctx context.Context, state *loginState) error {
@@ -144,8 +153,9 @@ func (s *server) getLoginStateFromStateID(ctx context.Context, stateID string) (
 
 func (s *server) saveAuthenticatorCallbackState(ctx context.Context, sess *corev1.Session, loginState *loginState) error {
 	stateBytes, err := json.Marshal(&authenticatorCallbackState{
-		IsApp:       loginState.IsApp,
-		CallbackURL: loginState.CallbackURL,
+		IsApp:         loginState.IsApp,
+		CallbackURL:   loginState.CallbackURL,
+		CodeChallenge: loginState.CodeChallenge,
 	})
 	if err != nil {
 		return err
@@ -185,10 +195,70 @@ func (s *server) loadAuthenticatorCallbackState(ctx context.Context, sess *corev
 	return ret, nil
 }
 
+func (s *server) savePendingClientAuth(ctx context.Context,
+	sess *corev1.Session, state *pendingClientAuth) error {
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.octeliumC.CacheC().SetCache(ctx, &rcachev1.SetCacheRequest{
+		Key:  []byte(getPendingClientAuthKey(sess)),
+		Data: stateBytes,
+		Duration: &metav1.Duration{
+			Type: &metav1.Duration_Minutes{
+				Minutes: 5,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) loadPendingClientAuth(ctx context.Context,
+	sess *corev1.Session) (*pendingClientAuth, error) {
+	return s.doLoadPendingClientAuth(ctx, sess, false)
+}
+
+func (s *server) consumePendingClientAuth(ctx context.Context,
+	sess *corev1.Session) (*pendingClientAuth, error) {
+	return s.doLoadPendingClientAuth(ctx, sess, true)
+}
+
+func (s *server) doLoadPendingClientAuth(ctx context.Context,
+	sess *corev1.Session, delete bool) (*pendingClientAuth, error) {
+
+	res, err := s.octeliumC.CacheC().GetCache(ctx, &rcachev1.GetCacheRequest{
+		Key:    []byte(getPendingClientAuthKey(sess)),
+		Delete: delete,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &pendingClientAuth{}
+	if err := json.Unmarshal(res.Data, ret); err != nil {
+		zap.L().Warn("Could not unmarshal json of pendingClientAuth from cache", zap.Error(err))
+		return nil, errors.Errorf("Invalid or expired state. Please try again.")
+	}
+
+	if ret.CallbackURL == "" {
+		return nil, errors.Errorf("Empty client callback URL")
+	}
+
+	return ret, nil
+}
+
 func getAuthKey(state string) string {
 	return fmt.Sprintf("authserver.ls.%s", state)
 }
 
 func getAuthenticatorCallbackKey(sess *corev1.Session) string {
 	return fmt.Sprintf("authserver.ls.authn.%s", sess.Metadata.Uid)
+}
+
+func getPendingClientAuthKey(sess *corev1.Session) string {
+	return fmt.Sprintf("authserver.ls.capp.%s", sess.Metadata.Uid)
 }

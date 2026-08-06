@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -422,6 +423,81 @@ func TestGetLoginStateFromCallback(t *testing.T) {
 		vals.Set("RelayState", stateID)
 
 		_, err := srv.getLoginStateFromCallback(newPostReq(vals, otherStateID))
+		assert.NotNil(t, err)
+	}
+}
+
+func TestPendingClientAuth(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	{
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+		codeChallenge := opkce.GetChallenge(codeVerifier)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL:   "http://localhost:12345/callback/success/abcdefgh",
+			CodeChallenge: codeChallenge,
+		}))
+
+		for range 3 {
+			state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, "http://localhost:12345/callback/success/abcdefgh", state.CallbackURL)
+			assert.Equal(t, codeChallenge, state.CodeChallenge)
+		}
+
+		state, err := srv.consumePendingClientAuth(ctx, usrT.Session)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, codeChallenge, state.CodeChallenge)
+
+		_, err = srv.consumePendingClientAuth(ctx, usrT.Session)
+		assert.NotNil(t, err)
+
+		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		other, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL: "http://localhost:12345/callback/success/abcdefgh",
+		}))
+
+		_, err = srv.loadPendingClientAuth(ctx, other.Session)
+		assert.NotNil(t, err)
+	}
+
+	{
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
 		assert.NotNil(t, err)
 	}
 }

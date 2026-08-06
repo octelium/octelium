@@ -24,10 +24,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 )
@@ -233,4 +236,118 @@ func TestHandleLogin(t *testing.T) {
 		}
 	}
 
+}
+
+func TestHandleLoginClientRequest(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	doLogin := func(usrT *tstuser.User, loginReq *authv1.ClientLoginRequest) *http.Response {
+		murl := fmt.Sprintf("http://localhost/login?octelium_req=%s",
+			encodeLoginReq(t, loginReq))
+
+		req := httptest.NewRequest("GET", murl, nil)
+		req.AddCookie(&http.Cookie{
+			Name:  "octelium_rt",
+			Value: string(usrT.GetAccessToken().RefreshToken),
+			Path:  "/",
+		})
+
+		w := httptest.NewRecorder()
+		srv.handleLogin(w, req)
+		return w.Result()
+	}
+
+	countCredentials := func() int {
+		credList, err := srv.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{})
+		assert.Nil(t, err)
+		return len(credList.Items)
+	}
+
+	t.Run("no-silent-token", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		totalCreds := countCredentials()
+
+		resp := doLogin(usrT, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  opkce.GetChallenge(codeVerifier),
+		})
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+		location := resp.Header.Get("Location")
+		assert.Equal(t, fmt.Sprintf("%s/callback/success", srv.rootURL), location)
+		assert.NotContains(t, location, "octelium_response")
+		assert.NotContains(t, location, "localhost:12345")
+
+		assert.Equal(t, totalCreds, countCredentials())
+
+		state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "http://localhost:12345/callback/success/abcdefgh", state.CallbackURL)
+		assert.Equal(t, opkce.GetChallenge(codeVerifier), state.CodeChallenge)
+	})
+
+	t.Run("no-silent-token-legacy-client", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		totalCreds := countCredentials()
+
+		resp := doLogin(usrT, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcd",
+		})
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.NotContains(t, resp.Header.Get("Location"), "octelium_response")
+		assert.Equal(t, totalCreds, countCredentials())
+
+		state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, "http://localhost:12345/callback/success/abcd", state.CallbackURL)
+		assert.Empty(t, state.CodeChallenge)
+	})
+
+	t.Run("invalid-request", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		resp := doLogin(usrT, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   80,
+			CallbackSuffix: "abcd",
+		})
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, srv.getPortalURL(), resp.Header.Get("Location"))
+
+		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.NotNil(t, err)
+	})
 }

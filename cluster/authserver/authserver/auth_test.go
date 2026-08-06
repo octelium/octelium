@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -658,7 +659,7 @@ func TestHandleSuccessCallback(t *testing.T) {
 		resp := w.Result()
 
 		assert.Equal(t, resp.StatusCode, http.StatusSeeOther)
-		assert.Equal(t, murl, resp.Header.Get("Location"))
+		assert.Equal(t, fmt.Sprintf("https://portal.%s", srv.domain), resp.Header.Get("Location"))
 	})
 
 	t.Run("other-domain", func(t *testing.T) {
@@ -933,6 +934,86 @@ func TestGetLoginReq(t *testing.T) {
 			CallbackSuffix: "日本語テスト",
 		}))
 		assert.NotNil(t, err)
+	}
+}
+
+func TestGetLoginReqPKCE(t *testing.T) {
+
+	codeVerifier, err := opkce.NewVerifier()
+	assert.Nil(t, err)
+	codeChallenge := opkce.GetChallenge(codeVerifier)
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge,
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, authv1.ClientLoginRequest_V2, ret.ApiVersion)
+		assert.Equal(t, codeChallenge, ret.CodeChallenge)
+	}
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, authv1.ClientLoginRequest_V1, ret.ApiVersion)
+		assert.Equal(t, 0, len(ret.CodeChallenge))
+	}
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V2,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge,
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, authv1.ClientLoginRequest_V2, ret.ApiVersion)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V2,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge[:opkce.ChallengeLen-1],
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  append(codeChallenge, 0x0),
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		arg := encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   65535,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge,
+		})
+		assert.Less(t, len(arg), 128)
 	}
 }
 
@@ -1437,4 +1518,353 @@ func TestHandleAuthenticatorEndpointsUnauthenticated(t *testing.T) {
 		assert.NotEqual(t, fmt.Sprintf("%s/login", srv.rootURL),
 			resp.Header.Get("Location"), "%s", name)
 	}
+}
+
+func TestHandleClientApproval(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	newReq := func(usrT *tstuser.User) *http.Request {
+		req := httptest.NewRequest("GET", "http://localhost/callback/success/approval", nil)
+		req.AddCookie(&http.Cookie{
+			Name:  "octelium_rt",
+			Value: string(usrT.GetAccessToken().RefreshToken),
+			Path:  "/",
+		})
+		return req
+	}
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://localhost/callback/success/approval", nil)
+		w := httptest.NewRecorder()
+		srv.handleClientApproval(w, req)
+		resp := w.Result()
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, fmt.Sprintf("%s/login", srv.rootURL), resp.Header.Get("Location"))
+	})
+
+	t.Run("no-pending-request", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		w := httptest.NewRecorder()
+		srv.handleClientApproval(w, newReq(usrT))
+		resp := w.Result()
+
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, srv.getPortalURL(), resp.Header.Get("Location"))
+	})
+
+	t.Run("renders-the-page", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL:   "http://localhost:12345/callback/success/abcdefgh",
+			CodeChallenge: opkce.GetChallenge(codeVerifier),
+		}))
+
+		w := httptest.NewRecorder()
+		srv.handleClientApproval(w, newReq(usrT))
+		resp := w.Result()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		w = httptest.NewRecorder()
+		srv.handleClientApproval(w, newReq(usrT))
+		assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+	})
+}
+
+func TestHandleClientApprovalDecision(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	callbackURL := "http://localhost:12345/callback/success/abcdefgh"
+
+	newReq := func(usrT *tstuser.User, isApproved bool) *http.Request {
+		body, err := json.Marshal(&postApprovalReq{IsApproved: isApproved})
+		assert.Nil(t, err)
+
+		req := httptest.NewRequest("POST", "http://localhost/callback/success/approval",
+			bytes.NewReader(body))
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
+		req.AddCookie(&http.Cookie{
+			Name:  "octelium_rt",
+			Value: string(usrT.GetAccessToken().RefreshToken),
+			Path:  "/",
+		})
+		return req
+	}
+
+	getResp := func(w *httptest.ResponseRecorder) *postApprovalResp {
+		ret := &postApprovalResp{}
+		assert.Nil(t, json.NewDecoder(w.Result().Body).Decode(ret))
+		return ret
+	}
+
+	t.Run("invalid-origin", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		req := newReq(usrT, true)
+		req.Header.Set("X-Octelium-Origin", "https://evil.example.com")
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+	})
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		body, err := json.Marshal(&postApprovalReq{IsApproved: true})
+		assert.Nil(t, err)
+
+		req := httptest.NewRequest("POST", "http://localhost/callback/success/approval",
+			bytes.NewReader(body))
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Result().StatusCode)
+	})
+
+	t.Run("no-pending-request", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, newReq(usrT, true))
+
+		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+	})
+
+	t.Run("approved", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+		codeChallenge := opkce.GetChallenge(codeVerifier)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL:   callbackURL,
+			CodeChallenge: codeChallenge,
+		}))
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, newReq(usrT, true))
+		assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+		u, err := url.Parse(getResp(w).RedirectURL)
+		assert.Nil(t, err)
+		assert.Equal(t, "12345", u.Port())
+		assert.Equal(t, "/callback/success/abcdefgh", u.Path)
+
+		loginResp := decodeLoginResp(t, u)
+		assert.NotEmpty(t, loginResp.AuthenticationToken)
+		assert.Equal(t, codeChallenge, loginResp.CodeChallenge)
+
+		cred, err := srv.getCredentialFromToken(ctx, loginResp.AuthenticationToken)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, codeChallenge, cred.Status.GetPkce().GetCodeChallenge())
+
+		w = httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, newReq(usrT, true))
+		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+	})
+
+	t.Run("rejected", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL:   callbackURL,
+			CodeChallenge: opkce.GetChallenge(codeVerifier),
+		}))
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, newReq(usrT, false))
+		assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+		assert.Equal(t, srv.getPortalURL(), getResp(w).RedirectURL)
+
+		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.NotNil(t, err)
+	})
+
+	t.Run("approved-legacy-client", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL: callbackURL,
+		}))
+
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, newReq(usrT, true))
+		assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+		u, err := url.Parse(getResp(w).RedirectURL)
+		assert.Nil(t, err)
+
+		loginResp := decodeLoginResp(t, u)
+		assert.NotEmpty(t, loginResp.AuthenticationToken)
+		assert.Empty(t, loginResp.CodeChallenge)
+
+		cred, err := srv.getCredentialFromToken(ctx, loginResp.AuthenticationToken)
+		assert.Nil(t, err, "%+v", err)
+		assert.Nil(t, cred.Status.GetPkce())
+	})
+}
+
+func doClientLoginFlow(t *testing.T, ctx context.Context, srv *server, adminSrv *admin.Server,
+	loginReq *authv1.ClientLoginRequest, codeVerifier []byte) {
+
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	cookie := &http.Cookie{
+		Name:  "octelium_rt",
+		Value: string(usrT.GetAccessToken().RefreshToken),
+		Path:  "/",
+	}
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("http://localhost/login?octelium_req=%s", encodeLoginReq(t, loginReq)), nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	srv.handleLogin(w, req)
+	assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
+	assert.Equal(t, fmt.Sprintf("%s/callback/success", srv.rootURL), w.Result().Header.Get("Location"))
+
+	req = httptest.NewRequest("GET", "http://localhost/callback/success", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	srv.handleAuthSuccess(w, req)
+	assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
+	assert.Equal(t, fmt.Sprintf("%s/callback/success/approval", srv.rootURL),
+		w.Result().Header.Get("Location"))
+
+	req = httptest.NewRequest("GET", "http://localhost/callback/success/approval", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	srv.handleClientApproval(w, req)
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	body, err := json.Marshal(&postApprovalReq{IsApproved: true})
+	assert.Nil(t, err)
+	req = httptest.NewRequest("POST", "http://localhost/callback/success/approval",
+		bytes.NewReader(body))
+	req.Header.Set("X-Octelium-Origin", srv.rootURL)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	srv.handleClientApprovalDecision(w, req)
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+	out := &postApprovalResp{}
+	assert.Nil(t, json.NewDecoder(w.Result().Body).Decode(out))
+
+	u, err := url.Parse(out.RedirectURL)
+	assert.Nil(t, err)
+	assert.Equal(t, fmt.Sprintf("%d", loginReq.CallbackPort), u.Port())
+	assert.Equal(t, fmt.Sprintf("/callback/success/%s", loginReq.CallbackSuffix), u.Path)
+
+	loginResp := decodeLoginResp(t, u)
+	assert.NotEmpty(t, loginResp.AuthenticationToken)
+
+	sessTkn, err := srv.doAuthenticateWithAuthenticationToken(ctx,
+		&authv1.AuthenticateWithAuthenticationTokenRequest{
+			AuthenticationToken: loginResp.AuthenticationToken,
+			CodeVerifier:        codeVerifier,
+		})
+	assert.Nil(t, err, "%+v", err)
+	assert.NotEmpty(t, sessTkn.AccessToken)
+}
+
+func TestClientLoginFlow(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	t.Run("legacy-client", func(t *testing.T) {
+		doClientLoginFlow(t, ctx, srv, adminSrv, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcde",
+		}, nil)
+	})
+
+	t.Run("client", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		doClientLoginFlow(t, ctx, srv, adminSrv, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackPort:   12345,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  opkce.GetChallenge(codeVerifier),
+		}, codeVerifier)
+	})
+}
+
+func decodeLoginResp(t *testing.T, u *url.URL) *authv1.ClientLoginResponse {
+	respBytes, err := base64.RawURLEncoding.DecodeString(u.Query().Get("octelium_response"))
+	assert.Nil(t, err)
+
+	ret := &authv1.ClientLoginResponse{}
+	assert.Nil(t, pbutils.Unmarshal(respBytes, ret))
+	return ret
 }

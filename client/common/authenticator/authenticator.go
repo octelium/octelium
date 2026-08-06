@@ -38,11 +38,12 @@ import (
 )
 
 type AuthenticateOpts struct {
-	Domain    string
-	AuthToken string
-	Assertion *AuthenticateOptsAssertion
-	IsWeb     bool
-	Scopes    []string
+	Domain       string
+	AuthToken    string
+	Assertion    *AuthenticateOptsAssertion
+	IsWeb        bool
+	Scopes       []string
+	CodeVerifier []byte
 }
 
 type AuthenticateOptsAssertion struct {
@@ -282,6 +283,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 				&authv1.AuthenticateWithAuthenticationTokenRequest{
 					AuthenticationToken: a.opts.AuthToken,
 					Scopes:              a.opts.Scopes,
+					CodeVerifier:        a.opts.CodeVerifier,
 				})
 			if err != nil {
 				return "", err

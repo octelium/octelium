@@ -26,80 +26,119 @@ import (
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
+const callbackSuffixLen = 8
+
 type webAuthenticator struct {
 	server              *http.Server
-	listener            net.Listener
+	listeners           []net.Listener
 	ch                  chan bool
 	port                int
-	addr                string
 	successCallbackPath string
 	domain              string
 	domainRoot          string
 	callbackSuffix      string
 	scopes              []string
 	loginURL            string
+	codeVerifier        []byte
+	codeChallenge       []byte
+	err                 error
 	closeOnce           sync.Once
 }
 
 func newWebAuthenticator(domain string, scopes []string) (*webAuthenticator, error) {
 
-	suffix := utilrand.GetRandomString(5)
+	suffix := utilrand.GetRandomString(callbackSuffixLen)
 
 	zap.L().Debug("Creating new webAuthenticator", zap.String("pathSuffix", suffix))
+
+	codeVerifier, err := opkce.NewVerifier()
+	if err != nil {
+		return nil, err
+	}
 
 	return &webAuthenticator{
 		domain:              domain,
 		domainRoot:          fmt.Sprintf("https://%s", domain),
 		ch:                  make(chan bool),
-		addr:                "localhost",
 		successCallbackPath: fmt.Sprintf("/callback/success/%s", suffix),
 		callbackSuffix:      suffix,
 		loginURL:            fmt.Sprintf("https://%s/login", domain),
 		scopes:              scopes,
+		codeVerifier:        codeVerifier,
+		codeChallenge:       opkce.GetChallenge(codeVerifier),
 	}, nil
 }
 
 func (s *webAuthenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
+	zap.L().Debug("Received request at auth federation server")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	resp, err := s.getLoginResponse(r)
+	if err != nil {
+		zap.L().Debug("Ignoring an invalid callback request", zap.Error(err))
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	err = s.doAuthenticate(r.Context(), resp)
+
 	defer s.closeOnce.Do(func() {
+		s.err = err
 		close(s.ch)
 	})
 
-	zap.L().Debug("Received request at auth federation server")
-
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	http.Redirect(w, r, s.domainRoot, http.StatusFound)
+}
 
+func (s *webAuthenticator) getLoginResponse(r *http.Request) (*authv1.ClientLoginResponse, error) {
 	respBytes, err := base64.RawURLEncoding.DecodeString(r.URL.Query().Get("octelium_response"))
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	resp := &authv1.ClientLoginResponse{}
 	if err := pbutils.Unmarshal(respBytes, resp); err != nil {
-		return
+		return nil, err
 	}
 
-	{
-		authC, err := newAuthenticator(r.Context(), &AuthenticateOpts{
-			Domain:    s.domain,
-			AuthToken: resp.AuthenticationToken,
-			Scopes:    s.scopes,
-		})
-		if err != nil {
-			zap.L().Error("Could not create authenticator", zap.Error(err))
-		}
-
-		if err := authC.run(r.Context()); err != nil {
-			cliutils.LineError("Could not authenticate: %v\n", err)
-		}
+	if resp.AuthenticationToken == "" {
+		return nil, errors.Errorf("No authentication token is set")
 	}
 
+	return resp, nil
+}
+
+func (s *webAuthenticator) doAuthenticate(ctx context.Context, resp *authv1.ClientLoginResponse) error {
+	if len(resp.CodeChallenge) == 0 {
+		cliutils.LineWarn(
+			"This Cluster does not support verified client logins. Please ask your Cluster administrators to upgrade it.\n")
+	}
+
+	authC, err := newAuthenticator(ctx, &AuthenticateOpts{
+		Domain:       s.domain,
+		AuthToken:    resp.AuthenticationToken,
+		CodeVerifier: s.codeVerifier,
+		Scopes:       s.scopes,
+	})
+	if err != nil {
+		return err
+	}
+
+	return authC.run(ctx)
 }
 
 func (s *webAuthenticator) getLoginURL() string {
@@ -111,6 +150,7 @@ func (s *webAuthenticator) getLoginURL() string {
 		ApiVersion:     authv1.ClientLoginRequest_V1,
 		CallbackPort:   uint32(s.port),
 		CallbackSuffix: s.callbackSuffix,
+		CodeChallenge:  s.codeChallenge,
 	}
 
 	reqBytes, _ := pbutils.Marshal(req)
@@ -122,16 +162,46 @@ func (s *webAuthenticator) getLoginURL() string {
 	return u.String()
 }
 
-func (s *webAuthenticator) run(_ context.Context) error {
+func (s *webAuthenticator) listen() error {
+	const maxAttempts = 5
 
-	var err error
+	for range maxAttempts {
+		l4, err4 := net.Listen("tcp4", "127.0.0.1:0")
+		if err4 != nil {
+			l6, err6 := net.Listen("tcp6", "[::1]:0")
+			if err6 != nil {
+				return errors.Errorf(
+					"could not bind to a local port for authentication callback: %+v", err6)
+			}
 
-	s.listener, err = net.Listen("tcp", net.JoinHostPort(s.addr, "0"))
-	if err != nil {
-		return errors.Errorf("could not bind to a local port for authentication callback: %+v", err)
+			s.listeners = []net.Listener{l6}
+			s.port = l6.Addr().(*net.TCPAddr).Port
+			return nil
+		}
+
+		port := l4.Addr().(*net.TCPAddr).Port
+
+		l6, err6 := net.Listen("tcp6", net.JoinHostPort("::1", fmt.Sprintf("%d", port)))
+		if err6 != nil {
+			zap.L().Debug("Could not bind the IPv6 loopback. Retrying with another port",
+				zap.Int("port", port), zap.Error(err6))
+			l4.Close()
+			continue
+		}
+
+		s.listeners = []net.Listener{l4, l6}
+		s.port = port
+		return nil
 	}
 
-	s.port = s.listener.Addr().(*net.TCPAddr).Port
+	return errors.Errorf("could not bind to a local port for authentication callback")
+}
+
+func (s *webAuthenticator) run(_ context.Context) error {
+
+	if err := s.listen(); err != nil {
+		return err
+	}
 
 	mux := http.NewServeMux()
 
@@ -151,11 +221,13 @@ func (s *webAuthenticator) run(_ context.Context) error {
 	}()
 
 	serverErrCh := make(chan error, 1)
-	go func() {
-		if err := s.server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
-			serverErrCh <- err
-		}
-	}()
+	for _, lis := range s.listeners {
+		go func(lis net.Listener) {
+			if err := s.server.Serve(lis); err != nil && err != http.ErrServerClosed {
+				serverErrCh <- err
+			}
+		}(lis)
+	}
 
 	select {
 	case <-time.After(100 * time.Millisecond):
@@ -176,12 +248,13 @@ func (s *webAuthenticator) run(_ context.Context) error {
 	}()
 
 	cliutils.LineNotify("Please authenticate yourself using Octelium web Portal\n")
+	cliutils.LineInfo("Waiting for you to approve the login in your browser. Press Ctrl-C to cancel.\n")
 
 	select {
-	case <-time.After(10 * time.Minute):
+	case <-time.After(5 * time.Minute):
 		return errors.Errorf(
-			"You have not authenticated yourself after 10 minutes. Please authenticate yourself again.")
+			"You have not authenticated yourself after 5 minutes. Please authenticate yourself again.")
 	case <-s.ch:
-		return nil
+		return s.err
 	}
 }

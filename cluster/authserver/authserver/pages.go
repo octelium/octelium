@@ -59,16 +59,16 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 				return
 			}
-			callbackURL := fmt.Sprintf("http://localhost:%d/callback/success/%s",
-				loginReq.CallbackPort, loginReq.CallbackSuffix)
 
-			u, err := s.generateClientCallbackURL(ctx, sess, callbackURL)
-			if err != nil {
+			if err := s.savePendingClientAuth(ctx, sess, &pendingClientAuth{
+				CallbackURL:   getLoginReqCallbackURL(loginReq),
+				CodeChallenge: loginReq.CodeChallenge,
+			}); err != nil {
 				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 				return
 			}
 
-			s.redirectToCallbackSuccess(w, r, u.String())
+			s.redirectToCallbackSuccess(w, r, "")
 			return
 		} else if redirect := r.URL.Query().Get("redirect"); redirect != "" {
 			if s.isURLSameClusterOrigin(redirect) {
@@ -184,11 +184,18 @@ func (s *server) redirectToAuthenticatorRegister(w http.ResponseWriter, r *http.
 
 func (s *server) redirectToCallbackSuccess(w http.ResponseWriter, r *http.Request, redirectURL string) {
 	murl, _ := url.Parse(fmt.Sprintf("%s/callback/success", s.rootURL))
-	q := murl.Query()
-	q.Set("redirect", redirectURL)
-	murl.RawQuery = q.Encode()
+	if redirectURL != "" {
+		q := murl.Query()
+		q.Set("redirect", redirectURL)
+		murl.RawQuery = q.Encode()
+	}
 
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
+}
+
+func (s *server) redirectToClientApproval(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r,
+		fmt.Sprintf("%s/callback/success/approval", s.rootURL), http.StatusSeeOther)
 }
 
 func (s *server) redirectToPortal(w http.ResponseWriter, r *http.Request) {

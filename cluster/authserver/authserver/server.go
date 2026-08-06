@@ -417,6 +417,8 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 		mux.HandleFunc("GET /callback", s.handleAuthCallback)
 		mux.HandleFunc("POST /callback", s.handleAuthCallback)
 		mux.HandleFunc("GET /callback/success", s.handleAuthSuccess)
+		mux.HandleFunc("GET /callback/success/approval", s.handleClientApproval)
+		mux.HandleFunc("POST /callback/success/approval", s.handleClientApprovalDecision)
 		mux.HandleFunc("POST /oauth2/token", s.handleOAuth2Token)
 
 		mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleOAuth2Metadata)

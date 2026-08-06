@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	vutils "github.com/octelium/octelium/pkg/utils"
@@ -116,8 +117,19 @@ func getLoginReq(arg string) (*authv1.ClientLoginRequest, error) {
 		return nil, err
 	}
 
-	if ret.ApiVersion != authv1.ClientLoginRequest_V1 {
+	switch ret.ApiVersion {
+	case authv1.ClientLoginRequest_V1:
+		if len(ret.CodeChallenge) > 0 {
+			ret.ApiVersion = authv1.ClientLoginRequest_V2
+		}
+	case authv1.ClientLoginRequest_V2:
+	default:
 		return nil, errors.Errorf("Unsupported API version")
+	}
+
+	if ret.ApiVersion == authv1.ClientLoginRequest_V2 &&
+		len(ret.CodeChallenge) != opkce.ChallengeLen {
+		return nil, errors.Errorf("invalid code challenge")
 	}
 
 	if ret.CallbackPort < 10000 || ret.CallbackPort > 65535 {
@@ -129,6 +141,11 @@ func getLoginReq(arg string) (*authv1.ClientLoginRequest, error) {
 	}
 
 	return ret, nil
+}
+
+func getLoginReqCallbackURL(req *authv1.ClientLoginRequest) string {
+	return fmt.Sprintf("http://localhost:%d/callback/success/%s",
+		req.CallbackPort, req.CallbackSuffix)
 }
 
 func (s *server) handleAuth(w http.ResponseWriter, r *http.Request) {
@@ -310,34 +327,37 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 		return errors.Errorf("Unhandled authenticatorAction")
 	}
 
-	switch {
-	case state == nil:
+	if state == nil {
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
 		s.redirectToCallbackSuccess(w, r, s.getPortalURL())
 		return nil
-	case !state.IsApp:
-		s.setLoginCookies(w, accessToken, refreshToken, sess)
-		if state.CallbackURL != "" {
-			s.redirectToCallbackSuccess(w, r, state.CallbackURL)
-		} else {
-			s.redirectToCallbackSuccess(w, r, s.getPortalURL())
-		}
+	}
 
-		return nil
-	default:
-		u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
-		if err != nil {
+	if state.IsApp {
+		if err := s.savePendingClientAuth(ctx, sess, &pendingClientAuth{
+			CallbackURL:   state.CallbackURL,
+			CodeChallenge: state.CodeChallenge,
+		}); err != nil {
 			return err
 		}
 
 		s.setLoginCookies(w, accessToken, refreshToken, sess)
-		s.redirectToCallbackSuccess(w, r, u.String())
+		s.redirectToCallbackSuccess(w, r, "")
 		return nil
 	}
+
+	s.setLoginCookies(w, accessToken, refreshToken, sess)
+	if state.CallbackURL != "" {
+		s.redirectToCallbackSuccess(w, r, state.CallbackURL)
+	} else {
+		s.redirectToCallbackSuccess(w, r, s.getPortalURL())
+	}
+
+	return nil
 }
 
 func (s *server) generateClientCallbackURL(ctx context.Context,
-	sess *corev1.Session, callbackURL string) (*url.URL, error) {
+	sess *corev1.Session, callbackURL string, codeChallenge []byte) (*url.URL, error) {
 	srv := admin.NewServer(&admin.Opts{
 		OcteliumC:  s.octeliumC,
 		IsEmbedded: true,
@@ -363,6 +383,24 @@ func (s *server) generateClientCallbackURL(ctx context.Context,
 		return nil, err
 	}
 
+	if len(codeChallenge) == opkce.ChallengeLen {
+		cred.Status.Pkce = &corev1.Credential_Status_PKCE{
+			CodeChallenge: codeChallenge,
+		}
+
+		updatedCred, err := s.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		if err != nil {
+			if _, dErr := s.octeliumC.CoreC().DeleteCredential(ctx,
+				apivalidation.ObjectToRDeleteOptions(cred)); dErr != nil {
+				zap.L().Warn("Could not delete the Credential whose PKCE binding failed",
+					zap.Error(dErr))
+			}
+			return nil, err
+		}
+
+		cred = updatedCred
+	}
+
 	tokenResp, err := srv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
 		CredentialRef: umetav1.GetObjectReference(cred),
 	})
@@ -370,21 +408,24 @@ func (s *server) generateClientCallbackURL(ctx context.Context,
 		return nil, err
 	}
 
+	return getClientCallbackURL(callbackURL, &authv1.ClientLoginResponse{
+		AuthenticationToken: tokenResp.GetAuthenticationToken().AuthenticationToken,
+		CodeChallenge:       codeChallenge,
+	})
+}
+
+func getClientCallbackURL(callbackURL string, resp *authv1.ClientLoginResponse) (*url.URL, error) {
 	u, err := url.Parse(callbackURL)
 	if err != nil {
 		return nil, err
 	}
 
-	q := u.Query()
-
-	loginResp := &authv1.ClientLoginResponse{
-		AuthenticationToken: tokenResp.GetAuthenticationToken().AuthenticationToken,
-	}
-	respBytes, err := pbutils.Marshal(loginResp)
+	respBytes, err := pbutils.Marshal(resp)
 	if err != nil {
-		return nil, errors.Errorf("Could not generate JWT cookie %+v", err)
+		return nil, errors.Errorf("Could not marshal the ClientLoginResponse %+v", err)
 	}
 
+	q := u.Query()
 	q.Set("octelium_response", base64.RawURLEncoding.EncodeToString(respBytes))
 	u.RawQuery = q.Encode()
 
@@ -606,9 +647,8 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 				return nil, grpcutils.InvalidArg("")
 			}
 
-			userState.CallbackURL = fmt.Sprintf("http://localhost:%d/callback/success/%s",
-				loginReq.CallbackPort, loginReq.CallbackSuffix)
-
+			userState.CallbackURL = getLoginReqCallbackURL(loginReq)
+			userState.CodeChallenge = loginReq.CodeChallenge
 			userState.IsApp = true
 		}
 
@@ -642,6 +682,15 @@ func (s *server) doGenerateLoginState(ctx context.Context,
 }
 
 func (s *server) generateCallbackURL(query string) (string, bool, error) {
+	state, err := s.getCallbackLoginState(query)
+	if err != nil {
+		return "", false, err
+	}
+
+	return state.CallbackURL, state.IsApp, nil
+}
+
+func (s *server) getCallbackLoginState(query string) (*loginState, error) {
 	getRedirectURL := func(urlVals url.Values) string {
 		if redirect := urlVals.Get("redirect"); redirect != "" && s.isURLSameClusterOrigin(redirect) {
 			return redirect
@@ -650,34 +699,32 @@ func (s *server) generateCallbackURL(query string) (string, bool, error) {
 		return ""
 	}
 
-	if query == "" {
-		return "", false, nil
-	}
+	ret := &loginState{}
 
-	var callbackURL string
-	var isApp bool
+	if query == "" {
+		return ret, nil
+	}
 
 	queryVals, err := url.ParseQuery(query)
 	if err != nil {
-		return "", false, grpcutils.InvalidArg("Could not parse query: %s", query)
+		return nil, grpcutils.InvalidArg("Could not parse query: %s", query)
 	}
 	if val := queryVals.Get("octelium_req"); val != "" {
 		loginReq, err := getLoginReq(val)
 		if err != nil {
-			return "", false, grpcutils.InvalidArg("Invalid octelium_req")
+			return nil, grpcutils.InvalidArg("Invalid octelium_req")
 		}
 
-		callbackURL = fmt.Sprintf("http://localhost:%d/callback/success/%s",
-			loginReq.CallbackPort, loginReq.CallbackSuffix)
-
-		isApp = true
+		ret.CallbackURL = getLoginReqCallbackURL(loginReq)
+		ret.CodeChallenge = loginReq.CodeChallenge
+		ret.IsApp = true
 	}
 
-	if callbackURL == "" {
-		callbackURL = getRedirectURL(queryVals)
+	if ret.CallbackURL == "" {
+		ret.CallbackURL = getRedirectURL(queryVals)
 	}
 
-	return callbackURL, isApp, nil
+	return ret, nil
 }
 
 func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
@@ -712,18 +759,22 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL)
-			if err != nil {
-				zap.L().Debug("Could not generateClientCallbackURL", zap.Error(err))
-				s.redirectToCallbackSuccess(w, r, s.getPortalURL())
+			if err := s.savePendingClientAuth(ctx, sess, &pendingClientAuth{
+				CallbackURL:   state.CallbackURL,
+				CodeChallenge: state.CodeChallenge,
+			}); err != nil {
+				zap.L().Warn("Could not savePendingClientAuth", zap.Error(err))
+				s.redirectToPortal(w, r)
 				return
 			}
-
-			s.redirectToCallbackSuccess(w, r, u.String())
-			return
 		} else {
 			zap.L().Debug("Could not loadAuthenticatorCallbackState", zap.Error(err))
 		}
+	}
+
+	if _, err := s.loadPendingClientAuth(ctx, sess); err == nil {
+		s.redirectToClientApproval(w, r)
+		return
 	}
 
 	if redirectURL == "" {
@@ -732,19 +783,104 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.isURLSameClusterOrigin(redirectURL) {
-		u, err := url.Parse(redirectURL)
-		if err != nil {
-			s.redirectToPortal(w, r)
-			return
-		}
-
-		if u.Hostname() != "localhost" {
-			s.redirectToPortal(w, r)
-			return
-		}
+		s.redirectToPortal(w, r)
+		return
 	}
 
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+type postApprovalReq struct {
+	IsApproved bool `json:"isApproved"`
+}
+
+type postApprovalResp struct {
+	RedirectURL string `json:"redirectURL"`
+}
+
+func (s *server) handleClientApproval(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
+	if err != nil {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	if ucorev1.ToSession(sess).ShouldRefresh() {
+		s.redirectToLogin(w, r)
+		return
+	}
+
+	if _, err := s.loadPendingClientAuth(ctx, sess); err != nil {
+		zap.L().Debug("Could not loadPendingClientAuth", zap.Error(err))
+		s.redirectToPortal(w, r)
+		return
+	}
+
+	s.renderLoggedIn(w)
+}
+
+func (s *server) handleClientApprovalDecision(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	if err := s.checkXOcteliumOrigin(r); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	sess, err := s.getWebSessionFromHTTPRefreshCookie(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	if ucorev1.ToSession(sess).ShouldRefresh() {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	defer r.Body.Close()
+
+	r.Body = http.MaxBytesReader(w, r.Body, 512)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	var req postApprovalReq
+	if err := json.Unmarshal(b, &req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	state, err := s.consumePendingClientAuth(ctx, sess)
+	if err != nil {
+		zap.L().Debug("Could not consumePendingClientAuth", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	redirectURL := s.getPortalURL()
+
+	if req.IsApproved {
+		u, err := s.generateClientCallbackURL(ctx, sess, state.CallbackURL, state.CodeChallenge)
+		if err != nil {
+			zap.L().Debug("Could not generateClientCallbackURL", zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		redirectURL = u.String()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(postApprovalResp{
+		RedirectURL: redirectURL,
+	})
 }
 
 func (s *server) doPostAuthenticationRules(ctx context.Context,
