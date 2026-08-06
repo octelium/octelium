@@ -69,10 +69,14 @@ func (m *commonMetrics) atRequestEnd(startTime time.Time, additionalAttrSet metr
 	m.ActiveRequests.Add(ctx, -1,
 		metric.WithAttributeSet(m.CommonAttributeSet))
 
-	m.RequestDuration.Record(ctx,
-		float64(time.Since(startTime).Nanoseconds())/1000,
-		metric.WithAttributeSet(m.CommonAttributeSet),
-	)
-	m.TotalRequests.Add(ctx, 1,
-		metric.WithAttributeSet(m.CommonAttributeSet))
+	durationUs := float64(time.Since(startTime).Nanoseconds()) / 1000
+
+	if additionalAttrSet == nil {
+		m.RequestDuration.Record(ctx, durationUs, metric.WithAttributeSet(m.CommonAttributeSet))
+		m.TotalRequests.Add(ctx, 1, metric.WithAttributeSet(m.CommonAttributeSet))
+		return
+	}
+
+	m.RequestDuration.Record(ctx, durationUs, metric.WithAttributeSet(m.CommonAttributeSet), additionalAttrSet)
+	m.TotalRequests.Add(ctx, 1, metric.WithAttributeSet(m.CommonAttributeSet), additionalAttrSet)
 }

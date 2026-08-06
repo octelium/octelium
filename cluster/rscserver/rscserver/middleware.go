@@ -74,14 +74,23 @@ func (s *Server) handleUnaryRequest(ctx context.Context, req any, info *grpc.Una
 	}
 	startedAt := pbutils.Now()
 	s.commonMetrics.atRequestStart()
+	commonAttrs := func(err error, op string) metric.MeasurementOption {
+		attrs := []attribute.KeyValue{
+			attribute.Bool("error", err != nil),
+			attribute.String("api", i.api),
+			attribute.String("version", i.version),
+			attribute.String("kind", i.kind),
+		}
+		if op != "" {
+			attrs = append(attrs, attribute.String("op", op))
+		}
+		return metric.WithAttributes(attrs...)
+	}
+
 	switch i.verb {
 	case "Get":
 		ret, err := s.doGet(ctx, req.(*rmetav1.GetOptions), i.api, i.version, i.kind)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-				attribute.String("op", "get"),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "get"))
 		return ret, err
 	case "List":
 		retItems, listMeta, err := s.doList(ctx, req.(*rmetav1.ListOptions), i.api, i.version, i.kind)
@@ -89,42 +98,23 @@ func (s *Server) handleUnaryRequest(ctx context.Context, req any, info *grpc.Una
 			return nil, err
 		}
 		ret, err := s.toResourceList(retItems, listMeta, i.api, i.version, i.kind)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-				attribute.String("op", "list"),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "list"))
 		return ret, err
 	case "Create":
 		ret, err := s.doCreate(ctx, req.(umetav1.ResourceObjectI), i.api, i.version, i.kind)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-				attribute.String("op", "create"),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "create"))
 		return ret, err
 	case "Update":
 		ret, _, err := s.doUpdate(ctx, req.(umetav1.ResourceObjectI), i.api, i.version, i.kind)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-				attribute.String("op", "update"),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "update"))
 		return ret, err
 	case "Delete":
 		ret, err := s.doDelete(ctx, req.(*rmetav1.DeleteOptions), i.api, i.version, i.kind)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-				attribute.String("op", "delete"),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "delete"))
 		return ret, err
 	default:
 		ret, err := handler(ctx, req)
-		s.commonMetrics.atRequestEnd(startedAt.AsTime(),
-			metric.WithAttributes(
-				attribute.Bool("error", err != nil),
-			))
+		s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, ""))
 		return ret, err
 	}
 }
