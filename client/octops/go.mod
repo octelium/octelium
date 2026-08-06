@@ -21,8 +21,6 @@ require (
 	k8s.io/client-go v0.35.3
 )
 
-require github.com/octelium/octelium/octelium-go v0.0.0-00010101000000-000000000000 // indirect
-
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
