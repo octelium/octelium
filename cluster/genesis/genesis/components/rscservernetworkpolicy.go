@@ -26,14 +26,32 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	calicoapi "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	calicoclient "github.com/projectcalico/api/pkg/client/clientset_generated/clientset"
-	"github.com/projectcalico/api/pkg/lib/numorstring"
 	"go.uber.org/zap"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 )
+
+func hasPolicyAPI(dc discovery.DiscoveryInterface, groupVersion, kind string) bool {
+	resList, err := dc.ServerResourcesForGroupVersion(groupVersion)
+	if err != nil {
+		zap.L().Debug("Could not discover the API groupVersion",
+			zap.String("groupVersion", groupVersion), zap.Error(err))
+		return false
+	}
+
+	for _, res := range resList.APIResources {
+		if res.Kind == kind {
+			return true
+		}
+	}
+
+	return false
+}
 
 func detectCNI(ctx context.Context, o *CommonOpts) (string, error) {
 
@@ -42,31 +60,51 @@ func detectCNI(ctx context.Context, o *CommonOpts) (string, error) {
 		return "", err
 	}
 
+	var hasCilium bool
+	var hasCalico bool
+
 	for _, ds := range dsList.Items {
 		if strings.Contains(ds.Name, "cilium") &&
 			(ds.Namespace == "kube-system" ||
 				strings.Contains(ds.Namespace, "cilium")) {
-			return "cilium", nil
+			hasCilium = true
 		}
 		if strings.Contains(ds.Name, "calico") && (ds.Namespace == "kube-system" ||
 			strings.Contains(ds.Namespace, "calico") || strings.Contains(ds.Namespace, "tigera")) {
-			return "calico", nil
+			hasCalico = true
 		}
 	}
 
-	return "", nil
-}
-
-func setNetworkPolicyCilium(
-	ctx context.Context,
-	config *rest.Config,
-) error {
-	ciliumClient, err := ciliumclient.NewForConfig(config)
-	if err != nil {
-		return err
+	if hasCilium && hasCalico {
+		zap.L().Warn(
+			"Detected more than one supported CNI. Skipping the octelium-rscserver networkPolicy")
+		return "", nil
 	}
 
-	policy := &ciliumv2.CiliumNetworkPolicy{
+	switch {
+	case hasCilium:
+		return "cilium", nil
+	case hasCalico:
+		return "calico", nil
+	default:
+		return "", nil
+	}
+}
+
+func getRscServerCiliumNetworkPolicy() *ciliumv2.CiliumNetworkPolicy {
+
+	fromNamespace := func(ns string) api.EndpointSelector {
+		return api.EndpointSelector{
+			LabelSelector: &v1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":                         "octelium",
+					"io.kubernetes.pod.namespace": ns,
+				},
+			},
+		}
+	}
+
+	return &ciliumv2.CiliumNetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "octelium-rscserver",
 			Namespace: vutils.K8sNS,
@@ -81,22 +119,15 @@ func setNetworkPolicyCilium(
 				{
 					IngressCommonRule: api.IngressCommonRule{
 						FromEndpoints: []api.EndpointSelector{
-							{
-								LabelSelector: &v1.LabelSelector{
-									MatchLabels: map[string]string{
-										"app":                         "octelium",
-										"io.kubernetes.pod.namespace": vutils.K8sNS,
-									},
-								},
-							},
-							{
-								LabelSelector: &v1.LabelSelector{
-									MatchLabels: map[string]string{
-										"app":                         "octelium",
-										"io.kubernetes.pod.namespace": "default",
-									},
-								},
-							},
+							fromNamespace(vutils.K8sNS),
+
+							// Genesis runs in the default namespace at installation.
+							fromNamespace("default"),
+						},
+
+						FromEntities: api.EntitySlice{
+							api.EntityHost,
+							api.EntityRemoteNode,
 						},
 					},
 					ToPorts: []api.PortRule{
@@ -113,62 +144,65 @@ func setNetworkPolicyCilium(
 			},
 		},
 	}
-
-	if _, err := ciliumClient.CiliumV2().CiliumNetworkPolicies(vutils.K8sNS).Create(
-		ctx,
-		policy,
-		metav1.CreateOptions{},
-	); err != nil {
-		if !k8serr.IsAlreadyExists(err) {
-			return err
-		}
-	}
-
-	return nil
 }
 
-func setNetworkPolicyCalico(
-	ctx context.Context,
-	config *rest.Config,
-) error {
+func setNetworkPolicyCilium(ctx context.Context, config *rest.Config) error {
+	ciliumClient, err := ciliumclient.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	policy := getRscServerCiliumNetworkPolicy()
+	policyC := ciliumClient.CiliumV2().CiliumNetworkPolicies(vutils.K8sNS)
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		curr, err := policyC.Get(ctx, policy.Name, metav1.GetOptions{})
+		if err != nil {
+			if !k8serr.IsNotFound(err) {
+				return err
+			}
+
+			if _, err := policyC.Create(ctx, policy, metav1.CreateOptions{}); err != nil {
+				if !k8serr.IsAlreadyExists(err) {
+					return err
+				}
+
+				return k8serr.NewConflict(schema.GroupResource{
+					Group:    ciliumv2.CustomResourceDefinitionGroup,
+					Resource: ciliumv2.CNPPluralName,
+				}, policy.Name, err)
+			}
+
+			return nil
+		}
+
+		curr.Spec = policy.Spec
+		curr.Specs = nil
+
+		_, err = policyC.Update(ctx, curr, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func deleteNetworkPolicyCalico(ctx context.Context, config *rest.Config) error {
 	calicoClient, err := calicoclient.NewForConfig(config)
 	if err != nil {
 		return err
 	}
 
-	policy := &calicoapi.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "octelium-rscserver",
-			Namespace: vutils.K8sNS,
-		},
-		Spec: calicoapi.NetworkPolicySpec{
-			Selector: "app == 'octelium' && octelium.com/component == 'rscserver'",
-			Types:    []calicoapi.PolicyType{calicoapi.PolicyTypeIngress},
-			Ingress: []calicoapi.Rule{
-				{
-					Action: calicoapi.Allow,
-					Source: calicoapi.EntityRule{
-						Selector: "app == 'octelium'",
-					},
-					Destination: calicoapi.EntityRule{
-						Ports: []numorstring.Port{
-							numorstring.SinglePort(8080),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	if _, err := calicoClient.ProjectcalicoV3().NetworkPolicies(vutils.K8sNS).Create(
+	if err := calicoClient.ProjectcalicoV3().NetworkPolicies(vutils.K8sNS).Delete(
 		ctx,
-		policy,
-		metav1.CreateOptions{},
+		"octelium-rscserver",
+		metav1.DeleteOptions{},
 	); err != nil {
-		if !k8serr.IsAlreadyExists(err) {
+		if !k8serr.IsNotFound(err) {
 			return err
 		}
+
+		return nil
 	}
+
+	zap.L().Info("Removed the obsolete Calico octelium-rscserver networkPolicy")
 
 	return nil
 }
@@ -193,12 +227,30 @@ func setRscServerNetworkPolicy(ctx context.Context, o *CommonOpts) error {
 
 	switch cniType {
 	case "cilium":
+		if !hasPolicyAPI(o.K8sC.Discovery(), "cilium.io/v2", "CiliumNetworkPolicy") {
+			zap.L().Info(
+				"Cilium is installed but this cluster does not serve CiliumNetworkPolicy. " +
+					"Skipping the octelium-rscserver networkPolicy")
+			return nil
+		}
+
 		if err := setNetworkPolicyCilium(ctx, config); err != nil {
 			return err
 		}
 
 	case "calico":
-		if err := setNetworkPolicyCalico(ctx, config); err != nil {
+		if !hasPolicyAPI(o.K8sC.Discovery(), "projectcalico.org/v3", "NetworkPolicy") {
+			zap.L().Info(
+				"Calico is installed but its API server, which serves projectcalico.org/v3, " +
+					"is unavailable. Skipping the octelium-rscserver networkPolicy")
+			return nil
+		}
+
+		zap.L().Info(
+			"Calico cannot express the host network sources that the Gateway Agents reach " +
+				"rscServer from. Leaving the octelium-rscserver ingress unrestricted")
+
+		if err := deleteNetworkPolicyCalico(ctx, config); err != nil {
 			return err
 		}
 
