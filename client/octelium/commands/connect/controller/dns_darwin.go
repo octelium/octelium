@@ -17,7 +17,6 @@ package controller
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -28,6 +27,10 @@ import (
 )
 
 func (c *Controller) doSetDNS() error {
+
+	if err := c.saveResolvConf(); err != nil {
+		zap.L().Debug("Could not save the current resolv.conf", zap.Error(err))
+	}
 
 	if err := c.doSetDNSScutil(); err != nil {
 		zap.L().Warn("Could not doSetDNSScutil", zap.Error(err))
@@ -161,21 +164,7 @@ func getNetworkSetupServiceConfig(svc string) (*pbconfig.Connection_Preferences_
 
 func (c *Controller) doSetDNSResolvConf() error {
 
-	if !c.dnsConfigSaved {
-		oldResolvConf, err := os.ReadFile("/etc/resolv.conf")
-		if err != nil {
-			return err
-		}
-		c.c.Preferences.MacosPrefs.ResolvConf = oldResolvConf
-		c.dnsConfigSaved = true
-	}
-
-	resolvConfOpts, err := parseResolvConf(c.c.Preferences.MacosPrefs.ResolvConf)
-	if err != nil {
-		zap.L().Warn("Could not parse resolv.conf", zap.Error(err))
-	}
-
-	if err := c._doSetDNSResolvConf(resolvConfOpts); err != nil {
+	if err := c.setResolvConf(); err != nil {
 		return err
 	}
 
@@ -200,11 +189,9 @@ func (c *Controller) doUnsetDNS() error {
 			retErr = err
 		}
 	case pbconfig.Connection_Preferences_MacOS_RESOLVCONF:
-		if len(c.c.Preferences.MacosPrefs.ResolvConf) > 0 {
-			if err := os.WriteFile("/etc/resolv.conf", c.c.Preferences.MacosPrefs.ResolvConf, 0644); err != nil {
-				zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
-				retErr = err
-			}
+		if err := c.unsetResolvConf(); err != nil {
+			zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
+			retErr = err
 		}
 	default:
 	}

@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -134,34 +136,228 @@ func (c *Controller) getDNSSearchDomains() []string {
 	}
 }
 
-func (c *Controller) _doSetDNSResolvConf(initOpts *resolvConfOpts) error {
+const (
+	resolvConfPath             = "/etc/resolv.conf"
+	resolvConfMaxNameservers   = 3
+	resolvConfMaxSearchDomains = 6
+	resolvConfDefaultMode      = os.FileMode(0644)
+)
 
-	if initOpts == nil {
-		initOpts = &resolvConfOpts{}
+type resolvConfState struct {
+	path       string
+	saved      bool
+	written    bool
+	existed    bool
+	isSymlink  bool
+	linkTarget string
+	content    []byte
+	mode       os.FileMode
+}
+
+func (s *resolvConfState) getPath() string {
+	if s.path != "" {
+		return s.path
 	}
 
-	if len(initOpts.Nameservers) == 0 {
-		initOpts.Nameservers = []string{"8.8.8.8", "1.1.1.1"}
+	return resolvConfPath
+}
+
+func (c *Controller) saveResolvConf() error {
+	if c.resolvConf.saved {
+		return nil
+	}
+	c.resolvConf.saved = true
+
+	path := c.resolvConf.getPath()
+
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		c.resolvConf.saved = false
+		return err
 	}
 
-	opts := &resolvConfOpts{
-		Nameservers:   c.getDNSServers(),
+	c.resolvConf.existed = true
+	c.resolvConf.mode = fi.Mode().Perm()
+
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			c.resolvConf.saved = false
+			return err
+		}
+		c.resolvConf.isSymlink = true
+		c.resolvConf.linkTarget = target
+		c.resolvConf.mode = resolvConfDefaultMode
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		zap.L().Debug("Could not read the current resolv.conf", zap.Error(err))
+	} else {
+		c.resolvConf.content = content
+	}
+
+	zap.L().Debug("Saved the current resolv.conf",
+		zap.Bool("isSymlink", c.resolvConf.isSymlink),
+		zap.String("linkTarget", c.resolvConf.linkTarget))
+
+	return nil
+}
+
+func (c *Controller) getResolvConfOpts() (*resolvConfOpts, error) {
+	var nameservers []string
+	for _, ns := range c.getDNSServers() {
+		if govalidator.IsIP(ns) {
+			nameservers = append(nameservers, ns)
+		}
+	}
+	if len(nameservers) == 0 {
+		return nil, errors.Errorf("No valid DNS servers to set in %s", resolvConfPath)
+	}
+	if len(nameservers) > resolvConfMaxNameservers {
+		nameservers = nameservers[:resolvConfMaxNameservers]
+	}
+
+	ret := &resolvConfOpts{
+		Nameservers:   nameservers,
 		SearchDomains: c.getDNSSearchDomains(),
 	}
 
-	opts.Nameservers = append(opts.Nameservers, initOpts.Nameservers...)
-	opts.SearchDomains = append(opts.SearchDomains, initOpts.SearchDomains...)
-	// opts.Options = append(opts.Options, initOpts.Options...)
-
-	resolvConfStr, err := generateResolvConf(opts)
-	if err != nil {
-		return errors.Errorf("Could not generate resolv.conf file: %+v", err)
+	if prev, err := parseResolvConf(c.resolvConf.content); err == nil && prev != nil {
+		for _, domain := range prev.SearchDomains {
+			if !slices.Contains(ret.SearchDomains, domain) {
+				ret.SearchDomains = append(ret.SearchDomains, domain)
+			}
+		}
+		ret.Options = prev.Options
 	}
 
-	zap.L().Debug("Setting resolv.conf", zap.String("content", resolvConfStr))
+	if len(ret.SearchDomains) > resolvConfMaxSearchDomains {
+		ret.SearchDomains = ret.SearchDomains[:resolvConfMaxSearchDomains]
+	}
 
-	if err := os.WriteFile("/etc/resolv.conf", []byte(resolvConfStr), 0644); err != nil {
-		return errors.Errorf("Could not write to /etc/resolv.conf: %+v", err)
+	return ret, nil
+}
+
+func (c *Controller) setResolvConf() error {
+	if err := c.saveResolvConf(); err != nil {
+		return err
+	}
+
+	opts, err := c.getResolvConfOpts()
+	if err != nil {
+		return err
+	}
+
+	content, err := generateResolvConf(opts)
+	if err != nil {
+		return errors.Errorf("Could not generate the resolv.conf content: %+v", err)
+	}
+
+	zap.L().Debug("Setting resolv.conf", zap.String("content", content))
+
+	if err := c.writeResolvConf([]byte(content)); err != nil {
+		return err
+	}
+
+	c.resolvConf.written = true
+
+	return nil
+}
+
+func (c *Controller) writeResolvConf(content []byte) error {
+	if c.resolvConf.isSymlink {
+		return replaceResolvConf(c.resolvConf.getPath(), content, c.resolvConf.mode)
+	}
+
+	return writeResolvConfInPlace(c.resolvConf.getPath(), content, c.resolvConf.mode)
+}
+
+func (c *Controller) unsetResolvConf() error {
+	if !c.resolvConf.written {
+		return nil
+	}
+	c.resolvConf.written = false
+
+	zap.L().Debug("Restoring resolv.conf",
+		zap.Bool("existed", c.resolvConf.existed),
+		zap.Bool("isSymlink", c.resolvConf.isSymlink))
+
+	path := c.resolvConf.getPath()
+
+	if !c.resolvConf.existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+
+	if c.resolvConf.isSymlink {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Symlink(c.resolvConf.linkTarget, path)
+	}
+
+	return writeResolvConfInPlace(path, c.resolvConf.content, c.resolvConf.mode)
+}
+
+func writeResolvConfInPlace(path string, content []byte, mode os.FileMode) error {
+	if mode == 0 {
+		mode = resolvConfDefaultMode
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return errors.Errorf("Could not open %s: %+v", path, err)
+	}
+
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return errors.Errorf("Could not write to %s: %+v", path, err)
+	}
+
+	if err := f.Close(); err != nil {
+		return errors.Errorf("Could not write to %s: %+v", path, err)
+	}
+
+	return nil
+}
+
+func replaceResolvConf(path string, content []byte, mode os.FileMode) error {
+	if mode == 0 {
+		mode = resolvConfDefaultMode
+	}
+
+	f, err := os.CreateTemp(filepath.Dir(path),
+		fmt.Sprintf("%s.octelium-*", filepath.Base(path)))
+	if err != nil {
+		return errors.Errorf("Could not create a temp file for %s: %+v", path, err)
+	}
+	tmpPath := f.Name()
+
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return errors.Errorf("Could not write to %s: %+v", tmpPath, err)
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return errors.Errorf("Could not write to %s: %+v", tmpPath, err)
+	}
+
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return errors.Errorf("Could not replace %s: %+v", path, err)
 	}
 
 	return nil

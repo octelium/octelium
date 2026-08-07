@@ -61,6 +61,7 @@ type Controller struct {
 	nsTun      *netTun
 
 	dnsConfigSaved bool
+	resolvConf     resolvConfState
 	svcProxy       *serviceProxy
 
 	isClosed bool

@@ -16,7 +16,6 @@ package controller
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -26,6 +25,10 @@ import (
 )
 
 func (c *Controller) doSetDNS() error {
+
+	if err := c.saveResolvConf(); err != nil {
+		zap.L().Debug("Could not save the current resolv.conf", zap.Error(err))
+	}
 
 	if err := exec.Command("systemctl", "is-active", "--quiet", "systemd-resolved").Run(); err == nil {
 		if err := c.doSetDNSResolvctl(); err == nil {
@@ -43,21 +46,7 @@ func (c *Controller) doSetDNS() error {
 
 func (c *Controller) doSetDNSResolvConf() error {
 
-	if !c.dnsConfigSaved {
-		oldResolvConf, err := os.ReadFile("/etc/resolv.conf")
-		if err != nil {
-			return err
-		}
-		c.c.Preferences.LinuxPrefs.ResolvConf = oldResolvConf
-		c.dnsConfigSaved = true
-	}
-
-	resolvConfOpts, err := parseResolvConf(c.c.Preferences.LinuxPrefs.ResolvConf)
-	if err != nil {
-		zap.L().Warn("Could not parse resolv.conf", zap.Error(err))
-	}
-
-	if err := c._doSetDNSResolvConf(resolvConfOpts); err != nil {
+	if err := c.setResolvConf(); err != nil {
 		return err
 	}
 
@@ -118,10 +107,8 @@ func (c *Controller) doUnsetDNS() error {
 
 	switch c.c.Preferences.LinuxPrefs.DnsMode {
 	case cliconfigv1.Connection_Preferences_Linux_RESOLVCONF:
-		if len(c.c.Preferences.LinuxPrefs.ResolvConf) > 0 {
-			if err := os.WriteFile("/etc/resolv.conf", c.c.Preferences.LinuxPrefs.ResolvConf, 0644); err != nil {
-				return err
-			}
+		if err := c.unsetResolvConf(); err != nil {
+			return err
 		}
 
 	default:
