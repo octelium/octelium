@@ -47,6 +47,52 @@ func TestGetMultusConfDir(t *testing.T) {
 	}))
 }
 
+func TestGatewayAgentDaemonSetSecurityContext(t *testing.T) {
+
+	ds := getGatewayAgentDaemonSet(&CommonOpts{
+		ClusterConfig: &corev1.ClusterConfig{
+			Metadata: &metav1.Metadata{},
+			Spec:     &corev1.ClusterConfig_Spec{},
+			Status:   &corev1.ClusterConfig_Status{},
+		},
+		Region: &corev1.Region{
+			Metadata: &metav1.Metadata{Name: "default"},
+			Spec:     &corev1.Region_Spec{},
+			Status:   &corev1.Region_Status{},
+		},
+	})
+
+	podSpec := ds.Spec.Template.Spec
+
+	{
+		sc := podSpec.Containers[0].SecurityContext
+
+		assert.NotNil(t, sc.Capabilities)
+		assert.Equal(t, []k8scorev1.Capability{"ALL"}, sc.Capabilities.Drop)
+
+		assert.Equal(t, []k8scorev1.Capability{
+			"NET_ADMIN",
+			"NET_RAW",
+			"MKNOD",
+			"NET_BIND_SERVICE",
+			// "DAC_OVERRIDE",
+		}, sc.Capabilities.Add)
+
+		assert.False(t, *sc.AllowPrivilegeEscalation)
+
+		assert.Equal(t, int64(0), *sc.RunAsUser)
+		assert.False(t, *sc.ReadOnlyRootFilesystem)
+
+		assert.Nil(t, sc.Privileged)
+	}
+
+	{
+		initContainer := podSpec.InitContainers[0]
+		assert.Equal(t, "/lib/modules", initContainer.VolumeMounts[0].MountPath)
+		assert.True(t, initContainer.VolumeMounts[0].ReadOnly)
+	}
+}
+
 func TestGatewayAgentDaemonSetMultusConf(t *testing.T) {
 
 	genOpts := func(o *CommonOpts) *CommonOpts {

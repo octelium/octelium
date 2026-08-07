@@ -114,7 +114,7 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							Env:             envVars,
 							VolumeMounts: []k8scorev1.VolumeMount{{
 								Name:      "debian-modules",
-								ReadOnly:  false,
+								ReadOnly:  true,
 								MountPath: "/lib/modules",
 							}},
 							SecurityContext: &k8scorev1.SecurityContext{
@@ -189,22 +189,20 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							SecurityContext: &k8scorev1.SecurityContext{
 								ReadOnlyRootFilesystem:   new(false),
 								AllowPrivilegeEscalation: new(false),
-								RunAsNonRoot:             new(false),
-								RunAsUser:                new(int64(0)),
-								Capabilities: &k8scorev1.Capabilities{
 
-									/*
-										Drop: []k8scorev1.Capability{
-											"all",
-										},
-									*/
+								RunAsNonRoot: new(false),
+								RunAsUser:    new(int64(0)),
+								Capabilities: &k8scorev1.Capabilities{
+									Drop: []k8scorev1.Capability{
+										"ALL",
+									},
 
 									Add: []k8scorev1.Capability{
 										"NET_ADMIN",
 										"NET_RAW",
-										"CHOWN",
 										"MKNOD",
 										"NET_BIND_SERVICE",
+										// "DAC_OVERRIDE",
 									},
 								},
 							},
