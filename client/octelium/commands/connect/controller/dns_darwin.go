@@ -49,58 +49,15 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 
 	zap.L().Debug("Found network services", zap.Strings("svcList", netServices))
 
-	c.c.Preferences.MacosPrefs.NetworkSetupConfig = &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig{}
-	networkSetupConfig := c.c.Preferences.MacosPrefs.NetworkSetupConfig
-
-	if !c.dnsConfigSaved {
-		for _, svc := range netServices {
-			outServers, err := exec.Command("networksetup", "-getdnsservers", svc).CombinedOutput()
-			if err != nil {
-				return errors.Errorf("Could not get list network services: %+v. %s", err, string(outServers))
-			}
-
-			zap.L().Debug("Got search domains", zap.String("svc", svc), zap.String("domains", string(outServers)))
-
-			outDomains, err := exec.Command("networksetup", "-getsearchdomains", svc).CombinedOutput()
-			if err != nil {
-				return errors.Errorf("Could not get list network services: %+v. %s", err, string(outServers))
-			}
-
-			zap.L().Debug("Got search domains", zap.String("svc", svc), zap.String("domains", string(outDomains)))
-
-			var dnsServers []string
-			var dnsDomains []string
-			if strings.Contains(strings.ToLower(string(outServers)), `there aren`) ||
-				strings.Contains(strings.ToLower(string(outServers)), `any dns servers`) {
-				dnsServers = []string{"Empty"}
-			} else {
-				dnsServers = strings.Split(strings.TrimSpace(string(outServers)), "\n")
-				if len(dnsServers) == 0 || !govalidator.IsIP(dnsServers[0]) {
-					dnsServers = []string{"Empty"}
-				}
-			}
-
-			if strings.Contains(strings.ToLower(string(outDomains)), `there aren`) ||
-				strings.Contains(strings.ToLower(string(outDomains)), `any search domains`) {
-				dnsDomains = []string{"Empty"}
-			} else {
-				dnsDomains = strings.Split(strings.TrimSpace(string(outDomains)), "\n")
-				if len(dnsDomains) == 0 || !govalidator.IsDNSName(dnsDomains[0]) {
-					dnsDomains = []string{"Empty"}
-				}
-			}
-
-			networkSetupConfig.Services = append(networkSetupConfig.Services, &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service{
-				Name:       svc,
-				DnsServers: dnsServers,
-				DnsDomains: dnsDomains,
-			})
-		}
-
-		zap.L().Debug("Stored networksetup config", zap.Any("cfg", networkSetupConfig))
-
-		c.dnsConfigSaved = true
+	networkSetupConfig, err := prepareNetworkSetupConfig(c.c.Preferences.MacosPrefs,
+		netServices, getNetworkSetupServiceConfig)
+	if err != nil {
+		return err
 	}
+
+	zap.L().Debug("Stored networksetup config", zap.Any("cfg", networkSetupConfig))
+
+	c.dnsConfigSaved = true
 
 	for _, svc := range netServices {
 		if err := setNetworkSetupDNSServers(svc, c.getDNSServers(), c.getDNSSearchDomains()); err != nil {
@@ -111,6 +68,95 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 	c.c.Preferences.MacosPrefs.DnsMode = pbconfig.Connection_Preferences_MacOS_NETWORKSETUP
 
 	return nil
+}
+
+const networkSetupEmpty = "Empty"
+
+func parseNetworkSetupValues(out []byte, emptyMsg string, isValid func(string) bool) []string {
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "there aren") || strings.Contains(lower, emptyMsg) {
+		return []string{networkSetupEmpty}
+	}
+
+	var ret []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line := strings.TrimSpace(line); line != "" {
+			ret = append(ret, line)
+		}
+	}
+
+	if len(ret) == 0 || !isValid(ret[0]) {
+		return []string{networkSetupEmpty}
+	}
+
+	return ret
+}
+
+func getNetworkSetupService(cfg *pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig,
+	name string) *pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service {
+	if cfg == nil {
+		return nil
+	}
+
+	for _, svc := range cfg.Services {
+		if svc.Name == name {
+			return svc
+		}
+	}
+
+	return nil
+}
+
+func prepareNetworkSetupConfig(prefs *pbconfig.Connection_Preferences_MacOS, netServices []string,
+	getService func(string) (*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service, error),
+) (*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig, error) {
+
+	if prefs.NetworkSetupConfig == nil {
+		prefs.NetworkSetupConfig = &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig{}
+	}
+	cfg := prefs.NetworkSetupConfig
+
+	for _, name := range netServices {
+		if getNetworkSetupService(cfg, name) != nil {
+			continue
+		}
+
+		svc, err := getService(name)
+		if err != nil {
+			return nil, err
+		}
+		if svc == nil {
+			continue
+		}
+
+		cfg.Services = append(cfg.Services, svc)
+	}
+
+	return cfg, nil
+}
+
+func getNetworkSetupServiceConfig(svc string) (*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service, error) {
+	outServers, err := exec.Command("networksetup", "-getdnsservers", svc).CombinedOutput()
+	if err != nil {
+		return nil, errors.Errorf("Could not get the DNS servers of %s: %+v. %s",
+			svc, err, string(outServers))
+	}
+
+	zap.L().Debug("Got DNS servers", zap.String("svc", svc), zap.String("servers", string(outServers)))
+
+	outDomains, err := exec.Command("networksetup", "-getsearchdomains", svc).CombinedOutput()
+	if err != nil {
+		return nil, errors.Errorf("Could not get the search domains of %s: %+v. %s",
+			svc, err, string(outDomains))
+	}
+
+	zap.L().Debug("Got search domains", zap.String("svc", svc), zap.String("domains", string(outDomains)))
+
+	return &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service{
+		Name:       svc,
+		DnsServers: parseNetworkSetupValues(outServers, "any dns servers", govalidator.IsIP),
+		DnsDomains: parseNetworkSetupValues(outDomains, "any search domains", govalidator.IsDNSName),
+	}, nil
 }
 
 func (c *Controller) doSetDNSResolvConf() error {
@@ -133,6 +179,8 @@ func (c *Controller) doSetDNSResolvConf() error {
 		return err
 	}
 
+	c.c.Preferences.MacosPrefs.DnsMode = pbconfig.Connection_Preferences_MacOS_RESOLVCONF
+
 	return nil
 }
 
@@ -143,24 +191,29 @@ func (c *Controller) doUnsetDNS() error {
 		return nil
 	}
 
+	var retErr error
+
 	switch c.c.Preferences.MacosPrefs.DnsMode {
 	case pbconfig.Connection_Preferences_MacOS_SCUTIL:
 		if err := c.doUnsetDNSScutil(); err != nil {
-			return err
+			zap.L().Warn("Could not unset the DNS via scutil", zap.Error(err))
+			retErr = err
 		}
 	case pbconfig.Connection_Preferences_MacOS_RESOLVCONF:
 		if len(c.c.Preferences.MacosPrefs.ResolvConf) > 0 {
 			if err := os.WriteFile("/etc/resolv.conf", c.c.Preferences.MacosPrefs.ResolvConf, 0644); err != nil {
-				return err
+				zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
+				retErr = err
 			}
-		}
-	case pbconfig.Connection_Preferences_MacOS_NETWORKSETUP:
-		if err := c.doUnSetDNSNetworkSetup(); err != nil {
-			return err
 		}
 	default:
 	}
-	return nil
+
+	if err := c.doUnSetDNSNetworkSetup(); err != nil {
+		retErr = err
+	}
+
+	return retErr
 }
 
 func getNetworkSetupServices() ([]string, error) {
@@ -207,16 +260,23 @@ func setNetworkSetupDNSServers(svc string, dnsServers []string, networkDomains [
 }
 
 func (c *Controller) doUnSetDNSNetworkSetup() error {
+	cfg := c.c.Preferences.MacosPrefs.NetworkSetupConfig
+	if cfg == nil || len(cfg.Services) == 0 {
+		return nil
+	}
+
 	zap.L().Debug("Unsetting DNS using networksetup")
-	if c.c.Preferences.MacosPrefs.NetworkSetupConfig != nil {
-		for _, svc := range c.c.Preferences.MacosPrefs.NetworkSetupConfig.Services {
-			if err := setNetworkSetupDNSServers(svc.Name, svc.DnsServers, svc.DnsDomains); err != nil {
-				return err
-			}
+
+	var retErr error
+	for _, svc := range cfg.Services {
+		if err := setNetworkSetupDNSServers(svc.Name, svc.DnsServers, svc.DnsDomains); err != nil {
+			zap.L().Warn("Could not restore the DNS config of a network service",
+				zap.String("svc", svc.Name), zap.Error(err))
+			retErr = err
 		}
 	}
 
-	return nil
+	return retErr
 }
 
 func (c *Controller) doSetDNSScutil() error {
