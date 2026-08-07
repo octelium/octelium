@@ -147,6 +147,10 @@ func (c *Controller) Close() error {
 		}
 	}
 
+	if err := c.unsetServiceConfigs(); err != nil {
+		zap.L().Warn("Could not unset Service configs", zap.Error(err))
+	}
+
 	zap.L().Debug("Closed dev controller")
 	return nil
 }
