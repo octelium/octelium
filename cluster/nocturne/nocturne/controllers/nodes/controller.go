@@ -18,13 +18,16 @@ package nodecontroller
 
 import (
 	"context"
+	"slices"
 
 	"go.uber.org/zap"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -44,6 +47,11 @@ func NewController(
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return
+			}
+
+			if err := taintNode(ctx, k8sC, octeliumC, node); err != nil {
+				zap.L().Warn("Could not taint Gateway node",
+					zap.String("node", node.Name), zap.Error(err))
 			}
 
 			if err := untaintNode(ctx, k8sC, node); err != nil {
@@ -67,6 +75,11 @@ func NewController(
 
 			if oldNode.ResourceVersion == newNode.ResourceVersion {
 				return
+			}
+
+			if err := taintNode(ctx, k8sC, octeliumC, newNode); err != nil {
+				zap.L().Warn("Could not taint Gateway node",
+					zap.String("node", newNode.Name), zap.Error(err))
 			}
 
 			if err := untaintNode(ctx, k8sC, newNode); err != nil {
@@ -114,23 +127,120 @@ func deleteGWs(ctx context.Context, octeliumC octeliumc.ClientInterface, node *c
 	return nil
 }
 
-func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *corev1.Node) error {
+func hasGateway(ctx context.Context, octeliumC octeliumc.ClientInterface, n *corev1.Node) (bool, error) {
+	gwList, err := octeliumC.CoreC().ListGateway(ctx, &rmetav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
 
-	if n.Labels["octelium.com/gateway-registered"] != "true" {
+	for _, gw := range gwList.Items {
+		if gw.Status.NodeRef != nil && gw.Status.NodeRef.Uid == string(n.UID) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// taintNode sets the gateway-init taint on a data-plane node whose Gateway Agent
+// has not registered yet, so that the k8s scheduler defers scheduling Service
+// pods on it until the Multus CNI conf needed by those pods has been written.
+// The taint is removed by the Gateway Agent itself once the Gateway is ready.
+//
+// Genesis only taints the data-plane nodes that exist at installation time. This
+// covers the data-plane nodes that are added afterwards during runtime, whether
+// manually or by a cluster autoscaler.
+//
+// Nodes that additionally serve as control-plane nodes are skipped since the
+// Cluster's own control-plane components do not tolerate the taint.
+func taintNode(ctx context.Context, k8sC kubernetes.Interface,
+	octeliumC octeliumc.ClientInterface, n *corev1.Node) error {
+
+	if _, ok := n.Labels[vutils.NodeLabelDataPlane]; !ok {
 		return nil
 	}
 
-	for i, taint := range n.Spec.Taints {
-		if taint.Key == "octelium.com/gateway-init" {
-			zap.L().Info("Removing the gateway-init, most probably added by the cloud provider",
-				zap.String("node", n.Name))
-			n.Spec.Taints = append(n.Spec.Taints[:i], n.Spec.Taints[i+1:]...)
-			_, err := k8sC.CoreV1().Nodes().Update(ctx, n, k8smetav1.UpdateOptions{})
-			if err != nil {
-				return err
-			}
+	if _, ok := n.Labels[vutils.NodeLabelControlPlane]; ok {
+		return nil
+	}
+
+	if n.Labels[vutils.NodeLabelGatewayRegistered] == "true" {
+		return nil
+	}
+
+	if slices.ContainsFunc(n.Spec.Taints, func(taint corev1.Taint) bool {
+		return taint.Key == vutils.NodeTaintGatewayInit
+	}) {
+		return nil
+	}
+
+	hasGW, err := hasGateway(ctx, octeliumC, n)
+	if err != nil {
+		return err
+	}
+	if hasGW {
+		return nil
+	}
+
+	zap.L().Info("Setting the gateway-init taint on the newly added data-plane node",
+		zap.String("node", n.Name))
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := k8sC.CoreV1().Nodes().Get(ctx, n.Name, k8smetav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		if slices.ContainsFunc(node.Spec.Taints, func(taint corev1.Taint) bool {
+			return taint.Key == vutils.NodeTaintGatewayInit
+		}) {
 			return nil
 		}
+
+		node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
+			Key:    vutils.NodeTaintGatewayInit,
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		})
+
+		_, err = k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
+		return err
+	})
+}
+
+func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *corev1.Node) error {
+
+	if n.Labels[vutils.NodeLabelGatewayRegistered] != "true" {
+		return nil
 	}
-	return nil
+
+	if !slices.ContainsFunc(n.Spec.Taints, func(taint corev1.Taint) bool {
+		return taint.Key == vutils.NodeTaintGatewayInit
+	}) {
+		return nil
+	}
+
+	zap.L().Info("Removing the gateway-init taint, most probably added by the cloud provider",
+		zap.String("node", n.Name))
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := k8sC.CoreV1().Nodes().Get(ctx, n.Name, k8smetav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		taints := slices.DeleteFunc(slices.Clone(node.Spec.Taints),
+			func(taint corev1.Taint) bool {
+				return taint.Key == vutils.NodeTaintGatewayInit
+			})
+
+		if len(taints) == len(node.Spec.Taints) {
+			return nil
+		}
+
+		node.Spec.Taints = taints
+
+		_, err = k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
+		return err
+	})
 }

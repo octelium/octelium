@@ -104,6 +104,103 @@ func TestUntaintNode(t *testing.T) {
 	}
 }
 
+func TestTaintNode(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	genNode := func(labels map[string]string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name:   utilrand.GetRandomStringLowercase(8),
+				UID:    types.UID(vutils.UUIDv4()),
+				Labels: labels,
+			},
+			Spec:   corev1.NodeSpec{},
+			Status: corev1.NodeStatus{},
+		}
+	}
+
+	createNode := func(node *corev1.Node) *corev1.Node {
+		node, err := fakeC.K8sC.CoreV1().Nodes().Create(ctx, node, k8smetav1.CreateOptions{})
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, hasGatewayInitTaint(node))
+		return node
+	}
+
+	runTaint := func(node *corev1.Node) *corev1.Node {
+		err := taintNode(ctx, fakeC.K8sC, fakeC.OcteliumC, node)
+		assert.Nil(t, err, "%+v", err)
+
+		res, err := fakeC.K8sC.CoreV1().Nodes().Get(ctx, node.Name, k8smetav1.GetOptions{})
+		assert.Nil(t, err, "%+v", err)
+		return res
+	}
+
+	doTaint := func(node *corev1.Node) *corev1.Node {
+		return runTaint(createNode(node))
+	}
+
+	{
+		res := doTaint(genNode(map[string]string{
+			vutils.NodeLabelDataPlane: "",
+		}))
+		assert.True(t, hasGatewayInitTaint(res))
+	}
+
+	{
+		res := doTaint(genNode(map[string]string{
+			vutils.NodeLabelDataPlane:    "",
+			vutils.NodeLabelControlPlane: "",
+		}))
+		assert.False(t, hasGatewayInitTaint(res))
+	}
+
+	{
+		res := doTaint(genNode(map[string]string{
+			vutils.NodeLabelDataPlane:         "",
+			vutils.NodeLabelGatewayRegistered: "true",
+		}))
+		assert.False(t, hasGatewayInitTaint(res))
+	}
+
+	{
+		res := doTaint(genNode(map[string]string{
+			vutils.NodeLabelControlPlane: "",
+		}))
+		assert.False(t, hasGatewayInitTaint(res))
+	}
+
+	{
+		node := createNode(genNode(map[string]string{
+			vutils.NodeLabelDataPlane: "",
+		}))
+
+		_, err := fakeC.OcteliumC.CoreC().CreateGateway(ctx, &octeliumcorev1.Gateway{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &octeliumcorev1.Gateway_Spec{},
+			Status: &octeliumcorev1.Gateway_Status{
+				NodeRef: &metav1.ObjectReference{
+					Name: node.Name,
+					Uid:  string(node.UID),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		res := runTaint(node)
+		assert.False(t, hasGatewayInitTaint(res))
+	}
+}
+
 func TestDeleteGWs(t *testing.T) {
 
 	ctx := context.Background()

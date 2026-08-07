@@ -358,6 +358,12 @@ func GetDownstreamIPHeaderCanonical() string {
 }
 
 const UpgradeIDKey = "upgrade-id"
+
+const NodeLabelDataPlane = "octelium.com/node-mode-dataplane"
+const NodeLabelControlPlane = "octelium.com/node-mode-controlplane"
+const NodeLabelGatewayRegistered = "octelium.com/gateway-registered"
+const NodeTaintGatewayInit = "octelium.com/gateway-init"
+
 const ManagedServiceAddr = "localhost:49999"
 const MaxPolicyParents = 5
 const MaxNameSubArgs = 7
