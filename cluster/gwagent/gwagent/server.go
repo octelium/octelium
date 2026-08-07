@@ -19,6 +19,7 @@ package gwagent
 import (
 	"context"
 	"os"
+	"slices"
 
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -40,6 +41,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	k8scorev1 "k8s.io/api/core/v1"
 )
@@ -173,8 +175,8 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := untaintNode(ctx, s.k8sC, node); err != nil {
-		zap.L().Warn("Could not untaint node", zap.Error(err))
+	if err := untaintNode(ctx, s.k8sC, s.nodeName); err != nil {
+		return errors.Errorf("Could not set the node as Gateway-registered: %+v", err)
 	}
 
 	zap.L().Debug("Gateway agent is now running", zap.String("node", s.nodeName))
@@ -214,97 +216,49 @@ func (s *Server) prepareTUN() error {
 	return nil
 }
 
-func untaintNode(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.Node) error {
+func untaintNode(ctx context.Context, k8sC kubernetes.Interface, nodeName string) error {
 
-	zap.L().Debug("untainting node", zap.String("node", n.Name))
+	zap.L().Debug("Setting the node as Gateway-registered", zap.String("node", nodeName))
 
-	for i, taint := range n.Spec.Taints {
-		if taint.Key == "octelium.com/gateway-init" {
-			zap.L().Info("Found gateway-init taint. Removing it")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
-			/*
-				if err := waitForMultusPod(ctx, k8sC, n); err != nil {
-					return err
-				}
-			*/
-
-			node, err := k8sC.CoreV1().Nodes().Get(ctx, n.Name, k8smetav1.GetOptions{})
-			if err != nil {
-				return err
-			}
-
-			node.Spec.Taints = append(node.Spec.Taints[:i], node.Spec.Taints[i+1:]...)
-			node.Labels["octelium.com/gateway-registered"] = "true"
-
-			_, err = k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
-			if err != nil {
-				return err
-			}
-			return nil
-		}
-	}
-
-	return nil
-}
-
-/*
-func waitForMultusPod(ctx context.Context, k8sC kubernetes.Interface, n *k8scorev1.Node) error {
-	doFn := func() error {
-		pods, err := k8sC.CoreV1().Pods("kube-system").List(ctx, k8smetav1.ListOptions{
-			LabelSelector: "octelium.com/dependency=multus",
-		})
+		node, err := k8sC.CoreV1().Nodes().Get(ctx, nodeName, k8smetav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 
-		pod := func() *k8scorev1.Pod {
-			for _, pod := range pods.Items {
-				if pod.Spec.NodeName == n.Name {
-					return &pod
-				}
-			}
-			return nil
-		}()
+		taints := slices.DeleteFunc(slices.Clone(node.Spec.Taints),
+			func(taint k8scorev1.Taint) bool {
+				return taint.Key == vutils.NodeTaintGatewayInit
+			})
 
-		if pod == nil {
-			return errors.Errorf("Could not find the multus pod on the Node: %s", n.Name)
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
 		}
 
-		zap.L().Debug("Found multus pod. Checking its readiness...", zap.String("pod", pod.Name))
+		isTainted := len(taints) != len(node.Spec.Taints)
+		isRegistered := node.Labels[vutils.NodeLabelGatewayRegistered] == "true"
 
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == "Ready" && condition.Status == "True" {
-				return nil
-			}
-		}
-
-		return errors.Errorf("Pod is not ready")
-	}
-
-	zap.L().Debug("Waiting for Multus pod to be ready")
-
-	for i := range 1000 {
-		err := doFn()
-		if err == nil {
-			zap.L().Debug("Multus is ready")
+		if !isTainted && isRegistered {
 			return nil
 		}
-		zap.L().Info("Multus pod is not ready yet. Trying again...",
-			zap.Int("attempt", i+1), zap.Error(err))
-		time.Sleep(2 * time.Second)
-	}
 
-	return errors.Errorf("Could not check for multus pod readiness on the Node: %s", n.Name)
+		if isTainted {
+			zap.L().Info("Found gateway-init taint. Removing it",
+				zap.String("node", nodeName))
+		}
+
+		node.Spec.Taints = taints
+		node.Labels[vutils.NodeLabelGatewayRegistered] = "true"
+
+		_, err = k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
+		return err
+	})
 }
-*/
 
 func Run(ctx context.Context) error {
 
 	healthcheck.RunWithAddr("localhost:10101")
-
-	if err := os.MkdirAll("/etc/cni/multus/net.d", os.ModePerm); err != nil {
-		return err
-	}
 
 	srv, err := NewServer(ctx)
 	if err != nil {

@@ -19,6 +19,7 @@ package gw
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -26,6 +27,15 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+func getCNIConfPath() string {
+	confDir := os.Getenv(vutils.MultusConfDirEnv)
+	if confDir == "" {
+		confDir = vutils.MultusConfDirDefault
+	}
+
+	return filepath.Join(confDir, "octelium.conf")
+}
 
 func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 	if cc.Status == nil || cc.Status.Network == nil || cc.Status.Network.ClusterNetwork == nil {
@@ -131,15 +141,22 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 		return err
 	}
 
-	zap.L().Debug("Writing CNI file", zap.String("content", string(jsonBytes)))
+	confPath := getCNIConfPath()
 
-	if err := os.WriteFile("/etc/cni/multus/net.d/octelium.conf", jsonBytes, 0644); err != nil {
+	zap.L().Debug("Writing CNI file",
+		zap.String("path", confPath), zap.String("content", string(jsonBytes)))
+
+	if err := os.WriteFile(confPath, jsonBytes, 0644); err != nil {
 		return err
+	}
+
+	if _, err := os.Stat(confPath); err != nil {
+		return errors.Errorf("Could not read back the CNI conf at %s: %+v", confPath, err)
 	}
 
 	return nil
 }
 
 func deleteCNI(netw *corev1.Namespace) error {
-	return os.Remove("/etc/cni/multus/net.d/octelium.conf")
+	return os.Remove(getCNIConfPath())
 }
