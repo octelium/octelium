@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -52,6 +53,7 @@ import (
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 )
 
 type InitOpts struct {
@@ -60,6 +62,7 @@ type InitOpts struct {
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
 	CNIConfDir              string
+	MultusConfDir           string
 }
 
 func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
@@ -69,6 +72,10 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	}
 
 	if err := waitForNodesReadiness(ctx, g.k8sC); err != nil {
+		return err
+	}
+
+	if err := g.setDataPlaneNodeTaints(ctx); err != nil {
 		return err
 	}
 
@@ -171,6 +178,8 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 			SPIFFECSIDriver:         o.SPIFFECSIDriver,
 			SPIFFETrustDomain:       o.SPIFFETrustDomain,
 			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+			CNIConfDir:              o.CNIConfDir,
+			MultusConfDir:           o.MultusConfDir,
 		}); err != nil {
 			return err
 		}
@@ -219,6 +228,8 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 			SPIFFECSIDriver:         o.SPIFFECSIDriver,
 			SPIFFETrustDomain:       o.SPIFFETrustDomain,
 			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+			CNIConfDir:              o.CNIConfDir,
+			MultusConfDir:           o.MultusConfDir,
 		}); err != nil {
 		return err
 	}
@@ -1208,6 +1219,81 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Successfully created the root User initial authentication token")
+
+	return nil
+}
+
+func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
+	if ldflags.IsTest() {
+		return nil
+	}
+
+	dataPlaneNodes, err := g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
+		LabelSelector: vutils.NodeLabelDataPlane,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(dataPlaneNodes.Items) == 0 {
+		return errors.Errorf(
+			"No Kubernetes node is labeled as an Octelium data-plane node. At least one node must be labeled via: kubectl label nodes <NODE_NAME> %s=",
+			vutils.NodeLabelDataPlane)
+	}
+
+	nodeList, err := g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s,!%s",
+			vutils.NodeLabelDataPlane, vutils.NodeLabelControlPlane),
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, item := range nodeList.Items {
+		nodeName := item.Name
+
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			node, err := g.k8sC.CoreV1().Nodes().Get(ctx, nodeName, k8smetav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+
+			hasTaint := slices.ContainsFunc(node.Spec.Taints, func(taint k8scorev1.Taint) bool {
+				return taint.Key == vutils.NodeTaintGatewayInit
+			})
+
+			if node.Labels == nil {
+				node.Labels = make(map[string]string)
+			}
+			_, isRegistered := node.Labels[vutils.NodeLabelGatewayRegistered]
+
+			if hasTaint && !isRegistered {
+				return nil
+			}
+
+			if !hasTaint {
+				node.Spec.Taints = append(node.Spec.Taints, k8scorev1.Taint{
+					Key:    vutils.NodeTaintGatewayInit,
+					Value:  "true",
+					Effect: k8scorev1.TaintEffectNoSchedule,
+				})
+			}
+
+			delete(node.Labels, vutils.NodeLabelGatewayRegistered)
+
+			_, err = g.k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
+			return err
+		}); err != nil {
+			return errors.Errorf("Could not set the gateway-init taint on the node %s: %+v", nodeName, err)
+		}
+
+		zap.L().Debug("Set the gateway-init taint on the data-plane node",
+			zap.String("node", nodeName))
+	}
+
+	zap.L().Info("Successfully set the gateway-init taint on the dedicated data-plane nodes",
+		zap.Int("tainted", len(nodeList.Items)),
+		zap.Int("dataPlaneNodes", len(dataPlaneNodes.Items)))
 
 	return nil
 }

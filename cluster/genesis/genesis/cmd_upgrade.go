@@ -41,6 +41,7 @@ type UpgradeOpts struct {
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
 	CNIConfDir              string
+	MultusConfDir           string
 }
 
 func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
@@ -91,6 +92,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		SPIFFECSIDriver:         o.SPIFFECSIDriver,
 		SPIFFETrustDomain:       o.SPIFFETrustDomain,
 		EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+		CNIConfDir:              o.CNIConfDir,
+		MultusConfDir:           o.MultusConfDir,
 	}); err != nil {
 		return err
 	}
@@ -111,6 +114,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 			SPIFFECSIDriver:         o.SPIFFECSIDriver,
 			SPIFFETrustDomain:       o.SPIFFETrustDomain,
 			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
+			CNIConfDir:              o.CNIConfDir,
+			MultusConfDir:           o.MultusConfDir,
 		}); err != nil {
 		return err
 	}

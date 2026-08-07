@@ -83,6 +83,7 @@ type args struct {
 	SPIFFETrustDomain       string
 	EnableIngressFrontProxy bool
 	CNIConfDir              string
+	MultusConfDir           string
 }
 
 func init() {
@@ -91,6 +92,7 @@ func init() {
 	initCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
 	initCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
 	initCmd.PersistentFlags().StringVar(&cmdArgs.CNIConfDir, "cni-conf-dir", "", "CNI config directory")
+	initCmd.PersistentFlags().StringVar(&cmdArgs.MultusConfDir, "multus-conf-dir", "", "Multus delegate CNI config directory (confDir)")
 }
 
 func init() {
@@ -99,6 +101,7 @@ func init() {
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.SPIFFETrustDomain, "spiffe-trust-domain", "", "SPIFFE trust domain")
 	upgradeCmd.PersistentFlags().BoolVar(&cmdArgs.EnableIngressFrontProxy, "ingress-front-proxy", false, "Enable Ingress front proxy mode")
 	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.CNIConfDir, "cni-conf-dir", "", "CNI config directory")
+	upgradeCmd.PersistentFlags().StringVar(&cmdArgs.MultusConfDir, "multus-conf-dir", "", "Multus delegate CNI config directory (confDir)")
 }
 
 func init() {

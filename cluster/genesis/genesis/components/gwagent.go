@@ -18,15 +18,30 @@ package components
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const multusConfMountPath = "/host/multus-conf"
+
+func GetMultusConfDir(o *CommonOpts) string {
+	switch {
+	case o.MultusConfDir != "":
+		return o.MultusConfDir
+	case o.CNIConfDir != "":
+		return filepath.Join(o.CNIConfDir, "multus", "net.d")
+	default:
+		return vutils.MultusConfDirDefault
+	}
+}
 
 func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 
@@ -75,15 +90,10 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 								},
 							},
 							{
-								Name: "etc-cni",
+								Name: "multus-conf",
 								VolumeSource: k8scorev1.VolumeSource{
 									HostPath: &k8scorev1.HostPathVolumeSource{
-										Path: func() string {
-											if o.CNIConfDir != "" {
-												return o.CNIConfDir
-											}
-											return "/etc/cni"
-										}(),
+										Path: GetMultusConfDir(o),
 										Type: &hostPathDirectoryOrCreate,
 									},
 								},
@@ -143,11 +153,17 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							VolumeMounts: func() []k8scorev1.VolumeMount {
 								ret := []k8scorev1.VolumeMount{
 									{
-										Name:      "etc-cni",
+										Name:      "multus-conf",
 										ReadOnly:  false,
-										MountPath: "/etc/cni",
+										MountPath: multusConfMountPath,
 									},
 								}
+
+								ret = append(ret, k8scorev1.VolumeMount{
+									Name:      "multus-conf",
+									ReadOnly:  false,
+									MountPath: vutils.MultusConfDirDefault,
+								})
 
 								if o.EnableSPIFFECSI {
 									ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
@@ -232,6 +248,11 @@ func getGatewayAgentEnvVars(o *CommonOpts) []k8scorev1.EnvVar {
 			},
 		},
 	}
+
+	ret = append(ret, k8scorev1.EnvVar{
+		Name:  vutils.MultusConfDirEnv,
+		Value: multusConfMountPath,
+	})
 
 	if o.SPIFFETrustDomain != "" {
 		ret = append(ret, k8scorev1.EnvVar{
