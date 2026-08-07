@@ -154,6 +154,8 @@ func addCNI(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
 		return errors.Errorf("Could not read back the CNI conf at %s: %+v", confPath, err)
 	}
 
+	zap.L().Info("Successfully wrote the Octelium Multus CNI conf", zap.String("path", confPath))
+
 	return nil
 }
 

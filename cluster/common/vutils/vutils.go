@@ -366,7 +366,6 @@ const NodeTaintGatewayInit = "octelium.com/gateway-init"
 
 const MultusConfDirDefault = "/etc/cni/multus/net.d"
 const MultusConfDirEnv = "OCTELIUM_MULTUS_CONF_DIR"
-const MultusHostConfDirEnv = "OCTELIUM_MULTUS_HOST_CONF_DIR"
 
 const ManagedServiceAddr = "localhost:49999"
 const MaxPolicyParents = 5
