@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/asaskevich/govalidator"
+	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -35,6 +36,11 @@ func (c *Controller) toUAPI() string {
 	output.WriteString("replace_peers=true\n")
 
 	for _, gw := range c.c.Connection.Gateways {
+		if gw == nil || gw.Wireguard == nil || len(gw.Addresses) == 0 {
+			zap.L().Debug("Skipping Gateway without WireGuard info", zap.Any("gw", gw))
+			continue
+		}
+
 		output.WriteString(fmt.Sprintf("public_key=%s\n", wgKeyB64ToHex(gw.Wireguard.PublicKey)))
 		output.WriteString(fmt.Sprintf("endpoint=%s\n", net.JoinHostPort(gw.Addresses[0], fmt.Sprintf("%d", gw.Wireguard.Port))))
 		output.WriteString(fmt.Sprintf("persistent_keepalive_interval=%d\n", c.c.Preferences.KeepAliveSeconds))

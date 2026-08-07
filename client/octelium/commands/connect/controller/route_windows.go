@@ -30,10 +30,18 @@ func (c *Controller) doSetRoutes() error {
 		return nil
 	}
 
+	if c.opts.adapter == nil {
+		return nil
+	}
+
 	luid := c.opts.adapter.LUID()
 	routes := []*winipcfg.RouteData{}
 
 	for _, gw := range c.c.Connection.Gateways {
+		if gw == nil {
+			continue
+		}
+
 		for _, cidr := range gw.CIDRs {
 			ip, ipnet, err := net.ParseCIDR(cidr)
 			if err != nil {
@@ -45,22 +53,24 @@ func (c *Controller) doSetRoutes() error {
 				return err
 			}
 
-			if c.ipv4Supported && govalidator.IsIPv4(ip.String()) {
+			dst, err := netip.ParsePrefix(ipnet.String())
+			if err != nil {
+				return err
+			}
+
+			nextHop, err := netip.ParseAddr(nextHopIP.String())
+			if err != nil {
+				return err
+			}
+
+			if (c.ipv4Supported && govalidator.IsIPv4(ip.String())) ||
+				(c.ipv6Supported && govalidator.IsIPv6(ip.String())) {
 				routes = append(routes, &winipcfg.RouteData{
-					Destination: netip.MustParsePrefix(ipnet.String()),
-					NextHop:     netip.MustParseAddr(nextHopIP.String()),
+					Destination: dst,
+					NextHop:     nextHop,
 					Metric:      0,
 				})
 			}
-
-			if c.ipv6Supported && govalidator.IsIPv6(ip.String()) {
-				routes = append(routes, &winipcfg.RouteData{
-					Destination: netip.MustParsePrefix(ipnet.String()),
-					NextHop:     netip.MustParseAddr(nextHopIP.String()),
-					Metric:      0,
-				})
-			}
-
 		}
 	}
 
@@ -73,6 +83,10 @@ func (c *Controller) doSetRoutes() error {
 
 func (c *Controller) setIPIF() error {
 	zap.L().Debug("Setting IPIF")
+	if c.opts.adapter == nil {
+		return nil
+	}
+
 	luid := c.opts.adapter.LUID()
 
 	if c.ipv4Supported {
@@ -109,6 +123,9 @@ func (c *Controller) setIPIF() error {
 }
 
 func (c *Controller) doUnsetRoutes() error {
+	if c.opts.adapter == nil {
+		return nil
+	}
 
 	if c.ipv4Supported {
 		if err := c.opts.adapter.LUID().FlushRoutes(windows.AF_INET); err != nil {

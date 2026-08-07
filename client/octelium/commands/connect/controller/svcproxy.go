@@ -235,6 +235,9 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 		if err != nil {
 			return nil, errors.Errorf("Could not lookupHost via gVisor: %s", err)
 		}
+		if len(addrs) == 0 {
+			return nil, errors.Errorf("Could not resolve Service: %s", l.svcFQDN)
+		}
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(addrs[0], fmt.Sprintf("%d", l.port)))
 		if err != nil {
@@ -267,6 +270,11 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 }
 
 func (l *listener) resolveService() (net.IP, error) {
+	dnsServer := l.ctl.getCurrentDNS()
+	if dnsServer == nil {
+		return nil, errors.Errorf("No DNS servers available to resolve the Service: %s", l.svcFQDN)
+	}
+
 	c := dns.Client{}
 	m := dns.Msg{}
 	if l.ctl.ipv6Supported {
@@ -275,7 +283,7 @@ func (l *listener) resolveService() (net.IP, error) {
 		m.SetQuestion(l.svcFQDN+".", dns.TypeA)
 	}
 
-	r, _, err := c.Exchange(&m, net.JoinHostPort(l.ctl.getCurrentDNS().String(), "53"))
+	r, _, err := c.Exchange(&m, net.JoinHostPort(dnsServer.String(), "53"))
 	if err != nil {
 		return nil, err
 	}

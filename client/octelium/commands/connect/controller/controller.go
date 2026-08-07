@@ -175,7 +175,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		return err
 	}
 
-	if c.c.Preferences.LocalDNS.IsEnabled {
+	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.IsEnabled {
 		localDNSServer, err := dnssrv.NewDNSServer(&dnssrv.Opts{
 			ClusterDomain: c.c.Info.Cluster.Domain,
 			HasV4:         c.ipv4Supported,
@@ -185,11 +185,11 @@ func (c *Controller) Start(ctx context.Context) error {
 		})
 		if err != nil {
 			zap.L().Warn("Could not initialize local DNS server", zap.Error(err))
-		}
-		c.localDNSSrv = localDNSServer
-
-		if err := c.localDNSSrv.Run(); err != nil {
-			zap.L().Warn("Could not run local DNS server", zap.Error(err))
+		} else {
+			c.localDNSSrv = localDNSServer
+			if err := c.localDNSSrv.Run(); err != nil {
+				zap.L().Warn("Could not run local DNS server", zap.Error(err))
+			}
 		}
 	}
 

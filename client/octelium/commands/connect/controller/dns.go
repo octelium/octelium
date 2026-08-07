@@ -48,7 +48,9 @@ func (c *Controller) SetDNS() error {
 	dnsServers := c.getDNSServers()
 	var curServers []net.IP
 	for _, dnsServer := range dnsServers {
-		curServers = append(curServers, net.ParseIP(dnsServer))
+		if ip := net.ParseIP(dnsServer); ip != nil {
+			curServers = append(curServers, ip)
+		}
 	}
 
 	c.dnsServers.Lock()
@@ -87,7 +89,7 @@ func (c *Controller) UnsetDNS() error {
 }
 
 func (c *Controller) getDNSServers() []string {
-	if c.c.Preferences.LocalDNS.IsEnabled {
+	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.IsEnabled {
 		if addr := c.getLocalDNSServerAddr(); addr != "" {
 			if govalidator.IsIP(addr) {
 				return []string{
@@ -105,6 +107,10 @@ func (c *Controller) getDNSServers() []string {
 }
 
 func (c *Controller) getClusterDNSServers() []string {
+	if c.c.Connection.Dns == nil {
+		return nil
+	}
+
 	var ret []string
 	for _, s := range c.c.Connection.Dns.Servers {
 		if govalidator.IsIPv6(s) && c.ipv6Supported {
@@ -239,7 +245,7 @@ func generateResolvConf(config *resolvConfOpts) (string, error) {
 }
 
 func (c *Controller) getLocalDNSServerAddr() string {
-	if c.c.Preferences.LocalDNS.ListenAddress != "" {
+	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.ListenAddress != "" {
 		return c.c.Preferences.LocalDNS.ListenAddress
 	}
 	if cliutils.IsDarwin() {

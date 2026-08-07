@@ -23,6 +23,7 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -35,6 +36,10 @@ func (c *Controller) setWGDev() error {
 	peers := []wgtypes.PeerConfig{}
 
 	for _, gw := range c.c.Connection.Gateways {
+		if gw == nil || gw.Wireguard == nil || len(gw.Addresses) == 0 {
+			zap.L().Debug("Skipping Gateway without WireGuard info", zap.Any("gw", gw))
+			continue
+		}
 
 		allowedIPs, err := c.getWGPeerAllowedIPs(gw)
 		if err != nil {

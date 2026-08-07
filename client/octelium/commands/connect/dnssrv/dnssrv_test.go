@@ -59,6 +59,59 @@ func (s *tstDNSGetter) GetClusterDNSServers() []string {
 	return []string{"8.8.8.8"}
 }
 
+type tstEmptyDNSGetter struct {
+}
+
+func (s *tstEmptyDNSGetter) GetClusterDNSServers() []string {
+	return nil
+}
+
+func TestNewDNSServerInvalidOpts(t *testing.T) {
+	{
+		srv, err := NewDNSServer(nil)
+		assert.NotNil(t, err)
+		assert.Nil(t, srv)
+	}
+
+	{
+		srv, err := NewDNSServer(&Opts{
+			ClusterDomain: "example.com",
+			HasV4:         true,
+		})
+		assert.NotNil(t, err)
+		assert.Nil(t, srv)
+	}
+}
+
+func TestServerNoClusterDNSServers(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    "127.0.0.100:18054",
+		HasV4:         true,
+		DNSGetter:     &tstEmptyDNSGetter{},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, srv.Run())
+
+	time.Sleep(1 * time.Second)
+
+	for _, typ := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeMX} {
+		c := dns.Client{}
+		m := dns.Msg{}
+		m.SetQuestion("svc1.local.example.com.", typ)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		r, _, err := c.ExchangeContext(ctx, &m, "127.0.0.100:18054")
+		cancel()
+
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeServerFailure, r.Rcode)
+	}
+
+	assert.Nil(t, srv.Close())
+}
+
 func TestServer(t *testing.T) {
 
 	srv, err := NewDNSServer(&Opts{

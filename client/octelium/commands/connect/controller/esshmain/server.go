@@ -41,6 +41,14 @@ func New(c *cliconfigv1.Connection, goNetCtl ccommon.GoNetCtl,
 	}
 	var err error
 
+	if c.Preferences.ESSH == nil {
+		return nil, errors.Errorf("The Connection does not have eSSH preferences")
+	}
+
+	if len(c.Connection.Ed25519Key) != ed25519.PrivateKeySize {
+		return nil, errors.Errorf("Invalid ed25519 private key size: %d", len(c.Connection.Ed25519Key))
+	}
+
 	privSigner, err := ssh.NewSignerFromKey(ed25519.PrivateKey(c.Connection.Ed25519Key))
 	if err != nil {
 		return nil, err

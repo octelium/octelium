@@ -22,12 +22,17 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
 	zap.L().Debug("Setting gw", zap.Any("gw", gw))
+	if gw == nil || gw.Wireguard == nil || len(gw.Addresses) == 0 {
+		return errors.Errorf("Gateway does not have WireGuard info")
+	}
+
 	allowedIPs, err := c.getWGPeerAllowedIPs(gw)
 	if err != nil {
 		return err
@@ -73,6 +78,9 @@ func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
 }
 
 func (c *Controller) UnsetGatewayWGPeer(gw *userv1.Gateway) error {
+	if gw == nil || gw.Wireguard == nil {
+		return nil
+	}
 
 	gwPubK, err := wgtypes.ParseKey(gw.Wireguard.PublicKey)
 	if err != nil {

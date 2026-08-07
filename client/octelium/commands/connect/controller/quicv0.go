@@ -537,6 +537,9 @@ func (c *quicEngine) startTunReadLoop(ctx context.Context) {
 		}
 
 		for i := 0; i < n; i++ {
+			if sizes[i] <= 0 {
+				continue
+			}
 			start := tunPacketOffset
 			end := sizes[i] + tunPacketOffset
 			pkt := make([]byte, end-start)
@@ -562,6 +565,9 @@ func (c *quicEngine) processTunPkt(pkt []byte) {
 }
 
 func (c *quicEngine) getGWFromPkt(pkt []byte) *quicGW {
+	if len(pkt) == 0 {
+		return nil
+	}
 
 	var dst netip.Addr
 

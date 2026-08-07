@@ -116,6 +116,9 @@ func (c *Controller) addProxy(ctx context.Context, listener *userv1.HostedServic
 	if err != nil {
 		return err
 	}
+	if p == nil {
+		return nil
+	}
 
 	c.proxies = append(c.proxies, p)
 	return p.start(ctx)
@@ -209,25 +212,29 @@ func (c *Controller) newProxy(
 	addr *metav1.DualStackIP,
 	goNetCtl ccommon.GoNetCtl, ipv4Supported, ipv6Supported bool) (*proxy, error) {
 
-	ret := &proxy{
-		svc: svc,
-	}
-
 	if svc.Mode == userv1.HostedService_MODE_ESSH &&
 		c.c.Preferences.ESSH != nil &&
 		c.c.Preferences.ESSH.IsEnabled {
-
-	} else {
-		ret.p = userspace.NewProxyFromServiceListener(svc, addr, goNetCtl, ipv4Supported, ipv6Supported)
+		zap.S().Debugf("Service %s is served by the eSSH server. Skipping the proxy", svc.Name)
+		return nil, nil
 	}
 
-	return ret, nil
+	return &proxy{
+		svc: svc,
+		p:   userspace.NewProxyFromServiceListener(svc, addr, goNetCtl, ipv4Supported, ipv6Supported),
+	}, nil
 }
 
 func (p *proxy) start(ctx context.Context) error {
+	if p.p == nil {
+		return nil
+	}
 	return p.p.Start(ctx)
 }
 
 func (p *proxy) close() error {
+	if p.p == nil {
+		return nil
+	}
 	return p.p.Close()
 }

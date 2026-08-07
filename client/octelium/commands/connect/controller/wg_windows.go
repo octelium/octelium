@@ -15,9 +15,9 @@
 package controller
 
 import (
-	"net"
 	"net/netip"
 
+	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/windows/conf"
 )
 
@@ -48,24 +48,29 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 		}
 	}
 
-	dnsAddrs := []net.IP{}
+	var dnsAddrs []netip.Addr
 
-	dnsServers := c.getDNSServers()
-
-	for _, dnsAddr := range dnsServers {
-		dnsAddrs = append(dnsAddrs, net.ParseIP(dnsAddr))
+	for _, dnsAddr := range c.getDNSServers() {
+		naddr, err := netip.ParseAddr(dnsAddr)
+		if err != nil {
+			zap.L().Warn("Skipping invalid DNS server address",
+				zap.String("addr", dnsAddr), zap.Error(err))
+			continue
+		}
+		dnsAddrs = append(dnsAddrs, naddr)
 	}
 
 	peers := []conf.Peer{}
 
 	for _, gw := range c.c.Connection.Gateways {
+		if gw == nil || gw.Wireguard == nil || len(gw.Addresses) == 0 {
+			zap.L().Debug("Skipping Gateway without WireGuard info", zap.Any("gw", gw))
+			continue
+		}
+
 		key, err := conf.NewPrivateKeyFromString(gw.Wireguard.PublicKey)
 		if err != nil {
 			return nil, err
-		}
-
-		if len(gw.Addresses) == 0 {
-			continue
 		}
 
 		allowedIPs := []netip.Prefix{}
@@ -93,18 +98,12 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 		})
 	}
 
-	var netDNSAddrs []netip.Addr
-
-	for _, addr := range dnsAddrs {
-		netDNSAddrs = append(netDNSAddrs, netip.MustParseAddr(addr.String()))
-	}
-
 	return &conf.Config{
 		Name: c.c.Preferences.DeviceName,
 		Interface: conf.Interface{
 			PrivateKey: *pk,
 			Addresses:  addrs,
-			DNS:        netDNSAddrs,
+			DNS:        dnsAddrs,
 			DNSSearch:  []string{c.c.Info.Cluster.Domain},
 		},
 		Peers: peers,

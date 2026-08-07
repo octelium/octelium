@@ -18,13 +18,20 @@ import (
 	"os/exec"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 func (c *Controller) doSetRoutes() error {
 	if c.isNetstack {
 		return nil
 	}
+
 	cidr := c.c.Connection.Cidr
+	if cidr == nil {
+		zap.L().Warn("The Connection does not have a CIDR. No routes are set")
+		return nil
+	}
+
 	if c.ipv4Supported && cidr.V4 != "" {
 		if o, err := exec.Command("route", "-q", "-n", "add", "-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName).CombinedOutput(); err != nil {
 			return errors.Errorf("Could not set route %s: %s", cidr.V4, string(o))
@@ -46,6 +53,10 @@ func (c *Controller) doUnsetRoutes() error {
 	}
 
 	cidr := c.c.Connection.Cidr
+	if cidr == nil {
+		return nil
+	}
+
 	if c.ipv4Supported && cidr.V4 != "" {
 		if err := exec.Command("route", "-q", "-n", "delete", "-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName).Run(); err != nil {
 			return err

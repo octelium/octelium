@@ -26,6 +26,45 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestControllerESSHService(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctl, err := NewController(ctx, &cliconfigv1.Connection{
+		Connection: &userv1.ConnectionState{
+			L3Mode: userv1.ConnectionState_BOTH,
+		},
+		Preferences: &cliconfigv1.Connection_Preferences{
+			L3Mode: cliconfigv1.Connection_Preferences_BOTH,
+			ESSH: &cliconfigv1.Connection_Preferences_ESSH{
+				IsEnabled: true,
+			},
+		},
+	}, &ccommon.TestGoNetCtl{})
+	assert.Nil(t, err)
+
+	assert.Nil(t, ctl.Start(ctx))
+
+	svc := &userv1.HostedService{
+		Name:   "svc-essh",
+		Port:   43211,
+		L4Type: userv1.HostedService_TCP,
+		Mode:   userv1.HostedService_MODE_ESSH,
+		Upstream: &userv1.HostedService_Upstream{
+			Host: "localhost",
+			Port: 22,
+		},
+		Address: &metav1.DualStackIP{
+			Ipv4: "127.0.0.1",
+		},
+	}
+
+	assert.Nil(t, ctl.AddService(svc))
+	assert.Nil(t, ctl.UpdateService(svc))
+	assert.Nil(t, ctl.DeleteService(svc.Name))
+	assert.Nil(t, ctl.Close())
+}
+
 func TestController(t *testing.T) {
 
 	{

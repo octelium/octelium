@@ -60,6 +60,12 @@ type DNSGetter interface {
 }
 
 func NewDNSServer(opts *Opts) (*Server, error) {
+	if opts == nil {
+		return nil, errors.Errorf("Local DNS: nil opts")
+	}
+	if opts.DNSGetter == nil {
+		return nil, errors.Errorf("Local DNS: nil DNSGetter")
+	}
 
 	listenAddr := func() string {
 		if opts.ListenAddr != "" {
@@ -113,11 +119,18 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	q := msg.Question[0]
 	domain := q.Name
 
+	upstreamAddr := s.getUpstreamAddr()
+	if upstreamAddr == "" {
+		zap.L().Debug("Local DNS: no Cluster DNS servers available")
+		msg.SetRcode(r, dns.RcodeServerFailure)
+		w.WriteMsg(&msg)
+		return
+	}
+
 	switch q.Qtype {
 	case dns.TypeA, dns.TypeAAAA:
 	default:
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
-			net.JoinHostPort(s.dnsGetter.GetClusterDNSServers()[0], "53"))
+		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
 		if err != nil {
 			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 			msg.SetRcode(r, dns.RcodeServerFailure)
@@ -133,8 +146,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if !s.isLikelyService(domain) {
 
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
-			net.JoinHostPort(s.dnsGetter.GetClusterDNSServers()[0], "53"))
+		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
 		if err != nil {
 			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 			msg.SetRcode(r, dns.RcodeServerFailure)
@@ -162,8 +174,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype,
-		net.JoinHostPort(s.dnsGetter.GetClusterDNSServers()[0], "53"))
+	ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
 	if err != nil {
 		zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 		msg.SetRcode(r, dns.RcodeServerFailure)
@@ -174,6 +185,15 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	msg.Extra = ret.Extra
 	msg.Ns = ret.Ns
 	w.WriteMsg(&msg)
+}
+
+func (s *Server) getUpstreamAddr() string {
+	servers := s.dnsGetter.GetClusterDNSServers()
+	if len(servers) == 0 {
+		return ""
+	}
+
+	return net.JoinHostPort(servers[0], "53")
 }
 
 func (s *Server) ListenHost() string {
@@ -232,25 +252,27 @@ func (s *Server) isLikelyService(domain string) bool {
 
 func (s *Server) Run() error {
 	zap.L().Debug("Starting running local DNS server", zap.String("addr", s.listenAddr))
-	go func() {
-		if err := s.doRun(); err != nil {
-			zap.L().Warn("Could not run local DNS server", zap.Error(err))
-		}
-	}()
+
+	s.mu.Lock()
+	if s.isClosed {
+		s.mu.Unlock()
+		return nil
+	}
+
+	s.srv = &dns.Server{Addr: s.listenAddr, Net: "udp", Handler: s}
+	srv := s.srv
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cacheCancel = cancel
-	go s.cache.startCleanupLoop(ctx)
-	return nil
-}
+	s.mu.Unlock()
 
-func (s *Server) doRun() error {
-	s.srv = &dns.Server{Addr: s.listenAddr, Net: "udp"}
-	s.srv.Handler = s
-	if err := s.srv.ListenAndServe(); err != nil {
-		zap.L().Warn("Failed to serve local DNS", zap.Error(err))
-		return err
-	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			zap.L().Warn("Failed to serve local DNS", zap.Error(err))
+		}
+	}()
+
+	go s.cache.startCleanupLoop(ctx)
 
 	return nil
 }
@@ -259,13 +281,20 @@ func (s *Server) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.isClosed || s.srv == nil {
+	if s.isClosed {
 		return nil
 	}
 
 	s.isClosed = true
 	zap.L().Debug("Closing local DNS server...")
-	s.cacheCancel()
+
+	if s.cacheCancel != nil {
+		s.cacheCancel()
+	}
+
+	if s.srv == nil {
+		return nil
+	}
 
 	return s.srv.Shutdown()
 }

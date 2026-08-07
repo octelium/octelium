@@ -29,6 +29,12 @@ func (c *Controller) doSetRoutes() error {
 
 	zap.L().Debug("setting routes")
 
+	cidr := c.c.Connection.Cidr
+	if cidr == nil {
+		zap.L().Warn("The Connection does not have a CIDR. No routes are set")
+		return nil
+	}
+
 	mainTable := int(c.c.Preferences.LinuxPrefs.MainTableIndex)
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
 	if err != nil {
@@ -48,8 +54,6 @@ func (c *Controller) doSetRoutes() error {
 			Dst:       route,
 		})
 	}
-
-	cidr := c.c.Connection.Cidr
 
 	if c.ipv4Supported && cidr.V4 != "" {
 		zap.L().Debug("setting v4 route", zap.String("cidr", cidr.V4))
@@ -73,6 +77,11 @@ func (c *Controller) doUnsetRoutes() error {
 		return nil
 	}
 
+	cidr := c.c.Connection.Cidr
+	if cidr == nil {
+		return nil
+	}
+
 	mainTable := int(c.c.Preferences.LinuxPrefs.MainTableIndex)
 
 	l, err := netlink.LinkByName(c.c.Preferences.DeviceName)
@@ -89,8 +98,6 @@ func (c *Controller) doUnsetRoutes() error {
 			Dst:       route,
 		})
 	}
-
-	cidr := c.c.Connection.Cidr
 
 	if c.ipv4Supported && cidr.V4 != "" {
 		if err := doDeleteRoute(cidr.V4); err != nil {

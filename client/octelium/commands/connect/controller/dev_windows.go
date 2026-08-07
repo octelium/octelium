@@ -38,10 +38,15 @@ func setTunDev() error {
 }
 
 func (c *Controller) doInitDev(ctx context.Context) error {
-	err := c.doInitDevTUN(ctx)
-	if err == nil {
-		return nil
+	if !c.isQUIC {
+		err := c.doInitDevTUN(ctx)
+		if err == nil {
+			return nil
+		}
+		zap.L().Debug("Could not init TUN implementation. Trying gVisor netstack mode.",
+			zap.Error(err))
 	}
+
 	if err := c.doInitDevNetstack(ctx); err != nil {
 		return errors.Errorf("Could not init netstack dev: %+v", err)
 	}

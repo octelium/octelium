@@ -23,13 +23,23 @@ import (
 )
 
 func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
+	if gw == nil {
+		return errors.Errorf("Cannot add a nil Gateway")
+	}
+
 	c.c.Connection.Gateways = append(c.c.Connection.Gateways, gw)
 
 	if c.isQUIC {
+		if c.quicEngine == nil {
+			return errors.Errorf("The QUIC engine is not initialized")
+		}
 		return c.quicEngine.addGW(ctx, gw)
 	}
 
 	if c.isNetstack {
+		if c.dev == nil {
+			return errors.Errorf("The WireGuard device is not initialized")
+		}
 		if err := c.dev.IpcSet(c.toUAPI()); err != nil {
 			return err
 		}
@@ -44,6 +54,10 @@ func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
 }
 
 func (c *Controller) UpdateGateway(ctx context.Context, gw *userv1.Gateway) error {
+	if gw == nil {
+		return errors.Errorf("Cannot update a nil Gateway")
+	}
+
 	if c.isQUIC {
 		return nil
 	}
@@ -53,6 +67,9 @@ func (c *Controller) UpdateGateway(ctx context.Context, gw *userv1.Gateway) erro
 			c.c.Connection.Gateways[i] = gw
 
 			if c.isNetstack {
+				if c.dev == nil {
+					return errors.Errorf("The WireGuard device is not initialized")
+				}
 				if err := c.dev.IpcSet(c.toUAPI()); err != nil {
 					return err
 				}
@@ -76,6 +93,9 @@ func (c *Controller) UpdateGateway(ctx context.Context, gw *userv1.Gateway) erro
 func (c *Controller) DeleteGateway(ctx context.Context, gwID string) error {
 
 	if c.isQUIC {
+		if c.quicEngine == nil {
+			return nil
+		}
 		return c.quicEngine.deleteGWByID(gwID)
 	}
 
@@ -87,6 +107,9 @@ func (c *Controller) DeleteGateway(ctx context.Context, gwID string) error {
 			zap.L().Debug("Removing gw", zap.Any("gw", gw))
 
 			if c.isNetstack {
+				if c.dev == nil {
+					return errors.Errorf("The WireGuard device is not initialized")
+				}
 				if err := c.dev.IpcSet(c.toUAPI()); err != nil {
 					return err
 				}
