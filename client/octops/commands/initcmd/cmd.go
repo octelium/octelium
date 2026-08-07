@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -181,6 +182,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	if err := validateBootstrap(bootstrap); err != nil {
 		return errors.Errorf("Bootstrap validation error: %+v", err)
+	}
+
+	if err := cliutils.RunPromptConfirm(fmt.Sprintf(
+		`This installs a new Octelium Cluster at the domain "%s". `+
+			`Confirm to proceed`, clusterDomain)); err != nil {
+		return err
 	}
 
 	return install.DoInstall(ctx, &install.Opts{

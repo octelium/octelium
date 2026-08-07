@@ -33,7 +33,7 @@ set -e
 
 DOMAIN="localhost"
 VERSION=$GITHUB_REF_NAME
-DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive
 PG_PASSWORD=$(openssl rand -base64 12)
 REDIS_PASSWORD=$(openssl rand -base64 12)
 

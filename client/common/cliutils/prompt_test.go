@@ -15,41 +15,24 @@
 package cliutils
 
 import (
-	"os"
+	"testing"
 
-	"github.com/manifoldco/promptui"
-	"golang.org/x/term"
+	"github.com/stretchr/testify/assert"
 )
 
-func NewPrompt(prompt string, isConfirm bool) *promptui.Prompt {
-	templates := &promptui.PromptTemplates{
-		Prompt: "{{ . | bold }} ",
-	}
+func TestIsNonInteractive(t *testing.T) {
+	assert.True(t, IsNonInteractive())
 
-	return &promptui.Prompt{
-		Label:     prompt,
-		Templates: templates,
-		IsConfirm: isConfirm,
-	}
+	t.Setenv("DEBIAN_FRONTEND", "noninteractive")
+	assert.True(t, IsNonInteractive())
 
+	t.Setenv("DEBIAN_FRONTEND", "")
+	assert.True(t, IsNonInteractive())
 }
 
-func IsNonInteractive() bool {
-	if os.Getenv("DEBIAN_FRONTEND") == "noninteractive" {
-		return true
-	}
+func TestRunPromptConfirmNonInteractive(t *testing.T) {
 
-	return !term.IsTerminal(int(os.Stdin.Fd()))
-}
+	t.Setenv("DEBIAN_FRONTEND", "noninteractive")
 
-func RunPromptConfirm(prompt string) error {
-	if IsNonInteractive() {
-		return nil
-	}
-
-	if _, err := NewPrompt(prompt, true).Run(); err != nil {
-		return err
-	}
-
-	return nil
+	assert.Nil(t, RunPromptConfirm("Confirm to proceed"))
 }

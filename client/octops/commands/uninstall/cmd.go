@@ -73,22 +73,24 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	prompt := &promptui.Prompt{
-		Label: "Please enter the Octelium Cluster domain to confirm the Uninstallation",
-		Templates: &promptui.PromptTemplates{
-			Prompt: "{{ . | bold }} ",
-		},
+	if !cliutils.IsNonInteractive() {
+		prompt := &promptui.Prompt{
+			Label: "Please enter the Octelium Cluster domain to confirm the Uninstallation",
+			Templates: &promptui.PromptTemplates{
+				Prompt: "{{ . | bold }} ",
+			},
 
-		Validate: func(s string) error {
-			if s != clusterDomain {
-				return errors.Errorf("Cluster domain does not match")
-			}
-			return nil
-		},
-	}
+			Validate: func(s string) error {
+				if s != clusterDomain {
+					return errors.Errorf("Cluster domain does not match")
+				}
+				return nil
+			},
+		}
 
-	if _, err := prompt.Run(); err != nil {
-		return err
+		if _, err := prompt.Run(); err != nil {
+			return err
+		}
 	}
 
 	if err := k8sC.CoreV1().Namespaces().Delete(ctx, "octelium", v1.DeleteOptions{}); err != nil {

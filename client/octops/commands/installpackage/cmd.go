@@ -94,6 +94,20 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return "init"
 	}()
 
+	if err := cliutils.RunPromptConfirm(func() string {
+		if cmdArgs.Upgrade {
+			return fmt.Sprintf(
+				`This upgrades the package "%s" of the Octelium Cluster at the domain "%s". Confirm to proceed`,
+				cmdArgs.Package, domain)
+		}
+
+		return fmt.Sprintf(
+			`This installs the package "%s" into the Octelium Cluster at the domain "%s". `+
+				`Confirm to proceed`, cmdArgs.Package, domain)
+	}()); err != nil {
+		return err
+	}
+
 	if err := createGenesis(ctx, k8sC, domain, genesisCmd, cmdArgs.Version, cmdArgs.Package); err != nil {
 		return err
 	}
