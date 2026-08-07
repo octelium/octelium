@@ -32,9 +32,9 @@ import (
 )
 
 var defaultRetryBackoff = wait.Backoff{
-	Steps:    10,
-	Duration: 500 * time.Millisecond,
-	Factor:   1.5,
+	Steps:    15,
+	Duration: 400 * time.Millisecond,
+	Factor:   1.4,
 	Jitter:   0.2,
 }
 
@@ -78,24 +78,35 @@ func retryableCreateOrUpdate[T any](
 	modifyFunc func(obj T),
 ) (T, error) {
 	var result T
+	var lastErr error
+	exists := false
 
 	err := wait.ExponentialBackoffWithContext(ctx, defaultRetryBackoff,
 		func(ctx context.Context) (bool, error) {
-			var createErr error
-			result, createErr = createFunc(ctx)
-			if createErr == nil {
-				return true, nil
-			}
-			if !k8serr.IsAlreadyExists(createErr) {
-				if isTransientError(createErr) {
-					return false, nil
+			if !exists {
+				var createErr error
+				result, createErr = createFunc(ctx)
+				if createErr == nil {
+					return true, nil
 				}
-				return false, createErr
+				if !k8serr.IsAlreadyExists(createErr) {
+					lastErr = createErr
+					if isTransientError(createErr) {
+						return false, nil
+					}
+					return false, createErr
+				}
+				exists = true
 			}
 
 			oldItem, getErr := getFunc(ctx)
 			if getErr != nil {
-				if k8serr.IsNotFound(getErr) || isTransientError(getErr) {
+				lastErr = getErr
+				if k8serr.IsNotFound(getErr) {
+					exists = false
+					return false, nil
+				}
+				if isTransientError(getErr) {
 					return false, nil
 				}
 				return false, getErr
@@ -108,12 +119,17 @@ func retryableCreateOrUpdate[T any](
 			if updateErr == nil {
 				return true, nil
 			}
+			lastErr = updateErr
 			if k8serr.IsConflict(updateErr) || isTransientError(updateErr) {
 				return false, nil
 			}
 			return false, updateErr
 		},
 	)
+
+	if err != nil && lastErr != nil {
+		return result, lastErr
+	}
 
 	return result, err
 }
