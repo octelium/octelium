@@ -56,7 +56,7 @@ func Listen(network string, laddr *net.UDPAddr) (*Listener, error) {
 
 	l := &Listener{
 		pConn:     conn,
-		acceptCh:  make(chan *Conn),
+		acceptCh:  make(chan *Conn, 1024),
 		conns:     make(map[string]*Conn),
 		accepting: true,
 	}
@@ -179,7 +179,14 @@ func (l *Listener) getConn(raddr net.Addr) (*Conn, error) {
 	}
 	conn = l.newConn(raddr)
 	l.conns[raddr.String()] = conn
-	l.acceptCh <- conn
+
+	select {
+	case l.acceptCh <- conn:
+	default:
+		delete(l.conns, raddr.String())
+		return nil, errors.New("the UDP accept queue is full")
+	}
+
 	go conn.readLoop()
 
 	return conn, nil
@@ -219,6 +226,16 @@ type Conn struct {
 // It then waits for a Read operation to be ready to consume said data,
 // that is to say it waits on readCh to receive the slice of bytes that the Read operation wants to read onto.
 // The Read operation receives the signal that the data has been written to the slice of bytes through the sizeCh.
+const maxConnQueuedMsgs = 1024
+
+func (c *Conn) appendMsg(msg []byte) [][]byte {
+	if len(c.msgs) >= maxConnQueuedMsgs {
+		return c.msgs
+	}
+
+	return append(c.msgs, msg)
+}
+
 func (c *Conn) readLoop() {
 	ticker := time.NewTicker(c.timeout)
 	defer ticker.Stop()
@@ -227,7 +244,7 @@ func (c *Conn) readLoop() {
 		if len(c.msgs) == 0 {
 			select {
 			case msg := <-c.receiveCh:
-				c.msgs = append(c.msgs, msg)
+				c.msgs = c.appendMsg(msg)
 			case <-ticker.C:
 				c.muActivity.RLock()
 				deadline := c.lastActivity.Add(connTimeout)
@@ -247,7 +264,7 @@ func (c *Conn) readLoop() {
 			n := copy(cBuf, msg)
 			c.sizeCh <- n
 		case msg := <-c.receiveCh:
-			c.msgs = append(c.msgs, msg)
+			c.msgs = c.appendMsg(msg)
 		case <-ticker.C:
 			c.muActivity.RLock()
 			deadline := c.lastActivity.Add(connTimeout)

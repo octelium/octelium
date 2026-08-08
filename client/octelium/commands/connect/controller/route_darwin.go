@@ -15,8 +15,6 @@
 package controller
 
 import (
-	"os/exec"
-
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -33,13 +31,15 @@ func (c *Controller) doSetRoutes() error {
 	}
 
 	if c.ipv4Supported && cidr.V4 != "" {
-		if o, err := exec.Command("route", "-q", "-n", "add", "-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName).CombinedOutput(); err != nil {
+		if o, err := runOSCmdOutput("route", "-q", "-n", "add",
+			"-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName); err != nil {
 			return errors.Errorf("Could not set route %s: %s", cidr.V4, string(o))
 		}
 	}
 
 	if c.ipv6Supported && cidr.V6 != "" {
-		if o, err := exec.Command("route", "-q", "-n", "add", "-inet6", cidr.V6, "-iface", c.c.Preferences.DeviceName).CombinedOutput(); err != nil {
+		if o, err := runOSCmdOutput("route", "-q", "-n", "add",
+			"-inet6", cidr.V6, "-iface", c.c.Preferences.DeviceName); err != nil {
 			return errors.Errorf("Could not set route %s: %s", cidr.V6, string(o))
 		}
 	}
@@ -57,17 +57,23 @@ func (c *Controller) doUnsetRoutes() error {
 		return nil
 	}
 
+	var retErr error
+
 	if c.ipv4Supported && cidr.V4 != "" {
-		if err := exec.Command("route", "-q", "-n", "delete", "-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName).Run(); err != nil {
-			return err
+		if err := runOSCmd("route", "-q", "-n", "delete",
+			"-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName); err != nil {
+			zap.L().Debug("Could not delete the v4 route", zap.Error(err))
+			retErr = err
 		}
 	}
 
 	if c.ipv6Supported && cidr.V6 != "" {
-		if err := exec.Command("route", "-q", "-n", "delete", "-inet6", cidr.V6, "-iface", c.c.Preferences.DeviceName).Run(); err != nil {
-			return err
+		if err := runOSCmd("route", "-q", "-n", "delete",
+			"-inet6", cidr.V6, "-iface", c.c.Preferences.DeviceName); err != nil {
+			zap.L().Debug("Could not delete the v6 route", zap.Error(err))
+			retErr = err
 		}
 	}
 
-	return nil
+	return retErr
 }

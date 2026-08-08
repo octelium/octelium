@@ -41,7 +41,10 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 )
 
-const netstackIncomingPacketQueue = 1024
+const (
+	netstackIncomingPacketQueue = 1024
+	netstackLookupGrace         = 250 * time.Millisecond
+)
 
 type netTun struct {
 	stack          *stack.Stack
@@ -118,11 +121,15 @@ func (e *endpoint) WriteRawPacket(*stack.PacketBuffer) tcpip.Error {
 func (*endpoint) ParseHeader(*stack.PacketBuffer) bool { return true }
 
 func (e *endpoint) WritePackets(pbs stack.PacketBufferList) (int, tcpip.Error) {
-	lst := pbs.AsSlice()
-	for _, pkt := range lst {
-		e.WritePacket(pkt)
+	var written int
+	for _, pkt := range pbs.AsSlice() {
+		if err := e.WritePacket(pkt); err != nil {
+			return written, err
+		}
+		written++
 	}
-	return len(lst), nil
+
+	return written, nil
 }
 
 func (*endpoint) ARPHardwareType() header.ARPHardwareType {
@@ -250,6 +257,62 @@ func (c *Controller) createNetstackTUN() error {
 	return nil
 }
 
+func (c *Controller) setNetstackAddrs() error {
+	if c.nsTun == nil {
+		return errors.Errorf("The netstack TUN is not initialized")
+	}
+
+	want := make(map[tcpip.Address]tcpip.ProtocolAddress)
+	for _, addr := range c.c.Connection.Addresses {
+		if c.ipv4Supported && addr.V4 != "" {
+			ip, _, err := net.ParseCIDR(addr.V4)
+			if err != nil || ip.To4() == nil {
+				return errors.Errorf("Invalid v4 addr %s", addr.V4)
+			}
+			a := tcpip.AddrFromSlice(ip.To4())
+			want[a] = tcpip.ProtocolAddress{
+				Protocol:          header.IPv4ProtocolNumber,
+				AddressWithPrefix: a.WithPrefix(),
+			}
+		}
+		if c.ipv6Supported && addr.V6 != "" {
+			ip, _, err := net.ParseCIDR(addr.V6)
+			if err != nil || ip.To16() == nil {
+				return errors.Errorf("Invalid v6 addr %s", addr.V6)
+			}
+			a := tcpip.AddrFromSlice(ip.To16())
+			want[a] = tcpip.ProtocolAddress{
+				Protocol:          header.IPv6ProtocolNumber,
+				AddressWithPrefix: a.WithPrefix(),
+			}
+		}
+	}
+
+	for _, cur := range c.nsTun.stack.AllAddresses()[1] {
+		if _, ok := want[cur.AddressWithPrefix.Address]; ok {
+			delete(want, cur.AddressWithPrefix.Address)
+			continue
+		}
+
+		zap.L().Debug("Removing a stale netstack address",
+			zap.String("addr", cur.AddressWithPrefix.Address.String()))
+		if err := c.nsTun.stack.RemoveAddress(1, cur.AddressWithPrefix.Address); err != nil {
+			zap.L().Debug("Could not remove the netstack address", zap.String("err", err.String()))
+		}
+	}
+
+	for _, protoAddr := range want {
+		zap.L().Debug("Adding a netstack address",
+			zap.String("addr", protoAddr.AddressWithPrefix.Address.String()))
+		if err := c.nsTun.stack.AddProtocolAddress(1, protoAddr,
+			stack.AddressProperties{}); err != nil {
+			return errors.Errorf("Could not add the netstack address: %+v", err)
+		}
+	}
+
+	return nil
+}
+
 func (tun *netTun) Name() (string, error) {
 	return tun.ctl.c.Preferences.DeviceName, nil
 }
@@ -274,6 +337,8 @@ func (tun *netTun) Read(buf [][]byte, sizes []int, offset int) (int, error) {
 	if view == nil {
 		return 0, os.ErrClosed
 	}
+
+	defer view.Release()
 
 	n, err := view.Read(buf[0][offset:])
 	if err != nil {
@@ -327,6 +392,18 @@ func (tun *netTun) Close() error {
 
 		tun.stack.RemoveNIC(1)
 		tun.stack.Close()
+
+		for {
+			select {
+			case view := <-tun.incomingPacket:
+				if view != nil {
+					view.Release()
+				}
+				continue
+			default:
+			}
+			break
+		}
 
 		if tun.events != nil {
 			close(tun.events)
@@ -631,19 +708,45 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 
 	var addrsV4, addrsV6 []net.IP
 	var lastErr error
+	var gotAny bool
 
-	for range queued {
-		r := <-ch
+	collect := func(r lookupResult) {
 		if r.err != nil {
 			lastErr = r.err
-			continue
+			return
 		}
+
+		gotAny = true
 		for _, ip := range r.addrs {
 			if ip.To4() != nil {
 				addrsV4 = append(addrsV4, ip)
 			} else {
 				addrsV6 = append(addrsV6, ip)
 			}
+		}
+	}
+
+loop:
+	for range queued {
+		if !gotAny {
+			select {
+			case r := <-ch:
+				collect(r)
+			case <-ctx.Done():
+				break loop
+			}
+			continue
+		}
+
+		select {
+		case r := <-ch:
+			collect(r)
+		case <-ctx.Done():
+			break loop
+		case <-time.After(netstackLookupGrace):
+			zap.L().Debug("Timed out waiting for the other address family",
+				zap.String("host", host))
+			break loop
 		}
 	}
 

@@ -49,7 +49,7 @@ func (c *Controller) doSetDevUp() error {
 	}
 
 	zap.S().Debugf("setting dev up")
-	if o, err := exec.Command("ifconfig", c.c.Preferences.DeviceName, "up").CombinedOutput(); err != nil {
+	if o, err := runOSCmdOutput("ifconfig", c.c.Preferences.DeviceName, "up"); err != nil {
 		zap.S().Debugf("Could not set dev up: %s", string(o))
 		return err
 	}
@@ -188,10 +188,13 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 		return errors.Errorf("Could not open UAPI: %+v", err)
 	}
 
-	device := device.NewDevice(c.tundev, conn.NewDefaultBind(), logger)
+	dev := device.NewDevice(c.tundev, conn.NewDefaultBind(), logger)
 
 	uapi, err := ipc.UAPIListen(c.c.Preferences.DeviceName, fileUAPI)
 	if err != nil {
+		dev.Close()
+		c.tundev = nil
+		fileUAPI.Close()
 		return errors.Errorf("Could not listen UAPI: %+v", err)
 	}
 
@@ -206,11 +209,11 @@ func (c *Controller) doInitDevTUN(ctx context.Context) error {
 			if err != nil {
 				return
 			}
-			go device.IpcHandle(conn)
+			go dev.IpcHandle(conn)
 		}
 	}()
 
-	c.dev = device
+	c.dev = dev
 	c.uapi = uapi
 
 	return nil

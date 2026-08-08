@@ -453,6 +453,9 @@ func newCtl(ctx context.Context,
 		connCfg.Preferences.ServeOpts.IsEnabled {
 		ret.proxyCtl, err = proxy.NewController(ctx, connCfg, ret.devCtl)
 		if err != nil {
+			if err := ret.devCtl.Close(); err != nil {
+				zap.L().Debug("Could not close the dev controller", zap.Error(err))
+			}
 			return nil, err
 		}
 	}
@@ -535,7 +538,7 @@ func connect(ctx context.Context, domain string) error {
 	}
 
 	for {
-		ret := make(chan tryConnectRet)
+		ret := make(chan tryConnectRet, 1)
 		doneCh := make(chan struct{})
 		go func() {
 			ret <- tryConnect(ctx, domain, doneCh)
@@ -608,7 +611,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		if err != nil {
 			return tryConnectRet{
 				err:            err,
-				needsReconnect: false,
+				needsReconnect: doNeedReconnect(err),
 			}
 		}
 	}
@@ -641,7 +644,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	if err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not initialize controller: %s", err.Error()),
-			needsReconnect: false,
+			needsReconnect: ctx.Err() == nil,
 		}
 	}
 
@@ -649,7 +652,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		zap.L().Warn("Could not start controller", zap.Error(err))
 		return tryConnectRet{
 			err:            errors.Errorf("Could not start controller: %s", err.Error()),
-			needsReconnect: false,
+			needsReconnect: ctx.Err() == nil,
 		}
 	}
 

@@ -117,7 +117,12 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 	go func() {
 		for {
 			select {
-			case cr := <-r:
+			case cr, ok := <-r:
+				if !ok {
+					zap.L().Debug("The service request channel is closed")
+					cancelFn()
+					return
+				}
 				switch cr.Cmd {
 				case svc.Stop, svc.Shutdown:
 					zap.L().Debug("Received shutdown signal")

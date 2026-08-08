@@ -87,7 +87,33 @@ type quicEngine struct {
 
 	gwCloseCh chan string
 
+	reconnecting struct {
+		sync.Mutex
+		gws map[string]struct{}
+	}
+
 	pktPool sync.Pool
+}
+
+func (c *quicEngine) startReconnect(gwID string) bool {
+	c.reconnecting.Lock()
+	defer c.reconnecting.Unlock()
+
+	if c.reconnecting.gws == nil {
+		c.reconnecting.gws = make(map[string]struct{})
+	}
+	if _, ok := c.reconnecting.gws[gwID]; ok {
+		return false
+	}
+	c.reconnecting.gws[gwID] = struct{}{}
+
+	return true
+}
+
+func (c *quicEngine) doneReconnect(gwID string) {
+	c.reconnecting.Lock()
+	defer c.reconnecting.Unlock()
+	delete(c.reconnecting.gws, gwID)
 }
 
 type quicGWMap struct {
@@ -163,8 +189,16 @@ func (c *quicEngine) startGWReconnectLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case gwID := <-c.gwCloseCh:
+			if !c.startReconnect(gwID) {
+				zap.L().Debug("A reconnection is already in progress", zap.String("id", gwID))
+				continue
+			}
+
 			zap.L().Debug("gw closed. Reconnecting it", zap.String("id", gwID))
-			go c.doReconnectGW(ctx, gwID)
+			go func(gwID string) {
+				defer c.doneReconnect(gwID)
+				c.doReconnectGW(ctx, gwID)
+			}(gwID)
 		}
 	}
 }
@@ -218,7 +252,7 @@ func (c *quicEngine) close() error {
 	defer c.quicGWMap.Unlock()
 
 	for _, gw := range c.quicGWMap.gwMap {
-		gw.close()
+		gw.closeWithoutReconnect()
 	}
 	c.quicGWMap.gwMap = make(map[string]*quicGW)
 	c.quicGWMap.rebuildRoutes()
@@ -235,7 +269,7 @@ func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
 
 	e.quicGWMap.Lock()
 	if old := e.quicGWMap.gwMap[gw.Id]; old != nil {
-		old.close()
+		old.closeWithoutReconnect()
 		delete(e.quicGWMap.gwMap, gw.Id)
 		e.quicGWMap.rebuildRoutes()
 	}
@@ -252,7 +286,7 @@ func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
 	e.mu.Lock()
 	if e.isClosed {
 		e.mu.Unlock()
-		newGW.close()
+		newGW.closeWithoutReconnect()
 		return errors.Errorf("The QUIC engine is already closed")
 	}
 
@@ -437,7 +471,7 @@ func (c *quicEngine) deleteGWByID(gwID string) error {
 	if !ok {
 		return nil
 	}
-	gw.close()
+	gw.closeWithoutReconnect()
 	delete(c.quicGWMap.gwMap, gwID)
 	c.quicGWMap.rebuildRoutes()
 
@@ -481,21 +515,31 @@ func (c *quicGW) run(ctx context.Context) error {
 }
 
 func (c *quicGW) close() {
+	c.doClose(true)
+}
+
+func (c *quicGW) closeWithoutReconnect() {
+	c.doClose(false)
+}
+
+func (c *quicGW) doClose(reconnect bool) {
 	c.Lock()
 	defer c.Unlock()
 	if c.isClosed {
 		return
 	}
-	zap.L().Debug("Closing gw", zap.String("id", c.gw.Id))
+	zap.L().Debug("Closing gw", zap.String("id", c.gw.Id), zap.Bool("reconnect", reconnect))
 	c.isClosed = true
 	if c.cancelFn != nil {
 		c.cancelFn()
 	}
 
-	select {
-	case c.gwCloseCh <- c.gw.Id:
-	default:
-		zap.L().Debug("Could not signal the closing of the gw", zap.String("id", c.gw.Id))
+	if reconnect {
+		select {
+		case c.gwCloseCh <- c.gw.Id:
+		default:
+			zap.L().Debug("Could not signal the closing of the gw", zap.String("id", c.gw.Id))
+		}
 	}
 
 	if c.conn != nil {

@@ -97,16 +97,19 @@ func NewController(c *cliconfigv1.Connection) (*Controller, error) {
 		return nil, errors.Errorf("Could not initialize controller, invalid runtime OS")
 	}
 
-	wgClient, err := wgctrl.New()
-	if err != nil {
-		return nil, err
+	if wgClient, err := wgctrl.New(); err != nil {
+		zap.L().Debug(
+			"Could not create the WireGuard control client. Kernel WireGuard will be unavailable",
+			zap.Error(err))
+	} else {
+		ret.wgC = wgClient
 	}
-
-	ret.wgC = wgClient
 
 	privK, err := wgtypes.NewKey(c.Connection.X25519Key)
 	if err != nil {
-		wgClient.Close()
+		if ret.wgC != nil {
+			ret.wgC.Close()
+		}
 		return nil, err
 	}
 
@@ -285,6 +288,10 @@ func (c *Controller) reconfigure() error {
 		return err
 	}
 
+	if err := c.setRoutes(); err != nil {
+		return err
+	}
+
 	if err := c.setDNS(); err != nil {
 		return err
 	}
@@ -304,9 +311,21 @@ func (c *Controller) SetConnectionState(state *userv1.ConnectionState) error {
 		return errors.Errorf("The controller is already closed")
 	}
 
+	old := c.c.Connection
+
+	if err := c.unsetRoutes(); err != nil {
+		zap.L().Debug("Could not unset the current routes", zap.Error(err))
+	}
+
 	c.c.Connection = state
 
-	return c.reconfigure()
+	if err := c.reconfigure(); err != nil {
+		zap.L().Warn("Could not apply the new Connection state. Rolling back", zap.Error(err))
+		c.c.Connection = old
+		return err
+	}
+
+	return nil
 }
 
 func (c *Controller) UpdateDNS(dns *userv1.DNS) error {

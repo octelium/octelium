@@ -41,6 +41,10 @@ func (c *Controller) setWGDev() error {
 		return c.dev.IpcSet(c.toUAPI())
 	}
 
+	if c.wgC == nil {
+		return errors.Errorf("The WireGuard control client is not available")
+	}
+
 	peers := []wgtypes.PeerConfig{}
 
 	for _, gw := range c.c.Connection.Gateways {

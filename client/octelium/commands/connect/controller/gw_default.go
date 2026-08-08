@@ -70,6 +70,10 @@ func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
 		},
 	}
 
+	if c.wgC == nil {
+		return errors.Errorf("The WireGuard control client is not available")
+	}
+
 	if err := c.wgC.ConfigureDevice(c.c.Preferences.DeviceName, wgCfg); err != nil {
 		return err
 	}
@@ -96,6 +100,10 @@ func (c *Controller) UnsetGatewayWGPeer(gw *userv1.Gateway) error {
 				Remove:    true,
 			},
 		},
+	}
+
+	if c.wgC == nil {
+		return errors.Errorf("The WireGuard control client is not available")
 	}
 
 	if err := c.wgC.ConfigureDevice(c.c.Preferences.DeviceName, wgCfg); err != nil {

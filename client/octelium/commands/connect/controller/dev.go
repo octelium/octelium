@@ -36,6 +36,10 @@ func (c *Controller) DeleteDev() error {
 }
 
 func (c *Controller) SetDevAddrs() error {
+	if c.isNetstack {
+		return c.setNetstackAddrs()
+	}
+
 	return c.doSetDevAddrs()
 }
 

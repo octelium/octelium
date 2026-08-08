@@ -31,8 +31,8 @@ import (
 
 const (
 	listenTimeout   = 5 * time.Second
-	upstreamTimeout = 10 * time.Second
-	upstreamUDPSize = 4096
+	upstreamTimeout = 2 * time.Second
+	upstreamUDPSize = 1232
 )
 
 type Opts struct {
@@ -102,6 +102,37 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 	}, nil
 }
 
+func getRequestUDPSize(r *dns.Msg) int {
+	if opt := r.IsEdns0(); opt != nil {
+		if size := int(opt.UDPSize()); size >= dns.MinMsgSize {
+			return size
+		}
+	}
+
+	return dns.MinMsgSize
+}
+
+func writeRcode(w dns.ResponseWriter, r *dns.Msg, rcode int) {
+	msg := new(dns.Msg)
+	msg.SetRcode(r, rcode)
+	if err := w.WriteMsg(msg); err != nil {
+		zap.L().Debug("Local DNS: Could not write the response", zap.Error(err))
+	}
+}
+
+func writeUpstreamReply(w dns.ResponseWriter, r *dns.Msg, resp *dns.Msg) {
+	resp.Id = r.Id
+	resp.Question = r.Question
+	resp.Response = true
+	resp.RecursionAvailable = true
+
+	resp.Truncate(getRequestUDPSize(r))
+
+	if err := w.WriteMsg(resp); err != nil {
+		zap.L().Debug("Local DNS: Could not write the response", zap.Error(err))
+	}
+}
+
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if r == nil {
@@ -113,84 +144,45 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if len(r.Question) == 0 {
-		msg := new(dns.Msg)
-		msg.SetRcode(r, dns.RcodeRefused)
-		w.WriteMsg(msg)
+		writeRcode(w, r, dns.RcodeRefused)
 		return
 	}
 
-	msg := dns.Msg{}
-	msg.SetReply(r)
-
-	q := msg.Question[0]
+	q := r.Question[0]
 	domain := q.Name
 
 	upstreamAddrs := s.getUpstreamAddrs()
 	if len(upstreamAddrs) == 0 {
 		zap.L().Debug("Local DNS: no Cluster DNS servers available")
-		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		writeRcode(w, r, dns.RcodeServerFailure)
 		return
 	}
 
 	switch q.Qtype {
 	case dns.TypeA, dns.TypeAAAA:
-	default:
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
-		if err != nil {
-			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
-			msg.SetRcode(r, dns.RcodeServerFailure)
-			w.WriteMsg(&msg)
-			return
+		if s.isClusterName(domain) {
+			switch {
+			case q.Qtype == dns.TypeA && !s.hasV4,
+				q.Qtype == dns.TypeAAAA && !s.hasV6:
+				msg := new(dns.Msg)
+				msg.SetReply(r)
+				msg.RecursionAvailable = true
+				if err := w.WriteMsg(msg); err != nil {
+					zap.L().Debug("Local DNS: Could not write the response", zap.Error(err))
+				}
+				return
+			}
 		}
-		msg.Answer = ret.Answer
-		msg.Extra = ret.Extra
-		msg.Ns = ret.Ns
-		w.WriteMsg(&msg)
-		return
 	}
 
-	if !s.isClusterName(domain) {
-
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
-		if err != nil {
-			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
-			msg.SetRcode(r, dns.RcodeServerFailure)
-			w.WriteMsg(&msg)
-			return
-		}
-		msg.Answer = ret.Answer
-		msg.Extra = ret.Extra
-		msg.Ns = ret.Ns
-		w.WriteMsg(&msg)
-		return
-	}
-
-	switch {
-	case q.Qtype == dns.TypeA && !s.hasV4:
-		msg.SetReply(r)
-		msg.RecursionAvailable = true
-		w.WriteMsg(&msg)
-		return
-
-	case q.Qtype == dns.TypeAAAA && !s.hasV6:
-		msg.SetReply(r)
-		msg.RecursionAvailable = true
-		w.WriteMsg(&msg)
-		return
-	}
-
-	ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
+	ret, err := s.getExchangeAnswer(domain, q.Qtype, upstreamAddrs)
 	if err != nil {
-		zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
-		msg.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(&msg)
+		zap.L().Debug("Local DNS: Could not exchange answer with the Cluster DNS", zap.Error(err))
+		writeRcode(w, r, dns.RcodeServerFailure)
 		return
 	}
-	msg.Answer = ret.Answer
-	msg.Extra = ret.Extra
-	msg.Ns = ret.Ns
-	w.WriteMsg(&msg)
+
+	writeUpstreamReply(w, r, ret)
 }
 
 func (s *Server) getUpstreamAddrs() []string {
@@ -209,7 +201,8 @@ func (s *Server) ListenHost() string {
 	return host
 }
 
-func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvAddrs []string) (*dns.Msg, error) {
+func (s *Server) getExchangeAnswer(domain string, typ uint16,
+	srvAddrs []string) (*dns.Msg, error) {
 
 	if cached := s.cache.get(domain, typ); cached != nil {
 		return cached, nil
@@ -238,14 +231,14 @@ func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvA
 }
 
 func (s *Server) doExchange(domain string, typ uint16, srvAddr string) (*dns.Msg, error) {
-	c := dns.Client{UDPSize: upstreamUDPSize}
 	m := dns.Msg{}
-
 	m.SetQuestion(domain, typ)
 	m.SetEdns0(upstreamUDPSize, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), upstreamTimeout)
 	defer cancel()
+
+	c := dns.Client{UDPSize: upstreamUDPSize}
 
 	r, _, err := c.ExchangeContext(ctx, &m, srvAddr)
 	if err != nil {
@@ -309,7 +302,8 @@ func (s *Server) Run() error {
 	case err := <-errCh:
 		return errors.Errorf("Could not listen on the local DNS address %s: %+v", s.listenAddr, err)
 	case <-time.After(listenTimeout):
-		return errors.Errorf("Timed out waiting for the local DNS server to listen on %s", s.listenAddr)
+		return errors.Errorf("Timed out waiting for the local DNS server to listen on %s",
+			s.listenAddr)
 	}
 
 	zap.L().Debug("Local DNS server is now listening", zap.String("addr", s.listenAddr))
@@ -346,8 +340,9 @@ func (s *Server) Close() error {
 }
 
 const (
-	cacheMinTTL = 5 * time.Second
-	cacheMaxTTL = 300 * time.Second
+	cacheMinTTL     = 5 * time.Second
+	cacheMaxTTL     = 300 * time.Second
+	cacheMaxEntries = 4096
 )
 
 type cache struct {
@@ -373,16 +368,25 @@ func getCacheKey(domain string, typ uint16) string {
 
 func getMsgTTL(r *dns.Msg) time.Duration {
 	ttl := cacheMaxTTL
+	var hasRR bool
 
 	for _, rrs := range [][]dns.RR{r.Answer, r.Ns, r.Extra} {
 		for _, rr := range rrs {
 			if rr == nil || rr.Header().Rrtype == dns.TypeOPT {
 				continue
 			}
+			hasRR = true
 			if cur := time.Duration(rr.Header().Ttl) * time.Second; cur < ttl {
 				ttl = cur
 			}
 		}
+	}
+
+	if !hasRR {
+		return 0
+	}
+	if ttl <= 0 {
+		return 0
 	}
 
 	return min(max(ttl, cacheMinTTL), cacheMaxTTL)
@@ -431,13 +435,25 @@ func (c *cache) set(domain string, typ uint16, r *dns.Msg) {
 		return
 	}
 
+	ttl := getMsgTTL(r)
+	if ttl <= 0 {
+		return
+	}
+
 	now := time.Now()
 
 	c.Lock()
+	if len(c.cMap) >= cacheMaxEntries {
+		c.doCleanupLocked()
+	}
+	if len(c.cMap) >= cacheMaxEntries {
+		c.Unlock()
+		return
+	}
 	c.cMap[getCacheKey(domain, typ)] = &cacheVal{
 		r:        r.Copy(),
 		cachedAt: now,
-		exp:      now.Add(getMsgTTL(r)),
+		exp:      now.Add(ttl),
 	}
 	c.Unlock()
 }
@@ -466,6 +482,10 @@ func (c *cache) startCleanupLoop(ctx context.Context) {
 func (c *cache) doCleanup() {
 	c.Lock()
 	defer c.Unlock()
+	c.doCleanupLocked()
+}
+
+func (c *cache) doCleanupLocked() {
 	for k, v := range c.cMap {
 		if time.Now().After(v.exp) {
 			delete(c.cMap, k)

@@ -28,7 +28,7 @@ func (c *Controller) doSetDNS() error {
 		zap.L().Debug("Could not save the current resolv.conf", zap.Error(err))
 	}
 
-	if err := exec.Command("systemctl", "is-active", "--quiet", "systemd-resolved").Run(); err == nil {
+	if err := runOSCmd("systemctl", "is-active", "--quiet", "systemd-resolved"); err == nil {
 		if err := c.doSetDNSResolvctl(); err == nil {
 			return nil
 		} else {
@@ -83,12 +83,12 @@ func (c *Controller) doSetDNSResolvctl() error {
 	cmdDNSArgs, cmdDomainArgs = getResolvctlArgs(isResolvectl,
 		c.c.Preferences.DeviceName, dnsServers, searchDomains)
 
-	if b, err := exec.Command(cmdBin, cmdDNSArgs...).CombinedOutput(); err != nil {
+	if b, err := runOSCmdOutput(cmdBin, cmdDNSArgs...); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}
 
-	if b, err := exec.Command(cmdBin, cmdDomainArgs...).CombinedOutput(); err != nil {
+	if b, err := runOSCmdOutput(cmdBin, cmdDomainArgs...); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}

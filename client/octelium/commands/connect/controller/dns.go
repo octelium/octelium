@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/gofrs/flock"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/pkg/errors"
@@ -148,9 +149,12 @@ func (c *Controller) getClusterDNSServers() []string {
 
 	var ret []string
 	for _, s := range c.c.Connection.Dns.Servers {
-		if govalidator.IsIPv6(s) && c.ipv6Supported {
-			ret = append(ret, s)
-		} else {
+		switch {
+		case govalidator.IsIPv6(s):
+			if c.ipv6Supported {
+				ret = append(ret, s)
+			}
+		case govalidator.IsIPv4(s):
 			if c.ipv4Supported {
 				ret = append(ret, s)
 			}
@@ -228,6 +232,7 @@ type resolvConfState struct {
 	linkTarget string
 	content    []byte
 	mode       os.FileMode
+	lock       *flock.Flock
 }
 
 func (s *resolvConfState) getPath() string {
@@ -236,6 +241,36 @@ func (s *resolvConfState) getPath() string {
 	}
 
 	return resolvConfPath
+}
+
+const resolvConfLockName = "resolvconf.lock"
+
+func (c *Controller) acquireResolvConfLock() error {
+	if c.resolvConf.lock != nil {
+		return nil
+	}
+	if c.resolvConf.path != "" {
+		return nil
+	}
+
+	f, err := acquireFileLock(resolvConfLockName)
+	if err != nil {
+		return errors.Errorf(
+			"Another Octelium process is already managing %s: %+v", resolvConfPath, err)
+	}
+
+	c.resolvConf.lock = f
+
+	return nil
+}
+
+func (c *Controller) releaseResolvConfLock() {
+	if c.resolvConf.lock == nil {
+		return
+	}
+
+	releaseFileLock(c.resolvConf.lock)
+	c.resolvConf.lock = nil
 }
 
 func (c *Controller) saveResolvConf() error {
@@ -271,10 +306,13 @@ func (c *Controller) saveResolvConf() error {
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		zap.L().Debug("Could not read the current resolv.conf", zap.Error(err))
-	} else {
-		c.resolvConf.content = content
+		c.resolvConf.saved = false
+		c.resolvConf.existed = false
+		c.resolvConf.isSymlink = false
+		c.resolvConf.linkTarget = ""
+		return errors.Errorf("Could not read the current %s: %+v", path, err)
 	}
+	c.resolvConf.content = content
 
 	zap.L().Debug("Saved the current resolv.conf",
 		zap.Bool("isSymlink", c.resolvConf.isSymlink),
@@ -319,6 +357,21 @@ func (c *Controller) getResolvConfOpts() (*resolvConfOpts, error) {
 }
 
 func (c *Controller) setResolvConf() error {
+	if err := c.acquireResolvConfLock(); err != nil {
+		return err
+	}
+
+	if err := c.doSetResolvConf(); err != nil {
+		if !c.resolvConf.written {
+			c.releaseResolvConfLock()
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) doSetResolvConf() error {
 	if err := c.saveResolvConf(); err != nil {
 		return err
 	}
@@ -356,7 +409,6 @@ func (c *Controller) unsetResolvConf() error {
 	if !c.resolvConf.written {
 		return nil
 	}
-	c.resolvConf.written = false
 
 	zap.L().Debug("Restoring resolv.conf",
 		zap.Bool("existed", c.resolvConf.existed),
@@ -364,6 +416,17 @@ func (c *Controller) unsetResolvConf() error {
 
 	path := c.resolvConf.getPath()
 
+	if err := c.doUnsetResolvConf(path); err != nil {
+		return err
+	}
+
+	c.resolvConf.written = false
+	c.releaseResolvConfLock()
+
+	return nil
+}
+
+func (c *Controller) doUnsetResolvConf(path string) error {
 	if !c.resolvConf.existed {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err

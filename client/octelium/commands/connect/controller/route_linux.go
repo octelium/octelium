@@ -20,6 +20,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 )
 
 func (c *Controller) doSetRoutes() error {
@@ -47,12 +48,20 @@ func (c *Controller) doSetRoutes() error {
 			return err
 		}
 
-		return netlink.RouteAdd(&netlink.Route{
+		if err := netlink.RouteAdd(&netlink.Route{
 			LinkIndex: l.Attrs().Index,
 			Scope:     netlink.SCOPE_LINK,
 			Table:     table,
 			Dst:       route,
-		})
+		}); err != nil {
+			if errors.Is(err, unix.EEXIST) {
+				zap.L().Debug("The route already exists", zap.String("cidr", arg))
+				return nil
+			}
+			return err
+		}
+
+		return nil
 	}
 
 	if c.ipv4Supported && cidr.V4 != "" {
@@ -99,17 +108,21 @@ func (c *Controller) doUnsetRoutes() error {
 		})
 	}
 
+	var retErr error
+
 	if c.ipv4Supported && cidr.V4 != "" {
 		if err := doDeleteRoute(cidr.V4); err != nil {
-			return err
+			zap.L().Debug("Could not delete the v4 route", zap.Error(err))
+			retErr = err
 		}
 	}
 
 	if c.ipv6Supported && cidr.V6 != "" {
 		if err := doDeleteRoute(cidr.V6); err != nil {
-			return err
+			zap.L().Debug("Could not delete the v6 route", zap.Error(err))
+			retErr = err
 		}
 	}
 
-	return nil
+	return retErr
 }

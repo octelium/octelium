@@ -17,7 +17,6 @@ package controller
 import (
 	"bytes"
 	"fmt"
-	"os/exec"
 	"slices"
 	"strings"
 
@@ -211,7 +210,7 @@ func prepareNetworkSetupConfig(prefs *pbconfig.Connection_Preferences_MacOS, net
 }
 
 func getNetworkSetupServiceConfig(svc string) (*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service, error) {
-	outServers, err := exec.Command("networksetup", "-getdnsservers", svc).CombinedOutput()
+	outServers, err := runOSCmdOutput("networksetup", "-getdnsservers", svc)
 	if err != nil {
 		return nil, errors.Errorf("Could not get the DNS servers of %s: %+v. %s",
 			svc, err, string(outServers))
@@ -219,7 +218,7 @@ func getNetworkSetupServiceConfig(svc string) (*pbconfig.Connection_Preferences_
 
 	zap.L().Debug("Got DNS servers", zap.String("svc", svc), zap.String("servers", string(outServers)))
 
-	outDomains, err := exec.Command("networksetup", "-getsearchdomains", svc).CombinedOutput()
+	outDomains, err := runOSCmdOutput("networksetup", "-getsearchdomains", svc)
 	if err != nil {
 		return nil, errors.Errorf("Could not get the search domains of %s: %+v. %s",
 			svc, err, string(outDomains))
@@ -276,8 +275,7 @@ func (c *Controller) doUnsetDNS() error {
 }
 
 func getNetworkSetupServices() ([]string, error) {
-	c := exec.Command("networksetup", "-listallnetworkservices")
-	out, err := c.CombinedOutput()
+	out, err := runOSCmdOutput("networksetup", "-listallnetworkservices")
 	if err != nil {
 		return nil, errors.Errorf("Could not get list network services: %+v. %s", err, string(out))
 	}
@@ -304,8 +302,7 @@ func setNetworkSetupDNSServers(svc string, dnsServers []string, networkDomains [
 
 	cmd := []string{"-setdnsservers", svc}
 	cmd = append(cmd, dnsServers...)
-	zap.L().Debug("Executing cmd", zap.String("cmd", fmt.Sprintf("networksetup %s", strings.Join(cmd, " "))))
-	if o, err := exec.Command("networksetup", cmd...).CombinedOutput(); err != nil {
+	if o, err := runOSCmdOutput("networksetup", cmd...); err != nil {
 		return errors.Errorf("Could not set dns servers: %s. %+v", string(o), err)
 	}
 
@@ -319,8 +316,7 @@ func setNetworkSetupSearchDomains(svc string, networkDomains []string) error {
 
 	cmd := []string{"-setsearchdomains", svc}
 	cmd = append(cmd, networkDomains...)
-	zap.L().Debug("Executing cmd", zap.String("cmd", fmt.Sprintf("networksetup %s", strings.Join(cmd, " "))))
-	if o, err := exec.Command("networksetup", cmd...).CombinedOutput(); err != nil {
+	if o, err := runOSCmdOutput("networksetup", cmd...); err != nil {
 		return errors.Errorf("Could not set dns search domains: %s. %+v", string(o), err)
 	}
 
@@ -347,6 +343,22 @@ func (c *Controller) doUnSetDNSNetworkSetup() error {
 	return retErr
 }
 
+func (c *Controller) getScutilServiceKey() string {
+	domain := "default"
+	if c.c.Info != nil && c.c.Info.Cluster != nil && c.c.Info.Cluster.Domain != "" {
+		domain = strings.Map(func(r rune) rune {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+				return r
+			default:
+				return '-'
+			}
+		}, c.c.Info.Cluster.Domain)
+	}
+
+	return fmt.Sprintf("State:/Network/Service/octelium-%s/DNS", domain)
+}
+
 func (c *Controller) doSetDNSScutil() error {
 	arg := fmt.Sprintf(`
 open
@@ -355,12 +367,13 @@ d.add ServerAddresses * %s
 d.add SearchDomains * %s
 d.add SupplementalMatchDomains * %s
 d.add InterfaceName %s
-set State:/Network/Service/octelium/DNS
+set %s
 quit
 `, strings.Join(c.getDNSServers(), " "),
 		strings.Join(c.getDNSSearchDomains(), " "),
 		strings.Join(c.getDNSSearchDomains(), " "),
-		c.c.Preferences.DeviceName)
+		c.c.Preferences.DeviceName,
+		c.getScutilServiceKey())
 
 	if err := c.doRunScutil(arg); err != nil {
 		return err
@@ -371,22 +384,20 @@ quit
 }
 
 func (c *Controller) doUnsetDNSScutil() error {
-	arg := `
+	arg := fmt.Sprintf(`
 open
-remove State:/Network/Service/octelium/DNS
+remove %s
 quit
-`
+`, c.getScutilServiceKey())
+
 	return c.doRunScutil(arg)
 }
 
 func (c *Controller) doRunScutil(arg string) error {
-	cmd := exec.Command("scutil")
-	cmd.Stdin = strings.NewReader(arg)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	zap.L().Debug("Running scutil command", zap.String("input", arg))
-	if err := cmd.Run(); err != nil {
-		return errors.Errorf("Could not run scutil command: %s: stderr: %s", arg, stderr.String())
+	out, err := runOSCmdInput(arg, "scutil")
+	if err != nil {
+		return errors.Errorf("Could not run scutil command: %s: %+v. %s", arg, err, string(out))
 	}
+
 	return nil
 }

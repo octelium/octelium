@@ -32,6 +32,13 @@ func (c *Controller) doClose() {
 	if c.uapi != nil {
 		c.uapi.Close()
 	}
+
+	if c.tundev != nil {
+		if err := c.tundev.Close(); err != nil {
+			zap.L().Debug("Could not close the TUN device", zap.Error(err))
+		}
+		c.tundev = nil
+	}
 }
 
 func (c *Controller) doStart(ctx context.Context) error {

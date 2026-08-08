@@ -126,6 +126,8 @@ func (c *Controller) DeleteGateway(ctx context.Context, gwID string) error {
 func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 
 	if c.isQUIC {
+		c.removeGatewayFromState(gwID)
+
 		if c.quicEngine == nil {
 			return nil
 		}
@@ -158,4 +160,14 @@ func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 	}
 
 	return nil
+}
+
+func (c *Controller) removeGatewayFromState(gwID string) {
+	for i, gw := range c.c.Connection.Gateways {
+		if gw != nil && gw.Id == gwID {
+			c.c.Connection.Gateways = append(
+				c.c.Connection.Gateways[:i], c.c.Connection.Gateways[i+1:]...)
+			return
+		}
+	}
 }

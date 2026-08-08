@@ -246,3 +246,58 @@ func TestQUICGetGWFromPktWithShortPackets(t *testing.T) {
 	assert.Nil(t, e.getGWFromPkt([]byte{6 << 4}))
 	assert.Nil(t, e.getGWFromPkt(make([]byte, 60)))
 }
+
+func TestQUICDeletedGatewayIsNotResurrected(t *testing.T) {
+	ctx := context.Background()
+
+	gw := newTestGateway("gw-1")
+
+	c := &Controller{
+		isQUIC:        true,
+		ipv4Supported: true,
+		c: &cliconfigv1.Connection{
+			Connection: &userv1.ConnectionState{
+				Gateways: []*userv1.Gateway{gw},
+			},
+			Info: &cliconfigv1.Connection_Info{
+				Cluster: &cliconfigv1.Connection_Info_Cluster{Domain: "example.com"},
+			},
+			Preferences: &cliconfigv1.Connection_Preferences{DeviceName: "octelium0"},
+		},
+	}
+	c.quicEngine = newQUICEngine(c)
+
+	assert.Nil(t, c.DeleteGateway(ctx, "gw-1"))
+
+	assert.Equal(t, 0, len(c.c.Connection.Gateways))
+	assert.Nil(t, c.quicEngine.getGWByID("gw-1"))
+	assert.Nil(t, c.quicEngine.doReconnectGW(ctx, "gw-1"))
+}
+
+func TestQUICReplacingGatewayDoesNotSignalReconnect(t *testing.T) {
+	gw := newTestGateway("gw-1")
+
+	e := newTestQUICEngine([]*userv1.Gateway{gw})
+
+	newGW, err := newQUIGW(e, gw)
+	assert.Nil(t, err)
+
+	newGW.closeWithoutReconnect()
+
+	select {
+	case gwID := <-e.gwCloseCh:
+		t.Fatalf("unexpected reconnect signal for %s", gwID)
+	default:
+	}
+}
+
+func TestQUICReconnectSingleflight(t *testing.T) {
+	e := newTestQUICEngine(nil)
+
+	assert.True(t, e.startReconnect("gw-1"))
+	assert.False(t, e.startReconnect("gw-1"))
+	assert.True(t, e.startReconnect("gw-2"))
+
+	e.doneReconnect("gw-1")
+	assert.True(t, e.startReconnect("gw-1"))
+}

@@ -17,6 +17,7 @@ package dnssrv
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func TestCacheRespectsRecordTTL(t *testing.T) {
 }
 
 func TestCacheTTLIsClamped(t *testing.T) {
-	assert.Equal(t, cacheMinTTL, getMsgTTL(newTestCachedMsg("a.", 0)))
+	assert.Equal(t, time.Duration(0), getMsgTTL(newTestCachedMsg("a.", 0)))
 	assert.Equal(t, cacheMinTTL, getMsgTTL(newTestCachedMsg("a.", 1)))
 	assert.Equal(t, 60*time.Second, getMsgTTL(newTestCachedMsg("a.", 60)))
 	assert.Equal(t, cacheMaxTTL, getMsgTTL(newTestCachedMsg("a.", 86400)))
@@ -110,6 +111,9 @@ func TestCacheSkipsUncacheableResponses(t *testing.T) {
 	assert.Nil(t, c.get(domain, dns.TypeMX))
 
 	c.set(domain, dns.TypeA, nil)
+	assert.Nil(t, c.get(domain, dns.TypeA))
+
+	c.set(domain, dns.TypeA, newTestCachedMsg(domain, 0))
 	assert.Nil(t, c.get(domain, dns.TypeA))
 }
 
@@ -268,4 +272,109 @@ func TestServerRunIsListeningWhenItReturns(t *testing.T) {
 	assert.Nil(t, err)
 
 	assert.Nil(t, srv.Close())
+}
+
+type tstResponseWriter struct {
+	msg *dns.Msg
+}
+
+func (w *tstResponseWriter) LocalAddr() net.Addr {
+	return &net.UDPAddr{IP: net.ParseIP("127.0.0.100"), Port: 53}
+}
+
+func (w *tstResponseWriter) RemoteAddr() net.Addr {
+	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 40000}
+}
+
+func (w *tstResponseWriter) WriteMsg(m *dns.Msg) error {
+	w.msg = m
+	return nil
+}
+
+func (w *tstResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *tstResponseWriter) Close() error                { return nil }
+func (w *tstResponseWriter) TsigStatus() error           { return nil }
+func (w *tstResponseWriter) TsigTimersOnly(bool)         {}
+func (w *tstResponseWriter) Hijack()                     {}
+
+func TestWriteUpstreamReplyPreservesRcodeAndFlags(t *testing.T) {
+	req := new(dns.Msg)
+	req.SetQuestion("nope.local.example.com.", dns.TypeA)
+
+	resp := new(dns.Msg)
+	resp.SetRcode(req, dns.RcodeNameError)
+	resp.Authoritative = true
+	resp.Id = 4242
+
+	w := &tstResponseWriter{}
+	writeUpstreamReply(w, req, resp)
+
+	assert.NotNil(t, w.msg)
+	assert.Equal(t, dns.RcodeNameError, w.msg.Rcode)
+	assert.True(t, w.msg.Authoritative)
+	assert.True(t, w.msg.Response)
+	assert.True(t, w.msg.RecursionAvailable)
+	assert.Equal(t, req.Id, w.msg.Id)
+	assert.Equal(t, req.Question, w.msg.Question)
+}
+
+func TestWriteUpstreamReplyTruncatesToRequestSize(t *testing.T) {
+	req := new(dns.Msg)
+	req.SetQuestion("big.local.example.com.", dns.TypeTXT)
+
+	resp := new(dns.Msg)
+	resp.SetReply(req)
+	for i := range 20 {
+		resp.Answer = append(resp.Answer, &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name: req.Question[0].Name, Rrtype: dns.TypeTXT,
+				Class: dns.ClassINET, Ttl: 60,
+			},
+			Txt: []string{strings.Repeat("x", 200) + string(rune('a'+i))},
+		})
+	}
+	assert.True(t, resp.Len() > dns.MinMsgSize)
+
+	w := &tstResponseWriter{}
+	writeUpstreamReply(w, req, resp)
+
+	assert.NotNil(t, w.msg)
+	assert.True(t, w.msg.Truncated)
+	assert.True(t, w.msg.Len() <= dns.MinMsgSize)
+}
+
+func TestWriteUpstreamReplyHonorsEdns0Size(t *testing.T) {
+	req := new(dns.Msg)
+	req.SetQuestion("big.local.example.com.", dns.TypeTXT)
+	req.SetEdns0(4096, false)
+
+	assert.Equal(t, 4096, getRequestUDPSize(req))
+
+	resp := new(dns.Msg)
+	resp.SetReply(req)
+	for i := range 5 {
+		resp.Answer = append(resp.Answer, &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name: req.Question[0].Name, Rrtype: dns.TypeTXT,
+				Class: dns.ClassINET, Ttl: 60,
+			},
+			Txt: []string{strings.Repeat("x", 200) + string(rune('a'+i))},
+		})
+	}
+
+	w := &tstResponseWriter{}
+	writeUpstreamReply(w, req, resp)
+
+	assert.NotNil(t, w.msg)
+	assert.False(t, w.msg.Truncated)
+	assert.Equal(t, 5, len(w.msg.Answer))
+}
+
+func TestGetRequestUDPSizeDefaultsToMin(t *testing.T) {
+	req := new(dns.Msg)
+	req.SetQuestion("a.", dns.TypeA)
+	assert.Equal(t, dns.MinMsgSize, getRequestUDPSize(req))
+
+	req.SetEdns0(100, false)
+	assert.Equal(t, dns.MinMsgSize, getRequestUDPSize(req))
 }

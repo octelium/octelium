@@ -45,6 +45,8 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 		}
 		zap.L().Debug("Could not init TUN implementation. Trying gVisor netstack mode.",
 			zap.Error(err))
+
+		c.unwindPartialAdapter()
 	}
 
 	if err := c.doInitDevNetstack(ctx); err != nil {
@@ -394,4 +396,31 @@ func (c *Controller) destroyIface() error {
 	iw.mu.Unlock()
 
 	return nil
+}
+
+func (c *Controller) unwindPartialAdapter() {
+	if c.opts.adapter != nil {
+		if err := c.destroyIface(); err != nil {
+			zap.L().Debug("Could not destroy the interface", zap.Error(err))
+		}
+		if err := c.opts.adapter.Close(); err != nil {
+			zap.L().Debug("Could not close the adapter", zap.Error(err))
+		}
+		c.opts.adapter = nil
+	}
+
+	if iw := c.opts.ifaceWatcher; iw != nil {
+		iw.mu.Lock()
+		cb := iw.interfaceChangeCallback
+		iw.interfaceChangeCallback = nil
+		iw.luid = 0
+		iw.storedEvents = nil
+		iw.mu.Unlock()
+
+		if cb != nil {
+			cb.Unregister()
+		}
+
+		c.opts.ifaceWatcher = nil
+	}
 }

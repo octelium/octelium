@@ -45,6 +45,7 @@ type listener struct {
 	mu       sync.Mutex
 	lis      net.Listener
 	udpLis   *udp.Listener
+	conns    map[net.Conn]struct{}
 }
 
 type Proxy struct {
@@ -172,7 +173,33 @@ func (l *listener) close() error {
 		l.udpLis.Close()
 	}
 
+	for conn := range l.conns {
+		conn.Close()
+	}
+	l.conns = nil
+
 	return nil
+}
+
+func (l *listener) addConn(conn net.Conn) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.isClosed {
+		return false
+	}
+	if l.conns == nil {
+		l.conns = make(map[net.Conn]struct{})
+	}
+	l.conns[conn] = struct{}{}
+
+	return true
+}
+
+func (l *listener) removeConn(conn net.Conn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.conns, conn)
 }
 
 func (l *listener) setLis(lis net.Listener) bool {
@@ -280,7 +307,14 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 				continue
 			}
 
+			if !l.addConn(conn) {
+				conn.Close()
+				return nil
+			}
+
 			go func(conn net.Conn) {
+				defer l.removeConn(conn)
+
 				zap.S().Debugf("Starting serving connection on %s", listenerAddr)
 				tcpAddr, err := net.ResolveTCPAddr("tcp", l.upstreamHost)
 				if err != nil {

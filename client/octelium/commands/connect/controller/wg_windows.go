@@ -17,6 +17,7 @@ package controller
 import (
 	"net/netip"
 
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/windows/conf"
 )
@@ -111,13 +112,24 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 }
 
 func (c *Controller) setWGDev() error {
+	if c.isQUIC {
+		return nil
+	}
+
 	if c.isNetstack {
+		if c.dev == nil {
+			return errors.Errorf("The WireGuard device is not initialized")
+		}
 		return c.dev.IpcSet(c.toUAPI())
 	}
 
 	conf, err := c.getWgConf()
 	if err != nil {
 		return err
+	}
+
+	if c.opts.adapter == nil {
+		return errors.Errorf("The WireGuard adapter is not initialized")
 	}
 
 	return c.opts.adapter.SetConfiguration(conf.ToDriverConfiguration())

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -29,6 +30,8 @@ import (
 )
 
 const managedMarkerPrefix = "octelium-managed:"
+
+const sshConfigLockName = "sshconfig.lock"
 
 func (c *Controller) setServiceConfigs() error {
 	for _, svcCfg := range c.c.Connection.ServiceConfigs {
@@ -78,6 +81,14 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 		return nil
 	}
 
+	lock, err := acquireFileLock(sshConfigLockName)
+	if err != nil {
+		zap.L().Warn("Could not acquire the SSH config lock. Skipping the SSH service configs",
+			zap.Error(err))
+		return nil
+	}
+	defer releaseFileLock(lock)
+
 	zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
 
 	knownHostsPath := path.Join(sshDir, "known_hosts")
@@ -109,6 +120,14 @@ func (c *Controller) unsetServiceConfigSSH() error {
 	if sshDir == "" {
 		return nil
 	}
+
+	lock, err := acquireFileLock(sshConfigLockName)
+	if err != nil {
+		zap.L().Warn("Could not acquire the SSH config lock. Skipping the SSH config cleanup",
+			zap.Error(err))
+		return nil
+	}
+	defer releaseFileLock(lock)
 
 	zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
 
@@ -177,9 +196,26 @@ func addManagedLines(filePath, sshDir, marker string, lines []string) error {
 	}
 	fileExisted := err == nil
 
+	existing := make(map[string]struct{})
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if idx := strings.LastIndex(line, " "+managedMarkerPrefix); idx > 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		existing[line] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
 	var pending []string
 	for _, entry := range entries {
-		if bytes.Contains(content, []byte(entry)) {
+		if _, ok := existing[entry]; ok {
 			continue
 		}
 		pending = append(pending, fmt.Sprintf("%s %s", entry, marker))
@@ -268,6 +304,12 @@ func removeManagedLines(filePath, marker string) error {
 }
 
 func writeFileAtomic(filePath string, content []byte, fi os.FileInfo) error {
+	if resolved, err := filepath.EvalSymlinks(filePath); err == nil && resolved != filePath {
+		zap.L().Debug("Following the symlink of the SSH config file",
+			zap.String("filePath", filePath), zap.String("resolved", resolved))
+		filePath = resolved
+	}
+
 	f, err := os.CreateTemp(path.Dir(filePath), fmt.Sprintf("%s.octelium-*", path.Base(filePath)))
 	if err != nil {
 		return err

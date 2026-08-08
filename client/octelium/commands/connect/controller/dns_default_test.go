@@ -377,3 +377,65 @@ func TestGetLocalDNSServerAddrIsLoopback(t *testing.T) {
 	assert.NotNil(t, ip)
 	assert.True(t, ip.IsLoopback())
 }
+
+func TestSaveResolvConfRefusesUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode")
+	}
+
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+
+	original := "nameserver 192.168.1.1\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0000))
+
+	assert.NotNil(t, c.saveResolvConf())
+	assert.False(t, c.resolvConf.saved)
+	assert.False(t, c.resolvConf.existed)
+
+	assert.NotNil(t, c.setResolvConf())
+	assert.False(t, c.resolvConf.written)
+
+	assert.Nil(t, os.Chmod(filePath, 0644))
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestUnsetResolvConfIsRetryableAfterFailure(t *testing.T) {
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+
+	target := path.Join(path.Dir(filePath), "stub-resolv.conf")
+	assert.Nil(t, os.WriteFile(target, []byte("nameserver 127.0.0.53\n"), 0644))
+	assert.Nil(t, os.Symlink(target, filePath))
+
+	assert.Nil(t, c.setResolvConf())
+	assert.True(t, c.resolvConf.written)
+
+	c.resolvConf.linkTarget = ""
+	assert.NotNil(t, c.unsetResolvConf())
+	assert.True(t, c.resolvConf.written)
+
+	c.resolvConf.linkTarget = target
+	assert.Nil(t, c.unsetResolvConf())
+	assert.False(t, c.resolvConf.written)
+
+	linkTarget, err := os.Readlink(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, target, linkTarget)
+}
+
+func TestGetClusterDNSServersFiltersByFamily(t *testing.T) {
+	c, _ := newTestResolvConfCtl(t, []string{"100.64.0.53", "fd00::53", "not-an-ip"})
+
+	c.ipv4Supported, c.ipv6Supported = true, false
+	assert.Equal(t, []string{"100.64.0.53"}, c.getClusterDNSServers())
+
+	c.ipv4Supported, c.ipv6Supported = false, true
+	assert.Equal(t, []string{"fd00::53"}, c.getClusterDNSServers())
+
+	c.ipv4Supported, c.ipv6Supported = true, true
+	assert.Equal(t, []string{"100.64.0.53", "fd00::53"}, c.getClusterDNSServers())
+
+	c.ipv4Supported, c.ipv6Supported = false, false
+	assert.Nil(t, c.getClusterDNSServers())
+}

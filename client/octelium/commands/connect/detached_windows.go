@@ -99,6 +99,7 @@ func doRunDetached(domain string, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer service.Close()
 
 	zap.L().Debug("Starting service")
 

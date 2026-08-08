@@ -7,6 +7,7 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/creack/pty v1.1.24
 	github.com/fatih/color v1.18.0
+	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/miekg/dns v1.1.72
 	github.com/moby/term v0.5.2
@@ -44,7 +45,6 @@ require (
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-resty/resty/v2 v2.17.2 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/go-attestation v0.6.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect

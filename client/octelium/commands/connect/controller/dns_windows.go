@@ -154,8 +154,12 @@ func (c *Controller) doUnsetDNS() error {
 
 	luid := c.opts.adapter.LUID()
 
-	luid.FlushDNS(windows.AF_INET)
-	luid.FlushDNS(windows.AF_INET6)
+	if err := luid.FlushDNS(windows.AF_INET); err != nil {
+		zap.L().Debug("Could not flush the v4 DNS of the adapter", zap.Error(err))
+	}
+	if err := luid.FlushDNS(windows.AF_INET6); err != nil {
+		zap.L().Debug("Could not flush the v6 DNS of the adapter", zap.Error(err))
+	}
 	/*
 		if c.ipv4Supported {
 			if err := luid.FlushDNS(windows.AF_INET); err != nil {
@@ -170,7 +174,7 @@ func (c *Controller) doUnsetDNS() error {
 		}
 	*/
 
-	return nil
+	return retErr
 }
 
 const (
@@ -251,6 +255,10 @@ func (c *Controller) setNRPT() error {
 	}
 	defer key.Close()
 
+	if err := key.SetStringValue("Comment", marker); err != nil {
+		return err
+	}
+
 	if err := key.SetDWordValue("Version", nrptVersion); err != nil {
 		return err
 	}
@@ -264,10 +272,6 @@ func (c *Controller) setNRPT() error {
 	}
 
 	if err := key.SetDWordValue("ConfigOptions", nrptConfigOptionsDNSServers); err != nil {
-		return err
-	}
-
-	if err := key.SetStringValue("Comment", marker); err != nil {
 		return err
 	}
 
