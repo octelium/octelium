@@ -39,6 +39,7 @@ func (p *Proxy) ServeTCP(conn, connBackend WriteCloser) {
 	go p.connCopy(connBackend, conn, errChan)
 
 	<-errChan
+	<-errChan
 }
 
 func (p Proxy) connCopy(dst, src WriteCloser, errCh chan error) {

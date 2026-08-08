@@ -18,6 +18,7 @@
 package controller
 
 import (
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -311,4 +312,68 @@ func TestGetNRPTRuleKey(t *testing.T) {
 		_, err := getNRPTRuleKey(domain)
 		assert.NotNil(t, err)
 	}
+}
+
+func TestSetDNSContainerModeWritesResolvConf(t *testing.T) {
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+
+	original := "nameserver 127.0.0.11\noptions ndots:5\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0644))
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.True(t, strings.Contains(string(b), "nameserver 100.64.0.53"))
+	assert.False(t, strings.Contains(string(b), "127.0.0.11"))
+	assert.True(t, strings.Contains(string(b), "options ndots:5"))
+
+	assert.Nil(t, c.UnsetDNS())
+
+	b, err = os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestSetDNSContainerModeRespectsIgnoreDNS(t *testing.T) {
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+	c.c.Preferences.IgnoreDNS = true
+
+	original := "nameserver 127.0.0.11\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0644))
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestSetDNSContainerModeSkippedInNetstackMode(t *testing.T) {
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+	c.isNetstack = true
+
+	original := "nameserver 127.0.0.11\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0644))
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestGetLocalDNSServerAddrIsLoopback(t *testing.T) {
+	c, _ := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+
+	host, port, err := net.SplitHostPort(c.getLocalDNSServerAddr())
+	assert.Nil(t, err)
+	assert.Equal(t, "53", port)
+
+	ip := net.ParseIP(host)
+	assert.NotNil(t, ip)
+	assert.True(t, ip.IsLoopback())
 }

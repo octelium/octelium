@@ -29,6 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const listenTimeout = 5 * time.Second
+
 type Opts struct {
 	ClusterDomain string
 	HasV4         bool
@@ -77,7 +79,7 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 			}
 			return ""
 		}
-		if cliutils.IsDarwin() {
+		if cliutils.IsDarwin() || cliutils.IsWindows() {
 			return "127.0.0.1:53"
 		}
 
@@ -144,7 +146,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	if !s.isLikelyService(domain) {
+	if !s.isClusterName(domain) {
 
 		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
 		if err != nil {
@@ -225,12 +227,13 @@ func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvA
 	return r, nil
 }
 
-func (s *Server) isLikelyService(domain string) bool {
+func (s *Server) isClusterName(domain string) bool {
+	domain = strings.ToLower(domain)
+
 	suffixList := []string{
-		".local.",
 		fmt.Sprintf(".local.%s.", s.domain),
 		fmt.Sprintf(".%s.local.", s.domain),
-		fmt.Sprintf(".%s.", s.domain),
+		".local.",
 	}
 
 	for _, suffix := range suffixList {
@@ -239,15 +242,7 @@ func (s *Server) isLikelyService(domain string) bool {
 		}
 	}
 
-	parts := strings.Split(strings.TrimSuffix(domain, "."), ".")
-	if len(parts) == 1 {
-		return true
-	}
-	if len(parts) >= 2 && len(parts[len(parts)-1]) > 3 {
-		return true
-	}
-
-	return false
+	return len(strings.Split(strings.TrimSuffix(domain, "."), ".")) == 1
 }
 
 func (s *Server) Run() error {
@@ -259,18 +254,37 @@ func (s *Server) Run() error {
 		return nil
 	}
 
-	s.srv = &dns.Server{Addr: s.listenAddr, Net: "udp", Handler: s}
+	startedCh := make(chan struct{})
+
+	s.srv = &dns.Server{
+		Addr:              s.listenAddr,
+		Net:               "udp",
+		Handler:           s,
+		NotifyStartedFunc: func() { close(startedCh) },
+	}
 	srv := s.srv
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cacheCancel = cancel
 	s.mu.Unlock()
 
+	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
 			zap.L().Warn("Failed to serve local DNS", zap.Error(err))
+			errCh <- err
 		}
 	}()
+
+	select {
+	case <-startedCh:
+	case err := <-errCh:
+		return errors.Errorf("Could not listen on the local DNS address %s: %+v", s.listenAddr, err)
+	case <-time.After(listenTimeout):
+		return errors.Errorf("Timed out waiting for the local DNS server to listen on %s", s.listenAddr)
+	}
+
+	zap.L().Debug("Local DNS server is now listening", zap.String("addr", s.listenAddr))
 
 	go s.cache.startCleanupLoop(ctx)
 
@@ -296,7 +310,11 @@ func (s *Server) Close() error {
 		return nil
 	}
 
-	return s.srv.Shutdown()
+	if err := s.srv.Shutdown(); err != nil {
+		zap.L().Debug("Could not shut down the local DNS server", zap.Error(err))
+	}
+
+	return nil
 }
 
 type cache struct {

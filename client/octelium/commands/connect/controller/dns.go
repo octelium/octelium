@@ -43,11 +43,6 @@ func (c *Controller) getCurrentDNS() net.IP {
 
 func (c *Controller) SetDNS() error {
 
-	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
-		zap.L().Debug("Container mode. Not setting DNS")
-		return nil
-	}
-
 	dnsServers := c.getDNSServers()
 	var curServers []net.IP
 	for _, dnsServer := range dnsServers {
@@ -67,6 +62,15 @@ func (c *Controller) SetDNS() error {
 
 	zap.L().Debug("Setting DNS servers", zap.Strings("servers", dnsServers))
 
+	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
+		zap.L().Debug("Container mode. Setting resolv.conf directly")
+		if err := c.setResolvConf(); err != nil {
+			zap.L().Warn("Could not set resolv.conf", zap.Error(err))
+		}
+
+		return nil
+	}
+
 	if err := c.doSetDNS(); err != nil {
 		zap.L().Warn("Could not set DNS", zap.Error(err))
 	}
@@ -79,8 +83,13 @@ func (c *Controller) UnsetDNS() error {
 	if c.isNetstack || c.c.Preferences.IgnoreDNS {
 		return nil
 	}
+
 	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
-		zap.L().Debug("Container mode. Not unsetting DNS")
+		zap.L().Debug("Container mode. Restoring resolv.conf")
+		if err := c.unsetResolvConf(); err != nil {
+			zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
+		}
+
 		return nil
 	}
 
@@ -485,7 +494,7 @@ func (c *Controller) getLocalDNSServerAddr() string {
 	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.ListenAddress != "" {
 		return c.c.Preferences.LocalDNS.ListenAddress
 	}
-	if cliutils.IsDarwin() {
+	if cliutils.IsDarwin() || cliutils.IsWindows() {
 		return "127.0.0.1:53"
 	}
 

@@ -33,6 +33,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const (
+	handshakeTimeout   = 15 * time.Second
+	maxConcurrentConns = 128
+)
+
 type Server struct {
 	sshConfig *ssh.ServerConfig
 	isClosed  bool
@@ -42,6 +47,8 @@ type Server struct {
 	cancelFn context.CancelFunc
 
 	listeners []net.Listener
+
+	connSem chan struct{}
 
 	usr      *user.User
 	sameUser bool
@@ -53,10 +60,19 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	zap.L().Debug("Starting eSSH handleConn", zap.String("addr", c.RemoteAddr().String()))
 
+	if err := c.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		zap.L().Debug("Could not set the eSSH handshake deadline", zap.Error(err))
+	}
+
 	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
 	if err != nil {
+		zap.L().Debug("Could not complete the eSSH handshake", zap.Error(err))
 		c.Close()
 		return
+	}
+
+	if err := c.SetDeadline(time.Time{}); err != nil {
+		zap.L().Debug("Could not clear the eSSH handshake deadline", zap.Error(err))
 	}
 
 	dctx, err := newDctx(c, sshConn, s.usr, s.sameUser)
@@ -187,7 +203,22 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 			}
 		}
 
-		go s.handleConn(ctx, conn)
+		select {
+		case s.connSem <- struct{}{}:
+		default:
+			zap.L().Warn("Too many concurrent eSSH connections. Rejecting the connection",
+				zap.String("addr", conn.RemoteAddr().String()),
+				zap.Int("max", maxConcurrentConns))
+			conn.Close()
+			continue
+		}
+
+		go func(conn net.Conn) {
+			defer func() {
+				<-s.connSem
+			}()
+			s.handleConn(ctx, conn)
+		}(conn)
 	}
 }
 
@@ -210,6 +241,7 @@ func NewServer(opts *Opts) (*Server, error) {
 	server := &Server{
 		opts:     opts,
 		sameUser: true,
+		connSem:  make(chan struct{}, maxConcurrentConns),
 	}
 
 	usr, err := user.Current()

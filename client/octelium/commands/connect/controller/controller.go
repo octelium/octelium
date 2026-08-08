@@ -170,6 +170,8 @@ func (c *Controller) Start(ctx context.Context) error {
 		return err
 	}
 
+	c.startLocalDNSServer()
+
 	if err := c.doStart(ctx); err != nil {
 		return err
 	}
@@ -181,24 +183,6 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.svcProxy = svcProxy
 	if err := svcProxy.Start(ctx); err != nil {
 		return err
-	}
-
-	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.IsEnabled {
-		localDNSServer, err := dnssrv.NewDNSServer(&dnssrv.Opts{
-			ClusterDomain: c.c.Info.Cluster.Domain,
-			HasV4:         c.ipv4Supported,
-			HasV6:         c.ipv6Supported,
-			DNSGetter:     c,
-			ListenAddr:    c.getLocalDNSServerAddr(),
-		})
-		if err != nil {
-			zap.L().Warn("Could not initialize local DNS server", zap.Error(err))
-		} else {
-			c.localDNSSrv = localDNSServer
-			if err := c.localDNSSrv.Run(); err != nil {
-				zap.L().Warn("Could not run local DNS server", zap.Error(err))
-			}
-		}
 	}
 
 	if c.c.Preferences.ESSH != nil && c.c.Preferences.ESSH.IsEnabled {
@@ -232,6 +216,40 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (c *Controller) startLocalDNSServer() {
+	if c.c.Preferences.LocalDNS == nil || !c.c.Preferences.LocalDNS.IsEnabled {
+		return
+	}
+
+	disable := func(err error) {
+		zap.L().Warn("Could not start the local DNS server. Falling back to the Cluster DNS servers",
+			zap.Error(err))
+		c.c.Preferences.LocalDNS.IsEnabled = false
+		c.localDNSSrv = nil
+	}
+
+	localDNSServer, err := dnssrv.NewDNSServer(&dnssrv.Opts{
+		ClusterDomain: c.c.Info.Cluster.Domain,
+		HasV4:         c.ipv4Supported,
+		HasV6:         c.ipv6Supported,
+		DNSGetter:     c,
+		ListenAddr:    c.getLocalDNSServerAddr(),
+	})
+	if err != nil {
+		disable(err)
+		return
+	}
+
+	c.localDNSSrv = localDNSServer
+
+	if err := c.localDNSSrv.Run(); err != nil {
+		if err := localDNSServer.Close(); err != nil {
+			zap.L().Debug("Could not close the local DNS server", zap.Error(err))
+		}
+		disable(err)
+	}
 }
 
 func (c *Controller) Reconfigure() error {

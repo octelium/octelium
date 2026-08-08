@@ -15,9 +15,7 @@
 package controller
 
 import (
-	"fmt"
 	"os/exec"
-	"strings"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
@@ -60,8 +58,8 @@ func (c *Controller) doSetDNSResolvctl() error {
 	var isResolvectl bool
 
 	var cmdBin string
-	var cmdDNSArgs string
-	var cmdDomainArgs string
+	var cmdDNSArgs []string
+	var cmdDomainArgs []string
 
 	if _, err := exec.LookPath("resolvectl"); err == nil {
 		isResolvectl = true
@@ -72,28 +70,25 @@ func (c *Controller) doSetDNSResolvctl() error {
 		return errors.Errorf("Could not find resolvectl or systemd-resolve")
 	}
 
-	if isResolvectl {
-		cmdDNSArgs = fmt.Sprintf("dns %s %s", c.c.Preferences.DeviceName, strings.Join(c.getDNSServers(), " "))
-		cmdDomainArgs = fmt.Sprintf("domain %s %s", c.c.Preferences.DeviceName,
-			strings.Join(c.getDNSSearchDomains(), " "))
-	} else {
-		cmdDNSArgs = fmt.Sprintf("--interface %s", c.c.Preferences.DeviceName)
-
-		dnsServers := c.getDNSServers()
-		for _, s := range dnsServers {
-			cmdDNSArgs = fmt.Sprintf("%s --set-dns %s", cmdDNSArgs, s)
-		}
-
-		cmdDomainArgs = fmt.Sprintf("--interface %s --set-domain %s", c.c.Preferences.DeviceName,
-			c.c.Info.Cluster.Domain)
+	dnsServers := c.getDNSServers()
+	if len(dnsServers) == 0 {
+		return errors.Errorf("Could not find any DNS server to set")
 	}
 
-	if b, err := exec.Command(cmdBin, strings.Split(cmdDNSArgs, " ")...).CombinedOutput(); err != nil {
+	searchDomains := c.getDNSSearchDomains()
+	if len(searchDomains) == 0 {
+		return errors.Errorf("Could not find any DNS search domain to set")
+	}
+
+	cmdDNSArgs, cmdDomainArgs = getResolvctlArgs(isResolvectl,
+		c.c.Preferences.DeviceName, dnsServers, searchDomains)
+
+	if b, err := exec.Command(cmdBin, cmdDNSArgs...).CombinedOutput(); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}
 
-	if b, err := exec.Command(cmdBin, strings.Split(cmdDomainArgs, " ")...).CombinedOutput(); err != nil {
+	if b, err := exec.Command(cmdBin, cmdDomainArgs...).CombinedOutput(); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
 		return err
 	}
@@ -101,6 +96,29 @@ func (c *Controller) doSetDNSResolvctl() error {
 	c.c.Preferences.LinuxPrefs.DnsMode = cliconfigv1.Connection_Preferences_Linux_RESOLVECTL_BIN
 
 	return nil
+}
+
+func getResolvctlArgs(isResolvectl bool, devName string,
+	dnsServers, searchDomains []string) (dnsArgs []string, domainArgs []string) {
+
+	if isResolvectl {
+		dnsArgs = append([]string{"dns", devName}, dnsServers...)
+		domainArgs = append([]string{"domain", devName}, searchDomains...)
+
+		return dnsArgs, domainArgs
+	}
+
+	dnsArgs = []string{"--interface", devName}
+	for _, dnsServer := range dnsServers {
+		dnsArgs = append(dnsArgs, "--set-dns", dnsServer)
+	}
+
+	domainArgs = []string{"--interface", devName}
+	for _, searchDomain := range searchDomains {
+		domainArgs = append(domainArgs, "--set-domain", searchDomain)
+	}
+
+	return dnsArgs, domainArgs
 }
 
 func (c *Controller) doUnsetDNS() error {

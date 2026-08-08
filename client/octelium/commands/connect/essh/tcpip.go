@@ -22,10 +22,13 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
+
+const tcpipTerminationDelay = 5 * time.Second
 
 type localForwardChannelData struct {
 	DestAddr string
@@ -78,11 +81,21 @@ func (c *dctx) handleTCPIPChan(ctx context.Context, nch ssh.NewChannel) {
 	}()
 
 	go func() {
+		defer ch.Close()
+		defer dconn.Close()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-errCh:
+		}
+
 		select {
 		case <-ctx.Done():
 		case <-errCh:
+		case <-time.After(tcpipTerminationDelay):
+			zap.L().Debug("Timed out waiting for the forwarded conn to drain",
+				zap.String("dest", dest))
 		}
-		ch.Close()
-		dconn.Close()
 	}()
 }

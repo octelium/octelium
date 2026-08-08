@@ -16,6 +16,7 @@ package dnssrv
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -148,16 +149,63 @@ func TestServer(t *testing.T) {
 	}
 
 	{
-		assert.True(t, srv.isLikelyService("svc1."))
-		assert.True(t, srv.isLikelyService("svc1.local."))
-		assert.True(t, srv.isLikelyService("svc1.ns1.local."))
-		assert.True(t, srv.isLikelyService("svc1.local.example.com."))
-		assert.True(t, srv.isLikelyService("svc1.example.com.local."))
-		assert.True(t, srv.isLikelyService("svc1.default."))
-		assert.False(t, srv.isLikelyService("svc1.com."))
-		assert.False(t, srv.isLikelyService("svc1.io."))
+		assert.True(t, srv.isClusterName("svc1."))
+		assert.True(t, srv.isClusterName("svc1.local."))
+		assert.True(t, srv.isClusterName("svc1.ns1.local."))
+		assert.True(t, srv.isClusterName("svc1.local.example.com."))
+		assert.True(t, srv.isClusterName("SVC1.Local.Example.COM."))
+		assert.True(t, srv.isClusterName("svc1.example.com.local."))
+
+		assert.False(t, srv.isClusterName("svc1.com."))
+		assert.False(t, srv.isClusterName("svc1.io."))
+		assert.False(t, srv.isClusterName("svc1.default."))
+		assert.False(t, srv.isClusterName("example.com."))
+		assert.False(t, srv.isClusterName("portal.example.com."))
+		assert.False(t, srv.isClusterName("something.cloud."))
+		assert.False(t, srv.isClusterName("foo.online."))
 	}
 
 	err = srv.Close()
 	assert.Nil(t, err)
+}
+
+func TestServerRunReportsBindFailure(t *testing.T) {
+	addr := "127.0.0.100:18055"
+
+	blocker, err := net.ListenPacket("udp", addr)
+	assert.Nil(t, err)
+	defer blocker.Close()
+
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    addr,
+		HasV4:         true,
+		DNSGetter:     &tstDNSGetter{},
+	})
+	assert.Nil(t, err)
+
+	assert.NotNil(t, srv.Run())
+	assert.Nil(t, srv.Close())
+}
+
+func TestServerRunIsListeningWhenItReturns(t *testing.T) {
+	addr := "127.0.0.100:18056"
+
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    addr,
+		HasV4:         true,
+		DNSGetter:     &tstDNSGetter{},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, srv.Run())
+
+	c := dns.Client{Timeout: 5 * time.Second}
+	m := dns.Msg{}
+	m.SetQuestion("svc1.local.example.com.", dns.TypeA)
+
+	_, _, err = c.Exchange(&m, addr)
+	assert.Nil(t, err)
+
+	assert.Nil(t, srv.Close())
 }

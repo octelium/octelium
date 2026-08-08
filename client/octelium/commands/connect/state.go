@@ -99,8 +99,7 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 			}
 
 			if resp == nil || resp.Event == nil {
-				zap.L().Error("Invalid empty event")
-				time.Sleep(100 * time.Millisecond)
+				zap.L().Debug("Skipping a ConnectResponse with no known event")
 				continue
 			}
 
