@@ -138,3 +138,29 @@ func TestGetNetworkSetupService(t *testing.T) {
 	assert.NotNil(t, getNetworkSetupService(cfg, "Wi-Fi"))
 	assert.Nil(t, getNetworkSetupService(cfg, "Ethernet"))
 }
+
+func TestGetNetworkSetupSearchDomains(t *testing.T) {
+	svcCfg := func(domains ...string) *pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service {
+		return &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service{
+			Name:       "Wi-Fi",
+			DnsServers: []string{networkSetupEmpty},
+			DnsDomains: domains,
+		}
+	}
+
+	assert.Equal(t, []string{"local.example.com", "corp.lan"},
+		getNetworkSetupSearchDomains([]string{"local.example.com"}, svcCfg("corp.lan")))
+
+	assert.Equal(t, []string{"local.example.com"},
+		getNetworkSetupSearchDomains([]string{"local.example.com"}, svcCfg(networkSetupEmpty)))
+
+	assert.Equal(t, []string{"local.example.com"},
+		getNetworkSetupSearchDomains([]string{"local.example.com"}, nil))
+
+	assert.Equal(t, []string{"local.example.com", "corp.lan"},
+		getNetworkSetupSearchDomains([]string{"local.example.com"},
+			svcCfg("corp.lan", "local.example.com", "  corp.lan  ", "")))
+
+	assert.Nil(t, getNetworkSetupSearchDomains(nil, nil))
+	assert.Nil(t, getNetworkSetupSearchDomains(nil, svcCfg(networkSetupEmpty)))
+}

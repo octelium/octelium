@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -38,9 +39,80 @@ func (c *Controller) doSetDNS() error {
 			zap.L().Warn("Could not doSetDNSNetworkSetup", zap.Error(err))
 			return c.doSetDNSResolvConf()
 		}
+
+		return nil
+	}
+
+	if err := c.doSetDNSSearchDomains(); err != nil {
+		zap.L().Warn("Could not set the DNS search domains via networksetup", zap.Error(err))
 	}
 
 	return nil
+}
+
+func (c *Controller) doSetDNSSearchDomains() error {
+	zap.L().Debug("Setting the DNS search domains via networksetup")
+
+	netServices, err := getNetworkSetupServices()
+	if err != nil {
+		return err
+	}
+
+	networkSetupConfig, err := prepareNetworkSetupConfig(c.c.Preferences.MacosPrefs,
+		netServices, getNetworkSetupServiceConfig)
+	if err != nil {
+		return err
+	}
+
+	c.dnsConfigSaved = true
+
+	var retErr error
+	for _, svc := range netServices {
+		svcCfg := getNetworkSetupService(networkSetupConfig, svc)
+		if svcCfg == nil {
+			zap.L().Debug("Could not find the saved config of the network service. Skipping",
+				zap.String("svc", svc))
+			continue
+		}
+
+		domains := getNetworkSetupSearchDomains(c.getDNSSearchDomains(), svcCfg)
+
+		if err := setNetworkSetupSearchDomains(svc, domains); err != nil {
+			zap.L().Warn("Could not set the search domains of a network service",
+				zap.String("svc", svc), zap.Error(err))
+			retErr = err
+		}
+	}
+
+	return retErr
+}
+
+func getNetworkSetupSearchDomains(domains []string,
+	svcCfg *pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service) []string {
+
+	var ret []string
+
+	appendDomain := func(domain string) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" || domain == networkSetupEmpty || slices.Contains(ret, domain) {
+			return
+		}
+		ret = append(ret, domain)
+	}
+
+	for _, domain := range domains {
+		appendDomain(domain)
+	}
+
+	if svcCfg == nil {
+		return ret
+	}
+
+	for _, domain := range svcCfg.DnsDomains {
+		appendDomain(domain)
+	}
+
+	return ret
 }
 
 func (c *Controller) doSetDNSNetworkSetup() error {
@@ -237,12 +309,21 @@ func setNetworkSetupDNSServers(svc string, dnsServers []string, networkDomains [
 		return errors.Errorf("Could not set dns servers: %s. %+v", string(o), err)
 	}
 
-	cmd = []string{"-setsearchdomains", svc}
+	return setNetworkSetupSearchDomains(svc, networkDomains)
+}
+
+func setNetworkSetupSearchDomains(svc string, networkDomains []string) error {
+	if len(networkDomains) == 0 {
+		return nil
+	}
+
+	cmd := []string{"-setsearchdomains", svc}
 	cmd = append(cmd, networkDomains...)
 	zap.L().Debug("Executing cmd", zap.String("cmd", fmt.Sprintf("networksetup %s", strings.Join(cmd, " "))))
 	if o, err := exec.Command("networksetup", cmd...).CombinedOutput(); err != nil {
 		return errors.Errorf("Could not set dns search domains: %s. %+v", string(o), err)
 	}
+
 	return nil
 }
 
