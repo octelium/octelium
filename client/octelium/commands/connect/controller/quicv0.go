@@ -173,6 +173,12 @@ func (c *quicEngine) doReconnectGW(ctx context.Context, gwID string) error {
 			zap.L().Debug("Exiting GW reconnection loop", zap.String("id", gwID))
 			return nil
 		case <-tickerCh.C:
+			if c.getIsClosed() {
+				zap.L().Debug("The QUIC engine is closed. Exiting GW reconnection loop",
+					zap.String("id", gwID))
+				return nil
+			}
+
 			if err := c.addGW(ctx, gw); err == nil {
 				zap.L().Debug("Successfully reconnected gw", zap.String("id", gwID))
 				return nil
@@ -209,6 +215,10 @@ func (c *quicEngine) close() error {
 }
 
 func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
+	if e.getIsClosed() {
+		return errors.Errorf("The QUIC engine is already closed")
+	}
+
 	e.quicGWMap.Lock()
 	if old := e.quicGWMap.gwMap[gw.Id]; old != nil {
 		old.close()
@@ -224,11 +234,25 @@ func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
 		return err
 	}
 
+	e.mu.Lock()
+	if e.isClosed {
+		e.mu.Unlock()
+		newGW.close()
+		return errors.Errorf("The QUIC engine is already closed")
+	}
+
 	e.quicGWMap.Lock()
 	e.quicGWMap.gwMap[gw.Id] = newGW
 	e.quicGWMap.Unlock()
+	e.mu.Unlock()
 
 	return nil
+}
+
+func (e *quicEngine) getIsClosed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.isClosed
 }
 
 func newQUIGW(engine *quicEngine, gw *userv1.Gateway) (*quicGW, error) {
@@ -328,6 +352,16 @@ func (c *quicGW) connect(ctx context.Context) error {
 		return errors.Errorf("Could not dial QUIC gw: %s: %+v", c.gw.Id, err)
 	}
 
+	var isInitialized bool
+	defer func() {
+		if isInitialized {
+			return
+		}
+		zap.L().Debug("Closing the QUIC conn of the uninitialized gw", zap.String("id", c.gw.Id))
+		c.conn.CloseWithError(0, "")
+		c.conn = nil
+	}()
+
 	zap.L().Debug("Opening the init stream", zap.String("id", c.gw.Id))
 	initStream, err := c.conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -375,6 +409,8 @@ func (c *quicGW) connect(ctx context.Context) error {
 
 	zap.L().Debug("Successfully connected to gw", zap.String("id", c.gw.Id))
 
+	isInitialized = true
+
 	return nil
 }
 
@@ -397,6 +433,7 @@ func (c *quicGW) run(ctx context.Context) error {
 	c.cancelFn = cancel
 	zap.L().Debug("Starting running gw", zap.String("id", c.gw.Id))
 	if err := c.connect(ctx); err != nil {
+		cancel()
 		return err
 	}
 
@@ -415,9 +452,15 @@ func (c *quicGW) close() {
 	}
 	zap.L().Debug("Closing gw", zap.String("id", c.gw.Id))
 	c.isClosed = true
-	c.cancelFn()
+	if c.cancelFn != nil {
+		c.cancelFn()
+	}
 
-	c.gwCloseCh <- c.gw.Id
+	select {
+	case c.gwCloseCh <- c.gw.Id:
+	default:
+		zap.L().Debug("Could not signal the closing of the gw", zap.String("id", c.gw.Id))
+	}
 
 	if c.conn != nil {
 		c.conn.CloseWithError(0, "")

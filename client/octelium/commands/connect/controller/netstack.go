@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
@@ -46,6 +47,9 @@ type netTun struct {
 	events         chan tun.Event
 	incomingPacket chan *bufferv2.View
 	ctl            *Controller
+
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	hasV4 bool
 	hasV6 bool
@@ -85,8 +89,15 @@ func (*endpoint) LinkAddress() tcpip.LinkAddress {
 func (*endpoint) Wait() {}
 
 func (e *endpoint) WritePacket(pkt *stack.PacketBuffer) tcpip.Error {
-	e.incomingPacket <- pkt.ToView()
-	return nil
+	view := pkt.ToView()
+
+	select {
+	case e.incomingPacket <- view:
+		return nil
+	case <-e.closed:
+		view.Release()
+		return &tcpip.ErrClosedForSend{}
+	}
 }
 
 func (e *endpoint) WriteRawPacket(*stack.PacketBuffer) tcpip.Error {
@@ -147,8 +158,6 @@ func (c *Controller) createNetstackTUN() error {
 		return errors.Errorf("gVisor netstack mode is not currently supported for the architecture: %s", runtime.GOARCH)
 	}
 
-	c.isNetstack = true
-
 	opts := stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -159,9 +168,17 @@ func (c *Controller) createNetstackTUN() error {
 		stack:          stack.New(opts),
 		events:         make(chan tun.Event, 10),
 		incomingPacket: make(chan *bufferv2.View),
+		closed:         make(chan struct{}),
 		hasV4:          c.ipv4Supported,
 		hasV6:          c.ipv6Supported,
 	}
+
+	var isInitialized bool
+	defer func() {
+		if !isInitialized {
+			dev.Close()
+		}
+	}()
 
 	tcpipErr := dev.stack.CreateNIC(1, (*endpoint)(dev))
 	if tcpipErr != nil {
@@ -202,6 +219,9 @@ func (c *Controller) createNetstackTUN() error {
 
 	dev.events <- tun.EventUp
 
+	isInitialized = true
+
+	c.isNetstack = true
 	c.nsTun = dev
 	zap.S().Debugf("Successfully created netstackTun")
 	return nil
@@ -220,10 +240,18 @@ func (tun *netTun) Events() <-chan tun.Event {
 }
 
 func (tun *netTun) Read(buf [][]byte, sizes []int, offset int) (int, error) {
-	view, ok := <-tun.incomingPacket
-	if !ok {
+	var view *bufferv2.View
+
+	select {
+	case view = <-tun.incomingPacket:
+	case <-tun.closed:
 		return 0, os.ErrClosed
 	}
+
+	if view == nil {
+		return 0, os.ErrClosed
+	}
+
 	n, err := view.Read(buf[0][offset:])
 	if err != nil {
 		return 0, err
@@ -267,14 +295,19 @@ func (tun *netTun) BatchSize() int {
 }
 
 func (tun *netTun) Close() error {
-	tun.stack.RemoveNIC(1)
+	tun.closeOnce.Do(func() {
+		if tun.closed != nil {
+			close(tun.closed)
+		}
 
-	if tun.events != nil {
-		close(tun.events)
-	}
-	if tun.incomingPacket != nil {
-		close(tun.incomingPacket)
-	}
+		tun.stack.RemoveNIC(1)
+		tun.stack.Close()
+
+		if tun.events != nil {
+			close(tun.events)
+		}
+	})
+
 	return nil
 }
 

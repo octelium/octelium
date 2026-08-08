@@ -284,11 +284,15 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 				zap.S().Debugf("Starting serving connection on %s", listenerAddr)
 				tcpAddr, err := net.ResolveTCPAddr("tcp", l.upstreamHost)
 				if err != nil {
+					zap.S().Debugf("Could not resolve the upstream %s: %+v", l.upstreamHost, err)
+					conn.Close()
 					return
 				}
 
 				connBackend, err := net.DialTCP("tcp", nil, tcpAddr)
 				if err != nil {
+					zap.S().Debugf("Could not dial the upstream %s: %+v", l.upstreamHost, err)
+					conn.Close()
 					return
 				}
 

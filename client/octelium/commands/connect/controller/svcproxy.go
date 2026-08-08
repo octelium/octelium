@@ -218,6 +218,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 				connBackend, err := l.getConnBackendTCP()
 				if err != nil {
 					zap.L().Error("Could not get conn backend", zap.Error(err))
+					conn.Close()
 					return
 				}
 				pp.ServeTCP(conn.(*net.TCPConn), connBackend)

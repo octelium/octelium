@@ -228,14 +228,16 @@ func (c *Controller) enableFirewall(dnsServers []net.IP) error {
 
 */
 
+const maxStoredInterfaceEvents = 200
+
 type interfaceWatcherEvent struct {
-	adapter *driver.Adapter
-	luid    winipcfg.LUID
-	family  winipcfg.AddressFamily
+	luid   winipcfg.LUID
+	family winipcfg.AddressFamily
 }
 
 type interfaceWatcher struct {
 	mu                      sync.Mutex
+	luid                    winipcfg.LUID
 	interfaceChangeCallback winipcfg.ChangeCallback
 	changeCallbacks4        []winipcfg.ChangeCallback
 	changeCallbacks6        []winipcfg.ChangeCallback
@@ -254,12 +256,19 @@ func (c *Controller) watchInterface() error {
 		if notificationType != winipcfg.MibAddInstance {
 			return
 		}
-		if c.tundev == nil {
-			iw.storedEvents = append(iw.storedEvents, interfaceWatcherEvent{c.opts.adapter, iface.InterfaceLUID, iface.Family})
+
+		if iw.luid == 0 {
+			if len(iw.storedEvents) >= maxStoredInterfaceEvents {
+				zap.L().Debug("Dropping interface change event. Too many stored events",
+					zap.Uint64("luid", uint64(iface.InterfaceLUID)))
+				return
+			}
+			iw.storedEvents = append(iw.storedEvents,
+				interfaceWatcherEvent{iface.InterfaceLUID, iface.Family})
 			return
 		}
 
-		if iface.InterfaceLUID != c.opts.adapter.LUID() {
+		if iface.InterfaceLUID != iw.luid {
 			return
 		}
 
@@ -298,11 +307,19 @@ func (c *Controller) doConfigureIface() error {
 
 func (c *Controller) configureIface() {
 	iw := c.opts.ifaceWatcher
+	if iw == nil || c.opts.adapter == nil {
+		return
+	}
+
+	luid := c.opts.adapter.LUID()
+
 	iw.mu.Lock()
 	defer iw.mu.Unlock()
 
+	iw.luid = luid
+
 	for _, event := range iw.storedEvents {
-		if event.luid == c.opts.adapter.LUID() {
+		if event.luid == luid {
 			if err := c.doConfigureIface(); err != nil {
 				zap.L().Error("Could not configure interface", zap.Error(err))
 			}
@@ -314,7 +331,7 @@ func (c *Controller) configureIface() {
 func (c *Controller) destroyIface() error {
 
 	iw := c.opts.ifaceWatcher
-	if iw == nil {
+	if iw == nil || c.opts.adapter == nil {
 		return nil
 	}
 
@@ -323,6 +340,8 @@ func (c *Controller) destroyIface() error {
 	changeCallbacks6 := iw.changeCallbacks6
 	interfaceChangeCallback := iw.interfaceChangeCallback
 	luid := c.opts.adapter.LUID()
+	iw.luid = 0
+	iw.storedEvents = nil
 	iw.mu.Unlock()
 
 	if interfaceChangeCallback != nil {

@@ -53,16 +53,18 @@ func (c *Controller) doInitDevNetstack(ctx context.Context) error {
 		fmt.Sprintf("(%s) ", c.c.Preferences.DeviceName),
 	)
 
-	device := device.NewDevice(c.getTUNDev(), conn.NewDefaultBind(), logger)
-	if err := device.IpcSet(c.toUAPI()); err != nil {
+	dev := device.NewDevice(c.getTUNDev(), conn.NewDefaultBind(), logger)
+	if err := dev.IpcSet(c.toUAPI()); err != nil {
+		dev.Close()
 		return err
 	}
 
-	if err := device.Up(); err != nil {
+	if err := dev.Up(); err != nil {
+		dev.Close()
 		return err
 	}
 
-	c.dev = device
+	c.dev = dev
 
 	return nil
 }

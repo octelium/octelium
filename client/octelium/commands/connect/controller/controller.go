@@ -125,9 +125,16 @@ func (c *Controller) Close() error {
 		}
 	}
 
-	c.doClose()
 	if err := c.doDisconnect(); err != nil {
 		zap.L().Debug("Could not doDisconnect", zap.Error(err))
+	}
+
+	c.doClose()
+
+	if c.nsTun != nil {
+		if err := c.nsTun.Close(); err != nil {
+			zap.L().Debug("Could not close the netstack TUN", zap.Error(err))
+		}
 	}
 
 	if c.eSSHHMainSrv != nil {

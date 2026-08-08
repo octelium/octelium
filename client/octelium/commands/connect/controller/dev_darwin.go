@@ -63,6 +63,7 @@ func (c *Controller) doDeleteDev() error {
 
 	if c.uapi != nil {
 		c.uapi.Close()
+		c.uapi = nil
 	}
 	if c.dev != nil {
 		c.dev.Down()

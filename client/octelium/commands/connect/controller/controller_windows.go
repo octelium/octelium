@@ -26,7 +26,17 @@ import (
 )
 
 func (c *Controller) doClose() {
+	if c.wgC != nil {
+		c.wgC.Close()
+	}
 
+	if c.dev != nil {
+		c.dev.Close()
+	}
+
+	if c.uapi != nil {
+		c.uapi.Close()
+	}
 }
 
 func (c *Controller) pre() error {
@@ -75,16 +85,23 @@ func (c *Controller) doStart(ctx context.Context) error {
 }
 
 func (c *Controller) doDisconnect() error {
+	var retErr error
 
-	if err := c.DeleteDev(); err != nil {
-		return err
+	if err := c.unsetRoutes(); err != nil {
+		zap.L().Debug("Could not unset routes", zap.Error(err))
 	}
 
 	if err := c.UnsetDNS(); err != nil {
-		return err
+		zap.L().Warn("Could not unset DNS", zap.Error(err))
+		retErr = err
 	}
 
-	return nil
+	if err := c.DeleteDev(); err != nil {
+		zap.L().Warn("Could not delete dev", zap.Error(err))
+		retErr = err
+	}
+
+	return retErr
 }
 
 type platformOpts struct {

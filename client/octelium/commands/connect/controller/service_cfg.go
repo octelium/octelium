@@ -47,6 +47,10 @@ func (c *Controller) unsetServiceConfigs() error {
 }
 
 func (c *Controller) getSSHConfigMarker() (string, error) {
+	if c.c.Info == nil || c.c.Info.Cluster == nil {
+		return "", errors.Errorf("The Connection does not have Cluster info")
+	}
+
 	domain := c.c.Info.Cluster.Domain
 	if domain == "" || strings.ContainsAny(domain, " \t\r\n") {
 		return "", errors.Errorf("Invalid Cluster domain: %q", domain)

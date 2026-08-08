@@ -322,10 +322,13 @@ func (c *Controller) doInitDevTunWG(ctx context.Context) error {
 		return errors.Errorf("Could not open UAPI: %+v", err)
 	}
 
-	device := device.NewDevice(c.getTUNDev(), conn.NewDefaultBind(), logger)
+	dev := device.NewDevice(c.getTUNDev(), conn.NewDefaultBind(), logger)
 
 	uapi, err := ipc.UAPIListen(c.c.Preferences.DeviceName, fileUAPI)
 	if err != nil {
+		dev.Close()
+		c.tundev = nil
+		fileUAPI.Close()
 		return errors.Errorf("Could not listen UAPI: %+v", err)
 	}
 
@@ -340,11 +343,11 @@ func (c *Controller) doInitDevTunWG(ctx context.Context) error {
 			if err != nil {
 				return
 			}
-			go device.IpcHandle(conn)
+			go dev.IpcHandle(conn)
 		}
 	}()
 
-	c.dev = device
+	c.dev = dev
 	c.uapi = uapi
 
 	return nil
@@ -377,12 +380,14 @@ func (c *Controller) doSetTunDev() error {
 
 	ifr, err := unix.NewIfreq(c.c.Preferences.DeviceName)
 	if err != nil {
+		unix.Close(nfd)
 		return err
 	}
 
 	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
 	err = unix.IoctlIfreq(nfd, unix.TUNSETIFF, ifr)
 	if err != nil {
+		unix.Close(nfd)
 		return err
 	}
 
@@ -395,6 +400,7 @@ func (c *Controller) doSetTunDev() error {
 	fd := os.NewFile(uintptr(nfd), devTunPath)
 	tundev, err := tun.CreateTUNFromFile(fd, c.getMTU())
 	if err != nil {
+		fd.Close()
 		return errors.Errorf("Could not create TUN dev %+v", err)
 	}
 
