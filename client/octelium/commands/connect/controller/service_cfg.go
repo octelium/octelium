@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const sshConfigMarkerPrefix = "octelium-managed:"
+const managedMarkerPrefix = "octelium-managed:"
 
 func (c *Controller) setServiceConfigs() error {
 	for _, svcCfg := range c.c.Connection.ServiceConfigs {
@@ -46,7 +46,7 @@ func (c *Controller) unsetServiceConfigs() error {
 	return c.unsetServiceConfigSSH()
 }
 
-func (c *Controller) getSSHConfigMarker() (string, error) {
+func (c *Controller) getManagedMarker() (string, error) {
 	if c.c.Info == nil || c.c.Info.Cluster == nil {
 		return "", errors.Errorf("The Connection does not have Cluster info")
 	}
@@ -56,7 +56,7 @@ func (c *Controller) getSSHConfigMarker() (string, error) {
 		return "", errors.Errorf("Invalid Cluster domain: %q", domain)
 	}
 
-	return fmt.Sprintf("%s%s", sshConfigMarkerPrefix, domain), nil
+	return fmt.Sprintf("%s%s", managedMarkerPrefix, domain), nil
 }
 
 func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceConfig_SSH) error {
@@ -64,7 +64,7 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 		return nil
 	}
 
-	marker, err := c.getSSHConfigMarker()
+	marker, err := c.getManagedMarker()
 	if err != nil {
 		zap.L().Warn("Could not set the SSH service configs", zap.Error(err))
 		return nil
@@ -96,7 +96,7 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 }
 
 func (c *Controller) unsetServiceConfigSSH() error {
-	marker, err := c.getSSHConfigMarker()
+	marker, err := c.getManagedMarker()
 	if err != nil {
 		zap.L().Warn("Could not unset the SSH service configs", zap.Error(err))
 		return nil

@@ -260,3 +260,55 @@ func TestResolvConfCapsNameserversAndSearchDomains(t *testing.T) {
 	assert.Equal(t, resolvConfMaxSearchDomains, len(opts.SearchDomains))
 	assert.Equal(t, "local.example.com", opts.SearchDomains[0])
 }
+
+func TestGetNRPTNamespaces(t *testing.T) {
+	assert.Equal(t, []string{".local.example.com"},
+		getNRPTNamespaces([]string{"local.example.com"}, "example.com"))
+
+	assert.Equal(t, []string{".local.example.com"},
+		getNRPTNamespaces([]string{"LOCAL.Example.COM."}, "Example.com"))
+
+	assert.Equal(t, []string{".local.example.com"},
+		getNRPTNamespaces([]string{"local.example.com", "local.example.com."}, "example.com"))
+
+	assert.Equal(t, []string{".local.example.com", ".svc.example.com"},
+		getNRPTNamespaces([]string{"local.example.com", "svc.example.com"}, "example.com"))
+}
+
+func TestGetNRPTNamespacesRefusesCapturingTheClusterDomain(t *testing.T) {
+	assert.Nil(t, getNRPTNamespaces([]string{"example.com"}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"com"}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"example.com."}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"corp.example.com"}, "eu.corp.example.com"))
+
+	assert.Equal(t, []string{".local.example.com"},
+		getNRPTNamespaces([]string{"example.com", "local.example.com"}, "example.com"))
+}
+
+func TestGetNRPTNamespacesWithInvalidDomains(t *testing.T) {
+	assert.Nil(t, getNRPTNamespaces(nil, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{""}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"   "}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"local example.com"}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"local.example.com\nevil"}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"100.64.0.53"}, "example.com"))
+}
+
+func TestGetNRPTRuleKey(t *testing.T) {
+	key, err := getNRPTRuleKey("example.com")
+	assert.Nil(t, err)
+	assert.Regexp(t, `^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$`, key)
+
+	sameKey, err := getNRPTRuleKey("Example.COM ")
+	assert.Nil(t, err)
+	assert.Equal(t, key, sameKey)
+
+	otherKey, err := getNRPTRuleKey("other.example.com")
+	assert.Nil(t, err)
+	assert.NotEqual(t, key, otherKey)
+
+	for _, domain := range []string{"", "  ", "not a domain", "exa\nmple.com", `exa\mple.com`} {
+		_, err := getNRPTRuleKey(domain)
+		assert.NotNil(t, err)
+	}
+}

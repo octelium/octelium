@@ -17,6 +17,7 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
@@ -134,6 +135,46 @@ func (c *Controller) getDNSSearchDomains() []string {
 	return []string{
 		fmt.Sprintf("local.%s", c.c.Info.Cluster.Domain),
 	}
+}
+
+func getNRPTNamespaces(searchDomains []string, clusterDomain string) []string {
+	normalize := func(arg string) string {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(arg), "."))
+	}
+
+	clusterDomain = normalize(clusterDomain)
+
+	var ret []string
+	for _, domain := range searchDomains {
+		domain = normalize(domain)
+		if domain == "" || !govalidator.IsDNSName(domain) {
+			continue
+		}
+
+		if clusterDomain == domain || strings.HasSuffix(clusterDomain, fmt.Sprintf(".%s", domain)) {
+			zap.L().Warn("Refusing to set an NRPT rule that captures the Cluster domain itself",
+				zap.String("domain", domain), zap.String("clusterDomain", clusterDomain))
+			continue
+		}
+
+		namespace := fmt.Sprintf(".%s", domain)
+		if !slices.Contains(ret, namespace) {
+			ret = append(ret, namespace)
+		}
+	}
+
+	return ret
+}
+
+func getNRPTRuleKey(clusterDomain string) (string, error) {
+	clusterDomain = strings.ToLower(strings.TrimSpace(clusterDomain))
+	if clusterDomain == "" || !govalidator.IsDNSName(clusterDomain) {
+		return "", errors.Errorf("Invalid Cluster domain: %q", clusterDomain)
+	}
+
+	h := sha256.Sum256([]byte(fmt.Sprintf("octelium-nrpt-%s", clusterDomain)))
+
+	return fmt.Sprintf("{%x-%x-%x-%x-%x}", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16]), nil
 }
 
 const (
