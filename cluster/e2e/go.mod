@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/e2e
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3

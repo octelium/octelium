@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/client/octelium
 
-go 1.26.4
+go 1.26.5
 
 require (
 	al.essio.dev/pkg/shellescape v1.6.0
