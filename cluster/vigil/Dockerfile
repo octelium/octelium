@@ -5,7 +5,7 @@ ADD . /build/
 WORKDIR /build
 RUN make build-vigil
 FROM alpine:3.23
-RUN apk --no-cache add ca-certificates curl go
+RUN apk --no-cache add ca-certificates
 RUN adduser -S -D -H -u 3454 -h /app octelium
 USER octelium
 COPY --from=builder /build/bin/octelium-vigil /app/
