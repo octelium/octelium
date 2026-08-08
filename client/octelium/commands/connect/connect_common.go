@@ -425,6 +425,8 @@ func doGetPublishedService(ctx context.Context,
 	}, nil
 }
 
+const shutdownTimeout = 20 * time.Second
+
 type ctl struct {
 	devCtl          *controller.Controller
 	proxyCtl        *proxy.Controller
@@ -463,28 +465,37 @@ func newCtl(ctx context.Context,
 	return ret, nil
 }
 
-func (c *ctl) start(ctx context.Context) error {
+func (c *ctl) start(ctx context.Context) (err error) {
 	ctx, cancelFn := context.WithCancel(ctx)
 	c.cancelFn = cancelFn
+
+	defer func() {
+		if err == nil {
+			return
+		}
+		zap.L().Debug("Closing the controller after a startup error", zap.Error(err))
+		if err := c.close(); err != nil {
+			zap.L().Debug("Could not close the controller after a startup error", zap.Error(err))
+		}
+	}()
 
 	zap.L().Debug("Starting dev controller...")
 	if err := c.devCtl.Start(ctx); err != nil {
 		zap.L().Warn("Could not start dev controller", zap.Error(err))
-		if err := c.devCtl.Close(); err != nil {
-			zap.L().Debug("Could not close dev controller after startup error", zap.Error(err))
-		}
 		return err
 	}
 
 	if c.proxyCtl != nil {
 		zap.L().Debug("Starting proxy controller...")
 		if err := c.proxyCtl.Start(ctx); err != nil {
+			zap.L().Warn("Could not start proxy controller", zap.Error(err))
 			return err
 		}
 	}
 
 	zap.L().Debug("Starting state controller...")
 	if err := c.stateController.Start(ctx); err != nil {
+		zap.L().Warn("Could not start state controller", zap.Error(err))
 		return err
 	}
 
@@ -534,8 +545,9 @@ func connect(ctx context.Context, domain string) error {
 		case <-ctx.Done():
 			zap.L().Debug("Waiting for tryConnect to exit...")
 			select {
-			case <-time.After(2 * time.Second):
-				zap.L().Debug("tryConnect timeout...")
+			case <-time.After(shutdownTimeout):
+				zap.L().Warn("Timed out waiting for the connection to be cleanly closed",
+					zap.Duration("timeout", shutdownTimeout))
 			case <-doneCh:
 				zap.L().Debug("tryConnect done...")
 			}
