@@ -118,6 +118,29 @@ func (s *DNSServer) Unset(svc *corev1.Service) {
 	s.cache.delete(svc)
 }
 
+func getRequestUDPSize(r *dns.Msg) int {
+	if opt := r.IsEdns0(); opt != nil {
+		if size := int(opt.UDPSize()); size >= dns.MinMsgSize {
+			return size
+		}
+	}
+
+	return dns.MinMsgSize
+}
+
+func writeUpstreamReply(w dns.ResponseWriter, r *dns.Msg, resp *dns.Msg) {
+	resp.Id = r.Id
+	resp.Question = r.Question
+	resp.Response = true
+	resp.RecursionAvailable = true
+
+	resp.Truncate(getRequestUDPSize(r))
+
+	if err := w.WriteMsg(resp); err != nil {
+		zap.L().Debug("Could not write the DNS response", zap.Error(err))
+	}
+}
+
 func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if r == nil {
@@ -148,10 +171,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			return
 		}
 
-		msg.Answer = ret.Answer
-		msg.Extra = ret.Extra
-		msg.Ns = ret.Ns
-		w.WriteMsg(&msg)
+		writeUpstreamReply(w, r, ret)
 		return
 	}
 
@@ -174,10 +194,7 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			return
 		}
 
-		msg.Answer = ret.Answer
-		msg.Extra = ret.Extra
-		msg.Ns = ret.Ns
-		w.WriteMsg(&msg)
+		writeUpstreamReply(w, r, ret)
 		return
 	}
 
@@ -306,26 +323,19 @@ func (s *DNSServer) Run(ctx context.Context) error {
 
 	go s.fallbackZoneCache.startCleanupLoop(ctx)
 
-	{
-		srv := &dns.Server{Addr: fmt.Sprintf("[::1]:%d", vutils.ManagedServicePort), Net: "udp"}
+	for _, addr := range []string{
+		fmt.Sprintf("[::1]:%d", vutils.ManagedServicePort),
+		fmt.Sprintf("127.0.0.1:%d", vutils.ManagedServicePort),
+	} {
+		srv := &dns.Server{Addr: addr, Net: "udp"}
 		srv.Handler = s
 
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
-				zap.L().Debug("Failed to set udp listener", zap.Error(err))
+				zap.L().Debug("Failed to set udp listener",
+					zap.String("addr", addr), zap.Error(err))
 			}
-		}()
-	}
-
-	{
-		srv := &dns.Server{Addr: fmt.Sprintf("127.0.0.1:%d", vutils.ManagedServicePort), Net: "udp"}
-		srv.Handler = s
-
-		go func() {
-			if err := srv.ListenAndServe(); err != nil {
-				zap.L().Debug("Failed to set udp listener", zap.Error(err))
-			}
-			zap.L().Debug("DNS server exited...")
+			zap.L().Debug("DNS server exited...", zap.String("addr", addr))
 		}()
 	}
 

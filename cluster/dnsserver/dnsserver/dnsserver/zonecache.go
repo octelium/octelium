@@ -63,7 +63,7 @@ func (c *zoneCache) get(domain string, typ uint16) *dns.Msg {
 		return nil
 	}
 
-	return val.r
+	return val.r.Copy()
 }
 
 func (c *zoneCache) set(domain string, typ uint16, r *dns.Msg) {
@@ -79,7 +79,7 @@ func (c *zoneCache) set(domain string, typ uint16, r *dns.Msg) {
 
 	c.Lock()
 	c.cMap[c.getCacheKey(domain, typ)] = &zoneCacheVal{
-		r:   r,
+		r:   r.Copy(),
 		exp: time.Now().Add(c.duration),
 	}
 	c.Unlock()
