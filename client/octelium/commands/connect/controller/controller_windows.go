@@ -76,7 +76,7 @@ func (c *Controller) doStart(ctx context.Context) error {
 		}
 	}
 
-	if err := c.SetDNS(); err != nil {
+	if err := c.setDNS(); err != nil {
 		return err
 	}
 
@@ -91,7 +91,7 @@ func (c *Controller) doDisconnect() error {
 		zap.L().Debug("Could not unset routes", zap.Error(err))
 	}
 
-	if err := c.UnsetDNS(); err != nil {
+	if err := c.unsetDNS(); err != nil {
 		zap.L().Warn("Could not unset DNS", zap.Error(err))
 		retErr = err
 	}

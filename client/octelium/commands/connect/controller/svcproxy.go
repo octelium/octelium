@@ -276,33 +276,57 @@ func (l *listener) resolveService() (net.IP, error) {
 		return nil, errors.Errorf("No DNS servers available to resolve the Service: %s", l.svcFQDN)
 	}
 
-	c := dns.Client{}
-	m := dns.Msg{}
+	var qTypes []uint16
 	if l.ctl.ipv6Supported {
-		m.SetQuestion(l.svcFQDN+".", dns.TypeAAAA)
-	} else {
-		m.SetQuestion(l.svcFQDN+".", dns.TypeA)
+		qTypes = append(qTypes, dns.TypeAAAA)
+	}
+	if l.ctl.ipv4Supported {
+		qTypes = append(qTypes, dns.TypeA)
+	}
+	if len(qTypes) == 0 {
+		return nil, errors.Errorf("No supported address family to resolve the Service: %s", l.svcFQDN)
 	}
 
-	r, _, err := c.Exchange(&m, net.JoinHostPort(dnsServer.String(), "53"))
+	srvAddr := net.JoinHostPort(dnsServer.String(), "53")
+
+	var retErr error
+	for _, qType := range qTypes {
+		ip, err := l.doResolveService(srvAddr, qType)
+		if err != nil {
+			zap.L().Debug("Could not resolve the Service",
+				zap.String("svc", l.svcFQDN), zap.Uint16("qType", qType), zap.Error(err))
+			retErr = err
+			continue
+		}
+
+		return ip, nil
+	}
+
+	return nil, retErr
+}
+
+func (l *listener) doResolveService(srvAddr string, qType uint16) (net.IP, error) {
+	c := dns.Client{}
+	m := dns.Msg{}
+	m.SetQuestion(l.svcFQDN+".", qType)
+
+	r, _, err := c.Exchange(&m, srvAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(r.Answer) == 0 {
-		return nil, errors.Errorf("Could not resolve Service: %s", l.svcFQDN)
-	}
-
-	if l.ctl.ipv6Supported {
-		if record, ok := r.Answer[0].(*dns.AAAA); ok {
-			return record.AAAA, nil
-		}
-
-	} else {
-		if record, ok := r.Answer[0].(*dns.A); ok {
-			return record.A, nil
+	for _, answer := range r.Answer {
+		switch record := answer.(type) {
+		case *dns.AAAA:
+			if record.AAAA != nil {
+				return record.AAAA, nil
+			}
+		case *dns.A:
+			if record.A != nil {
+				return record.A, nil
+			}
 		}
 	}
 
-	return nil, errors.Errorf("Could not resolve Service: %s...", l.svcFQDN)
+	return nil, errors.Errorf("Could not resolve Service: %s", l.svcFQDN)
 }

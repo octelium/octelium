@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/quicv0"
@@ -39,6 +40,8 @@ import (
 )
 
 var tunPacketOffset = 0
+
+const quicMaxPacketSize = 65535
 
 const (
 	IPv4offsetSrc = 12
@@ -83,11 +86,20 @@ type quicEngine struct {
 	clusterDomain string
 
 	gwCloseCh chan string
+
+	pktPool sync.Pool
 }
 
 type quicGWMap struct {
 	sync.RWMutex
 	gwMap map[string]*quicGW
+
+	routes atomic.Pointer[[]quicRoute]
+}
+
+type quicRoute struct {
+	cidr netip.Prefix
+	gw   *quicGW
 }
 
 type quicGW struct {
@@ -208,6 +220,8 @@ func (c *quicEngine) close() error {
 	for _, gw := range c.quicGWMap.gwMap {
 		gw.close()
 	}
+	c.quicGWMap.gwMap = make(map[string]*quicGW)
+	c.quicGWMap.rebuildRoutes()
 
 	zap.L().Debug("QUIC engine closed")
 
@@ -223,6 +237,7 @@ func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
 	if old := e.quicGWMap.gwMap[gw.Id]; old != nil {
 		old.close()
 		delete(e.quicGWMap.gwMap, gw.Id)
+		e.quicGWMap.rebuildRoutes()
 	}
 	e.quicGWMap.Unlock()
 
@@ -243,6 +258,7 @@ func (e *quicEngine) addGW(ctx context.Context, gw *userv1.Gateway) error {
 
 	e.quicGWMap.Lock()
 	e.quicGWMap.gwMap[gw.Id] = newGW
+	e.quicGWMap.rebuildRoutes()
 	e.quicGWMap.Unlock()
 	e.mu.Unlock()
 
@@ -423,6 +439,26 @@ func (c *quicEngine) deleteGWByID(gwID string) error {
 	}
 	gw.close()
 	delete(c.quicGWMap.gwMap, gwID)
+	c.quicGWMap.rebuildRoutes()
+
+	return nil
+}
+
+func (m *quicGWMap) rebuildRoutes() {
+	routes := make([]quicRoute, 0, len(m.gwMap))
+	for _, gw := range m.gwMap {
+		for _, cidr := range gw.cidrs {
+			routes = append(routes, quicRoute{cidr: cidr, gw: gw})
+		}
+	}
+
+	m.routes.Store(&routes)
+}
+
+func (m *quicGWMap) getRoutes() []quicRoute {
+	if routes := m.routes.Load(); routes != nil {
+		return *routes
+	}
 
 	return nil
 }
@@ -508,6 +544,7 @@ func (c *quicGW) startSendToGWLoop(ctx context.Context) {
 			if err := c.conn.SendDatagram(buf); err != nil {
 				zap.L().Debug("Could not send datagram msg", zap.String("gw", c.gw.Id), zap.Error(err))
 			}
+			c.engine.putPktBuf(buf)
 		}
 	}
 }
@@ -542,26 +579,37 @@ func (c *quicGW) startReceiveFromGWLoop(ctx context.Context) {
 }
 
 func (c *quicEngine) startTunWriteLoop(ctx context.Context) {
+	buffs := make([][]byte, 1)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case pkt := <-c.tunCh:
-
-			buffs := make([][]byte, 1)
-			buffs[0] = pkt[:]
+			buffs[0] = pkt
 
 			if _, err := c.ctl.getTUNDev().Write(buffs, 0); err != nil {
 				zap.L().Debug("Could not write to tun", zap.Error(err))
 			}
+
+			buffs[0] = nil
 		}
 	}
 }
 
 func (c *quicEngine) startTunReadLoop(ctx context.Context) {
-	buf := make([]byte, 65535)
-	buffs := [][]byte{buf}
-	sizes := []int{0}
+	tunDev := c.ctl.getTUNDev()
+
+	batchSize := tunDev.BatchSize()
+	if batchSize < 1 {
+		batchSize = 1
+	}
+
+	buffs := make([][]byte, batchSize)
+	for i := range buffs {
+		buffs[i] = make([]byte, quicMaxPacketSize+tunPacketOffset)
+	}
+	sizes := make([]int, batchSize)
 
 	for {
 		select {
@@ -570,7 +618,7 @@ func (c *quicEngine) startTunReadLoop(ctx context.Context) {
 		default:
 		}
 
-		n, err := c.ctl.getTUNDev().Read(buffs, sizes, tunPacketOffset)
+		n, err := tunDev.Read(buffs, sizes, tunPacketOffset)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -580,30 +628,51 @@ func (c *quicEngine) startTunReadLoop(ctx context.Context) {
 		}
 
 		for i := 0; i < n; i++ {
-			if sizes[i] <= 0 {
+			if sizes[i] <= 0 || sizes[i] > quicMaxPacketSize {
 				continue
 			}
+
 			start := tunPacketOffset
 			end := sizes[i] + tunPacketOffset
-			pkt := make([]byte, end-start)
+
+			pkt := c.getPktBuf()[:sizes[i]]
 			copy(pkt, buffs[i][start:end])
 			c.processTunPkt(pkt)
 		}
 	}
 }
 
-func (c *quicEngine) processTunPkt(pkt []byte) {
-	c.quicGWMap.RLock()
-	defer c.quicGWMap.RUnlock()
-
-	gw := c.getGWFromPkt(pkt)
-
-	if gw != nil {
-		select {
-		case gw.gwCh <- pkt:
-		default:
-			zap.L().Debug("Dropping QUIC packet...", zap.String("gw", gw.gw.Id))
+func (c *quicEngine) getPktBuf() []byte {
+	if v := c.pktPool.Get(); v != nil {
+		if buf := v.(*[]byte); cap(*buf) >= quicMaxPacketSize {
+			return (*buf)[:quicMaxPacketSize]
 		}
+	}
+
+	return make([]byte, quicMaxPacketSize)
+}
+
+func (c *quicEngine) putPktBuf(pkt []byte) {
+	if cap(pkt) < quicMaxPacketSize {
+		return
+	}
+
+	buf := pkt[:cap(pkt)]
+	c.pktPool.Put(&buf)
+}
+
+func (c *quicEngine) processTunPkt(pkt []byte) {
+	gw := c.getGWFromPkt(pkt)
+	if gw == nil {
+		c.putPktBuf(pkt)
+		return
+	}
+
+	select {
+	case gw.gwCh <- pkt:
+	default:
+		c.putPktBuf(pkt)
+		zap.L().Debug("Dropping QUIC packet...", zap.String("gw", gw.gw.Id))
 	}
 }
 
@@ -633,11 +702,9 @@ func (c *quicEngine) getGWFromPkt(pkt []byte) *quicGW {
 		return nil
 	}
 
-	for _, gw := range c.quicGWMap.gwMap {
-		for _, cidr := range gw.cidrs {
-			if cidr.Contains(dst) {
-				return gw
-			}
+	for _, route := range c.quicGWMap.getRoutes() {
+		if route.cidr.Contains(dst) {
+			return route.gw
 		}
 	}
 

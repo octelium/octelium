@@ -56,6 +56,11 @@ type Controller struct {
 		servers []net.IP
 	}
 
+	clusterDNSServers struct {
+		sync.Mutex
+		servers []string
+	}
+
 	isNetstack bool
 	isQUIC     bool
 	nsTun      *netTun
@@ -164,6 +169,13 @@ func (c *Controller) Close() error {
 }
 
 func (c *Controller) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
 	zap.L().Debug("Starting controller...")
 
 	if err := c.setServiceConfigs(); err != nil {
@@ -253,6 +265,17 @@ func (c *Controller) startLocalDNSServer() {
 }
 
 func (c *Controller) Reconfigure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	return c.reconfigure()
+}
+
+func (c *Controller) reconfigure() error {
 
 	if err := c.setWGDev(); err != nil {
 		return err
@@ -262,14 +285,51 @@ func (c *Controller) Reconfigure() error {
 		return err
 	}
 
-	if err := c.SetDNS(); err != nil {
+	if err := c.setDNS(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
+func (c *Controller) SetConnectionState(state *userv1.ConnectionState) error {
+	if state == nil {
+		return errors.Errorf("Cannot set a nil Connection state")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	c.c.Connection = state
+
+	return c.reconfigure()
+}
+
+func (c *Controller) UpdateDNS(dns *userv1.DNS) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	c.c.Connection.Dns = dns
+
+	return c.setDNS()
+}
+
 func (c *Controller) UpdatePrivateKey(key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
 	if c.isQUIC {
 		return nil
 	}
@@ -327,7 +387,8 @@ func getESOCKS5ListenAddrs(connCfg *cliconfigv1.Connection) []string {
 		if addr.V4 != "" && ipv4Supported {
 			ret = append(ret,
 				net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv4, portStr))
-		} else if addr.V6 != "" && ipv6Supported {
+		}
+		if addr.V6 != "" && ipv6Supported {
 			ret = append(ret,
 				net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv6, portStr))
 		}

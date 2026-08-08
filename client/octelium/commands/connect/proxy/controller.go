@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	controller "github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -64,20 +65,40 @@ func NewController(ctx context.Context, c *cliconfigv1.Connection, goNetCtl ccom
 }
 
 func (c *Controller) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.isClosed {
+		c.mu.Unlock()
+		return errors.Errorf("The proxy controller is already closed")
+	}
 	c.ctx, c.cancelFn = context.WithCancel(ctx)
+	c.mu.Unlock()
 
 	zap.L().Debug("Starting proxy controller")
 
 	return c.ctl.Start(ctx)
 }
 
-func (c *Controller) AddService(svc *userv1.HostedService) error {
+func (c *Controller) getCtx() (context.Context, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if err := c.ctl.AddService(c.ctx, svc); err != nil {
+	if c.isClosed {
+		return nil, errors.Errorf("The proxy controller is already closed")
+	}
+	if c.ctx == nil {
+		return nil, errors.Errorf("The proxy controller is not started yet")
+	}
+
+	return c.ctx, nil
+}
+
+func (c *Controller) AddService(svc *userv1.HostedService) error {
+	ctx, err := c.getCtx()
+	if err != nil {
 		return err
 	}
 
-	return nil
+	return c.ctl.AddService(ctx, svc)
 }
 
 func (c *Controller) DeleteService(name string) error {
@@ -86,8 +107,12 @@ func (c *Controller) DeleteService(name string) error {
 }
 
 func (c *Controller) UpdateService(svc *userv1.HostedService) error {
+	ctx, err := c.getCtx()
+	if err != nil {
+		return err
+	}
 
-	return c.ctl.UpdateService(c.ctx, svc)
+	return c.ctl.UpdateService(ctx, svc)
 }
 
 func (c *Controller) Close() error {
@@ -98,7 +123,9 @@ func (c *Controller) Close() error {
 	}
 	zap.S().Debugf("Closing proxy controller...")
 	c.isClosed = true
-	c.cancelFn()
+	if c.cancelFn != nil {
+		c.cancelFn()
+	}
 
 	return c.ctl.Close()
 }

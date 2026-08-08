@@ -41,6 +41,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 )
 
+const netstackIncomingPacketQueue = 1024
+
 type netTun struct {
 	stack          *stack.Stack
 	dispatcher     stack.NetworkDispatcher
@@ -89,15 +91,24 @@ func (*endpoint) LinkAddress() tcpip.LinkAddress {
 func (*endpoint) Wait() {}
 
 func (e *endpoint) WritePacket(pkt *stack.PacketBuffer) tcpip.Error {
+	select {
+	case <-e.closed:
+		return &tcpip.ErrClosedForSend{}
+	default:
+	}
+
 	view := pkt.ToView()
 
 	select {
 	case e.incomingPacket <- view:
 		return nil
-	case <-e.closed:
-		view.Release()
-		return &tcpip.ErrClosedForSend{}
+	default:
 	}
+
+	view.Release()
+	zap.L().Debug("Dropping an outgoing netstack packet. The TUN queue is full")
+
+	return &tcpip.ErrNoBufferSpace{}
 }
 
 func (e *endpoint) WriteRawPacket(*stack.PacketBuffer) tcpip.Error {
@@ -167,7 +178,7 @@ func (c *Controller) createNetstackTUN() error {
 		ctl:            c,
 		stack:          stack.New(opts),
 		events:         make(chan tun.Event, 10),
-		incomingPacket: make(chan *bufferv2.View),
+		incomingPacket: make(chan *bufferv2.View, netstackIncomingPacketQueue),
 		closed:         make(chan struct{}),
 		hasV4:          c.ipv4Supported,
 		hasV6:          c.ipv6Supported,
@@ -188,20 +199,32 @@ func (c *Controller) createNetstackTUN() error {
 	for _, addr := range c.c.Connection.Addresses {
 
 		if c.ipv4Supported && addr.V4 != "" {
-			_, mip, _ := net.ParseCIDR(addr.V4)
+			ip, _, err := net.ParseCIDR(addr.V4)
+			if err != nil {
+				return errors.Errorf("Could not parse addr v4 %s: %+v", addr.V4, err)
+			}
+			if ip.To4() == nil {
+				return errors.Errorf("Not an IPv4 address: %s", addr.V4)
+			}
 			if err := dev.stack.AddProtocolAddress(1, tcpip.ProtocolAddress{
 				Protocol:          header.IPv4ProtocolNumber,
-				AddressWithPrefix: tcpip.AddrFromSlice(mip.IP.To4()).WithPrefix(),
+				AddressWithPrefix: tcpip.AddrFromSlice(ip.To4()).WithPrefix(),
 			}, stack.AddressProperties{}); err != nil {
 				return errors.Errorf("Could not add addr v4: %+v", err)
 			}
 
 		}
 		if c.ipv6Supported && addr.V6 != "" {
-			_, mip, _ := net.ParseCIDR(addr.V6)
+			ip, _, err := net.ParseCIDR(addr.V6)
+			if err != nil {
+				return errors.Errorf("Could not parse addr v6 %s: %+v", addr.V6, err)
+			}
+			if ip.To16() == nil {
+				return errors.Errorf("Not an IPv6 address: %s", addr.V6)
+			}
 			if err := dev.stack.AddProtocolAddress(1, tcpip.ProtocolAddress{
 				Protocol:          header.IPv6ProtocolNumber,
-				AddressWithPrefix: tcpip.AddrFromSlice(mip.IP).WithPrefix(),
+				AddressWithPrefix: tcpip.AddrFromSlice(ip.To16()).WithPrefix(),
 			}, stack.AddressProperties{}); err != nil {
 				return errors.Errorf("Could not add addr v6: %+v", err)
 			}
@@ -281,6 +304,8 @@ func (tun *netTun) Write(buffs [][]byte, offset int) (int, error) {
 		case 6:
 			tun.dispatcher.DeliverNetworkPacket(ipv6.ProtocolNumber, pkb)
 		}
+
+		pkb.DecRef()
 	}
 
 	return len(buffs), nil

@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy/userspace"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
@@ -62,6 +63,13 @@ func NewController(ctx context.Context, c *cliconfigv1.Connection, goNetCtl ccom
 }
 
 func (c *Controller) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The proxy controller is already closed")
+	}
+
 	zap.S().Debugf("Starting proxy controller")
 
 	sOpts := c.c.Connection.ServiceOptions
@@ -125,10 +133,28 @@ func (c *Controller) addProxy(ctx context.Context, listener *userv1.HostedServic
 }
 
 func (c *Controller) AddService(ctx context.Context, svc *userv1.HostedService) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The proxy controller is already closed")
+	}
+
 	return c.doAddService(ctx, svc)
 }
 
 func (c *Controller) DeleteService(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return nil
+	}
+
+	return c.deleteService(name)
+}
+
+func (c *Controller) deleteService(name string) error {
 
 	for idx := 0; idx < len(c.proxies); idx++ {
 		if c.proxies[idx].svc.Name == name {
@@ -155,6 +181,17 @@ func (c *Controller) deleteProxy(p *proxy) {
 }
 
 func (c *Controller) UpdateService(ctx context.Context, svc *userv1.HostedService) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The proxy controller is already closed")
+	}
+
+	return c.updateService(ctx, svc)
+}
+
+func (c *Controller) updateService(ctx context.Context, svc *userv1.HostedService) error {
 
 	zap.S().Debugf("Updating svc: %+v", svc)
 

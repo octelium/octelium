@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -43,6 +44,18 @@ func newTestQUICEngine(gws []*userv1.Gateway) *quicEngine {
 			},
 		},
 	})
+}
+
+func (e *quicEngine) getRoutesGW(addr string) *quicGW {
+	ip := netip.MustParseAddr(addr)
+
+	for _, route := range e.quicGWMap.getRoutes() {
+		if route.cidr.Contains(ip) {
+			return route.gw
+		}
+	}
+
+	return nil
 }
 
 func TestQUICEngineCloseIsIdempotent(t *testing.T) {
@@ -171,4 +184,65 @@ func TestQUICGWCloseWithFullCloseCh(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("closing the gw blocked on a full close channel")
 	}
+}
+
+func TestQUICRouteTable(t *testing.T) {
+	e := newTestQUICEngine(nil)
+
+	assert.Nil(t, e.getGWFromPkt(nil))
+	assert.Nil(t, e.getRoutesGW("10.0.0.5"))
+
+	gwA, err := newQUIGW(e, &userv1.Gateway{
+		Id:     "gw-a",
+		CIDRs:  []string{"10.0.0.0/8", "fd00::/8"},
+		Quicv0: &userv1.Gateway_QUICV0{Port: 1},
+	})
+	assert.Nil(t, err)
+
+	gwB, err := newQUIGW(e, &userv1.Gateway{
+		Id:     "gw-b",
+		CIDRs:  []string{"192.168.0.0/16"},
+		Quicv0: &userv1.Gateway_QUICV0{Port: 1},
+	})
+	assert.Nil(t, err)
+
+	e.quicGWMap.Lock()
+	e.quicGWMap.gwMap["gw-a"] = gwA
+	e.quicGWMap.gwMap["gw-b"] = gwB
+	e.quicGWMap.rebuildRoutes()
+	e.quicGWMap.Unlock()
+
+	assert.Equal(t, gwA, e.getRoutesGW("10.1.2.3"))
+	assert.Equal(t, gwA, e.getRoutesGW("fd00::1"))
+	assert.Equal(t, gwB, e.getRoutesGW("192.168.1.1"))
+	assert.Nil(t, e.getRoutesGW("8.8.8.8"))
+
+	assert.Nil(t, e.deleteGWByID("gw-a"))
+	assert.Nil(t, e.getRoutesGW("10.1.2.3"))
+	assert.Equal(t, gwB, e.getRoutesGW("192.168.1.1"))
+
+	assert.Nil(t, e.close())
+	assert.Nil(t, e.getRoutesGW("192.168.1.1"))
+}
+
+func TestQUICPktBufPool(t *testing.T) {
+	e := newTestQUICEngine(nil)
+
+	buf := e.getPktBuf()
+	assert.Equal(t, quicMaxPacketSize, len(buf))
+
+	e.putPktBuf(buf[:100])
+	assert.Equal(t, quicMaxPacketSize, len(e.getPktBuf()))
+
+	e.putPktBuf(make([]byte, 10))
+	assert.Equal(t, quicMaxPacketSize, len(e.getPktBuf()))
+}
+
+func TestQUICGetGWFromPktWithShortPackets(t *testing.T) {
+	e := newTestQUICEngine(nil)
+
+	assert.Nil(t, e.getGWFromPkt([]byte{}))
+	assert.Nil(t, e.getGWFromPkt([]byte{4 << 4}))
+	assert.Nil(t, e.getGWFromPkt([]byte{6 << 4}))
+	assert.Nil(t, e.getGWFromPkt(make([]byte, 60)))
 }

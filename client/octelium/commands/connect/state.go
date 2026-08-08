@@ -166,17 +166,12 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	case *userv1.ConnectResponse_UpdateDNS_:
 		dns := state.Event.(*userv1.ConnectResponse_UpdateDNS_).UpdateDNS.Dns
 		zap.L().Debug("Updating DNS", zap.Any("dns", dns))
-		c.c.Connection.Dns = dns
-		if err := c.ctl.SetDNS(); err != nil {
+		if err := c.ctl.UpdateDNS(dns); err != nil {
 			return errors.Errorf("Could not set DNS: %+v", err)
 		}
 	case *userv1.ConnectResponse_AddService_:
 		svc := state.Event.(*userv1.ConnectResponse_AddService_).AddService.Service
 		zap.L().Debug("Adding Service", zap.Any("svc", svc))
-
-		if c.c.Connection.ServiceOptions == nil {
-			c.c.Connection.ServiceOptions = &userv1.ConnectionState_ServiceOptions{}
-		}
 
 		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
 			return nil
@@ -191,10 +186,6 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	case *userv1.ConnectResponse_UpdateService_:
 		svc := state.Event.(*userv1.ConnectResponse_UpdateService_).UpdateService.Service
 		zap.L().Debug("Updating Service", zap.Any("svc", svc))
-
-		if c.c.Connection.ServiceOptions == nil {
-			c.c.Connection.ServiceOptions = &userv1.ConnectionState_ServiceOptions{}
-		}
 
 		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
 			return nil
@@ -211,10 +202,6 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 
 		zap.L().Debug("Deleting Service", zap.String("svc", svcName))
 
-		if c.c.Connection.ServiceOptions == nil {
-			return errors.Errorf("Could not delete svc: %s. Service options is nil", svcName)
-		}
-
 		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
 			return nil
 		}
@@ -228,8 +215,7 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 	case *userv1.ConnectResponse_State:
 		zap.L().Debug("Setting the state")
 		connection := state.Event.(*userv1.ConnectResponse_State).State
-		c.c.Connection = connection
-		if err := c.ctl.Reconfigure(); err != nil {
+		if err := c.ctl.SetConnectionState(connection); err != nil {
 			return err
 		}
 

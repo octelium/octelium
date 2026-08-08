@@ -24,33 +24,93 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCache(t *testing.T) {
-	cache := newCache()
-	cache.duration = 2 * time.Second
-
-	{
-		c := dns.Client{}
-		m := dns.Msg{}
-
-		domain := "google.com."
-		typ := dns.TypeA
-
-		m.SetQuestion(domain, typ)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		r, _, err := c.ExchangeContext(ctx, &m, "8.8.8.8:53")
-		assert.Nil(t, err)
-
-		cache.set(domain, typ, r)
-		res := cache.get(domain, typ)
-		assert.NotNil(t, res)
-
-		time.Sleep(3 * time.Second)
-		res = cache.get(domain, typ)
-		assert.Nil(t, res)
+func newTestCachedMsg(domain string, ttl uint32) *dns.Msg {
+	m := &dns.Msg{}
+	m.SetQuestion(domain, dns.TypeA)
+	m.Response = true
+	m.Rcode = dns.RcodeSuccess
+	m.Answer = []dns.RR{
+		&dns.A{
+			Hdr: dns.RR_Header{
+				Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl,
+			},
+			A: net.ParseIP("1.2.3.4"),
+		},
 	}
+
+	return m
+}
+
+func TestCache(t *testing.T) {
+	c := newCache()
+
+	domain := "svc1.local.example.com."
+
+	c.set(domain, dns.TypeA, newTestCachedMsg(domain, 60))
+
+	res := c.get(domain, dns.TypeA)
+	assert.NotNil(t, res)
+	assert.Equal(t, uint32(60), res.Answer[0].Header().Ttl)
+
+	res.Answer[0].Header().Ttl = 1
+	assert.Equal(t, uint32(60), c.get(domain, dns.TypeA).Answer[0].Header().Ttl)
+
+	assert.Nil(t, c.get(domain, dns.TypeAAAA))
+	assert.Nil(t, c.get("other.local.example.com.", dns.TypeA))
+}
+
+func TestCacheKeyIsCaseInsensitive(t *testing.T) {
+	c := newCache()
+
+	c.set("SVC1.Local.Example.COM.", dns.TypeA,
+		newTestCachedMsg("SVC1.Local.Example.COM.", 60))
+
+	assert.NotNil(t, c.get("svc1.local.example.com.", dns.TypeA))
+	assert.NotNil(t, c.get("SVC1.LOCAL.EXAMPLE.COM.", dns.TypeA))
+}
+
+func TestCacheRespectsRecordTTL(t *testing.T) {
+	c := newCache()
+
+	domain := "svc1.local.example.com."
+
+	c.set(domain, dns.TypeA, newTestCachedMsg(domain, 10))
+
+	time.Sleep(1100 * time.Millisecond)
+
+	res := c.get(domain, dns.TypeA)
+	assert.NotNil(t, res)
+	assert.True(t, res.Answer[0].Header().Ttl < 10)
+	assert.True(t, res.Answer[0].Header().Ttl >= 8)
+}
+
+func TestCacheTTLIsClamped(t *testing.T) {
+	assert.Equal(t, cacheMinTTL, getMsgTTL(newTestCachedMsg("a.", 0)))
+	assert.Equal(t, cacheMinTTL, getMsgTTL(newTestCachedMsg("a.", 1)))
+	assert.Equal(t, 60*time.Second, getMsgTTL(newTestCachedMsg("a.", 60)))
+	assert.Equal(t, cacheMaxTTL, getMsgTTL(newTestCachedMsg("a.", 86400)))
+}
+
+func TestCacheSkipsUncacheableResponses(t *testing.T) {
+	c := newCache()
+
+	domain := "svc1.local.example.com."
+
+	failure := newTestCachedMsg(domain, 60)
+	failure.Rcode = dns.RcodeNameError
+	c.set(domain, dns.TypeA, failure)
+	assert.Nil(t, c.get(domain, dns.TypeA))
+
+	truncated := newTestCachedMsg(domain, 60)
+	truncated.Truncated = true
+	c.set(domain, dns.TypeA, truncated)
+	assert.Nil(t, c.get(domain, dns.TypeA))
+
+	c.set(domain, dns.TypeMX, newTestCachedMsg(domain, 60))
+	assert.Nil(t, c.get(domain, dns.TypeMX))
+
+	c.set(domain, dns.TypeA, nil)
+	assert.Nil(t, c.get(domain, dns.TypeA))
 }
 
 type tstDNSGetter struct {

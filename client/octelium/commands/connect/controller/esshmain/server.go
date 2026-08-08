@@ -77,7 +77,8 @@ func New(c *cliconfigv1.Connection, goNetCtl ccommon.GoNetCtl,
 			if addr.V4 != "" && ipv4Supported {
 				listenAddrs = append(listenAddrs,
 					net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv4, portStr))
-			} else if addr.V6 != "" && ipv6Supported {
+			}
+			if addr.V6 != "" && ipv6Supported {
 				listenAddrs = append(listenAddrs,
 					net.JoinHostPort(umetav1.ToDualStackNetwork(addr).ToIP().Ipv6, portStr))
 			}

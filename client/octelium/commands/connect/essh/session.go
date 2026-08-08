@@ -296,6 +296,10 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 
 	cmd := exec.CommandContext(ctx, shellPath, "-c", cmdStr)
 
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
 	if !c.sameUser {
 		uid, err := strconv.ParseUint(usr.Uid, 10, 32)
 		if err != nil {
@@ -306,9 +310,11 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 			return err
 		}
 
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)},
-		}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
+	}
+
+	if usr.HomeDir != "" {
+		cmd.Dir = usr.HomeDir
 	}
 
 	cmd.Stdout = ch
@@ -345,9 +351,7 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 		select {
 		case <-ctx.Done():
 			zap.L().Debug("ctx done. Exiting exec...")
-			if cmd.Process != nil {
-				cmd.Process.Kill()
-			}
+			killProcessGroup(cmd)
 
 			sessCtx.sendSessionExitStatus(130)
 

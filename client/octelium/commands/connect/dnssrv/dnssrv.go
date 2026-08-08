@@ -29,7 +29,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const listenTimeout = 5 * time.Second
+const (
+	listenTimeout   = 5 * time.Second
+	upstreamTimeout = 10 * time.Second
+	upstreamUDPSize = 4096
+)
 
 type Opts struct {
 	ClusterDomain string
@@ -121,8 +125,8 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	q := msg.Question[0]
 	domain := q.Name
 
-	upstreamAddr := s.getUpstreamAddr()
-	if upstreamAddr == "" {
+	upstreamAddrs := s.getUpstreamAddrs()
+	if len(upstreamAddrs) == 0 {
 		zap.L().Debug("Local DNS: no Cluster DNS servers available")
 		msg.SetRcode(r, dns.RcodeServerFailure)
 		w.WriteMsg(&msg)
@@ -132,7 +136,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	switch q.Qtype {
 	case dns.TypeA, dns.TypeAAAA:
 	default:
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
+		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
 		if err != nil {
 			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 			msg.SetRcode(r, dns.RcodeServerFailure)
@@ -148,7 +152,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if !s.isClusterName(domain) {
 
-		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
+		ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
 		if err != nil {
 			zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 			msg.SetRcode(r, dns.RcodeServerFailure)
@@ -176,7 +180,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddr)
+	ret, err := s.getExchangeAnswer(&msg, domain, q.Qtype, upstreamAddrs)
 	if err != nil {
 		zap.L().Debug("Local DNS: Could not exchange answer for Cluster zone", zap.Error(err))
 		msg.SetRcode(r, dns.RcodeServerFailure)
@@ -189,13 +193,15 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	w.WriteMsg(&msg)
 }
 
-func (s *Server) getUpstreamAddr() string {
-	servers := s.dnsGetter.GetClusterDNSServers()
-	if len(servers) == 0 {
-		return ""
+func (s *Server) getUpstreamAddrs() []string {
+	var ret []string
+	for _, server := range s.dnsGetter.GetClusterDNSServers() {
+		if govalidator.IsIP(server) {
+			ret = append(ret, net.JoinHostPort(server, "53"))
+		}
 	}
 
-	return net.JoinHostPort(servers[0], "53")
+	return ret
 }
 
 func (s *Server) ListenHost() string {
@@ -203,26 +209,48 @@ func (s *Server) ListenHost() string {
 	return host
 }
 
-func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvAddr string) (*dns.Msg, error) {
+func (s *Server) getExchangeAnswer(msg *dns.Msg, domain string, typ uint16, srvAddrs []string) (*dns.Msg, error) {
 
 	if cached := s.cache.get(domain, typ); cached != nil {
 		return cached, nil
 	}
 
-	c := dns.Client{}
+	if len(srvAddrs) == 0 {
+		return nil, errors.Errorf("No Cluster DNS servers available")
+	}
+
+	var retErr error
+	for _, srvAddr := range srvAddrs {
+		r, err := s.doExchange(domain, typ, srvAddr)
+		if err != nil {
+			zap.L().Debug("Local DNS: Could not exchange with the Cluster DNS server",
+				zap.String("addr", srvAddr), zap.Error(err))
+			retErr = err
+			continue
+		}
+
+		s.cache.set(domain, typ, r)
+
+		return r, nil
+	}
+
+	return nil, retErr
+}
+
+func (s *Server) doExchange(domain string, typ uint16, srvAddr string) (*dns.Msg, error) {
+	c := dns.Client{UDPSize: upstreamUDPSize}
 	m := dns.Msg{}
 
 	m.SetQuestion(domain, typ)
+	m.SetEdns0(upstreamUDPSize, false)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), upstreamTimeout)
 	defer cancel()
 
 	r, _, err := c.ExchangeContext(ctx, &m, srvAddr)
 	if err != nil {
 		return nil, err
 	}
-
-	s.cache.set(domain, typ, r)
 
 	return r, nil
 }
@@ -317,45 +345,83 @@ func (s *Server) Close() error {
 	return nil
 }
 
+const (
+	cacheMinTTL = 5 * time.Second
+	cacheMaxTTL = 300 * time.Second
+)
+
 type cache struct {
 	sync.RWMutex
-	cMap     map[string]*cacheVal
-	duration time.Duration
+	cMap map[string]*cacheVal
 }
 
 type cacheVal struct {
-	r   *dns.Msg
-	exp time.Time
+	r        *dns.Msg
+	cachedAt time.Time
+	exp      time.Time
 }
 
 func newCache() *cache {
 	return &cache{
-		cMap:     make(map[string]*cacheVal),
-		duration: 30 * time.Second,
+		cMap: make(map[string]*cacheVal),
 	}
 }
 
 func getCacheKey(domain string, typ uint16) string {
-	return fmt.Sprintf("%s:%d", domain, typ)
+	return fmt.Sprintf("%s:%d", strings.ToLower(domain), typ)
+}
+
+func getMsgTTL(r *dns.Msg) time.Duration {
+	ttl := cacheMaxTTL
+
+	for _, rrs := range [][]dns.RR{r.Answer, r.Ns, r.Extra} {
+		for _, rr := range rrs {
+			if rr == nil || rr.Header().Rrtype == dns.TypeOPT {
+				continue
+			}
+			if cur := time.Duration(rr.Header().Ttl) * time.Second; cur < ttl {
+				ttl = cur
+			}
+		}
+	}
+
+	return min(max(ttl, cacheMinTTL), cacheMaxTTL)
 }
 
 func (c *cache) get(domain string, typ uint16) *dns.Msg {
 	c.RLock()
-	defer c.RUnlock()
 	val, ok := c.cMap[getCacheKey(domain, typ)]
+	c.RUnlock()
 	if !ok {
 		return nil
 	}
 
-	if time.Now().After(val.exp) {
+	now := time.Now()
+	if now.After(val.exp) {
 		return nil
 	}
 
-	return val.r
+	elapsed := uint32(now.Sub(val.cachedAt) / time.Second)
+
+	ret := val.r.Copy()
+	for _, rrs := range [][]dns.RR{ret.Answer, ret.Ns, ret.Extra} {
+		for _, rr := range rrs {
+			if rr == nil || rr.Header().Rrtype == dns.TypeOPT {
+				continue
+			}
+			if rr.Header().Ttl <= elapsed {
+				rr.Header().Ttl = 1
+				continue
+			}
+			rr.Header().Ttl -= elapsed
+		}
+	}
+
+	return ret
 }
 
 func (c *cache) set(domain string, typ uint16, r *dns.Msg) {
-	if r.Rcode != dns.RcodeSuccess {
+	if r == nil || r.Rcode != dns.RcodeSuccess || r.Truncated {
 		return
 	}
 
@@ -365,10 +431,13 @@ func (c *cache) set(domain string, typ uint16, r *dns.Msg) {
 		return
 	}
 
+	now := time.Now()
+
 	c.Lock()
 	c.cMap[getCacheKey(domain, typ)] = &cacheVal{
-		r:   r,
-		exp: time.Now().Add(c.duration),
+		r:        r.Copy(),
+		cachedAt: now,
+		exp:      now.Add(getMsgTTL(r)),
 	}
 	c.Unlock()
 }

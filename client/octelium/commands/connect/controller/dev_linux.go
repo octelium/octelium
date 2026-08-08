@@ -243,14 +243,14 @@ func (c *Controller) doSetDevAddrs() error {
 
 	for _, ip := range addAddrs {
 		if c.ipv4Supported && ip.V4 != "" {
-			_, cidr, err := net.ParseCIDR(ip.V4)
+			addr, cidr, err := net.ParseCIDR(ip.V4)
 			if err != nil {
 				return err
 			}
-			zap.L().Debug("Adding ipv4 addr", zap.String("addr", cidr.String()))
+			zap.L().Debug("Adding ipv4 addr", zap.String("addr", ip.V4))
 			if err := netlink.AddrAdd(l, &netlink.Addr{
 				IPNet: &net.IPNet{
-					IP:   cidr.IP,
+					IP:   addr,
 					Mask: cidr.Mask,
 				},
 			}); err != nil {
@@ -259,14 +259,14 @@ func (c *Controller) doSetDevAddrs() error {
 		}
 
 		if c.ipv6Supported && ip.V6 != "" {
-			_, cidr, err := net.ParseCIDR(ip.V6)
+			addr, cidr, err := net.ParseCIDR(ip.V6)
 			if err != nil {
 				return err
 			}
-			zap.L().Debug("Adding ipv6 addr", zap.String("addr", cidr.String()))
+			zap.L().Debug("Adding ipv6 addr", zap.String("addr", ip.V6))
 			if err := netlink.AddrAdd(l, &netlink.Addr{
 				IPNet: &net.IPNet{
-					IP:   cidr.IP,
+					IP:   addr,
 					Mask: cidr.Mask,
 				},
 			}); err != nil {

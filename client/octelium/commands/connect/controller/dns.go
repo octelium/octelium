@@ -42,6 +42,17 @@ func (c *Controller) getCurrentDNS() net.IP {
 }
 
 func (c *Controller) SetDNS() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	return c.setDNS()
+}
+
+func (c *Controller) setDNS() error {
 
 	dnsServers := c.getDNSServers()
 	var curServers []net.IP
@@ -54,6 +65,11 @@ func (c *Controller) SetDNS() error {
 	c.dnsServers.Lock()
 	c.dnsServers.servers = curServers
 	c.dnsServers.Unlock()
+
+	clusterServers := c.getClusterDNSServers()
+	c.clusterDNSServers.Lock()
+	c.clusterDNSServers.servers = clusterServers
+	c.clusterDNSServers.Unlock()
 
 	if c.isNetstack || c.c.Preferences.IgnoreDNS || len(dnsServers) == 0 {
 		zap.L().Debug("Ignoring setting DNS")
@@ -79,6 +95,13 @@ func (c *Controller) SetDNS() error {
 }
 
 func (c *Controller) UnsetDNS() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.unsetDNS()
+}
+
+func (c *Controller) unsetDNS() error {
 	zap.L().Debug("Unsetting DNS")
 	if c.isNetstack || c.c.Preferences.IgnoreDNS {
 		return nil
@@ -137,7 +160,10 @@ func (c *Controller) getClusterDNSServers() []string {
 }
 
 func (c *Controller) GetClusterDNSServers() []string {
-	return c.getClusterDNSServers()
+	c.clusterDNSServers.Lock()
+	defer c.clusterDNSServers.Unlock()
+
+	return slices.Clone(c.clusterDNSServers.servers)
 }
 
 func (c *Controller) getDNSSearchDomains() []string {

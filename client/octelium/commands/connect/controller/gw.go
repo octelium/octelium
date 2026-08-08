@@ -23,6 +23,17 @@ import (
 )
 
 func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	return c.addGateway(ctx, gw)
+}
+
+func (c *Controller) addGateway(ctx context.Context, gw *userv1.Gateway) error {
 	if gw == nil {
 		return errors.Errorf("Cannot add a nil Gateway")
 	}
@@ -54,6 +65,17 @@ func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
 }
 
 func (c *Controller) UpdateGateway(ctx context.Context, gw *userv1.Gateway) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	return c.updateGateway(ctx, gw)
+}
+
+func (c *Controller) updateGateway(ctx context.Context, gw *userv1.Gateway) error {
 	if gw == nil {
 		return errors.Errorf("Cannot update a nil Gateway")
 	}
@@ -91,6 +113,17 @@ func (c *Controller) UpdateGateway(ctx context.Context, gw *userv1.Gateway) erro
 }
 
 func (c *Controller) DeleteGateway(ctx context.Context, gwID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+
+	return c.deleteGateway(ctx, gwID)
+}
+
+func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 
 	if c.isQUIC {
 		if c.quicEngine == nil {

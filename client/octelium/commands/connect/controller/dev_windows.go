@@ -250,10 +250,20 @@ func (c *Controller) watchInterface() error {
 
 	var err error
 	iw.interfaceChangeCallback, err = winipcfg.RegisterInterfaceChangeCallback(func(notificationType winipcfg.MibNotificationType, iface *winipcfg.MibIPInterfaceRow) {
+		if notificationType != winipcfg.MibAddInstance {
+			return
+		}
+
+		if !c.mu.TryLock() {
+			zap.L().Debug("Could not acquire the controller lock. Skipping the interface change event")
+			return
+		}
+		defer c.mu.Unlock()
+
 		iw.mu.Lock()
 		defer iw.mu.Unlock()
 
-		if notificationType != winipcfg.MibAddInstance {
+		if c.isClosed {
 			return
 		}
 
