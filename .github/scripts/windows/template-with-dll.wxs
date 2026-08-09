@@ -40,6 +40,9 @@
       <Component Id="WireGuardDLL" Guid="${COMPONENT_GUID_2}">
         <File Id="WireGuardDll" Source="bin\wireguard.dll" KeyPath="yes" />
       </Component>
+      <Component Id="WintunDLL" Guid="${COMPONENT_GUID_3}">
+        <File Id="WintunDll" Source="bin\wintun.dll" KeyPath="yes" />
+      </Component>
     </ComponentGroup>
     
     <Component Id="PATH" Guid="${PATH_GUID}" Directory="BIN_FOLDER">

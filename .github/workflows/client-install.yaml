@@ -61,10 +61,13 @@ jobs:
           octelium version
           octeliumctl version
           octops version
-          $dllPath = Join-Path $HOME ".local\bin\wireguard.dll"
-          if (Test-Path $dllPath) {
-              Write-Host "wireguard.dll found in bin directory."
-          } else {
-              Write-Error "wireguard.dll is missing from installation directory!"
-              exit 1
+          $binDir = Join-Path $HOME ".local\bin"
+          foreach ($dll in @("wireguard.dll", "wintun.dll")) {
+              $dllPath = Join-Path $binDir $dll
+              if (Test-Path $dllPath) {
+                  Write-Host "$dll found in bin directory."
+              } else {
+                  Write-Error "$dll is missing from installation directory!"
+                  exit 1
+              }
           }

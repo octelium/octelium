@@ -20,6 +20,7 @@ $ComponentGuids = @{
     'octelium' = @{
         'MainExe' = 'AF4CA0D6-6605-4951-B837-8BB7EA8D91E1'
         'WireGuardDll' = '8352CC11-3CE1-4BA4-A80B-81E9606038DB'
+        'WintunDll' = '4A72A20A-F2D3-44C5-9E69-D413ADF1132B'
         'Path' = 'B9F2DB53-9911-468D-8864-E58A87B0695F'
     }
     'octeliumctl' = @{
@@ -41,6 +42,7 @@ $UpgradeCode = switch ($PackageName) {
 
 $ComponentGuid1 = $ComponentGuids[$PackageName]['MainExe']
 $ComponentGuid2 = if ($IncludeWireGuard) { $ComponentGuids[$PackageName]['WireGuardDll'] } else { $null }
+$ComponentGuid3 = if ($IncludeWireGuard) { $ComponentGuids[$PackageName]['WintunDll'] } else { $null }
 $PathGuid = $ComponentGuids[$PackageName]['Path']
 
 $Description = switch ($PackageName) {
@@ -72,6 +74,7 @@ $wxsContent = $wxsContent -replace '\$\{UPGRADE_CODE\}', $UpgradeCode
 $wxsContent = $wxsContent -replace '\$\{DESCRIPTION\}', $Description
 $wxsContent = $wxsContent -replace '\$\{COMPONENT_GUID_1\}', $ComponentGuid1
 $wxsContent = $wxsContent -replace '\$\{COMPONENT_GUID_2\}', $ComponentGuid2
+$wxsContent = $wxsContent -replace '\$\{COMPONENT_GUID_3\}', $ComponentGuid3
 $wxsContent = $wxsContent -replace '\$\{PATH_GUID\}', $PathGuid
 
 $wxsPath = "packaging/msi/$PackageName.wxs"
