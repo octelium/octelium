@@ -57,11 +57,11 @@ func (c *Controller) doInitDevQUICV0(ctx context.Context) error {
 
 	switch {
 	case cliutils.IsLinux():
+	case cliutils.IsWindows():
 	case cliutils.IsDarwin():
 		tunPacketOffset = 4
 	default:
 		tunPacketOffset = 4
-		// return errors.Errorf("QUIC is currently only supported for Linux and MacOS")
 	}
 
 	zap.L().Debug("Initializing the QUIC engine")

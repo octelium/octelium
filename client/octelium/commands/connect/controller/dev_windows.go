@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
+	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/windows/driver"
 	"golang.zx2c4.com/wireguard/windows/services"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -38,7 +39,17 @@ func setTunDev() error {
 }
 
 func (c *Controller) doInitDev(ctx context.Context) error {
-	if !c.isQUIC {
+	if c.isQUIC {
+		err := c.doInitDevTUNQUICV0(ctx)
+		if err == nil {
+			zap.L().Debug("QUICV0 mode chosen: Wintun mode")
+			return nil
+		}
+		zap.L().Debug("Could not init the Wintun implementation. Trying gVisor netstack mode.",
+			zap.Error(err))
+
+		c.unwindPartialDev()
+	} else {
 		err := c.doInitDevTUN(ctx)
 		if err == nil {
 			return nil
@@ -46,12 +57,74 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 		zap.L().Debug("Could not init TUN implementation. Trying gVisor netstack mode.",
 			zap.Error(err))
 
-		c.unwindPartialAdapter()
+		c.unwindPartialDev()
 	}
 
 	if err := c.doInitDevNetstack(ctx); err != nil {
 		return errors.Errorf("Could not init netstack dev: %+v", err)
 	}
+	return nil
+}
+
+func (c *Controller) doInitDevTUNQUICV0(ctx context.Context) error {
+	zap.L().Debug("Starting watching network interface",
+		zap.String("userAgent", version.UserAgent()))
+
+	if err := c.watchInterface(); err != nil {
+		return err
+	}
+
+	if err := c.doSetTunDev(); err != nil {
+		return err
+	}
+
+	if err := c.doInitDevQUICV0(ctx); err != nil {
+		return err
+	}
+
+	c.configureIface()
+
+	return nil
+}
+
+func (c *Controller) doSetTunDev() error {
+	guid, err := c.getTunGUID()
+	if err != nil {
+		return err
+	}
+
+	name := c.getDevName("octelium-quicv0")
+
+	zap.L().Debug("Creating the Wintun device",
+		zap.String("name", name), zap.Int("mtu", c.getMTU()))
+
+	var tundev tun.Device
+	for i := 0; i < 15; i++ {
+		if i > 0 {
+			time.Sleep(time.Second)
+			zap.L().Debug("Retrying the Wintun device creation after failure because system just booted",
+				zap.Duration("sinceBoot", windows.DurationSinceBoot()), zap.Error(err))
+		}
+
+		tundev, err = tun.CreateTUNWithRequestedGUID(name, guid, c.getMTU())
+		if err == nil || !services.StartedAtBoot() {
+			break
+		}
+	}
+	if err != nil {
+		return errors.Errorf("Could not create the Wintun device: %+v", err)
+	}
+
+	c.tundev = tundev
+
+	if realName, err := tundev.Name(); err == nil && realName != "" {
+		c.c.Preferences.DeviceName = realName
+	}
+
+	zap.L().Debug("Successfully created the Wintun device",
+		zap.String("name", c.c.Preferences.DeviceName),
+		zap.Uint64("luid", uint64(c.getLUID())))
+
 	return nil
 }
 
@@ -129,6 +202,10 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 }
 
 func (c *Controller) doSetDevUp() error {
+	if c.opts.adapter == nil {
+		return nil
+	}
+
 	if err := c.opts.adapter.SetAdapterState(driver.AdapterStateUp); err != nil {
 		return err
 	}
@@ -141,12 +218,14 @@ func (c *Controller) doDeleteDev() error {
 		return nil
 	}
 
-	if c.opts.adapter == nil {
-		return nil
+	if err := c.destroyIface(); err != nil {
+		zap.L().Debug("Could not destroy the interface", zap.Error(err))
 	}
 
-	c.destroyIface()
-	c.opts.adapter.Close()
+	if c.opts.adapter != nil {
+		c.opts.adapter.Close()
+		c.opts.adapter = nil
+	}
 
 	return nil
 }
@@ -155,6 +234,11 @@ func (c *Controller) doSetDevAddrs() error {
 
 	if c.isNetstack {
 		return nil
+	}
+
+	luid := c.getLUID()
+	if luid == 0 {
+		return errors.Errorf("The network device is not initialized")
 	}
 
 	ipv4Nets := []netip.Prefix{}
@@ -179,13 +263,13 @@ func (c *Controller) doSetDevAddrs() error {
 	}
 
 	if c.ipv4Supported && len(ipv4Nets) > 0 {
-		if err := c.opts.adapter.LUID().SetIPAddressesForFamily(windows.AF_INET, ipv4Nets); err != nil {
+		if err := luid.SetIPAddressesForFamily(windows.AF_INET, ipv4Nets); err != nil {
 			return err
 		}
 	}
 
 	if c.ipv6Supported && len(ipv6Nets) > 0 {
-		if err := c.opts.adapter.LUID().SetIPAddressesForFamily(windows.AF_INET6, ipv6Nets); err != nil {
+		if err := luid.SetIPAddressesForFamily(windows.AF_INET6, ipv6Nets); err != nil {
 			return err
 		}
 	}
@@ -198,8 +282,19 @@ func (c *Controller) doSetDevAddrs() error {
 }
 
 func (c *Controller) getGUID() (*windows.GUID, error) {
+	return c.getGUIDFromSeed("octelium")
+}
 
-	arg := fmt.Sprintf("octelium-%s", c.c.Info.Cluster.Domain)
+func (c *Controller) getTunGUID() (*windows.GUID, error) {
+	return c.getGUIDFromSeed("octelium-quicv0")
+}
+
+func (c *Controller) getGUIDFromSeed(seed string) (*windows.GUID, error) {
+	if c.c.Info == nil || c.c.Info.Cluster == nil {
+		return nil, errors.Errorf("The Connection does not have Cluster info")
+	}
+
+	arg := fmt.Sprintf("%s-%s", seed, c.c.Info.Cluster.Domain)
 	h := sha256.New()
 	_, err := h.Write([]byte(arg))
 	if err != nil {
@@ -221,6 +316,23 @@ func (c *Controller) getGUID() (*windows.GUID, error) {
 	zap.L().Debug("Got adapter GUID", zap.String("guid", ret.String()))
 
 	return ret, nil
+}
+
+func (c *Controller) getDevName(prefix string) string {
+	return strings.ReplaceAll(
+		fmt.Sprintf("%s-%s", prefix, c.c.Info.Cluster.Domain), ".", "-")
+}
+
+func (c *Controller) getLUID() winipcfg.LUID {
+	if c.opts.adapter != nil {
+		return c.opts.adapter.LUID()
+	}
+
+	if nativeTun, ok := c.tundev.(*tun.NativeTun); ok {
+		return winipcfg.LUID(nativeTun.LUID())
+	}
+
+	return 0
 }
 
 /*
@@ -319,31 +431,26 @@ func (c *Controller) doConfigureIface() error {
 
 func (c *Controller) configureIface() {
 	iw := c.opts.ifaceWatcher
-	if iw == nil || c.opts.adapter == nil {
+	luid := c.getLUID()
+	if iw == nil || luid == 0 {
 		return
 	}
 
-	luid := c.opts.adapter.LUID()
-
 	iw.mu.Lock()
-	defer iw.mu.Unlock()
-
 	iw.luid = luid
-
-	for _, event := range iw.storedEvents {
-		if event.luid == luid {
-			if err := c.doConfigureIface(); err != nil {
-				zap.L().Error("Could not configure interface", zap.Error(err))
-			}
-		}
-	}
 	iw.storedEvents = nil
+	iw.mu.Unlock()
+
+	if err := c.doConfigureIface(); err != nil {
+		zap.L().Error("Could not configure interface", zap.Error(err))
+	}
 }
 
 func (c *Controller) destroyIface() error {
 
 	iw := c.opts.ifaceWatcher
-	if iw == nil || c.opts.adapter == nil {
+	luid := c.getLUID()
+	if iw == nil || luid == 0 {
 		return nil
 	}
 
@@ -351,7 +458,6 @@ func (c *Controller) destroyIface() error {
 	changeCallbacks4 := iw.changeCallbacks4
 	changeCallbacks6 := iw.changeCallbacks6
 	interfaceChangeCallback := iw.interfaceChangeCallback
-	luid := c.opts.adapter.LUID()
 	iw.luid = 0
 	iw.storedEvents = nil
 	iw.mu.Unlock()
@@ -398,15 +504,32 @@ func (c *Controller) destroyIface() error {
 	return nil
 }
 
-func (c *Controller) unwindPartialAdapter() {
-	if c.opts.adapter != nil {
+func (c *Controller) unwindPartialDev() {
+	if c.quicEngine != nil {
+		if err := c.quicEngine.close(); err != nil {
+			zap.L().Debug("Could not close the QUIC engine", zap.Error(err))
+		}
+		c.quicEngine = nil
+	}
+
+	if c.opts.adapter != nil || c.tundev != nil {
 		if err := c.destroyIface(); err != nil {
 			zap.L().Debug("Could not destroy the interface", zap.Error(err))
 		}
+	}
+
+	if c.opts.adapter != nil {
 		if err := c.opts.adapter.Close(); err != nil {
 			zap.L().Debug("Could not close the adapter", zap.Error(err))
 		}
 		c.opts.adapter = nil
+	}
+
+	if c.tundev != nil {
+		if err := c.tundev.Close(); err != nil {
+			zap.L().Debug("Could not close the TUN device", zap.Error(err))
+		}
+		c.tundev = nil
 	}
 
 	if iw := c.opts.ifaceWatcher; iw != nil {

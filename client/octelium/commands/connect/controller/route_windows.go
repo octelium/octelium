@@ -30,11 +30,11 @@ func (c *Controller) doSetRoutes() error {
 		return nil
 	}
 
-	if c.opts.adapter == nil {
+	luid := c.getLUID()
+	if luid == 0 {
 		return nil
 	}
 
-	luid := c.opts.adapter.LUID()
 	routes := []*winipcfg.RouteData{}
 
 	for _, gw := range c.c.Connection.Gateways {
@@ -83,11 +83,11 @@ func (c *Controller) doSetRoutes() error {
 
 func (c *Controller) setIPIF() error {
 	zap.L().Debug("Setting IPIF")
-	if c.opts.adapter == nil {
+
+	luid := c.getLUID()
+	if luid == 0 {
 		return nil
 	}
-
-	luid := c.opts.adapter.LUID()
 
 	if c.ipv4Supported {
 		ipif, err := luid.IPInterface(windows.AF_INET)
@@ -123,18 +123,19 @@ func (c *Controller) setIPIF() error {
 }
 
 func (c *Controller) doUnsetRoutes() error {
-	if c.opts.adapter == nil {
+	luid := c.getLUID()
+	if luid == 0 {
 		return nil
 	}
 
 	if c.ipv4Supported {
-		if err := c.opts.adapter.LUID().FlushRoutes(windows.AF_INET); err != nil {
+		if err := luid.FlushRoutes(windows.AF_INET); err != nil {
 			return err
 		}
 	}
 
 	if c.ipv6Supported {
-		if err := c.opts.adapter.LUID().FlushRoutes(windows.AF_INET6); err != nil {
+		if err := luid.FlushRoutes(windows.AF_INET6); err != nil {
 			return err
 		}
 	}

@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -91,13 +90,13 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 
 	zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
 
-	knownHostsPath := path.Join(sshDir, "known_hosts")
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 	if err := addManagedLines(knownHostsPath, sshDir, marker, svcCfg.KnownHosts); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the known_hosts file",
 			zap.String("filePath", knownHostsPath), zap.Error(err))
 	}
 
-	authorizedKeysPath := path.Join(sshDir, "authorized_keys")
+	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
 	if err := addManagedLines(authorizedKeysPath, sshDir, marker, svcCfg.AuthorizedKeys); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the authorized keys file",
 			zap.String("filePath", authorizedKeysPath), zap.Error(err))
@@ -109,7 +108,7 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 func (c *Controller) unsetServiceConfigSSH() error {
 	marker, err := c.getManagedMarker()
 	if err != nil {
-		zap.L().Warn("Could not unset the SSH service configs", zap.Error(err))
+		zap.L().Debug("Could not unset the SSH service configs", zap.Error(err))
 		return nil
 	}
 
@@ -123,7 +122,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 
 	lock, err := acquireFileLock(sshConfigLockName)
 	if err != nil {
-		zap.L().Warn("Could not acquire the SSH config lock. Skipping the SSH config cleanup",
+		zap.L().Debug("Could not acquire the SSH config lock. Skipping the SSH config cleanup",
 			zap.Error(err))
 		return nil
 	}
@@ -132,11 +131,11 @@ func (c *Controller) unsetServiceConfigSSH() error {
 	zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
 
 	for _, filePath := range []string{
-		path.Join(sshDir, "known_hosts"),
-		path.Join(sshDir, "authorized_keys"),
+		filepath.Join(sshDir, "known_hosts"),
+		filepath.Join(sshDir, "authorized_keys"),
 	} {
 		if err := removeManagedLines(filePath, marker); err != nil {
-			zap.L().Warn("Could not remove the Cluster CA",
+			zap.L().Debug("Could not remove the Cluster CA",
 				zap.String("filePath", filePath), zap.Error(err))
 		}
 	}
@@ -153,7 +152,7 @@ func getSSHDir() (string, error) {
 		return "", errors.Errorf("Could not determine the User home directory")
 	}
 
-	sshDir := path.Join(homeDir, ".ssh")
+	sshDir := filepath.Join(homeDir, ".ssh")
 
 	if _, err := os.Stat(sshDir); err != nil {
 		if os.IsNotExist(err) {
@@ -310,7 +309,7 @@ func writeFileAtomic(filePath string, content []byte, fi os.FileInfo) error {
 		filePath = resolved
 	}
 
-	f, err := os.CreateTemp(path.Dir(filePath), fmt.Sprintf("%s.octelium-*", path.Base(filePath)))
+	f, err := os.CreateTemp(filepath.Dir(filePath), fmt.Sprintf("%s.octelium-*", filepath.Base(filePath)))
 	if err != nil {
 		return err
 	}

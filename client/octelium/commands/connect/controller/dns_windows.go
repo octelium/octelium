@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
 func (c *Controller) doSetDNS() error {
@@ -32,11 +33,12 @@ func (c *Controller) doSetDNS() error {
 		return nil
 	}
 
-	if c.opts.adapter == nil {
-		return errors.Errorf("The WireGuard adapter is not initialized")
+	luid := c.getLUID()
+	if luid == 0 {
+		return errors.Errorf("The network device is not initialized")
 	}
 
-	if err := c.doSetDNSAdapter(); err != nil {
+	if err := c.doSetDNSAdapter(luid); err != nil {
 		return err
 	}
 
@@ -53,9 +55,7 @@ func (c *Controller) doSetDNS() error {
 	return nil
 }
 
-func (c *Controller) doSetDNSAdapter() error {
-	luid := c.opts.adapter.LUID()
-
+func (c *Controller) doSetDNSAdapter(luid winipcfg.LUID) error {
 	dnsServers := c.getDNSServers()
 
 	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.IsEnabled {
@@ -148,11 +148,10 @@ func (c *Controller) doUnsetDNS() error {
 		zap.L().Debug("Could not flush the DNS resolver cache", zap.Error(err))
 	}
 
-	if c.opts.adapter == nil {
+	luid := c.getLUID()
+	if luid == 0 {
 		return retErr
 	}
-
-	luid := c.opts.adapter.LUID()
 
 	if err := luid.FlushDNS(windows.AF_INET); err != nil {
 		zap.L().Debug("Could not flush the v4 DNS of the adapter", zap.Error(err))

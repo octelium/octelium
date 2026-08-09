@@ -146,6 +146,10 @@ You can also use multiple scopes in the same command as follows "--scope service
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESOCKS5, "esocks5", false, "Run embedded SOCKS5 server")
 }
 
+func isQUICV0() bool {
+	return cmdArgs.TunnelMode == "quicv0" || os.Getenv("OCTELIUM_QUIC") == "true"
+}
+
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
