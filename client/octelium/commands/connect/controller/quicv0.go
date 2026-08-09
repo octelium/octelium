@@ -39,7 +39,7 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-var tunPacketOffset = 0
+const tunPacketOffset = 16
 
 const quicMaxPacketSize = 65535
 
@@ -54,15 +54,6 @@ const (
 )
 
 func (c *Controller) doInitDevQUICV0(ctx context.Context) error {
-
-	switch {
-	case cliutils.IsLinux():
-	case cliutils.IsWindows():
-	case cliutils.IsDarwin():
-		tunPacketOffset = 4
-	default:
-		tunPacketOffset = 4
-	}
 
 	zap.L().Debug("Initializing the QUIC engine")
 
@@ -624,15 +615,23 @@ func (c *quicGW) startReceiveFromGWLoop(ctx context.Context) {
 
 func (c *quicEngine) startTunWriteLoop(ctx context.Context) {
 	buffs := make([][]byte, 1)
+	buf := make([]byte, quicMaxPacketSize+tunPacketOffset)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case pkt := <-c.tunCh:
-			buffs[0] = pkt
+			if len(pkt) > quicMaxPacketSize {
+				zap.L().Debug("Dropping an oversized packet received from the Gateway",
+					zap.Int("len", len(pkt)))
+				continue
+			}
 
-			if _, err := c.ctl.getTUNDev().Write(buffs, 0); err != nil {
+			copy(buf[tunPacketOffset:], pkt)
+			buffs[0] = buf[:tunPacketOffset+len(pkt)]
+
+			if _, err := c.ctl.getTUNDev().Write(buffs, tunPacketOffset); err != nil {
 				zap.L().Debug("Could not write to tun", zap.Error(err))
 			}
 

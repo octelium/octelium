@@ -16,13 +16,16 @@ package controller
 
 import (
 	"context"
+	"io"
 	"net/netip"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 func newTestQUICEngine(gws []*userv1.Gateway) *quicEngine {
@@ -300,4 +303,101 @@ func TestQUICReconnectSingleflight(t *testing.T) {
 
 	e.doneReconnect("gw-1")
 	assert.True(t, e.startReconnect("gw-1"))
+}
+
+type tstTunDev struct {
+	minOffset int
+	hdrLen    int
+	writeCh   chan []byte
+	errCh     chan error
+}
+
+func newTstTunDev(minOffset, hdrLen int) *tstTunDev {
+	return &tstTunDev{
+		minOffset: minOffset,
+		hdrLen:    hdrLen,
+		writeCh:   make(chan []byte, 16),
+		errCh:     make(chan error, 16),
+	}
+}
+
+func (d *tstTunDev) File() *os.File { return nil }
+
+func (d *tstTunDev) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	return 0, os.ErrClosed
+}
+
+func (d *tstTunDev) Write(bufs [][]byte, offset int) (int, error) {
+	if offset < d.minOffset {
+		err := io.ErrShortBuffer
+		d.errCh <- err
+		return 0, err
+	}
+
+	for i, buf := range bufs {
+		hdr := buf[offset-d.hdrLen : offset]
+		for j := range hdr {
+			hdr[j] = 0xff
+		}
+
+		out := make([]byte, len(buf)-(offset-d.hdrLen))
+		copy(out, buf[offset-d.hdrLen:])
+		d.writeCh <- out
+		_ = i
+	}
+
+	return len(bufs), nil
+}
+
+func (d *tstTunDev) MTU() (int, error)        { return 1280, nil }
+func (d *tstTunDev) Name() (string, error)    { return "octelium0", nil }
+func (d *tstTunDev) Events() <-chan tun.Event { return nil }
+func (d *tstTunDev) Close() error             { return nil }
+func (d *tstTunDev) BatchSize() int           { return 1 }
+
+func TestQUICTunWriteLoopHonorsDeviceHeadroom(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		minOffset int
+		hdrLen    int
+	}{
+		{"darwin-utun", 4, 4},
+		{"linux-virtio", 10, 10},
+		{"no-headroom", 0, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dev := newTstTunDev(tt.minOffset, tt.hdrLen)
+
+			e := newTestQUICEngine(nil)
+			e.ctl.tundev = dev
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			go e.startTunWriteLoop(ctx)
+
+			pkt := make([]byte, 40)
+			pkt[0] = 0x60
+			for i := 1; i < len(pkt); i++ {
+				pkt[i] = byte(i)
+			}
+
+			e.tunCh <- pkt
+
+			select {
+			case err := <-dev.errCh:
+				t.Fatalf("write rejected: %v", err)
+			case got := <-dev.writeCh:
+				assert.Len(t, got, tt.hdrLen+len(pkt))
+				assert.Equal(t, pkt, got[tt.hdrLen:])
+			case <-time.After(3 * time.Second):
+				t.Fatal("timed out waiting for the tun write")
+			}
+		})
+	}
+}
+
+func TestQUICTunPacketOffsetSatisfiesAllBackends(t *testing.T) {
+	assert.GreaterOrEqual(t, tunPacketOffset, 4)
+	assert.GreaterOrEqual(t, tunPacketOffset, 10)
 }
