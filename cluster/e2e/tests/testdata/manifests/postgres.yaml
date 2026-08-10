@@ -1,0 +1,45 @@
+kind: Service
+metadata:
+  name: pg
+spec:
+  mode: TCP
+  port: 5432
+  config:
+    upstream:
+      container:
+        image: postgres
+        port: 5432
+        env:
+          - name: POSTGRES_PASSWORD
+            value: password
+---
+kind: Service
+metadata:
+  name: pg.production
+spec:
+  mode: TCP
+  port: 5432
+  config:
+    upstream:
+      container:
+        image: postgres
+        port: 5432
+        env:
+          - name: POSTGRES_PASSWORD
+            value: password
+---
+kind: Service
+metadata:
+  name: postgres-main
+spec:
+  mode: POSTGRES
+  port: 5432
+  config:
+    upstream:
+      url: postgres://octelium-pg-postgresql.default.svc
+    postgres:
+      user: octelium
+      database: octelium
+      auth:
+        password:
+          fromSecret: pg

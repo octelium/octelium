@@ -2,7 +2,8 @@
 export GO111MODULE=on
 export PATH := $(PATH):$(shell go env GOPATH)/bin
 
-.PHONY: gen-api build-cli build-octelium clean fmt lint test unit vendor
+.PHONY: gen-api build-cli build-octelium clean fmt lint test unit vendor \
+	e2e e2e-list e2e-test e2e-teardown
 
 REPOSITORY := github.com/octelium/octelium
 REGISTRY ?= ghcr.io
@@ -76,6 +77,25 @@ build-wrdpgw:
 	CGO_ENABLED=1 GOOS=linux go build -tags wrdpgw_credssp $(LDFLAGS) -o bin/octelium-wrdpgw github.com/octelium/octelium/cluster/wrdpgw
 build-e2e:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-e2e github.com/octelium/octelium/cluster/e2e
+
+# The e2e scenario to run against. See `./bin/octelium-e2e list`.
+E2E_SCENARIO ?= k3s-flannel
+
+e2e-list: build-e2e
+	./bin/octelium-e2e list
+
+# Provision, install and test in one go. This installs a Kubernetes cluster on
+# the current host, so run it on a throwaway machine.
+e2e: build-e2e install-cli
+	./bin/octelium-e2e all --scenario=$(E2E_SCENARIO)
+
+# Re-run only the suite against a Cluster that is already installed.
+# Pass E2E_RUN to filter, e.g. `make e2e-test E2E_RUN=TestE2E/Apply`.
+e2e-test: build-e2e
+	./bin/octelium-e2e test --scenario=$(E2E_SCENARIO) $(if $(E2E_RUN),--run=$(E2E_RUN),)
+
+e2e-teardown: build-e2e
+	./bin/octelium-e2e teardown --scenario=$(E2E_SCENARIO)
 
 build-cli-octelium:
 	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/ github.com/octelium/octelium/client/octelium

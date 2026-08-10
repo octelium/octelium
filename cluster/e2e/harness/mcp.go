@@ -14,28 +14,34 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package e2e
+package harness
 
 import (
 	"context"
 	"fmt"
 	"net"
 	"net/http"
+	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
-type params struct {
+type MCPSrv struct {
+	Port int
+
+	lis net.Listener
+	srv *http.Server
+}
+
+type mcpEchoParams struct {
 	Input string `json:"input"`
 }
 
-func (s *mcpServer) doEcho(ctx context.Context, req *mcp.CallToolRequest, params *params) (*mcp.CallToolResult, any, error) {
-
-	zap.L().Debug("New mcp doEcho req",
-		zap.Any("req", req), zap.Any("params", params))
+func (s *MCPSrv) doEcho(ctx context.Context,
+	req *mcp.CallToolRequest, params *mcpEchoParams) (*mcp.CallToolResult, any, error) {
+	zap.L().Debug("New mcp doEcho req", zap.Any("req", req), zap.Any("params", params))
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -44,16 +50,8 @@ func (s *mcpServer) doEcho(ctx context.Context, req *mcp.CallToolRequest, params
 	}, nil, nil
 }
 
-type mcpServer struct {
-	port int
-	lis  net.Listener
-	srv  *http.Server
-}
-
-func (s *mcpServer) run(ctx context.Context) error {
-
-	addr := fmt.Sprintf("localhost:%d", s.port)
-	var err error
+func (s *MCPSrv) Run(ctx context.Context) error {
+	addr := fmt.Sprintf("localhost:%d", s.Port)
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "echo-server",
@@ -69,39 +67,46 @@ func (s *mcpServer) run(ctx context.Context) error {
 		return server
 	}, nil)
 
-	s.lis, err = func() (net.Listener, error) {
-		for range 100 {
-			ret, err := net.Listen("tcp", addr)
-			if err == nil {
-				return ret, nil
-			}
-			time.Sleep(1 * time.Second)
-		}
-		return nil, errors.Errorf("Could not listen mcpSrv")
-	}()
+	lis, err := listenWithRetry(addr, nil)
 	if err != nil {
 		return err
 	}
+	s.lis = lis
 
-	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
-
+	s.srv = &http.Server{Addr: addr, Handler: handler}
 	go s.srv.Serve(s.lis)
 
-	time.Sleep(1 * time.Second)
+	if err := WaitPortOpen(s.Port, 30*time.Second); err != nil {
+		return err
+	}
 
 	zap.L().Debug("Started running mcp server", zap.String("addr", addr))
-
 	return nil
 }
 
-func (s *mcpServer) close() {
+func (s *MCPSrv) Close() {
 	if s.srv != nil {
 		s.srv.Close()
 	}
 	if s.lis != nil {
 		s.lis.Close()
 	}
+}
+
+func (h *H) StartMCPUpstream(t *testing.T, srv *MCPSrv) *MCPSrv {
+	t.Helper()
+
+	if srv == nil {
+		srv = &MCPSrv{}
+	}
+	if srv.Port == 0 {
+		srv.Port = h.Port()
+	}
+
+	if err := srv.Run(t.Context()); err != nil {
+		t.Fatalf("Could not start the local MCP upstream: %+v", err)
+	}
+
+	t.Cleanup(srv.Close)
+	return srv
 }

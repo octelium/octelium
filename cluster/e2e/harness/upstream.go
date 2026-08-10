@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package e2e
+package harness
 
 import (
 	"context"
@@ -26,6 +26,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -35,31 +37,42 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
-type tstSrvHTTP struct {
-	port        int
-	srv         *http.Server
-	isHTTP2     bool
-	crt         *tls.Certificate
-	isWS        bool
-	bearerToken string
-	caPool      *x509.CertPool
-	lis         net.Listener
-	serveFn     func(w http.ResponseWriter, r *http.Request)
+type TestSrvHTTP struct {
+	Port    int
+	IsHTTP2 bool
+	IsWS    bool
+
+	Crt         *tls.Certificate
+	CAPool      *x509.CertPool
+	BearerToken string
+
+	serveFn atomic.Pointer[func(w http.ResponseWriter, r *http.Request)]
+	srv     *http.Server
+	lis     net.Listener
+}
+
+func (s *TestSrvHTTP) SetServeFn(fn func(w http.ResponseWriter, r *http.Request)) {
+	if fn == nil {
+		s.serveFn.Store(nil)
+		return
+	}
+	s.serveFn.Store(&fn)
 }
 
 type tstResp struct {
 	Hello string `json:"hello"`
 }
 
-func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	zap.L().Debug("New tstSrvHTTP req",
+func (s *TestSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	zap.L().Debug("New TestSrvHTTP req",
 		zap.Any("req", r.Header),
 		zap.String("path", r.RequestURI),
 		zap.String("method", r.Method),
 		zap.String("host", r.Host),
 		zap.String("url", r.URL.String()))
-	if s.serveFn != nil {
-		s.serveFn(w, r)
+
+	if fn := s.serveFn.Load(); fn != nil {
+		(*fn)(w, r)
 		return
 	}
 
@@ -78,9 +91,7 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		resp, err := json.Marshal(&tstResp{
-			Hello: req.Hello,
-		})
+		resp, err := json.Marshal(&tstResp{Hello: req.Hello})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -89,20 +100,17 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.bearerToken != "" {
-		bearer := r.Header.Get("Authorization")
-		tkn := strings.TrimPrefix(bearer, "Bearer ")
-		if s.bearerToken != tkn {
+	if s.BearerToken != "" {
+		tkn := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if s.BearerToken != tkn {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 	}
 
-	if !s.isWS {
+	if !s.IsWS {
 		w.Header().Set("Content-Type", "application/json")
-		resp, err := json.Marshal(&tstResp{
-			Hello: "world",
-		})
+		resp, err := json.Marshal(&tstResp{Hello: "world"})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -114,9 +122,7 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
+		CheckOrigin:     func(r *http.Request) bool { return true },
 	}
 
 	wsConn, err := upgrader.Upgrade(w, r, nil)
@@ -125,8 +131,8 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer wsConn.Close()
-	ctx := r.Context()
 
+	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
@@ -134,7 +140,6 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			_, payload, err := wsConn.ReadMessage()
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			wsConn.WriteMessage(websocket.BinaryMessage, payload)
@@ -142,81 +147,92 @@ func (s *tstSrvHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *tstSrvHTTP) run(ctx context.Context) error {
-	addr := fmt.Sprintf("localhost:%d", s.port)
-	var err error
+func (s *TestSrvHTTP) Run(ctx context.Context) error {
+	addr := fmt.Sprintf("localhost:%d", s.Port)
 
-	handler := http.AllowQuerySemicolons(s)
-	if s.isHTTP2 {
+	var handler http.Handler = http.AllowQuerySemicolons(s)
+	if s.IsHTTP2 {
 		handler = h2c.NewHandler(handler, &http2.Server{})
 	}
-	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
 
-	if s.crt != nil {
-		zap.L().Debug("upstream listening over TLS")
-		s.lis, err = func() (net.Listener, error) {
-			for range 100 {
-				ret, err := tls.Listen("tcp", addr, s.getTLSConfig())
-				if err == nil {
-					return ret, nil
-				}
-				time.Sleep(1 * time.Second)
-			}
-			return nil, errors.Errorf("Could not listen tstSrvHTTP")
-		}()
-		if err != nil {
-			return err
-		}
-	} else {
-		s.lis, err = func() (net.Listener, error) {
-			for range 100 {
-				ret, err := net.Listen("tcp", addr)
-				if err == nil {
-					return ret, nil
-				}
-				time.Sleep(1 * time.Second)
-			}
-			return nil, errors.Errorf("Could not listen tstSrvHTTP")
-		}()
-		if err != nil {
-			return err
-		}
+	s.srv = &http.Server{Addr: addr, Handler: handler}
+
+	lis, err := listenWithRetry(addr, s.tlsConfig())
+	if err != nil {
+		return err
 	}
+	s.lis = lis
 
 	go s.srv.Serve(s.lis)
 
-	time.Sleep(1 * time.Second)
-
-	return nil
+	return WaitPortOpen(s.Port, 30*time.Second)
 }
 
-func (s *tstSrvHTTP) getTLSConfig() *tls.Config {
-	if s.crt == nil {
+func (s *TestSrvHTTP) tlsConfig() *tls.Config {
+	if s.Crt == nil {
 		return nil
 	}
 
 	return &tls.Config{
-		Certificates: []tls.Certificate{*s.crt},
+		Certificates: []tls.Certificate{*s.Crt},
 		NextProtos: func() []string {
-			if s.isHTTP2 {
+			if s.IsHTTP2 {
 				return []string{"h2", "http/1.1"}
-			} else {
-				return []string{"http/1.1"}
 			}
+			return []string{"http/1.1"}
 		}(),
-		RootCAs: s.caPool,
+		RootCAs: s.CAPool,
 	}
-
 }
 
-func (s *tstSrvHTTP) close() {
+func (s *TestSrvHTTP) Close() {
 	if s.srv != nil {
 		s.srv.Close()
 	}
 	if s.lis != nil {
 		s.lis.Close()
 	}
+}
+
+func (h *H) StartHTTPUpstream(t *testing.T, srv *TestSrvHTTP) *TestSrvHTTP {
+	t.Helper()
+
+	if srv == nil {
+		srv = &TestSrvHTTP{}
+	}
+	if srv.Port == 0 {
+		srv.Port = h.Port()
+	}
+
+	if err := srv.Run(t.Context()); err != nil {
+		t.Fatalf("Could not start the local HTTP upstream: %+v", err)
+	}
+
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func listenWithRetry(addr string, tlsCfg *tls.Config) (net.Listener, error) {
+	deadline := time.Now().Add(30 * time.Second)
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		var lis net.Listener
+		var err error
+
+		if tlsCfg != nil {
+			lis, err = tls.Listen("tcp", addr, tlsCfg)
+		} else {
+			lis, err = net.Listen("tcp", addr)
+		}
+
+		if err == nil {
+			return lis, nil
+		}
+
+		lastErr = err
+		time.Sleep(DefaultPollInterval)
+	}
+
+	return nil, errors.Errorf("Could not listen on %s: %+v", addr, lastErr)
 }

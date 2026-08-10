@@ -1,0 +1,34 @@
+kind: Service
+metadata:
+  name: llama
+spec:
+  port: 8080
+  mode: HTTP
+  isPublic: true
+  config:
+    upstream:
+      container:
+        port: 8080
+        image: ghcr.io/ggml-org/llama.cpp:server
+        args:
+        - "-hf"
+        - "Qwen/Qwen3-0.6B-GGUF:Q8_0"
+        - "--alias"
+        - "e2e"
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "8080"
+        - "-c"
+        - "512"
+        - "-n"
+        - "32"
+        - "-np"
+        - "1"
+        - "-t"
+        - "2"
+        resourceLimit:
+          cpu:
+            millicores: 2000
+          memory:
+            megabytes: 3000

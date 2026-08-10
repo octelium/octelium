@@ -1,0 +1,33 @@
+kind: User
+metadata:
+  name: john
+spec:
+  type: HUMAN
+  email: john@example.com
+  groups: ["admins"]
+---
+kind: User
+metadata:
+  name: microservice1
+spec:
+  type: WORKLOAD
+  groups: ["admins"]
+---
+kind: Group
+metadata:
+  name: admins
+spec:
+  authorization:
+    policies: ["allow-all"]
+---
+kind: Namespace
+metadata:
+  name: production
+spec: {}
+---
+kind: Namespace
+metadata:
+  name: development
+spec:
+  authorization:
+    policies: ["allow-all"]

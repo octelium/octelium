@@ -1,30 +1,91 @@
 name: tests-e2e
 permissions:
   contents: read
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "The e2e scenario to run against"
+        required: false
+        default: "k3s-flannel"
+      run:
+        description: "Only run tests matching this regular expression (go test -run)"
+        required: false
+        default: ""
+env:
+  GO_VERSION: "1.26.5"
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            scenario: k3s-flannel
+          - runner: ubuntu-24.04-arm
+            scenario: k3s-flannel
     runs-on: ${{ matrix.runner }}
-    name: test-${{ matrix.runner }}
+    name: ${{ matrix.scenario }}-${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
+
+      - name: Reclaim disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+          docker system prune --all --force || true
+          df -h /
+
       - name: Set up go
         uses: actions/setup-go@v5
         with:
-          go-version: "${{env.GO_VERSION}}"
+          go-version: "${{ env.GO_VERSION }}"
+
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
-      - name: Run
+
+      - name: Build
         run: |
           go version
-          which go
-          whoami
           make build-e2e
           make install-cli
-          ./bin/octelium-e2e
+
+      - name: Provision
+        run: ./bin/octelium-e2e provision --scenario=${{ inputs.scenario || matrix.scenario }}
+
+      - name: Prepare
+        run: ./bin/octelium-e2e prepare --scenario=${{ inputs.scenario || matrix.scenario }}
+
+      - name: Install
+        run: ./bin/octelium-e2e install --scenario=${{ inputs.scenario || matrix.scenario }}
+
+      - name: Test
+        run: |
+          ./bin/octelium-e2e test \
+            --scenario=${{ inputs.scenario || matrix.scenario }} \
+            --artifacts="${{ runner.temp }}/e2e-artifacts" \
+            ${{ inputs.run && format('--run={0}', inputs.run) || '' }}
+
+      - name: Collect cluster state on failure
+        if: failure()
+        run: |
+          mkdir -p "${{ runner.temp }}/e2e-artifacts"
+          kubectl get all -A -o wide > "${{ runner.temp }}/e2e-artifacts/get-all.txt" 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp \
+            > "${{ runner.temp }}/e2e-artifacts/events.txt" 2>&1 || true
+          cp /tmp/octelium-e2e-k3s.log "${{ runner.temp }}/e2e-artifacts/" 2>/dev/null || true
+        env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.scenario }}-${{ matrix.runner }}
+          path: ${{ runner.temp }}/e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
