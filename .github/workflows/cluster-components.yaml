@@ -10,6 +10,7 @@ on:
       - b-*
       - main
       - dev
+      - dev-*
 
 jobs:
   build:

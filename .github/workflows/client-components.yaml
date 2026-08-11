@@ -10,6 +10,7 @@ on:
       - b-*
       - main
       - dev
+      - dev-*
 jobs:
   build:
     name: build-${{ matrix.component }}-${{ matrix.arch }}
