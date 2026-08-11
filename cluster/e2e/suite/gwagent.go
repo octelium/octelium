@@ -200,6 +200,11 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		Args: []string{"--no-dns"},
 	})
 
+	tun, err := h.TunDevice(t)
+	require.Nil(t, err, "could not determine the tunnel device")
+
+	zap.L().Info("Resolved the tunnel device", zap.String("dev", tun))
+
 	routeTo := func(t *testing.T, host string) string {
 		t.Helper()
 
@@ -219,12 +224,12 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		zap.L().Info("Route to the Service address",
 			zap.String("addr", host), zap.String("dev", dev), zap.String("route", route))
 
-		if dev != tunDevice {
+		if dev != tun {
 			t.Skipf("traffic to %s egresses via %q rather than the %q tunnel device, so the "+
 				"Gateway L3 data path is not exercised on this host. This is expected when "+
 				"the Cluster runs on the same host as the client, since the directly "+
 				"connected route to the Cluster network wins over the tunnel. Route: %s",
-				host, dev, tunDevice, route)
+				host, dev, tun, route)
 		}
 
 		url := fmt.Sprintf("http://%s",
@@ -263,8 +268,8 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		out, err := h.Output(t.Context(), "ip route show table all")
 		require.Nil(t, err)
 
-		assert.True(t, hasRouteVia(string(out), tunDevice),
+		assert.True(t, hasRouteVia(string(out), tun),
 			"no route via the %s tunnel device was installed on the host. Routes:\n%s",
-			tunDevice, string(out))
+			tun, string(out))
 	})
 }

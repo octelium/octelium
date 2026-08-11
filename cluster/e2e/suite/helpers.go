@@ -43,8 +43,6 @@ const propagationBudget = 10 * time.Second
 
 const decisionSettle = 2 * time.Second
 
-const tunDevice = "octelium"
-
 var errStillAllowed = errors.New("the request is still allowed")
 
 func errUnexpectedStatus(got, want int) error {
