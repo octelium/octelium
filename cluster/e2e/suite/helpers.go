@@ -51,6 +51,25 @@ func errUnexpectedStatus(got, want int) error {
 	return errors.Errorf("got status %d, want %d", got, want)
 }
 
+func routeDevice(route string) string {
+	fields := strings.Fields(route)
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func hasRouteVia(routes, dev string) bool {
+	for _, line := range strings.Split(routes, "\n") {
+		if routeDevice(line) == dev {
+			return true
+		}
+	}
+	return false
+}
+
 func newMetadata() *metav1.Metadata {
 	return &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)}
 }

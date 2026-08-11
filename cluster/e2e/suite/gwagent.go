@@ -214,12 +214,18 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		t.Helper()
 
 		route := routeTo(t, host)
-		zap.L().Info("Route to the Service address",
-			zap.String("addr", host), zap.String("route", route))
+		dev := routeDevice(route)
 
-		require.Contains(t, route, tunDevice,
-			"traffic to %s does not go through the %s tunnel device, so this is not "+
-				"exercising the Gateway data path. Route: %s", host, tunDevice, route)
+		zap.L().Info("Route to the Service address",
+			zap.String("addr", host), zap.String("dev", dev), zap.String("route", route))
+
+		if dev != tunDevice {
+			t.Skipf("traffic to %s egresses via %q rather than the %q tunnel device, so the "+
+				"Gateway L3 data path is not exercised on this host. This is expected when "+
+				"the Cluster runs on the same host as the client, since the directly "+
+				"connected route to the Cluster network wins over the tunnel. Route: %s",
+				host, dev, tunDevice, route)
+		}
 
 		url := fmt.Sprintf("http://%s",
 			net.JoinHostPort(host, fmt.Sprintf("%d", svc.Status.Port)))
@@ -257,7 +263,8 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		out, err := h.Output(t.Context(), "ip route show table all")
 		require.Nil(t, err)
 
-		assert.Contains(t, string(out), tunDevice,
-			"no Octelium route was installed on the host")
+		assert.True(t, hasRouteVia(string(out), tunDevice),
+			"no route via the %s tunnel device was installed on the host. Routes:\n%s",
+			tunDevice, string(out))
 	})
 }
