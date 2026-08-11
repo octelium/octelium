@@ -33,6 +33,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+const (
+	k8sClientQPS   = 50
+	k8sClientBurst = 100
+)
+
 type H struct {
 	Scenario *scenario.Scenario
 	State    *scenario.State
@@ -128,6 +133,8 @@ func (h *H) initK8s() error {
 	if err != nil {
 		return err
 	}
+	cfg.QPS = k8sClientQPS
+	cfg.Burst = k8sClientBurst
 
 	k8sC, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

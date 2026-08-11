@@ -29,6 +29,10 @@ import (
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
+	k8scorev1 "k8s.io/api/core/v1"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 func (r *Runner) installSteps() []Step {
@@ -79,12 +83,8 @@ func (r *Runner) stepOctopsInit(ctx context.Context, _ *Runner) error {
 		r.SetEnv(k, v)
 	}
 
-	paths := s.Provisioner.CNIPaths()
-	if paths.NetDir != "" {
-		r.SetEnv("OCTELIUM_CNI_CONF_DIR", paths.NetDir)
-	}
-	if paths.MultusConfDir != "" {
-		r.SetEnv(vutils.MultusConfDirEnv, paths.MultusConfDir)
+	if paths := s.Provisioner.CNIPaths(); paths.OcteliumCNIConfDir != "" {
+		r.SetEnv("OCTELIUM_CNI_CONF_DIR", paths.OcteliumCNIConfDir)
 	}
 
 	versionArg := ""
@@ -156,11 +156,9 @@ func (r *Runner) stepWaitDeployments(ctx context.Context, _ *Runner) error {
 	for _, name := range r.Scenario.Install.WaitDeployments {
 		zap.L().Debug("Waiting for deployment readiness", zap.String("deployment", name))
 
-		err := pollUntil(ctx, fmt.Sprintf("deployment %s", name), timeout, 2*second,
+		err := pollUntil(ctx, fmt.Sprintf("the deployment %s", name), timeout, 2*second,
 			func(ctx context.Context) error {
-				ctx, cancel := context.WithTimeout(ctx, 30*second)
-				defer cancel()
-				return k8sutils.WaitReadinessDeploymentWithNS(ctx, k8sC, name, vutils.K8sNS)
+				return deploymentReadiness(ctx, k8sC, vutils.K8sNS, name)
 			})
 		if err != nil {
 			return err
@@ -168,6 +166,88 @@ func (r *Runner) stepWaitDeployments(ctx context.Context, _ *Runner) error {
 	}
 
 	return nil
+}
+
+func deploymentReadiness(ctx context.Context,
+	k8sC kubernetes.Interface, ns, name string) error {
+	dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	rs, err := k8sutils.GetNewReplicaSet(dep, k8sC.AppsV1())
+	if err != nil {
+		return err
+	}
+	if rs == nil {
+		return errors.Errorf("The Deployment has no current ReplicaSet yet")
+	}
+
+	want := *dep.Spec.Replicas - k8sutils.MaxUnavailable(*dep)
+	if rs.Status.ReadyReplicas >= want {
+		return nil
+	}
+
+	return errors.Errorf("%d of %d replicas are ready. %s",
+		rs.Status.ReadyReplicas, want, describePods(ctx, k8sC, dep))
+}
+
+func describePods(ctx context.Context,
+	k8sC kubernetes.Interface, dep *appsv1.Deployment) string {
+	sel, err := k8smetav1.LabelSelectorAsSelector(dep.Spec.Selector)
+	if err != nil {
+		return fmt.Sprintf("<could not read the Deployment selector: %+v>", err)
+	}
+
+	pods, err := k8sC.CoreV1().Pods(dep.Namespace).List(ctx,
+		k8smetav1.ListOptions{LabelSelector: sel.String()})
+	if err != nil {
+		return fmt.Sprintf("<could not list the pods: %+v>", err)
+	}
+
+	if len(pods.Items) == 0 {
+		return "No pod has been created for this Deployment yet"
+	}
+
+	var b strings.Builder
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+
+		fmt.Fprintf(&b, "Pod %s is %s", pod.Name, pod.Status.Phase)
+
+		for _, c := range pod.Status.Conditions {
+			if c.Status != k8scorev1.ConditionTrue && c.Reason != "" {
+				fmt.Fprintf(&b, " [%s: %s]", c.Reason, c.Message)
+			}
+		}
+
+		statuses := append(append([]k8scorev1.ContainerStatus{},
+			pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
+
+		for _, cs := range statuses {
+			if cs.Ready {
+				continue
+			}
+			switch {
+			case cs.State.Waiting != nil:
+				fmt.Fprintf(&b, "; the container %s is waiting: %s %s",
+					cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message)
+			case cs.State.Terminated != nil:
+				fmt.Fprintf(&b, "; the container %s terminated with %d: %s %s",
+					cs.Name, cs.State.Terminated.ExitCode,
+					cs.State.Terminated.Reason, cs.State.Terminated.Message)
+			default:
+				fmt.Fprintf(&b, "; the container %s is not ready yet", cs.Name)
+			}
+			if cs.RestartCount > 0 {
+				fmt.Fprintf(&b, " (%d restarts)", cs.RestartCount)
+			}
+		}
+
+		b.WriteString(". ")
+	}
+
+	return strings.TrimSpace(b.String())
 }
 
 func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {

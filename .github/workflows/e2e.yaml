@@ -73,11 +73,26 @@ jobs:
       - name: Collect cluster state on failure
         if: failure()
         run: |
-          mkdir -p "${{ runner.temp }}/e2e-artifacts"
-          kubectl get all -A -o wide > "${{ runner.temp }}/e2e-artifacts/get-all.txt" 2>&1 || true
-          kubectl get events -A --sort-by=.lastTimestamp \
-            > "${{ runner.temp }}/e2e-artifacts/events.txt" 2>&1 || true
-          cp /tmp/octelium-e2e-k3s.log "${{ runner.temp }}/e2e-artifacts/" 2>/dev/null || true
+          OUT="${{ runner.temp }}/e2e-artifacts"
+          mkdir -p "$OUT"
+
+          kubectl get all -A -o wide > "$OUT/get-all.txt" 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
+          kubectl describe pods -n octelium > "$OUT/describe-pods.txt" 2>&1 || true
+          kubectl get pods -n octelium \
+            -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,IMAGE:.spec.containers[*].image \
+            > "$OUT/pod-images.txt" 2>&1 || true
+
+          for pod in $(kubectl get pods -n octelium -o name 2>/dev/null); do
+            name=$(basename "$pod")
+            kubectl logs "$pod" -n octelium --all-containers --tail=200 \
+              > "$OUT/logs-${name}.txt" 2>&1 || true
+            kubectl logs "$pod" -n octelium --all-containers --tail=200 --previous \
+              > "$OUT/logs-${name}-previous.txt" 2>&1 || true
+          done
+          find "$OUT" -name 'logs-*-previous.txt' -size -1c -delete || true
+
+          cp /tmp/octelium-e2e-k3s.log "$OUT/" 2>/dev/null || true
         env:
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 

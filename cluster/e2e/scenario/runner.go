@@ -27,6 +27,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+const (
+	k8sClientQPS   = 50
+	k8sClientBurst = 100
+)
+
 type Provisioner interface {
 	Name() string
 
@@ -132,6 +137,8 @@ func (r *Runner) K8sC() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.QPS = k8sClientQPS
+	cfg.Burst = k8sClientBurst
 
 	k8sC, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

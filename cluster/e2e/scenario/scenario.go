@@ -60,9 +60,10 @@ const (
 )
 
 type CNIPaths struct {
-	BinDir        string
-	NetDir        string
-	MultusConfDir string
+	BinDir string
+	NetDir string
+
+	OcteliumCNIConfDir string
 }
 
 type Topology struct {
