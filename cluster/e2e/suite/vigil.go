@@ -500,7 +500,7 @@ func testVigilServiceState(t *testing.T, h *harness.H) {
 
 		disable := h.Within(t, "the disabled Service to stop serving", harness.DecisionBudget,
 			func(ctx context.Context) error {
-				res, err := h.HTTP().R().SetContext(ctx).Get(v.url("/"))
+				res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/"))
 				if err != nil {
 					return nil
 				}
@@ -515,7 +515,7 @@ func testVigilServiceState(t *testing.T, h *harness.H) {
 
 		enable := h.Within(t, "the re-enabled Service to serve again", harness.DecisionBudget,
 			func(ctx context.Context) error {
-				res, err := h.HTTP().R().SetContext(ctx).Get(v.url("/"))
+				res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/"))
 				if err != nil {
 					return err
 				}

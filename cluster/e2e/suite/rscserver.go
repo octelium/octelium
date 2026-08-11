@@ -309,8 +309,12 @@ func testRscServerList(t *testing.T, h *harness.H) {
 	})
 
 	t.Run("PageBeyondTheEnd", func(t *testing.T) {
-		res := listPage(t, 9000, 10, nil)
-		assert.Equal(t, 0, len(res.Items))
+		_, err := h.CoreC().ListPolicy(ctx, &corev1.ListPolicyOptions{
+			Common: &metav1.CommonListOptions{Page: 9000, ItemsPerPage: 10},
+		})
+		require.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err),
+			"a page past the end should be reported as NotFound, got: %+v", err)
 	})
 
 	t.Run("PageTooHighRejected", func(t *testing.T) {

@@ -19,6 +19,7 @@ package scenario
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -238,6 +239,31 @@ func (p *K3s) logTail(ctx context.Context, r *Runner) string {
 }
 
 func (p *K3s) stepWaitNodes(ctx context.Context, r *Runner) error {
+	want := r.Scenario.Topology.Nodes
+	if want < 1 {
+		want = 1
+	}
+
+	err := pollUntil(ctx, fmt.Sprintf("%d node(s) to register", want),
+		5*minute, 2*second, func(ctx context.Context) error {
+			out, err := r.BashOutput(ctx, `kubectl get nodes --no-headers -o name | wc -l`)
+			if err != nil {
+				return errors.Errorf("%+v: %s", err, out)
+			}
+
+			got, err := strconv.Atoi(strings.TrimSpace(out))
+			if err != nil {
+				return errors.Errorf("Could not count the registered nodes: %s", out)
+			}
+			if got < want {
+				return errors.Errorf("Only %d of %d nodes have registered", got, want)
+			}
+			return nil
+		})
+	if err != nil {
+		return errors.Errorf("%+v\nk3s log:\n%s", err, p.logTail(ctx, r))
+	}
+
 	return r.Bash(ctx, `
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true

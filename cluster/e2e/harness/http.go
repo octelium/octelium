@@ -17,12 +17,14 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -38,6 +40,28 @@ func (h *H) HTTP() *resty.Client {
 			zap.L().Debug("Retrying....", zap.Error(err))
 		}).
 		SetTimeout(40 * time.Second).
+		SetLogger(zap.S())
+}
+
+func (h *H) WaitGetStatus(t *testing.T, c *resty.Client, path string, want int) {
+	t.Helper()
+
+	h.Eventually(t, fmt.Sprintf("GET %s to return %d", path, want), DecisionBudget,
+		func(ctx context.Context) error {
+			res, err := c.R().SetContext(ctx).Get(path)
+			if err != nil {
+				return err
+			}
+			if res.StatusCode() != want {
+				return errors.Errorf("got status %d, want %d", res.StatusCode(), want)
+			}
+			return nil
+		})
+}
+
+func (h *H) HTTPNoRetry() *resty.Client {
+	return resty.New().
+		SetTimeout(10 * time.Second).
 		SetLogger(zap.S())
 }
 

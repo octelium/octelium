@@ -184,9 +184,17 @@ func testNocturne(t *testing.T, h *harness.H) {
 
 		require.NotNil(t, svc.Status.NamespaceRef)
 		assert.Equal(t, ns.Metadata.Name, svc.Status.NamespaceRef.Name)
-		assert.True(t, len(svc.Status.Addresses) > 0)
 		assert.True(t, svc.Status.Port > 0)
 
 		h.MustWaitService(t, svc.Metadata.Name)
+
+		h.Eventually(t, "the Service to be assigned addresses", propagationBudget,
+			func(ctx context.Context) error {
+				cur := h.GetService(t, svc.Metadata.Name)
+				if len(cur.Status.Addresses) == 0 {
+					return errors.Errorf("The Service has no addresses yet")
+				}
+				return nil
+			})
 	})
 }

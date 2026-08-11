@@ -130,7 +130,11 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 
 	bin := "octelium connect"
 	if o.Root {
-		bin = "sudo -E octelium connect"
+		path, err := exec.LookPath("octelium")
+		if err != nil {
+			return nil, errors.Errorf("Could not resolve the octelium binary: %+v", err)
+		}
+		bin = fmt.Sprintf("sudo -E %s connect", path)
 	}
 
 	cmdStr := bin

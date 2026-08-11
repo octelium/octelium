@@ -41,7 +41,7 @@ func testConnect(t *testing.T, h *harness.H) {
 			Publish: map[string]int{"demo-nginx": port},
 		})
 
-		h.GetStatus(t, h.HTTP(), conn.URL("demo-nginx"), http.StatusOK)
+		h.WaitGetStatus(t, h.HTTP(), conn.URL("demo-nginx"), http.StatusOK)
 	})
 }
 
@@ -55,6 +55,8 @@ func testConnectQUIC(t *testing.T, h *harness.H) {
 	})
 
 	h.MustWaitServiceUpstream(t, "nginx")
+
+	h.WaitGetStatus(t, h.HTTP(), conn.URL("nginx"), http.StatusOK)
 
 	res := h.GetStatus(t, h.HTTP(), conn.URL("nginx"), http.StatusOK)
 
