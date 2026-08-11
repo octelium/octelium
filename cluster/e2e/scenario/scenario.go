@@ -118,6 +118,8 @@ type InstallOpts struct {
 	EnableQUICv0 bool
 	NetworkMode  string
 
+	Env map[string]string
+
 	EnableSPIFFECSI   bool
 	SPIFFECSIDriver   string
 	SPIFFETrustDomain string
@@ -128,6 +130,21 @@ type InstallOpts struct {
 
 	WaitDeployments []string
 	WaitTimeout     time.Duration
+}
+
+type Hooks struct {
+	PostProvision []Step
+	PostPrepare   []Step
+	PostInstall   []Step
+}
+
+var DefaultComponents = []string{
+	"ingress",
+	"ingress-dataplane",
+	"nocturne",
+	"rscserver",
+	"octovigil",
+	"gwagent",
 }
 
 type Scenario struct {
@@ -141,14 +158,23 @@ type Scenario struct {
 	Multus      MultusOpts
 	Storage     StorageOpts
 	Install     InstallOpts
+	Hooks       Hooks
 	Caps        Capabilities
+	Components  []string
 
 	Budget time.Duration
 }
 
+func (s *Scenario) ComponentList() []string {
+	if len(s.Components) == 0 {
+		return DefaultComponents
+	}
+	return s.Components
+}
+
 var registry = map[string]func() *Scenario{}
 
-func register(id string, fn func() *Scenario) {
+func Register(id string, fn func() *Scenario) {
 	if _, ok := registry[id]; ok {
 		panic("scenario already registered: " + id)
 	}
@@ -163,6 +189,14 @@ func Get(id string) (*Scenario, error) {
 	ret := fn()
 	ret.ID = id
 	return ret, nil
+}
+
+func MustGet(id string) *Scenario {
+	ret, err := Get(id)
+	if err != nil {
+		panic(err)
+	}
+	return ret
 }
 
 func IDs() []string {

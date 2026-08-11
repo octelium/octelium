@@ -26,6 +26,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	k3sPIDPath = "/tmp/octelium-e2e-k3s.pid"
+	k3sLogPath = "/tmp/octelium-e2e-k3s.log"
+)
+
 type K3s struct {
 	Kubeconfig  string
 	ServerArgs  []string
@@ -62,12 +67,18 @@ func (p *K3s) Provision(ctx context.Context, r *Runner) error {
 }
 
 func (p *K3s) Teardown(ctx context.Context, r *Runner) error {
-	return r.Bash(ctx, `
+	return r.Bash(ctx, fmt.Sprintf(`
+if [ -x /usr/local/bin/k3s-killall.sh ]; then
+  sudo /usr/local/bin/k3s-killall.sh || true
+fi
 if [ -x /usr/local/bin/k3s-uninstall.sh ]; then
   sudo /usr/local/bin/k3s-uninstall.sh || true
 fi
-sudo pkill -f 'k3s server' || true
-`)
+if [ -f %[1]s ]; then
+  sudo kill "$(cat %[1]s)" 2>/dev/null || true
+  sudo rm -f %[1]s
+fi
+`, k3sPIDPath))
 }
 
 func (p *K3s) ExternalIP(ctx context.Context, r *Runner) (string, error) {
@@ -172,21 +183,26 @@ curl -sfL https://get.k3s.io | sh -
 
 func (p *K3s) stepStartK3s(ctx context.Context, r *Runner) error {
 	if err := r.Bash(ctx, fmt.Sprintf(`
-if pgrep -f 'k3s server' >/dev/null 2>&1; then
-  echo "k3s server is already running"
+if [ -f %[1]s ] && sudo kill -0 "$(cat %[1]s)" 2>/dev/null; then
+  echo "k3s server is already running with pid $(cat %[1]s)"
   exit 0
 fi
-sudo k3s server %s --write-kubeconfig-mode 644 >/tmp/octelium-e2e-k3s.log 2>&1 &
-disown || true
-`, strings.Join(p.ServerArgs, " "))); err != nil {
+
+sudo rm -f %[1]s %[2]s
+sudo sh -c 'nohup k3s server %[3]s --write-kubeconfig-mode 644 >%[2]s 2>&1 & echo $! > %[1]s'
+`, k3sPIDPath, k3sLogPath, strings.Join(p.ServerArgs, " "))); err != nil {
 		return err
 	}
 
 	kubeconfig := p.KubeconfigPath()
 
-	return pollUntil(ctx, "k3s kubeconfig", 5*minute, 2*second, func(ctx context.Context) error {
+	err := pollUntil(ctx, "the k3s apiserver", 5*minute, 2*second, func(ctx context.Context) error {
+		if err := p.checkRunning(ctx, r); err != nil {
+			return fatal(err)
+		}
+
 		out, err := r.BashOutput(ctx, fmt.Sprintf(`
-sudo test -f %[1]s || { echo "kubeconfig not written yet"; exit 1; }
+sudo test -f %[1]s || { echo "the kubeconfig is not written yet"; exit 1; }
 sudo chmod 644 %[1]s
 kubectl version --request-timeout=5s >/dev/null
 `, kubeconfig))
@@ -195,6 +211,30 @@ kubectl version --request-timeout=5s >/dev/null
 		}
 		return nil
 	})
+	if err != nil {
+		return errors.Errorf("%+v\nk3s log:\n%s", err, p.logTail(ctx, r))
+	}
+
+	return nil
+}
+
+func (p *K3s) checkRunning(ctx context.Context, r *Runner) error {
+	out, err := r.BashOutput(ctx, fmt.Sprintf(`
+test -f %[1]s || { echo "no pidfile at %[1]s"; exit 1; }
+sudo kill -0 "$(cat %[1]s)" 2>/dev/null || { echo "pid $(cat %[1]s) is gone"; exit 1; }
+`, k3sPIDPath))
+	if err != nil {
+		return errors.Errorf("The k3s server is not running: %s", out)
+	}
+	return nil
+}
+
+func (p *K3s) logTail(ctx context.Context, r *Runner) string {
+	out, err := r.BashOutput(ctx, fmt.Sprintf(`sudo tail -n 50 %s`, k3sLogPath))
+	if err != nil {
+		return fmt.Sprintf("<could not read %s: %+v>", k3sLogPath, err)
+	}
+	return out
 }
 
 func (p *K3s) stepWaitNodes(ctx context.Context, r *Runner) error {

@@ -75,6 +75,10 @@ func (r *Runner) stepOctopsInit(ctx context.Context, _ *Runner) error {
 		r.SetEnv("OCTELIUM_INGRESS_FRONT_PROXY", "true")
 	}
 
+	for k, v := range o.Env {
+		r.SetEnv(k, v)
+	}
+
 	paths := s.Provisioner.CNIPaths()
 	if paths.NetDir != "" {
 		r.SetEnv("OCTELIUM_CNI_CONF_DIR", paths.NetDir)

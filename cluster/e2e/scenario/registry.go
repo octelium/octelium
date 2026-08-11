@@ -24,7 +24,7 @@ import (
 )
 
 func init() {
-	register("k3s-flannel", k3sFlannel)
+	Register("k3s-flannel", k3sFlannel)
 }
 
 func k3sFlannel() *Scenario {

@@ -1,5 +1,3 @@
-//go:build e2e
-
 /*
  * Copyright Octelium Labs, LLC. All rights reserved.
  *
@@ -16,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package tests
+package suite
 
 import (
 	"embed"

@@ -45,6 +45,19 @@ type State struct {
 
 	ProvisionedAt time.Time `json:"provisionedAt,omitempty"`
 	InstalledAt   time.Time `json:"installedAt,omitempty"`
+
+	Extra map[string]string `json:"extra,omitempty"`
+}
+
+func (s *State) Set(k, v string) {
+	if s.Extra == nil {
+		s.Extra = map[string]string{}
+	}
+	s.Extra[k] = v
+}
+
+func (s *State) Get(k string) string {
+	return s.Extra[k]
 }
 
 func DefaultStatePath() string {

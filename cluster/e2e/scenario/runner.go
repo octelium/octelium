@@ -158,6 +158,10 @@ func (r *Runner) Provision(ctx context.Context) error {
 	r.State.ExternalIP = externalIP
 	r.State.ProvisionedAt = time.Now()
 
+	if err := runSteps(ctx, r, "provision", r.Scenario.Hooks.PostProvision); err != nil {
+		return err
+	}
+
 	zap.L().Info("Provisioned",
 		zap.String("externalIP", externalIP),
 		zap.String("kubeconfig", r.State.KubeconfigPath))
@@ -166,14 +170,16 @@ func (r *Runner) Provision(ctx context.Context) error {
 }
 
 func (r *Runner) Prepare(ctx context.Context) error {
-	if err := runSteps(ctx, r, "prepare", r.prepareSteps()); err != nil {
+	steps := append(r.prepareSteps(), r.Scenario.Hooks.PostPrepare...)
+	if err := runSteps(ctx, r, "prepare", steps); err != nil {
 		return err
 	}
 	return r.SaveState()
 }
 
 func (r *Runner) Install(ctx context.Context) error {
-	if err := runSteps(ctx, r, "install", r.installSteps()); err != nil {
+	steps := append(r.installSteps(), r.Scenario.Hooks.PostInstall...)
+	if err := runSteps(ctx, r, "install", steps); err != nil {
 		return err
 	}
 	r.State.InstalledAt = time.Now()

@@ -29,6 +29,16 @@ const (
 	minute = time.Minute
 )
 
+const pollReportEvery = 15 * time.Second
+
+type fatalError struct {
+	err error
+}
+
+func (f *fatalError) Error() string { return f.err.Error() }
+
+func fatal(err error) error { return &fatalError{err: err} }
+
 func pollUntil(ctx context.Context, what string,
 	budget, interval time.Duration, fn func(ctx context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, budget)
@@ -36,6 +46,7 @@ func pollUntil(ctx context.Context, what string,
 
 	started := time.Now()
 	attempts := 0
+	reported := time.Now()
 
 	var lastErr error
 	for {
@@ -47,6 +58,22 @@ func pollUntil(ctx context.Context, what string,
 				zap.Int("attempts", attempts),
 				zap.Duration("elapsed", time.Since(started)))
 			return nil
+		}
+
+		var f *fatalError
+		if errors.As(lastErr, &f) {
+			return errors.Errorf("Gave up waiting for %s after %s: %+v",
+				what, time.Since(started).Truncate(time.Millisecond), f.err)
+		}
+
+		if time.Since(reported) >= pollReportEvery {
+			reported = time.Now()
+			zap.L().Info("Still waiting",
+				zap.String("what", what),
+				zap.Int("attempts", attempts),
+				zap.Duration("elapsed", time.Since(started).Truncate(time.Second)),
+				zap.Duration("budget", budget),
+				zap.NamedError("lastError", lastErr))
 		}
 
 		select {

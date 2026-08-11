@@ -1,5 +1,3 @@
-//go:build e2e
-
 /*
  * Copyright Octelium Labs, LLC. All rights reserved.
  *
@@ -16,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package tests
+package suite
 
 import (
 	"net/http"
@@ -82,14 +80,7 @@ func testComponentHealth(t *testing.T, h *harness.H) {
 	zap.L().Debug("Checking components",
 		zap.Time("installedAt", h.State.InstalledAt))
 
-	for _, component := range []string{
-		"ingress",
-		"ingress-dataplane",
-		"nocturne",
-		"rscserver",
-		"octovigil",
-		"gwagent",
-	} {
+	for _, component := range h.Scenario.ComponentList() {
 		h.CheckComponentRestarts(t, component)
 	}
 }
