@@ -40,7 +40,7 @@ import (
 func applyNginx(t *testing.T, a *applyCtx) {
 	a.h.MustWaitServiceUpstream(t, "nginx")
 
-	res := a.h.GetStatus(t, a.h.HTTP(), a.url("nginx"), http.StatusOK)
+	res := a.h.WaitGetStatus(t, a.h.HTTP(), a.url("nginx"), http.StatusOK)
 
 	_, err := html.Parse(strings.NewReader(string(res.Body())))
 	assert.Nil(t, err)
@@ -49,7 +49,7 @@ func applyNginx(t *testing.T, a *applyCtx) {
 func applyGoogle(t *testing.T, a *applyCtx) {
 	a.h.MustWaitService(t, "google")
 
-	res := a.h.GetStatus(t, a.h.HTTP(), a.url("google"), http.StatusOK)
+	res := a.h.WaitGetStatus(t, a.h.HTTP(), a.url("google"), http.StatusOK)
 
 	_, err := html.Parse(strings.NewReader(string(res.Body())))
 	assert.Nil(t, err)

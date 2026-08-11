@@ -56,9 +56,7 @@ func testConnectQUIC(t *testing.T, h *harness.H) {
 
 	h.MustWaitServiceUpstream(t, "nginx")
 
-	h.WaitGetStatus(t, h.HTTP(), conn.URL("nginx"), http.StatusOK)
-
-	res := h.GetStatus(t, h.HTTP(), conn.URL("nginx"), http.StatusOK)
+	res := h.WaitGetStatus(t, h.HTTP(), conn.URL("nginx"), http.StatusOK)
 
 	_, err := html.Parse(strings.NewReader(string(res.Body())))
 	assert.Nil(t, err)

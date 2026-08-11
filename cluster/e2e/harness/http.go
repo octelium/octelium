@@ -43,8 +43,10 @@ func (h *H) HTTP() *resty.Client {
 		SetLogger(zap.S())
 }
 
-func (h *H) WaitGetStatus(t *testing.T, c *resty.Client, path string, want int) {
+func (h *H) WaitGetStatus(t *testing.T, c *resty.Client, path string, want int) *resty.Response {
 	t.Helper()
+
+	var ret *resty.Response
 
 	h.Eventually(t, fmt.Sprintf("GET %s to return %d", path, want), DecisionBudget,
 		func(ctx context.Context) error {
@@ -55,8 +57,11 @@ func (h *H) WaitGetStatus(t *testing.T, c *resty.Client, path string, want int) 
 			if res.StatusCode() != want {
 				return errors.Errorf("got status %d, want %d", res.StatusCode(), want)
 			}
+			ret = res
 			return nil
 		})
+
+	return ret
 }
 
 func (h *H) HTTPNoRetry() *resty.Client {

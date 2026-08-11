@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,14 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 	h.Require(t, capRootTUN)
 
 	svc := h.NewPublicService(t, "default")
+
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+		InlinePolicies: harness.InlineAllowAny("allow-l3"),
+	}
+	svc = h.UpdateService(t, svc)
+
+	h.MustWaitService(t, svc.Metadata.Name)
+
 	svc = h.GetService(t, svc.Metadata.Name)
 
 	require.True(t, len(svc.Status.Addresses) > 0)
@@ -191,20 +200,39 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		Args: []string{"--no-dns"},
 	})
 
+	routeTo := func(t *testing.T, host string) string {
+		t.Helper()
+
+		out, err := h.Output(t.Context(), fmt.Sprintf("ip route get %s", host))
+		if err != nil {
+			return fmt.Sprintf("<could not resolve the route: %+v: %s>", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
 	get := func(t *testing.T, host string) {
 		t.Helper()
+
+		route := routeTo(t, host)
+		zap.L().Info("Route to the Service address",
+			zap.String("addr", host), zap.String("route", route))
+
+		require.Contains(t, route, tunDevice,
+			"traffic to %s does not go through the %s tunnel device, so this is not "+
+				"exercising the Gateway data path. Route: %s", host, tunDevice, route)
 
 		url := fmt.Sprintf("http://%s",
 			net.JoinHostPort(host, fmt.Sprintf("%d", svc.Status.Port)))
 
 		h.Eventually(t, fmt.Sprintf("GET %s to succeed over the tunnel", url),
 			harness.ConnectBudget, func(ctx context.Context) error {
-				res, err := h.HTTP().R().SetContext(ctx).Get(url)
+				res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(url)
 				if err != nil {
 					return err
 				}
 				if res.StatusCode() != http.StatusOK {
-					return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+					return errors.Errorf("%+v. Route: %s",
+						errUnexpectedStatus(res.StatusCode(), http.StatusOK), route)
 				}
 				return nil
 			})
@@ -229,7 +257,7 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 		out, err := h.Output(t.Context(), "ip route show table all")
 		require.Nil(t, err)
 
-		assert.Contains(t, string(out), "octelium",
+		assert.Contains(t, string(out), tunDevice,
 			"no Octelium route was installed on the host")
 	})
 }
