@@ -52,7 +52,35 @@ func Internal(format string, a ...any) error {
 	return status.Errorf(codes.Internal, "Internal error")
 }
 
+func isUserInduced(code codes.Code) bool {
+	switch code {
+	case codes.InvalidArgument,
+		codes.NotFound,
+		codes.AlreadyExists,
+		codes.PermissionDenied,
+		codes.Unauthenticated,
+		codes.FailedPrecondition,
+		codes.OutOfRange,
+		codes.ResourceExhausted,
+		codes.Unimplemented:
+		return true
+	default:
+		return false
+	}
+}
+
 func InternalWithErr(err error) error {
+	type grpcStatus interface{ GRPCStatus() *status.Status }
+
+	var gs grpcStatus
+	if errors.As(err, &gs) {
+		if s := gs.GRPCStatus(); s != nil && isUserInduced(s.Code()) {
+			zap.L().Debug("Propagating error",
+				zap.String("code", s.Code().String()), zap.Error(err))
+			return s.Err()
+		}
+	}
+
 	zap.L().Warn("Internal error", zap.Error(err))
 	return status.Errorf(codes.Internal, "Internal error")
 }
