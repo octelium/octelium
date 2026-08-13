@@ -17,6 +17,7 @@
 package oscope
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -384,7 +385,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -402,7 +403,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -426,7 +427,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -450,7 +451,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns2",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -473,7 +474,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -497,7 +498,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -523,7 +524,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 		{
 			svc: &corev1.Service{
 				Metadata: &metav1.Metadata{
-					Name: "svc1",
+					Name: "svc1.ns1",
 				},
 				Status: &corev1.Service_Status{
 					NamespaceRef: &metav1.ObjectReference{
@@ -954,7 +955,7 @@ func TestIsAuthorizedByScopes(t *testing.T) {
 func tstSvcNS(name, ns string) *corev1.Service {
 	return &corev1.Service{
 		Metadata: &metav1.Metadata{
-			Name: name,
+			Name: fmt.Sprintf("%s.%s", name, ns),
 		},
 		Spec: &corev1.Service_Spec{},
 		Status: &corev1.Service_Status{

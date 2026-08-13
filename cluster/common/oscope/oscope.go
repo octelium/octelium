@@ -24,6 +24,7 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/rgx"
 	"github.com/pkg/errors"
@@ -401,7 +402,7 @@ func IsAuthorizedByScopeService(scope *corev1.Scope_Service, svc *corev1.Service
 		}
 
 		if len(filter.Names) > 0 {
-			if !isInListOrAny(filter.Names, svc.Metadata.Name) {
+			if !isInListOrAnyService(filter.Names, svc.Metadata.Name) {
 				return false
 			}
 		}
@@ -421,5 +422,25 @@ func IsAuthorizedByScopeService(scope *corev1.Scope_Service, svc *corev1.Service
 func isInListOrAny(lst []string, arg string) bool {
 	return slices.ContainsFunc(lst, func(itm string) bool {
 		return itm == arg || itm == "*"
+	})
+}
+
+func isInListOrAnyService(lst []string, arg string) bool {
+	full := vutils.GetServiceFullNameFromName(arg)
+	if full == "" {
+		full = arg
+	}
+
+	name, _, _ := strings.Cut(full, ".")
+
+	return slices.ContainsFunc(lst, func(itm string) bool {
+		switch {
+		case itm == "*":
+			return true
+		case strings.Contains(itm, "."):
+			return itm == full
+		default:
+			return itm == name
+		}
 	})
 }
