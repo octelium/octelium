@@ -158,7 +158,8 @@ func (s *tstSrv) Process(srv extprocsvc.ExternalProcessor_ProcessServer) error {
 
 func TestMiddleware(t *testing.T) {
 
-	ctx := context.Background()
+	ctx, cancelFn := context.WithCancel(context.Background())
+	t.Cleanup(cancelFn)
 
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
@@ -196,8 +197,16 @@ func TestMiddleware(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	var rReq *http.Request
+	var streamRW *httptest.ResponseRecorder
+	var isStreamed bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rReq = r
+		if r.URL.Path == "/stream" {
+			w.Write([]byte("foo"))
+			w.(http.Flusher).Flush()
+			isStreamed = streamRW.Body.String() == "foo"
+			w.Write([]byte("bar"))
+		}
 	})
 
 	celEngine, err := celengine.New(ctx, &celengine.Opts{})
@@ -275,11 +284,57 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, "", rw.Body.String())
 	}
 
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/stream", nil)
+
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+										ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+											Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
+												Address: fmt.Sprintf("localhost:%d", port),
+											},
+											ProcessingMode: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode{
+												ResponseBodyMode: corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_ProcessingMode_NONE,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		streamRW = rw
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.True(t, isStreamed)
+		assert.True(t, rw.Flushed)
+		assert.Equal(t, "foobar", rw.Body.String())
+		assert.Equal(t, tstSrv.rspHeader, rw.Header().Get("X-Octelium-Custom-1"))
+	}
+
 }
 
 func TestMiddlewareTimeout(t *testing.T) {
 
-	ctx := context.Background()
+	ctx, cancelFn := context.WithCancel(context.Background())
+	t.Cleanup(cancelFn)
 
 	tst, err := tests.Initialize(nil)
 	assert.Nil(t, err)
@@ -363,9 +418,17 @@ func TestMiddlewareTimeout(t *testing.T) {
 
 		mdlwr.ServeHTTP(rw, req)
 
-		assert.Equal(t, "", rReq.Header.Get("X-Octelium-Custom-1"))
+		assert.Nil(t, rReq)
 		assert.Equal(t, "", rw.Header().Get("X-Octelium-Custom-1"))
-
-		assert.Equal(t, "", rw.Body.String())
+		assert.Equal(t, http.StatusBadGateway, rw.Code)
+		assert.Contains(t, rw.Body.String(), "external processor error")
 	}
+}
+
+func TestResponseWriterMaxBodySize(t *testing.T) {
+	rw := newResponseWriter(httptest.NewRecorder(), true, func() {})
+
+	n, err := rw.Write(make([]byte, maxBodySize+1))
+	assert.Zero(t, n)
+	assert.ErrorIs(t, err, errBodyTooLarge)
 }
