@@ -252,3 +252,102 @@ func TestGetAccessLog(t *testing.T) {
 		assert.Equal(t, reqPath, logE.Entry.Info.GetHttp().Request.Path)
 	}
 }
+
+func TestGetRequestHeaderMap(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+	for _, header := range []string{
+		"Authorization",
+		"Cookie",
+		"Cookie2",
+		"Grpc-Metadata-Authorization",
+		"Proxy-Authorization",
+		"Referer",
+		"Sec-Websocket-Protocol",
+		"X-Api-Key",
+		"X-Auth-Token",
+		"X-Custom-Credential",
+		"X-Octelium-Auth",
+		"X-Octelium-Refresh-Token",
+		"X-Octelium-Session-Ref",
+		"X-Octelium-Session-Uid",
+	} {
+		req.Header.Set(header, "secret")
+	}
+	req.Header.Set("X-Excluded", "excluded")
+	req.Header.Set("X-Safe", "safe")
+
+	for _, cfg := range []*corev1.Service_Spec_Config_HTTP_Visibility{
+		{
+			IncludeAllRequestHeaders: true,
+			ExcludeRequestHeaders:    []string{"X-Excluded"},
+		},
+		{
+			IncludeRequestHeaders: []string{
+				"Authorization",
+				"X-Custom-Credential",
+				"X-Safe",
+			},
+		},
+	} {
+		headers := getRequestHeaderMap(req, cfg, "X-Custom-Credential")
+		assert.Len(t, headers, 1)
+		for key, value := range headers {
+			assert.Equal(t, "X-Safe", http.CanonicalHeaderKey(key))
+			assert.Equal(t, "safe", value)
+		}
+	}
+}
+
+func TestGetResponseHeaderMap(t *testing.T) {
+	rw := httptest.NewRecorder()
+	for _, header := range []string{
+		"Authentication-Info",
+		"Authorization",
+		"Location",
+		"Proxy-Authentication-Info",
+		"Refresh",
+		"Sec-Websocket-Protocol",
+		"Set-Cookie",
+		"Set-Cookie2",
+		"X-Auth-Token",
+		"X-Octelium-Auth",
+		"X-Octelium-Refresh-Token",
+		"X-Octelium-Session-Ref",
+		"X-Octelium-Session-Uid",
+	} {
+		rw.Header().Set(header, "secret")
+	}
+	rw.Header().Set("X-Excluded", "excluded")
+	rw.Header().Set("X-Safe", "safe")
+
+	for _, cfg := range []*corev1.Service_Spec_Config_HTTP_Visibility{
+		{
+			IncludeAllResponseHeaders: true,
+			ExcludeResponseHeaders:    []string{"X-Excluded"},
+		},
+		{
+			IncludeResponseHeaders: []string{
+				"Set-Cookie",
+				"X-Octelium-Session-Ref",
+				"X-Safe",
+			},
+		},
+	} {
+		headers := getResponseHeaderMap(rw, cfg)
+		assert.Len(t, headers, 1)
+		for key, value := range headers {
+			assert.Equal(t, "X-Safe", http.CanonicalHeaderKey(key))
+			assert.Equal(t, "safe", value)
+		}
+	}
+}
+
+func TestGetLogURL(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"https://localhost/prefix/object?access_token=secret&session=credential", nil)
+	req.Header.Set("Referer",
+		"https://user:password@example.com/login?code=secret#credential")
+
+	assert.Equal(t, "/prefix/object", getLogURI(req))
+	assert.Equal(t, "https://example.com/login", getLogReferer(req))
+}

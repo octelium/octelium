@@ -22,6 +22,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,7 +281,12 @@ func (m *middleware) getAccessLog(
 			}
 		}
 
-		reqHeaders = getRequestHeaderMap(req, visibilityCfg)
+		var customAuthHeader string
+		if svcCfg.GetHttp().GetAuth().GetCustom() != nil {
+			customAuthHeader = svcCfg.GetHttp().GetAuth().GetCustom().Header
+		}
+
+		reqHeaders = getRequestHeaderMap(req, visibilityCfg, customAuthHeader)
 		respHeaders = getResponseHeaderMap(crw, visibilityCfg)
 	}
 
@@ -298,11 +304,11 @@ func (m *middleware) getAccessLog(
 
 	httpC := &corev1.AccessLog_Entry_Info_HTTP{
 		Request: &corev1.AccessLog_Entry_Info_HTTP_Request{
-			Uri:       req.URL.RequestURI(),
+			Uri:       getLogURI(req),
 			Path:      req.URL.Path,
 			UserAgent: req.Header.Get("User-Agent"),
 			Method:    req.Method,
-			Referer:   req.Referer(),
+			Referer:   getLogReferer(req),
 			Scheme:    req.URL.Scheme,
 			BodyBytes: func() uint64 {
 				if req.ContentLength < 0 {
@@ -392,7 +398,40 @@ func (m *middleware) getAccessLog(
 	return logE
 }
 
-func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP_Visibility) map[string]string {
+var sensitiveRequestHeaders = []string{
+	"Authorization",
+	"Cookie",
+	"Cookie2",
+	"Grpc-Metadata-Authorization",
+	"Proxy-Authorization",
+	"Referer",
+	"Sec-Websocket-Protocol",
+	"X-Api-Key",
+	"X-Auth-Token",
+	"X-Octelium-Auth",
+	"X-Octelium-Refresh-Token",
+	"X-Octelium-Session-Ref",
+	"X-Octelium-Session-Uid",
+}
+
+var sensitiveResponseHeaders = []string{
+	"Authentication-Info",
+	"Authorization",
+	"Location",
+	"Proxy-Authentication-Info",
+	"Refresh",
+	"Sec-Websocket-Protocol",
+	"Set-Cookie",
+	"Set-Cookie2",
+	"X-Auth-Token",
+	"X-Octelium-Auth",
+	"X-Octelium-Refresh-Token",
+	"X-Octelium-Session-Ref",
+	"X-Octelium-Session-Uid",
+}
+
+func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP_Visibility,
+	customAuthHeader string) map[string]string {
 	if cfg == nil {
 		return nil
 	}
@@ -412,15 +451,12 @@ func getRequestHeaderMap(req *http.Request, cfg *corev1.Service_Spec_Config_HTTP
 	}
 
 	if len(cfg.ExcludeRequestHeaders) > 0 && len(ret) > 0 {
-		for _, hdr := range cfg.ExcludeRequestHeaders {
-			delete(ret, http.CanonicalHeaderKey(hdr))
-		}
+		deleteHeaderMap(ret, cfg.ExcludeRequestHeaders...)
 	}
 
 	if ret != nil {
-		delete(ret, "Authorization")
-		delete(ret, "Cookie")
-		delete(ret, "X-Api-Key")
+		deleteHeaderMap(ret, sensitiveRequestHeaders...)
+		deleteHeaderMap(ret, customAuthHeader)
 	}
 
 	return ret
@@ -446,16 +482,53 @@ func getResponseHeaderMap(rw http.ResponseWriter, cfg *corev1.Service_Spec_Confi
 	}
 
 	if len(cfg.ExcludeResponseHeaders) > 0 && len(ret) > 0 {
-		for _, hdr := range cfg.ExcludeResponseHeaders {
-			delete(ret, http.CanonicalHeaderKey(hdr))
-		}
+		deleteHeaderMap(ret, cfg.ExcludeResponseHeaders...)
 	}
 
 	if ret != nil {
-		delete(ret, "Set-Cookie")
+		deleteHeaderMap(ret, sensitiveResponseHeaders...)
 	}
 
 	return ret
+}
+
+func deleteHeaderMap(headers map[string]string, names ...string) {
+	for key := range headers {
+		for _, name := range names {
+			if strings.EqualFold(key, name) {
+				delete(headers, key)
+				break
+			}
+		}
+	}
+}
+
+func getLogURI(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+
+	u := *req.URL
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.RequestURI()
+}
+
+func getLogReferer(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+
+	u, err := url.Parse(req.Referer())
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.String()
 }
 
 type responseWriter struct {
