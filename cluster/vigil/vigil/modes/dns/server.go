@@ -188,13 +188,19 @@ func (s *Server) Close() error {
 
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	startedAt := time.Now()
+	defer func() {
+		if err := recover(); err != nil {
+			zap.L().Error("Recovered from DNS request panic", zap.Any("error", err))
+		}
+	}()
+
 	if r == nil {
 		return
 	}
 
-	if len(r.Question) != 1 {
+	if r.Response || r.Opcode != dns.OpcodeQuery || len(r.Question) != 1 {
 		msg := new(dns.Msg)
-		msg.SetRcode(r, dns.RcodeNotImplemented)
+		msg.SetRcode(r, dns.RcodeFormatError)
 		_ = w.WriteMsg(msg)
 		return
 	}

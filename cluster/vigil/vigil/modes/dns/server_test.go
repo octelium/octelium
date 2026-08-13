@@ -99,6 +99,83 @@ func findSumDataPointByRcodeClass(t *testing.T, rm *metricdata.ResourceMetrics, 
 	return metricdata.DataPoint[int64]{}, false
 }
 
+type testResponseWriter struct {
+	msg *dns.Msg
+}
+
+func (w *testResponseWriter) LocalAddr() net.Addr {
+	return &net.UDPAddr{}
+}
+
+func (w *testResponseWriter) RemoteAddr() net.Addr {
+	return &net.UDPAddr{}
+}
+
+func (w *testResponseWriter) WriteMsg(msg *dns.Msg) error {
+	w.msg = msg
+	return nil
+}
+
+func (w *testResponseWriter) Write(b []byte) (int, error) {
+	return len(b), nil
+}
+
+func (w *testResponseWriter) Close() error {
+	return nil
+}
+
+func (w *testResponseWriter) TsigStatus() error {
+	return nil
+}
+
+func (w *testResponseWriter) TsigTimersOnly(bool) {
+}
+
+func (w *testResponseWriter) Hijack() {
+}
+
+func TestInvalidRequest(t *testing.T) {
+	tests := []*dns.Msg{
+		{},
+		{
+			Question: []dns.Question{
+				{Name: "allowed.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET},
+				{Name: "denied.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET},
+			},
+		},
+		{
+			MsgHdr: dns.MsgHdr{Opcode: dns.OpcodeUpdate},
+			Question: []dns.Question{
+				{Name: "example.", Qtype: dns.TypeSOA, Qclass: dns.ClassINET},
+			},
+		},
+		{
+			MsgHdr: dns.MsgHdr{Response: true},
+			Question: []dns.Question{
+				{Name: "example.", Qtype: dns.TypeA, Qclass: dns.ClassINET},
+			},
+		},
+	}
+
+	for _, req := range tests {
+		w := &testResponseWriter{}
+		assert.NotPanics(t, func() {
+			new(Server).ServeDNS(w, req)
+		})
+		assert.NotNil(t, w.msg)
+		assert.Equal(t, dns.RcodeFormatError, w.msg.Rcode)
+	}
+}
+
+func TestRequestPanic(t *testing.T) {
+	req := new(dns.Msg)
+	req.SetQuestion("example.", dns.TypeA)
+
+	assert.NotPanics(t, func() {
+		new(Server).ServeDNS(&testResponseWriter{}, req)
+	})
+}
+
 func TestServer(t *testing.T) {
 
 	ctx := context.Background()
