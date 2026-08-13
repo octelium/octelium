@@ -443,7 +443,7 @@ func testVigilDynamicConfig(t *testing.T, h *harness.H) {
 			{
 				Condition: &corev1.Condition{
 					Type: &corev1.Condition_Match{
-						Match: `has(ctx.request.http.headers["x-e2e-channel"]) && ` +
+						Match: `"x-e2e-channel" in ctx.request.http.headers && ` +
 							`ctx.request.http.headers["x-e2e-channel"] == "beta"`,
 					},
 				},
