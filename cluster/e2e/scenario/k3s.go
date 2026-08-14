@@ -47,6 +47,8 @@ const (
 	calicoChartVersion = "v3.32.1"
 )
 
+const k3sClusterCIDRDefault = "10.42.0.0/16"
+
 func k3sCNIPaths(cni CNI) CNIPaths {
 	if cni == "" || cni == CNIFlannel {
 		return CNIPaths{
@@ -64,6 +66,7 @@ func k3sCNIPaths(cni CNI) CNIPaths {
 type K3s struct {
 	Kubeconfig  string
 	CNI         CNI
+	ClusterCIDR string
 	ServerArgs  []string
 	InstallExec []string
 	Packages    []string
@@ -455,11 +458,13 @@ helm upgrade --install calico projectcalico/tigera-operator \
   --version %[1]s \
   --namespace tigera-operator \
   --set installation.cni.type=Calico \
+  --set installation.cni.binDir=%[2]s \
+  --set installation.cni.confDir=%[3]s \
   --set installation.calicoNetwork.bgp=Disabled \
-  --set installation.cniBinDir=%[2]s \
-  --set installation.cniNetDir=%[3]s \
+  --set installation.calicoNetwork.ipPools[0].cidr=%[4]s \
+  --set installation.calicoNetwork.ipPools[0].encapsulation=VXLAN \
   --timeout 10m
-`, calicoChartVersion, p.Paths.BinDir, p.Paths.NetDir)); err != nil {
+`, calicoChartVersion, p.Paths.BinDir, p.Paths.NetDir, p.clusterCIDR())); err != nil {
 		return err
 	}
 
@@ -468,7 +473,58 @@ helm upgrade --install calico projectcalico/tigera-operator \
 		return err
 	}
 
+	if err := p.waitCalicoInstallation(ctx, r); err != nil {
+		return err
+	}
+
 	return p.waitCNIRollout(ctx, r, "calico-system", "daemonset/calico-node")
+}
+
+func (p *K3s) clusterCIDR() string {
+	if p.ClusterCIDR != "" {
+		return p.ClusterCIDR
+	}
+	return k3sClusterCIDRDefault
+}
+
+func (p *K3s) waitCalicoInstallation(ctx context.Context, r *Runner) error {
+	return pollUntil(ctx, "the tigera-operator to accept the Installation",
+		5*minute, 5*second, func(ctx context.Context) error {
+			if msg := calicoDegraded(ctx, r); msg != "" {
+				return fatal(errors.Errorf("The tigera-operator rejected the Installation. %s", msg))
+			}
+
+			if _, err := r.BashOutput(ctx,
+				`kubectl get namespace calico-system -o name`); err != nil {
+				return errors.Errorf("The operator has not created calico-system yet")
+			}
+
+			return nil
+		})
+}
+
+func calicoDegraded(ctx context.Context, r *Runner) string {
+	out, err := r.BashOutput(ctx, `kubectl get tigerastatus -o jsonpath=`+
+		`'{range .items[*]}{.metadata.name}{"="}`+
+		`{.status.conditions[?(@.type=="Degraded")].status}{":"}`+
+		`{.status.conditions[?(@.type=="Degraded")].message}{"\n"}{end}'`)
+	if err != nil {
+		return ""
+	}
+
+	var ret []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		name, rest, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		status, msg, _ := strings.Cut(rest, ":")
+		if status == "True" {
+			ret = append(ret, fmt.Sprintf("%s: %s", name, strings.TrimSpace(msg)))
+		}
+	}
+
+	return strings.Join(ret, "; ")
 }
 
 func (p *K3s) waitCNIRollout(ctx context.Context, r *Runner, ns, target string) error {

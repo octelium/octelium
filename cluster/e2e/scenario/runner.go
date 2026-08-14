@@ -154,6 +154,9 @@ func (r *Runner) Provision(ctx context.Context) error {
 		zap.String("scenario", r.Scenario.ID),
 		zap.String("provisioner", r.Scenario.Provisioner.Name()))
 
+	stop := r.watchCluster(ctx, "provision")
+	defer stop()
+
 	if err := r.Scenario.Provisioner.Provision(ctx, r); err != nil {
 		return err
 	}
@@ -177,6 +180,9 @@ func (r *Runner) Provision(ctx context.Context) error {
 }
 
 func (r *Runner) Prepare(ctx context.Context) error {
+	stop := r.watchCluster(ctx, "prepare")
+	defer stop()
+
 	steps := append(r.prepareSteps(), r.Scenario.Hooks.PostPrepare...)
 	if err := runSteps(ctx, r, "prepare", steps); err != nil {
 		return err
@@ -185,6 +191,9 @@ func (r *Runner) Prepare(ctx context.Context) error {
 }
 
 func (r *Runner) Install(ctx context.Context) error {
+	stop := r.watchCluster(ctx, "install")
+	defer stop()
+
 	steps := append(r.installSteps(), r.Scenario.Hooks.PostInstall...)
 	if err := runSteps(ctx, r, "install", steps); err != nil {
 		return err

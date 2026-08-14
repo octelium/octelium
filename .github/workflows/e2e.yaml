@@ -15,7 +15,7 @@ on:
         required: false
         type: choice
         default: flannel
-        options: [flannel, cilium, calico, canal]
+        options: [flannel, cilium, calico]
       spiffe:
         description: "Install SPIRE and enable the SPIFFE CSI driver"
         required: false
