@@ -188,7 +188,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 					ReadOnlyRootFilesystem:   new(true),
 					Capabilities: &k8scorev1.Capabilities{
 						Drop: []k8scorev1.Capability{
-							"all",
+							"ALL",
 						},
 						Add: []k8scorev1.Capability{
 							"NET_BIND_SERVICE",
@@ -290,9 +290,8 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 							return nil
 						}(),
 						Capabilities: &k8scorev1.Capabilities{
-							Add: []k8scorev1.Capability{
-								"NET_BIND_SERVICE",
-							},
+							Drop: []k8scorev1.Capability{"ALL"},
+							Add:  []k8scorev1.Capability{"NET_BIND_SERVICE"},
 						},
 					},
 					Resources: func() k8scorev1.ResourceRequirements {
