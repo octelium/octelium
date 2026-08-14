@@ -257,7 +257,7 @@ func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {
 			r.State.AuthTokenPath, err)
 	}
 
-	return pollUntil(ctx, "initial login", 3*minute, 3*second, func(ctx context.Context) error {
+	err = pollUntil(ctx, "initial login", 3*minute, 3*second, func(ctx context.Context) error {
 		out, err := r.BashOutput(ctx, fmt.Sprintf(
 			`OCTELIUM_INSECURE_TLS=true octelium login --domain %s --auth-token %s`,
 			r.Scenario.Domain, shellQuote(strings.TrimSpace(string(tkn)))))
@@ -266,6 +266,39 @@ func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return errors.Errorf("%+v\n%s", err, r.ingressDiagnostics(ctx))
+	}
+
+	return nil
+}
+
+func (r *Runner) ingressDiagnostics(ctx context.Context) string {
+	netDir := r.Scenario.Provisioner.CNIPaths().NetDir
+
+	out, err := r.BashOutput(ctx, fmt.Sprintf(`
+echo "--- listening sockets ---"
+sudo ss -lntp 2>&1 | head -n 40
+echo "--- the Cluster ingress Services ---"
+kubectl get svc -n %[1]s -o wide 2>&1 | head -n 20
+echo "--- the k3s ServiceLB pods, which bind the host port ---"
+kubectl get pods -n kube-system -o wide 2>&1 | grep -i svclb || echo "no svclb pod exists"
+kubectl get ds -n kube-system 2>&1 | grep -i svclb || echo "no svclb daemonset exists"
+echo "--- the CNI config chain in %[2]s ---"
+sudo ls -la %[2]s 2>&1
+for f in %[2]s/*.conf %[2]s/*.conflist; do
+  [ -f "$f" ] || continue
+  echo "--- $f ---"
+  sudo cat "$f" 2>&1 | head -n 40
+done
+`, vutils.K8sNS, netDir))
+	if err != nil {
+		return fmt.Sprintf("<could not collect the ingress diagnostics: %+v>\n%s", err, out)
+	}
+
+	return "The Cluster is up but its ingress is not reachable on the host. " +
+		"The host port is bound by a k3s ServiceLB pod through the portmap CNI plugin, " +
+		"so a CNI whose config chain has no portmap never opens it.\n" + out
 }
 
 func (r *Runner) stepStorageSecretResource(ctx context.Context, _ *Runner) error {

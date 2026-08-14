@@ -475,6 +475,7 @@ helm upgrade --install cilium cilium/cilium \
   --set cni.binPath=%s \
   --set cni.confPath=%s \
   --set cni.exclusive=false \
+  --set cni.chainingMode=portmap \
   --timeout 10m
 `, ciliumChartVersion, apiAddr, p.Paths.BinDir, p.Paths.NetDir)); err != nil {
 		return err
@@ -497,6 +498,7 @@ helm upgrade --install calico projectcalico/tigera-operator \
   --set installation.cni.binDir=%[2]s \
   --set installation.cni.confDir=%[3]s \
   --set installation.calicoNetwork.bgp=Disabled \
+  --set installation.calicoNetwork.hostPorts=Enabled \
   --set installation.calicoNetwork.ipPools[0].cidr=%[4]s \
   --set installation.calicoNetwork.ipPools[0].encapsulation=VXLAN \
   --set goldmane.enabled=false \
