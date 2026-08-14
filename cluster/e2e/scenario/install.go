@@ -291,16 +291,53 @@ func loginError(out string) string {
 }
 
 func (r *Runner) ingressDiagnostics(ctx context.Context) string {
-	netDir := r.Scenario.Provisioner.CNIPaths().NetDir
+	out, err := r.BashOutput(ctx,
+		diagScript(vutils.K8sNS, r.Scenario.Provisioner.CNIPaths().NetDir))
+	if err != nil {
+		return fmt.Sprintf("<could not collect the ingress diagnostics: %+v>\n%s\n", err, out)
+	}
 
-	out, err := r.BashOutput(ctx, fmt.Sprintf(`
-echo "--- listening sockets ---"
-sudo ss -lntp 2>&1 | head -n 40
-echo "--- the Cluster ingress Services ---"
-kubectl get svc -n %[1]s -o wide 2>&1 | head -n 20
-echo "--- the k3s ServiceLB pods, which bind the host port ---"
+	return "The Cluster is up but its ingress is not reachable at the Cluster domain. " +
+		"The host port is published by a k3s ServiceLB pod through the portmap CNI plugin, " +
+		"which is iptables DNAT rather than a listening socket.\n" + out + "\n"
+}
+
+func diagScript(ns, netDir string) string {
+	return fmt.Sprintf(`
+SVC=octelium-ingress-dataplane
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+NODE_PORT=$(kubectl get svc -n %[1]s "$SVC" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)
+CLUSTER_IP=$(kubectl get svc -n %[1]s "$SVC" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+
+echo "--- where the ingress answers from ---"
+for target in "127.0.0.1:443" "${NODE_IP}:443" "${NODE_IP}:${NODE_PORT}" "${CLUSTER_IP}:443"; do
+  case "$target" in *:|:*) continue ;; esac
+  printf '%%-24s ' "$target"
+  curl -sk -o /dev/null -m 5 -w 'http=%%{http_code} connect=%%{time_connect}s\n' \
+    "https://$target/" 2>&1 || echo "unreachable"
+done
+
+echo "--- the portmap DNAT rules for the host port ---"
+RULES=$(sudo iptables -t nat -S 2>/dev/null | grep -iE 'hostport|CNI-DN' | head -n 20 || true)
+if [ -n "$RULES" ]; then echo "$RULES"; else echo "no CNI hostport rules in the nat table"; fi
+
+echo "--- route_localnet, which 127.0.0.1 to a pod IP depends on ---"
+sudo sysctl net.ipv4.conf.all.route_localnet 2>&1 || true
+for d in /proc/sys/net/ipv4/conf/*/route_localnet; do
+  [ -r "$d" ] || continue
+  printf '%%s = %%s\n' "$d" "$(sudo cat "$d" 2>/dev/null)"
+done | grep -vE '/(lo|default)/' | head -n 15 || true
+
+echo "--- the k3s ServiceLB pod that owns the host port ---"
 kubectl get pods -n kube-system -o wide 2>&1 | grep -i svclb || echo "no svclb pod exists"
 kubectl get ds -n kube-system 2>&1 | grep -i svclb || echo "no svclb daemonset exists"
+kubectl get pod -n kube-system -l svccontroller.k3s.cattle.io/svcname="$SVC" \
+  -o jsonpath='{.items[0].spec.containers[*].ports}' 2>&1 || true
+echo
+
+echo "--- the Cluster ingress Services ---"
+kubectl get svc -n %[1]s -o wide 2>&1 | head -n 20
+
 echo "--- the CNI config chain in %[2]s ---"
 sudo ls -la %[2]s 2>&1
 for f in %[2]s/*.conf %[2]s/*.conflist; do
@@ -308,14 +345,7 @@ for f in %[2]s/*.conf %[2]s/*.conflist; do
   echo "--- $f ---"
   sudo cat "$f" 2>&1 | head -n 40
 done
-`, vutils.K8sNS, netDir))
-	if err != nil {
-		return fmt.Sprintf("<could not collect the ingress diagnostics: %+v>\n%s\n", err, out)
-	}
-
-	return "The Cluster is up but its ingress is not reachable on the host. " +
-		"The host port is bound by a k3s ServiceLB pod through the portmap CNI plugin, " +
-		"so a CNI whose config chain has no portmap never opens it.\n" + out + "\n"
+`, ns, netDir)
 }
 
 func (r *Runner) stepStorageSecretResource(ctx context.Context, _ *Runner) error {
