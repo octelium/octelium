@@ -251,7 +251,10 @@ func describePods(ctx context.Context,
 	return strings.TrimSpace(b.String())
 }
 
-const hostIngressPIDPath = "/tmp/octelium-e2e-host-ingress.pid"
+const (
+	hostIngressPIDPath = "/tmp/octelium-e2e-host-ingress.pid"
+	hostIngressLogPath = "/tmp/octelium-e2e-host-ingress.log"
+)
 
 func (r *Runner) stepHostIngress(ctx context.Context, _ *Runner) error {
 	out, err := r.BashOutput(ctx, hostIngressScript(vutils.K8sNS))
@@ -271,7 +274,11 @@ if [ -f %[1]s ]; then
   sudo kill "$(cat %[1]s)" 2>/dev/null || true
   sudo rm -f %[1]s
 fi
-`, hostIngressPIDPath))
+sudo rm -f %[2]s
+for port in 443 8080; do
+  sudo iptables -t nat -D OUTPUT -p tcp -d 127.0.0.1 --dport "$port" -j RETURN 2>/dev/null || true
+done
+`, hostIngressPIDPath, hostIngressLogPath))
 }
 
 func hostIngressScript(ns string) string {
@@ -303,16 +310,20 @@ echo "Forwarding 127.0.0.1:$PORT to $NODE_IP:$PORT for the Cluster domain."
 
 if ! command -v socat >/dev/null 2>&1; then
   sudo apt-get update -qq
-  sudo apt-get install -y -qq socat
+  sudo apt-get install -y -qq socat >/dev/null
 fi
+
+sudo iptables -t nat -D OUTPUT -p tcp -d 127.0.0.1 --dport "$PORT" -j RETURN 2>/dev/null || true
+sudo iptables -t nat -I OUTPUT 1 -p tcp -d 127.0.0.1 --dport "$PORT" -j RETURN
 
 if [ -f %[2]s ]; then
   sudo kill "$(cat %[2]s)" 2>/dev/null || true
   sudo rm -f %[2]s
 fi
 
+sudo rm -f %[3]s
 sudo sh -c "nohup socat TCP4-LISTEN:$PORT,bind=127.0.0.1,fork,reuseaddr TCP4:$NODE_IP:$PORT \
-  >/dev/null 2>&1 & echo \$! > %[2]s"
+  >%[3]s 2>&1 & echo \$! > %[2]s"
 
 for i in $(seq 1 30); do
   if reachable 127.0.0.1 "$PORT"; then
@@ -323,8 +334,13 @@ for i in $(seq 1 30); do
 done
 
 echo "the forwarder did not come up on 127.0.0.1:$PORT" >&2
+echo "--- socat ---" >&2
+sudo cat %[3]s >&2 2>/dev/null || echo "no socat log at %[3]s" >&2
+sudo ss -lntp 2>&1 | grep -E ":$PORT " >&2 || echo "nothing listens on :$PORT" >&2
+echo "--- nat OUTPUT ---" >&2
+sudo iptables -t nat -S OUTPUT >&2 2>/dev/null || true
 exit 1
-`, ns, hostIngressPIDPath)
+`, ns, hostIngressPIDPath, hostIngressLogPath)
 }
 
 func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {
