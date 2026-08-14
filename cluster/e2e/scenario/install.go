@@ -257,20 +257,37 @@ func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {
 			r.State.AuthTokenPath, err)
 	}
 
-	err = pollUntil(ctx, "initial login", 3*minute, 3*second, func(ctx context.Context) error {
+	var reported bool
+
+	return pollUntil(ctx, "initial login", 3*minute, 3*second, func(ctx context.Context) error {
 		out, err := r.BashOutput(ctx, fmt.Sprintf(
 			`OCTELIUM_INSECURE_TLS=true octelium login --domain %s --auth-token %s`,
 			r.Scenario.Domain, shellQuote(strings.TrimSpace(string(tkn)))))
-		if err != nil {
-			return errors.Errorf("%+v: %s", err, out)
+		if err == nil {
+			return nil
 		}
-		return nil
+
+		if !reported {
+			reported = true
+			fmt.Fprint(os.Stdout, r.ingressDiagnostics(ctx))
+		}
+
+		return errors.Errorf("%+v: %s", err, loginError(out))
 	})
-	if err != nil {
-		return errors.Errorf("%+v\n%s", err, r.ingressDiagnostics(ctx))
+}
+
+func loginError(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "Error:") {
+			return line
+		}
 	}
 
-	return nil
+	if idx := strings.Index(out, "\nUsage:"); idx > 0 {
+		return strings.TrimSpace(out[:idx])
+	}
+
+	return strings.TrimSpace(out)
 }
 
 func (r *Runner) ingressDiagnostics(ctx context.Context) string {
@@ -293,12 +310,12 @@ for f in %[2]s/*.conf %[2]s/*.conflist; do
 done
 `, vutils.K8sNS, netDir))
 	if err != nil {
-		return fmt.Sprintf("<could not collect the ingress diagnostics: %+v>\n%s", err, out)
+		return fmt.Sprintf("<could not collect the ingress diagnostics: %+v>\n%s\n", err, out)
 	}
 
 	return "The Cluster is up but its ingress is not reachable on the host. " +
 		"The host port is bound by a k3s ServiceLB pod through the portmap CNI plugin, " +
-		"so a CNI whose config chain has no portmap never opens it.\n" + out
+		"so a CNI whose config chain has no portmap never opens it.\n" + out + "\n"
 }
 
 func (r *Runner) stepStorageSecretResource(ctx context.Context, _ *Runner) error {
