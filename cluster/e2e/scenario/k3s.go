@@ -25,12 +25,41 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	k8scorev1 "k8s.io/api/core/v1"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	k3sPIDPath = "/tmp/octelium-e2e-k3s.pid"
 	k3sLogPath = "/tmp/octelium-e2e-k3s.log"
 )
+
+const (
+	k3sFlannelBinDir = "/var/lib/rancher/k3s/data/cni/"
+	k3sFlannelNetDir = "/var/lib/rancher/k3s/agent/etc/cni/net.d"
+
+	stdCNIBinDir = "/opt/cni/bin"
+	stdCNINetDir = "/etc/cni/net.d"
+)
+
+const (
+	ciliumChartVersion = "1.20.0"
+	calicoChartVersion = "v3.32.1"
+)
+
+func k3sCNIPaths(cni CNI) CNIPaths {
+	if cni == "" || cni == CNIFlannel {
+		return CNIPaths{
+			BinDir: k3sFlannelBinDir,
+			NetDir: k3sFlannelNetDir,
+		}
+	}
+
+	return CNIPaths{
+		BinDir: stdCNIBinDir,
+		NetDir: stdCNINetDir,
+	}
+}
 
 type K3s struct {
 	Kubeconfig  string
@@ -54,7 +83,11 @@ func (p *K3s) KubeconfigPath() string {
 func (p *K3s) CNIPaths() CNIPaths { return p.Paths }
 
 func (p *K3s) Provision(ctx context.Context, r *Runner) error {
-	return runSteps(ctx, r, "provision", []Step{
+	return runSteps(ctx, r, "provision", p.provisionSteps())
+}
+
+func (p *K3s) provisionSteps() []Step {
+	return []Step{
 		{Name: "host/sysctls", Run: p.stepSysctls},
 		{Name: "host/packages", Run: p.stepPackages},
 		{Name: "host/storage-dir", Run: p.stepStorageDir},
@@ -71,7 +104,7 @@ func (p *K3s) Provision(ctx context.Context, r *Runner) error {
 		{Name: "k3s/nodes-ready", Run: p.stepWaitNodesReady},
 		{Name: "k3s/node-labels", Run: p.stepLabelNodes},
 		{Name: "k3s/node-public-ip", Run: p.stepAnnotatePublicIP},
-	})
+	}
 }
 
 func (p *K3s) Teardown(ctx context.Context, r *Runner) error {
@@ -275,10 +308,75 @@ func (p *K3s) stepWaitNodesRegistered(ctx context.Context, r *Runner) error {
 }
 
 func (p *K3s) stepWaitNodesReady(ctx context.Context, r *Runner) error {
-	return r.Bash(ctx, `
-kubectl wait --for=condition=Ready nodes --all --timeout=600s
-kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true
-`)
+	k8sC, err := r.K8sC()
+	if err != nil {
+		return err
+	}
+
+	err = pollUntil(ctx, "every node to become Ready", 10*minute, 5*second,
+		func(ctx context.Context) error {
+			nodes, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{})
+			if err != nil {
+				return err
+			}
+			if len(nodes.Items) == 0 {
+				return errors.Errorf("No node has registered")
+			}
+
+			var notReady []string
+			for i := range nodes.Items {
+				if reason := nodeNotReady(&nodes.Items[i]); reason != "" {
+					notReady = append(notReady, reason)
+				}
+			}
+
+			if len(notReady) > 0 {
+				return errors.Errorf("%s", strings.Join(notReady, "; "))
+			}
+			return nil
+		})
+	if err != nil {
+		return errors.Errorf("%+v\n%s", err, p.notReadyDiagnostics(ctx, r))
+	}
+
+	return r.Bash(ctx,
+		`kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true`)
+}
+
+func nodeNotReady(node *k8scorev1.Node) string {
+	for _, c := range node.Status.Conditions {
+		if c.Type != k8scorev1.NodeReady {
+			continue
+		}
+		if c.Status == k8scorev1.ConditionTrue {
+			return ""
+		}
+		return fmt.Sprintf("the node %s is %s: %s %s",
+			node.Name, c.Status, c.Reason, c.Message)
+	}
+
+	return fmt.Sprintf("the node %s has no Ready condition yet", node.Name)
+}
+
+func (p *K3s) notReadyDiagnostics(ctx context.Context, r *Runner) string {
+	if p.CNI == "" || p.CNI == CNIFlannel {
+		return fmt.Sprintf("k3s log:\n%s", p.logTail(ctx, r))
+	}
+
+	out, err := r.BashOutput(ctx, fmt.Sprintf(`
+echo "--- CNI config in %[1]s ---"
+sudo ls -la %[1]s 2>&1 | head -n 20
+echo "--- CNI binaries in %[2]s ---"
+sudo ls -la %[2]s 2>&1 | head -n 30
+echo "--- pods ---"
+kubectl get pods -A -o wide 2>&1 | head -n 40
+`, p.Paths.NetDir, p.Paths.BinDir))
+	if err != nil {
+		out = fmt.Sprintf("<could not collect the CNI diagnostics: %+v>", err)
+	}
+
+	return fmt.Sprintf("The CNI %s did not make the node Ready.\n%s\nk3s log:\n%s",
+		p.CNI, out, p.logTail(ctx, r))
 }
 
 func (p *K3s) stepLabelNodes(ctx context.Context, r *Runner) error {
@@ -325,10 +423,11 @@ func (p *K3s) installCilium(ctx context.Context, r *Runner) error {
 		return err
 	}
 
-	return r.Bash(ctx, fmt.Sprintf(`
+	if err := r.Bash(ctx, fmt.Sprintf(`
 helm repo add cilium https://helm.cilium.io/
 helm repo update cilium
 helm upgrade --install cilium cilium/cilium \
+  --version %s \
   --namespace kube-system \
   --set operator.replicas=1 \
   --set ipam.mode=kubernetes \
@@ -337,21 +436,66 @@ helm upgrade --install cilium cilium/cilium \
   --set cni.binPath=%s \
   --set cni.confPath=%s \
   --set cni.exclusive=false \
-  --wait --timeout 10m
-`, apiAddr, p.Paths.BinDir, p.Paths.NetDir))
+  --timeout 10m
+`, ciliumChartVersion, apiAddr, p.Paths.BinDir, p.Paths.NetDir)); err != nil {
+		return err
+	}
+
+	return p.waitCNIRollout(ctx, r, "kube-system", "daemonset/cilium")
 }
 
 func (p *K3s) installCalico(ctx context.Context, r *Runner) error {
-	return r.Bash(ctx, fmt.Sprintf(`
+	if err := r.Bash(ctx, fmt.Sprintf(`
 helm repo add projectcalico https://docs.tigera.io/calico/charts
 helm repo update projectcalico
+helm template calico-crds projectcalico/crd.projectcalico.org.v1 --version %[1]s \
+  | kubectl apply --server-side --force-conflicts -f -
 kubectl create namespace tigera-operator --dry-run=client -o yaml | kubectl apply -f -
 helm upgrade --install calico projectcalico/tigera-operator \
+  --version %[1]s \
   --namespace tigera-operator \
   --set installation.cni.type=Calico \
   --set installation.calicoNetwork.bgp=Disabled \
-  --set installation.cniBinDir=%s \
-  --set installation.cniNetDir=%s \
-  --wait --timeout 10m
-`, p.Paths.BinDir, p.Paths.NetDir))
+  --set installation.cniBinDir=%[2]s \
+  --set installation.cniNetDir=%[3]s \
+  --timeout 10m
+`, calicoChartVersion, p.Paths.BinDir, p.Paths.NetDir)); err != nil {
+		return err
+	}
+
+	if err := p.waitCNIRollout(ctx, r, "tigera-operator",
+		"deployment/tigera-operator"); err != nil {
+		return err
+	}
+
+	return p.waitCNIRollout(ctx, r, "calico-system", "daemonset/calico-node")
+}
+
+func (p *K3s) waitCNIRollout(ctx context.Context, r *Runner, ns, target string) error {
+	err := pollUntil(ctx, fmt.Sprintf("%s in %s to roll out", target, ns),
+		10*minute, 5*second, func(ctx context.Context) error {
+			out, err := r.BashOutput(ctx, fmt.Sprintf(
+				"kubectl rollout status %s --namespace %s --timeout=30s",
+				shellQuote(target), shellQuote(ns)))
+			if err != nil {
+				return errors.Errorf("%+v: %s", err, out)
+			}
+			return nil
+		})
+	if err != nil {
+		return errors.Errorf("%+v\n%s", err, p.cniDiagnostics(ctx, r, ns))
+	}
+
+	return nil
+}
+
+func (p *K3s) cniDiagnostics(ctx context.Context, r *Runner, ns string) string {
+	out, err := r.BashOutput(ctx, fmt.Sprintf(`
+kubectl get pods --namespace %[1]s -o wide 2>&1 | head -n 30
+kubectl get events --namespace %[1]s --sort-by=.lastTimestamp 2>&1 | tail -n 20
+`, shellQuote(ns)))
+	if err != nil {
+		return fmt.Sprintf("<could not collect the %s diagnostics: %+v>", ns, err)
+	}
+	return out
 }

@@ -159,10 +159,7 @@ func k3sProvisioner(cni CNI) *K3s {
 			"ssh", "postgresql-client", "mysql-client",
 		},
 		DBHostPath: "/mnt/octelium/db",
-		Paths: CNIPaths{
-			BinDir: "/var/lib/rancher/k3s/data/cni/",
-			NetDir: "/var/lib/rancher/k3s/agent/etc/cni/net.d",
-		},
+		Paths:      k3sCNIPaths(cni),
 	}
 
 	if cni != CNIFlannel {
