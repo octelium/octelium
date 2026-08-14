@@ -146,28 +146,64 @@ func TestRecentWarnings(t *testing.T) {
 	assert.Contains(t, got, "no nodes")
 }
 
-func TestRecentWarningsKeepsOnlyTheLatest(t *testing.T) {
+func warning(t *testing.T, k8sC *fake.Clientset, pod, reason, msg string, at time.Time) {
+	t.Helper()
+
+	_, err := k8sC.CoreV1().Events("octelium").Create(context.Background(),
+		&k8scorev1.Event{
+			ObjectMeta:     k8smetav1.ObjectMeta{Namespace: "octelium", Name: pod},
+			InvolvedObject: k8scorev1.ObjectReference{Name: pod},
+			Type:           k8scorev1.EventTypeWarning,
+			Reason:         reason,
+			Message:        msg,
+			LastTimestamp:  k8smetav1.NewTime(at),
+		}, k8smetav1.CreateOptions{})
+	require.NoError(t, err)
+}
+
+func TestRecentWarningsGroupsTheSameFailure(t *testing.T) {
 	k8sC := fake.NewSimpleClientset()
+	now := time.Now()
+
+	msg := `plugin type="multus" failed (add): error adding container to network ` +
+		`"octelium": failed to find plugin "bridge" in path [/opt/cni/bin]`
+	for i := 0; i < 8; i++ {
+		warning(t, k8sC, fmt.Sprintf("svc-%d", i), "FailedCreatePodSandBox", msg,
+			now.Add(time.Duration(i)*time.Second))
+	}
+
+	got := recentWarnings(context.Background(), k8sC)
+
+	assert.Len(t, strings.Split(got, "\n"), 1)
+	assert.Contains(t, got, "and 7 more")
+	assert.Contains(t, got, `failed to find plugin "bridge"`)
+}
+
+func TestRecentWarningsCapsDistinctFailures(t *testing.T) {
+	k8sC := fake.NewSimpleClientset()
+	now := time.Now()
 
 	for i := 0; i < watchEventCount+10; i++ {
-		name := fmt.Sprintf("evt-%02d", i)
-		_, err := k8sC.CoreV1().Events("octelium").Create(context.Background(),
-			&k8scorev1.Event{
-				ObjectMeta:     k8smetav1.ObjectMeta{Namespace: "octelium", Name: name},
-				InvolvedObject: k8scorev1.ObjectReference{Name: name},
-				Type:           k8scorev1.EventTypeWarning,
-				Reason:         "BackOff",
-				Message:        "restarting",
-				LastTimestamp:  k8smetav1.NewTime(time.Now().Add(time.Duration(i) * time.Minute)),
-			}, k8smetav1.CreateOptions{})
-		require.NoError(t, err)
+		warning(t, k8sC, fmt.Sprintf("pod-%02d", i), "BackOff",
+			fmt.Sprintf("restarting %d", i), now.Add(time.Duration(i)*time.Minute))
 	}
 
 	got := recentWarnings(context.Background(), k8sC)
 
 	assert.Len(t, strings.Split(got, "\n"), watchEventCount)
-	assert.Contains(t, got, fmt.Sprintf("evt-%02d", watchEventCount+9))
-	assert.NotContains(t, got, "evt-00")
+	assert.Contains(t, got, fmt.Sprintf("restarting %d", watchEventCount+9))
+	assert.NotContains(t, got, "restarting 0\n")
+}
+
+func TestRecentWarningsTruncatesLongMessages(t *testing.T) {
+	k8sC := fake.NewSimpleClientset()
+	warning(t, k8sC, "svc-0", "FailedCreatePodSandBox",
+		strings.Repeat("x", watchMessageMax*3), time.Now())
+
+	got := recentWarnings(context.Background(), k8sC)
+
+	assert.Less(t, len(got), watchMessageMax*2)
+	assert.Contains(t, got, "...")
 }
 
 func TestWatchInterval(t *testing.T) {

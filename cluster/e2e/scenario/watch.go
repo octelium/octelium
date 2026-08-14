@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ const (
 
 	watchIntervalDefault = 30 * time.Second
 	watchEventCount      = 12
+	watchMessageMax      = 400
 )
 
 func watchInterval() time.Duration {
@@ -215,18 +217,60 @@ func recentWarnings(ctx context.Context, k8sC kubernetes.Interface) string {
 		return eventTime(&items[i]).Before(eventTime(&items[j]))
 	})
 
-	if len(items) > watchEventCount {
-		items = items[len(items)-watchEventCount:]
+	type group struct {
+		reason  string
+		message string
+		objects []string
+	}
+
+	groups := map[string]*group{}
+	var order []string
+
+	for i := range items {
+		e := &items[i]
+		msg := truncate(strings.TrimSpace(e.Message), watchMessageMax)
+		key := e.Reason + "\x00" + msg
+
+		g, ok := groups[key]
+		if !ok {
+			g = &group{reason: e.Reason, message: msg}
+			groups[key] = g
+			order = append(order, key)
+		}
+
+		obj := e.InvolvedObject.Name
+		if e.Namespace != "" {
+			obj = e.Namespace + "/" + obj
+		}
+		if !slices.Contains(g.objects, obj) {
+			g.objects = append(g.objects, obj)
+		}
+	}
+
+	if len(order) > watchEventCount {
+		order = order[len(order)-watchEventCount:]
 	}
 
 	var b strings.Builder
-	for i := range items {
-		e := &items[i]
-		fmt.Fprintf(&b, "  %s/%s %s: %s\n",
-			e.Namespace, e.InvolvedObject.Name, e.Reason, strings.TrimSpace(e.Message))
+	for _, key := range order {
+		g := groups[key]
+
+		who := g.objects[0]
+		if len(g.objects) > 1 {
+			who = fmt.Sprintf("%s and %d more", who, len(g.objects)-1)
+		}
+
+		fmt.Fprintf(&b, "  %s %s: %s\n", who, g.reason, g.message)
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func truncate(arg string, max int) string {
+	if len(arg) <= max {
+		return arg
+	}
+	return arg[:max] + "..."
 }
 
 func eventTime(e *k8scorev1.Event) time.Time {

@@ -133,12 +133,43 @@ func TestK3sProvisionScheduleInstallsTheCNIBeforeWaitingOnReadiness(t *testing.T
 
 	registered := slices.Index(names, "k3s/nodes-registered")
 	install := slices.Index(names, "cni/install")
+	plugins := slices.Index(names, "cni/plugins")
 	ready := slices.Index(names, "k3s/nodes-ready")
 
 	require.NotEqual(t, -1, registered)
 	require.NotEqual(t, -1, install)
+	require.NotEqual(t, -1, plugins)
 	require.NotEqual(t, -1, ready)
 
 	assert.Less(t, registered, install)
-	assert.Less(t, install, ready)
+	assert.Less(t, install, plugins)
+	assert.Less(t, plugins, ready)
+}
+
+func TestK3sReferencePluginsOnlyWhereTheCNIDoesNotShipThem(t *testing.T) {
+	stepsFor := func(cni CNI) map[string]Step {
+		ret := map[string]Step{}
+		for _, step := range k3sProvisioner(cni).provisionSteps() {
+			ret[step.Name] = step
+		}
+		return ret
+	}
+
+	t.Run("k3s ships bridge and host-local alongside flannel", func(t *testing.T) {
+		steps := stepsFor(CNIFlannel)
+
+		require.NotNil(t, steps["cni/plugins"].Skip)
+		assert.True(t, steps["cni/plugins"].Skip(nil))
+		assert.True(t, steps["cni/install"].Skip(nil))
+	})
+
+	t.Run("cilium and calico ship only their own plugin", func(t *testing.T) {
+		for _, cni := range []CNI{CNICilium, CNICalico} {
+			steps := stepsFor(cni)
+
+			require.NotNil(t, steps["cni/plugins"].Skip, "cni=%q", cni)
+			assert.False(t, steps["cni/plugins"].Skip(nil), "cni=%q", cni)
+			assert.False(t, steps["cni/install"].Skip(nil), "cni=%q", cni)
+		}
+	})
 }

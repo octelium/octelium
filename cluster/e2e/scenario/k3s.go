@@ -45,6 +45,7 @@ const (
 const (
 	ciliumChartVersion = "1.20.0"
 	calicoChartVersion = "v3.32.1"
+	cniPluginsVersion  = "v1.9.1"
 )
 
 const k3sClusterCIDRDefault = "10.42.0.0/16"
@@ -101,8 +102,13 @@ func (p *K3s) provisionSteps() []Step {
 		{Name: "k3s/nodes-registered", Run: p.stepWaitNodesRegistered},
 		{
 			Name: "cni/install",
-			Skip: func(r *Runner) bool { return p.CNI == "" || p.CNI == CNIFlannel },
+			Skip: p.skipCNIInstall,
 			Run:  p.stepInstallCNI,
+		},
+		{
+			Name: "cni/plugins",
+			Skip: p.skipCNIInstall,
+			Run:  p.stepInstallCNIPlugins,
 		},
 		{Name: "k3s/nodes-ready", Run: p.stepWaitNodesReady},
 		{Name: "k3s/node-labels", Run: p.stepLabelNodes},
@@ -409,6 +415,36 @@ func (p *K3s) stepAnnotatePublicIP(ctx context.Context, r *Runner) error {
 		`kubectl annotate nodes --all --overwrite octelium.com/public-ip-test=%s`, externalIP))
 }
 
+func (p *K3s) skipCNIInstall(r *Runner) bool {
+	return p.CNI == "" || p.CNI == CNIFlannel
+}
+
+func (p *K3s) stepInstallCNIPlugins(ctx context.Context, r *Runner) error {
+	return r.Bash(ctx, fmt.Sprintf(`
+if [ -x %[1]s/bridge ] && [ -x %[1]s/host-local ]; then
+  echo "the reference CNI plugins are already installed in %[1]s"
+  exit 0
+fi
+
+case "$(uname -m)" in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) echo "Unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+
+TMP=$(mktemp -d)
+curl -fsSL -o "${TMP}/cni-plugins.tgz" \
+  "https://github.com/containernetworking/plugins/releases/download/%[2]s/cni-plugins-linux-${ARCH}-%[2]s.tgz"
+sudo mkdir -p %[1]s
+sudo tar -C %[1]s -xzf "${TMP}/cni-plugins.tgz"
+rm -rf "${TMP}"
+
+test -x %[1]s/bridge || { echo "the bridge plugin is still missing from %[1]s" >&2; exit 1; }
+test -x %[1]s/host-local || { echo "the host-local plugin is still missing from %[1]s" >&2; exit 1; }
+ls -la %[1]s
+`, p.Paths.BinDir, cniPluginsVersion))
+}
+
 func (p *K3s) stepInstallCNI(ctx context.Context, r *Runner) error {
 	switch p.CNI {
 	case CNICilium:
@@ -463,6 +499,8 @@ helm upgrade --install calico projectcalico/tigera-operator \
   --set installation.calicoNetwork.bgp=Disabled \
   --set installation.calicoNetwork.ipPools[0].cidr=%[4]s \
   --set installation.calicoNetwork.ipPools[0].encapsulation=VXLAN \
+  --set goldmane.enabled=false \
+  --set whisker.enabled=false \
   --timeout 10m
 `, calicoChartVersion, p.Paths.BinDir, p.Paths.NetDir, p.clusterCIDR())); err != nil {
 		return err
@@ -488,18 +526,19 @@ func (p *K3s) clusterCIDR() string {
 }
 
 func (p *K3s) waitCalicoInstallation(ctx context.Context, r *Runner) error {
-	return pollUntil(ctx, "the tigera-operator to accept the Installation",
+	return pollUntil(ctx, "the tigera-operator to reconcile the Installation",
 		5*minute, 5*second, func(ctx context.Context) error {
-			if msg := calicoDegraded(ctx, r); msg != "" {
-				return fatal(errors.Errorf("The tigera-operator rejected the Installation. %s", msg))
-			}
-
 			if _, err := r.BashOutput(ctx,
-				`kubectl get namespace calico-system -o name`); err != nil {
-				return errors.Errorf("The operator has not created calico-system yet")
+				`kubectl get namespace calico-system -o name`); err == nil {
+				return nil
 			}
 
-			return nil
+			if msg := calicoDegraded(ctx, r); msg != "" {
+				return errors.Errorf(
+					"The operator has not created calico-system yet. %s", msg)
+			}
+
+			return errors.Errorf("The operator has not created calico-system yet")
 		})
 }
 
