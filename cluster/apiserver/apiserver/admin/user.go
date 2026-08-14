@@ -98,7 +98,9 @@ func (s *Server) UpdateUser(ctx context.Context, req *corev1.User) (*corev1.User
 		return nil, err
 	}
 
-	if !ldflags.IsTest() {
+	switch {
+	case ldflags.IsTest() || s.isEmbedded:
+	default:
 		i, err := userctx.GetUserCtx(ctx)
 		if err != nil {
 			return nil, err
