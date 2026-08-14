@@ -193,6 +193,20 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 						},
 					}
 
+					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+						ret = append(ret, corev1.EnvVar{
+							Name:  "OCTELIUM_ENABLE_SPIFFE_CSI",
+							Value: "true",
+						})
+
+						if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+							ret = append(ret, corev1.EnvVar{
+								Name:  "OCTELIUM_SPIFFE_CSI_DRIVER",
+								Value: val,
+							})
+						}
+					}
+
 					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
 						ret = append(ret, corev1.EnvVar{
 							Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",

@@ -39,21 +39,51 @@ import (
 )
 
 type Controller struct {
-	octeliumC       octeliumc.ClientInterface
-	k8sC            kubernetes.Interface
-	hasSPIFFE       bool
-	spiffeCSIDriver string
+	octeliumC         octeliumc.ClientInterface
+	k8sC              kubernetes.Interface
+	hasSPIFFE         bool
+	spiffeCSIDriver   string
+	spiffeTrustDomain string
 }
 
 const ns = vutils.K8sNS
 
 func NewController(octeliumC octeliumc.ClientInterface, k8sC kubernetes.Interface) *Controller {
 	return &Controller{
-		octeliumC:       octeliumC,
-		k8sC:            k8sC,
-		hasSPIFFE:       os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true",
-		spiffeCSIDriver: os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"),
+		octeliumC:         octeliumC,
+		k8sC:              k8sC,
+		hasSPIFFE:         os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true",
+		spiffeCSIDriver:   os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"),
+		spiffeTrustDomain: os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"),
 	}
+}
+
+func (c *Controller) getSPIFFEEnv() []k8scorev1.EnvVar {
+	if !c.hasSPIFFE {
+		return nil
+	}
+
+	ret := []k8scorev1.EnvVar{
+		{
+			Name:  "OCTELIUM_ENABLE_SPIFFE_CSI",
+			Value: "true",
+		},
+	}
+
+	if c.spiffeCSIDriver != "" {
+		ret = append(ret, k8scorev1.EnvVar{
+			Name:  "OCTELIUM_SPIFFE_CSI_DRIVER",
+			Value: c.spiffeCSIDriver,
+		})
+	}
+	if c.spiffeTrustDomain != "" {
+		ret = append(ret, k8scorev1.EnvVar{
+			Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+			Value: c.spiffeTrustDomain,
+		})
+	}
+
+	return ret
 }
 
 func (c *Controller) deployK8sResources(ctx context.Context, svc *corev1.Service) error {
@@ -195,7 +225,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 						},
 					},
 				},
-				Env: []k8scorev1.EnvVar{
+				Env: append([]k8scorev1.EnvVar{
 					{
 						Name:  "OCTELIUM_SVC_UID",
 						Value: svc.Metadata.Uid,
@@ -228,7 +258,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 							},
 						},
 					},
-				},
+				}, c.getSPIFFEEnv()...),
 				VolumeMounts: func() []k8scorev1.VolumeMount {
 					var ret []k8scorev1.VolumeMount
 					if c.hasSPIFFE {
@@ -253,7 +283,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 		if svc.Status.ManagedService.Type == "vigil" && svc.Status.ManagedService.Image != "" {
 			ret.Containers[0].Image = svc.Status.ManagedService.Image
 		} else {
-			envVars := []k8scorev1.EnvVar{
+			envVars := append([]k8scorev1.EnvVar{
 				{
 					Name:  "OCTELIUM_SVC_UID",
 					Value: svc.Metadata.Uid,
@@ -270,7 +300,7 @@ func (c *Controller) newPodSpecVigil(svc *corev1.Service) k8scorev1.PodSpec {
 					Name:  "OCTELIUM_REGION_UID",
 					Value: vutils.GetMyRegionUID(),
 				},
-			}
+			}, c.getSPIFFEEnv()...)
 
 			if svc.Status.ManagedService.Image != "" {
 				ret.Containers = append(ret.Containers, k8scorev1.Container{

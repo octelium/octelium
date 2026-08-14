@@ -252,12 +252,7 @@ func getGatewayAgentEnvVars(o *CommonOpts) []k8scorev1.EnvVar {
 		Value: multusConfMountPath,
 	})
 
-	if o.SPIFFETrustDomain != "" {
-		ret = append(ret, k8scorev1.EnvVar{
-			Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
-			Value: o.SPIFFETrustDomain,
-		})
-	}
+	ret = SetSPIFFEEnv(ret, o)
 
 	return ret
 }

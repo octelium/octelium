@@ -17,7 +17,6 @@
 package scenario
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -55,6 +54,10 @@ func Build(spec Spec) (*Scenario, error) {
 			Step{Name: "spiffe/spire", Run: stepSPIRE})
 	}
 
+	if err := applyCustomizers(ret); err != nil {
+		return nil, err
+	}
+
 	return ret, nil
 }
 
@@ -62,18 +65,7 @@ func (s Spec) trustDomain() string {
 	if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
 		return val
 	}
-	return "octelium.local"
-}
-
-func stepSPIRE(ctx context.Context, r *Runner) error {
-	return r.Bash(ctx, `
-helm repo add spire https://spiffe.github.io/helm-charts-hardened/
-helm repo update spire
-helm upgrade --install spire-crds spire/spire-crds \
-  --namespace spire --create-namespace --wait --timeout 10m
-helm upgrade --install spire spire/spire \
-  --namespace spire --wait --timeout 10m
-`)
+	return SPIFFETrustDomainDefault
 }
 
 func baseScenario() *Scenario {

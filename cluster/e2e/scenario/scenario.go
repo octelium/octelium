@@ -184,6 +184,11 @@ func Get(id string) (*Scenario, error) {
 	if fn, ok := registry[id]; ok {
 		ret := fn()
 		ret.ID = id
+
+		if err := applyCustomizers(ret); err != nil {
+			return nil, err
+		}
+
 		return ret, nil
 	}
 

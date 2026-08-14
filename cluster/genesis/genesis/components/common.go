@@ -376,16 +376,37 @@ func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {
 
 	dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes,
 		k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
-	dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(dep.Spec.Template.Spec.Containers[0].VolumeMounts,
-		k8sutils.GetSPIFFEVolumeMount())
 
-	if o.SPIFFETrustDomain != "" {
-		dep.Spec.Template.Spec.Containers[0].Env = append(dep.Spec.Template.Spec.Containers[0].Env,
-			k8scorev1.EnvVar{
-				Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
-				Value: o.SPIFFETrustDomain,
-			})
+	c := &dep.Spec.Template.Spec.Containers[0]
+	c.VolumeMounts = append(c.VolumeMounts, k8sutils.GetSPIFFEVolumeMount())
+	c.Env = SetSPIFFEEnv(c.Env, o)
+}
+
+func SetSPIFFEEnv(env []k8scorev1.EnvVar, o *CommonOpts) []k8scorev1.EnvVar {
+	if o == nil || !o.EnableSPIFFECSI {
+		return env
 	}
+
+	env = setEnvIfAbsent(env, "OCTELIUM_ENABLE_SPIFFE_CSI", "true")
+
+	if o.SPIFFECSIDriver != "" {
+		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_CSI_DRIVER", o.SPIFFECSIDriver)
+	}
+	if o.SPIFFETrustDomain != "" {
+		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_TRUST_DOMAIN", o.SPIFFETrustDomain)
+	}
+
+	return env
+}
+
+func setEnvIfAbsent(env []k8scorev1.EnvVar, name, value string) []k8scorev1.EnvVar {
+	for _, itm := range env {
+		if itm.Name == name {
+			return env
+		}
+	}
+
+	return append(env, k8scorev1.EnvVar{Name: name, Value: value})
 }
 
 func MainLivenessProbe() *k8scorev1.Probe {

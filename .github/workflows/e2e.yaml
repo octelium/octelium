@@ -104,6 +104,18 @@ jobs:
           done
           find "$OUT" -name 'logs-*-previous.txt' -size -1c -delete || true
 
+          if kubectl get namespace spire >/dev/null 2>&1; then
+            kubectl get csidriver -o wide > "$OUT/spire-csidrivers.txt" 2>&1 || true
+            kubectl get all -n spire -o wide > "$OUT/spire-get-all.txt" 2>&1 || true
+            kubectl get configmaps -n spire -o yaml > "$OUT/spire-configmaps.txt" 2>&1 || true
+            kubectl describe pods -n spire > "$OUT/spire-describe-pods.txt" 2>&1 || true
+
+            for pod in $(kubectl get pods -n spire -o name 2>/dev/null); do
+              kubectl logs "$pod" -n spire --all-containers --tail=200 \
+                > "$OUT/spire-logs-$(basename "$pod").txt" 2>&1 || true
+            done
+          fi
+
           cp /tmp/octelium-e2e-k3s.log "$OUT/" 2>/dev/null || true
         env:
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml

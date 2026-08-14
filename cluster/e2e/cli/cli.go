@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/cluster/e2e/harness"
@@ -170,21 +171,20 @@ func (a *app) listCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List the available scenarios",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, id := range scenario.IDs() {
-				s, err := scenario.Get(id)
-				if err != nil {
-					return err
+			ids := scenario.IDs()
+			for _, spec := range scenario.Specs() {
+				if !slices.Contains(ids, spec.ID()) {
+					ids = append(ids, spec.ID())
 				}
-				printScenario(id, s)
 			}
 
-			for _, spec := range scenario.Specs() {
-				s, err := scenario.Build(spec)
+			for _, id := range ids {
+				s, err := scenario.Get(id)
 				if err != nil {
-					fmt.Printf("%-22s %s\n\n", spec.ID(), err)
+					fmt.Printf("%-22s %s\n\n", id, err)
 					continue
 				}
-				printScenario(spec.ID(), s)
+				printScenario(id, s)
 			}
 
 			return nil
