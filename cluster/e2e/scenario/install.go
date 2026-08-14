@@ -44,6 +44,7 @@ func (r *Runner) installSteps() []Step {
 			Run:  r.stepCollector,
 		},
 		{Name: "octelium/readiness", Run: r.stepWaitDeployments},
+		{Name: "octelium/host-ingress", Run: r.stepHostIngress},
 		{Name: "octelium/login", Run: r.stepLogin},
 		{Name: "octelium/storage-secret", Run: r.stepStorageSecretResource},
 		{
@@ -248,6 +249,82 @@ func describePods(ctx context.Context,
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+const hostIngressPIDPath = "/tmp/octelium-e2e-host-ingress.pid"
+
+func (r *Runner) stepHostIngress(ctx context.Context, _ *Runner) error {
+	out, err := r.BashOutput(ctx, hostIngressScript(vutils.K8sNS))
+	if err != nil {
+		return errors.Errorf("Could not reach the Cluster ingress from the host: %+v\n%s\n%s",
+			err, out, r.ingressDiagnostics(ctx))
+	}
+
+	zap.L().Debug("The Cluster ingress is reachable from the host", zap.String("out", out))
+
+	return nil
+}
+
+func (r *Runner) stopHostIngress(ctx context.Context) error {
+	return r.Bash(ctx, fmt.Sprintf(`
+if [ -f %[1]s ]; then
+  sudo kill "$(cat %[1]s)" 2>/dev/null || true
+  sudo rm -f %[1]s
+fi
+`, hostIngressPIDPath))
+}
+
+func hostIngressScript(ns string) string {
+	return fmt.Sprintf(`
+SVC=octelium-ingress-dataplane
+PORT=$(kubectl get svc -n %[1]s "$SVC" -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || true)
+PORT=${PORT:-443}
+
+reachable() { timeout 3 bash -c "</dev/tcp/$1/$2" 2>/dev/null; }
+
+if reachable 127.0.0.1 "$PORT"; then
+  echo "the ingress already answers on 127.0.0.1:$PORT"
+  exit 0
+fi
+
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+if [ -z "$NODE_IP" ]; then
+  echo "could not determine the node address" >&2
+  exit 1
+fi
+
+if ! reachable "$NODE_IP" "$PORT"; then
+  echo "the ingress does not answer on $NODE_IP:$PORT either, so this is not a host port problem" >&2
+  exit 1
+fi
+
+echo "the ingress answers on $NODE_IP:$PORT but not on 127.0.0.1:$PORT."
+echo "Forwarding 127.0.0.1:$PORT to $NODE_IP:$PORT for the Cluster domain."
+
+if ! command -v socat >/dev/null 2>&1; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq socat
+fi
+
+if [ -f %[2]s ]; then
+  sudo kill "$(cat %[2]s)" 2>/dev/null || true
+  sudo rm -f %[2]s
+fi
+
+sudo sh -c "nohup socat TCP4-LISTEN:$PORT,bind=127.0.0.1,fork,reuseaddr TCP4:$NODE_IP:$PORT \
+  >/dev/null 2>&1 & echo \$! > %[2]s"
+
+for i in $(seq 1 30); do
+  if reachable 127.0.0.1 "$PORT"; then
+    echo "the ingress now answers on 127.0.0.1:$PORT"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "the forwarder did not come up on 127.0.0.1:$PORT" >&2
+exit 1
+`, ns, hostIngressPIDPath)
 }
 
 func (r *Runner) stepLogin(ctx context.Context, _ *Runner) error {

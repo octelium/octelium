@@ -203,6 +203,10 @@ func (r *Runner) Install(ctx context.Context) error {
 }
 
 func (r *Runner) Teardown(ctx context.Context) error {
+	if err := r.stopHostIngress(ctx); err != nil {
+		zap.L().Warn("Could not stop the host ingress forwarder", zap.Error(err))
+	}
+
 	if err := r.Scenario.Provisioner.Teardown(ctx, r); err != nil {
 		zap.L().Warn("Could not fully tear down the cluster", zap.Error(err))
 	}
