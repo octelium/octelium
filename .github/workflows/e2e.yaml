@@ -4,41 +4,53 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      scenario:
-        description: "The e2e scenario to run against"
+      distro:
+        description: "Kubernetes distribution"
         required: false
-        default: "k3s-flannel"
+        type: choice
+        default: k3s
+        options: [k3s, rke2, k8s]
+      cni:
+        description: "CNI plugin"
+        required: false
+        type: choice
+        default: flannel
+        options: [flannel, cilium, calico, canal]
+      spiffe:
+        description: "Install SPIRE and enable the SPIFFE CSI driver"
+        required: false
+        type: boolean
+        default: false
+      arch:
+        description: "Architectures to run on"
+        required: false
+        type: choice
+        default: both
+        options: [both, amd64, arm64]
       run:
         description: "Only run tests matching this regular expression (go test -run)"
         required: false
         default: ""
 env:
   GO_VERSION: "1.26.5"
+  SCENARIO: >-
+    ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ inputs.spiffe && '-spiffe' || '' }}
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            scenario: k3s-flannel
-          - runner: ubuntu-24.04-arm
-            scenario: k3s-flannel
+        runner: ${{ inputs.arch == 'amd64' && fromJSON('["ubuntu-24.04"]')
+          || inputs.arch == 'arm64' && fromJSON('["ubuntu-24.04-arm"]')
+          || fromJSON('["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     runs-on: ${{ matrix.runner }}
-    name: ${{ matrix.scenario }}-${{ matrix.runner }}
+    name: ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}-${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
-
-      - name: Reclaim disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
-          docker system prune --all --force || true
-          df -h /
 
       - name: Set up go
         uses: actions/setup-go@v5
@@ -55,18 +67,18 @@ jobs:
           make install-cli
 
       - name: Provision
-        run: ./bin/octelium-e2e provision --scenario=${{ inputs.scenario || matrix.scenario }}
+        run: ./bin/octelium-e2e provision --scenario=${{ env.SCENARIO }}
 
       - name: Prepare
-        run: ./bin/octelium-e2e prepare --scenario=${{ inputs.scenario || matrix.scenario }}
+        run: ./bin/octelium-e2e prepare --scenario=${{ env.SCENARIO }}
 
       - name: Install
-        run: ./bin/octelium-e2e install --scenario=${{ inputs.scenario || matrix.scenario }}
+        run: ./bin/octelium-e2e install --scenario=${{ env.SCENARIO }}
 
       - name: Test
         run: |
           ./bin/octelium-e2e test \
-            --scenario=${{ inputs.scenario || matrix.scenario }} \
+            --scenario=${{ env.SCENARIO }} \
             --artifacts="${{ runner.temp }}/e2e-artifacts" \
             ${{ inputs.run && format('--run={0}', inputs.run) || '' }}
 
@@ -100,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ matrix.scenario }}-${{ matrix.runner }}
+          name: e2e-${{ env.SCENARIO }}-${{ matrix.runner }}
           path: ${{ runner.temp }}/e2e-artifacts
           if-no-files-found: ignore
           retention-days: 7

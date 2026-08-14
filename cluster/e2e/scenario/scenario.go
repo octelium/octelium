@@ -19,8 +19,6 @@ package scenario
 import (
 	"slices"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 const TestNamespace = "e2e"
@@ -183,13 +181,18 @@ func Register(id string, fn func() *Scenario) {
 }
 
 func Get(id string) (*Scenario, error) {
-	fn, ok := registry[id]
-	if !ok {
-		return nil, errors.Errorf("Unknown scenario %q. Known scenarios: %s", id, IDs())
+	if fn, ok := registry[id]; ok {
+		ret := fn()
+		ret.ID = id
+		return ret, nil
 	}
-	ret := fn()
-	ret.ID = id
-	return ret, nil
+
+	spec, err := ParseSpec(id)
+	if err != nil {
+		return nil, err
+	}
+
+	return Build(spec)
 }
 
 func MustGet(id string) *Scenario {

@@ -175,16 +175,18 @@ func (a *app) listCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-
-				var caps []string
-				for _, c := range s.Caps {
-					caps = append(caps, string(c))
-				}
-
-				fmt.Printf("%-16s %s\n", id, s.Description)
-				fmt.Printf("%-16s provisioner=%s cni=%s nodes=%d caps=[%s]\n\n",
-					"", s.Provisioner.Name(), s.CNI, s.Topology.Nodes, strings.Join(caps, " "))
+				printScenario(id, s)
 			}
+
+			for _, spec := range scenario.Specs() {
+				s, err := scenario.Build(spec)
+				if err != nil {
+					fmt.Printf("%-22s %s\n\n", spec.ID(), err)
+					continue
+				}
+				printScenario(spec.ID(), s)
+			}
+
 			return nil
 		},
 	}
@@ -292,4 +294,15 @@ func (a *app) moduleDir() string {
 	}
 
 	return "."
+}
+
+func printScenario(id string, s *scenario.Scenario) {
+	var caps []string
+	for _, c := range s.Caps {
+		caps = append(caps, string(c))
+	}
+
+	fmt.Printf("%-22s %s\n", id, s.Description)
+	fmt.Printf("%-22s provisioner=%s cni=%s nodes=%d caps=[%s]\n\n",
+		"", s.Provisioner.Name(), s.CNI, s.Topology.Nodes, strings.Join(caps, " "))
 }

@@ -17,38 +17,68 @@
 package scenario
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/pkg/errors"
 )
 
-func init() {
-	Register("k3s-flannel", k3sFlannel)
+func Build(spec Spec) (*Scenario, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+
+	ret := baseScenario()
+	ret.ID = spec.ID()
+	ret.CNI = spec.CNI
+
+	switch spec.Distro {
+	case DistroK3s:
+		ret.Provisioner = k3sProvisioner(spec.CNI)
+	default:
+		return nil, errors.Errorf(
+			"The distro %q is not implemented yet. Currently supported: %s",
+			spec.Distro, DistroK3s)
+	}
+
+	ret.Description = fmt.Sprintf("Single-node %s with %s", spec.Distro, spec.CNI)
+
+	if spec.SPIFFE {
+		ret.Description += " and SPIRE"
+		ret.Install.EnableSPIFFECSI = true
+		ret.Install.SPIFFETrustDomain = spec.trustDomain()
+		ret.Caps = append(ret.Caps, CapSPIFFE)
+		ret.Hooks.PostPrepare = append(ret.Hooks.PostPrepare,
+			Step{Name: "spiffe/spire", Run: stepSPIRE})
+	}
+
+	return ret, nil
 }
 
-func k3sFlannel() *Scenario {
+func (s Spec) trustDomain() string {
+	if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
+		return val
+	}
+	return "octelium.local"
+}
+
+func stepSPIRE(ctx context.Context, r *Runner) error {
+	return r.Bash(ctx, `
+helm repo add spire https://spiffe.github.io/helm-charts-hardened/
+helm repo update spire
+helm upgrade --install spire-crds spire/spire-crds \
+  --namespace spire --create-namespace --wait --timeout 10m
+helm upgrade --install spire spire/spire \
+  --namespace spire --wait --timeout 10m
+`)
+}
+
+func baseScenario() *Scenario {
 	return &Scenario{
-		Description: "Single-node k3s on the host with flannel. The baseline environment.",
-		Domain:      "localhost",
-
-		CNI: CNIFlannel,
-
-		Provisioner: &K3s{
-			Kubeconfig: "/etc/rancher/k3s/k3s.yaml",
-
-			ServerArgs:  []string{"--disable traefik", "--docker"},
-			InstallExec: []string{"--disable", "traefik"},
-			Packages: []string{
-				"iputils-ping", "postgresql", "jq", "curl",
-				"ssh", "postgresql-client", "mysql-client",
-			},
-			DBHostPath: "/mnt/octelium/db",
-			Paths: CNIPaths{
-				BinDir: "/var/lib/rancher/k3s/data/cni/",
-				NetDir: "/var/lib/rancher/k3s/agent/etc/cni/net.d",
-			},
-		},
+		Domain: "localhost",
 
 		Topology: Topology{
 			Nodes: 1,
@@ -123,4 +153,31 @@ func k3sFlannel() *Scenario {
 
 		Budget: 45 * time.Minute,
 	}
+}
+
+func k3sProvisioner(cni CNI) *K3s {
+	ret := &K3s{
+		Kubeconfig: "/etc/rancher/k3s/k3s.yaml",
+		CNI:        cni,
+
+		ServerArgs:  []string{"--disable traefik", "--docker"},
+		InstallExec: []string{"--disable", "traefik"},
+		Packages: []string{
+			"iputils-ping", "postgresql", "jq", "curl",
+			"ssh", "postgresql-client", "mysql-client",
+		},
+		DBHostPath: "/mnt/octelium/db",
+		Paths: CNIPaths{
+			BinDir: "/var/lib/rancher/k3s/data/cni/",
+			NetDir: "/var/lib/rancher/k3s/agent/etc/cni/net.d",
+		},
+	}
+
+	if cni != CNIFlannel {
+		disable := []string{"--flannel-backend=none", "--disable-network-policy"}
+		ret.ServerArgs = append(ret.ServerArgs, disable...)
+		ret.InstallExec = append(ret.InstallExec, disable...)
+	}
+
+	return ret
 }

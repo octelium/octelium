@@ -34,6 +34,7 @@ const (
 
 type K3s struct {
 	Kubeconfig  string
+	CNI         CNI
 	ServerArgs  []string
 	InstallExec []string
 	Packages    []string
@@ -61,7 +62,13 @@ func (p *K3s) Provision(ctx context.Context, r *Runner) error {
 		{Name: "host/helm", Run: p.stepHelm},
 		{Name: "k3s/install", Run: p.stepInstallK3s},
 		{Name: "k3s/start", Run: p.stepStartK3s},
-		{Name: "k3s/nodes-ready", Run: p.stepWaitNodes},
+		{Name: "k3s/nodes-registered", Run: p.stepWaitNodesRegistered},
+		{
+			Name: "cni/install",
+			Skip: func(r *Runner) bool { return p.CNI == "" || p.CNI == CNIFlannel },
+			Run:  p.stepInstallCNI,
+		},
+		{Name: "k3s/nodes-ready", Run: p.stepWaitNodesReady},
 		{Name: "k3s/node-labels", Run: p.stepLabelNodes},
 		{Name: "k3s/node-public-ip", Run: p.stepAnnotatePublicIP},
 	})
@@ -238,7 +245,7 @@ func (p *K3s) logTail(ctx context.Context, r *Runner) string {
 	return out
 }
 
-func (p *K3s) stepWaitNodes(ctx context.Context, r *Runner) error {
+func (p *K3s) stepWaitNodesRegistered(ctx context.Context, r *Runner) error {
 	want := r.Scenario.Topology.Nodes
 	if want < 1 {
 		want = 1
@@ -264,6 +271,10 @@ func (p *K3s) stepWaitNodes(ctx context.Context, r *Runner) error {
 		return errors.Errorf("%+v\nk3s log:\n%s", err, p.logTail(ctx, r))
 	}
 
+	return nil
+}
+
+func (p *K3s) stepWaitNodesReady(ctx context.Context, r *Runner) error {
 	return r.Bash(ctx, `
 kubectl wait --for=condition=Ready nodes --all --timeout=600s
 kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true
@@ -295,4 +306,52 @@ func (p *K3s) stepAnnotatePublicIP(ctx context.Context, r *Runner) error {
 
 	return r.Bash(ctx, fmt.Sprintf(
 		`kubectl annotate nodes --all --overwrite octelium.com/public-ip-test=%s`, externalIP))
+}
+
+func (p *K3s) stepInstallCNI(ctx context.Context, r *Runner) error {
+	switch p.CNI {
+	case CNICilium:
+		return p.installCilium(ctx, r)
+	case CNICalico:
+		return p.installCalico(ctx, r)
+	default:
+		return errors.Errorf("The k3s provisioner cannot install the CNI %q", p.CNI)
+	}
+}
+
+func (p *K3s) installCilium(ctx context.Context, r *Runner) error {
+	apiAddr, err := p.ExternalIP(ctx, r)
+	if err != nil {
+		return err
+	}
+
+	return r.Bash(ctx, fmt.Sprintf(`
+helm repo add cilium https://helm.cilium.io/
+helm repo update cilium
+helm upgrade --install cilium cilium/cilium \
+  --namespace kube-system \
+  --set operator.replicas=1 \
+  --set ipam.mode=kubernetes \
+  --set k8sServiceHost=%s \
+  --set k8sServicePort=6443 \
+  --set cni.binPath=%s \
+  --set cni.confPath=%s \
+  --set cni.exclusive=false \
+  --wait --timeout 10m
+`, apiAddr, p.Paths.BinDir, p.Paths.NetDir))
+}
+
+func (p *K3s) installCalico(ctx context.Context, r *Runner) error {
+	return r.Bash(ctx, fmt.Sprintf(`
+helm repo add projectcalico https://docs.tigera.io/calico/charts
+helm repo update projectcalico
+kubectl create namespace tigera-operator --dry-run=client -o yaml | kubectl apply -f -
+helm upgrade --install calico projectcalico/tigera-operator \
+  --namespace tigera-operator \
+  --set installation.cni.type=Calico \
+  --set installation.calicoNetwork.bgp=Disabled \
+  --set installation.cniBinDir=%s \
+  --set installation.cniNetDir=%s \
+  --wait --timeout 10m
+`, p.Paths.BinDir, p.Paths.NetDir))
 }
