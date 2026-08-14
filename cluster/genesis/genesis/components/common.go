@@ -406,7 +406,7 @@ func MainSecurityContext() *k8scorev1.SecurityContext {
 	return &k8scorev1.SecurityContext{
 		ReadOnlyRootFilesystem:   new(true),
 		AllowPrivilegeEscalation: new(false),
-		RunAsNonRoot:             new(true),
+		// RunAsNonRoot:             new(true),
 		Capabilities: &k8scorev1.Capabilities{
 			Drop: []k8scorev1.Capability{"ALL"},
 		},
