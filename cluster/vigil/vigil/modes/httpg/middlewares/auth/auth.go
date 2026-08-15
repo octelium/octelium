@@ -26,7 +26,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/rscutils"
-	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
@@ -73,7 +72,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	var err error
 
-	if httputils.IsAnonymousMode(req) {
+	if middlewares.IsAnonymousMode(req) {
 		if svc.Spec.Authorization == nil || !svc.Spec.Authorization.EnableAnonymous {
 			if reqCtx.AuthResponse == nil {
 				// AuthResponse is already set by preauth

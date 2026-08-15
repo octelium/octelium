@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
@@ -98,7 +99,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 	cfg := reqCtx.ServiceConfig
 
-	if cfg == nil || cfg.GetHttp() == nil || len(cfg.GetHttp().Plugins) == 0 {
+	plugins := ucorev1.ToServiceConfig(cfg).GetHTTPPlugins()
+	if len(plugins) == 0 {
 		m.next.ServeHTTP(rw, req)
 		return
 	}
@@ -111,7 +113,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer closeGRPC()
 
-	for _, plugin := range cfg.GetHttp().Plugins {
+	for _, plugin := range plugins {
 		switch plugin.Type.(type) {
 		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
 

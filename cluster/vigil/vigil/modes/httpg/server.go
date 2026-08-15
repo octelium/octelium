@@ -49,6 +49,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
 	jsonschema "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/jsonchema"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/mcp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/path"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/paths"
@@ -329,7 +330,15 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		return accesslog.New(ctx, next)
 	})
 
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return mcp.NewGuard(ctx, next, s.domain)
+	})
+
 	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return mcp.NewRebuild(ctx, next)
+	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return auth.New(ctx, next, s.octeliumC, s.octovigilC, s.domain)
@@ -340,6 +349,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return mcp.NewSeal(ctx, next)
+	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return headers.New(ctx, next, s.celEngine, s.secretMan)

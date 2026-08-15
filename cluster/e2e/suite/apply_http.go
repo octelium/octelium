@@ -83,8 +83,6 @@ func applyWebSocket(t *testing.T, a *applyCtx) {
 }
 
 func applyMCP(t *testing.T, a *applyCtx) {
-	t.Skip("the MCP phase is not enabled yet")
-
 	a.h.MustWaitService(t, "mcp-echo")
 
 	client := mcp.NewClient(&mcp.Implementation{

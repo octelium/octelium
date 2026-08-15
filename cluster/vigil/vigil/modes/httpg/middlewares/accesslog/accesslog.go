@@ -63,6 +63,7 @@ const (
 	streamKindK8sExec
 	streamKindK8sLog
 	streamKindGeneric
+	streamKindMCP
 )
 
 const (
@@ -77,12 +78,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	kind := detectStreamKind(req, reqCtx)
 
-	if kind == streamKindNone {
+	switch kind {
+	case streamKindNone:
 		m.serveNonStreaming(w, req, reqCtx)
-		return
+	case streamKindMCP:
+		m.serveMCP(w, req, reqCtx)
+	default:
+		m.serveStreaming(w, req, reqCtx, kind)
 	}
-
-	m.serveStreaming(w, req, reqCtx, kind)
 }
 
 func detectStreamKind(req *http.Request, reqCtx *middlewares.RequestContext) streamKind {
@@ -90,6 +93,10 @@ func detectStreamKind(req *http.Request, reqCtx *middlewares.RequestContext) str
 
 	if isWebSocketUpgrade(req) {
 		return streamKindWS
+	}
+
+	if ucorev1.ToService(svc).IsMCP() {
+		return streamKindMCP
 	}
 
 	/*
@@ -154,11 +161,7 @@ func (m *middleware) serveStreaming(w http.ResponseWriter,
 		var mu sync.Mutex
 		lastLog := time.Now()
 
-		svcCfg := reqCtx.ServiceConfig
-		var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
-		if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Visibility != nil {
-			visibilityCfg = svcCfg.GetHttp().Visibility
-		}
+		visibilityCfg := getVisibilityConfig(reqCtx)
 
 		crw.onSSEEvent = func(event []byte) {
 			n := atomic.AddInt64(&eventCount, 1)
@@ -220,6 +223,10 @@ const (
 	logPhaseSSEEvent
 )
 
+func getVisibilityConfig(reqCtx *middlewares.RequestContext) *corev1.Service_Spec_Config_HTTP_Visibility {
+	return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPVisibility()
+}
+
 func (m *middleware) getAccessLog(
 	req *http.Request,
 	crw *responseWriter,
@@ -229,10 +236,7 @@ func (m *middleware) getAccessLog(
 	eventSeq int64) *corev1.AccessLog {
 
 	svcCfg := reqCtx.ServiceConfig
-	var visibilityCfg *corev1.Service_Spec_Config_HTTP_Visibility
-	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Visibility != nil {
-		visibilityCfg = svcCfg.GetHttp().Visibility
-	}
+	visibilityCfg := getVisibilityConfig(reqCtx)
 
 	var reqBody []byte
 	var reqBodyMap *structpb.Struct
@@ -282,8 +286,8 @@ func (m *middleware) getAccessLog(
 		}
 
 		var customAuthHeader string
-		if svcCfg.GetHttp().GetAuth().GetCustom() != nil {
-			customAuthHeader = svcCfg.GetHttp().GetAuth().GetCustom().Header
+		if ucorev1.ToServiceConfig(svcCfg).GetHTTPAuth().GetCustom() != nil {
+			customAuthHeader = ucorev1.ToServiceConfig(svcCfg).GetHTTPAuth().GetCustom().Header
 		}
 
 		reqHeaders = getRequestHeaderMap(req, visibilityCfg, customAuthHeader)
@@ -371,6 +375,29 @@ func (m *middleware) getAccessLog(
 			k8sC.Resource = k8sI.Resource
 			k8sC.Subresource = k8sI.Subresource
 			k8sC.Name = k8sI.Name
+		}
+	case ucorev1.ToService(svc).IsMCP():
+		mcpC := &corev1.AccessLog_Entry_Info_MCP{
+			Http: httpC,
+		}
+		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Mcp{
+			Mcp: mcpC,
+		}
+
+		if mcpI := reqCtx.DownstreamInfo.Request.GetMcp(); mcpI != nil {
+			mcpC.ProtocolVersion = mcpI.ProtocolVersion
+			mcpC.Method = mcpI.Method
+			mcpC.Name = mcpI.Name
+			mcpC.RequestID = mcpI.RequestID
+			mcpC.IsNotification = mcpI.IsNotification
+			mcpC.SessionID = mcpI.SessionID
+
+			if mcpI.Client != nil {
+				mcpC.Client = &corev1.AccessLog_Entry_Info_MCP_Client{
+					Name:    mcpI.Client.Name,
+					Version: mcpI.Client.Version,
+				}
+			}
 		}
 	case ucorev1.ToService(svc).IsGRPC():
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Grpc{
@@ -548,6 +575,21 @@ type responseWriter struct {
 	sseLineBuf  []byte
 	sseMu       sync.Mutex
 	sseEventCnt atomic.Int64
+
+	mcpResolved bool
+	mcpIsSSE    bool
+	maxSSEEvent int
+}
+
+func (rw *responseWriter) resolveMCPKind() {
+	if rw.mcpResolved {
+		return
+	}
+	rw.mcpResolved = true
+
+	ct := rw.Header().Get("Content-Type")
+	mediaType := strings.TrimSpace(strings.Split(ct, ";")[0])
+	rw.mcpIsSSE = strings.EqualFold(mediaType, "text/event-stream")
 }
 
 func newResponseWriter(w http.ResponseWriter, kind streamKind) *responseWriter {
@@ -577,19 +619,32 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 
 		switch rw.kind {
 		case streamKindNone:
-			if rw.body.Len() < maxBodyLen {
-				remaining := maxBodyLen - rw.body.Len()
-				if n <= remaining {
-					rw.body.Write(b[:n])
-				} else {
-					rw.body.Write(b[:remaining])
-				}
-			}
+			rw.bufferBody(b[:n])
 		case streamKindSSE:
 			rw.parseSSEEvents(b[:n])
+		case streamKindMCP:
+			rw.resolveMCPKind()
+			if rw.mcpIsSSE {
+				rw.parseSSEEvents(b[:n])
+			} else {
+				rw.bufferBody(b[:n])
+			}
 		}
 	}
 	return n, err
+}
+
+func (rw *responseWriter) bufferBody(p []byte) {
+	if rw.body.Len() >= maxBodyLen {
+		return
+	}
+
+	remaining := maxBodyLen - rw.body.Len()
+	if len(p) <= remaining {
+		rw.body.Write(p)
+	} else {
+		rw.body.Write(p[:remaining])
+	}
 }
 
 func (rw *responseWriter) parseSSEEvents(p []byte) {
@@ -623,13 +678,18 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 		rw.onSSEEvent(event)
 	}
 
-	const maxSSELineBuf = 64 * 1024
+	maxSSELineBuf := defaultMaxSSELineBuf
+	if rw.maxSSEEvent > 0 {
+		maxSSELineBuf = rw.maxSSEEvent
+	}
 	if len(rw.sseLineBuf) > maxSSELineBuf {
 		newBuf := make([]byte, maxSSELineBuf)
 		copy(newBuf, rw.sseLineBuf[len(rw.sseLineBuf)-maxSSELineBuf:])
 		rw.sseLineBuf = newBuf
 	}
 }
+
+const defaultMaxSSELineBuf = 64 * 1024
 
 func (rw *responseWriter) WriteHeader(statusCode int) {
 	rw.statusCode = statusCode

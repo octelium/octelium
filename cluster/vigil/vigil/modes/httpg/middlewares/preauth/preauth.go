@@ -78,15 +78,23 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	cfg := svc.Spec.Config
 
-	if (cfg != nil &&
-		cfg.GetHttp() != nil &&
-		cfg.GetHttp().EnableRequestBuffering) ||
+	isMCP := ucorev1.ToService(svc).IsMCP()
+
+	if isMCP ||
+		(cfg != nil &&
+			cfg.GetHttp() != nil &&
+			cfg.GetHttp().EnableRequestBuffering) ||
 		(cfg != nil && cfg.GetHttp() != nil &&
 			cfg.GetHttp().Auth != nil &&
 			cfg.GetHttp().Auth.GetSigv4() != nil) {
 		defer req.Body.Close()
 
-		limit := getMaxBodySize(cfg)
+		limit := func() int64 {
+			if isMCP {
+				return getMaxMCPBodySize(cfg)
+			}
+			return getMaxBodySize(cfg)
+		}()
 		body, err := io.ReadAll(io.LimitReader(req.Body, limit+1))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -120,8 +128,22 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
+		if isMCP && len(additional.Body) > 0 {
+			bodyMap := make(map[string]any)
+			if err := json.Unmarshal(additional.Body, &bodyMap); err == nil {
+				additional.bodyMap = bodyMap
+				reqCtx.BodyJSONMap = bodyMap
+			}
+		}
+
 		req.Body = io.NopCloser(bytes.NewReader(additional.Body))
 		req.ContentLength = int64(len(additional.Body))
+	}
+
+	if isMCP {
+		additional.mcpReq = httputils.ParseMCPRequest(req, additional.Body)
+		reqCtx.MCP = additional.mcpReq
+		reqCtx.SetBodyDigest()
 	}
 
 	downstreamReq, err := m.getDownstreamReq(req, reqCtx, additional)
@@ -140,7 +162,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	reqCtx.DownstreamRequest = downstreamReq
 
-	if httputils.IsAnonymousMode(req) {
+	if middlewares.IsAnonymousMode(req) {
 
 		// TODO: set Namespace
 		reqCtx.DownstreamInfo = &corev1.RequestContext{
@@ -169,9 +191,10 @@ type additionalInfo struct {
 	Body       []byte
 	IsBodyJSON bool
 	bodyMap    map[string]any
+	mcpReq     *httputils.MCPRequest
 }
 
-const maxReqCtxBodySize = 2 * 1024 * 1024
+const maxReqCtxBodySize = middlewares.MaxReqCtxBodySize
 
 func (m *middleware) getDownstreamReq(req *http.Request,
 	reqCtx *middlewares.RequestContext,
@@ -235,6 +258,16 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 				},
 			},
 		}, nil
+	case ucorev1.ToService(svc).IsMCP():
+		return &coctovigilv1.DownstreamRequest{
+			Source: getDownstreamSource(req),
+			Request: &corev1.RequestContext_Request{
+				Ip: ip,
+				Type: &corev1.RequestContext_Request_Mcp{
+					Mcp: middlewares.GetMCPRequestContext(additional.mcpReq, httpC),
+				},
+			},
+		}, nil
 	case ucorev1.ToService(svc).IsGRPC():
 		info, err := httputils.GetGRPCInfo(req.URL.Path)
 		if err != nil {
@@ -285,7 +318,23 @@ func getDownstreamSource(r *http.Request) *coctovigilv1.DownstreamRequest_Source
 	}
 }
 
-const defaultMaxBodySize = 32 * 1024 * 1024
+const (
+	defaultMaxBodySize = 32 * 1024 * 1024
+
+	defaultMaxMCPBodySize = 1024 * 1024
+	maxMCPBodySize        = 16 * 1024 * 1024
+)
+
+func getMaxMCPBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
+	configured := svcCfg.GetMcp().GetLimits().GetMaxRequestBytes()
+	if configured == 0 {
+		return defaultMaxMCPBodySize
+	}
+	if int64(configured) > maxMCPBodySize {
+		return maxMCPBodySize
+	}
+	return int64(configured)
+}
 
 func getMaxBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
 	if svcCfg != nil && svcCfg.GetHttp() != nil &&

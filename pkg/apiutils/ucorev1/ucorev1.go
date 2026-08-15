@@ -267,6 +267,85 @@ func (s *ServiceConfig) GetRealName() string {
 	return s.Name
 }
 
+func (s *ServiceConfig) GetHTTPAuth() *corev1.Service_Spec_Config_HTTP_Auth {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetAuth(); ret != nil {
+		return ret
+	}
+	return s.GetMcp().GetAuth()
+}
+
+func (s *ServiceConfig) GetHTTPHeader() *corev1.Service_Spec_Config_HTTP_Header {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetHeader(); ret != nil {
+		return ret
+	}
+	return s.GetMcp().GetHeader()
+}
+
+func (s *ServiceConfig) GetHTTPPath() *corev1.Service_Spec_Config_HTTP_Path {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetPath(); ret != nil {
+		return ret
+	}
+	return s.GetMcp().GetPath()
+}
+
+func (s *ServiceConfig) GetHTTPCors() *corev1.Service_Spec_Config_HTTP_CORS {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetCors(); ret != nil {
+		return ret
+	}
+	return s.GetMcp().GetCors()
+}
+
+func (s *ServiceConfig) GetHTTPPlugins() []*corev1.Service_Spec_Config_HTTP_Plugin {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetPlugins(); len(ret) > 0 {
+		return ret
+	}
+	return s.GetMcp().GetPlugins()
+}
+
+func (s *ServiceConfig) GetHTTPVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	if ret := s.GetHttp().GetVisibility(); ret != nil {
+		return ret
+	}
+	return s.GetMcp().GetVisibility()
+}
+
+func GetRequestHTTP(req *corev1.RequestContext_Request) *corev1.RequestContext_Request_HTTP {
+	if req == nil {
+		return nil
+	}
+
+	switch req.Type.(type) {
+	case *corev1.RequestContext_Request_Http:
+		return req.GetHttp()
+	case *corev1.RequestContext_Request_Grpc:
+		return req.GetGrpc().GetHttp()
+	case *corev1.RequestContext_Request_Kubernetes_:
+		return req.GetKubernetes().GetHttp()
+	case *corev1.RequestContext_Request_Mcp:
+		return req.GetMcp().GetHttp()
+	default:
+		return nil
+	}
+}
+
 func (s *Service) Namespace() string {
 	if s.Status.NamespaceRef != nil {
 		return s.Status.NamespaceRef.Name
@@ -571,7 +650,7 @@ func (l *Service) GetAllUpstreamEndpointsByConfig(cfg *corev1.Service_Spec_Confi
 		switch l.Spec.Mode {
 		case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,
 			corev1.Service_Spec_WEB, corev1.Service_Spec_RDP_WEB,
-			corev1.Service_Spec_KUBERNETES:
+			corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP:
 			return "http"
 		case corev1.Service_Spec_SSH:
 			return "ssh"
@@ -714,11 +793,19 @@ func (l *Service) IsHTTP() bool {
 		corev1.Service_Spec_KUBERNETES,
 		corev1.Service_Spec_GRPC,
 		corev1.Service_Spec_WEB,
-		corev1.Service_Spec_RDP_WEB:
+		corev1.Service_Spec_RDP_WEB,
+		corev1.Service_Spec_MCP:
 		return true
 	default:
 		return false
 	}
+}
+
+func (l *Service) IsMCP() bool {
+	if l == nil || l.Service == nil || l.Spec == nil {
+		return false
+	}
+	return l.Spec.Mode == corev1.Service_Spec_MCP
 }
 
 func (l *Service) IsManagedService() bool {
@@ -735,6 +822,10 @@ func (s *Service) IsListenerHTTP2() bool {
 	}
 
 	if s.Spec.Config != nil && s.Spec.Config.GetHttp() != nil && s.Spec.Config.GetHttp().ListenHTTP2 {
+		return true
+	}
+
+	if s.Spec.Config != nil && s.Spec.Config.GetMcp() != nil && s.Spec.Config.GetMcp().ListenHTTP2 {
 		return true
 	}
 
@@ -994,6 +1085,9 @@ func (s *Service) IsUpstreamHTTP2ByConfig(cfg *corev1.Service_Spec_Config) bool 
 		return false
 	}
 	if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().IsUpstreamHTTP2 {
+		return true
+	}
+	if cfg != nil && cfg.GetMcp() != nil && cfg.GetMcp().IsUpstreamHTTP2 {
 		return true
 	}
 	switch s.BackendSchemeByConfig(cfg) {

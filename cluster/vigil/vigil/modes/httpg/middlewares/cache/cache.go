@@ -96,12 +96,13 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	cfg := reqCtx.ServiceConfig
 
-	if cfg == nil || cfg.GetHttp() == nil || len(cfg.GetHttp().Plugins) == 0 {
+	plugins := ucorev1.ToServiceConfig(cfg).GetHTTPPlugins()
+	if len(plugins) == 0 {
 		m.next.ServeHTTP(rw, req)
 		return
 	}
 
-	for _, plugin := range cfg.GetHttp().Plugins {
+	for _, plugin := range plugins {
 		cacheC := plugin.GetCache()
 		if cacheC == nil {
 			continue

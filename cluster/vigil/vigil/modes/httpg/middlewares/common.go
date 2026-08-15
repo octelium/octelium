@@ -18,11 +18,13 @@ package middlewares
 
 import (
 	"context"
+	"crypto/sha256"
 	"net/http"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 )
 
 type Constructor func(http.Handler) (http.Handler, error)
@@ -94,8 +96,25 @@ type RequestContext struct {
 	BodyJSONMap map[string]any
 
 	ReqCtxMap map[string]any
+
+	MCP *httputils.MCPRequest
+
+	BodyDigest [sha256.Size]byte
+}
+
+func (r *RequestContext) SetBodyDigest() {
+	r.BodyDigest = sha256.Sum256(r.Body)
+}
+
+func (r *RequestContext) IsBodyChanged() bool {
+	return sha256.Sum256(r.Body) != r.BodyDigest
 }
 
 func GetCtxRequestContext(ctx context.Context) *RequestContext {
 	return ctx.Value(CtxRequestContext).(*RequestContext)
+}
+
+func IsAnonymousMode(req *http.Request) bool {
+	svc := GetCtxRequestContext(req.Context()).Service
+	return svc.Spec.IsAnonymous
 }

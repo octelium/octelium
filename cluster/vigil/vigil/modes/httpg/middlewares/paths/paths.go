@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
 
 type middleware struct {
@@ -37,8 +38,7 @@ func New(ctx context.Context, next http.Handler) (http.Handler, error) {
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	reqCtx := middlewares.GetCtxRequestContext(req.Context())
 	svcCfg := reqCtx.ServiceConfig
-	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Path != nil {
-		pth := svcCfg.GetHttp().Path
+	if pth := ucorev1.ToServiceConfig(svcCfg).GetHTTPPath(); pth != nil {
 		if pth.RemovePrefix != "" {
 			req.URL.Path = fixPrefixSlash(strings.TrimPrefix(req.URL.Path, pth.RemovePrefix))
 			if req.URL.RawPath != "" {

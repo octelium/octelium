@@ -23,7 +23,9 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -85,7 +87,32 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		})
 	}
 
+	if ucorev1.ToService(reqCtx.Service).IsMCP() {
+		attrs = append(attrs,
+			attribute.KeyValue{
+				Key:   "req.mcp.method",
+				Value: attribute.StringValue(getMCPMethod(reqCtx)),
+			},
+			attribute.KeyValue{
+				Key:   "req.mcp.protocol_version",
+				Value: attribute.StringValue(reqCtx.MCP.GetProtocolVersion()),
+			},
+		)
+	}
+
 	m.commonMetrics.AtRequestEnd(reqCtx.CreatedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
+}
+
+func getMCPMethod(reqCtx *middlewares.RequestContext) string {
+	method := reqCtx.MCP.GetMethod()
+	switch {
+	case method == "":
+		return "UNKNOWN"
+	case httputils.IsMCPMethodKnown(method):
+		return method
+	default:
+		return "OTHER"
+	}
 }
 
 func getMethod(req *http.Request) string {
