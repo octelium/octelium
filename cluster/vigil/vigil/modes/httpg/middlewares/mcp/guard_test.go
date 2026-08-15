@@ -55,11 +55,13 @@ func newService() *corev1.Service {
 }
 
 type guardResult struct {
-	isNext    bool
-	code      int
-	errCode   int
-	body      string
-	errBodyID any
+	isNext      bool
+	code        int
+	errCode     int
+	body        string
+	errBodyID   any
+	errBodyData map[string]any
+	hasBodyID   bool
 }
 
 func serveGuard(t *testing.T, method, path, body string,
@@ -108,11 +110,12 @@ func serveGuard(t *testing.T, method, path, body string,
 	if !ret.isNext && rw.Body.Len() > 0 {
 		parsed := map[string]any{}
 		if err := json.Unmarshal(rw.Body.Bytes(), &parsed); err == nil {
-			ret.errBodyID = parsed["id"]
+			ret.errBodyID, ret.hasBodyID = parsed["id"]
 			if e, ok := parsed["error"].(map[string]any); ok {
 				if c, ok := e["code"].(float64); ok {
 					ret.errCode = int(c)
 				}
+				ret.errBodyData, _ = e["data"].(map[string]any)
 			}
 		}
 	}
@@ -285,10 +288,34 @@ func TestGuardErrorRequestID(t *testing.T) {
 	}
 
 	{
+		ret := serveGuard(t, http.MethodPost, "/mcp",
+			`{"jsonrpc":"1.0","id":"42","method":"tools/list"}`, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.Equal(t, "42", ret.errBodyID)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp",
+			`{"jsonrpc":"1.0","id":"1e5","method":"tools/list"}`, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.Equal(t, "1e5", ret.errBodyID)
+	}
+
+	{
 		ret := serveGuard(t, http.MethodPost, "/mcp", `{not json`, nil,
 			&corev1.Service_Spec_Config_MCP{})
 
-		assert.Nil(t, ret.errBodyID)
+		assert.False(t, ret.hasBodyID)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp",
+			`{"jsonrpc":"1.0","id":null,"method":"tools/list"}`, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.hasBodyID)
 	}
 }
 
@@ -346,6 +373,8 @@ func TestGuardProtocolVersion(t *testing.T) {
 		assert.False(t, ret.isNext)
 		assert.Equal(t, http.StatusBadRequest, ret.code)
 		assert.Equal(t, ErrCodeUnsupportedVer, ret.errCode)
+		assert.Equal(t, "2026-07-28", ret.errBodyData["requested"])
+		assert.Equal(t, []any{"2025-06-18"}, ret.errBodyData["supported"])
 	}
 
 	{
@@ -433,43 +462,6 @@ func TestGuardUnknownMethod(t *testing.T) {
 			})
 
 		assert.True(t, ret.isNext)
-	}
-}
-
-func TestGuardOrigin(t *testing.T) {
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, nil,
-			&corev1.Service_Spec_Config_MCP{})
-
-		assert.True(t, ret.isNext)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
-			"Origin": "https://my-mcp.example.com",
-		}, &corev1.Service_Spec_Config_MCP{})
-
-		assert.True(t, ret.isNext)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
-			"Origin": "https://evil.example.net",
-		}, &corev1.Service_Spec_Config_MCP{})
-
-		assert.False(t, ret.isNext)
-		assert.Equal(t, http.StatusForbidden, ret.code)
-		assert.Equal(t, ErrCodeOriginRejected, ret.errCode)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
-			"Origin": "null",
-		}, &corev1.Service_Spec_Config_MCP{})
-
-		assert.False(t, ret.isNext)
-		assert.Equal(t, http.StatusForbidden, ret.code)
 	}
 }
 

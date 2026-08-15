@@ -333,8 +333,7 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 	ctx := req.Context()
 	inputMap := reqCtx.ReqCtxMap
 
-	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
-		cfg := svcCfg.GetHttp().Header
+	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 		for _, hdr := range cfg.AddResponseHeaders {
 			if hdr.Append {
 				switch hdr.Type.(type) {

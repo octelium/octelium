@@ -46,6 +46,8 @@ const (
 
 const maxMCPCaps = 64
 
+const mcpCapsExtensions = "extensions"
+
 type MCPClientInfo struct {
 	Name    string
 	Version string
@@ -60,6 +62,7 @@ type MCPRequest struct {
 	Method         string
 	Name           string
 	RequestID      string
+	RequestIDRaw   json.RawMessage
 	IsNotification bool
 
 	ProtocolVersion       string
@@ -80,6 +83,13 @@ func (r *MCPRequest) GetRequestID() string {
 		return ""
 	}
 	return r.RequestID
+}
+
+func (r *MCPRequest) GetRequestIDRaw() json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	return r.RequestIDRaw
 }
 
 func (r *MCPRequest) GetMethod() string {
@@ -228,7 +238,7 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 		}
 	}
 
-	ret.RequestID, ret.IsNotification = parseMCPRequestID(env.ID)
+	ret.RequestID, ret.RequestIDRaw, ret.IsNotification = parseMCPRequestID(env.ID)
 
 	if len(env.Params) == 0 {
 		return ret
@@ -277,18 +287,27 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 	return ret
 }
 
-func parseMCPRequestID(raw json.RawMessage) (string, bool) {
+func parseMCPRequestID(raw json.RawMessage) (string, json.RawMessage, bool) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return "", true
+	if len(trimmed) == 0 {
+		return "", nil, true
+	}
+
+	if bytes.Equal(trimmed, []byte("null")) {
+		return "", nil, false
 	}
 
 	var str string
 	if err := json.Unmarshal(trimmed, &str); err == nil {
-		return str, false
+		return str, trimmed, false
 	}
 
-	return string(trimmed), false
+	var num json.Number
+	if err := json.Unmarshal(trimmed, &num); err == nil {
+		return num.String(), trimmed, false
+	}
+
+	return string(trimmed), nil, false
 }
 
 func deriveMCPName(method string, params *mcpParams) string {
@@ -341,10 +360,23 @@ func getMCPMapKeys(obj map[string]json.RawMessage) []string {
 	if len(obj) == 0 {
 		return nil
 	}
+
 	ret := make([]string, 0, len(obj))
-	for k := range obj {
-		ret = append(ret, k)
+	for k, v := range obj {
+		if k != mcpCapsExtensions {
+			ret = append(ret, k)
+			continue
+		}
+
+		extensions := make(map[string]json.RawMessage)
+		if err := json.Unmarshal(v, &extensions); err != nil {
+			continue
+		}
+		for id := range extensions {
+			ret = append(ret, id)
+		}
 	}
+
 	sort.Strings(ret)
 	if len(ret) > maxMCPCaps {
 		ret = ret[:maxMCPCaps]
@@ -432,7 +464,7 @@ func ParseMCPResponse(body []byte) *MCPResponse {
 	}
 
 	var hasNoID bool
-	ret.RequestID, hasNoID = parseMCPRequestID(env.ID)
+	ret.RequestID, _, hasNoID = parseMCPRequestID(env.ID)
 	ret.IsNotification = hasNoID && ret.Method != ""
 
 	if env.Error != nil {
@@ -508,8 +540,7 @@ var mcpKnownMethods = map[string]struct{}{
 	"logging/setLevel":       {},
 
 	"tasks/get":    {},
-	"tasks/list":   {},
-	"tasks/result": {},
+	"tasks/update": {},
 	"tasks/cancel": {},
 
 	"notifications/initialized":                {},
@@ -522,5 +553,5 @@ var mcpKnownMethods = map[string]struct{}{
 	"notifications/resources/list_changed":     {},
 	"notifications/resources/updated":          {},
 	"notifications/subscriptions/acknowledged": {},
-	"notifications/tasks/status":               {},
+	"notifications/tasks":                      {},
 }

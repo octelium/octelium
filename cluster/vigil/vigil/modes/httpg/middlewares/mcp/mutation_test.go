@@ -145,92 +145,24 @@ func TestRebuild(t *testing.T) {
 	}
 }
 
-func TestSeal(t *testing.T) {
-
-	ctx := context.Background()
-
-	{
-		var isNext bool
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			isNext = true
-		})
-
-		mdlwr, err := NewSeal(ctx, next)
-		assert.Nil(t, err)
-
-		req, reqCtx := newMutationRequest(t, readReportBody)
-		setRequestBody(req, reqCtx, deleteProductionBody)
-
-		rw := httptest.NewRecorder()
-		mdlwr.ServeHTTP(rw, req)
-
-		assert.False(t, isNext)
-		assert.Equal(t, http.StatusForbidden, rw.Code)
-		assert.Contains(t, rw.Body.String(), `"code":-32007`)
-	}
-
-	{
-		var isNext bool
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			isNext = true
-		})
-
-		mdlwr, err := NewSeal(ctx, next)
-		assert.Nil(t, err)
-
-		req, reqCtx := newMutationRequest(t, readReportBody)
-		setRequestBody(req, reqCtx,
-			`{"jsonrpc":"2.0","id":1,"method":"tools/call",`+
-				`"params":{"name":"read-report","arguments":{"environment":"production"}}}`)
-
-		rw := httptest.NewRecorder()
-		mdlwr.ServeHTTP(rw, req)
-
-		assert.False(t, isNext)
-		assert.Equal(t, http.StatusForbidden, rw.Code)
-	}
-
-	{
-		var isNext bool
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			isNext = true
-		})
-
-		mdlwr, err := NewSeal(ctx, next)
-		assert.Nil(t, err)
-
-		req, _ := newMutationRequest(t, readReportBody)
-
-		rw := httptest.NewRecorder()
-		mdlwr.ServeHTTP(rw, req)
-
-		assert.True(t, isNext)
-		assert.Equal(t, http.StatusOK, rw.Code)
-	}
-}
-
 func TestMutationNonMCP(t *testing.T) {
 
 	ctx := context.Background()
 
-	for _, newFn := range []func(context.Context, http.Handler) (http.Handler, error){
-		NewRebuild,
-		NewSeal,
-	} {
-		var isNext bool
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			isNext = true
-		})
+	var isNext bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isNext = true
+	})
 
-		mdlwr, err := newFn(ctx, next)
-		assert.Nil(t, err)
+	mdlwr, err := NewRebuild(ctx, next)
+	assert.Nil(t, err)
 
-		req, reqCtx := newMutationRequest(t, readReportBody)
-		reqCtx.Service.Spec.Mode = corev1.Service_Spec_HTTP
-		setRequestBody(req, reqCtx, deleteProductionBody)
+	req, reqCtx := newMutationRequest(t, readReportBody)
+	reqCtx.Service.Spec.Mode = corev1.Service_Spec_HTTP
+	setRequestBody(req, reqCtx, deleteProductionBody)
 
-		mdlwr.ServeHTTP(httptest.NewRecorder(), req)
+	mdlwr.ServeHTTP(httptest.NewRecorder(), req)
 
-		assert.True(t, isNext)
-	}
+	assert.True(t, isNext)
+	assert.Equal(t, "read-report", reqCtx.MCP.GetName())
 }

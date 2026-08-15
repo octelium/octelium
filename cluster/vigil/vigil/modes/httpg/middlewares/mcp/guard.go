@@ -18,14 +18,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -67,11 +67,7 @@ func (m *guard) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *WriteErrorOpts {
 	cfg := getMCPConfig(reqCtx.ServiceConfig)
 	mcpReq := reqCtx.MCP
-	reqID := mcpReq.GetRequestID()
-
-	if o := m.checkOrigin(req, reqCtx, reqID); o != nil {
-		return o
-	}
+	reqID := mcpReq.GetRequestIDRaw()
 
 	if req.Method != http.MethodPost {
 		return &WriteErrorOpts{
@@ -131,7 +127,7 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	return nil
 }
 
-func (m *guard) checkEnvelope(mcpReq *httputils.MCPRequest, reqID string) *WriteErrorOpts {
+func (m *guard) checkEnvelope(mcpReq *httputils.MCPRequest, reqID json.RawMessage) *WriteErrorOpts {
 	if !mcpReq.IsJSONRPC {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,
@@ -179,7 +175,7 @@ func (m *guard) checkEnvelope(mcpReq *httputils.MCPRequest, reqID string) *Write
 }
 
 func (m *guard) checkProtocolVersion(mcpReq *httputils.MCPRequest,
-	cfg *corev1.Service_Spec_Config_MCP, reqID string) *WriteErrorOpts {
+	cfg *corev1.Service_Spec_Config_MCP, reqID json.RawMessage) *WriteErrorOpts {
 
 	if mcpReq.BodyProtocolVersion != "" && mcpReq.HeaderProtocolVersion != "" &&
 		mcpReq.BodyProtocolVersion != mcpReq.HeaderProtocolVersion {
@@ -193,6 +189,8 @@ func (m *guard) checkProtocolVersion(mcpReq *httputils.MCPRequest,
 		}
 	}
 
+	versions := cfg.GetProtocol().GetVersions()
+
 	if mcpReq.ProtocolVersion == "" {
 		if cfg.GetProtocol().GetRequireVersion() {
 			return &WriteErrorOpts{
@@ -200,30 +198,37 @@ func (m *guard) checkProtocolVersion(mcpReq *httputils.MCPRequest,
 				Code:       ErrCodeUnsupportedVer,
 				Message:    "Octelium: the MCP request declares no protocol version",
 				RequestID:  reqID,
+				Data: &unsupportedVersionData{
+					Supported: versions,
+					Requested: "",
+				},
 			}
 		}
 		return nil
 	}
 
-	versions := cfg.GetProtocol().GetVersions()
-	if len(versions) == 0 {
+	if len(versions) == 0 || slices.Contains(versions, mcpReq.ProtocolVersion) {
 		return nil
 	}
 
-	if !slices.Contains(versions, mcpReq.ProtocolVersion) {
-		return &WriteErrorOpts{
-			HTTPStatus: http.StatusBadRequest,
-			Code:       ErrCodeUnsupportedVer,
-			Message: fmt.Sprintf("Octelium: unsupported MCP protocol version: %s",
-				mcpReq.ProtocolVersion),
-			RequestID: reqID,
-		}
+	return &WriteErrorOpts{
+		HTTPStatus: http.StatusBadRequest,
+		Code:       ErrCodeUnsupportedVer,
+		Message:    "Octelium: unsupported MCP protocol version",
+		RequestID:  reqID,
+		Data: &unsupportedVersionData{
+			Supported: versions,
+			Requested: mcpReq.ProtocolVersion,
+		},
 	}
-
-	return nil
 }
 
-func (m *guard) checkMirroredHeaders(mcpReq *httputils.MCPRequest, reqID string) *WriteErrorOpts {
+type unsupportedVersionData struct {
+	Supported []string `json:"supported"`
+	Requested string   `json:"requested"`
+}
+
+func (m *guard) checkMirroredHeaders(mcpReq *httputils.MCPRequest, reqID json.RawMessage) *WriteErrorOpts {
 
 	if mcpReq.HeaderMethod != "" && mcpReq.HeaderMethod != mcpReq.Method {
 		return &WriteErrorOpts{
@@ -251,7 +256,7 @@ func (m *guard) checkMirroredHeaders(mcpReq *httputils.MCPRequest, reqID string)
 }
 
 func (m *guard) checkEndpoint(req *http.Request,
-	cfg *corev1.Service_Spec_Config_MCP, reqID string) *WriteErrorOpts {
+	cfg *corev1.Service_Spec_Config_MCP, reqID json.RawMessage) *WriteErrorOpts {
 
 	endpoint := cfg.GetEndpoint()
 	if endpoint == "" || req.URL.Path == endpoint {
@@ -266,7 +271,7 @@ func (m *guard) checkEndpoint(req *http.Request,
 	}
 }
 
-func (m *guard) checkContentType(req *http.Request, reqID string) *WriteErrorOpts {
+func (m *guard) checkContentType(req *http.Request, reqID json.RawMessage) *WriteErrorOpts {
 	ct := req.Header.Get("Content-Type")
 	if ct == "" {
 		return &WriteErrorOpts{
@@ -277,58 +282,17 @@ func (m *guard) checkContentType(req *http.Request, reqID string) *WriteErrorOpt
 		}
 	}
 
-	mediaType := strings.TrimSpace(strings.Split(ct, ";")[0])
-	if !strings.EqualFold(mediaType, "application/json") {
+	mediaType, _, err := mime.ParseMediaType(ct)
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusUnsupportedMediaType,
 			Code:       ErrCodeTransport,
-			Message: fmt.Sprintf("Octelium: unsupported MCP Content-Type: %s",
-				mediaType),
-			RequestID: reqID,
+			Message:    "Octelium: the MCP endpoint requires a JSON Content-Type",
+			RequestID:  reqID,
 		}
 	}
 
 	return nil
-}
-
-func (m *guard) checkOrigin(req *http.Request, reqCtx *middlewares.RequestContext,
-	reqID string) *WriteErrorOpts {
-
-	origin := req.Header.Get("Origin")
-	if origin == "" {
-		return nil
-	}
-
-	if m.isOriginAllowed(origin, reqCtx) {
-		return nil
-	}
-
-	return &WriteErrorOpts{
-		HTTPStatus: http.StatusForbidden,
-		Code:       ErrCodeOriginRejected,
-		Message:    "Octelium: the request Origin is not allowed",
-		RequestID:  reqID,
-	}
-}
-
-func (m *guard) isOriginAllowed(origin string, reqCtx *middlewares.RequestContext) bool {
-
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" {
-		return false
-	}
-
-	svc := reqCtx.Service
-	if svc == nil {
-		return false
-	}
-
-	fqdn := vutils.GetServicePublicFQDN(svc, m.domain)
-	if fqdn == "" {
-		return false
-	}
-
-	return strings.EqualFold(u.Hostname(), fqdn)
 }
 
 const (

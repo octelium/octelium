@@ -119,6 +119,21 @@ func TestParseMCPRequest(t *testing.T) {
 	}
 
 	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add",
+			"_meta":{"io.modelcontextprotocol/clientCapabilities":{"roots":{},
+			"extensions":{"io.modelcontextprotocol/tasks":{},
+			"io.modelcontextprotocol/ui":{"mimeTypes":["text/html"]}}}}}}`
+
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.Equal(t, []string{
+			"io.modelcontextprotocol/tasks",
+			"io.modelcontextprotocol/ui",
+			"roots",
+		}, ret.Capabilities)
+	}
+
+	{
 		ret := ParseMCPRequest(nil, nil)
 		assert.False(t, ret.IsJSONRPC)
 
@@ -126,6 +141,7 @@ func TestParseMCPRequest(t *testing.T) {
 		assert.Equal(t, "", nilReq.GetMethod())
 		assert.Equal(t, "", nilReq.GetName())
 		assert.Equal(t, "", nilReq.GetRequestID())
+		assert.Nil(t, nilReq.GetRequestIDRaw())
 		assert.Equal(t, "", nilReq.GetProtocolVersion())
 		assert.Equal(t, "", nilReq.GetSessionID())
 		assert.False(t, nilReq.GetIsNotification())
@@ -168,12 +184,17 @@ func TestParseMCPRequestID(t *testing.T) {
 	tsts := []struct {
 		id             string
 		requestID      string
+		requestIDRaw   string
 		isNotification bool
 	}{
-		{`1`, "1", false},
-		{`9007199254740993`, "9007199254740993", false},
-		{`"req-1"`, "req-1", false},
-		{`null`, "", true},
+		{`1`, "1", `1`, false},
+		{`9007199254740993`, "9007199254740993", `9007199254740993`, false},
+		{`"req-1"`, "req-1", `"req-1"`, false},
+		{`"42"`, "42", `"42"`, false},
+		{`"1e5"`, "1e5", `"1e5"`, false},
+		{`null`, "", ``, false},
+		{`true`, "true", ``, false},
+		{`{"a":1}`, `{"a":1}`, ``, false},
 	}
 
 	for _, tst := range tsts {
@@ -181,6 +202,7 @@ func TestParseMCPRequestID(t *testing.T) {
 		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
 
 		assert.Equal(t, tst.requestID, ret.RequestID, tst.id)
+		assert.Equal(t, tst.requestIDRaw, string(ret.RequestIDRaw), tst.id)
 		assert.Equal(t, tst.isNotification, ret.IsNotification, tst.id)
 	}
 
@@ -326,12 +348,17 @@ func TestIsMCPMethodKnown(t *testing.T) {
 		"initialize",
 		"notifications/initialized",
 		"tasks/get",
+		"tasks/update",
 		"tasks/cancel",
+		"notifications/tasks",
 	} {
 		assert.True(t, IsMCPMethodKnown(method), method)
 	}
 
-	for _, method := range []string{"", "acme/custom", "tools/", "TOOLS/CALL"} {
+	for _, method := range []string{
+		"", "acme/custom", "tools/", "TOOLS/CALL",
+		"tasks/list", "tasks/result", "notifications/tasks/status",
+	} {
 		assert.False(t, IsMCPMethodKnown(method), method)
 	}
 }

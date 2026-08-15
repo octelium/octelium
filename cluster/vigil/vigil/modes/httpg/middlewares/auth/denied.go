@@ -76,7 +76,7 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 			HTTPStatus: httpStatusCode,
 			Code:       code,
 			Message:    message,
-			RequestID:  reqCtx.MCP.GetRequestID(),
+			RequestID:  reqCtx.MCP.GetRequestIDRaw(),
 		})
 		return
 	case ucorev1.ToService(svc).IsGRPC():

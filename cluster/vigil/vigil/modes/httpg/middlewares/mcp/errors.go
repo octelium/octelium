@@ -27,23 +27,22 @@ const (
 	ErrCodeMethodNotFound = -32601
 
 	ErrCodeHeaderMismatch = -32020
+	ErrCodeUnsupportedVer = -32022
 
-	ErrCodeUnauthenticated  = -32001
-	ErrCodeUnauthorized     = -32002
-	ErrCodeOriginRejected   = -32003
-	ErrCodeUnsupportedVer   = -32004
-	ErrCodeTransport        = -32006
-	ErrCodeMutationRejected = -32007
+	ErrCodeUnauthenticated = -40001
+	ErrCodeUnauthorized    = -40002
+	ErrCodeTransport       = -40003
 )
 
 type jsonRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 type jsonRPCErrorResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
+	ID      json.RawMessage `json:"id,omitempty"`
 	Error   *jsonRPCError   `json:"error"`
 }
 
@@ -51,16 +50,18 @@ type WriteErrorOpts struct {
 	HTTPStatus int
 	Code       int
 	Message    string
-	RequestID  string
+	RequestID  json.RawMessage
+	Data       any
 }
 
 func WriteError(w http.ResponseWriter, o *WriteErrorOpts) {
 	resp := &jsonRPCErrorResponse{
 		JSONRPC: "2.0",
-		ID:      getJSONRPCID(o.RequestID),
+		ID:      o.RequestID,
 		Error: &jsonRPCError{
 			Code:    o.Code,
 			Message: o.Message,
+			Data:    o.Data,
 		},
 	}
 
@@ -77,32 +78,4 @@ func WriteError(w http.ResponseWriter, o *WriteErrorOpts) {
 
 	w.WriteHeader(o.HTTPStatus)
 	w.Write(body)
-}
-
-func getJSONRPCID(arg string) json.RawMessage {
-	if arg == "" {
-		return json.RawMessage("null")
-	}
-
-	if isJSONNumber(arg) {
-		return json.RawMessage(arg)
-	}
-
-	ret, err := json.Marshal(arg)
-	if err != nil {
-		return json.RawMessage("null")
-	}
-	return ret
-}
-
-func isJSONNumber(arg string) bool {
-	if arg == "" {
-		return false
-	}
-
-	var v json.Number
-	if err := json.Unmarshal([]byte(arg), &v); err != nil {
-		return false
-	}
-	return true
 }

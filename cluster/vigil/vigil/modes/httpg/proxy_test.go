@@ -88,11 +88,9 @@ func TestForwardedClientCertRemoved(t *testing.T) {
 			"X-Forwarded-Client-Cert": "By=spiffe://cluster/ns/default/sa/admin",
 		})
 
-		httpCfg := &corev1.Service_Spec_Config_HTTP{
-			Header: &corev1.Service_Spec_Config_HTTP_Header{ForwardedMode: mode},
-		}
+		headerCfg := &corev1.Service_Spec_Config_HTTP_Header{ForwardedMode: mode}
 
-		applyForwardedHeaders(pr, newForwardedSvc(false), httpCfg, false, "https", "example.com", "obf")
+		applyForwardedHeaders(pr, newForwardedSvc(false), headerCfg, false, "https", "example.com", "obf")
 
 		assert.Equal(t, "", pr.Out.Header.Get("X-Forwarded-Client-Cert"), mode.String())
 	}
@@ -126,12 +124,10 @@ func TestForwardedPrefixHeadersFollowMode(t *testing.T) {
 
 	{
 		pr := newForwardedProxyRequest(t, hdrs)
-		httpCfg := &corev1.Service_Spec_Config_HTTP{
-			Header: &corev1.Service_Spec_Config_HTTP_Header{
-				ForwardedMode: corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT,
-			},
+		headerCfg := &corev1.Service_Spec_Config_HTTP_Header{
+			ForwardedMode: corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT,
 		}
-		applyForwardedHeaders(pr, newForwardedSvc(false), httpCfg, false, "https", "example.com", "obf")
+		applyForwardedHeaders(pr, newForwardedSvc(false), headerCfg, false, "https", "example.com", "obf")
 
 		assert.Equal(t, "/downstream", pr.Out.Header.Get("X-Forwarded-Prefix"))
 		assert.Equal(t, "/downstream/v1", pr.Out.Header.Get("X-Forwarded-Uri"))
