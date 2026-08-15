@@ -50,9 +50,8 @@ func TestGetInstallationFromBootstrap(t *testing.T) {
 				},
 			},
 			Cni: &cbootstrapv1.Config_Spec_CNI{
-				ConfDir: "/var/lib/rancher/k3s/agent/etc/cni",
-				Multus: &cbootstrapv1.Config_Spec_CNI_Multus{
-					ConfDir: "/opt/multus/conf",
+				ConfDirType: &cbootstrapv1.Config_Spec_CNI_MultusConfDir{
+					MultusConfDir: "/opt/multus/conf",
 				},
 			},
 			Ingress: &cbootstrapv1.Config_Spec_Ingress{
@@ -68,8 +67,8 @@ func TestGetInstallationFromBootstrap(t *testing.T) {
 	assert.Equal(t, "octelium.local", ret.GetSpiffe().GetTrustDomain())
 	assert.Equal(t, "csi.example.com", ret.GetSpiffe().GetCsiDriver().GetName())
 
-	assert.Equal(t, "/var/lib/rancher/k3s/agent/etc/cni", ret.GetCni().GetConfDir())
-	assert.Equal(t, "/opt/multus/conf", ret.GetCni().GetMultus().GetConfDir())
+	assert.Empty(t, ret.GetCni().GetConfDir())
+	assert.Equal(t, "/opt/multus/conf", ret.GetCni().GetMultusConfDir())
 
 	assert.True(t, ret.GetIngress().GetFrontProxy().GetEnable())
 }
@@ -109,8 +108,6 @@ spec:
       name: csi.example.com
   cni:
     confDir: /var/lib/rancher/k3s/agent/etc/cni
-    multus:
-      confDir: /opt/multus/conf
   ingress:
     frontProxy:
       enable: true
@@ -125,6 +122,32 @@ spec:
 	assert.Equal(t, "octelium.local", ret.GetSpiffe().GetTrustDomain())
 	assert.Equal(t, "csi.example.com", ret.GetSpiffe().GetCsiDriver().GetName())
 	assert.Equal(t, "/var/lib/rancher/k3s/agent/etc/cni", ret.GetCni().GetConfDir())
-	assert.Equal(t, "/opt/multus/conf", ret.GetCni().GetMultus().GetConfDir())
+	assert.Empty(t, ret.GetCni().GetMultusConfDir())
 	assert.True(t, ret.GetIngress().GetFrontProxy().GetEnable())
+}
+
+func TestGetInstallationFromBootstrapYAMLBothConfDirs(t *testing.T) {
+	y := `
+spec:
+  cni:
+    confDir: /var/lib/rancher/k3s/agent/etc/cni
+    multusConfDir: /opt/multus/conf
+`
+	assert.NotNil(t, pbutils.UnmarshalYAML([]byte(y), &cbootstrapv1.Config{}))
+}
+
+func TestGetInstallationFromBootstrapYAMLMultusConfDir(t *testing.T) {
+	y := `
+spec:
+  cni:
+    multusConfDir: /opt/multus/conf
+`
+	bs := &cbootstrapv1.Config{}
+	assert.Nil(t, pbutils.UnmarshalYAML([]byte(y), bs))
+
+	ret, err := getInstallationFromBootstrap(bs)
+	assert.Nil(t, err)
+
+	assert.Equal(t, "/opt/multus/conf", ret.GetCni().GetMultusConfDir())
+	assert.Empty(t, ret.GetCni().GetConfDir())
 }

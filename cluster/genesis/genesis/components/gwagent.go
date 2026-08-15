@@ -35,8 +35,8 @@ const multusConfMountPath = "/host/multus-conf"
 func GetMultusConfDir(o *CommonOpts) string {
 	cni := GetInstallation(o).GetCni()
 	switch {
-	case cni.GetMultus().GetConfDir() != "":
-		return cni.GetMultus().GetConfDir()
+	case cni.GetMultusConfDir() != "":
+		return cni.GetMultusConfDir()
 	case cni.GetConfDir() != "":
 		return filepath.Join(cni.GetConfDir(), "multus", "net.d")
 	default:

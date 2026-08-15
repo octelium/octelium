@@ -27,17 +27,19 @@ import (
 )
 
 func cniInstallation(confDir, multusConfDir string) *corev1.ClusterConfig_Status_Installation {
-	ret := &corev1.ClusterConfig_Status_Installation{
-		Cni: &corev1.ClusterConfig_Status_Installation_CNI{
+	cni := &corev1.ClusterConfig_Status_Installation_CNI{}
+	switch {
+	case multusConfDir != "":
+		cni.ConfDirType = &corev1.ClusterConfig_Status_Installation_CNI_MultusConfDir{
+			MultusConfDir: multusConfDir,
+		}
+	case confDir != "":
+		cni.ConfDirType = &corev1.ClusterConfig_Status_Installation_CNI_ConfDir{
 			ConfDir: confDir,
-		},
-	}
-	if multusConfDir != "" {
-		ret.Cni.Multus = &corev1.ClusterConfig_Status_Installation_CNI_Multus{
-			ConfDir: multusConfDir,
 		}
 	}
-	return ret
+
+	return &corev1.ClusterConfig_Status_Installation{Cni: cni}
 }
 
 func TestGetMultusConfDir(t *testing.T) {
@@ -64,9 +66,6 @@ func TestGetMultusConfDir(t *testing.T) {
 
 	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(
 		optsWithInstallation(cniInstallation("", "/opt/multus/conf"))))
-
-	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(
-		optsWithInstallation(cniInstallation("/etc/cni", "/opt/multus/conf"))))
 }
 
 func TestGatewayAgentDaemonSetSecurityContext(t *testing.T) {
