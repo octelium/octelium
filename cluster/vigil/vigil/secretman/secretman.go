@@ -177,8 +177,7 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 			}
 		}
 
-		if cfg.GetHttp() != nil && cfg.GetHttp().GetAuth() != nil {
-			authS := cfg.GetHttp().GetAuth()
+		if authS := ucorev1.ToServiceConfig(cfg).GetHTTPAuth(); authS != nil {
 			if authS.GetBearer() != nil && authS.GetBearer().GetFromSecret() != "" {
 				doAppend(authS.GetBearer().GetFromSecret())
 			}

@@ -150,8 +150,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 
 	inputMap := reqCtx.ReqCtxMap
 
-	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Header != nil {
-		cfg := svcCfg.GetHttp().Header
+	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 
 		switch cfg.AuthorizationMode {
 		case corev1.Service_Spec_Config_HTTP_Header_AUTHORIZATION_MODE_UNSET:
@@ -198,8 +197,8 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 	}
 
 	if svcCfg != nil &&
-		svcCfg.GetHttp() != nil && svcCfg.GetHttp().GetAuth() != nil {
-		authS := svcCfg.GetHttp().GetAuth()
+		ucorev1.ToServiceConfig(svcCfg).GetHTTPAuth() != nil {
+		authS := ucorev1.ToServiceConfig(svcCfg).GetHTTPAuth()
 
 		if authS.GetBearer() != nil &&
 			authS.GetBearer().GetFromSecret() != "" {
@@ -292,10 +291,10 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 func (m *middleware) processCORSHeaders(rw http.ResponseWriter, req *http.Request, reqCtx *middlewares.RequestContext) bool {
 	svcCfg := reqCtx.ServiceConfig
 
-	if svcCfg == nil || svcCfg.GetHttp() == nil || svcCfg.GetHttp().Cors == nil {
+	cors := ucorev1.ToServiceConfig(svcCfg).GetHTTPCors()
+	if cors == nil {
 		return false
 	}
-	cors := svcCfg.GetHttp().Cors
 
 	reqAcMethod := req.Header.Get("Access-Control-Request-Method")
 	originHeader := req.Header.Get("Origin")
@@ -361,8 +360,7 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 		}
 
 	}
-	if svcCfg != nil && svcCfg.GetHttp() != nil && svcCfg.GetHttp().Cors != nil {
-		cors := svcCfg.GetHttp().Cors
+	if cors := ucorev1.ToServiceConfig(svcCfg).GetHTTPCors(); cors != nil {
 
 		originHeader := req.Header.Get("Origin")
 		allowed, match := m.isOriginAllowed(originHeader, cors.AllowOriginStringMatch)

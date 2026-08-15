@@ -676,7 +676,6 @@ func TestEvalPolicy(t *testing.T) {
 		assert.False(t, res)
 	}
 
-
 	{
 		res, err := srv.EvalPolicy(ctx,
 			`isNonExistentFunc(ctx.user.metadata.name)"`,

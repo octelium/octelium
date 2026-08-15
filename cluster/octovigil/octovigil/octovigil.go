@@ -262,22 +262,7 @@ func (s *Server) getHTTPHeadersFromReq(req *coctovigilv1.DownstreamRequest) map[
 		return nil
 	}
 
-	switch req.Request.Type.(type) {
-	case *corev1.RequestContext_Request_Grpc:
-		if req.Request.GetGrpc().Http == nil {
-			return nil
-		}
-		return req.Request.GetGrpc().Http.Headers
-	case *corev1.RequestContext_Request_Http:
-		return req.Request.GetHttp().Headers
-	case *corev1.RequestContext_Request_Kubernetes_:
-		if req.Request.GetKubernetes().Http == nil {
-			return nil
-		}
-		return req.Request.GetKubernetes().Http.Headers
-	default:
-		return nil
-	}
+	return ucorev1.GetRequestHTTP(req.Request).GetHeaders()
 }
 
 func (s *Server) isAddressFromClient(addrStr string) bool {
@@ -644,8 +629,8 @@ func (s *Server) isAuthorized(ctx context.Context,
 
 	if req.Service.Spec.IsPublic && req.Session.Status.Type == corev1.Session_Status_CLIENTLESS {
 		if cc := s.ccCtl.Get(); cc != nil && cc.Spec.Ingress != nil && cc.Spec.Ingress.UseForwardedForHeader {
-			if req.Request != nil && req.Request.GetHttp() != nil && req.Request.GetHttp().Headers != nil {
-				ipAddr := req.Request.GetHttp().Headers[strings.ToLower(vutils.GetDownstreamIPHeaderCanonical())]
+			if hdrs := ucorev1.GetRequestHTTP(req.Request).GetHeaders(); hdrs != nil {
+				ipAddr := hdrs[strings.ToLower(vutils.GetDownstreamIPHeaderCanonical())]
 				if ipAddr != "" && req.Session.Status.Authentication != nil &&
 					req.Session.Status.Authentication.Info != nil &&
 					req.Session.Status.Authentication.Info.Downstream != nil &&

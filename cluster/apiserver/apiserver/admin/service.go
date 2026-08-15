@@ -428,9 +428,10 @@ func (s *Server) validateService(ctx context.Context,
 			return grpcutils.InvalidArg("Anonymous access mode requires isPublic to be enabled")
 		}
 		switch svc.Spec.Mode {
-		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC:
+		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB,
+			corev1.Service_Spec_GRPC, corev1.Service_Spec_MCP:
 		default:
-			return grpcutils.InvalidArg("Anonymous access mode requires HTTP or WEB modes")
+			return grpcutils.InvalidArg("Anonymous access mode requires HTTP, WEB, GRPC or MCP modes")
 		}
 		if svc.Spec.Authorization != nil && !svc.Spec.Authorization.EnableAnonymous {
 			return grpcutils.InvalidArg(
@@ -847,154 +848,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			return grpcutils.InvalidArg("Either HTTP, WEB or GRPC modes must be set for HTTP config to be used")
 		}
 
-		if cfg.GetHttp().Header != nil {
-			hdrSpec := cfg.GetHttp().Header
-
-			if len(hdrSpec.AddRequestHeaders) > 256 {
-				return grpcutils.InvalidArg("Too many addRequestHeaders")
-			}
-
-			if len(hdrSpec.AddResponseHeaders) > 256 {
-				return grpcutils.InvalidArg("Too many addResponseHeaders")
-			}
-
-			if len(hdrSpec.RemoveRequestHeaders) > 256 {
-				return grpcutils.InvalidArg("Too many removeRequestHeaders")
-			}
-
-			if len(hdrSpec.RemoveResponseHeaders) > 256 {
-				return grpcutils.InvalidArg("Too many removeResponseHeaders")
-			}
-
-			for _, hdr := range hdrSpec.AddRequestHeaders {
-				if !httpguts.ValidHeaderFieldName(hdr.Key) {
-					return grpcutils.InvalidArg("invalid header name")
-				}
-
-				switch hdr.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
-					if !httpguts.ValidHeaderFieldValue(hdr.GetValue()) {
-						return grpcutils.InvalidArg("invalid header value")
-					}
-				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
-						return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
-					}
-				default:
-					return grpcutils.InvalidArg("You must provide either a header value or eval")
-				}
-
-			}
-
-			for _, hdr := range hdrSpec.AddResponseHeaders {
-				if !httpguts.ValidHeaderFieldName(hdr.Key) {
-					return grpcutils.InvalidArg("invalid header name")
-				}
-
-				switch hdr.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
-					if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
-						return err
-					}
-				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
-						return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
-					}
-				default:
-					return grpcutils.InvalidArg("You must provide either a header value or eval")
-				}
-			}
-
-			for _, hdr := range hdrSpec.RemoveRequestHeaders {
-				if err := s.validateGenStr(hdr, true, "key"); err != nil {
-					return err
-				}
-			}
-
-			for _, hdr := range hdrSpec.RemoveResponseHeaders {
-				if err := s.validateGenStr(hdr, true, "key"); err != nil {
-					return err
-				}
-			}
+		if err := s.validateHTTPHeader(ctx, cfg.GetHttp().Header); err != nil {
+			return err
 		}
 
-		if cfg.GetHttp().Auth != nil {
-			authSpec := cfg.GetHttp().Auth
-
-			if authSpec.GetBearer() != nil {
-				if err := s.validateSecretOwner(ctx, authSpec.GetBearer()); err != nil {
-					return err
-				}
-			}
-
-			if authSpec.GetBasic() != nil {
-				if authSpec.GetBasic().Username == "" {
-					return serr.InvalidArg("Basic Auth username must be set")
-				} else {
-					if err := apivalidation.ValidateGenASCII(authSpec.GetBasic().Username); err != nil {
-						return err
-					}
-				}
-
-				if err := s.validateSecretOwner(ctx, authSpec.GetBasic().GetPassword()); err != nil {
-					return err
-				}
-			}
-
-			if authSpec.GetCustom() != nil {
-
-				if err := s.validateGenStr(authSpec.GetCustom().Header, true, "header"); err != nil {
-					return err
-				}
-
-				if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {
-					return err
-				}
-			}
-
-			if authSpec.GetSigv4() != nil {
-				if authSpec.GetSigv4().Service == "" {
-					return serr.InvalidArg("sigv4 service must be set")
-				} else {
-					if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Service); err != nil {
-						return err
-					}
-				}
-
-				if authSpec.GetSigv4().Region == "" {
-					return serr.InvalidArg("sigv4 region must be set")
-				} else {
-					if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Region); err != nil {
-						return err
-					}
-				}
-
-				if authSpec.GetSigv4().AccessKeyID == "" {
-					return serr.InvalidArg("sigv4 accessKeyID be set")
-				} else {
-					if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().AccessKeyID); err != nil {
-						return err
-					}
-				}
-
-				if err := s.validateSecretOwner(ctx, authSpec.GetSigv4().GetSecretAccessKey()); err != nil {
-					return err
-				}
-			}
-
-			if authSpec.GetOauth2ClientCredentials() != nil {
-				oauth2C := authSpec.GetOauth2ClientCredentials()
-				if oauth2C.ClientID == "" {
-					return serr.InvalidArg("OAuth2 client ID cannot be empty")
-				}
-				if oauth2C.TokenURL == "" {
-					return serr.InvalidArg("OAuth2 token URL must be set")
-				}
-				if err := s.validateSecretOwner(ctx, oauth2C.GetClientSecret()); err != nil {
-					return err
-				}
-
-			}
+		if err := s.validateHTTPAuth(ctx, cfg.GetHttp().Auth); err != nil {
+			return err
 		}
 
 		if cfg.GetHttp().Body != nil {
@@ -1025,25 +884,8 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			}
 		}
 
-		if cfg.GetHttp().Path != nil {
-			pth := cfg.GetHttp().Path
-			if pth.AddPrefix != "" {
-				if len(pth.AddPrefix) > 512 {
-					return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
-				}
-				if !govalidator.IsRequestURI(pth.AddPrefix) {
-					return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
-				}
-			}
-
-			if pth.RemovePrefix != "" {
-				if len(pth.RemovePrefix) > 512 {
-					return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
-				}
-				if !govalidator.IsRequestURI(pth.RemovePrefix) {
-					return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
-				}
-			}
+		if err := s.validateHTTPPath(cfg.GetHttp().Path); err != nil {
+			return err
 		}
 
 		if cfg.GetHttp().Retry != nil {
@@ -1103,253 +945,12 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			}
 		}
 
-		if len(cfg.GetHttp().Plugins) > 0 {
-			if len(cfg.GetHttp().Plugins) > 256 {
-				return grpcutils.InvalidArg("Too many plugins")
-			}
-
-			var names []string
-			for _, plugin := range cfg.GetHttp().Plugins {
-
-				if err := apivalidation.ValidateName(plugin.Name, 0, 0); err != nil {
-					return err
-				}
-				if slices.Contains(names, plugin.Name) {
-					return serr.InvalidArg("This Plugin name already exists: %s", cfg.Name)
-				}
-				names = append(names, plugin.Name)
-
-				if err := s.validateCondition(ctx, plugin.Condition); err != nil {
-					return err
-				}
-
-				switch plugin.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
-					if len(plugin.GetLua().GetInline()) == 0 {
-						return serr.InvalidArg("Lua script is empty")
-					}
-
-					if len(plugin.GetLua().GetInline()) > 20000 {
-						return serr.InvalidArg("Lua script is too large")
-					}
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_:
-					if plugin.GetDirect().StatusCode != 0 {
-						if err := apivalidation.ValidateHTTPStatusCode(
-							int64(plugin.GetDirect().StatusCode)); err != nil {
-							return err
-						}
-					}
-					if len(plugin.GetDirect().Headers) > 100 {
-						return grpcutils.InvalidArg("Too many headers")
-					}
-
-					for _, hdr := range plugin.GetDirect().Headers {
-						if !httpguts.ValidHeaderFieldName(hdr.Key) {
-							return grpcutils.InvalidArg("invalid header name")
-						}
-
-						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-							return grpcutils.InvalidArg("invalid header value")
-						}
-					}
-
-					if plugin.GetDirect().Body != nil {
-						switch plugin.GetDirect().Body.Type.(type) {
-						case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline:
-							if len(plugin.GetDirect().Body.GetInline()) > 50000 {
-								return grpcutils.InvalidArg("inline is too large")
-							}
-						case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes:
-							if len(plugin.GetDirect().Body.GetInlineBytes()) > 35000 {
-								return grpcutils.InvalidArg("inlineBytes is too large")
-							}
-
-						}
-					}
-
-				case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
-
-					confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
-					if confDuration > 6000*time.Millisecond {
-						return serr.InvalidArg("message timeout upper limit is exceeded")
-					}
-
-					switch plugin.GetExtProc().Type.(type) {
-					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
-						if err := apivalidation.ValidateHostPort(
-							plugin.GetExtProc().GetAddress()); err != nil {
-							return err
-						}
-					case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Container_:
-						if plugin.GetExtProc().GetContainer().Image == "" {
-							return grpcutils.InvalidArg("Image address is empty")
-						}
-
-						if len(plugin.GetExtProc().GetContainer().Image) > 256 {
-							return grpcutils.InvalidArg("Image address is too long: %s",
-								plugin.GetExtProc().GetContainer().Image)
-						}
-					}
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
-					conf := plugin.GetCache()
-					if conf.Ttl != nil {
-						if err := apivalidation.ValidateDuration(conf.Ttl); err != nil {
-							return err
-						}
-					}
-					if conf.Key != nil {
-						switch conf.Key.Type.(type) {
-						case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
-							if err := checkCELExpression(ctx, conf.Key.GetEval()); err != nil {
-								return err
-							}
-						default:
-							return grpcutils.InvalidArg("Invalid key type")
-						}
-					}
-
-					if conf.MaxSize > 256_000_000 {
-						return grpcutils.InvalidArg("Invalid maxSize value: %d", conf.MaxSize)
-					}
-
-				case *corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema:
-					conf := plugin.GetJsonSchema()
-					switch conf.Type.(type) {
-					case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline:
-						val := conf.GetInline()
-						if len(val) == 0 {
-							return grpcutils.InvalidArg("jsonSchema is empty")
-						}
-						if len(val) > 30000 {
-							return grpcutils.InvalidArg("jsonSchema is too large")
-						}
-						if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
-							return grpcutils.InvalidArg("invalid jsonSchema")
-						}
-
-					default:
-						return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
-					}
-
-					for _, hdr := range conf.Headers {
-						if !httpguts.ValidHeaderFieldName(hdr.Key) {
-							return grpcutils.InvalidArg("invalid header name")
-						}
-
-						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-							return grpcutils.InvalidArg("invalid header value")
-						}
-					}
-
-					if conf.Body != nil {
-						switch conf.Body.Type.(type) {
-						case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
-							if len(conf.Body.GetInline()) > 50000 {
-								return grpcutils.InvalidArg("inline is too large")
-							}
-						case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
-							if len(conf.Body.GetInlineBytes()) > 35000 {
-								return grpcutils.InvalidArg("inlineBytes is too large")
-							}
-
-						}
-					}
-
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Path_:
-
-					pth := plugin.GetPath()
-					if pth.AddPrefix != "" {
-						if len(pth.AddPrefix) > 512 {
-							return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
-						}
-						if !govalidator.IsRequestURI(pth.AddPrefix) {
-							return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
-						}
-					}
-
-					if pth.RemovePrefix != "" {
-						if len(pth.RemovePrefix) > 512 {
-							return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
-						}
-						if !govalidator.IsRequestURI(pth.RemovePrefix) {
-							return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
-						}
-					}
-
-				case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_:
-
-					conf := plugin.GetRateLimit()
-					if conf.Limit == 0 {
-						return grpcutils.InvalidArg("Limit must be set")
-					} else if conf.Limit < 0 {
-						return grpcutils.InvalidArg("Limit cannot be negative: %d", conf.Limit)
-					}
-
-					if conf.StatusCode != 0 {
-						if err := apivalidation.ValidateHTTPStatusCode(int64(conf.StatusCode)); err != nil {
-							return err
-						}
-					}
-					if conf.Window == nil {
-						return grpcutils.InvalidArg("Window duration must be set")
-					}
-
-					if err := apivalidation.ValidateDuration(conf.Window); err != nil {
-						return err
-					}
-
-					for _, hdr := range conf.Headers {
-						if !httpguts.ValidHeaderFieldName(hdr.Key) {
-							return grpcutils.InvalidArg("invalid header name")
-						}
-
-						if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-							return grpcutils.InvalidArg("invalid header value")
-						}
-					}
-
-					if conf.Body != nil {
-						switch conf.Body.Type.(type) {
-						case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline:
-							if len(conf.Body.GetInline()) > 50000 {
-								return grpcutils.InvalidArg("inline is too large")
-							}
-						case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes:
-							if len(conf.Body.GetInlineBytes()) > 35000 {
-								return grpcutils.InvalidArg("inlineBytes is too large")
-							}
-
-						}
-					}
-
-				default:
-					return grpcutils.InvalidArg("plugin type must be set")
-				}
-			}
+		if err := s.validateHTTPPlugins(ctx, cfg.Name, cfg.GetHttp().Plugins); err != nil {
+			return err
 		}
 
-		if cfg.GetHttp().Visibility != nil {
-			visibility := cfg.GetHttp().Visibility
-			maxHeaders := 128
-			if len(visibility.IncludeRequestHeaders) > maxHeaders {
-				return grpcutils.InvalidArg("Too many includeRequestHeader")
-			}
-
-			for _, hdr := range visibility.IncludeRequestHeaders {
-				if err := s.validateGenStr(hdr, true, "key"); err != nil {
-					return err
-				}
-			}
-
-			if len(visibility.IncludeResponseHeaders) > maxHeaders {
-				return grpcutils.InvalidArg("Too many includeResponseHeaders")
-			}
-
-			for _, hdr := range visibility.IncludeResponseHeaders {
-				if err := s.validateGenStr(hdr, true, "includeResponseHeader"); err != nil {
-					return err
-				}
-			}
+		if err := s.validateHTTPVisibility(cfg.GetHttp().Visibility); err != nil {
+			return err
 		}
 
 	case *corev1.Service_Spec_Config_Kubernetes_:
@@ -1421,6 +1022,15 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 
 			}
 		}
+	case *corev1.Service_Spec_Config_Mcp:
+		if spec.Mode != corev1.Service_Spec_MCP {
+			return grpcutils.InvalidArg("MCP mode must be set for MCP config to be used")
+		}
+
+		if err := s.validateMCPConfig(ctx, cfg); err != nil {
+			return err
+		}
+
 	case *corev1.Service_Spec_Config_Rdp:
 		if spec.Mode != corev1.Service_Spec_RDP_WEB {
 			return grpcutils.InvalidArg("RDP_WEB mode must be set for RDP config to be used")
@@ -1684,7 +1294,7 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			corev1.Service_Spec_UDP,
 			corev1.Service_Spec_MODE_UNSET:
 			return 0
-		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB:
+		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_MCP:
 			if l.Spec.IsTLS {
 				return 443
 			}
@@ -1771,3 +1381,442 @@ func (s *Server) GetService(ctx context.Context, req *metav1.GetOptions) (*corev
 }
 
 var k8sCapabilityRegex = regexp.MustCompile(`^(ALL|[A-Z][A-Z0-9_]{0,29})$`)
+
+func (s *Server) validateHTTPHeader(ctx context.Context, hdrSpec *corev1.Service_Spec_Config_HTTP_Header) error {
+	if hdrSpec == nil {
+		return nil
+	}
+
+	if len(hdrSpec.AddRequestHeaders) > 256 {
+		return grpcutils.InvalidArg("Too many addRequestHeaders")
+	}
+
+	if len(hdrSpec.AddResponseHeaders) > 256 {
+		return grpcutils.InvalidArg("Too many addResponseHeaders")
+	}
+
+	if len(hdrSpec.RemoveRequestHeaders) > 256 {
+		return grpcutils.InvalidArg("Too many removeRequestHeaders")
+	}
+
+	if len(hdrSpec.RemoveResponseHeaders) > 256 {
+		return grpcutils.InvalidArg("Too many removeResponseHeaders")
+	}
+
+	for _, hdr := range hdrSpec.AddRequestHeaders {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		switch hdr.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+			if !httpguts.ValidHeaderFieldValue(hdr.GetValue()) {
+				return grpcutils.InvalidArg("invalid header value")
+			}
+		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+			if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+				return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
+			}
+		default:
+			return grpcutils.InvalidArg("You must provide either a header value or eval")
+		}
+
+	}
+
+	for _, hdr := range hdrSpec.AddResponseHeaders {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		switch hdr.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
+			if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
+				return err
+			}
+		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
+			if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+				return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
+			}
+		default:
+			return grpcutils.InvalidArg("You must provide either a header value or eval")
+		}
+	}
+
+	for _, hdr := range hdrSpec.RemoveRequestHeaders {
+		if err := s.validateGenStr(hdr, true, "key"); err != nil {
+			return err
+		}
+	}
+
+	for _, hdr := range hdrSpec.RemoveResponseHeaders {
+		if err := s.validateGenStr(hdr, true, "key"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) validateHTTPAuth(ctx context.Context, authSpec *corev1.Service_Spec_Config_HTTP_Auth) error {
+	if authSpec == nil {
+		return nil
+	}
+
+	if authSpec.GetBearer() != nil {
+		if err := s.validateSecretOwner(ctx, authSpec.GetBearer()); err != nil {
+			return err
+		}
+	}
+
+	if authSpec.GetBasic() != nil {
+		if authSpec.GetBasic().Username == "" {
+			return serr.InvalidArg("Basic Auth username must be set")
+		} else {
+			if err := apivalidation.ValidateGenASCII(authSpec.GetBasic().Username); err != nil {
+				return err
+			}
+		}
+
+		if err := s.validateSecretOwner(ctx, authSpec.GetBasic().GetPassword()); err != nil {
+			return err
+		}
+	}
+
+	if authSpec.GetCustom() != nil {
+
+		if err := s.validateGenStr(authSpec.GetCustom().Header, true, "header"); err != nil {
+			return err
+		}
+
+		if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {
+			return err
+		}
+	}
+
+	if authSpec.GetSigv4() != nil {
+		if authSpec.GetSigv4().Service == "" {
+			return serr.InvalidArg("sigv4 service must be set")
+		} else {
+			if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Service); err != nil {
+				return err
+			}
+		}
+
+		if authSpec.GetSigv4().Region == "" {
+			return serr.InvalidArg("sigv4 region must be set")
+		} else {
+			if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().Region); err != nil {
+				return err
+			}
+		}
+
+		if authSpec.GetSigv4().AccessKeyID == "" {
+			return serr.InvalidArg("sigv4 accessKeyID be set")
+		} else {
+			if err := apivalidation.ValidateGenASCII(authSpec.GetSigv4().AccessKeyID); err != nil {
+				return err
+			}
+		}
+
+		if err := s.validateSecretOwner(ctx, authSpec.GetSigv4().GetSecretAccessKey()); err != nil {
+			return err
+		}
+	}
+
+	if authSpec.GetOauth2ClientCredentials() != nil {
+		oauth2C := authSpec.GetOauth2ClientCredentials()
+		if oauth2C.ClientID == "" {
+			return serr.InvalidArg("OAuth2 client ID cannot be empty")
+		}
+		if oauth2C.TokenURL == "" {
+			return serr.InvalidArg("OAuth2 token URL must be set")
+		}
+		if err := s.validateSecretOwner(ctx, oauth2C.GetClientSecret()); err != nil {
+			return err
+		}
+
+	}
+	return nil
+}
+
+func (s *Server) validateHTTPPath(pth *corev1.Service_Spec_Config_HTTP_Path) error {
+	if pth == nil {
+		return nil
+	}
+
+	if pth.AddPrefix != "" {
+		if len(pth.AddPrefix) > 512 {
+			return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
+		}
+		if !govalidator.IsRequestURI(pth.AddPrefix) {
+			return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
+		}
+	}
+
+	if pth.RemovePrefix != "" {
+		if len(pth.RemovePrefix) > 512 {
+			return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
+		}
+		if !govalidator.IsRequestURI(pth.RemovePrefix) {
+			return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
+		}
+	}
+	return nil
+}
+
+func (s *Server) validateHTTPPlugins(ctx context.Context, cfgName string, plugins []*corev1.Service_Spec_Config_HTTP_Plugin) error {
+	if len(plugins) == 0 {
+		return nil
+	}
+
+	if len(plugins) > 256 {
+		return grpcutils.InvalidArg("Too many plugins")
+	}
+
+	var names []string
+	for _, plugin := range plugins {
+
+		if err := apivalidation.ValidateName(plugin.Name, 0, 0); err != nil {
+			return err
+		}
+		if slices.Contains(names, plugin.Name) {
+			return serr.InvalidArg("This Plugin name already exists: %s", cfgName)
+		}
+		names = append(names, plugin.Name)
+
+		if err := s.validateCondition(ctx, plugin.Condition); err != nil {
+			return err
+		}
+
+		switch plugin.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
+			if len(plugin.GetLua().GetInline()) == 0 {
+				return serr.InvalidArg("Lua script is empty")
+			}
+
+			if len(plugin.GetLua().GetInline()) > 20000 {
+				return serr.InvalidArg("Lua script is too large")
+			}
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_:
+			if plugin.GetDirect().StatusCode != 0 {
+				if err := apivalidation.ValidateHTTPStatusCode(
+					int64(plugin.GetDirect().StatusCode)); err != nil {
+					return err
+				}
+			}
+			if len(plugin.GetDirect().Headers) > 100 {
+				return grpcutils.InvalidArg("Too many headers")
+			}
+
+			for _, hdr := range plugin.GetDirect().Headers {
+				if !httpguts.ValidHeaderFieldName(hdr.Key) {
+					return grpcutils.InvalidArg("invalid header name")
+				}
+
+				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+					return grpcutils.InvalidArg("invalid header value")
+				}
+			}
+
+			if plugin.GetDirect().Body != nil {
+				switch plugin.GetDirect().Body.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline:
+					if len(plugin.GetDirect().Body.GetInline()) > 50000 {
+						return grpcutils.InvalidArg("inline is too large")
+					}
+				case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes:
+					if len(plugin.GetDirect().Body.GetInlineBytes()) > 35000 {
+						return grpcutils.InvalidArg("inlineBytes is too large")
+					}
+
+				}
+			}
+
+		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
+
+			confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
+			if confDuration > 6000*time.Millisecond {
+				return serr.InvalidArg("message timeout upper limit is exceeded")
+			}
+
+			switch plugin.GetExtProc().Type.(type) {
+			case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
+				if err := apivalidation.ValidateHostPort(
+					plugin.GetExtProc().GetAddress()); err != nil {
+					return err
+				}
+			case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Container_:
+				if plugin.GetExtProc().GetContainer().Image == "" {
+					return grpcutils.InvalidArg("Image address is empty")
+				}
+
+				if len(plugin.GetExtProc().GetContainer().Image) > 256 {
+					return grpcutils.InvalidArg("Image address is too long: %s",
+						plugin.GetExtProc().GetContainer().Image)
+				}
+			}
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
+			conf := plugin.GetCache()
+			if conf.Ttl != nil {
+				if err := apivalidation.ValidateDuration(conf.Ttl); err != nil {
+					return err
+				}
+			}
+			if conf.Key != nil {
+				switch conf.Key.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
+					if err := checkCELExpression(ctx, conf.Key.GetEval()); err != nil {
+						return err
+					}
+				default:
+					return grpcutils.InvalidArg("Invalid key type")
+				}
+			}
+
+			if conf.MaxSize > 256_000_000 {
+				return grpcutils.InvalidArg("Invalid maxSize value: %d", conf.MaxSize)
+			}
+
+		case *corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema:
+			conf := plugin.GetJsonSchema()
+			switch conf.Type.(type) {
+			case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline:
+				val := conf.GetInline()
+				if len(val) == 0 {
+					return grpcutils.InvalidArg("jsonSchema is empty")
+				}
+				if len(val) > 30000 {
+					return grpcutils.InvalidArg("jsonSchema is too large")
+				}
+				if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
+					return grpcutils.InvalidArg("invalid jsonSchema")
+				}
+
+			default:
+				return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
+			}
+
+			for _, hdr := range conf.Headers {
+				if !httpguts.ValidHeaderFieldName(hdr.Key) {
+					return grpcutils.InvalidArg("invalid header name")
+				}
+
+				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+					return grpcutils.InvalidArg("invalid header value")
+				}
+			}
+
+			if conf.Body != nil {
+				switch conf.Body.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
+					if len(conf.Body.GetInline()) > 50000 {
+						return grpcutils.InvalidArg("inline is too large")
+					}
+				case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
+					if len(conf.Body.GetInlineBytes()) > 35000 {
+						return grpcutils.InvalidArg("inlineBytes is too large")
+					}
+
+				}
+			}
+
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Path_:
+
+			pth := plugin.GetPath()
+			if pth.AddPrefix != "" {
+				if len(pth.AddPrefix) > 512 {
+					return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
+				}
+				if !govalidator.IsRequestURI(pth.AddPrefix) {
+					return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
+				}
+			}
+
+			if pth.RemovePrefix != "" {
+				if len(pth.RemovePrefix) > 512 {
+					return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
+				}
+				if !govalidator.IsRequestURI(pth.RemovePrefix) {
+					return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
+				}
+			}
+
+		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_:
+
+			conf := plugin.GetRateLimit()
+			if conf.Limit == 0 {
+				return grpcutils.InvalidArg("Limit must be set")
+			} else if conf.Limit < 0 {
+				return grpcutils.InvalidArg("Limit cannot be negative: %d", conf.Limit)
+			}
+
+			if conf.StatusCode != 0 {
+				if err := apivalidation.ValidateHTTPStatusCode(int64(conf.StatusCode)); err != nil {
+					return err
+				}
+			}
+			if conf.Window == nil {
+				return grpcutils.InvalidArg("Window duration must be set")
+			}
+
+			if err := apivalidation.ValidateDuration(conf.Window); err != nil {
+				return err
+			}
+
+			for _, hdr := range conf.Headers {
+				if !httpguts.ValidHeaderFieldName(hdr.Key) {
+					return grpcutils.InvalidArg("invalid header name")
+				}
+
+				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+					return grpcutils.InvalidArg("invalid header value")
+				}
+			}
+
+			if conf.Body != nil {
+				switch conf.Body.Type.(type) {
+				case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline:
+					if len(conf.Body.GetInline()) > 50000 {
+						return grpcutils.InvalidArg("inline is too large")
+					}
+				case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes:
+					if len(conf.Body.GetInlineBytes()) > 35000 {
+						return grpcutils.InvalidArg("inlineBytes is too large")
+					}
+
+				}
+			}
+
+		default:
+			return grpcutils.InvalidArg("plugin type must be set")
+		}
+	}
+	return nil
+}
+
+func (s *Server) validateHTTPVisibility(visibility *corev1.Service_Spec_Config_HTTP_Visibility) error {
+	if visibility == nil {
+		return nil
+	}
+
+	maxHeaders := 128
+	if len(visibility.IncludeRequestHeaders) > maxHeaders {
+		return grpcutils.InvalidArg("Too many includeRequestHeader")
+	}
+
+	for _, hdr := range visibility.IncludeRequestHeaders {
+		if err := s.validateGenStr(hdr, true, "key"); err != nil {
+			return err
+		}
+	}
+
+	if len(visibility.IncludeResponseHeaders) > maxHeaders {
+		return grpcutils.InvalidArg("Too many includeResponseHeaders")
+	}
+
+	for _, hdr := range visibility.IncludeResponseHeaders {
+		if err := s.validateGenStr(hdr, true, "includeResponseHeader"); err != nil {
+			return err
+		}
+	}
+	return nil
+}

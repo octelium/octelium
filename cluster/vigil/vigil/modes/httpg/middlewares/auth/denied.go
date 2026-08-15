@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/mcp"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -54,6 +55,30 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 	}()
 
 	switch {
+	case ucorev1.ToService(svc).IsMCP():
+		if httpStatusCode == http.StatusUnauthorized && svc.Spec.IsPublic {
+			w.Header().Set("WWW-Authenticate",
+				mcp.GetWWWAuthenticate(vutils.GetServicePublicFQDN(svc, m.domain)))
+		}
+
+		code, message := func() (int, string) {
+			switch {
+			case isAnonymousAuthorizationMode:
+				return mcp.ErrCodeUnauthorized, "Octelium: unauthorized request"
+			case !reqCtx.IsAuthenticated:
+				return mcp.ErrCodeUnauthenticated, "Octelium: unauthenticated request"
+			default:
+				return mcp.ErrCodeUnauthorized, "Octelium: unauthorized request"
+			}
+		}()
+
+		mcp.WriteError(w, &mcp.WriteErrorOpts{
+			HTTPStatus: httpStatusCode,
+			Code:       code,
+			Message:    message,
+			RequestID:  reqCtx.MCP.GetRequestID(),
+		})
+		return
 	case ucorev1.ToService(svc).IsGRPC():
 		w.Header().Set("Content-Type", "application/grpc")
 
