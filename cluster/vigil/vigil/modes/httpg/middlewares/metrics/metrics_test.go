@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
@@ -152,4 +153,47 @@ func TestServeHTTPAllowedNoReason(t *testing.T) {
 
 	_, ok = dp.Attributes.Value("reason")
 	assert.False(t, ok)
+}
+
+func TestMCPAttributes(t *testing.T) {
+
+	tsts := []struct {
+		method   string
+		version  string
+		versions []string
+		outMethd string
+		outVer   string
+	}{
+		{"tools/call", "2026-07-28", nil, "tools/call", "2026-07-28"},
+		{"acme/custom", "2026-07-28", nil, "OTHER", "2026-07-28"},
+		{"", "", nil, "UNKNOWN", "UNSET"},
+		{"tools/call", "9999-12-31", nil, "tools/call", "OTHER"},
+		{"tools/call", "9999-12-31", []string{"9999-12-31"}, "tools/call", "9999-12-31"},
+	}
+
+	for _, tst := range tsts {
+		svc := newTestSvc()
+		svc.Spec.Mode = corev1.Service_Spec_MCP
+
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			Service:   svc,
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Mcp{
+					Mcp: &corev1.Service_Spec_Config_MCP{
+						Protocol: &corev1.Service_Spec_Config_MCP_Protocol{
+							Versions: tst.versions,
+						},
+					},
+				},
+			},
+			MCP: &httputils.MCPRequest{
+				Method:          tst.method,
+				ProtocolVersion: tst.version,
+			},
+		}
+
+		assert.Equal(t, tst.outMethd, getMCPMethod(reqCtx), tst.method)
+		assert.Equal(t, tst.outVer, getMCPProtocolVersion(reqCtx), tst.version)
+	}
 }

@@ -8636,10 +8636,13 @@ type Service_Spec_Config_MCP struct {
 	Limits *Service_Spec_Config_MCP_Limits `protobuf:"bytes,3,opt,name=limits,proto3" json:"limits,omitempty"`
 	// Auth sets authentication-to-upstream specific configuration
 	Auth *Service_Spec_Config_HTTP_Auth `protobuf:"bytes,4,opt,name=auth,proto3" json:"auth,omitempty"`
-	// Header sets request and response header manipulation options. The
-	// MCP reserved headers (i.e. `MCP-Protocol-Version`, `Mcp-Method`,
-	// `Mcp-Name` and `Mcp-Param-*`) are owned by Octelium and cannot be
-	// manipulated here.
+	// Header sets request and response header manipulation options. Note
+	// that the MCP reserved headers (i.e. `MCP-Protocol-Version`,
+	// `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*`) can be manipulated here
+	// too. Octelium never uses them to make authorization decisions, which
+	// are always made from the JSON-RPC request body itself, however the
+	// upstream MCP server rejects the requests whose headers do not match
+	// the body.
 	Header *Service_Spec_Config_HTTP_Header `protobuf:"bytes,5,opt,name=header,proto3" json:"header,omitempty"`
 	// Path sets the upstream request path options
 	Path *Service_Spec_Config_HTTP_Path `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`

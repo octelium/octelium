@@ -99,10 +99,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 
 	cfg := reqCtx.ServiceConfig
-	var httpCfg *corev1.Service_Spec_Config_HTTP
-	if cfg != nil && cfg.GetHttp() != nil {
-		httpCfg = cfg.GetHttp()
-	}
+	httpCfg := cfg.GetHttp()
+	headerCfg := ucorev1.ToServiceConfig(cfg).GetHTTPHeader()
+	authCfg := ucorev1.ToServiceConfig(cfg).GetHTTPAuth()
 
 	if httpCfg != nil && httpCfg.Response != nil && httpCfg.Response.GetDirect() != nil {
 		return &directResponseHandler{
@@ -149,8 +148,8 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				}
 			}
 
-			if httpCfg != nil && httpCfg.Header != nil && httpCfg.Header.Host != nil {
-				hostCfg := httpCfg.Header.Host
+			if headerCfg != nil && headerCfg.Host != nil {
+				hostCfg := headerCfg.Host
 
 				switch {
 				case hostCfg.GetPreserve():
@@ -208,18 +207,16 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 			applyForwardedHeaders(
 				pr,
 				svc,
-				httpCfg,
+				headerCfg,
 				isManagedSvc,
 				forwardedScheme,
 				s.domain,
 				s.forwardedObfuscatedID,
 			)
 
-			if httpCfg != nil &&
-				httpCfg.GetAuth() != nil &&
-				httpCfg.GetAuth().GetSigv4() != nil {
+			if authCfg.GetSigv4() != nil {
 
-				sigv4Opts := httpCfg.GetAuth().GetSigv4()
+				sigv4Opts := authCfg.GetSigv4()
 
 				secret, err := s.secretMan.GetByName(inReq.Context(),
 					sigv4Opts.GetSecretAccessKey().GetFromSecret())
@@ -367,7 +364,7 @@ func getForwardedScheme(req *http.Request, svc *corev1.Service) string {
 func applyForwardedHeaders(
 	pr *httputil.ProxyRequest,
 	svc *corev1.Service,
-	httpCfg *corev1.Service_Spec_Config_HTTP,
+	headerCfg *corev1.Service_Spec_Config_HTTP_Header,
 	isManagedSvc bool,
 	forwardedScheme string,
 	domain string,
@@ -385,8 +382,8 @@ func applyForwardedHeaders(
 	}
 
 	var mode corev1.Service_Spec_Config_HTTP_Header_ForwardedMode
-	if httpCfg != nil && httpCfg.Header != nil {
-		mode = httpCfg.Header.ForwardedMode
+	if headerCfg != nil {
+		mode = headerCfg.ForwardedMode
 	}
 
 	switch mode {

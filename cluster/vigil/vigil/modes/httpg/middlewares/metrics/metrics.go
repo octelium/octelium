@@ -21,6 +21,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"slices"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
@@ -95,12 +96,35 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			},
 			attribute.KeyValue{
 				Key:   "req.mcp.protocol_version",
-				Value: attribute.StringValue(reqCtx.MCP.GetProtocolVersion()),
+				Value: attribute.StringValue(getMCPProtocolVersion(reqCtx)),
 			},
 		)
 	}
 
 	m.commonMetrics.AtRequestEnd(reqCtx.CreatedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
+}
+
+func getMCPProtocolVersion(reqCtx *middlewares.RequestContext) string {
+	version := reqCtx.MCP.GetProtocolVersion()
+	switch {
+	case version == "":
+		return "UNSET"
+	case slices.Contains(mcpProtocolVersions, version):
+		return version
+	case slices.Contains(
+		reqCtx.ServiceConfig.GetMcp().GetProtocol().GetVersions(), version):
+		return version
+	default:
+		return "OTHER"
+	}
+}
+
+var mcpProtocolVersions = []string{
+	"2024-11-05",
+	"2025-03-26",
+	"2025-06-18",
+	"2025-11-25",
+	"2026-07-28",
 }
 
 func getMCPMethod(reqCtx *middlewares.RequestContext) string {

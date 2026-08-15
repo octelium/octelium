@@ -52,39 +52,3 @@ func (m *rebuild) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	m.next.ServeHTTP(w, req)
 }
-
-type seal struct {
-	next http.Handler
-}
-
-func NewSeal(ctx context.Context, next http.Handler) (http.Handler, error) {
-	return &seal{
-		next: next,
-	}, nil
-}
-
-func (m *seal) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	ctx := req.Context()
-	reqCtx := middlewares.GetCtxRequestContext(ctx)
-
-	if !ucorev1.ToService(reqCtx.Service).IsMCP() {
-		m.next.ServeHTTP(w, req)
-		return
-	}
-
-	if reqCtx.IsBodyChanged() {
-		zap.L().Warn("Rejecting an MCP request whose body was mutated after authorization",
-			zap.String("method", reqCtx.MCP.GetMethod()),
-			zap.String("name", reqCtx.MCP.GetName()))
-
-		WriteError(w, &WriteErrorOpts{
-			HTTPStatus: http.StatusForbidden,
-			Code:       ErrCodeMutationRejected,
-			Message:    "Octelium: the MCP request body was modified after authorization",
-			RequestID:  reqCtx.MCP.GetRequestID(),
-		})
-		return
-	}
-
-	m.next.ServeHTTP(w, req)
-}
