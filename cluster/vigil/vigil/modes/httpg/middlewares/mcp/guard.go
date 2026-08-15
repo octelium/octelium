@@ -69,7 +69,7 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	mcpReq := reqCtx.MCP
 	reqID := mcpReq.GetRequestID()
 
-	if o := m.checkOrigin(req, reqCtx, cfg, reqID); o != nil {
+	if o := m.checkOrigin(req, reqCtx, reqID); o != nil {
 		return o
 	}
 
@@ -98,7 +98,7 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 		}
 	}
 
-	if mcpReq.IsBatch && !cfg.GetProtocol().GetAllowBatch() {
+	if mcpReq.IsBatch {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,
 			Code:       ErrCodeInvalidRequest,
@@ -254,11 +254,7 @@ func (m *guard) checkEndpoint(req *http.Request,
 	cfg *corev1.Service_Spec_Config_MCP, reqID string) *WriteErrorOpts {
 
 	endpoint := cfg.GetEndpoint()
-	if endpoint == nil || endpoint.Path == "" || !endpoint.Strict {
-		return nil
-	}
-
-	if req.URL.Path == endpoint.Path {
+	if endpoint == "" || req.URL.Path == endpoint {
 		return nil
 	}
 
@@ -296,18 +292,14 @@ func (m *guard) checkContentType(req *http.Request, reqID string) *WriteErrorOpt
 }
 
 func (m *guard) checkOrigin(req *http.Request, reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_MCP, reqID string) *WriteErrorOpts {
-
-	if cfg.GetOrigin().GetDisable() {
-		return nil
-	}
+	reqID string) *WriteErrorOpts {
 
 	origin := req.Header.Get("Origin")
 	if origin == "" {
 		return nil
 	}
 
-	if m.isOriginAllowed(origin, reqCtx, cfg) {
+	if m.isOriginAllowed(origin, reqCtx) {
 		return nil
 	}
 
@@ -319,18 +311,11 @@ func (m *guard) checkOrigin(req *http.Request, reqCtx *middlewares.RequestContex
 	}
 }
 
-func (m *guard) isOriginAllowed(origin string,
-	reqCtx *middlewares.RequestContext, cfg *corev1.Service_Spec_Config_MCP) bool {
+func (m *guard) isOriginAllowed(origin string, reqCtx *middlewares.RequestContext) bool {
 
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" {
 		return false
-	}
-
-	for _, allowed := range cfg.GetOrigin().GetAllowed() {
-		if strings.EqualFold(allowed, origin) {
-			return true
-		}
 	}
 
 	svc := reqCtx.Service

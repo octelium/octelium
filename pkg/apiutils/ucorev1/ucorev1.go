@@ -301,10 +301,7 @@ func (s *ServiceConfig) GetHTTPCors() *corev1.Service_Spec_Config_HTTP_CORS {
 	if s == nil || s.Service_Spec_Config == nil {
 		return nil
 	}
-	if ret := s.GetHttp().GetCors(); ret != nil {
-		return ret
-	}
-	return s.GetMcp().GetCors()
+	return s.GetHttp().GetCors()
 }
 
 func (s *ServiceConfig) GetHTTPPlugins() []*corev1.Service_Spec_Config_HTTP_Plugin {
@@ -321,10 +318,7 @@ func (s *ServiceConfig) GetHTTPVisibility() *corev1.Service_Spec_Config_HTTP_Vis
 	if s == nil || s.Service_Spec_Config == nil {
 		return nil
 	}
-	if ret := s.GetHttp().GetVisibility(); ret != nil {
-		return ret
-	}
-	return s.GetMcp().GetVisibility()
+	return s.GetHttp().GetVisibility()
 }
 
 func GetRequestHTTP(req *corev1.RequestContext_Request) *corev1.RequestContext_Request_HTTP {

@@ -223,7 +223,17 @@ const (
 	logPhaseSSEEvent
 )
 
+var mcpVisibility = &corev1.Service_Spec_Config_HTTP_Visibility{
+	EnableRequestBody:     true,
+	EnableRequestBodyMap:  true,
+	EnableResponseBody:    true,
+	EnableResponseBodyMap: true,
+}
+
 func getVisibilityConfig(reqCtx *middlewares.RequestContext) *corev1.Service_Spec_Config_HTTP_Visibility {
+	if ucorev1.ToService(reqCtx.Service).IsMCP() {
+		return mcpVisibility
+	}
 	return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPVisibility()
 }
 
