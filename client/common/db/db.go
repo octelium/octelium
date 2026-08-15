@@ -86,6 +86,9 @@ func (d *DB) GetSessionToken(clusterDomain string) (*authv1.SessionToken, error)
 	if err != nil {
 		return nil, err
 	}
+	if ret.GetSessionToken() == nil {
+		return nil, ErrNotFound
+	}
 	return ret.SessionToken, nil
 }
 

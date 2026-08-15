@@ -43,7 +43,7 @@ func (d *memDB) get(ctx context.Context, domain string) (*cliconfigv1.State_Doma
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return ret, nil
+	return pbutils.Clone(ret).(*cliconfigv1.State_Domain), nil
 }
 func (d *memDB) set(ctx context.Context, domain string, sessToken *authv1.SessionToken) error {
 	d.Lock()

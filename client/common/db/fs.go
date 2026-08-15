@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -30,7 +32,13 @@ import (
 
 var ErrNotFound = errors.New("OcteliumDB: Not Found")
 
+const (
+	lockTimeout       = 10 * time.Second
+	lockRetryInterval = 1000 * time.Millisecond
+)
+
 type fsDB struct {
+	mu     sync.Mutex
 	flock  *flock.Flock
 	dbPath string
 }
@@ -60,27 +68,62 @@ func newFSDB(dbPath string) (*fsDB, error) {
 	return ret, nil
 }
 
+func (d *fsDB) lock() (func(), error) {
+
+	d.mu.Lock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
+	defer cancel()
+
+	locked, err := d.flock.TryLockContext(ctx, lockRetryInterval)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, err
+	}
+	if !locked {
+		d.mu.Unlock()
+		return nil, errors.Errorf("OcteliumDB: Could not acquire the file lock at %s", d.flock.Path())
+	}
+
+	return func() {
+		d.flock.Unlock()
+		d.mu.Unlock()
+	}, nil
+}
+
 func (d *fsDB) writeState(state *cliconfigv1.State) error {
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	return d.writeStateLocked(state)
+}
+
+func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 
 	stateBytes, err := pbutils.Marshal(state)
 	if err != nil {
 		return err
 	}
 
-	if err := d.flock.Lock(); err != nil {
-		return err
-	}
-	defer d.flock.Unlock()
-
 	return os.WriteFile(d.dbPath, stateBytes, 0600)
 }
 
 func (d *fsDB) readState() (*cliconfigv1.State, error) {
 
-	if err := d.flock.Lock(); err != nil {
+	unlock, err := d.lock()
+	if err != nil {
 		return nil, err
 	}
-	defer d.flock.Unlock()
+	defer unlock()
+
+	return d.readStateLocked()
+}
+
+func (d *fsDB) readStateLocked() (*cliconfigv1.State, error) {
 
 	ret := &cliconfigv1.State{}
 
@@ -107,12 +150,18 @@ func (d *fsDB) readState() (*cliconfigv1.State, error) {
 
 func (d *fsDB) migrate(_ context.Context) error {
 
-	_, err := os.Stat(d.dbPath)
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	_, err = os.Stat(d.dbPath)
 	if err == nil {
 		return nil
 	}
 	if os.IsNotExist(err) {
-		return d.writeState(&cliconfigv1.State{
+		return d.writeStateLocked(&cliconfigv1.State{
 			DomainMap: make(map[string]*cliconfigv1.State_Domain),
 		})
 	}
@@ -152,7 +201,13 @@ func (d *fsDB) get(_ context.Context, clusterDomain string) (*cliconfigv1.State_
 
 func (d *fsDB) set(_ context.Context, clusterDomain string, resp *authv1.SessionToken) error {
 
-	state, err := d.readState()
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
 	if err != nil {
 		return err
 	}
@@ -162,16 +217,23 @@ func (d *fsDB) set(_ context.Context, clusterDomain string, resp *authv1.Session
 		SessionTokenSetAt: pbutils.Now(),
 	}
 
-	return d.writeState(state)
+	return d.writeStateLocked(state)
 }
 
 func (d *fsDB) delete(_ context.Context, clusterDomain string) error {
-	state, err := d.readState()
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
 	if err != nil {
 		return err
 	}
 
 	delete(state.DomainMap, clusterDomain)
 
-	return d.writeState(state)
+	return d.writeStateLocked(state)
 }
