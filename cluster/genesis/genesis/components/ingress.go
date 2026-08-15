@@ -123,7 +123,7 @@ func getIngressDataPlaneService(o *CommonOpts) *k8scorev1.Service {
 				{
 					Protocol: k8scorev1.ProtocolTCP,
 					Port: func() int32 {
-						if o.EnableIngressFrontProxy {
+						if IsIngressFrontProxyEnabled(o) {
 							return 8080
 						}
 						return 443
@@ -203,7 +203,7 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 										Value: o.Region.Metadata.Name,
 									},
 								}
-								if o.EnableIngressFrontProxy {
+								if IsIngressFrontProxyEnabled(o) {
 									ret = append(ret, k8scorev1.EnvVar{
 										Name:  "OCTELIUM_FRONT_PROXY_MODE",
 										Value: "true",

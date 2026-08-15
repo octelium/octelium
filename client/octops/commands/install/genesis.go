@@ -17,7 +17,6 @@ package install
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -33,6 +32,8 @@ import (
 )
 
 const genesisNS = "default"
+
+const genesisJobName = "octelium-genesis"
 
 func getGenesisRole() *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
@@ -78,7 +79,7 @@ func getGenesisRoleBinding() *rbacv1.ClusterRoleBinding {
 	}
 }
 
-func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
+func getGenesisJob(o *Opts, spiffe *SPIFFEOpts) *batchv1.Job {
 	labels := map[string]string{
 		"app":                         "octelium",
 		"octelium.com/component":      "genesis",
@@ -95,38 +96,51 @@ func getGenesisJob(domain, regionName string, version string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: GetGenesisPodSpec(domain, "init", version, "octelium-genesis", "", ""),
+				Spec: GetGenesisPodSpec(&GenesisPodSpecOpts{
+					Domain:     o.ClusterDomain,
+					Cmd:        "init",
+					Version:    o.Version,
+					SvcAccount: "octelium-genesis",
+					SPIFFE:     spiffe,
+				}),
 			},
 		},
 	}
 }
 
-func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1.PodSpec {
+type GenesisPodSpecOpts struct {
+	Domain     string
+	Cmd        string
+	Version    string
+	SvcAccount string
+	Package    string
+	Region     string
+	SPIFFE     *SPIFFEOpts
+}
+
+func GetGenesisPodSpec(o *GenesisPodSpecOpts) corev1.PodSpec {
+	pkg := o.Package
 	if pkg == "" {
 		pkg = "octelium"
 	}
+	rgn := o.Region
 	if rgn == "" {
 		rgn = "default"
 	}
 
 	return corev1.PodSpec{
-		ServiceAccountName: svcAccount,
+		ServiceAccountName: o.SvcAccount,
 		RestartPolicy:      corev1.RestartPolicyNever,
 		Volumes: func() []corev1.Volume {
 			var ret []corev1.Volume
-			if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
-
-				csiName := func() string {
-					if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
-						return val
-					}
-
-					return "csi.spiffe.io"
-				}()
+			if o.SPIFFE != nil {
 				ret = append(ret, corev1.Volume{
 					Name: "spiffe-agent",
 					VolumeSource: corev1.VolumeSource{
-						CSI: &corev1.CSIVolumeSource{Driver: csiName, ReadOnly: utils_types.BoolToPtr(true)},
+						CSI: &corev1.CSIVolumeSource{
+							Driver:   o.SPIFFE.getCSIDriver(),
+							ReadOnly: utils_types.BoolToPtr(true),
+						},
 					},
 				})
 			}
@@ -138,8 +152,8 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 			{
 				Name: fmt.Sprintf("%s-genesis", pkg),
 				Image: func() string {
-					if version != "" {
-						return cliutils.GetGenesisImageWithPackage(pkg, version)
+					if o.Version != "" {
+						return cliutils.GetGenesisImageWithPackage(pkg, o.Version)
 					}
 					if ldflags.IsDev() {
 						return cliutils.GetGenesisImageWithPackage(pkg, "")
@@ -148,31 +162,10 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 					}
 				}(),
 				ImagePullPolicy: corev1.PullAlways,
-				Args: func() []string {
-					ret := []string{cmd}
-
-					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
-						ret = append(ret, "--enable-spiffe-csi")
-					}
-					if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
-						ret = append(ret, fmt.Sprintf("--spiffe-csi-driver=%s", val))
-					}
-					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
-						ret = append(ret, fmt.Sprintf("--spiffe-trust-domain=%s", val))
-					}
-					if val := os.Getenv("OCTELIUM_CNI_CONF_DIR"); val != "" {
-						ret = append(ret, fmt.Sprintf("--cni-conf-dir=%s", val))
-					}
-
-					if os.Getenv("OCTELIUM_INGRESS_FRONT_PROXY") == "true" {
-						ret = append(ret, "--ingress-front-proxy")
-					}
-
-					return ret
-				}(),
+				Args:            []string{o.Cmd},
 				VolumeMounts: func() []corev1.VolumeMount {
 					var ret []corev1.VolumeMount
-					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+					if o.SPIFFE != nil {
 						ret = append(ret, corev1.VolumeMount{
 							Name:      "spiffe-agent",
 							MountPath: "/run/spire/sockets",
@@ -185,7 +178,7 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 					ret := []corev1.EnvVar{
 						{
 							Name:  "OCTELIUM_DOMAIN",
-							Value: domain,
+							Value: o.Domain,
 						},
 						{
 							Name:  "OCTELIUM_REGION_NAME",
@@ -193,25 +186,25 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 						},
 					}
 
-					if os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true" {
+					if o.SPIFFE != nil {
 						ret = append(ret, corev1.EnvVar{
 							Name:  "OCTELIUM_ENABLE_SPIFFE_CSI",
 							Value: "true",
 						})
 
-						if val := os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"); val != "" {
+						if val := o.SPIFFE.CSIDriver; val != "" {
 							ret = append(ret, corev1.EnvVar{
 								Name:  "OCTELIUM_SPIFFE_CSI_DRIVER",
 								Value: val,
 							})
 						}
-					}
 
-					if val := os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"); val != "" {
-						ret = append(ret, corev1.EnvVar{
-							Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
-							Value: val,
-						})
+						if val := o.SPIFFE.TrustDomain; val != "" {
+							ret = append(ret, corev1.EnvVar{
+								Name:  "OCTELIUM_SPIFFE_TRUST_DOMAIN",
+								Value: val,
+							})
+						}
 					}
 
 					return ret
@@ -224,7 +217,7 @@ func GetGenesisPodSpec(domain, cmd, version, svcAccount, pkg, rgn string) corev1
 func createGenesis(ctx context.Context, o *Opts) error {
 
 	c := o.K8sC
-	if err := cleanupResources(ctx, o.K8sC, o.ClusterDomain, o.Region.Metadata.Name, o.Version); err != nil {
+	if err := cleanupResources(ctx, o.K8sC); err != nil {
 		return errors.Errorf("Could not clean up components: %+v", err)
 	}
 
@@ -244,7 +237,7 @@ func createGenesis(ctx context.Context, o *Opts) error {
 	}
 
 	_, err = c.BatchV1().Jobs(genesisNS).Create(ctx,
-		getGenesisJob(o.ClusterDomain, o.Region.Metadata.Name, o.Version), metav1.CreateOptions{})
+		getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
@@ -252,11 +245,11 @@ func createGenesis(ctx context.Context, o *Opts) error {
 	return nil
 }
 
-func cleanupResources(ctx context.Context, c kubernetes.Interface, domain, regionName string, version string) error {
+func cleanupResources(ctx context.Context, c kubernetes.Interface) error {
 	zap.S().Debugf("Cleaning up resources if existent")
-	if _, err := c.BatchV1().Jobs(genesisNS).Get(ctx, getGenesisJob(domain, regionName, version).Name, metav1.GetOptions{}); err == nil {
+	if _, err := c.BatchV1().Jobs(genesisNS).Get(ctx, genesisJobName, metav1.GetOptions{}); err == nil {
 		zap.S().Debugf("Deleting already existing job")
-		if err := c.BatchV1().Jobs(genesisNS).Delete(ctx, getGenesisJob(domain, regionName, version).Name, metav1.DeleteOptions{}); err != nil {
+		if err := c.BatchV1().Jobs(genesisNS).Delete(ctx, genesisJobName, metav1.DeleteOptions{}); err != nil {
 			return err
 		}
 	} else if !k8serr.IsNotFound(err) {

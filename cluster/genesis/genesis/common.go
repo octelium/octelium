@@ -56,8 +56,8 @@ func (g *Genesis) installComponents(ctx context.Context,
 	opts.Region = region
 
 	zap.L().Debug("Starting installComponents",
-		zap.Bool("spiffe", opts.EnableSPIFFECSI),
-		zap.Bool("ingressProxyMode", opts.EnableIngressFrontProxy))
+		zap.Bool("spiffe", components.IsSPIFFEEnabled(opts)),
+		zap.Bool("ingressProxyMode", components.IsIngressFrontProxyEnabled(opts)))
 
 	{
 		err = components.CreateGatewayAgent(ctx, opts)

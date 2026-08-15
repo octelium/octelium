@@ -56,14 +56,7 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-type InitOpts struct {
-	EnableSPIFFECSI         bool
-	SPIFFECSIDriver         string
-	SPIFFETrustDomain       string
-	EnableIngressFrontProxy bool
-	CNIConfDir              string
-	MultusConfDir           string
-}
+type InitOpts struct{}
 
 func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	zap.L().Info("Starting initializing the Cluster")
@@ -100,6 +93,10 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 
 	clusterCfg, err := g.initClusterConfig(ctx, bootstrap, initResources.Domain)
 	if err != nil {
+		return err
+	}
+
+	if err := g.setInstallationConfigMap(ctx, clusterCfg); err != nil {
 		return err
 	}
 
@@ -172,14 +169,8 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		}
 	} else {
 		if err := components.CreateRscServer(ctx, &components.CommonOpts{
-			K8sC:                    g.k8sC,
-			ClusterConfig:           clusterCfg,
-			EnableSPIFFECSI:         o.EnableSPIFFECSI,
-			SPIFFECSIDriver:         o.SPIFFECSIDriver,
-			SPIFFETrustDomain:       o.SPIFFETrustDomain,
-			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
-			CNIConfDir:              o.CNIConfDir,
-			MultusConfDir:           o.MultusConfDir,
+			K8sC:          g.k8sC,
+			ClusterConfig: clusterCfg,
 		}); err != nil {
 			return err
 		}
@@ -222,14 +213,8 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 
 	if err := g.installComponents(ctx,
 		region, &components.CommonOpts{
-			K8sC:                    g.k8sC,
-			ClusterConfig:           clusterCfg,
-			EnableSPIFFECSI:         o.EnableSPIFFECSI,
-			SPIFFECSIDriver:         o.SPIFFECSIDriver,
-			SPIFFETrustDomain:       o.SPIFFETrustDomain,
-			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
-			CNIConfDir:              o.CNIConfDir,
-			MultusConfDir:           o.MultusConfDir,
+			K8sC:          g.k8sC,
+			ClusterConfig: clusterCfg,
 		}); err != nil {
 		return err
 	}
@@ -371,6 +356,75 @@ func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *cor
 
 	_, err = g.octeliumC.CoreC().CreateSecret(ctx, crt)
 	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getInstallationFromBootstrap(bs *cbootstrapv1.Config) (*corev1.ClusterConfig_Status_Installation, error) {
+	spec := bs.GetSpec()
+	if spec.GetSpiffe() == nil && spec.GetCni() == nil && spec.GetIngress() == nil {
+		return nil, nil
+	}
+
+	ret := &corev1.ClusterConfig_Status_Installation{}
+
+	if spec.GetSpiffe() != nil {
+		ret.Spiffe = &corev1.ClusterConfig_Status_Installation_SPIFFE{}
+		if err := pbutils.MarshalInto(ret.Spiffe, spec.GetSpiffe()); err != nil {
+			return nil, err
+		}
+	}
+
+	if spec.GetCni() != nil {
+		ret.Cni = &corev1.ClusterConfig_Status_Installation_CNI{}
+		if err := pbutils.MarshalInto(ret.Cni, spec.GetCni()); err != nil {
+			return nil, err
+		}
+	}
+
+	if spec.GetIngress() != nil {
+		ret.Ingress = &corev1.ClusterConfig_Status_Installation_Ingress{}
+		if err := pbutils.MarshalInto(ret.Ingress, spec.GetIngress()); err != nil {
+			return nil, err
+		}
+	}
+
+	return ret, nil
+}
+
+const installationConfigMapName = "octelium-installation"
+const installationConfigMapKey = "installation.json"
+
+func (g *Genesis) setInstallationConfigMap(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
+
+	installation := clusterCfg.Status.Installation
+	if installation == nil {
+		installation = &corev1.ClusterConfig_Status_Installation{}
+	}
+
+	val, err := pbutils.MarshalJSON(installation, true)
+	if err != nil {
+		return err
+	}
+
+	cm := &k8scorev1.ConfigMap{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name:      installationConfigMapName,
+			Namespace: vutils.K8sNS,
+			Labels: map[string]string{
+				"app": "octelium",
+			},
+		},
+		Data: map[string]string{
+			installationConfigMapKey: string(val),
+		},
+	}
+
+	zap.L().Debug("Setting the installation ConfigMap", zap.Any("cm", cm))
+
+	if _, err := k8sutils.CreateOrUpdateConfigMap(ctx, g.k8sC, cm); err != nil {
 		return err
 	}
 
@@ -879,6 +933,12 @@ func (g *Genesis) initClusterConfig(ctx context.Context, bootstrap *cbootstrapv1
 			return nil, err
 		}
 	}
+
+	installation, err := getInstallationFromBootstrap(bootstrap)
+	if err != nil {
+		return nil, err
+	}
+	clusterCfg.Status.Installation = installation
 
 	clusterCfg.Status.Network.V6RangePrefix = v6Prefix
 	if err := clusterconfig.SetClusterSubnets(clusterCfg); err != nil {

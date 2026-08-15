@@ -125,7 +125,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 func createGenesis(ctx context.Context, c kubernetes.Interface, domain, cmd, version, pkg string) error {
 
 	_, err := c.BatchV1().Jobs("octelium").Create(ctx,
-		getGenesisJob(domain, cmd, version, pkg),
+		getGenesisJob(domain, cmd, version, pkg, install.GetSPIFFE(ctx, c)),
 		metav1.CreateOptions{})
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func createGenesis(ctx context.Context, c kubernetes.Interface, domain, cmd, ver
 	return nil
 }
 
-func getGenesisJob(domain, cmd, version, pkg string) *batchv1.Job {
+func getGenesisJob(domain, cmd, version, pkg string, spiffe *install.SPIFFEOpts) *batchv1.Job {
 	labels := map[string]string{
 		"app":                         "octelium",
 		"octelium.com/component":      "genesis",
@@ -161,7 +161,14 @@ func getGenesisJob(domain, cmd, version, pkg string) *batchv1.Job {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
 				},
-				Spec: install.GetGenesisPodSpec(domain, cmd, version, "octelium-nocturne", pkg, ""),
+				Spec: install.GetGenesisPodSpec(&install.GenesisPodSpecOpts{
+					Domain:     domain,
+					Cmd:        cmd,
+					Version:    version,
+					SvcAccount: "octelium-nocturne",
+					Package:    pkg,
+					SPIFFE:     spiffe,
+				}),
 			},
 		},
 	}

@@ -19,10 +19,39 @@ package components
 import (
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 )
+
+func optsWithInstallation(inst *corev1.ClusterConfig_Status_Installation) *CommonOpts {
+	return &CommonOpts{
+		ClusterConfig: &corev1.ClusterConfig{
+			Metadata: &metav1.Metadata{},
+			Spec:     &corev1.ClusterConfig_Spec{},
+			Status: &corev1.ClusterConfig_Status{
+				Installation: inst,
+			},
+		},
+	}
+}
+
+func spiffeInstallation(enable bool, csiDriver, trustDomain string) *corev1.ClusterConfig_Status_Installation {
+	ret := &corev1.ClusterConfig_Status_Installation{
+		Spiffe: &corev1.ClusterConfig_Status_Installation_SPIFFE{
+			Enable:      enable,
+			TrustDomain: trustDomain,
+		},
+	}
+	if csiDriver != "" {
+		ret.Spiffe.CsiDriver = &corev1.ClusterConfig_Status_Installation_SPIFFE_CSIDriver{
+			Name: csiDriver,
+		}
+	}
+	return ret
+}
 
 func envOf(c k8scorev1.Container) map[string]string {
 	ret := map[string]string{}
@@ -47,21 +76,36 @@ func newDeployment(env ...k8scorev1.EnvVar) *appsv1.Deployment {
 func TestSetDeploymentSPIFFE(t *testing.T) {
 	t.Run("a Cluster without SPIFFE is left alone", func(t *testing.T) {
 		dep := newDeployment()
-		SetDeploymentSPIFFE(dep, &CommonOpts{EnableSPIFFECSI: false,
-			SPIFFETrustDomain: "octelium.local"})
+		SetDeploymentSPIFFE(dep, optsWithInstallation(
+			spiffeInstallation(false, "", "octelium.local")))
 
 		assert.Empty(t, dep.Spec.Template.Spec.Volumes)
 		assert.Empty(t, dep.Spec.Template.Spec.Containers[0].VolumeMounts)
 		assert.Empty(t, dep.Spec.Template.Spec.Containers[0].Env)
 	})
 
+	t.Run("a Cluster with no installation options at all is left alone", func(t *testing.T) {
+		for _, o := range []*CommonOpts{
+			nil,
+			{},
+			{ClusterConfig: &corev1.ClusterConfig{}},
+			optsWithInstallation(nil),
+			optsWithInstallation(&corev1.ClusterConfig_Status_Installation{}),
+		} {
+			dep := newDeployment()
+			SetDeploymentSPIFFE(dep, o)
+
+			assert.Empty(t, dep.Spec.Template.Spec.Volumes)
+			assert.Empty(t, dep.Spec.Template.Spec.Containers[0].VolumeMounts)
+			assert.Empty(t, dep.Spec.Template.Spec.Containers[0].Env)
+		}
+	})
+
 	t.Run("a component that mounts the SPIFFE volume is told SPIFFE is on",
 		func(t *testing.T) {
 			dep := newDeployment()
-			SetDeploymentSPIFFE(dep, &CommonOpts{
-				EnableSPIFFECSI:   true,
-				SPIFFETrustDomain: "octelium.local",
-			})
+			SetDeploymentSPIFFE(dep, optsWithInstallation(
+				spiffeInstallation(true, "", "octelium.local")))
 
 			c := dep.Spec.Template.Spec.Containers[0]
 
@@ -80,11 +124,8 @@ func TestSetDeploymentSPIFFE(t *testing.T) {
 	t.Run("a custom CSI driver reaches both the volume and the component",
 		func(t *testing.T) {
 			dep := newDeployment()
-			SetDeploymentSPIFFE(dep, &CommonOpts{
-				EnableSPIFFECSI:   true,
-				SPIFFECSIDriver:   "csi.example.com",
-				SPIFFETrustDomain: "octelium.local",
-			})
+			SetDeploymentSPIFFE(dep, optsWithInstallation(
+				spiffeInstallation(true, "csi.example.com", "octelium.local")))
 
 			assert.Equal(t, "csi.example.com",
 				dep.Spec.Template.Spec.Volumes[0].CSI.Driver)
@@ -96,10 +137,8 @@ func TestSetDeploymentSPIFFE(t *testing.T) {
 		dep := newDeployment(k8scorev1.EnvVar{
 			Name: "OCTELIUM_ENABLE_SPIFFE_CSI", Value: "true"})
 
-		SetDeploymentSPIFFE(dep, &CommonOpts{
-			EnableSPIFFECSI:   true,
-			SPIFFETrustDomain: "octelium.local",
-		})
+		SetDeploymentSPIFFE(dep, optsWithInstallation(
+			spiffeInstallation(true, "", "octelium.local")))
 
 		c := dep.Spec.Template.Spec.Containers[0]
 

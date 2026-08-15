@@ -35,14 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type UpgradeOpts struct {
-	EnableSPIFFECSI         bool
-	SPIFFECSIDriver         string
-	SPIFFETrustDomain       string
-	EnableIngressFrontProxy bool
-	CNIConfDir              string
-	MultusConfDir           string
-}
+type UpgradeOpts struct{}
 
 func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 
@@ -86,14 +79,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	zap.L().Debug("upgrading rscServer")
 
 	if err := components.CreateRscServer(ctx, &components.CommonOpts{
-		K8sC:                    g.k8sC,
-		ClusterConfig:           clusterCfg,
-		EnableSPIFFECSI:         o.EnableSPIFFECSI,
-		SPIFFECSIDriver:         o.SPIFFECSIDriver,
-		SPIFFETrustDomain:       o.SPIFFETrustDomain,
-		EnableIngressFrontProxy: o.EnableIngressFrontProxy,
-		CNIConfDir:              o.CNIConfDir,
-		MultusConfDir:           o.MultusConfDir,
+		K8sC:          g.k8sC,
+		ClusterConfig: clusterCfg,
 	}); err != nil {
 		return err
 	}
@@ -108,14 +95,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 
 	if err := g.installComponents(ctx,
 		regionV, &components.CommonOpts{
-			K8sC:                    g.k8sC,
-			ClusterConfig:           clusterCfg,
-			EnableSPIFFECSI:         o.EnableSPIFFECSI,
-			SPIFFECSIDriver:         o.SPIFFECSIDriver,
-			SPIFFETrustDomain:       o.SPIFFETrustDomain,
-			EnableIngressFrontProxy: o.EnableIngressFrontProxy,
-			CNIConfDir:              o.CNIConfDir,
-			MultusConfDir:           o.MultusConfDir,
+			K8sC:          g.k8sC,
+			ClusterConfig: clusterCfg,
 		}); err != nil {
 		return err
 	}

@@ -33,11 +33,12 @@ import (
 const multusConfMountPath = "/host/multus-conf"
 
 func GetMultusConfDir(o *CommonOpts) string {
+	cni := GetInstallation(o).GetCni()
 	switch {
-	case o.MultusConfDir != "":
-		return o.MultusConfDir
-	case o.CNIConfDir != "":
-		return filepath.Join(o.CNIConfDir, "multus", "net.d")
+	case cni.GetMultus().GetConfDir() != "":
+		return cni.GetMultus().GetConfDir()
+	case cni.GetConfDir() != "":
+		return filepath.Join(cni.GetConfDir(), "multus", "net.d")
 	default:
 		return vutils.MultusConfDirDefault
 	}
@@ -100,8 +101,8 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 							},
 						}
 
-						if o.EnableSPIFFECSI {
-							ret = append(ret, k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
+						if IsSPIFFEEnabled(o) {
+							ret = append(ret, k8sutils.GetSPIFFEVolume(GetSPIFFECSIDriver(o)))
 						}
 
 						return ret
@@ -165,7 +166,7 @@ func getGatewayAgentDaemonSet(o *CommonOpts) *appsv1.DaemonSet {
 									MountPath: vutils.MultusConfDirDefault,
 								})
 
-								if o.EnableSPIFFECSI {
+								if IsSPIFFEEnabled(o) {
 									ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
 								}
 

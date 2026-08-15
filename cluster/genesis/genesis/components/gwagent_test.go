@@ -26,25 +26,47 @@ import (
 	k8scorev1 "k8s.io/api/core/v1"
 )
 
+func cniInstallation(confDir, multusConfDir string) *corev1.ClusterConfig_Status_Installation {
+	ret := &corev1.ClusterConfig_Status_Installation{
+		Cni: &corev1.ClusterConfig_Status_Installation_CNI{
+			ConfDir: confDir,
+		},
+	}
+	if multusConfDir != "" {
+		ret.Cni.Multus = &corev1.ClusterConfig_Status_Installation_CNI_Multus{
+			ConfDir: multusConfDir,
+		}
+	}
+	return ret
+}
+
 func TestGetMultusConfDir(t *testing.T) {
 
-	assert.Equal(t, vutils.MultusConfDirDefault, GetMultusConfDir(&CommonOpts{}))
+	for _, o := range []*CommonOpts{
+		nil,
+		{},
+		{ClusterConfig: &corev1.ClusterConfig{}},
+		optsWithInstallation(nil),
+		optsWithInstallation(&corev1.ClusterConfig_Status_Installation{}),
+		optsWithInstallation(&corev1.ClusterConfig_Status_Installation{
+			Cni: &corev1.ClusterConfig_Status_Installation_CNI{},
+		}),
+		optsWithInstallation(cniInstallation("", "")),
+	} {
+		assert.Equal(t, vutils.MultusConfDirDefault, GetMultusConfDir(o))
+	}
 
-	assert.Equal(t, "/etc/cni/multus/net.d", GetMultusConfDir(&CommonOpts{
-		CNIConfDir: "/etc/cni",
-	}))
-	assert.Equal(t, "/var/lib/rancher/k3s/agent/etc/cni/multus/net.d", GetMultusConfDir(&CommonOpts{
-		CNIConfDir: "/var/lib/rancher/k3s/agent/etc/cni",
-	}))
+	assert.Equal(t, "/etc/cni/multus/net.d", GetMultusConfDir(
+		optsWithInstallation(cniInstallation("/etc/cni", ""))))
 
-	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(&CommonOpts{
-		MultusConfDir: "/opt/multus/conf",
-	}))
+	assert.Equal(t, "/var/lib/rancher/k3s/agent/etc/cni/multus/net.d", GetMultusConfDir(
+		optsWithInstallation(cniInstallation("/var/lib/rancher/k3s/agent/etc/cni", ""))))
 
-	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(&CommonOpts{
-		CNIConfDir:    "/etc/cni",
-		MultusConfDir: "/opt/multus/conf",
-	}))
+	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(
+		optsWithInstallation(cniInstallation("", "/opt/multus/conf"))))
+
+	assert.Equal(t, "/opt/multus/conf", GetMultusConfDir(
+		optsWithInstallation(cniInstallation("/etc/cni", "/opt/multus/conf"))))
 }
 
 func TestGatewayAgentDaemonSetSecurityContext(t *testing.T) {
@@ -95,12 +117,8 @@ func TestGatewayAgentDaemonSetSecurityContext(t *testing.T) {
 
 func TestGatewayAgentDaemonSetMultusConf(t *testing.T) {
 
-	genOpts := func(o *CommonOpts) *CommonOpts {
-		o.ClusterConfig = &corev1.ClusterConfig{
-			Metadata: &metav1.Metadata{},
-			Spec:     &corev1.ClusterConfig_Spec{},
-			Status:   &corev1.ClusterConfig_Status{},
-		}
+	genOpts := func(inst *corev1.ClusterConfig_Status_Installation) *CommonOpts {
+		o := optsWithInstallation(inst)
 		o.Region = &corev1.Region{
 			Metadata: &metav1.Metadata{Name: "default"},
 			Spec:     &corev1.Region_Spec{},
@@ -138,7 +156,7 @@ func TestGatewayAgentDaemonSetMultusConf(t *testing.T) {
 	}
 
 	{
-		ds := getGatewayAgentDaemonSet(genOpts(&CommonOpts{}))
+		ds := getGatewayAgentDaemonSet(genOpts(nil))
 		podSpec := ds.Spec.Template.Spec
 
 		vol := getVolume(&podSpec, "multus-conf")
@@ -157,9 +175,7 @@ func TestGatewayAgentDaemonSetMultusConf(t *testing.T) {
 	}
 
 	{
-		ds := getGatewayAgentDaemonSet(genOpts(&CommonOpts{
-			MultusConfDir: "/opt/multus/conf",
-		}))
+		ds := getGatewayAgentDaemonSet(genOpts(cniInstallation("", "/opt/multus/conf")))
 		podSpec := ds.Spec.Template.Spec
 
 		vol := getVolume(&podSpec, "multus-conf")

@@ -66,26 +66,8 @@ func (r *Runner) stepOctopsInit(ctx context.Context, _ *Runner) error {
 	r.SetEnv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", authTokenPath)
 	r.SetEnv("OCTELIUM_SKIP_MESSAGES", "true")
 
-	if o.EnableSPIFFECSI {
-		r.SetEnv("OCTELIUM_ENABLE_SPIFFE_CSI", "true")
-		if o.SPIFFECSIDriver != "" {
-			r.SetEnv("OCTELIUM_SPIFFE_CSI_DRIVER", o.SPIFFECSIDriver)
-		}
-		if o.SPIFFETrustDomain != "" {
-			r.SetEnv("OCTELIUM_SPIFFE_TRUST_DOMAIN", o.SPIFFETrustDomain)
-		}
-	}
-
-	if o.IngressFrontProxy {
-		r.SetEnv("OCTELIUM_INGRESS_FRONT_PROXY", "true")
-	}
-
 	for k, v := range o.Env {
 		r.SetEnv(k, v)
-	}
-
-	if paths := s.Provisioner.CNIPaths(); paths.OcteliumCNIConfDir != "" {
-		r.SetEnv("OCTELIUM_CNI_CONF_DIR", paths.OcteliumCNIConfDir)
 	}
 
 	versionArg := ""
@@ -126,6 +108,24 @@ func (r *Runner) bootstrapYAML() string {
 		if s.Install.EnableQUICv0 {
 			b.WriteString("    quicv0:\n      enable: true\n")
 		}
+	}
+
+	if s.Install.EnableSPIFFECSI {
+		b.WriteString("  spiffe:\n    enable: true\n")
+		if s.Install.SPIFFETrustDomain != "" {
+			fmt.Fprintf(&b, "    trustDomain: %s\n", s.Install.SPIFFETrustDomain)
+		}
+		if s.Install.SPIFFECSIDriver != "" {
+			fmt.Fprintf(&b, "    csiDriver:\n      name: %s\n", s.Install.SPIFFECSIDriver)
+		}
+	}
+
+	if paths := s.Provisioner.CNIPaths(); paths.OcteliumCNIConfDir != "" {
+		fmt.Fprintf(&b, "  cni:\n    confDir: %s\n", paths.OcteliumCNIConfDir)
+	}
+
+	if s.Install.IngressFrontProxy {
+		b.WriteString("  ingress:\n    frontProxy:\n      enable: true\n")
 	}
 
 	return b.String()

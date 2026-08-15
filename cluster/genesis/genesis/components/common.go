@@ -357,25 +357,42 @@ func GetDefaultResourceRequirements() k8scorev1.ResourceRequirements {
 }
 
 type CommonOpts struct {
-	OcteliumC               octeliumc.ClientInterface
-	K8sC                    kubernetes.Interface
-	ClusterConfig           *corev1.ClusterConfig
-	Region                  *corev1.Region
-	EnableSPIFFECSI         bool
-	SPIFFECSIDriver         string
-	SPIFFETrustDomain       string
-	EnableIngressFrontProxy bool
-	CNIConfDir              string
-	MultusConfDir           string
+	OcteliumC     octeliumc.ClientInterface
+	K8sC          kubernetes.Interface
+	ClusterConfig *corev1.ClusterConfig
+	Region        *corev1.Region
+}
+
+func GetInstallation(o *CommonOpts) *corev1.ClusterConfig_Status_Installation {
+	if o == nil {
+		return nil
+	}
+	return o.ClusterConfig.GetStatus().GetInstallation()
+}
+
+func IsSPIFFEEnabled(o *CommonOpts) bool {
+	return GetInstallation(o).GetSpiffe().GetEnable()
+}
+
+func GetSPIFFECSIDriver(o *CommonOpts) string {
+	return GetInstallation(o).GetSpiffe().GetCsiDriver().GetName()
+}
+
+func GetSPIFFETrustDomain(o *CommonOpts) string {
+	return GetInstallation(o).GetSpiffe().GetTrustDomain()
+}
+
+func IsIngressFrontProxyEnabled(o *CommonOpts) bool {
+	return GetInstallation(o).GetIngress().GetFrontProxy().GetEnable()
 }
 
 func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {
-	if o == nil || !o.EnableSPIFFECSI {
+	if !IsSPIFFEEnabled(o) {
 		return
 	}
 
 	dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes,
-		k8sutils.GetSPIFFEVolume(o.SPIFFECSIDriver))
+		k8sutils.GetSPIFFEVolume(GetSPIFFECSIDriver(o)))
 
 	c := &dep.Spec.Template.Spec.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, k8sutils.GetSPIFFEVolumeMount())
@@ -383,17 +400,17 @@ func SetDeploymentSPIFFE(dep *appsv1.Deployment, o *CommonOpts) {
 }
 
 func SetSPIFFEEnv(env []k8scorev1.EnvVar, o *CommonOpts) []k8scorev1.EnvVar {
-	if o == nil || !o.EnableSPIFFECSI {
+	if !IsSPIFFEEnabled(o) {
 		return env
 	}
 
 	env = setEnvIfAbsent(env, "OCTELIUM_ENABLE_SPIFFE_CSI", "true")
 
-	if o.SPIFFECSIDriver != "" {
-		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_CSI_DRIVER", o.SPIFFECSIDriver)
+	if val := GetSPIFFECSIDriver(o); val != "" {
+		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_CSI_DRIVER", val)
 	}
-	if o.SPIFFETrustDomain != "" {
-		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_TRUST_DOMAIN", o.SPIFFETrustDomain)
+	if val := GetSPIFFETrustDomain(o); val != "" {
+		env = setEnvIfAbsent(env, "OCTELIUM_SPIFFE_TRUST_DOMAIN", val)
 	}
 
 	return env
