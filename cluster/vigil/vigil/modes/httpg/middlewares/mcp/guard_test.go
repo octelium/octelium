@@ -216,10 +216,7 @@ func TestGuardTransport(t *testing.T) {
 func TestGuardEndpoint(t *testing.T) {
 
 	cfg := &corev1.Service_Spec_Config_MCP{
-		Endpoint: &corev1.Service_Spec_Config_MCP_Endpoint{
-			Path:   "/mcp",
-			Strict: true,
-		},
+		Endpoint: "/mcp",
 	}
 
 	{
@@ -236,9 +233,7 @@ func TestGuardEndpoint(t *testing.T) {
 
 	{
 		ret := serveGuard(t, http.MethodPost, "/other", toolsCallBody, nil,
-			&corev1.Service_Spec_Config_MCP{
-				Endpoint: &corev1.Service_Spec_Config_MCP_Endpoint{Path: "/mcp"},
-			})
+			&corev1.Service_Spec_Config_MCP{})
 
 		assert.True(t, ret.isNext)
 	}
@@ -267,17 +262,6 @@ func TestGuardEnvelope(t *testing.T) {
 		assert.False(t, ret.isNext, tst.body)
 		assert.Equal(t, tst.code, ret.code, tst.body)
 		assert.Equal(t, tst.errCode, ret.errCode, tst.body)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp",
-			`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`, nil,
-			&corev1.Service_Spec_Config_MCP{
-				Protocol: &corev1.Service_Spec_Config_MCP_Protocol{AllowBatch: true},
-			})
-
-		assert.False(t, ret.isNext)
-		assert.Equal(t, ErrCodeParse, ret.errCode)
 	}
 }
 
@@ -486,28 +470,6 @@ func TestGuardOrigin(t *testing.T) {
 
 		assert.False(t, ret.isNext)
 		assert.Equal(t, http.StatusForbidden, ret.code)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
-			"Origin": "https://app.example.net",
-		}, &corev1.Service_Spec_Config_MCP{
-			Origin: &corev1.Service_Spec_Config_MCP_Origin{
-				Allowed: []string{"https://app.example.net"},
-			},
-		})
-
-		assert.True(t, ret.isNext)
-	}
-
-	{
-		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
-			"Origin": "https://evil.example.net",
-		}, &corev1.Service_Spec_Config_MCP{
-			Origin: &corev1.Service_Spec_Config_MCP_Origin{Disable: true},
-		})
-
-		assert.True(t, ret.isNext)
 	}
 }
 
