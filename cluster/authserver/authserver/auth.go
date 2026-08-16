@@ -377,6 +377,11 @@ func (s *server) setAuthCallbackResponse(r *http.Request, w http.ResponseWriter,
 
 func (s *server) generateClientCallbackURL(ctx context.Context,
 	sess *corev1.Session, callbackURL string, codeChallenge []byte) (*url.URL, error) {
+
+	if s.hasPendingAuthenticatorAction(sess) {
+		return nil, errors.Errorf("The Session has a pending Authenticator action")
+	}
+
 	srv := admin.NewServer(&admin.Opts{
 		OcteliumC:  s.octeliumC,
 		IsEmbedded: true,
@@ -761,6 +766,13 @@ func (s *server) handleAuthSuccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.hasPendingAuthenticatorAction(sess) {
+		zap.L().Debug("Session has a pending Authenticator action in handleAuthSuccess",
+			zap.String("sess", sess.Metadata.Name))
+		s.redirectToAuthenticatorAction(w, r, sess)
+		return
+	}
+
 	redirectURL := r.URL.Query().Get("redirect")
 	zap.L().Debug("handleAuthSuccess req", zap.String("redirectURL", redirectURL))
 
@@ -832,6 +844,13 @@ func (s *server) handleClientApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.hasPendingAuthenticatorAction(sess) {
+		zap.L().Debug("Session has a pending Authenticator action in handleClientApproval",
+			zap.String("sess", sess.Metadata.Name))
+		s.redirectToAuthenticatorAction(w, r, sess)
+		return
+	}
+
 	if _, err := s.loadPendingClientAuth(ctx, sess); err != nil {
 		zap.L().Debug("Could not loadPendingClientAuth", zap.Error(err))
 		s.redirectToPortal(w, r)
@@ -857,6 +876,13 @@ func (s *server) handleClientApprovalDecision(w http.ResponseWriter, r *http.Req
 	}
 
 	if ucorev1.ToSession(sess).ShouldRefresh() {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	if s.hasPendingAuthenticatorAction(sess) {
+		zap.L().Debug("Session has a pending Authenticator action in handleClientApprovalDecision",
+			zap.String("sess", sess.Metadata.Name))
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -1041,4 +1067,14 @@ func (s *server) checkSessionValid(sess *corev1.Session) error {
 	}
 
 	return nil
+}
+
+func (s *server) hasPendingAuthenticatorAction(sess *corev1.Session) bool {
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_AUTHENTICATION_REQUIRED,
+		corev1.Session_Status_REGISTRATION_REQUIRED:
+		return true
+	default:
+		return false
+	}
 }

@@ -53,6 +53,13 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if vReq := r.URL.Query().Get("octelium_req"); vReq != "" {
+			if s.hasPendingAuthenticatorAction(sess) {
+				zap.L().Debug("Session has a pending Authenticator action in handleLogin",
+					zap.String("sess", sess.Metadata.Name))
+				s.redirectToAuthenticatorAction(w, r, sess)
+				return
+			}
+
 			if err := s.savePendingClientAuthFromQuery(ctx, sess, r.URL.Query()); err != nil {
 				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 				return
@@ -175,6 +182,15 @@ func (s *server) redirectToAuthenticatorRegister(w http.ResponseWriter, r *http.
 	murl, _ := url.Parse(fmt.Sprintf("%s/authenticators/register", s.rootURL))
 	murl.RawQuery = r.URL.RawQuery
 	http.Redirect(w, r, murl.String(), http.StatusSeeOther)
+}
+
+func (s *server) redirectToAuthenticatorAction(w http.ResponseWriter, r *http.Request, sess *corev1.Session) {
+	switch sess.Status.AuthenticatorAction {
+	case corev1.Session_Status_REGISTRATION_REQUIRED:
+		s.redirectToAuthenticatorRegister(w, r)
+	default:
+		s.redirectToAuthenticatorAuthenticate(w, r)
+	}
 }
 
 func (s *server) redirectToCallbackSuccess(w http.ResponseWriter, r *http.Request, redirectURL string) {

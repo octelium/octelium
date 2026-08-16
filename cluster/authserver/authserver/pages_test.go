@@ -352,6 +352,66 @@ func TestHandleLoginClientRequest(t *testing.T) {
 		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
 		assert.NotNil(t, err)
 	})
+
+	t.Run("authenticator-action-required", func(t *testing.T) {
+		for _, tc := range []struct {
+			action       corev1.Session_Status_AuthenticatorAction
+			redirectPath string
+		}{
+			{corev1.Session_Status_AUTHENTICATION_REQUIRED, "/authenticators/authenticate"},
+			{corev1.Session_Status_REGISTRATION_REQUIRED, "/authenticators/register"},
+		} {
+			usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+			assert.Nil(t, err)
+
+			usrT.Session.Status.AuthenticatorAction = tc.action
+			usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+			assert.Nil(t, err)
+
+			totalCreds := countCredentials()
+
+			resp := doLogin(usrT, &authv1.ClientLoginRequest{
+				ApiVersion:     authv1.ClientLoginRequest_V1,
+				CallbackPort:   12345,
+				CallbackSuffix: "abcdefgh",
+			})
+
+			assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			assert.Contains(t, resp.Header.Get("Location"), tc.redirectPath)
+
+			_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
+			assert.NotNil(t, err)
+
+			assert.Equal(t, totalCreds, countCredentials())
+		}
+	})
+
+	t.Run("authenticator-action-recommended", func(t *testing.T) {
+		for _, action := range []corev1.Session_Status_AuthenticatorAction{
+			corev1.Session_Status_AUTHENTICATION_RECOMMENDED,
+			corev1.Session_Status_REGISTRATION_RECOMMENDED,
+		} {
+			usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+			assert.Nil(t, err)
+
+			usrT.Session.Status.AuthenticatorAction = action
+			usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+			assert.Nil(t, err)
+
+			resp := doLogin(usrT, &authv1.ClientLoginRequest{
+				ApiVersion:     authv1.ClientLoginRequest_V1,
+				CallbackPort:   12345,
+				CallbackSuffix: "abcdefgh",
+			})
+
+			assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			assert.Equal(t, fmt.Sprintf("%s/callback/success", srv.rootURL), resp.Header.Get("Location"))
+
+			state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, "http://localhost:12345/callback/success/abcdefgh", state.CallbackURL)
+		}
+	})
 }
 
 func TestHandleLoginClientRequestAuthenticatorReauth(t *testing.T) {

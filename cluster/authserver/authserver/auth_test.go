@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/octovigilc"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -1361,6 +1362,63 @@ func TestCheckSessionValid(t *testing.T) {
 	}
 }
 
+func TestHasPendingAuthenticatorAction(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newSession := func() *corev1.Session {
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+		return usrT.Session
+	}
+
+	{
+		assert.False(t, srv.hasPendingAuthenticatorAction(newSession()))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
+		assert.True(t, srv.hasPendingAuthenticatorAction(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_REGISTRATION_REQUIRED
+		assert.True(t, srv.hasPendingAuthenticatorAction(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_RECOMMENDED
+		assert.False(t, srv.hasPendingAuthenticatorAction(sess))
+	}
+
+	{
+		sess := newSession()
+		sess.Status.AuthenticatorAction = corev1.Session_Status_REGISTRATION_RECOMMENDED
+		assert.False(t, srv.hasPendingAuthenticatorAction(sess))
+	}
+}
+
 func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 
 	ctx := context.Background()
@@ -1857,6 +1915,190 @@ func TestClientLoginFlow(t *testing.T) {
 			CallbackSuffix: "abcdefgh",
 			CodeChallenge:  opkce.GetChallenge(codeVerifier),
 		}, codeVerifier)
+	})
+}
+
+func TestClientLoginFlowAuthenticatorAction(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	loginReq := &authv1.ClientLoginRequest{
+		ApiVersion:     authv1.ClientLoginRequest_V1,
+		CallbackPort:   12345,
+		CallbackSuffix: "abcdefgh",
+	}
+
+	countCredentials := func() int {
+		credList, err := srv.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{})
+		assert.Nil(t, err)
+		return len(credList.Items)
+	}
+
+	newCookie := func(usrT *tstuser.User) *http.Cookie {
+		return &http.Cookie{
+			Name:  "octelium_rt",
+			Value: string(usrT.GetAccessToken().RefreshToken),
+			Path:  "/",
+		}
+	}
+
+	setAction := func(usrT *tstuser.User, action corev1.Session_Status_AuthenticatorAction) {
+		var err error
+		usrT.Session.Status.AuthenticatorAction = action
+		usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+		assert.Nil(t, err)
+	}
+
+	doLogin := func(cookie *http.Cookie) *http.Response {
+		req := httptest.NewRequest("GET",
+			fmt.Sprintf("http://localhost/login?octelium_req=%s", encodeLoginReq(t, loginReq)), nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		srv.handleLogin(w, req)
+		return w.Result()
+	}
+
+	doApprovalDecision := func(cookie *http.Cookie) *http.Response {
+		body, err := json.Marshal(&postApprovalReq{IsApproved: true})
+		assert.Nil(t, err)
+
+		req := httptest.NewRequest("POST", "http://localhost/callback/success/approval",
+			bytes.NewReader(body))
+		req.Header.Set("X-Octelium-Origin", srv.rootURL)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		srv.handleClientApprovalDecision(w, req)
+		return w.Result()
+	}
+
+	doCheckBlocked := func(t *testing.T,
+		action corev1.Session_Status_AuthenticatorAction, redirectPath string) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		setAction(usrT, action)
+
+		cookie := newCookie(usrT)
+		totalCreds := countCredentials()
+
+		resp := doLogin(cookie)
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Location"), redirectPath)
+
+		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.NotNil(t, err)
+
+		req := httptest.NewRequest("GET", "http://localhost/callback/success", nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		srv.handleAuthSuccess(w, req)
+		assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
+		assert.Contains(t, w.Result().Header.Get("Location"), redirectPath)
+
+		req = httptest.NewRequest("GET", "http://localhost/callback/success/approval", nil)
+		req.AddCookie(cookie)
+		w = httptest.NewRecorder()
+		srv.handleClientApproval(w, req)
+		assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
+		assert.Contains(t, w.Result().Header.Get("Location"), redirectPath)
+
+		assert.Equal(t, http.StatusUnauthorized, doApprovalDecision(cookie).StatusCode)
+
+		assert.Equal(t, totalCreds, countCredentials())
+	}
+
+	t.Run("authentication-required", func(t *testing.T) {
+		doCheckBlocked(t, corev1.Session_Status_AUTHENTICATION_REQUIRED, "/authenticators/authenticate")
+	})
+
+	t.Run("registration-required", func(t *testing.T) {
+		doCheckBlocked(t, corev1.Session_Status_REGISTRATION_REQUIRED, "/authenticators/register")
+	})
+
+	t.Run("pending-request-is-not-consumable", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		callbackURL := "http://localhost:12345/callback/success/abcdefgh"
+
+		assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, &pendingClientAuth{
+			CallbackURL: callbackURL,
+		}))
+
+		setAction(usrT, corev1.Session_Status_AUTHENTICATION_REQUIRED)
+
+		totalCreds := countCredentials()
+
+		assert.Equal(t, http.StatusUnauthorized, doApprovalDecision(newCookie(usrT)).StatusCode)
+		assert.Equal(t, totalCreds, countCredentials())
+
+		_, err = srv.generateClientCallbackURL(ctx, usrT.Session, callbackURL, nil)
+		assert.NotNil(t, err)
+
+		state, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, callbackURL, state.CallbackURL)
+	})
+
+	t.Run("action-cleared", func(t *testing.T) {
+		usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		setAction(usrT, corev1.Session_Status_AUTHENTICATION_REQUIRED)
+
+		cookie := newCookie(usrT)
+
+		resp := doLogin(cookie)
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Contains(t, resp.Header.Get("Location"), "/authenticators/authenticate")
+
+		setAction(usrT, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET)
+
+		resp = doLogin(cookie)
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, fmt.Sprintf("%s/callback/success", srv.rootURL), resp.Header.Get("Location"))
+
+		req := httptest.NewRequest("GET", "http://localhost/callback/success/approval", nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		srv.handleClientApproval(w, req)
+		assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+
+		resp = doApprovalDecision(cookie)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		out := &postApprovalResp{}
+		assert.Nil(t, json.NewDecoder(resp.Body).Decode(out))
+
+		u, err := url.Parse(out.RedirectURL)
+		assert.Nil(t, err)
+		assert.Equal(t, "12345", u.Port())
+
+		loginResp := decodeLoginResp(t, u)
+		assert.NotEmpty(t, loginResp.AuthenticationToken)
+
+		sessTkn, err := srv.doAuthenticateWithAuthenticationToken(ctx,
+			&authv1.AuthenticateWithAuthenticationTokenRequest{
+				AuthenticationToken: loginResp.AuthenticationToken,
+			})
+		assert.Nil(t, err, "%+v", err)
+		assert.NotEmpty(t, sessTkn.AccessToken)
 	})
 }
 
