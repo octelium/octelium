@@ -168,6 +168,34 @@ func (c *dctx) getEffectiveDB() string {
 	return c.startupMessage.(*pgproto3.StartupMessage).Parameters["database"]
 }
 
+func (c *dctx) getUpstreamConfig(upstream *loadbalancer.Upstream, password string) (*pgconn.Config, error) {
+	connStr := fmt.Sprintf("host=%s port=%d", upstream.Host, upstream.Port)
+
+	switch c.svcConfig.GetPostgres().SslMode {
+	case corev1.Service_Spec_Config_Postgres_DISABLE:
+		connStr = fmt.Sprintf("%s sslmode=disable", connStr)
+	case corev1.Service_Spec_Config_Postgres_REQUIRE:
+		connStr = fmt.Sprintf("%s sslmode=require", connStr)
+	default:
+		connStr = fmt.Sprintf("%s sslmode=prefer", connStr)
+	}
+
+	pgCfg, err := pgconn.ParseConfig(connStr)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.dbUser != "" {
+		pgCfg.User = c.dbUser
+	}
+	if c.dbName != "" {
+		pgCfg.Database = c.dbName
+	}
+	pgCfg.Password = password
+
+	return pgCfg, nil
+}
+
 func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) error {
 
 	zap.L().Debug("Starting connecting",
@@ -196,24 +224,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	c.dbUser = c.getEffectiveUser()
 	c.dbName = c.getEffectiveDB()
 
-	connStr := fmt.Sprintf("user=%s password=%s host=%s port=%d",
-		c.dbUser, ucorev1.ToSecret(passwordSecret).GetValueStr(),
-		upstream.Host, upstream.Port,
-	)
-	if c.dbName != "" {
-		connStr = fmt.Sprintf("%s dbname=%s", connStr, c.dbName)
-	}
-
-	switch cfg.SslMode {
-	case corev1.Service_Spec_Config_Postgres_DISABLE:
-		connStr = fmt.Sprintf("%s sslmode=disable", connStr)
-	case corev1.Service_Spec_Config_Postgres_REQUIRE:
-		connStr = fmt.Sprintf("%s sslmode=require", connStr)
-	default:
-		connStr = fmt.Sprintf("%s sslmode=prefer", connStr)
-	}
-
-	pgCfg, err := pgconn.ParseConfig(connStr)
+	pgCfg, err := c.getUpstreamConfig(upstream, ucorev1.ToSecret(passwordSecret).GetValueStr())
 	if err != nil {
 		return err
 	}
