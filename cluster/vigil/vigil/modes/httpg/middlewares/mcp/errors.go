@@ -32,6 +32,7 @@ const (
 	ErrCodeUnauthenticated = -40001
 	ErrCodeUnauthorized    = -40002
 	ErrCodeTransport       = -40003
+	ErrCodeOriginRejected  = -40004
 )
 
 type jsonRPCError struct {

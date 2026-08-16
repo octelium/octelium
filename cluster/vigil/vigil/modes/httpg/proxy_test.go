@@ -25,6 +25,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -161,4 +162,67 @@ func TestForwardedHeadersPreservedForManagedServices(t *testing.T) {
 
 	assert.Equal(t, "203.0.113.7", pr.Out.Header.Get("X-Forwarded-For"))
 	assert.Equal(t, "https", pr.Out.Header.Get("X-Forwarded-Proto"))
+}
+
+func TestMCPCommonConfig(t *testing.T) {
+
+	cfg := ucorev1.ToServiceConfig(&corev1.Service_Spec_Config{
+		Type: &corev1.Service_Spec_Config_Mcp{
+			Mcp: &corev1.Service_Spec_Config_MCP{
+				Header: &corev1.Service_Spec_Config_HTTP_Header{
+					ForwardedMode: corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT,
+					Host: &corev1.Service_Spec_Config_HTTP_Header_Host{
+						Type: &corev1.Service_Spec_Config_HTTP_Header_Host_Value{
+							Value: "upstream.internal",
+						},
+					},
+					AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+						{
+							Key:  "X-Octelium-Test",
+							Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "1"},
+						},
+					},
+				},
+				Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+					Type: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4_{
+						Sigv4: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4{
+							Region:  "us-east-1",
+							Service: "s3",
+						},
+					},
+				},
+				Path: &corev1.Service_Spec_Config_HTTP_Path{
+					AddPrefix: "/api",
+				},
+				Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+					{Name: "tst"},
+				},
+			},
+		},
+	})
+
+	headerCfg := cfg.GetHTTPHeader()
+	assert.NotNil(t, headerCfg)
+	assert.Equal(t, "upstream.internal", headerCfg.GetHost().GetValue())
+	assert.Equal(t, corev1.Service_Spec_Config_HTTP_Header_TRANSPARENT, headerCfg.ForwardedMode)
+	assert.Len(t, headerCfg.AddResponseHeaders, 1)
+
+	assert.NotNil(t, cfg.GetHTTPAuth().GetSigv4())
+	assert.Equal(t, "us-east-1", cfg.GetHTTPAuth().GetSigv4().Region)
+
+	assert.Equal(t, "/api", cfg.GetHTTPPath().AddPrefix)
+	assert.Len(t, cfg.GetHTTPPlugins(), 1)
+
+	visibility := cfg.GetMCPVisibility()
+	assert.True(t, visibility.EnableRequestBody)
+	assert.True(t, visibility.EnableResponseBody)
+
+	pr := newForwardedProxyRequest(t, map[string]string{
+		"X-Forwarded-For":    "1.2.3.4",
+		"X-Forwarded-Prefix": "/prefix",
+	})
+
+	applyForwardedHeaders(pr, newForwardedSvc(false), headerCfg, false, "https", "example.com", "obf")
+
+	assert.Equal(t, "/prefix", pr.Out.Header.Get("X-Forwarded-Prefix"))
 }

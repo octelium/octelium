@@ -156,12 +156,17 @@ func (m *middleware) serveStreaming(w http.ResponseWriter,
 	crw := newResponseWriter(w, kind)
 	connID := vutils.GenerateLogID()
 
+	crw.onFirstByte = func() {
+		if reqCtx.DownstreamInfo == nil {
+			return
+		}
+		otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseStreamOpen, connID, 0))
+	}
+
 	if kind == streamKindSSE {
 		var eventCount int64
 		var mu sync.Mutex
 		lastLog := time.Now()
-
-		visibilityCfg := getVisibilityConfig(reqCtx)
 
 		crw.onSSEEvent = func(event []byte) {
 			n := atomic.AddInt64(&eventCount, 1)
@@ -181,7 +186,7 @@ func (m *middleware) serveStreaming(w http.ResponseWriter,
 			}
 			log := m.getAccessLog(req, crw, reqCtx, logPhaseSSEEvent, connID, n)
 
-			if visibilityCfg != nil {
+			if visibilityCfg := getVisibilityConfig(reqCtx); visibilityCfg != nil {
 				if visibilityCfg.EnableResponseBody {
 					log.Entry.Info.GetHttp().Response.Body = event
 				}
@@ -207,10 +212,6 @@ func (m *middleware) serveStreaming(w http.ResponseWriter,
 		return
 	}
 
-	if crw.firstByteAt != (time.Time{}) {
-		otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseStreamOpen, connID, 0))
-	}
-
 	otelutils.EmitAccessLog(m.getAccessLog(req, crw, reqCtx, logPhaseStreamClose, connID, crw.eventCount()))
 }
 
@@ -223,16 +224,9 @@ const (
 	logPhaseSSEEvent
 )
 
-var mcpVisibility = &corev1.Service_Spec_Config_HTTP_Visibility{
-	EnableRequestBody:     true,
-	EnableRequestBodyMap:  true,
-	EnableResponseBody:    true,
-	EnableResponseBodyMap: true,
-}
-
 func getVisibilityConfig(reqCtx *middlewares.RequestContext) *corev1.Service_Spec_Config_HTTP_Visibility {
 	if ucorev1.ToService(reqCtx.Service).IsMCP() {
-		return mcpVisibility
+		return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetMCPVisibility()
 	}
 	return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPVisibility()
 }
@@ -406,6 +400,7 @@ func (m *middleware) getAccessLog(
 				mcpC.Client = &corev1.AccessLog_Entry_Info_MCP_Client{
 					Name:    mcpI.Client.Name,
 					Version: mcpI.Client.Version,
+					Title:   mcpI.Client.Title,
 				}
 			}
 		}
@@ -581,6 +576,7 @@ type responseWriter struct {
 	kind    streamKind
 	writeMu sync.Mutex
 
+	onFirstByte func()
 	onSSEEvent  func([]byte)
 	sseLineBuf  []byte
 	sseMu       sync.Mutex
@@ -619,8 +615,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	rw.writeMu.Lock()
 	defer rw.writeMu.Unlock()
 
+	var isFirstByte bool
 	if rw.firstByteAt.IsZero() && len(b) > 0 {
 		rw.firstByteAt = time.Now()
+		isFirstByte = true
 	}
 
 	n, err := rw.ResponseWriter.Write(b)
@@ -639,6 +637,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 			} else {
 				rw.bufferBody(b[:n])
 			}
+		}
+
+		if isFirstByte && rw.onFirstByte != nil {
+			rw.onFirstByte()
 		}
 	}
 	return n, err

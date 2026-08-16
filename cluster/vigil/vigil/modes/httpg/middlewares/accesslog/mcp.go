@@ -102,9 +102,19 @@ func (m *middleware) serveMCP(w http.ResponseWriter, req *http.Request,
 
 	obs := &mcpObserver{}
 
+	connID := vutils.GenerateLogID()
+
 	crw := newResponseWriter(w, streamKindMCP)
 	crw.maxSSEEvent = getMaxMCPStreamEventBytes(reqCtx)
 	crw.onSSEEvent = obs.onSSEEvent
+
+	crw.onFirstByte = func() {
+		if reqCtx.DownstreamInfo == nil || !crw.mcpIsSSE {
+			return
+		}
+		otelutils.EmitAccessLog(
+			m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseStreamOpen, connID, 0))
+	}
 
 	m.next.ServeHTTP(crw, req)
 
@@ -119,10 +129,6 @@ func (m *middleware) serveMCP(w http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	connID := vutils.GenerateLogID()
-
-	otelutils.EmitAccessLog(
-		m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseStreamOpen, connID, 0))
 	otelutils.EmitAccessLog(
 		m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, connID, 1))
 }

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -69,6 +70,10 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	mcpReq := reqCtx.MCP
 	reqID := mcpReq.GetRequestIDRaw()
 
+	if o := m.checkOrigin(req, cfg); o != nil {
+		return o
+	}
+
 	if req.Method != http.MethodPost {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusMethodNotAllowed,
@@ -83,6 +88,10 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	}
 
 	if o := m.checkContentType(req, reqID); o != nil {
+		return o
+	}
+
+	if o := m.checkSingletonHeaders(req, reqID); o != nil {
 		return o
 	}
 
@@ -145,6 +154,14 @@ func (m *guard) checkEnvelope(mcpReq *httputils.MCPRequest, reqID json.RawMessag
 		}
 	}
 
+	if mcpReq.HasInvalidRequestID {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Code:       ErrCodeInvalidRequest,
+			Message:    `Octelium: the "id" member must be either a string or a number`,
+		}
+	}
+
 	switch {
 	case mcpReq.Method == "":
 		return &WriteErrorOpts{
@@ -195,13 +212,11 @@ func (m *guard) checkProtocolVersion(mcpReq *httputils.MCPRequest,
 		if cfg.GetProtocol().GetRequireVersion() {
 			return &WriteErrorOpts{
 				HTTPStatus: http.StatusBadRequest,
-				Code:       ErrCodeUnsupportedVer,
-				Message:    "Octelium: the MCP request declares no protocol version",
-				RequestID:  reqID,
-				Data: &unsupportedVersionData{
-					Supported: versions,
-					Requested: "",
-				},
+				Code:       ErrCodeHeaderMismatch,
+				Message: fmt.Sprintf(
+					"Octelium: the MCP request declares no protocol version in either the %s header or the request body",
+					httputils.MCPHeaderProtocolVersion),
+				RequestID: reqID,
 			}
 		}
 		return nil
@@ -241,6 +256,17 @@ func (m *guard) checkMirroredHeaders(mcpReq *httputils.MCPRequest, reqID json.Ra
 		}
 	}
 
+	if mcpReq.HasInvalidHeaderName {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Code:       ErrCodeHeaderMismatch,
+			Message: fmt.Sprintf(
+				"Octelium: the %s header value is not a valid base64 sentinel encoded value",
+				httputils.MCPHeaderName),
+			RequestID: reqID,
+		}
+	}
+
 	if mcpReq.HasHeaderName && mcpReq.HeaderName != mcpReq.Name {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,
@@ -269,6 +295,102 @@ func (m *guard) checkEndpoint(req *http.Request,
 		Message:    "Octelium: not the MCP endpoint path",
 		RequestID:  reqID,
 	}
+}
+
+var mcpSingletonHeaders = []string{
+	httputils.MCPHeaderProtocolVersion,
+	httputils.MCPHeaderMethod,
+	httputils.MCPHeaderName,
+	httputils.MCPHeaderSessionID,
+}
+
+func (m *guard) checkSingletonHeaders(req *http.Request, reqID json.RawMessage) *WriteErrorOpts {
+	for _, hdr := range mcpSingletonHeaders {
+		if len(req.Header.Values(hdr)) > 1 {
+			return &WriteErrorOpts{
+				HTTPStatus: http.StatusBadRequest,
+				Code:       ErrCodeHeaderMismatch,
+				Message: fmt.Sprintf(
+					"Octelium: the %s request header must not be set more than once", hdr),
+				RequestID: reqID,
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *guard) checkOrigin(req *http.Request,
+	cfg *corev1.Service_Spec_Config_MCP) *WriteErrorOpts {
+
+	originCfg := cfg.GetOrigin()
+	if originCfg.GetDisable() {
+		return nil
+	}
+
+	vals := req.Header.Values("Origin")
+	if len(vals) == 0 {
+		return nil
+	}
+
+	if len(vals) == 1 {
+		if origin, ok := normalizeOrigin(vals[0]); ok {
+			if isSameOrigin(req, origin) {
+				return nil
+			}
+
+			for _, allowed := range originCfg.GetAllowed() {
+				if normalized, ok := normalizeOrigin(allowed); ok && normalized == origin {
+					return nil
+				}
+			}
+		}
+	}
+
+	return &WriteErrorOpts{
+		HTTPStatus: http.StatusForbidden,
+		Code:       ErrCodeOriginRejected,
+		Message:    "Octelium: the Origin request header is not allowed",
+	}
+}
+
+func isSameOrigin(req *http.Request, origin string) bool {
+	if req.Host == "" {
+		return false
+	}
+
+	for _, scheme := range []string{"https", "http"} {
+		if self, ok := normalizeOrigin(scheme + "://" + req.Host); ok && self == origin {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeOrigin(arg string) (string, bool) {
+	u, err := url.Parse(arg)
+	if err != nil || u.Scheme == "" || u.Host == "" ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", false
+	}
+
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+
+	if port == "" {
+		return fmt.Sprintf("%s://%s", scheme, host), true
+	}
+
+	return fmt.Sprintf("%s://%s:%s", scheme, host, port), true
 }
 
 func (m *guard) checkContentType(req *http.Request, reqID json.RawMessage) *WriteErrorOpts {

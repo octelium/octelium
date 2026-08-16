@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -1818,5 +1819,206 @@ func (s *Server) validateHTTPVisibility(visibility *corev1.Service_Spec_Config_H
 			return err
 		}
 	}
+	return nil
+}
+
+const (
+	maxMCPProtocolVersions = 16
+	maxMCPEndpointPathLen  = 256
+
+	maxMCPRequestBytesLimit     = 16 * 1024 * 1024
+	maxMCPStreamEventBytesLimit = 4 * 1024 * 1024
+
+	maxMCPAllowedOrigins    = 64
+	maxMCPOriginLen         = 256
+	maxMCPVisibilityHeaders = 128
+)
+
+func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec_Config) error {
+	mcp := cfg.GetMcp()
+	if mcp == nil {
+		return grpcutils.InvalidArg("MCP config is not set")
+	}
+
+	if err := s.validateMCPEndpoint(mcp.GetEndpoint()); err != nil {
+		return err
+	}
+
+	if err := s.validateMCPProtocol(mcp.GetProtocol()); err != nil {
+		return err
+	}
+
+	if err := s.validateMCPLimits(mcp.GetLimits()); err != nil {
+		return err
+	}
+
+	if err := s.validateMCPOrigin(mcp.GetOrigin()); err != nil {
+		return err
+	}
+
+	if err := s.validateMCPVisibility(mcp.GetVisibility()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPHeader(ctx, mcp.GetHeader()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPAuth(ctx, mcp.GetAuth()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPPath(mcp.GetPath()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPPlugins(ctx, cfg.Name, mcp.GetPlugins()); err != nil {
+		return err
+	}
+
+	for _, plugin := range mcp.GetPlugins() {
+		switch plugin.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
+			return grpcutils.InvalidArg(
+				"The Cache plugin is unsupported for MCP Services: %s", plugin.Name)
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPEndpoint(path string) error {
+	if path == "" {
+		return nil
+	}
+
+	if len(path) > maxMCPEndpointPathLen {
+		return grpcutils.InvalidArg("The MCP endpoint path is too long")
+	}
+
+	if !strings.HasPrefix(path, "/") {
+		return grpcutils.InvalidArg("The MCP endpoint path must be absolute")
+	}
+
+	if strings.ContainsAny(path, "?#") {
+		return grpcutils.InvalidArg(
+			"The MCP endpoint path must not contain a query or a fragment")
+	}
+
+	for i := 0; i < len(path); i++ {
+		if path[i] < 0x20 || path[i] == 0x7f {
+			return grpcutils.InvalidArg(
+				"The MCP endpoint path contains an invalid control character")
+		}
+	}
+
+	if strings.Contains(path, "//") || strings.Contains(path, "/./") ||
+		strings.Contains(path, "/../") || strings.HasSuffix(path, "/.") ||
+		strings.HasSuffix(path, "/..") {
+		return grpcutils.InvalidArg("The MCP endpoint path must be canonical")
+	}
+
+	if strings.HasPrefix(path, "/.well-known/") {
+		return grpcutils.InvalidArg(
+			"The MCP endpoint path must not be a reserved well-known path")
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPProtocol(protocol *corev1.Service_Spec_Config_MCP_Protocol) error {
+	if protocol == nil {
+		return nil
+	}
+
+	if len(protocol.Versions) > maxMCPProtocolVersions {
+		return grpcutils.InvalidArg("Too many MCP protocol versions")
+	}
+
+	var seen []string
+	for _, version := range protocol.Versions {
+		if version == "" {
+			return grpcutils.InvalidArg("An MCP protocol version cannot be empty")
+		}
+		if err := s.validateGenStr(version, true, "protocolVersion"); err != nil {
+			return err
+		}
+		if slices.Contains(seen, version) {
+			return grpcutils.InvalidArg("Duplicate MCP protocol version: %s", version)
+		}
+		seen = append(seen, version)
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPLimits(limits *corev1.Service_Spec_Config_MCP_Limits) error {
+	if limits == nil {
+		return nil
+	}
+
+	if limits.MaxRequestBytes > maxMCPRequestBytesLimit {
+		return grpcutils.InvalidArg("maxRequestBytes is above the maximum allowed value")
+	}
+
+	if limits.MaxStreamEventBytes > maxMCPStreamEventBytesLimit {
+		return grpcutils.InvalidArg("maxStreamEventBytes is above the maximum allowed value")
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPOrigin(origin *corev1.Service_Spec_Config_MCP_Origin) error {
+	if origin == nil {
+		return nil
+	}
+
+	if len(origin.Allowed) > maxMCPAllowedOrigins {
+		return grpcutils.InvalidArg("Too many allowed MCP Origins")
+	}
+
+	var seen []string
+	for _, arg := range origin.Allowed {
+		if len(arg) > maxMCPOriginLen {
+			return grpcutils.InvalidArg("The allowed Origin is too long")
+		}
+
+		u, err := url.Parse(arg)
+		if err != nil || u.Scheme == "" || u.Host == "" ||
+			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return grpcutils.InvalidArg(
+				`The allowed Origin must be in the "scheme://host[:port]" format: %s`, arg)
+		}
+
+		if slices.Contains(seen, arg) {
+			return grpcutils.InvalidArg("Duplicate allowed Origin: %s", arg)
+		}
+		seen = append(seen, arg)
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPVisibility(visibility *corev1.Service_Spec_Config_MCP_Visibility) error {
+	if visibility == nil {
+		return nil
+	}
+
+	for _, hdrs := range [][]string{
+		visibility.IncludeRequestHeaders,
+		visibility.IncludeResponseHeaders,
+		visibility.ExcludeRequestHeaders,
+		visibility.ExcludeResponseHeaders,
+	} {
+		if len(hdrs) > maxMCPVisibilityHeaders {
+			return grpcutils.InvalidArg("Too many MCP visibility headers")
+		}
+		for _, hdr := range hdrs {
+			if err := s.validateGenStr(hdr, true, "key"); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
