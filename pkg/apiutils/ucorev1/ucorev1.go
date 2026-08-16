@@ -321,6 +321,27 @@ func (s *ServiceConfig) GetHTTPVisibility() *corev1.Service_Spec_Config_HTTP_Vis
 	return s.GetHttp().GetVisibility()
 }
 
+func (s *ServiceConfig) GetMCPVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
+	var cfg *corev1.Service_Spec_Config_MCP_Visibility
+	if s != nil && s.Service_Spec_Config != nil {
+		cfg = s.GetMcp().GetVisibility()
+	}
+
+	return &corev1.Service_Spec_Config_HTTP_Visibility{
+		EnableRequestBody:     !cfg.GetDisableRequestBody(),
+		EnableRequestBodyMap:  !cfg.GetDisableRequestBody(),
+		EnableResponseBody:    !cfg.GetDisableResponseBody(),
+		EnableResponseBodyMap: !cfg.GetDisableResponseBody(),
+
+		IncludeRequestHeaders:     cfg.GetIncludeRequestHeaders(),
+		IncludeResponseHeaders:    cfg.GetIncludeResponseHeaders(),
+		IncludeAllRequestHeaders:  cfg.GetIncludeAllRequestHeaders(),
+		IncludeAllResponseHeaders: cfg.GetIncludeAllResponseHeaders(),
+		ExcludeRequestHeaders:     cfg.GetExcludeRequestHeaders(),
+		ExcludeResponseHeaders:    cfg.GetExcludeResponseHeaders(),
+	}
+}
+
 func GetRequestHTTP(req *corev1.RequestContext_Request) *corev1.RequestContext_Request_HTTP {
 	if req == nil {
 		return nil

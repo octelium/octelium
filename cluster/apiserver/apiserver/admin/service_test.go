@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -1645,4 +1646,77 @@ func TestServiceHostUser(t *testing.T) {
 	assert.Equal(t,
 		usr.Metadata.Uid,
 		svc.Metadata.SpecLabels[fmt.Sprintf("host-user-%s", usr.Metadata.Name)])
+}
+
+func TestValidateMCPOrigin(t *testing.T) {
+	s := &Server{}
+
+	assert.Nil(t, s.validateMCPOrigin(nil))
+	assert.Nil(t, s.validateMCPOrigin(&corev1.Service_Spec_Config_MCP_Origin{}))
+
+	assert.Nil(t, s.validateMCPOrigin(&corev1.Service_Spec_Config_MCP_Origin{
+		Allowed: []string{
+			"https://example.com",
+			"https://console.example.com:8443",
+			"http://localhost:3000",
+		},
+	}))
+
+	for _, arg := range []string{
+		"",
+		"null",
+		"example.com",
+		"https://example.com/",
+		"https://example.com/path",
+		"https://example.com?a=1",
+		"https://example.com#frag",
+		"https://user:pass@example.com",
+		"https://",
+		strings.Repeat("a", maxMCPOriginLen+1),
+	} {
+		assert.NotNil(t, s.validateMCPOrigin(&corev1.Service_Spec_Config_MCP_Origin{
+			Allowed: []string{arg},
+		}), arg)
+	}
+
+	assert.NotNil(t, s.validateMCPOrigin(&corev1.Service_Spec_Config_MCP_Origin{
+		Allowed: []string{"https://example.com", "https://example.com"},
+	}))
+
+	{
+		var allowed []string
+		for range maxMCPAllowedOrigins + 1 {
+			allowed = append(allowed, "https://example.com")
+		}
+		assert.NotNil(t, s.validateMCPOrigin(&corev1.Service_Spec_Config_MCP_Origin{
+			Allowed: allowed,
+		}))
+	}
+}
+
+func TestValidateMCPVisibility(t *testing.T) {
+	s := &Server{}
+
+	assert.Nil(t, s.validateMCPVisibility(nil))
+	assert.Nil(t, s.validateMCPVisibility(&corev1.Service_Spec_Config_MCP_Visibility{
+		DisableRequestBody:     true,
+		DisableResponseBody:    true,
+		IncludeRequestHeaders:  []string{"User-Agent"},
+		IncludeResponseHeaders: []string{"Content-Type"},
+		ExcludeRequestHeaders:  []string{"X-Secret"},
+	}))
+
+	assert.NotNil(t, s.validateMCPVisibility(&corev1.Service_Spec_Config_MCP_Visibility{
+		IncludeRequestHeaders: []string{""},
+	}))
+
+	{
+		var hdrs []string
+		for range maxMCPVisibilityHeaders + 1 {
+			hdrs = append(hdrs, "User-Agent")
+		}
+		assert.NotNil(t, s.validateMCPVisibility(&corev1.Service_Spec_Config_MCP_Visibility{
+			ExcludeResponseHeaders: hdrs,
+		}))
+	}
 }

@@ -1058,3 +1058,50 @@ func TestOcteliumCookiesRemovedForOrdinaryServices(t *testing.T) {
 
 	assert.Equal(t, "a=1", req.Header.Get("Cookie"))
 }
+
+func TestMCPResponseHeaders(t *testing.T) {
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "my-mcp.default"},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_MCP,
+		},
+		Status: &corev1.Service_Status{
+			NamespaceRef: &metav1.ObjectReference{Name: "default"},
+		},
+	}
+
+	reqCtx := &middlewares.RequestContext{
+		Service: svc,
+		ServiceConfig: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Mcp{
+				Mcp: &corev1.Service_Spec_Config_MCP{
+					Header: &corev1.Service_Spec_Config_HTTP_Header{
+						AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+							{
+								Key: "X-Octelium-Test",
+								Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+									Value: "mcp",
+								},
+							},
+						},
+						RemoveResponseHeaders: []string{"X-Upstream-Internal"},
+					},
+				},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://my-mcp.example.com/mcp", nil)
+	req = req.WithContext(context.WithValue(
+		req.Context(), middlewares.CtxRequestContext, reqCtx))
+
+	hdr := http.Header{}
+	hdr.Set("X-Upstream-Internal", "leak")
+
+	md := &middleware{}
+	md.modifyResponseHeaders(hdr, req, reqCtx)
+
+	assert.Equal(t, "mcp", hdr.Get("X-Octelium-Test"))
+	assert.Equal(t, "", hdr.Get("X-Upstream-Internal"))
+}

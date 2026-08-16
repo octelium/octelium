@@ -65,6 +65,8 @@ type MCPRequest struct {
 	RequestIDRaw   json.RawMessage
 	IsNotification bool
 
+	HasInvalidRequestID bool
+
 	ProtocolVersion       string
 	BodyProtocolVersion   string
 	HeaderProtocolVersion string
@@ -72,6 +74,8 @@ type MCPRequest struct {
 	HeaderMethod  string
 	HeaderName    string
 	HasHeaderName bool
+
+	HasInvalidHeaderName bool
 
 	Client       *MCPClientInfo
 	Capabilities []string
@@ -201,7 +205,9 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 
 		if vals, ok := req.Header[http.CanonicalHeaderKey(MCPHeaderName)]; ok && len(vals) > 0 {
 			ret.HasHeaderName = true
-			ret.HeaderName = DecodeMCPHeaderValue(vals[0])
+			var isValid bool
+			ret.HeaderName, isValid = DecodeMCPHeaderValue(vals[0])
+			ret.HasInvalidHeaderName = !isValid
 		}
 	}
 
@@ -238,7 +244,9 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 		}
 	}
 
-	ret.RequestID, ret.RequestIDRaw, ret.IsNotification = parseMCPRequestID(env.ID)
+	var isValidRequestID bool
+	ret.RequestID, ret.RequestIDRaw, ret.IsNotification, isValidRequestID = parseMCPRequestID(env.ID)
+	ret.HasInvalidRequestID = !isValidRequestID
 
 	if len(env.Params) == 0 {
 		return ret
@@ -287,27 +295,27 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 	return ret
 }
 
-func parseMCPRequestID(raw json.RawMessage) (string, json.RawMessage, bool) {
+func parseMCPRequestID(raw json.RawMessage) (string, json.RawMessage, bool, bool) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return "", nil, true
+		return "", nil, true, true
 	}
 
 	if bytes.Equal(trimmed, []byte("null")) {
-		return "", nil, false
+		return "", nil, false, false
 	}
 
 	var str string
 	if err := json.Unmarshal(trimmed, &str); err == nil {
-		return str, trimmed, false
+		return str, trimmed, false, true
 	}
 
 	var num json.Number
 	if err := json.Unmarshal(trimmed, &num); err == nil {
-		return num.String(), trimmed, false
+		return num.String(), trimmed, false, true
 	}
 
-	return string(trimmed), nil, false
+	return string(trimmed), nil, false, false
 }
 
 func deriveMCPName(method string, params *mcpParams) string {
@@ -384,24 +392,22 @@ func getMCPMapKeys(obj map[string]json.RawMessage) []string {
 	return ret
 }
 
-func DecodeMCPHeaderValue(arg string) string {
-	if !strings.HasPrefix(arg, mcpBase64Prefix) || !strings.HasSuffix(arg, mcpBase64Suffix) {
-		return arg
-	}
-	if len(arg) < len(mcpBase64Prefix)+len(mcpBase64Suffix) {
-		return arg
+func DecodeMCPHeaderValue(arg string) (string, bool) {
+	if len(arg) < len(mcpBase64Prefix)+len(mcpBase64Suffix) ||
+		!strings.HasPrefix(arg, mcpBase64Prefix) || !strings.HasSuffix(arg, mcpBase64Suffix) {
+		return arg, true
 	}
 
 	encoded := arg[len(mcpBase64Prefix) : len(arg)-len(mcpBase64Suffix)]
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return arg
+		return arg, false
 	}
 	if !utf8.Valid(decoded) {
-		return arg
+		return arg, false
 	}
 
-	return string(decoded)
+	return string(decoded), true
 }
 
 type MCPResponse struct {
@@ -464,7 +470,7 @@ func ParseMCPResponse(body []byte) *MCPResponse {
 	}
 
 	var hasNoID bool
-	ret.RequestID, _, hasNoID = parseMCPRequestID(env.ID)
+	ret.RequestID, _, hasNoID, _ = parseMCPRequestID(env.ID)
 	ret.IsNotification = hasNoID && ret.Method != ""
 
 	if env.Error != nil {

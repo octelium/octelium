@@ -45,7 +45,7 @@ func (m *rebuild) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if reqCtx.IsBodyChanged() {
-		zap.L().Debug("MCP request body was mutated by a PRE_AUTH plugin. Rebuilding the RequestContext")
+		zap.L().Debug("MCP request body was mutated by a Plugin. Rebuilding the RequestContext")
 		middlewares.SetMCPRequestContext(reqCtx, req)
 		reqCtx.SetBodyDigest()
 	}

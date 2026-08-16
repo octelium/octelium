@@ -17,6 +17,7 @@
 package httputils
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,15 +187,18 @@ func TestParseMCPRequestID(t *testing.T) {
 		requestID      string
 		requestIDRaw   string
 		isNotification bool
+		isInvalid      bool
 	}{
-		{`1`, "1", `1`, false},
-		{`9007199254740993`, "9007199254740993", `9007199254740993`, false},
-		{`"req-1"`, "req-1", `"req-1"`, false},
-		{`"42"`, "42", `"42"`, false},
-		{`"1e5"`, "1e5", `"1e5"`, false},
-		{`null`, "", ``, false},
-		{`true`, "true", ``, false},
-		{`{"a":1}`, `{"a":1}`, ``, false},
+		{`1`, "1", `1`, false, false},
+		{`9007199254740993`, "9007199254740993", `9007199254740993`, false, false},
+		{`"req-1"`, "req-1", `"req-1"`, false, false},
+		{`"42"`, "42", `"42"`, false, false},
+		{`"1e5"`, "1e5", `"1e5"`, false, false},
+
+		{`null`, "", ``, false, true},
+		{`true`, "true", ``, false, true},
+		{`{"a":1}`, `{"a":1}`, ``, false, true},
+		{`[1]`, `[1]`, ``, false, true},
 	}
 
 	for _, tst := range tsts {
@@ -204,6 +208,7 @@ func TestParseMCPRequestID(t *testing.T) {
 		assert.Equal(t, tst.requestID, ret.RequestID, tst.id)
 		assert.Equal(t, tst.requestIDRaw, string(ret.RequestIDRaw), tst.id)
 		assert.Equal(t, tst.isNotification, ret.IsNotification, tst.id)
+		assert.Equal(t, tst.isInvalid, ret.HasInvalidRequestID, tst.id)
 	}
 
 	{
@@ -211,6 +216,16 @@ func TestParseMCPRequestID(t *testing.T) {
 		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
 
 		assert.True(t, ret.IsNotification)
+		assert.False(t, ret.HasInvalidRequestID)
+		assert.Equal(t, "", ret.RequestID)
+	}
+
+	{
+		ret := ParseMCPResponse([]byte(
+			`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}`))
+
+		assert.True(t, ret.IsError)
+		assert.False(t, ret.IsNotification)
 		assert.Equal(t, "", ret.RequestID)
 	}
 }
@@ -249,21 +264,29 @@ func TestParseMCPRequestMalformed(t *testing.T) {
 func TestDecodeMCPHeaderValue(t *testing.T) {
 
 	tsts := []struct {
-		in  string
-		out string
+		in      string
+		out     string
+		isValid bool
 	}{
-		{"us-west1", "us-west1"},
-		{"=?base64?SGVsbG8sIOS4lueVjA==?=", "Hello, 世界"},
-		{"=?base64?IHBhZGRlZCA=?=", " padded "},
-		{"=?base64?bGluZTEKbGluZTI=?=", "line1\nline2"},
-		{"=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?=", "=?base64?literal?="},
-		{"=?base64?!!!notbase64!!!?=", "=?base64?!!!notbase64!!!?="},
-		{"=?base64?abc", "=?base64?abc"},
-		{"", ""},
+		{"us-west1", "us-west1", true},
+		{"=?base64?SGVsbG8sIOS4lueVjA==?=", "Hello, 世界", true},
+		{"=?base64?IHBhZGRlZCA=?=", " padded ", true},
+		{"=?base64?bGluZTEKbGluZTI=?=", "line1\nline2", true},
+		{"=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?=", "=?base64?literal?=", true},
+
+		{"=?base64?!!!notbase64!!!?=", "=?base64?!!!notbase64!!!?=", false},
+		{"=?base64?" + base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe}) + "?=",
+			"=?base64?//4=?=", false},
+
+		{"=?base64?abc", "=?base64?abc", true},
+		{"=?base64??=", "", true},
+		{"", "", true},
 	}
 
 	for _, tst := range tsts {
-		assert.Equal(t, tst.out, DecodeMCPHeaderValue(tst.in), tst.in)
+		out, isValid := DecodeMCPHeaderValue(tst.in)
+		assert.Equal(t, tst.out, out, tst.in)
+		assert.Equal(t, tst.isValid, isValid, tst.in)
 	}
 }
 
@@ -373,6 +396,6 @@ func FuzzParseMCPRequest(f *testing.F) {
 		ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
 		ParseMCPResponse([]byte(body))
 		GetSSEEventData([]byte(body))
-		DecodeMCPHeaderValue(body)
+		_, _ = DecodeMCPHeaderValue(body)
 	})
 }

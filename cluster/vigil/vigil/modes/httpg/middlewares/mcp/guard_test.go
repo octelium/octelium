@@ -67,6 +67,28 @@ type guardResult struct {
 func serveGuard(t *testing.T, method, path, body string,
 	headers map[string]string, cfg *corev1.Service_Spec_Config_MCP) *guardResult {
 
+	hdr := http.Header{}
+	for k, v := range headers {
+		if v == "" {
+			continue
+		}
+		hdr.Set(k, v)
+	}
+
+	var deleted []string
+	for k, v := range headers {
+		if v == "" {
+			deleted = append(deleted, k)
+		}
+	}
+
+	return serveGuardHeader(t, method, path, body, hdr, deleted, cfg)
+}
+
+func serveGuardHeader(t *testing.T, method, path, body string,
+	headers http.Header, deleted []string,
+	cfg *corev1.Service_Spec_Config_MCP) *guardResult {
+
 	ctx := context.Background()
 	ret := &guardResult{}
 
@@ -81,12 +103,14 @@ func serveGuard(t *testing.T, method, path, body string,
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	for k, v := range headers {
-		if v == "" {
-			req.Header.Del(k)
-			continue
+	for k, vals := range headers {
+		req.Header.Del(k)
+		for _, v := range vals {
+			req.Header.Add(k, v)
 		}
-		req.Header.Set(k, v)
+	}
+	for _, k := range deleted {
+		req.Header.Del(k)
 	}
 
 	req = req.WithContext(context.WithValue(ctx,
@@ -348,7 +372,8 @@ func TestGuardProtocolVersion(t *testing.T) {
 			})
 
 		assert.False(t, ret.isNext)
-		assert.Equal(t, ErrCodeUnsupportedVer, ret.errCode)
+		assert.Equal(t, ErrCodeHeaderMismatch, ret.errCode)
+		assert.Equal(t, http.StatusBadRequest, ret.code)
 	}
 
 	{
@@ -477,4 +502,161 @@ func TestGuardProtectedResourceMetadata(t *testing.T) {
 	assert.Nil(t, json.Unmarshal([]byte(ret.body), &parsed))
 	assert.Equal(t, "https://my-mcp.example.com/", parsed["resource"])
 	assert.Equal(t, []any{"https://example.com"}, parsed["authorization_servers"])
+}
+
+func TestGuardOrigin(t *testing.T) {
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext)
+	}
+
+	for _, origin := range []string{
+		"https://my-mcp.example.com",
+		"https://my-mcp.example.com:443",
+		"http://my-mcp.example.com",
+		"HTTPS://MY-MCP.EXAMPLE.COM",
+	} {
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": origin,
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext, origin)
+	}
+
+	for _, origin := range []string{
+		"https://evil.com",
+		"https://my-mcp.example.com.evil.com",
+		"https://my-mcp.example.com:8443",
+		"null",
+		"",
+		"https://user:pass@my-mcp.example.com",
+		"https://my-mcp.example.com/path",
+	} {
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": origin,
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		if origin == "" {
+			assert.True(t, ret.isNext, origin)
+			continue
+		}
+
+		assert.False(t, ret.isNext, origin)
+		assert.Equal(t, http.StatusForbidden, ret.code, origin)
+		assert.Equal(t, ErrCodeOriginRejected, ret.errCode, origin)
+
+		assert.False(t, ret.hasBodyID, origin)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://console.example.com",
+		}, &corev1.Service_Spec_Config_MCP{
+			Origin: &corev1.Service_Spec_Config_MCP_Origin{
+				Allowed: []string{"https://console.example.com:443"},
+			},
+		})
+
+		assert.True(t, ret.isNext)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://evil.com",
+		}, &corev1.Service_Spec_Config_MCP{
+			Origin: &corev1.Service_Spec_Config_MCP_Origin{Disable: true},
+		})
+
+		assert.True(t, ret.isNext)
+	}
+
+	{
+		hdr := http.Header{}
+		hdr.Add("Origin", "https://my-mcp.example.com")
+		hdr.Add("Origin", "https://evil.com")
+
+		ret := serveGuardHeader(t, http.MethodPost, "/mcp", toolsCallBody, hdr, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext)
+		assert.Equal(t, http.StatusForbidden, ret.code)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodGet, "/mcp", "", map[string]string{
+			"Origin": "https://evil.com",
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext)
+		assert.Equal(t, http.StatusForbidden, ret.code)
+	}
+}
+
+func TestGuardSingletonHeaders(t *testing.T) {
+
+	for _, hdrName := range []string{
+		httputils.MCPHeaderProtocolVersion,
+		httputils.MCPHeaderMethod,
+		httputils.MCPHeaderName,
+		httputils.MCPHeaderSessionID,
+	} {
+		hdr := http.Header{}
+		hdr.Add(hdrName, "2026-07-28")
+		hdr.Add(hdrName, "tools/call")
+
+		ret := serveGuardHeader(t, http.MethodPost, "/mcp", toolsCallBody, hdr, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext, hdrName)
+		assert.Equal(t, http.StatusBadRequest, ret.code, hdrName)
+		assert.Equal(t, ErrCodeHeaderMismatch, ret.errCode, hdrName)
+	}
+}
+
+func TestGuardInvalidRequestID(t *testing.T) {
+
+	for _, id := range []string{`null`, `true`, `{"a":1}`, `[1]`} {
+		body := `{"jsonrpc":"2.0","id":` + id + `,"method":"tools/list"}`
+
+		ret := serveGuard(t, http.MethodPost, "/mcp", body, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext, id)
+		assert.Equal(t, http.StatusBadRequest, ret.code, id)
+		assert.Equal(t, ErrCodeInvalidRequest, ret.errCode, id)
+		assert.False(t, ret.hasBodyID, id)
+	}
+
+	for _, id := range []string{`1`, `"req-1"`, `"42"`} {
+		body := `{"jsonrpc":"2.0","id":` + id + `,"method":"tools/list"}`
+
+		ret := serveGuard(t, http.MethodPost, "/mcp", body, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext, id)
+	}
+}
+
+func TestGuardInvalidHeaderName(t *testing.T) {
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			httputils.MCPHeaderName: "=?base64?!!!notbase64!!!?=",
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext)
+		assert.Equal(t, http.StatusBadRequest, ret.code)
+		assert.Equal(t, ErrCodeHeaderMismatch, ret.errCode)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			httputils.MCPHeaderName: "=?base64?YWRk?=",
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext)
+	}
 }
