@@ -138,7 +138,7 @@ func InitLog() error {
 	return nil
 }
 
-func Initialize(o *Opts) (*T, error) {
+func Initialize(o *Opts) (_ *T, err error) {
 
 	if o == nil {
 		o = &Opts{}
@@ -193,6 +193,16 @@ func Initialize(o *Opts) (*T, error) {
 			return nil, err
 		}
 	}
+
+	defer func() {
+		if err == nil {
+			return
+		}
+		if dropErr := dropDatabase(dbName); dropErr != nil {
+			zap.L().Warn("Could not drop the test DB of a failed Initialize",
+				zap.String("db", dbName), zap.Error(dropErr))
+		}
+	}()
 
 	zap.L().Debug("Starting new rsc server")
 
@@ -577,16 +587,31 @@ func Initialize(o *Opts) (*T, error) {
 
 func (t *T) Destroy() error {
 
+	if t == nil {
+		return nil
+	}
+
 	zap.L().Debug("Destroying test DB", zap.String("db", t.dbName))
 
-	t.rscSrv.Stop()
+	if t.rscSrv != nil {
+		t.rscSrv.Stop()
+	}
 
-	db, err := postgresutils.NewDB()
+	if t.dbName == "" {
+		return nil
+	}
+
+	return dropDatabase(t.dbName)
+}
+
+func dropDatabase(dbName string) error {
+	db, err := postgresutils.NewDBWithNODB()
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 
-	if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", t.dbName)); err != nil {
+	if _, err := db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s;", dbName)); err != nil {
 		return err
 	}
 
