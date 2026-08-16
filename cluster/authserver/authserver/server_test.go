@@ -18,18 +18,139 @@ package authserver
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
+
+func TestUnaryServerInterceptor(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	info := &grpc.UnaryServerInfo{
+		FullMethod: "/octelium.api.main.auth.v1.MainService/AuthenticateWithRefreshToken",
+	}
+
+	{
+		resp, err := srv.unaryServerInterceptor(ctx, &authv1.AuthenticateWithRefreshTokenRequest{},
+			info, func(ctx context.Context, req any) (any, error) {
+				return &authv1.SessionToken{AccessToken: "at"}, nil
+			})
+		assert.Nil(t, err)
+		assert.Equal(t, "at", resp.(*authv1.SessionToken).AccessToken)
+	}
+
+	{
+		resp, err := srv.unaryServerInterceptor(ctx, &authv1.AuthenticateWithRefreshTokenRequest{},
+			info, func(ctx context.Context, req any) (any, error) {
+				return nil, grpcutils.Unauthenticated("")
+			})
+		assert.Nil(t, resp)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	}
+
+	{
+		var sess *corev1.Session
+		resp, err := srv.unaryServerInterceptor(ctx, &authv1.AuthenticateWithRefreshTokenRequest{},
+			info, func(ctx context.Context, req any) (any, error) {
+				return nil, errors.Errorf("%s", sess.Metadata.Name)
+			})
+		assert.Nil(t, resp)
+		assert.Equal(t, codes.Internal, status.Code(err))
+	}
+
+	{
+		resp, err := srv.unaryServerInterceptor(ctx, &authv1.AuthenticateWithRefreshTokenRequest{},
+			info, func(ctx context.Context, req any) (any, error) {
+				panic("boom")
+			})
+		assert.Nil(t, resp)
+		assert.Equal(t, codes.Internal, status.Code(err))
+	}
+
+	{
+		resp, err := srv.unaryServerInterceptor(ctx, &authv1.AuthenticateWithRefreshTokenRequest{},
+			info, func(ctx context.Context, req any) (any, error) {
+				return &authv1.SessionToken{AccessToken: "at"}, errors.Errorf("err")
+			})
+		assert.NotNil(t, resp)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestShutdown(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	{
+		srv.shutdown()
+	}
+
+	{
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
+		assert.Nil(t, err)
+
+		srv.grpcSrv = grpc.NewServer()
+		authv1.RegisterMainServiceServer(srv.grpcSrv, &authMainSvc{s: srv})
+
+		srv.httpSrv = &http.Server{
+			Handler: http.NewServeMux(),
+		}
+
+		go func() {
+			srv.grpcSrv.Serve(lis)
+		}()
+
+		srv.shutdown()
+
+		_, err = grpc.NewClient(lis.Addr().String(),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		assert.Nil(t, err)
+
+		assert.Nil(t, srv.httpSrv.Shutdown(ctx))
+	}
+}
 
 func newTestIdentityProvider(t *testing.T, ctx context.Context,
 	srv *server, idpType corev1.IdentityProvider_Status_Type) *corev1.IdentityProvider {

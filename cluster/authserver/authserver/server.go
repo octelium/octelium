@@ -54,6 +54,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type server struct {
@@ -85,7 +86,12 @@ type server struct {
 	mdsProvider metadata.Provider
 
 	geoipCtl *geoipctl.Controller
+
+	grpcSrv *grpc.Server
+	httpSrv *http.Server
 }
+
+const shutdownTimeout = 15 * time.Second
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
 	s.setTemplateGlobals(new)
@@ -387,13 +393,22 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 			s: s,
 		}
 
-		grpcSrv := grpc.NewServer(
-			grpc.MaxConcurrentStreams(100*1000),
+		s.grpcSrv = grpc.NewServer(
+			grpc.MaxConcurrentStreams(1000),
 			grpc.ConnectionTimeout(10*time.Second),
 			grpc.MaxRecvMsgSize(200*1024),
+			grpc.MaxHeaderListSize(64*1024),
 			grpc.ReadBufferSize(32*1024),
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				MaxConnectionIdle:     5 * time.Minute,
+				MaxConnectionAge:      30 * time.Minute,
+				MaxConnectionAgeGrace: 30 * time.Second,
+				Time:                  2 * time.Minute,
+				Timeout:               20 * time.Second,
+			}),
+			grpc.UnaryInterceptor(s.unaryServerInterceptor),
 		)
-		authv1.RegisterMainServiceServer(grpcSrv, authSrv)
+		authv1.RegisterMainServiceServer(s.grpcSrv, authSrv)
 
 		lisGRPC, err := net.Listen("tcp", vutils.ManagedServiceAddr)
 		if err != nil {
@@ -402,7 +417,7 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 
 		go func() {
 			zap.L().Debug("running auth gRPC server...")
-			if err := grpcSrv.Serve(lisGRPC); err != nil {
+			if err := s.grpcSrv.Serve(lisGRPC); err != nil {
 				zap.L().Info("gRPC server closed", zap.Error(err))
 			}
 		}()
@@ -439,19 +454,19 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 			}
 		})
 
+		s.httpSrv = &http.Server{
+			Handler:      mux,
+			Addr:         vutils.ManagedServiceAddr,
+			WriteTimeout: 15 * time.Second,
+			ReadTimeout:  15 * time.Second,
+
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    32 * 1024,
+		}
+
 		go func() {
-			srv := &http.Server{
-				Handler:      mux,
-				Addr:         vutils.ManagedServiceAddr,
-				WriteTimeout: 15 * time.Second,
-				ReadTimeout:  15 * time.Second,
-
-				ReadHeaderTimeout: 5 * time.Second,
-				IdleTimeout:       60 * time.Second,
-				MaxHeaderBytes:    32 * 1024,
-			}
-
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := s.httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				zap.L().Error("AuthServer HTTP server exited", zap.Error(err))
 			}
 		}()
@@ -488,7 +503,39 @@ func Run(ctx context.Context, grpcMode bool) error {
 	zap.L().Info("AuthServer is now running...")
 	<-ctx.Done()
 
+	s.shutdown()
+
 	return nil
+}
+
+func (s *server) shutdown() {
+	zap.L().Debug("Shutting down AuthServer")
+
+	if s.httpSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		if err := s.httpSrv.Shutdown(ctx); err != nil {
+			zap.L().Warn("Could not gracefully shut down the HTTP server", zap.Error(err))
+		}
+	}
+
+	if s.grpcSrv != nil {
+		stoppedCh := make(chan struct{})
+		go func() {
+			s.grpcSrv.GracefulStop()
+			close(stoppedCh)
+		}()
+
+		select {
+		case <-stoppedCh:
+		case <-time.After(shutdownTimeout):
+			zap.L().Warn("Could not gracefully stop the gRPC server. Forcing a stop")
+			s.grpcSrv.Stop()
+		}
+	}
+
+	zap.L().Debug("AuthServer shutdown completed")
 }
 
 func (s *server) getWebProviderFromUID(uid string) (utils.Provider, error) {

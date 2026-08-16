@@ -18,14 +18,34 @@ package authserver
 
 import (
 	"context"
+	"runtime/debug"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type authMainSvc struct {
 	authv1.UnimplementedMainServiceServer
 	s *server
+}
+
+func (s *server) unaryServerInterceptor(ctx context.Context, req any,
+	info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			zap.L().Error("Recovered from a panic in a gRPC handler",
+				zap.String("method", info.FullMethod),
+				zap.Any("panic", r),
+				zap.ByteString("stack", debug.Stack()))
+			resp = nil
+			err = s.errInternal("Panic in the gRPC handler: %v", r)
+		}
+	}()
+
+	return handler(ctx, req)
 }
 
 func (s *authMainSvc) AuthenticateWithAuthenticationToken(ctx context.Context,
