@@ -52,14 +52,14 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if vReq := r.URL.Query().Get("octelium_req"); vReq != "" {
-			if s.hasPendingAuthenticatorAction(sess) {
-				zap.L().Debug("Session has a pending Authenticator action in handleLogin",
-					zap.String("sess", sess.Metadata.Name))
-				s.redirectToAuthenticatorAction(w, r, sess)
-				return
-			}
+		if s.hasPendingAuthenticatorAction(sess) {
+			zap.L().Debug("Session has a pending Authenticator action in handleLogin",
+				zap.String("sess", sess.Metadata.Name))
+			s.redirectToAuthenticatorAction(w, r, sess)
+			return
+		}
 
+		if vReq := r.URL.Query().Get("octelium_req"); vReq != "" {
 			if err := s.savePendingClientAuthFromQuery(ctx, sess, r.URL.Query()); err != nil {
 				http.Redirect(w, r, s.getPortalURL(), http.StatusSeeOther)
 				return

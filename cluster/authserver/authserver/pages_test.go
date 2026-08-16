@@ -383,6 +383,26 @@ func TestHandleLoginClientRequest(t *testing.T) {
 			assert.NotNil(t, err)
 
 			assert.Equal(t, totalCreds, countCredentials())
+
+			doReq := func(murl string) *http.Response {
+				req := httptest.NewRequest("GET", murl, nil)
+				req.AddCookie(&http.Cookie{
+					Name:  "octelium_rt",
+					Value: string(usrT.GetAccessToken().RefreshToken),
+					Path:  "/",
+				})
+				w := httptest.NewRecorder()
+				srv.handleLogin(w, req)
+				return w.Result()
+			}
+
+			resp = doReq("http://localhost/login")
+			assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			assert.Contains(t, resp.Header.Get("Location"), tc.redirectPath)
+
+			resp = doReq(fmt.Sprintf("http://localhost/login?redirect=https://svc.%s", srv.domain))
+			assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			assert.Contains(t, resp.Header.Get("Location"), tc.redirectPath)
 		}
 	})
 
