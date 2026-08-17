@@ -35,14 +35,15 @@ const (
 
 type LLMRequest struct {
 	Protocol  corev1.Service_Spec_Config_LLM_Protocol
-	Operation corev1.Service_Spec_Config_LLM_Operation
+	Operation corev1.RequestContext_Request_LLM_Operation
 
 	IsKnownRoute bool
 	HasBody      bool
 	IsBodyValid  bool
 
-	Model  string
-	Stream bool
+	Model          string
+	IsModelTooLong bool
+	Stream         bool
 
 	MaxOutputTokens uint64
 
@@ -65,9 +66,9 @@ func (r *LLMRequest) GetProtocol() corev1.Service_Spec_Config_LLM_Protocol {
 	return r.Protocol
 }
 
-func (r *LLMRequest) GetOperation() corev1.Service_Spec_Config_LLM_Operation {
+func (r *LLMRequest) GetOperation() corev1.RequestContext_Request_LLM_Operation {
 	if r == nil {
-		return corev1.Service_Spec_Config_LLM_OPERATION_UNSET
+		return corev1.RequestContext_Request_LLM_OPERATION_UNSET
 	}
 	return r.Operation
 }
@@ -154,22 +155,22 @@ func GetLLMProtocol(cfg *corev1.Service_Spec_Config_LLM) corev1.Service_Spec_Con
 type llmRoute struct {
 	method    string
 	path      string
-	operation corev1.Service_Spec_Config_LLM_Operation
+	operation corev1.RequestContext_Request_LLM_Operation
 }
 
 var llmRoutesOpenAI = []llmRoute{
-	{http.MethodPost, "/v1/chat/completions", corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS},
-	{http.MethodPost, "/v1/responses", corev1.Service_Spec_Config_LLM_RESPONSES},
-	{http.MethodPost, "/v1/completions", corev1.Service_Spec_Config_LLM_COMPLETIONS},
-	{http.MethodPost, "/v1/embeddings", corev1.Service_Spec_Config_LLM_EMBEDDINGS},
-	{http.MethodPost, "/v1/moderations", corev1.Service_Spec_Config_LLM_MODERATIONS},
-	{http.MethodGet, "/v1/models", corev1.Service_Spec_Config_LLM_MODELS_LIST},
+	{http.MethodPost, "/v1/chat/completions", corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS},
+	{http.MethodPost, "/v1/responses", corev1.RequestContext_Request_LLM_RESPONSES},
+	{http.MethodPost, "/v1/completions", corev1.RequestContext_Request_LLM_COMPLETIONS},
+	{http.MethodPost, "/v1/embeddings", corev1.RequestContext_Request_LLM_EMBEDDINGS},
+	{http.MethodPost, "/v1/moderations", corev1.RequestContext_Request_LLM_MODERATIONS},
+	{http.MethodGet, "/v1/models", corev1.RequestContext_Request_LLM_MODELS_LIST},
 }
 
 var llmRoutesAnthropic = []llmRoute{
-	{http.MethodPost, "/v1/messages", corev1.Service_Spec_Config_LLM_MESSAGES},
-	{http.MethodPost, "/v1/messages/count_tokens", corev1.Service_Spec_Config_LLM_COUNT_TOKENS},
-	{http.MethodGet, "/v1/models", corev1.Service_Spec_Config_LLM_MODELS_LIST},
+	{http.MethodPost, "/v1/messages", corev1.RequestContext_Request_LLM_MESSAGES},
+	{http.MethodPost, "/v1/messages/count_tokens", corev1.RequestContext_Request_LLM_COUNT_TOKENS},
+	{http.MethodGet, "/v1/models", corev1.RequestContext_Request_LLM_MODELS_LIST},
 }
 
 const llmModelsPrefix = "/v1/models/"
@@ -184,14 +185,14 @@ func getLLMRoutes(protocol corev1.Service_Spec_Config_LLM_Protocol) []llmRoute {
 }
 
 func MatchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
-	method, path string) (corev1.Service_Spec_Config_LLM_Operation, bool) {
+	method, path string) (corev1.RequestContext_Request_LLM_Operation, bool) {
 
 	for _, route := range getLLMRoutes(protocol) {
 		if route.path != path {
 			continue
 		}
 		if route.method != method {
-			return corev1.Service_Spec_Config_LLM_OPERATION_UNSET, false
+			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
 		}
 		return route.operation, true
 	}
@@ -199,38 +200,38 @@ func MatchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
 	if strings.HasPrefix(path, llmModelsPrefix) {
 		model := path[len(llmModelsPrefix):]
 		if model == "" || strings.Contains(model, "/") {
-			return corev1.Service_Spec_Config_LLM_OPERATION_UNSET, false
+			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
 		}
 		if method != http.MethodGet {
-			return corev1.Service_Spec_Config_LLM_OPERATION_UNSET, false
+			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
 		}
-		return corev1.Service_Spec_Config_LLM_MODELS_GET, true
+		return corev1.RequestContext_Request_LLM_MODELS_GET, true
 	}
 
-	return corev1.Service_Spec_Config_LLM_OPERATION_UNSET, false
+	return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
 }
 
-func IsLLMOperationBodyParsed(operation corev1.Service_Spec_Config_LLM_Operation) bool {
+func IsLLMOperationBodyParsed(operation corev1.RequestContext_Request_LLM_Operation) bool {
 	switch operation {
-	case corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
-		corev1.Service_Spec_Config_LLM_RESPONSES,
-		corev1.Service_Spec_Config_LLM_COMPLETIONS,
-		corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-		corev1.Service_Spec_Config_LLM_MODERATIONS,
-		corev1.Service_Spec_Config_LLM_MESSAGES,
-		corev1.Service_Spec_Config_LLM_COUNT_TOKENS:
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_EMBEDDINGS,
+		corev1.RequestContext_Request_LLM_MODERATIONS,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
 		return true
 	default:
 		return false
 	}
 }
 
-func IsLLMOperationStreamable(operation corev1.Service_Spec_Config_LLM_Operation) bool {
+func IsLLMOperationStreamable(operation corev1.RequestContext_Request_LLM_Operation) bool {
 	switch operation {
-	case corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
-		corev1.Service_Spec_Config_LLM_RESPONSES,
-		corev1.Service_Spec_Config_LLM_COMPLETIONS,
-		corev1.Service_Spec_Config_LLM_MESSAGES:
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_MESSAGES:
 		return true
 	default:
 		return false
@@ -281,7 +282,7 @@ func ParseLLMRequest(req *http.Request,
 		return ret
 	}
 
-	if ret.Operation == corev1.Service_Spec_Config_LLM_MODELS_GET {
+	if ret.Operation == corev1.RequestContext_Request_LLM_MODELS_GET {
 		ret.setModel(strings.TrimPrefix(req.URL.Path, llmModelsPrefix))
 		return ret
 	}
@@ -330,8 +331,7 @@ func ParseLLMRequest(req *http.Request,
 		}
 		var v uint64
 		if err := json.Unmarshal(raw, &v); err == nil {
-			ret.MaxOutputTokens = v
-			break
+			ret.MaxOutputTokens = max(ret.MaxOutputTokens, v)
 		}
 	}
 
@@ -364,7 +364,11 @@ func ParseLLMRequest(req *http.Request,
 }
 
 func (r *LLMRequest) setModel(arg string) {
-	if arg == "" || len(arg) > maxLLMStringLen {
+	if arg == "" {
+		return
+	}
+	if len(arg) > maxLLMStringLen {
+		r.IsModelTooLong = true
 		return
 	}
 	r.Model = arg
@@ -572,6 +576,8 @@ type LLMUsage struct {
 	ReasoningTokens uint64
 
 	IsSet bool
+
+	providerTotalTokens uint64
 }
 
 func (u *LLMUsage) Merge(arg LLMUsage) {
@@ -594,9 +600,22 @@ func (u *LLMUsage) Merge(arg LLMUsage) {
 	if arg.ReasoningTokens > 0 {
 		u.ReasoningTokens = arg.ReasoningTokens
 	}
+	if arg.providerTotalTokens > 0 {
+		u.providerTotalTokens = arg.providerTotalTokens
+	}
 
-	u.TotalTokens = max(arg.TotalTokens, u.InputTokens+u.OutputTokens)
+	u.setTotalTokens()
 	u.IsSet = true
+}
+
+func (u *LLMUsage) setTotalTokens() {
+	if u.providerTotalTokens > 0 {
+		u.TotalTokens = u.providerTotalTokens
+		return
+	}
+
+	u.TotalTokens = u.InputTokens + u.CacheReadInputTokens +
+		u.CacheCreationInputTokens + u.OutputTokens
 }
 
 type LLMResponse struct {
@@ -664,10 +683,11 @@ func (u *llmUsageJSON) toUsage() LLMUsage {
 	ret := LLMUsage{
 		InputTokens:  max(u.PromptTokens, u.InputTokens),
 		OutputTokens: max(u.CompletionTokens, u.OutputTokens),
-		TotalTokens:  u.TotalTokens,
 
 		CacheReadInputTokens:     u.CacheReadInputTokens,
 		CacheCreationInputTokens: u.CacheCreationInputTokens,
+
+		providerTotalTokens: u.TotalTokens,
 	}
 
 	if u.PromptTokensDetails != nil {
@@ -685,12 +705,8 @@ func (u *llmUsageJSON) toUsage() LLMUsage {
 		ret.ReasoningTokens = max(ret.ReasoningTokens, u.OutputTokensDetails.ReasoningTokens)
 	}
 
-	if ret.TotalTokens == 0 {
-		ret.TotalTokens = ret.InputTokens + ret.OutputTokens
-	}
-
-	ret.IsSet = ret.InputTokens > 0 || ret.OutputTokens > 0 ||
-		ret.CacheReadInputTokens > 0 || ret.CacheCreationInputTokens > 0
+	ret.setTotalTokens()
+	ret.IsSet = true
 
 	return ret
 }
@@ -747,7 +763,7 @@ func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
 		r.FinishReason = env.Choices[0].FinishReason
 	case delta != nil && delta.StopReason != "":
 		r.FinishReason = delta.StopReason
-	case env.Status != "":
+	case isLLMTerminalStatus(env.Status):
 		r.FinishReason = env.Status
 	}
 
@@ -839,6 +855,15 @@ func hasLLMDeltaContent(raw json.RawMessage) bool {
 	}
 
 	return true
+}
+
+func isLLMTerminalStatus(arg string) bool {
+	switch arg {
+	case "completed", "failed", "cancelled", "incomplete":
+		return true
+	default:
+		return false
+	}
 }
 
 func isLLMContentEventType(arg string) bool {

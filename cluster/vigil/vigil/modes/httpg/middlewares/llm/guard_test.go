@@ -219,27 +219,6 @@ func TestGuardBody(t *testing.T) {
 	}
 }
 
-func TestGuardOperations(t *testing.T) {
-	cfg := &corev1.Service_Spec_Config_LLM{
-		AllowedOperations: []corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-			corev1.Service_Spec_Config_LLM_MODELS_LIST,
-		},
-	}
-
-	{
-		assert.True(t, serveGuard(t, http.MethodPost, "/v1/embeddings",
-			`{"model":"text-embedding-3-small","input":"a"}`, nil, cfg).isNext)
-	}
-
-	{
-		res := serveGuard(t, http.MethodPost, "/v1/chat/completions", chatBody, nil, cfg)
-		assert.False(t, res.isNext)
-		assert.Equal(t, http.StatusForbidden, res.code)
-		assert.Equal(t, ErrCodeOperationDenied, res.errCode)
-	}
-}
-
 func TestGuardLimits(t *testing.T) {
 
 	{
@@ -295,8 +274,8 @@ func TestGuardLimits(t *testing.T) {
 func TestGuardAnthropicErrors(t *testing.T) {
 	cfg := &corev1.Service_Spec_Config_LLM{
 		Protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
-		AllowedOperations: []corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_MESSAGES,
+		Limits: &corev1.Service_Spec_Config_LLM_Limits{
+			MaxOutputTokens: 1024,
 		},
 	}
 
@@ -307,11 +286,11 @@ func TestGuardAnthropicErrors(t *testing.T) {
 	}
 
 	{
-		res := serveGuard(t, http.MethodPost, "/v1/messages/count_tokens",
-			`{"model":"claude-sonnet-4","messages":[]}`, nil, cfg)
+		res := serveGuard(t, http.MethodPost, "/v1/messages",
+			`{"model":"claude-sonnet-4","max_tokens":4096,"messages":[]}`, nil, cfg)
 		assert.False(t, res.isNext)
-		assert.Equal(t, http.StatusForbidden, res.code)
-		assert.Equal(t, "permission_error", res.errType)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+		assert.Equal(t, "invalid_request_error", res.errType)
 	}
 
 	{
@@ -335,5 +314,29 @@ func TestGuardStream(t *testing.T) {
 			`{"model":"text-embedding-3-small","stream":true,"input":"a"}`, nil, cfg)
 		assert.False(t, res.isNext)
 		assert.Equal(t, http.StatusBadRequest, res.code)
+	}
+}
+
+func TestGuardModelTooLong(t *testing.T) {
+	cfg := &corev1.Service_Spec_Config_LLM{}
+
+	{
+		res := serveGuard(t, http.MethodPost, "/v1/chat/completions",
+			`{"model":"`+strings.Repeat("a", 257)+`","messages":[]}`, nil, cfg)
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+		assert.Equal(t, ErrCodeInvalidRequest, res.errCode)
+	}
+
+	{
+		res := serveGuard(t, http.MethodGet,
+			"/v1/models/"+strings.Repeat("a", 257), "", nil, cfg)
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+	}
+
+	{
+		assert.True(t, serveGuard(t, http.MethodPost, "/v1/chat/completions",
+			`{"model":"`+strings.Repeat("a", 256)+`","messages":[]}`, nil, cfg).isNext)
 	}
 }

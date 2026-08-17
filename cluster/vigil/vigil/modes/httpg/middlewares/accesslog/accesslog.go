@@ -595,10 +595,12 @@ type responseWriter struct {
 	sseMu       sync.Mutex
 	sseEventCnt atomic.Int64
 
-	sseResolved bool
-	isSSE       bool
-	maxSSEEvent int
-	maxBody     int
+	sseResolved   bool
+	isSSE         bool
+	maxSSEEvent   int
+	maxBody       int
+	sseDiscarding bool
+	sseTruncated  bool
 }
 
 func (rw *responseWriter) resolveSSEKind() {
@@ -689,22 +691,20 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 	rw.sseLineBuf = append(rw.sseLineBuf, p...)
 
 	for {
-		idx := bytes.Index(rw.sseLineBuf, []byte("\n\n"))
+		idx, sep := indexSSEDelimiter(rw.sseLineBuf)
 		if idx == -1 {
-			idx = bytes.Index(rw.sseLineBuf, []byte("\r\n\r\n"))
-			if idx == -1 {
-				break
-			}
-			event := make([]byte, idx)
-			copy(event, rw.sseLineBuf[:idx])
-			rw.sseLineBuf = rw.sseLineBuf[idx+4:]
-			rw.sseEventCnt.Add(1)
-			rw.onSSEEvent(event)
+			break
+		}
+
+		if rw.sseDiscarding {
+			rw.sseLineBuf = rw.sseLineBuf[idx+sep:]
+			rw.sseDiscarding = false
 			continue
 		}
+
 		event := make([]byte, idx)
 		copy(event, rw.sseLineBuf[:idx])
-		rw.sseLineBuf = rw.sseLineBuf[idx+2:]
+		rw.sseLineBuf = rw.sseLineBuf[idx+sep:]
 		rw.sseEventCnt.Add(1)
 		rw.onSSEEvent(event)
 	}
@@ -714,10 +714,28 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 		maxSSELineBuf = rw.maxSSEEvent
 	}
 	if len(rw.sseLineBuf) > maxSSELineBuf {
-		newBuf := make([]byte, maxSSELineBuf)
-		copy(newBuf, rw.sseLineBuf[len(rw.sseLineBuf)-maxSSELineBuf:])
-		rw.sseLineBuf = newBuf
+		rw.sseLineBuf = rw.sseLineBuf[:0]
+		rw.sseDiscarding = true
+		rw.sseTruncated = true
 	}
+}
+
+func indexSSEDelimiter(arg []byte) (int, int) {
+	best, sep := -1, 0
+
+	for _, delim := range [][]byte{
+		[]byte("\r\n\r\n"), []byte("\n\n"), []byte("\r\r"),
+	} {
+		idx := bytes.Index(arg, delim)
+		if idx == -1 {
+			continue
+		}
+		if best == -1 || idx < best || (idx == best && len(delim) > sep) {
+			best, sep = idx, len(delim)
+		}
+	}
+
+	return best, sep
 }
 
 const defaultMaxSSELineBuf = 64 * 1024

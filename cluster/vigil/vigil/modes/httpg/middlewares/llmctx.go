@@ -97,5 +97,5 @@ func SetLLMRequestContext(reqCtx *RequestContext, req *http.Request) {
 		}
 	}
 
-	reqCtx.ReqCtxMap = nil
+	reqCtx.SetReqCtxMap()
 }

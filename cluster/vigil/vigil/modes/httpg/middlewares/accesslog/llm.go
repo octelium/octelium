@@ -177,7 +177,7 @@ func (m *middleware) getLLMAccessLog(
 	llmC.ResponseID = obs.responseID
 	llmC.Model = obs.model
 	llmC.FinishReason = obs.finishReason
-	llmC.Usage = getLLMUsage(reqCtx, obs, phase)
+	llmC.Usage = getLLMUsage(reqCtx, crw, obs, phase)
 
 	if !obs.firstTokenAt.IsZero() {
 		if ms := obs.firstTokenAt.Sub(reqCtx.CreatedAt).Milliseconds(); ms >= 0 &&
@@ -193,10 +193,18 @@ func (m *middleware) getLLMAccessLog(
 	return logE
 }
 
-func getLLMUsage(reqCtx *middlewares.RequestContext, obs *llmObserver,
-	phase logPhase) *corev1.AccessLog_Entry_Info_LLM_Usage {
+func getLLMUsage(reqCtx *middlewares.RequestContext, crw *responseWriter,
+	obs *llmObserver, phase logPhase) *corev1.AccessLog_Entry_Info_LLM_Usage {
 
 	if !obs.usage.IsSet {
+		if crw.statusCode >= http.StatusBadRequest ||
+			reqCtx.LLM.GetEstimateQuality() ==
+				corev1.RequestContext_Request_LLM_UNAVAILABLE {
+			return &corev1.AccessLog_Entry_Info_LLM_Usage{
+				Source: corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET,
+			}
+		}
+
 		return &corev1.AccessLog_Entry_Info_LLM_Usage{
 			Source:      corev1.AccessLog_Entry_Info_LLM_Usage_ESTIMATED,
 			InputTokens: reqCtx.LLM.GetEstimatedInputTokens(),
@@ -205,7 +213,7 @@ func getLLMUsage(reqCtx *middlewares.RequestContext, obs *llmObserver,
 	}
 
 	source := corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER
-	if phase == logPhaseStreamClose && obs.finishReason == "" {
+	if phase == logPhaseStreamClose && (obs.finishReason == "" || crw.sseTruncated) {
 		source = corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL
 	}
 
@@ -250,7 +258,7 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 	}
 
 	llmC.Protocol = llmI.Protocol
-	llmC.Operation = llmI.Operation
+	llmC.Operation = corev1.AccessLog_Entry_Info_LLM_Operation(llmI.Operation)
 	llmC.RequestedModel = llmI.Model
 	llmC.Stream = llmI.Stream
 	llmC.EstimatedInputTokens = llmI.EstimatedInputTokens

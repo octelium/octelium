@@ -96,7 +96,7 @@ func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
 		}
 	}
 
-	reqCtx.ReqCtxMap = nil
+	reqCtx.SetReqCtxMap()
 }
 
 const MaxReqCtxBodySize = 2 * 1024 * 1024

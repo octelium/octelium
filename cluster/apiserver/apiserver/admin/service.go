@@ -1900,8 +1900,7 @@ func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec
 }
 
 const (
-	maxLLMModelLen   = 256
-	maxLLMOperations = 32
+	maxLLMModelLen = 256
 
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
 	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
@@ -1916,10 +1915,6 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 	}
 
 	if err := s.validateLLMProtocol(llm.GetProtocol()); err != nil {
-		return err
-	}
-
-	if err := s.validateLLMOperations(llm.GetProtocol(), llm.GetAllowedOperations()); err != nil {
 		return err
 	}
 
@@ -1971,60 +1966,6 @@ func (s *Server) validateLLMProtocol(protocol corev1.Service_Spec_Config_LLM_Pro
 	default:
 		return grpcutils.InvalidArg("Unsupported LLM protocol")
 	}
-}
-
-var llmOperationsOpenAI = []corev1.Service_Spec_Config_LLM_Operation{
-	corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
-	corev1.Service_Spec_Config_LLM_RESPONSES,
-	corev1.Service_Spec_Config_LLM_COMPLETIONS,
-	corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-	corev1.Service_Spec_Config_LLM_MODERATIONS,
-	corev1.Service_Spec_Config_LLM_MODELS_LIST,
-	corev1.Service_Spec_Config_LLM_MODELS_GET,
-}
-
-var llmOperationsAnthropic = []corev1.Service_Spec_Config_LLM_Operation{
-	corev1.Service_Spec_Config_LLM_MESSAGES,
-	corev1.Service_Spec_Config_LLM_COUNT_TOKENS,
-	corev1.Service_Spec_Config_LLM_MODELS_LIST,
-	corev1.Service_Spec_Config_LLM_MODELS_GET,
-}
-
-func (s *Server) validateLLMOperations(protocol corev1.Service_Spec_Config_LLM_Protocol,
-	operations []corev1.Service_Spec_Config_LLM_Operation) error {
-
-	if len(operations) == 0 {
-		return nil
-	}
-
-	if len(operations) > maxLLMOperations {
-		return grpcutils.InvalidArg("Too many LLM allowedOperations")
-	}
-
-	supported := llmOperationsOpenAI
-	if protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
-		supported = llmOperationsAnthropic
-	}
-
-	var seen []corev1.Service_Spec_Config_LLM_Operation
-	for _, operation := range operations {
-		if operation == corev1.Service_Spec_Config_LLM_OPERATION_UNSET {
-			return grpcutils.InvalidArg("An LLM operation cannot be unset")
-		}
-
-		if !slices.Contains(supported, operation) {
-			return grpcutils.InvalidArg(
-				"The LLM operation %s is unsupported by the %s protocol",
-				operation.String(), protocol.String())
-		}
-
-		if slices.Contains(seen, operation) {
-			return grpcutils.InvalidArg("Duplicate LLM operation: %s", operation.String())
-		}
-		seen = append(seen, operation)
-	}
-
-	return nil
 }
 
 func (s *Server) validateLLMModel(ctx context.Context,

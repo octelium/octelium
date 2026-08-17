@@ -28,8 +28,11 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+const maxLLMModelLen = 256
 
 type model struct {
 	next      http.Handler
@@ -88,6 +91,10 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext) 
 		return nil
 	}
 
+	if err := checkModelName(target); err != nil {
+		return err
+	}
+
 	bodyMap := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(reqCtx.Body, &bodyMap); err != nil {
 		return err
@@ -116,6 +123,20 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext) 
 	return nil
 }
 
+func checkModelName(arg string) error {
+	if len(arg) > maxLLMModelLen {
+		return errors.Errorf("The model name is too long: %d", len(arg))
+	}
+
+	for i := 0; i < len(arg); i++ {
+		if arg[i] < 0x20 || arg[i] == 0x7f {
+			return errors.Errorf("The model name contains an invalid control character")
+		}
+	}
+
+	return nil
+}
+
 func (m *model) getModel(ctx context.Context,
 	cfg *corev1.Service_Spec_Config_LLM_Model,
 	reqCtx *middlewares.RequestContext) (string, error) {
@@ -124,7 +145,9 @@ func (m *model) getModel(ctx context.Context,
 	case *corev1.Service_Spec_Config_LLM_Model_Value:
 		return cfg.GetValue(), nil
 	case *corev1.Service_Spec_Config_LLM_Model_Eval:
-		return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), reqCtx.ReqCtxMap)
+		return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), map[string]any{
+			"ctx": reqCtx.ReqCtxMap,
+		})
 	default:
 		return "", nil
 	}

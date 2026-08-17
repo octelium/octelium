@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 type Constructor func(http.Handler) (http.Handler, error)
@@ -102,6 +103,14 @@ type RequestContext struct {
 	LLM *httputils.LLMRequest
 
 	BodyDigest [sha256.Size]byte
+}
+
+func (r *RequestContext) SetReqCtxMap() {
+	if r.DownstreamInfo == nil {
+		r.ReqCtxMap = nil
+		return
+	}
+	r.ReqCtxMap = pbutils.MustConvertToMap(r.DownstreamInfo)
 }
 
 func (r *RequestContext) SetBodyDigest() {

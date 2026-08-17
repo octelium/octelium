@@ -43,21 +43,21 @@ func TestMatchLLMRoute(t *testing.T) {
 		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_OPENAI,
 			http.MethodPost, "/v1/chat/completions")
 		assert.True(t, ok)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS, operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, operation)
 	}
 
 	{
 		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_OPENAI,
 			http.MethodGet, "/v1/models")
 		assert.True(t, ok)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_LIST, operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_LIST, operation)
 	}
 
 	{
 		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_OPENAI,
 			http.MethodGet, "/v1/models/gpt-4o")
 		assert.True(t, ok)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_GET, operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, operation)
 	}
 
 	{
@@ -93,14 +93,14 @@ func TestMatchLLMRoute(t *testing.T) {
 		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_ANTHROPIC,
 			http.MethodPost, "/v1/messages")
 		assert.True(t, ok)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MESSAGES, operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MESSAGES, operation)
 	}
 
 	{
 		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_ANTHROPIC,
 			http.MethodPost, "/v1/messages/count_tokens")
 		assert.True(t, ok)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_COUNT_TOKENS, operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_COUNT_TOKENS, operation)
 	}
 
 	{
@@ -119,7 +119,7 @@ func TestParseLLMRequestOpenAI(t *testing.T) {
 
 		assert.True(t, llmReq.IsKnownRoute)
 		assert.True(t, llmReq.IsBodyValid)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, llmReq.Operation)
 		assert.Equal(t, "gpt-4o", llmReq.Model)
 		assert.False(t, llmReq.Stream)
 		assert.Equal(t, uint32(1), llmReq.InputItemCount)
@@ -144,7 +144,7 @@ func TestParseLLMRequestOpenAI(t *testing.T) {
 			http.MethodPost, "/v1/responses",
 			`{"model":"gpt-5","max_output_tokens":1024,"input":"Hello"}`)
 
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_RESPONSES, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_RESPONSES, llmReq.Operation)
 		assert.Equal(t, uint64(1024), llmReq.MaxOutputTokens)
 	}
 
@@ -211,7 +211,7 @@ func TestParseLLMRequestAnthropic(t *testing.T) {
 			"tools":[{"name":"bash","input_schema":{"type":"object"}}]}`)
 
 		assert.True(t, llmReq.IsKnownRoute)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MESSAGES, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MESSAGES, llmReq.Operation)
 		assert.Equal(t, corev1.Service_Spec_Config_LLM_ANTHROPIC, llmReq.Protocol)
 		assert.Equal(t, "claude-sonnet-4", llmReq.Model)
 		assert.Equal(t, uint64(2048), llmReq.MaxOutputTokens)
@@ -265,7 +265,7 @@ func TestLLMEstimate(t *testing.T) {
 			http.MethodPost, "/v1/embeddings",
 			`{"model":"text-embedding-3-small","input":["a","b","c"]}`)
 
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_EMBEDDINGS, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBEDDINGS, llmReq.Operation)
 		assert.Equal(t, uint32(3), llmReq.InputItemCount)
 	}
 }
@@ -382,7 +382,7 @@ func TestLLMUsageMerge(t *testing.T) {
 		assert.True(t, usage.IsSet)
 		assert.Equal(t, uint64(100), usage.InputTokens)
 		assert.Equal(t, uint64(50), usage.OutputTokens)
-		assert.Equal(t, uint64(150), usage.TotalTokens)
+		assert.Equal(t, uint64(215), usage.TotalTokens)
 		assert.Equal(t, uint64(40), usage.CacheReadInputTokens)
 		assert.Equal(t, uint64(25), usage.CacheCreationInputTokens)
 	}
@@ -415,7 +415,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
 		assert.True(t, llmReq.IsKnownRoute)
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
 		assert.Equal(t, "gpt-4o", llmReq.Model)
 	}
 
@@ -425,7 +425,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_ANTHROPIC, nil)
 
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
 		assert.Equal(t, "claude-sonnet-4-20250514", llmReq.Model)
 	}
 
@@ -435,7 +435,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_LIST, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_LIST, llmReq.Operation)
 		assert.Empty(t, llmReq.Model)
 	}
 }
@@ -478,7 +478,73 @@ func TestParseLLMRequestBounds(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
-		assert.Equal(t, corev1.Service_Spec_Config_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
 		assert.Empty(t, llmReq.Model)
+	}
+}
+
+func TestParseLLMResponseTerminalStatus(t *testing.T) {
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"type":"response.in_progress","response":{"id":"resp_1","status":"in_progress"}}`))
+
+		assert.NotNil(t, msg)
+		assert.Empty(t, msg.FinishReason)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"type":"response.created","response":{"id":"resp_1","status":"queued"}}`))
+
+		assert.NotNil(t, msg)
+		assert.Empty(t, msg.FinishReason)
+	}
+
+	for _, status := range []string{"completed", "failed", "cancelled", "incomplete"} {
+		msg := ParseLLMResponse([]byte(
+			`{"type":"response.done","response":{"id":"resp_1","status":"` + status + `"}}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, status, msg.FinishReason)
+	}
+}
+
+func TestParseLLMRequestMaxOutputTokens(t *testing.T) {
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_OPENAI,
+			http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[],"max_output_tokens":10,"max_tokens":100000}`)
+
+		assert.Equal(t, uint64(100000), llmReq.MaxOutputTokens)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_OPENAI,
+			http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[],"max_completion_tokens":256}`)
+
+		assert.Equal(t, uint64(256), llmReq.MaxOutputTokens)
+	}
+}
+
+func TestLLMUsagePresence(t *testing.T) {
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","choices":[{"finish_reason":"stop"}],` +
+				`"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`))
+
+		assert.NotNil(t, msg)
+		assert.True(t, msg.Usage.IsSet)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","choices":[{"finish_reason":"stop"}]}`))
+
+		assert.NotNil(t, msg)
+		assert.False(t, msg.Usage.IsSet)
 	}
 }

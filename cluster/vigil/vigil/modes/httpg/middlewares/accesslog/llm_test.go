@@ -131,7 +131,7 @@ func TestLLMAccessLogComplete(t *testing.T) {
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_COMPLETE, llmC.Type)
 	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPENAI, llmC.Protocol)
-	assert.Equal(t, corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS, llmC.Operation)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_CHAT_COMPLETIONS, llmC.Operation)
 	assert.Equal(t, "gpt-4o", llmC.RequestedModel)
 	assert.Equal(t, "gpt-4o-2024-11-20", llmC.Model)
 	assert.Equal(t, "chatcmpl-1", llmC.ResponseID)
@@ -294,7 +294,98 @@ func TestLLMAccessLogAnthropicStream(t *testing.T) {
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
 	assert.Equal(t, uint64(100), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(50), llmC.Usage.OutputTokens)
-	assert.Equal(t, uint64(150), llmC.Usage.TotalTokens)
+	assert.Equal(t, uint64(215), llmC.Usage.TotalTokens)
 	assert.Equal(t, uint64(40), llmC.Usage.CacheReadInputTokens)
 	assert.Equal(t, uint64(25), llmC.Usage.CacheCreationInputTokens)
+}
+
+func TestLLMAccessLogUsageUnset(t *testing.T) {
+
+	{
+		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+
+		req := httptest.NewRequest(http.MethodGet,
+			"http://my-llm.example.com/v1/models", nil)
+
+		reqCtx.LLM = httputils.ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_OPENAI, nil)
+
+		rw := httptest.NewRecorder()
+		crw := newResponseWriter(rw, streamKindLLM)
+		crw.maxBody = maxLLMResponseBodyBytes
+		crw.Header().Set("Content-Type", "application/json")
+		_, err := crw.Write([]byte(`{"object":"list","data":[]}`))
+		assert.Nil(t, err)
+
+		md := &middleware{}
+		logE := md.getLLMAccessLog(req, crw, reqCtx, &llmObserver{},
+			logPhaseComplete, "", 0)
+
+		llmC := logE.Entry.Info.GetLlm()
+		assert.Equal(t,
+			corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET, llmC.Usage.Source)
+		assert.Equal(t, uint64(0), llmC.Usage.TotalTokens)
+	}
+
+	{
+		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/chat/completions", strings.NewReader(llmReqBody))
+
+		rw := httptest.NewRecorder()
+		crw := newResponseWriter(rw, streamKindLLM)
+		crw.maxBody = maxLLMResponseBodyBytes
+		crw.Header().Set("Content-Type", "application/json")
+		crw.WriteHeader(http.StatusTooManyRequests)
+		_, err := crw.Write([]byte(`{"error":{"message":"rate limited"}}`))
+		assert.Nil(t, err)
+
+		md := &middleware{}
+		logE := md.getLLMAccessLog(req, crw, reqCtx, &llmObserver{},
+			logPhaseComplete, "", 0)
+
+		llmC := logE.Entry.Info.GetLlm()
+		assert.Equal(t,
+			corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET, llmC.Usage.Source)
+	}
+}
+
+func TestLLMAccessLogOversizedStreamEvent(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://my-llm.example.com/v1/chat/completions", strings.NewReader(llmReqBody))
+
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+	crw.maxSSEEvent = 512
+	crw.Header().Set("Content-Type", "text/event-stream")
+
+	obs := &llmObserver{}
+	crw.onSSEEvent = obs.onSSEEvent
+
+	_, err := crw.Write([]byte("data: " +
+		`{"id":"chatcmpl-9","usage":{"prompt_tokens":99999,"completion_tokens":1},` +
+		`"pad":"` + strings.Repeat("x", 2048)))
+	assert.Nil(t, err)
+
+	_, err = crw.Write([]byte(strings.Repeat("x", 2048) + `"}` + "\n\n"))
+	assert.Nil(t, err)
+
+	_, err = crw.Write([]byte("data: " +
+		`{"id":"chatcmpl-9","choices":[{"delta":{},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}` + "\n\n"))
+	assert.Nil(t, err)
+
+	md := &middleware{}
+	logE := md.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, "", 1)
+
+	llmC := logE.Entry.Info.GetLlm()
+
+	assert.Equal(t, uint64(5), llmC.Usage.InputTokens)
+	assert.Equal(t, uint64(3), llmC.Usage.OutputTokens)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
+	assert.Equal(t, uint64(1), llmC.EventCount)
+	assert.Equal(t, "stop", llmC.FinishReason)
 }

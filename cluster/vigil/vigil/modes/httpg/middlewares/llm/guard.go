@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -72,8 +71,13 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 		}
 	}
 
-	if o := m.checkOperation(llmReq, cfg); o != nil {
-		return o
+	if llmReq.IsModelTooLong {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       ErrTypeInvalidRequest,
+			Code:       ErrCodeInvalidRequest,
+			Message:    "Octelium: the requested model name is too long",
+		}
 	}
 
 	if !httputils.IsLLMOperationBodyParsed(llmReq.Operation) {
@@ -104,23 +108,6 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	}
 
 	return m.checkLimits(llmReq, cfg)
-}
-
-func (m *guard) checkOperation(llmReq *httputils.LLMRequest,
-	cfg *corev1.Service_Spec_Config_LLM) *WriteErrorOpts {
-
-	allowed := cfg.GetAllowedOperations()
-	if len(allowed) == 0 || slices.Contains(allowed, llmReq.Operation) {
-		return nil
-	}
-
-	return &WriteErrorOpts{
-		HTTPStatus: http.StatusForbidden,
-		Type:       ErrTypePermission,
-		Code:       ErrCodeOperationDenied,
-		Message: fmt.Sprintf("Octelium: the operation is not allowed: %s",
-			llmReq.Operation.String()),
-	}
 }
 
 func (m *guard) checkLimits(llmReq *httputils.LLMRequest,

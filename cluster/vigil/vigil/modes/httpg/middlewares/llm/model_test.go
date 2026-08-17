@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
@@ -144,11 +145,9 @@ func TestModelValue(t *testing.T) {
 func TestModelEval(t *testing.T) {
 
 	reqCtxMap := map[string]any{
-		"ctx": map[string]any{
-			"request": map[string]any{
-				"llm": map[string]any{
-					"model": "fast",
-				},
+		"request": map[string]any{
+			"llm": map[string]any{
+				"model": "fast",
 			},
 		},
 	}
@@ -218,5 +217,108 @@ func TestModelBodylessOperations(t *testing.T) {
 		res := serveModel(t, http.MethodGet, "/v1/models/gpt-4o", "", cfg, nil)
 		assert.True(t, res.isNext)
 		assert.Equal(t, "gpt-4o", res.reqCtx.LLM.GetModel())
+	}
+}
+
+func TestModelEvalAfterRebuild(t *testing.T) {
+	ctx := context.Background()
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	body := `{"model":"fast","messages":[]}`
+	cfg := &corev1.Service_Spec_Config_LLM{
+		Model: &corev1.Service_Spec_Config_LLM_Model{
+			Type: &corev1.Service_Spec_Config_LLM_Model_Eval{
+				Eval: `ctx.request.llm.model == "fast" ? "gpt-4o-mini" : "gpt-4o"`,
+			},
+		},
+	}
+	svcCfg := &corev1.Service_Spec_Config{
+		Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	llmReq := httputils.ParseLLMRequest(req, cfg.GetProtocol(), []byte(body))
+	httpC := &corev1.RequestContext_Request_HTTP{
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+	}
+	downstreamReq := &coctovigilv1.DownstreamRequest{
+		Request: &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Llm{
+				Llm: middlewares.GetLLMRequestContext(llmReq, httpC),
+			},
+		},
+	}
+
+	reqCtx := &middlewares.RequestContext{
+		CreatedAt:         time.Now(),
+		Service:           newService(),
+		ServiceConfig:     svcCfg,
+		Body:              []byte(body),
+		LLM:               llmReq,
+		DownstreamRequest: downstreamReq,
+		DownstreamInfo: &corev1.RequestContext{
+			Request: downstreamReq.Request,
+		},
+	}
+	reqCtx.SetBodyDigest()
+	reqCtx.SetReqCtxMap()
+
+	req = req.WithContext(context.WithValue(ctx,
+		middlewares.CtxRequestContext, reqCtx))
+
+	mutated := `{"model":"fast","messages":[],"temperature":0.5}`
+	reqCtx.Body = []byte(mutated)
+
+	rebuild, err := NewRebuild(ctx, http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {}))
+	assert.Nil(t, err)
+	rebuild.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.NotEmpty(t, reqCtx.ReqCtxMap)
+
+	var upstream map[string]any
+	mdlwr, err := NewModel(ctx, http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			out, err := io.ReadAll(r.Body)
+			assert.Nil(t, err)
+			assert.Nil(t, json.Unmarshal(out, &upstream))
+		}), celEngine)
+	assert.Nil(t, err)
+
+	rw := httptest.NewRecorder()
+	mdlwr.ServeHTTP(rw, req)
+
+	assert.Equal(t, http.StatusOK, rw.Result().StatusCode)
+	assert.Equal(t, "gpt-4o-mini", upstream["model"])
+	assert.Equal(t, 0.5, upstream["temperature"])
+}
+
+func TestModelEvalBounds(t *testing.T) {
+	reqCtxMap := map[string]any{
+		"request": map[string]any{
+			"llm": map[string]any{"model": "fast"},
+		},
+	}
+
+	for _, eval := range []string{
+		`"` + strings.Repeat("a", maxLLMModelLen+1) + `"`,
+		`"gpt-4o\nX-Injected: 1"`,
+	} {
+		res := serveModel(t, http.MethodPost, "/v1/chat/completions",
+			`{"model":"fast","messages":[]}`,
+			&corev1.Service_Spec_Config_LLM{
+				Model: &corev1.Service_Spec_Config_LLM_Model{
+					Type: &corev1.Service_Spec_Config_LLM_Model_Eval{Eval: eval},
+				},
+			}, reqCtxMap)
+
+		assert.False(t, res.isNext, eval)
+		assert.Equal(t, http.StatusInternalServerError, res.code, eval)
 	}
 }

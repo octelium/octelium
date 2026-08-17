@@ -1759,53 +1759,6 @@ func TestValidateLLMModel(t *testing.T) {
 	}))
 }
 
-func TestValidateLLMOperations(t *testing.T) {
-	s := &Server{}
-
-	assert.Nil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_OPENAI, nil))
-
-	assert.Nil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_OPENAI,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
-			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-			corev1.Service_Spec_Config_LLM_MODELS_LIST,
-		}))
-
-	assert.Nil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_ANTHROPIC,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_MESSAGES,
-			corev1.Service_Spec_Config_LLM_COUNT_TOKENS,
-		}))
-
-	assert.NotNil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_OPENAI,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_OPERATION_UNSET,
-		}))
-
-	assert.NotNil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_OPENAI,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_MESSAGES,
-		}))
-
-	assert.NotNil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_ANTHROPIC,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
-		}))
-
-	assert.NotNil(t, s.validateLLMOperations(
-		corev1.Service_Spec_Config_LLM_OPENAI,
-		[]corev1.Service_Spec_Config_LLM_Operation{
-			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
-		}))
-}
-
 func TestValidateLLMLimits(t *testing.T) {
 	s := &Server{}
 
