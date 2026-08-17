@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/llm"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -60,7 +61,17 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	m.setRequestHeaders(req, reqCtx)
+	if err := m.setRequestHeaders(req, reqCtx); err != nil {
+		zap.L().Warn("Could not setRequestHeaders", zap.Error(err))
+		llm.WriteError(rw, &llm.WriteErrorOpts{
+			Protocol:   reqCtx.LLM.GetProtocol(),
+			HTTPStatus: http.StatusBadGateway,
+			Type:       llm.ErrTypeAPI,
+			Code:       llm.ErrCodeUpstreamAuth,
+			Message:    "Octelium: could not set the upstream provider credentials",
+		})
+		return
+	}
 
 	crw := &responseWriter{
 		ResponseWriter: rw,
@@ -136,17 +147,22 @@ func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
 	return http.ErrNotSupported
 }
 
-func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.RequestContext) {
+func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.RequestContext) error {
 	ctx := req.Context()
 
 	svc := reqCtx.Service
 	svcCfg := reqCtx.ServiceConfig
 	isManagedSvc := ucorev1.ToService(svc).IsManagedService()
 	isAnonymous := svc.Spec.IsAnonymous
+	isLLM := ucorev1.ToService(svc).IsLLM()
 
 	req.Header.Del("X-Request-Id")
 
 	scrubOcteliumRequestHeaders(req, isManagedSvc)
+
+	if isLLM {
+		scrubLLMCredentialHeaders(req)
+	}
 
 	inputMap := reqCtx.ReqCtxMap
 
@@ -208,6 +224,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Bearer Secret",
 					zap.String("secretName", authS.GetBearer().GetFromSecret()), zap.Error(err))
+				if isLLM {
+					return err
+				}
 			}
 		} else if authS.GetBasic() != nil &&
 			authS.GetBasic().GetPassword() != nil && authS.GetBasic().GetPassword().GetFromSecret() != "" {
@@ -220,6 +239,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Basic Secret",
 					zap.String("secretName", authS.GetBasic().GetPassword().GetFromSecret()), zap.Error(err))
+				if isLLM {
+					return err
+				}
 			}
 		} else if authS.GetCustom() != nil &&
 			authS.GetCustom().GetValue() != nil && authS.GetCustom().GetValue().GetFromSecret() != "" {
@@ -229,6 +251,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Custom Auth Secret",
 					zap.String("secretName", authS.GetCustom().GetValue().GetFromSecret()), zap.Error(err))
+				if isLLM {
+					return err
+				}
 			}
 		} else if authS.GetOauth2ClientCredentials() != nil &&
 			authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
@@ -244,6 +269,9 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 			} else {
 				zap.L().Warn("Could not get oauth2 client credentials access token", zap.Error(err))
+				if isLLM {
+					return err
+				}
 			}
 		}
 	}
@@ -285,6 +313,20 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+var llmCredentialHeaders = []string{
+	"Authorization",
+	"X-Api-Key",
+	"Api-Key",
+}
+
+func scrubLLMCredentialHeaders(req *http.Request) {
+	for _, hdr := range llmCredentialHeaders {
+		req.Header.Del(hdr)
 	}
 }
 

@@ -99,6 +99,8 @@ type RequestContext struct {
 
 	MCP *httputils.MCPRequest
 
+	LLM *httputils.LLMRequest
+
 	BodyDigest [sha256.Size]byte
 }
 

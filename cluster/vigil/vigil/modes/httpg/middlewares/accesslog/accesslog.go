@@ -64,6 +64,7 @@ const (
 	streamKindK8sLog
 	streamKindGeneric
 	streamKindMCP
+	streamKindLLM
 )
 
 const (
@@ -83,6 +84,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		m.serveNonStreaming(w, req, reqCtx)
 	case streamKindMCP:
 		m.serveMCP(w, req, reqCtx)
+	case streamKindLLM:
+		m.serveLLM(w, req, reqCtx)
 	default:
 		m.serveStreaming(w, req, reqCtx, kind)
 	}
@@ -97,6 +100,10 @@ func detectStreamKind(req *http.Request, reqCtx *middlewares.RequestContext) str
 
 	if ucorev1.ToService(svc).IsMCP() {
 		return streamKindMCP
+	}
+
+	if ucorev1.ToService(svc).IsLLM() {
+		return streamKindLLM
 	}
 
 	/*
@@ -225,10 +232,14 @@ const (
 )
 
 func getVisibilityConfig(reqCtx *middlewares.RequestContext) *corev1.Service_Spec_Config_HTTP_Visibility {
-	if ucorev1.ToService(reqCtx.Service).IsMCP() {
+	switch {
+	case ucorev1.ToService(reqCtx.Service).IsMCP():
 		return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetMCPVisibility()
+	case ucorev1.ToService(reqCtx.Service).IsLLM():
+		return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetLLMVisibility()
+	default:
+		return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPVisibility()
 	}
-	return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPVisibility()
 }
 
 func (m *middleware) getAccessLog(
@@ -404,6 +415,8 @@ func (m *middleware) getAccessLog(
 				}
 			}
 		}
+	case ucorev1.ToService(svc).IsLLM():
+		setLLMAccessLogInfo(logE, httpC, reqCtx)
 	case ucorev1.ToService(svc).IsGRPC():
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Grpc{
 			Grpc: &corev1.AccessLog_Entry_Info_GRPC{
@@ -582,20 +595,21 @@ type responseWriter struct {
 	sseMu       sync.Mutex
 	sseEventCnt atomic.Int64
 
-	mcpResolved bool
-	mcpIsSSE    bool
+	sseResolved bool
+	isSSE       bool
 	maxSSEEvent int
+	maxBody     int
 }
 
-func (rw *responseWriter) resolveMCPKind() {
-	if rw.mcpResolved {
+func (rw *responseWriter) resolveSSEKind() {
+	if rw.sseResolved {
 		return
 	}
-	rw.mcpResolved = true
+	rw.sseResolved = true
 
 	ct := rw.Header().Get("Content-Type")
 	mediaType := strings.TrimSpace(strings.Split(ct, ";")[0])
-	rw.mcpIsSSE = strings.EqualFold(mediaType, "text/event-stream")
+	rw.isSSE = strings.EqualFold(mediaType, "text/event-stream")
 }
 
 func newResponseWriter(w http.ResponseWriter, kind streamKind) *responseWriter {
@@ -630,9 +644,9 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 			rw.bufferBody(b[:n])
 		case streamKindSSE:
 			rw.parseSSEEvents(b[:n])
-		case streamKindMCP:
-			rw.resolveMCPKind()
-			if rw.mcpIsSSE {
+		case streamKindMCP, streamKindLLM:
+			rw.resolveSSEKind()
+			if rw.isSSE {
 				rw.parseSSEEvents(b[:n])
 			} else {
 				rw.bufferBody(b[:n])
@@ -647,11 +661,16 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 func (rw *responseWriter) bufferBody(p []byte) {
-	if rw.body.Len() >= maxBodyLen {
+	maxBody := maxBodyLen
+	if rw.maxBody > 0 {
+		maxBody = rw.maxBody
+	}
+
+	if rw.body.Len() >= maxBody {
 		return
 	}
 
-	remaining := maxBodyLen - rw.body.Len()
+	remaining := maxBody - rw.body.Len()
 	if len(p) <= remaining {
 		rw.body.Write(p)
 	} else {

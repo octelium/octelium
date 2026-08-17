@@ -109,7 +109,7 @@ func (m *middleware) serveMCP(w http.ResponseWriter, req *http.Request,
 	crw.onSSEEvent = obs.onSSEEvent
 
 	crw.onFirstByte = func() {
-		if reqCtx.DownstreamInfo == nil || !crw.mcpIsSSE {
+		if reqCtx.DownstreamInfo == nil || !crw.isSSE {
 			return
 		}
 		otelutils.EmitAccessLog(
@@ -122,7 +122,7 @@ func (m *middleware) serveMCP(w http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	if !crw.mcpIsSSE {
+	if !crw.isSSE {
 		obs.onFinalBody(crw.body.Bytes())
 		otelutils.EmitAccessLog(
 			m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseComplete, "", 0))

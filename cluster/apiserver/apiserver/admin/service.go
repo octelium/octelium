@@ -430,9 +430,11 @@ func (s *Server) validateService(ctx context.Context,
 		}
 		switch svc.Spec.Mode {
 		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB,
-			corev1.Service_Spec_GRPC, corev1.Service_Spec_MCP:
+			corev1.Service_Spec_GRPC, corev1.Service_Spec_MCP,
+			corev1.Service_Spec_LLM:
 		default:
-			return grpcutils.InvalidArg("Anonymous access mode requires HTTP, WEB, GRPC or MCP modes")
+			return grpcutils.InvalidArg(
+				"Anonymous access mode requires HTTP, WEB, GRPC, MCP or LLM modes")
 		}
 		if svc.Spec.Authorization != nil && !svc.Spec.Authorization.EnableAnonymous {
 			return grpcutils.InvalidArg(
@@ -1032,6 +1034,15 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 			return err
 		}
 
+	case *corev1.Service_Spec_Config_Llm:
+		if spec.Mode != corev1.Service_Spec_LLM {
+			return grpcutils.InvalidArg("LLM mode must be set for LLM config to be used")
+		}
+
+		if err := s.validateLLMConfig(ctx, cfg); err != nil {
+			return err
+		}
+
 	case *corev1.Service_Spec_Config_Rdp:
 		if spec.Mode != corev1.Service_Spec_RDP_WEB {
 			return grpcutils.InvalidArg("RDP_WEB mode must be set for RDP config to be used")
@@ -1295,7 +1306,8 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			corev1.Service_Spec_UDP,
 			corev1.Service_Spec_MODE_UNSET:
 			return 0
-		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_MCP:
+		case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_MCP,
+			corev1.Service_Spec_LLM:
 			if l.Spec.IsTLS {
 				return 443
 			}
@@ -1881,6 +1893,197 @@ func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec
 		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
 			return grpcutils.InvalidArg(
 				"The Cache plugin is unsupported for MCP Services: %s", plugin.Name)
+		}
+	}
+
+	return nil
+}
+
+const (
+	maxLLMModelLen   = 256
+	maxLLMOperations = 32
+
+	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
+	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
+
+	maxLLMVisibilityHeaders = 128
+)
+
+func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec_Config) error {
+	llm := cfg.GetLlm()
+	if llm == nil {
+		return grpcutils.InvalidArg("LLM config is not set")
+	}
+
+	if err := s.validateLLMProtocol(llm.GetProtocol()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMOperations(llm.GetProtocol(), llm.GetAllowedOperations()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMModel(ctx, llm.GetModel()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMLimits(llm.GetLimits()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMVisibility(llm.GetVisibility()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPHeader(ctx, llm.GetHeader()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPAuth(ctx, llm.GetAuth()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPPath(llm.GetPath()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPPlugins(ctx, cfg.Name, llm.GetPlugins()); err != nil {
+		return err
+	}
+
+	for _, plugin := range llm.GetPlugins() {
+		switch plugin.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
+			return grpcutils.InvalidArg(
+				"The Cache plugin is unsupported for LLM Services: %s", plugin.Name)
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMProtocol(protocol corev1.Service_Spec_Config_LLM_Protocol) error {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET,
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return nil
+	default:
+		return grpcutils.InvalidArg("Unsupported LLM protocol")
+	}
+}
+
+var llmOperationsOpenAI = []corev1.Service_Spec_Config_LLM_Operation{
+	corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
+	corev1.Service_Spec_Config_LLM_RESPONSES,
+	corev1.Service_Spec_Config_LLM_COMPLETIONS,
+	corev1.Service_Spec_Config_LLM_EMBEDDINGS,
+	corev1.Service_Spec_Config_LLM_MODERATIONS,
+	corev1.Service_Spec_Config_LLM_MODELS_LIST,
+	corev1.Service_Spec_Config_LLM_MODELS_GET,
+}
+
+var llmOperationsAnthropic = []corev1.Service_Spec_Config_LLM_Operation{
+	corev1.Service_Spec_Config_LLM_MESSAGES,
+	corev1.Service_Spec_Config_LLM_COUNT_TOKENS,
+	corev1.Service_Spec_Config_LLM_MODELS_LIST,
+	corev1.Service_Spec_Config_LLM_MODELS_GET,
+}
+
+func (s *Server) validateLLMOperations(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	operations []corev1.Service_Spec_Config_LLM_Operation) error {
+
+	if len(operations) == 0 {
+		return nil
+	}
+
+	if len(operations) > maxLLMOperations {
+		return grpcutils.InvalidArg("Too many LLM allowedOperations")
+	}
+
+	supported := llmOperationsOpenAI
+	if protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
+		supported = llmOperationsAnthropic
+	}
+
+	var seen []corev1.Service_Spec_Config_LLM_Operation
+	for _, operation := range operations {
+		if operation == corev1.Service_Spec_Config_LLM_OPERATION_UNSET {
+			return grpcutils.InvalidArg("An LLM operation cannot be unset")
+		}
+
+		if !slices.Contains(supported, operation) {
+			return grpcutils.InvalidArg(
+				"The LLM operation %s is unsupported by the %s protocol",
+				operation.String(), protocol.String())
+		}
+
+		if slices.Contains(seen, operation) {
+			return grpcutils.InvalidArg("Duplicate LLM operation: %s", operation.String())
+		}
+		seen = append(seen, operation)
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMModel(ctx context.Context,
+	model *corev1.Service_Spec_Config_LLM_Model) error {
+	if model == nil {
+		return nil
+	}
+
+	switch model.Type.(type) {
+	case *corev1.Service_Spec_Config_LLM_Model_Value:
+		if model.GetValue() == "" {
+			return grpcutils.InvalidArg("The LLM model value cannot be empty")
+		}
+		if len(model.GetValue()) > maxLLMModelLen {
+			return grpcutils.InvalidArg("The LLM model value is too long")
+		}
+	case *corev1.Service_Spec_Config_LLM_Model_Eval:
+		if err := checkCELExpression(ctx, model.GetEval()); err != nil {
+			return grpcutils.InvalidArg("Invalid eval: %s", model.GetEval())
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMLimits(limits *corev1.Service_Spec_Config_LLM_Limits) error {
+	if limits == nil {
+		return nil
+	}
+
+	if limits.MaxRequestBytes > maxLLMRequestBytesLimit {
+		return grpcutils.InvalidArg("maxRequestBytes is above the maximum allowed value")
+	}
+
+	if limits.MaxStreamEventBytes > maxLLMStreamEventBytesLimit {
+		return grpcutils.InvalidArg("maxStreamEventBytes is above the maximum allowed value")
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMVisibility(visibility *corev1.Service_Spec_Config_LLM_Visibility) error {
+	if visibility == nil {
+		return nil
+	}
+
+	for _, hdrs := range [][]string{
+		visibility.IncludeRequestHeaders,
+		visibility.IncludeResponseHeaders,
+		visibility.ExcludeRequestHeaders,
+		visibility.ExcludeResponseHeaders,
+	} {
+		if len(hdrs) > maxLLMVisibilityHeaders {
+			return grpcutils.InvalidArg("Too many LLM visibility headers")
+		}
+		for _, hdr := range hdrs {
+			if err := s.validateGenStr(hdr, true, "key"); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -79,8 +79,9 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	cfg := svc.Spec.Config
 
 	isMCP := ucorev1.ToService(svc).IsMCP()
+	isLLM := ucorev1.ToService(svc).IsLLM()
 
-	if isMCP ||
+	if isMCP || isLLM ||
 		(cfg != nil &&
 			cfg.GetHttp() != nil &&
 			cfg.GetHttp().EnableRequestBuffering) ||
@@ -90,10 +91,14 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 
 		limit := func() int64 {
-			if isMCP {
+			switch {
+			case isMCP:
 				return getMaxMCPBodySize(cfg)
+			case isLLM:
+				return getMaxLLMBodySize(cfg)
+			default:
+				return getMaxBodySize(cfg)
 			}
-			return getMaxBodySize(cfg)
 		}()
 		body, err := io.ReadAll(io.LimitReader(req.Body, limit+1))
 		if err != nil {
@@ -128,7 +133,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		if isMCP && len(additional.Body) > 0 {
+		if (isMCP || isLLM) && len(additional.Body) > 0 {
 			bodyMap := make(map[string]any)
 			if err := json.Unmarshal(additional.Body, &bodyMap); err == nil {
 				additional.bodyMap = bodyMap
@@ -140,9 +145,15 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		req.ContentLength = int64(len(additional.Body))
 	}
 
-	if isMCP {
+	switch {
+	case isMCP:
 		additional.mcpReq = httputils.ParseMCPRequest(req, additional.Body)
 		reqCtx.MCP = additional.mcpReq
+		reqCtx.SetBodyDigest()
+	case isLLM:
+		additional.llmReq = httputils.ParseLLMRequest(req,
+			ucorev1.ToServiceConfig(cfg).GetLLMProtocol(), additional.Body)
+		reqCtx.LLM = additional.llmReq
 		reqCtx.SetBodyDigest()
 	}
 
@@ -192,6 +203,7 @@ type additionalInfo struct {
 	IsBodyJSON bool
 	bodyMap    map[string]any
 	mcpReq     *httputils.MCPRequest
+	llmReq     *httputils.LLMRequest
 }
 
 const maxReqCtxBodySize = middlewares.MaxReqCtxBodySize
@@ -268,6 +280,16 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 				},
 			},
 		}, nil
+	case ucorev1.ToService(svc).IsLLM():
+		return &coctovigilv1.DownstreamRequest{
+			Source: getDownstreamSource(req),
+			Request: &corev1.RequestContext_Request{
+				Ip: ip,
+				Type: &corev1.RequestContext_Request_Llm{
+					Llm: middlewares.GetLLMRequestContext(additional.llmReq, httpC),
+				},
+			},
+		}, nil
 	case ucorev1.ToService(svc).IsGRPC():
 		info, err := httputils.GetGRPCInfo(req.URL.Path)
 		if err != nil {
@@ -323,7 +345,21 @@ const (
 
 	defaultMaxMCPBodySize = 1024 * 1024
 	maxMCPBodySize        = 16 * 1024 * 1024
+
+	defaultMaxLLMBodySize = 8 * 1024 * 1024
+	maxLLMBodySize        = 64 * 1024 * 1024
 )
+
+func getMaxLLMBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
+	configured := svcCfg.GetLlm().GetLimits().GetMaxRequestBytes()
+	if configured == 0 {
+		return defaultMaxLLMBodySize
+	}
+	if int64(configured) > maxLLMBodySize {
+		return maxLLMBodySize
+	}
+	return int64(configured)
+}
 
 func getMaxMCPBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
 	configured := svcCfg.GetMcp().GetLimits().GetMaxRequestBytes()

@@ -22,37 +22,35 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
-func GetMCPRequestContext(mcpReq *httputils.MCPRequest,
-	httpC *corev1.RequestContext_Request_HTTP) *corev1.RequestContext_Request_MCP {
+func GetLLMRequestContext(llmReq *httputils.LLMRequest,
+	httpC *corev1.RequestContext_Request_HTTP) *corev1.RequestContext_Request_LLM {
 
-	ret := &corev1.RequestContext_Request_MCP{
-		Http:            httpC,
-		ProtocolVersion: mcpReq.GetProtocolVersion(),
-		Method:          mcpReq.GetMethod(),
-		Name:            mcpReq.GetName(),
-		RequestID:       mcpReq.GetRequestID(),
-		IsNotification:  mcpReq.GetIsNotification(),
-		Capabilities:    mcpReq.GetCapabilities(),
-		SessionID:       mcpReq.GetSessionID(),
+	return &corev1.RequestContext_Request_LLM{
+		Http:                 httpC,
+		Protocol:             llmReq.GetProtocol(),
+		Operation:            llmReq.GetOperation(),
+		Model:                llmReq.GetModel(),
+		Stream:               llmReq.GetStream(),
+		EstimatedInputTokens: llmReq.GetEstimatedInputTokens(),
+		EstimateQuality:      llmReq.GetEstimateQuality(),
+		MaxOutputTokens:      llmReq.GetMaxOutputTokens(),
+		HasTools:             llmReq.GetToolCount() > 0,
+		ToolCount:            llmReq.GetToolCount(),
+		ToolNames:            llmReq.GetToolNames(),
+		InputItemCount:       llmReq.GetInputItemCount(),
+		HasImageInput:        llmReq.GetHasImageInput(),
+		HasAudioInput:        llmReq.GetHasAudioInput(),
 	}
-
-	if client := mcpReq.GetClient(); client != nil {
-		ret.Client = &corev1.RequestContext_Request_MCP_Client{
-			Name:    client.GetName(),
-			Version: client.GetVersion(),
-			Title:   client.GetTitle(),
-		}
-	}
-
-	return ret
 }
 
-func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
-	mcpReq := httputils.ParseMCPRequest(req, reqCtx.Body)
-	reqCtx.MCP = mcpReq
+func SetLLMRequestContext(reqCtx *RequestContext, req *http.Request) {
+	llmReq := httputils.ParseLLMRequest(req,
+		ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetLLMProtocol(), reqCtx.Body)
+	reqCtx.LLM = llmReq
 
 	reqCtx.BodyJSONMap = nil
 	if len(reqCtx.Body) > 0 {
@@ -66,13 +64,16 @@ func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
 		return
 	}
 
-	mcpC := reqCtx.DownstreamRequest.Request.GetMcp()
-	if mcpC == nil {
+	llmC := reqCtx.DownstreamRequest.Request.GetLlm()
+	if llmC == nil {
 		return
 	}
 
-	httpC := mcpC.Http
+	httpC := llmC.Http
 	if httpC != nil {
+		httpC.Method = req.Method
+		httpC.Path = req.URL.Path
+		httpC.Uri = req.URL.RequestURI()
 		httpC.Body = reqCtx.Body
 		httpC.Size = int64(len(reqCtx.Body))
 		if len(reqCtx.Body) > MaxReqCtxBodySize {
@@ -84,19 +85,17 @@ func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
 		}
 	}
 
-	updated := GetMCPRequestContext(mcpReq, httpC)
-	reqCtx.DownstreamRequest.Request.Type = &corev1.RequestContext_Request_Mcp{
-		Mcp: updated,
+	updated := GetLLMRequestContext(llmReq, httpC)
+	reqCtx.DownstreamRequest.Request.Type = &corev1.RequestContext_Request_Llm{
+		Llm: updated,
 	}
 
 	if reqCtx.DownstreamInfo != nil && reqCtx.DownstreamInfo.Request != nil &&
 		reqCtx.DownstreamInfo.Request != reqCtx.DownstreamRequest.Request {
-		reqCtx.DownstreamInfo.Request.Type = &corev1.RequestContext_Request_Mcp{
-			Mcp: updated,
+		reqCtx.DownstreamInfo.Request.Type = &corev1.RequestContext_Request_Llm{
+			Llm: updated,
 		}
 	}
 
 	reqCtx.ReqCtxMap = nil
 }
-
-const MaxReqCtxBodySize = 2 * 1024 * 1024

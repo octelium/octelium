@@ -1720,3 +1720,109 @@ func TestValidateMCPVisibility(t *testing.T) {
 		}))
 	}
 }
+
+func TestValidateLLMModel(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMModel(ctx, nil))
+	assert.Nil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{}))
+
+	assert.Nil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+			Value: "gpt-4o",
+		},
+	}))
+
+	assert.Nil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Eval{
+			Eval: `ctx.request.llm.model == "fast" ? "gpt-4o-mini" : "gpt-4o"`,
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+			Value: "",
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+			Value: strings.Repeat("a", maxLLMModelLen+1),
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Eval{
+			Eval: `((((`,
+		},
+	}))
+}
+
+func TestValidateLLMOperations(t *testing.T) {
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_OPENAI, nil))
+
+	assert.Nil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
+			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
+			corev1.Service_Spec_Config_LLM_MODELS_LIST,
+		}))
+
+	assert.Nil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_MESSAGES,
+			corev1.Service_Spec_Config_LLM_COUNT_TOKENS,
+		}))
+
+	assert.NotNil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_OPERATION_UNSET,
+		}))
+
+	assert.NotNil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_MESSAGES,
+		}))
+
+	assert.NotNil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_CHAT_COMPLETIONS,
+		}))
+
+	assert.NotNil(t, s.validateLLMOperations(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		[]corev1.Service_Spec_Config_LLM_Operation{
+			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
+			corev1.Service_Spec_Config_LLM_EMBEDDINGS,
+		}))
+}
+
+func TestValidateLLMLimits(t *testing.T) {
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMLimits(nil))
+	assert.Nil(t, s.validateLLMLimits(&corev1.Service_Spec_Config_LLM_Limits{
+		MaxRequestBytes:         16 * 1024 * 1024,
+		MaxStreamEventBytes:     512 * 1024,
+		MaxEstimatedInputTokens: 100000,
+		MaxOutputTokens:         16000,
+		MaxTools:                64,
+	}))
+
+	assert.NotNil(t, s.validateLLMLimits(&corev1.Service_Spec_Config_LLM_Limits{
+		MaxRequestBytes: maxLLMRequestBytesLimit + 1,
+	}))
+
+	assert.NotNil(t, s.validateLLMLimits(&corev1.Service_Spec_Config_LLM_Limits{
+		MaxStreamEventBytes: maxLLMStreamEventBytesLimit + 1,
+	}))
+}

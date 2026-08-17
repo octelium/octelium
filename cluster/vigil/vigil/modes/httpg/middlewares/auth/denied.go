@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/llm"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/mcp"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
@@ -77,6 +78,29 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 			Code:       code,
 			Message:    message,
 			RequestID:  reqCtx.MCP.GetRequestIDRaw(),
+		})
+		return
+	case ucorev1.ToService(svc).IsLLM():
+		errType, code, message := func() (string, string, string) {
+			switch {
+			case isAnonymousAuthorizationMode:
+				return llm.ErrTypePermission, llm.ErrCodeUnauthorized,
+					"Octelium: unauthorized request"
+			case !reqCtx.IsAuthenticated:
+				return llm.ErrTypeAuthentication, llm.ErrCodeUnauthenticated,
+					"Octelium: unauthenticated request"
+			default:
+				return llm.ErrTypePermission, llm.ErrCodeUnauthorized,
+					"Octelium: unauthorized request"
+			}
+		}()
+
+		llm.WriteError(w, &llm.WriteErrorOpts{
+			Protocol:   reqCtx.LLM.GetProtocol(),
+			HTTPStatus: httpStatusCode,
+			Type:       errType,
+			Code:       code,
+			Message:    message,
 		})
 		return
 	case ucorev1.ToService(svc).IsGRPC():

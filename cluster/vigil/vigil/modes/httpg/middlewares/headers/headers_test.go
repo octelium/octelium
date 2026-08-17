@@ -1105,3 +1105,132 @@ func TestMCPResponseHeaders(t *testing.T) {
 	assert.Equal(t, "mcp", hdr.Get("X-Octelium-Test"))
 	assert.Equal(t, "", hdr.Get("X-Upstream-Internal"))
 }
+
+func newLLMReqCtx(isAnonymous bool,
+	cfg *corev1.Service_Spec_Config_LLM) *middlewares.RequestContext {
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "my-llm.default"},
+		Spec: &corev1.Service_Spec{
+			Mode:        corev1.Service_Spec_LLM,
+			IsAnonymous: isAnonymous,
+		},
+		Status: &corev1.Service_Status{
+			NamespaceRef: &metav1.ObjectReference{Name: "default"},
+		},
+	}
+
+	svcCfg := &corev1.Service_Spec_Config{
+		Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},
+	}
+	svc.Spec.Config = svcCfg
+
+	return &middlewares.RequestContext{
+		CreatedAt:     time.Now(),
+		Service:       svc,
+		ServiceConfig: svcCfg,
+		ReqCtxMap:     map[string]any{},
+	}
+}
+
+func TestLLMCredentialHeadersScrubbed(t *testing.T) {
+
+	for _, isAnonymous := range []bool{false, true} {
+		reqCtx := newLLMReqCtx(isAnonymous, &corev1.Service_Spec_Config_LLM{})
+		req := newScrubRequest(t, reqCtx)
+
+		req.Header.Set("Authorization", "Bearer sk-downstream")
+		req.Header.Set("X-Api-Key", "sk-ant-downstream")
+		req.Header.Set("api-key", "azure-downstream")
+		req.Header.Set("User-Agent", "openai-python/1.0")
+
+		assert.Nil(t, (&middleware{}).setRequestHeaders(req, reqCtx))
+
+		assert.Empty(t, req.Header.Get("Authorization"))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+		assert.Empty(t, req.Header.Get("Api-Key"))
+		assert.Equal(t, "openai-python/1.0", req.Header.Get("User-Agent"))
+	}
+
+	{
+		reqCtx := newLLMReqCtx(false, &corev1.Service_Spec_Config_LLM{
+			Header: &corev1.Service_Spec_Config_HTTP_Header{
+				AuthorizationMode: corev1.Service_Spec_Config_HTTP_Header_PASS,
+			},
+		})
+		req := newScrubRequest(t, reqCtx)
+
+		req.Header.Set("Authorization", "Bearer sk-downstream")
+		req.Header.Set("X-Api-Key", "sk-ant-downstream")
+
+		assert.Nil(t, (&middleware{}).setRequestHeaders(req, reqCtx))
+
+		assert.Empty(t, req.Header.Get("Authorization"))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	}
+}
+
+func TestLLMUpstreamSecretFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	authS := &corev1.Service_Spec_Config_HTTP_Auth{
+		Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_{
+			Custom: &corev1.Service_Spec_Config_HTTP_Auth_Custom{
+				Header: "X-Api-Key",
+				Value: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value{
+					Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value_FromSecret{
+						FromSecret: "does-not-exist",
+					},
+				},
+			},
+		},
+	}
+
+	{
+		reqCtx := newLLMReqCtx(false, &corev1.Service_Spec_Config_LLM{Auth: authS})
+		req := newScrubRequest(t, reqCtx)
+		req.Header.Set("X-Api-Key", "sk-ant-downstream")
+
+		mdlwr := &middleware{secretMan: secretMan}
+		assert.NotNil(t, mdlwr.setRequestHeaders(req, reqCtx))
+		assert.Empty(t, req.Header.Get("X-Api-Key"))
+	}
+
+	{
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{Name: "my-http.default"},
+			Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP},
+			Status:   &corev1.Service_Status{},
+		}
+		svcCfg := &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{Auth: authS},
+			},
+		}
+		svc.Spec.Config = svcCfg
+
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:     time.Now(),
+			Service:       svc,
+			ServiceConfig: svcCfg,
+			ReqCtxMap:     map[string]any{},
+		}
+		req := newScrubRequest(t, reqCtx)
+
+		mdlwr := &middleware{secretMan: secretMan}
+		assert.Nil(t, mdlwr.setRequestHeaders(req, reqCtx))
+	}
+}

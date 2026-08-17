@@ -181,7 +181,8 @@ func (s *Server) createServer(ctx context.Context) error {
 		corev1.Service_Spec_GRPC,
 		corev1.Service_Spec_WEB,
 		corev1.Service_Spec_RDP_WEB,
-		corev1.Service_Spec_MCP:
+		corev1.Service_Spec_MCP,
+		corev1.Service_Spec_LLM:
 		zap.L().Debug("Starting in HTTP mode", zap.String("mode", mode.String()))
 		s.server, err = httpg.New(ctx, opts)
 	case corev1.Service_Spec_POSTGRES:

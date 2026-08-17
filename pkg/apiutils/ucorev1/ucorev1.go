@@ -274,7 +274,10 @@ func (s *ServiceConfig) GetHTTPAuth() *corev1.Service_Spec_Config_HTTP_Auth {
 	if ret := s.GetHttp().GetAuth(); ret != nil {
 		return ret
 	}
-	return s.GetMcp().GetAuth()
+	if ret := s.GetMcp().GetAuth(); ret != nil {
+		return ret
+	}
+	return s.GetLlm().GetAuth()
 }
 
 func (s *ServiceConfig) GetHTTPHeader() *corev1.Service_Spec_Config_HTTP_Header {
@@ -284,7 +287,10 @@ func (s *ServiceConfig) GetHTTPHeader() *corev1.Service_Spec_Config_HTTP_Header 
 	if ret := s.GetHttp().GetHeader(); ret != nil {
 		return ret
 	}
-	return s.GetMcp().GetHeader()
+	if ret := s.GetMcp().GetHeader(); ret != nil {
+		return ret
+	}
+	return s.GetLlm().GetHeader()
 }
 
 func (s *ServiceConfig) GetHTTPPath() *corev1.Service_Spec_Config_HTTP_Path {
@@ -294,7 +300,10 @@ func (s *ServiceConfig) GetHTTPPath() *corev1.Service_Spec_Config_HTTP_Path {
 	if ret := s.GetHttp().GetPath(); ret != nil {
 		return ret
 	}
-	return s.GetMcp().GetPath()
+	if ret := s.GetMcp().GetPath(); ret != nil {
+		return ret
+	}
+	return s.GetLlm().GetPath()
 }
 
 func (s *ServiceConfig) GetHTTPCors() *corev1.Service_Spec_Config_HTTP_CORS {
@@ -311,7 +320,10 @@ func (s *ServiceConfig) GetHTTPPlugins() []*corev1.Service_Spec_Config_HTTP_Plug
 	if ret := s.GetHttp().GetPlugins(); len(ret) > 0 {
 		return ret
 	}
-	return s.GetMcp().GetPlugins()
+	if ret := s.GetMcp().GetPlugins(); len(ret) > 0 {
+		return ret
+	}
+	return s.GetLlm().GetPlugins()
 }
 
 func (s *ServiceConfig) GetHTTPVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
@@ -342,6 +354,47 @@ func (s *ServiceConfig) GetMCPVisibility() *corev1.Service_Spec_Config_HTTP_Visi
 	}
 }
 
+func (s *ServiceConfig) GetLLM() *corev1.Service_Spec_Config_LLM {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	return s.GetLlm()
+}
+
+func (s *ServiceConfig) GetLLMProtocol() corev1.Service_Spec_Config_LLM_Protocol {
+	if s == nil || s.Service_Spec_Config == nil {
+		return corev1.Service_Spec_Config_LLM_OPENAI
+	}
+
+	switch s.GetLlm().GetProtocol() {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return corev1.Service_Spec_Config_LLM_ANTHROPIC
+	default:
+		return corev1.Service_Spec_Config_LLM_OPENAI
+	}
+}
+
+func (s *ServiceConfig) GetLLMVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
+	var cfg *corev1.Service_Spec_Config_LLM_Visibility
+	if s != nil && s.Service_Spec_Config != nil {
+		cfg = s.GetLlm().GetVisibility()
+	}
+
+	return &corev1.Service_Spec_Config_HTTP_Visibility{
+		EnableRequestBody:     cfg.GetEnableRequestBody(),
+		EnableRequestBodyMap:  cfg.GetEnableRequestBodyMap(),
+		EnableResponseBody:    cfg.GetEnableResponseBody(),
+		EnableResponseBodyMap: cfg.GetEnableResponseBodyMap(),
+
+		IncludeRequestHeaders:     cfg.GetIncludeRequestHeaders(),
+		IncludeResponseHeaders:    cfg.GetIncludeResponseHeaders(),
+		IncludeAllRequestHeaders:  cfg.GetIncludeAllRequestHeaders(),
+		IncludeAllResponseHeaders: cfg.GetIncludeAllResponseHeaders(),
+		ExcludeRequestHeaders:     cfg.GetExcludeRequestHeaders(),
+		ExcludeResponseHeaders:    cfg.GetExcludeResponseHeaders(),
+	}
+}
+
 func GetRequestHTTP(req *corev1.RequestContext_Request) *corev1.RequestContext_Request_HTTP {
 	if req == nil {
 		return nil
@@ -356,6 +409,8 @@ func GetRequestHTTP(req *corev1.RequestContext_Request) *corev1.RequestContext_R
 		return req.GetKubernetes().GetHttp()
 	case *corev1.RequestContext_Request_Mcp:
 		return req.GetMcp().GetHttp()
+	case *corev1.RequestContext_Request_Llm:
+		return req.GetLlm().GetHttp()
 	default:
 		return nil
 	}
@@ -665,7 +720,8 @@ func (l *Service) GetAllUpstreamEndpointsByConfig(cfg *corev1.Service_Spec_Confi
 		switch l.Spec.Mode {
 		case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,
 			corev1.Service_Spec_WEB, corev1.Service_Spec_RDP_WEB,
-			corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP:
+			corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP,
+			corev1.Service_Spec_LLM:
 			return "http"
 		case corev1.Service_Spec_SSH:
 			return "ssh"
@@ -809,7 +865,8 @@ func (l *Service) IsHTTP() bool {
 		corev1.Service_Spec_GRPC,
 		corev1.Service_Spec_WEB,
 		corev1.Service_Spec_RDP_WEB,
-		corev1.Service_Spec_MCP:
+		corev1.Service_Spec_MCP,
+		corev1.Service_Spec_LLM:
 		return true
 	default:
 		return false
@@ -821,6 +878,13 @@ func (l *Service) IsMCP() bool {
 		return false
 	}
 	return l.Spec.Mode == corev1.Service_Spec_MCP
+}
+
+func (l *Service) IsLLM() bool {
+	if l == nil || l.Service == nil || l.Spec == nil {
+		return false
+	}
+	return l.Spec.Mode == corev1.Service_Spec_LLM
 }
 
 func (l *Service) IsManagedService() bool {
@@ -841,6 +905,10 @@ func (s *Service) IsListenerHTTP2() bool {
 	}
 
 	if s.Spec.Config != nil && s.Spec.Config.GetMcp() != nil && s.Spec.Config.GetMcp().ListenHTTP2 {
+		return true
+	}
+
+	if s.Spec.Config != nil && s.Spec.Config.GetLlm() != nil && s.Spec.Config.GetLlm().ListenHTTP2 {
 		return true
 	}
 
@@ -1103,6 +1171,9 @@ func (s *Service) IsUpstreamHTTP2ByConfig(cfg *corev1.Service_Spec_Config) bool 
 		return true
 	}
 	if cfg != nil && cfg.GetMcp() != nil && cfg.GetMcp().IsUpstreamHTTP2 {
+		return true
+	}
+	if cfg != nil && cfg.GetLlm() != nil && cfg.GetLlm().IsUpstreamHTTP2 {
 		return true
 	}
 	switch s.BackendSchemeByConfig(cfg) {

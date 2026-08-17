@@ -101,6 +101,23 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		)
 	}
 
+	if ucorev1.ToService(reqCtx.Service).IsLLM() {
+		attrs = append(attrs,
+			attribute.KeyValue{
+				Key:   "req.llm.operation",
+				Value: attribute.StringValue(reqCtx.LLM.GetOperation().String()),
+			},
+			attribute.KeyValue{
+				Key:   "req.llm.protocol",
+				Value: attribute.StringValue(reqCtx.LLM.GetProtocol().String()),
+			},
+			attribute.KeyValue{
+				Key:   "req.llm.stream",
+				Value: attribute.BoolValue(reqCtx.LLM.GetStream()),
+			},
+		)
+	}
+
 	m.commonMetrics.AtRequestEnd(reqCtx.CreatedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
 }
 

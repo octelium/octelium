@@ -86,6 +86,11 @@ func isStreamingRequest(req *http.Request) bool {
 	}
 
 	reqCtx := middlewares.GetCtxRequestContext(req.Context())
+
+	if reqCtx != nil && reqCtx.LLM.GetStream() {
+		return true
+	}
+
 	if reqCtx != nil && reqCtx.Service != nil &&
 		ucorev1.ToService(reqCtx.Service).IsKubernetes() {
 		p := req.URL.Path

@@ -268,7 +268,8 @@ func getScheme(l *corev1.Service) string {
 	switch l.Spec.Mode {
 	case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,
 		corev1.Service_Spec_WEB, corev1.Service_Spec_RDP_WEB,
-		corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP:
+		corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP,
+		corev1.Service_Spec_LLM:
 		return "http"
 	case corev1.Service_Spec_SSH:
 		return "ssh"

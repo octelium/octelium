@@ -48,6 +48,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/extproc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/headers"
 	jsonschema "github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/jsonchema"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/llm"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/lua"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/mcp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
@@ -334,10 +335,18 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 		return mcp.NewGuard(ctx, next, s.domain)
 	})
 
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewGuard(ctx, next)
+	})
+
 	appendPlugins(corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH)
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return mcp.NewRebuild(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewRebuild(ctx, next)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
@@ -352,6 +361,14 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return mcp.NewRebuild(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewRebuild(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewModel(ctx, next, s.celEngine)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
