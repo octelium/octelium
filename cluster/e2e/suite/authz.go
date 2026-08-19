@@ -18,6 +18,7 @@ package suite
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -54,6 +55,61 @@ func testAuthorization(t *testing.T, h *harness.H) {
 
 	t.Run("DefaultDeny", func(t *testing.T) {
 		h.WaitDenied(t, c)
+	})
+
+	t.Run("ClusterConfigGlobalPolicy", func(t *testing.T) {
+		h.WaitDenied(t, c)
+
+		sessions := h.UserSessions(t, usr)
+		require.Equal(t, 1, len(sessions))
+		sess := sessions[0]
+
+		cc := h.ClusterConfig(t)
+		original := cc.Spec.Authorization
+
+		t.Cleanup(func() {
+			cc := h.ClusterConfig(t)
+			cc.Spec.Authorization = original
+			h.UpdateClusterConfig(t, cc)
+		})
+
+		authz := &corev1.ClusterConfig_Spec_Authorization{}
+		if original != nil {
+			authz.Policies = append(authz.Policies, original.Policies...)
+			authz.InlinePolicies = append(authz.InlinePolicies, original.InlinePolicies...)
+		}
+		authz.InlinePolicies = append(authz.InlinePolicies, &corev1.InlinePolicy{
+			Name: "allow-e2e-session",
+			Spec: &corev1.Policy_Spec{
+				Rules: []*corev1.Policy_Spec_Rule{
+					harness.MatchRule("allow-e2e-session", 0,
+						corev1.Policy_Spec_Rule_ALLOW,
+						fmt.Sprintf(`ctx.user.metadata.uid == %q && ctx.session.metadata.uid == %q`,
+							usr.Metadata.Uid, sess.Metadata.Uid)),
+				},
+			},
+		})
+
+		cc.Spec.Authorization = authz
+		cc = h.UpdateClusterConfig(t, cc)
+
+		grant := h.WaitAllowed(t, c)
+
+		cc = h.ClusterConfig(t)
+		cc.Spec.Authorization = original
+		h.UpdateClusterConfig(t, cc)
+
+		revoke := h.WaitDenied(t, c)
+
+		zap.L().Info("ClusterConfig global Policy propagation",
+			zap.Duration("grant", grant), zap.Duration("revoke", revoke))
+
+		assert.Less(t, grant, propagationBudget,
+			"granting access with a ClusterConfig Policy took %s, budget is %s",
+			grant, propagationBudget)
+		assert.Less(t, revoke, propagationBudget,
+			"removing a ClusterConfig Policy took %s, budget is %s",
+			revoke, propagationBudget)
 	})
 
 	t.Run("ServiceInlinePolicy", func(t *testing.T) {
