@@ -184,26 +184,35 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 
 func (h *H) waitConnected(ctx context.Context) error {
 	return h.EventuallyErr(ctx, "octelium connect to report a connected Session",
-		ConnectBudget, func(ctx context.Context) error {
-			out, err := h.Output(ctx, "octelium status -o json")
-			if err != nil {
-				return errors.Errorf("octelium status failed: %+v: %s", err, out)
-			}
+		ConnectBudget, h.connected)
+}
 
-			status := &userv1.GetStatusResponse{}
-			if err := pbutils.UnmarshalJSON(out, status); err != nil {
-				return errors.Errorf("could not parse octelium status: %+v: %s", err, out)
-			}
+func (h *H) WaitConnected(t *testing.T) time.Duration {
+	t.Helper()
 
-			if status.Session == nil || status.Session.Status == nil {
-				return errors.Errorf("no Session in octelium status yet")
-			}
-			if !status.Session.Status.IsConnected {
-				return errors.Errorf("the Session is not connected yet")
-			}
+	return h.Within(t, "octelium connect to report a connected Session",
+		ConnectBudget, h.connected)
+}
 
-			return nil
-		})
+func (h *H) connected(ctx context.Context) error {
+	out, err := h.Output(ctx, "octelium status -o json")
+	if err != nil {
+		return errors.Errorf("octelium status failed: %+v: %s", err, out)
+	}
+
+	status := &userv1.GetStatusResponse{}
+	if err := pbutils.UnmarshalJSON(out, status); err != nil {
+		return errors.Errorf("could not parse octelium status: %+v: %s", err, out)
+	}
+
+	if status.Session == nil || status.Session.Status == nil {
+		return errors.Errorf("no Session in octelium status yet")
+	}
+	if !status.Session.Status.IsConnected {
+		return errors.Errorf("the Session is not connected yet")
+	}
+
+	return nil
 }
 
 func (h *H) Status(t *testing.T) *userv1.GetStatusResponse {

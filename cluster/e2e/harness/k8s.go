@@ -117,6 +117,21 @@ func (h *H) ComponentPods(ctx context.Context, component string) ([]k8scorev1.Po
 	return podList.Items, nil
 }
 
+func (h *H) ServicePods(ctx context.Context, service string) ([]k8scorev1.Pod, error) {
+	podList, err := h.k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
+		LabelSelector: fmt.Sprintf("octelium.com/svc=%s", service),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(podList.Items) < 1 {
+		return nil, errors.Errorf("No pods found for the Service %q", service)
+	}
+
+	return podList.Items, nil
+}
+
 func (h *H) CheckComponentRestarts(t *testing.T, component string) {
 	t.Helper()
 

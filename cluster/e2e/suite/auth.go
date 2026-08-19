@@ -27,10 +27,12 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
 func testAuthenticationAssertion(t *testing.T, h *harness.H) {
@@ -275,4 +277,97 @@ func testAuthenticationSession(t *testing.T, h *harness.H) {
 		assert.Equal(t, 1, len(h.UserSessions(t, scoped)),
 			"a refused authentication must not leave a Session behind")
 	})
+}
+
+func testAuthenticationRefresh(t *testing.T, h *harness.H) {
+	svc := h.NewPublicService(t, "default")
+
+	usr := h.CreateWorkloadUser(t, &corev1.User_Spec_Authorization{
+		InlinePolicies: harness.InlineAllowAny("allow"),
+	})
+
+	cred := h.CreateCredential(t, harness.CredentialOpts{
+		User:        usr.Metadata.Name,
+		Type:        corev1.Credential_Spec_AUTH_TOKEN,
+		SessionType: corev1.Session_Status_CLIENTLESS,
+	})
+
+	credToken := h.CredentialToken(t, cred).GetAuthenticationToken()
+	require.NotNil(t, credToken)
+
+	authC := h.AuthC(t)
+	first, err := authC.AuthenticateWithAuthenticationToken(t.Context(),
+		&authv1.AuthenticateWithAuthenticationTokenRequest{
+			AuthenticationToken: credToken.AuthenticationToken,
+		})
+	require.Nil(t, err)
+	require.NotEmpty(t, first.AccessToken)
+	require.NotEmpty(t, first.RefreshToken)
+
+	h.WaitAllowed(t, h.ServiceClient(svc, first.AccessToken))
+
+	sessions := h.UserSessions(t, usr)
+	require.Equal(t, 1, len(sessions))
+
+	before := sessions[0]
+	require.NotNil(t, before.Status)
+	require.NotNil(t, before.Status.Authentication)
+
+	refreshCtx := metadata.AppendToOutgoingContext(t.Context(),
+		"x-octelium-refresh-token", first.RefreshToken)
+	second, err := authC.AuthenticateWithRefreshToken(refreshCtx,
+		&authv1.AuthenticateWithRefreshTokenRequest{})
+	require.Nil(t, err)
+	require.NotEmpty(t, second.AccessToken)
+	require.NotEmpty(t, second.RefreshToken)
+	assert.NotEqual(t, first.AccessToken, second.AccessToken)
+	assert.NotEqual(t, first.RefreshToken, second.RefreshToken)
+
+	h.WaitAllowed(t, h.ServiceClient(svc, second.AccessToken))
+
+	rotated := h.Within(t, "the rotated access token to invalidate the previous token",
+		harness.DecisionBudget, func(ctx context.Context) error {
+			got, err := h.StatusOf(ctx, h.ServiceClient(svc, first.AccessToken), "/")
+			if err != nil {
+				return err
+			}
+			if got != http.StatusUnauthorized && got != http.StatusForbidden {
+				return errors.Errorf("the previous access token returned status %d", got)
+			}
+			return nil
+		})
+
+	zap.L().Info("Access token rotation propagation", zap.Duration("elapsed", rotated))
+	assert.Less(t, rotated, propagationBudget,
+		"rotating an access token took %s, budget is %s", rotated, propagationBudget)
+
+	_, err = authC.AuthenticateWithRefreshToken(refreshCtx,
+		&authv1.AuthenticateWithRefreshTokenRequest{})
+	require.NotNil(t, err)
+	assert.True(t, grpcerr.IsUnauthenticated(err),
+		"the previous refresh token returned an unexpected error: %+v", err)
+
+	after := h.GetSession(t, before.Metadata.Name)
+	require.NotNil(t, after.Status)
+	require.NotNil(t, after.Status.Authentication)
+	require.NotNil(t, after.Status.Authentication.Info)
+	assert.Equal(t, corev1.Session_Status_Authentication_Info_REFRESH_TOKEN,
+		after.Status.Authentication.Info.Type)
+	assert.Equal(t, before.Status.TotalAuthentications+1,
+		after.Status.TotalAuthentications)
+	assert.NotEqual(t, before.Status.Authentication.TokenID,
+		after.Status.Authentication.TokenID)
+	require.True(t, len(after.Status.LastAuthentications) > 0)
+	assert.Equal(t, before.Status.Authentication.TokenID,
+		after.Status.LastAuthentications[0].TokenID)
+
+	h.DeleteSession(t, after)
+
+	newRefreshCtx := metadata.AppendToOutgoingContext(t.Context(),
+		"x-octelium-refresh-token", second.RefreshToken)
+	_, err = authC.AuthenticateWithRefreshToken(newRefreshCtx,
+		&authv1.AuthenticateWithRefreshTokenRequest{})
+	require.NotNil(t, err)
+	assert.True(t, grpcerr.IsUnauthenticated(err),
+		"a refresh token for a deleted Session returned an unexpected error: %+v", err)
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
+	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -184,7 +185,25 @@ func (h *H) Gateways(t *testing.T) []*corev1.Gateway {
 func (h *H) RestartComponent(t *testing.T, component string) time.Duration {
 	t.Helper()
 
-	before, err := h.ComponentPods(t.Context(), component)
+	return h.restartPods(t, component, func(ctx context.Context) ([]k8scorev1.Pod, error) {
+		return h.ComponentPods(ctx, component)
+	})
+}
+
+func (h *H) RestartService(t *testing.T, service string) time.Duration {
+	t.Helper()
+
+	return h.restartPods(t, fmt.Sprintf("Service %s", service),
+		func(ctx context.Context) ([]k8scorev1.Pod, error) {
+			return h.ServicePods(ctx, service)
+		})
+}
+
+func (h *H) restartPods(t *testing.T, name string,
+	get func(context.Context) ([]k8scorev1.Pod, error)) time.Duration {
+	t.Helper()
+
+	before, err := get(t.Context())
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -204,11 +223,15 @@ func (h *H) RestartComponent(t *testing.T, component string) time.Duration {
 		}
 	}
 
-	return h.Within(t, fmt.Sprintf("the %s pods to be replaced", component),
+	return h.Within(t, fmt.Sprintf("the %s pods to be replaced", name),
 		DeploymentBudget, func(ctx context.Context) error {
-			pods, err := h.ComponentPods(ctx, component)
+			pods, err := get(ctx)
 			if err != nil {
 				return err
+			}
+			if len(pods) < len(before) {
+				return errors.Errorf("found %d replacement pods, want at least %d",
+					len(pods), len(before))
 			}
 
 			for _, pod := range pods {

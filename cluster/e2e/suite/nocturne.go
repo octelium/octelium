@@ -52,6 +52,41 @@ func newManagedService(t *testing.T, h *harness.H, image string, port uint32) *c
 	})
 }
 
+func waitServiceAddresses(t *testing.T, h *harness.H,
+	name string, want int) []*corev1.Service_Status_Address {
+	t.Helper()
+
+	var ret []*corev1.Service_Status_Address
+	h.Eventually(t, fmt.Sprintf("the Service to report %d addresses", want),
+		harness.DeploymentBudget, func(ctx context.Context) error {
+			svc, err := h.CoreC().GetService(ctx, &metav1.GetOptions{Name: name})
+			if err != nil {
+				return err
+			}
+			if svc.Status == nil {
+				return errors.Errorf("the Service has no status")
+			}
+			if len(svc.Status.Addresses) != want {
+				return errors.Errorf("the Service reports %d addresses, want %d",
+					len(svc.Status.Addresses), want)
+			}
+			for _, address := range svc.Status.Addresses {
+				if address.PodRef == nil || address.PodRef.Uid == "" {
+					return errors.Errorf("a Service address has no Pod reference")
+				}
+				if address.DualStackIP == nil ||
+					(address.DualStackIP.Ipv4 == "" && address.DualStackIP.Ipv6 == "") {
+					return errors.Errorf("the Pod %s has no Service IP address",
+						address.PodRef.Name)
+				}
+			}
+			ret = svc.Status.Addresses
+			return nil
+		})
+
+	return ret
+}
+
 func testNocturne(t *testing.T, h *harness.H) {
 	t.Run("Reconciliation", func(t *testing.T) {
 		svc := newManagedService(t, h, "nginx", 80)
@@ -77,6 +112,7 @@ func testNocturne(t *testing.T, h *harness.H) {
 		hostname := h.SvcHostname(svc)
 
 		h.MustWaitService(t, svc.Metadata.Name)
+		waitServiceAddresses(t, h, svc.Metadata.Name, 1)
 
 		svc.Spec.Deployment = &corev1.Service_Spec_Deployment{Replicas: 2}
 		svc = h.UpdateService(t, svc)
@@ -100,6 +136,31 @@ func testNocturne(t *testing.T, h *harness.H) {
 				}
 				return nil
 			})
+
+		addresses := waitServiceAddresses(t, h, svc.Metadata.Name, 2)
+		assert.NotEqual(t, addresses[0].PodRef.Uid, addresses[1].PodRef.Uid)
+
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.Deployment.Replicas = 1
+		svc = h.UpdateService(t, svc)
+
+		h.Eventually(t, "the Deployment to scale back to one replica",
+			harness.DeploymentBudget, func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, hostname)
+				if err != nil {
+					return err
+				}
+				if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1 {
+					return errors.Errorf("the Deployment does not request one replica")
+				}
+				if dep.Status.ReadyReplicas != 1 {
+					return errors.Errorf("the Deployment has %d ready replicas, want 1",
+						dep.Status.ReadyReplicas)
+				}
+				return nil
+			})
+
+		waitServiceAddresses(t, h, svc.Metadata.Name, 1)
 	})
 
 	t.Run("UpstreamRollout", func(t *testing.T) {
