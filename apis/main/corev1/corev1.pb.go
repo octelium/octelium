@@ -23745,8 +23745,13 @@ type AccessLog_Entry_Info_LLM_Usage struct {
 	OutputTokens uint64                                `protobuf:"varint,3,opt,name=outputTokens,proto3" json:"outputTokens,omitempty"`
 	// TotalTokens is the total token count reported by the upstream
 	// provider itself. Whenever the provider reports none, which is the
-	// case for the ANTHROPIC protocol, it is the sum of every other
-	// token count of this message.
+	// case for the ANTHROPIC protocol as well as for many
+	// OpenAI-compatible servers, it is computed as the sum of the input
+	// and output tokens plus only those cache token counts that the
+	// provider accounts for additively (i.e. the ANTHROPIC ones). The
+	// OPENAI cached and reasoning token counts are already included in
+	// the input and the output counts respectively and they are
+	// therefore never added again.
 	TotalTokens uint64 `protobuf:"varint,4,opt,name=totalTokens,proto3" json:"totalTokens,omitempty"`
 	// CacheReadInputTokens is the number of the input tokens that were
 	// read from the provider's prompt cache. Note that the providers

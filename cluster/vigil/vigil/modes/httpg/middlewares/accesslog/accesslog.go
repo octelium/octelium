@@ -690,6 +690,11 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 
 	rw.sseLineBuf = append(rw.sseLineBuf, p...)
 
+	maxSSELineBuf := defaultMaxSSELineBuf
+	if rw.maxSSEEvent > 0 {
+		maxSSELineBuf = rw.maxSSEEvent
+	}
+
 	for {
 		idx, sep := indexSSEDelimiter(rw.sseLineBuf)
 		if idx == -1 {
@@ -702,6 +707,12 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 			continue
 		}
 
+		if idx > maxSSELineBuf {
+			rw.sseLineBuf = rw.sseLineBuf[idx+sep:]
+			rw.sseTruncated = true
+			continue
+		}
+
 		event := make([]byte, idx)
 		copy(event, rw.sseLineBuf[:idx])
 		rw.sseLineBuf = rw.sseLineBuf[idx+sep:]
@@ -709,10 +720,6 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 		rw.onSSEEvent(event)
 	}
 
-	maxSSELineBuf := defaultMaxSSELineBuf
-	if rw.maxSSEEvent > 0 {
-		maxSSELineBuf = rw.maxSSEEvent
-	}
 	if len(rw.sseLineBuf) > maxSSELineBuf {
 		rw.sseLineBuf = rw.sseLineBuf[:0]
 		rw.sseDiscarding = true

@@ -389,3 +389,39 @@ func TestLLMAccessLogOversizedStreamEvent(t *testing.T) {
 	assert.Equal(t, uint64(1), llmC.EventCount)
 	assert.Equal(t, "stop", llmC.FinishReason)
 }
+
+func TestLLMAccessLogOversizedStreamEventSingleWrite(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://my-llm.example.com/v1/chat/completions", strings.NewReader(llmReqBody))
+
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+	crw.maxSSEEvent = 512
+	crw.Header().Set("Content-Type", "text/event-stream")
+
+	obs := &llmObserver{}
+	crw.onSSEEvent = obs.onSSEEvent
+
+	_, err := crw.Write([]byte("data: " +
+		`{"id":"chatcmpl-9","usage":{"prompt_tokens":99999,"completion_tokens":1},` +
+		`"pad":"` + strings.Repeat("x", 4096) + `"}` + "\n\n"))
+	assert.Nil(t, err)
+
+	_, err = crw.Write([]byte("data: " +
+		`{"id":"chatcmpl-9","choices":[{"delta":{},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}` + "\n\n"))
+	assert.Nil(t, err)
+
+	md := &middleware{}
+	logE := md.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, "", 1)
+
+	llmC := logE.Entry.Info.GetLlm()
+
+	assert.Equal(t, uint64(5), llmC.Usage.InputTokens)
+	assert.Equal(t, uint64(3), llmC.Usage.OutputTokens)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
+	assert.Equal(t, uint64(1), llmC.EventCount)
+	assert.Equal(t, "stop", llmC.FinishReason)
+}

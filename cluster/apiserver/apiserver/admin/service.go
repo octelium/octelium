@@ -1987,6 +1987,12 @@ func (s *Server) validateLLMModel(ctx context.Context,
 		if len(model.GetValue()) > maxLLMModelLen {
 			return grpcutils.InvalidArg("The LLM model value is too long")
 		}
+		for i := 0; i < len(model.GetValue()); i++ {
+			if model.GetValue()[i] < 0x20 || model.GetValue()[i] == 0x7f {
+				return grpcutils.InvalidArg(
+					"The LLM model value contains an invalid control character")
+			}
+		}
 	case *corev1.Service_Spec_Config_LLM_Model_Eval:
 		if err := checkCELExpression(ctx, model.GetEval()); err != nil {
 			return grpcutils.InvalidArg("Invalid eval: %s", model.GetEval())

@@ -1711,6 +1711,19 @@ func TestValidateLLMModel(t *testing.T) {
 			Eval: `((((`,
 		},
 	}))
+
+	for _, arg := range []string{
+		"gpt-4o\r\nx-injected: 1",
+		"gpt-4o\n",
+		"gpt-4o\x00",
+		"gpt-4o\x7f",
+	} {
+		assert.NotNil(t, s.validateLLMModel(ctx, &corev1.Service_Spec_Config_LLM_Model{
+			Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+				Value: arg,
+			},
+		}), arg)
+	}
 }
 
 func TestValidateLLMLimits(t *testing.T) {

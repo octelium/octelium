@@ -548,3 +548,43 @@ func TestLLMUsagePresence(t *testing.T) {
 		assert.False(t, msg.Usage.IsSet)
 	}
 }
+
+func TestParseLLMResponseUsageNoProviderTotal(t *testing.T) {
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","model":"llama-3","object":"chat.completion",
+			"choices":[{"finish_reason":"stop","message":{"content":"hi"}}],
+			"usage":{"prompt_tokens":100,"completion_tokens":50,
+			"prompt_tokens_details":{"cached_tokens":40}}}`))
+
+		assert.NotNil(t, msg)
+		assert.True(t, msg.Usage.IsSet)
+		assert.Equal(t, uint64(100), msg.Usage.InputTokens)
+		assert.Equal(t, uint64(50), msg.Usage.OutputTokens)
+		assert.Equal(t, uint64(40), msg.Usage.CacheReadInputTokens)
+		assert.Equal(t, uint64(150), msg.Usage.TotalTokens)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"msg_1","model":"claude-sonnet-4","type":"message",
+			"usage":{"input_tokens":100,"output_tokens":50,
+			"cache_read_input_tokens":40,"cache_creation_input_tokens":25}}`))
+
+		assert.NotNil(t, msg)
+		assert.True(t, msg.Usage.IsSet)
+		assert.Equal(t, uint64(215), msg.Usage.TotalTokens)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-2","model":"llama-3","object":"chat.completion",
+			"choices":[{"finish_reason":"stop","message":{"content":"hi"}}],
+			"usage":{"prompt_tokens":100,"completion_tokens":50,
+			"completion_tokens_details":{"reasoning_tokens":30}}}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, uint64(150), msg.Usage.TotalTokens)
+	}
+}

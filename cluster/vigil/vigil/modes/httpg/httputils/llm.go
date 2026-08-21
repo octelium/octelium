@@ -578,6 +578,7 @@ type LLMUsage struct {
 	IsSet bool
 
 	providerTotalTokens uint64
+	cacheTokensAdditive bool
 }
 
 func (u *LLMUsage) Merge(arg LLMUsage) {
@@ -603,6 +604,9 @@ func (u *LLMUsage) Merge(arg LLMUsage) {
 	if arg.providerTotalTokens > 0 {
 		u.providerTotalTokens = arg.providerTotalTokens
 	}
+	if arg.cacheTokensAdditive {
+		u.cacheTokensAdditive = true
+	}
 
 	u.setTotalTokens()
 	u.IsSet = true
@@ -614,8 +618,10 @@ func (u *LLMUsage) setTotalTokens() {
 		return
 	}
 
-	u.TotalTokens = u.InputTokens + u.CacheReadInputTokens +
-		u.CacheCreationInputTokens + u.OutputTokens
+	u.TotalTokens = u.InputTokens + u.OutputTokens
+	if u.cacheTokensAdditive {
+		u.TotalTokens += u.CacheReadInputTokens + u.CacheCreationInputTokens
+	}
 }
 
 type LLMResponse struct {
@@ -688,6 +694,8 @@ func (u *llmUsageJSON) toUsage() LLMUsage {
 		CacheCreationInputTokens: u.CacheCreationInputTokens,
 
 		providerTotalTokens: u.TotalTokens,
+		cacheTokensAdditive: u.CacheReadInputTokens > 0 ||
+			u.CacheCreationInputTokens > 0,
 	}
 
 	if u.PromptTokensDetails != nil {
