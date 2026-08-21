@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -56,6 +57,7 @@ func NewLbManager(octeliumC octeliumc.ClientInterface, vCache *vcache.Cache) *LB
 type Upstream struct {
 	HostPort string
 	URL      *url.URL
+	Path     string
 	IsUser   bool
 	SNIHost  string
 	Host     string
@@ -67,6 +69,19 @@ type Upstream struct {
 }
 
 var ErrNoUpstream = errors.Errorf("No upstreams found")
+
+func (u *Upstream) GetPath() string {
+	if u == nil {
+		return ""
+	}
+
+	ret := strings.TrimSuffix(u.Path, "/")
+	if ret == "" || ret[0] != '/' {
+		return ""
+	}
+
+	return ret
+}
 
 func (l *LBManager) getUpstreamFromSvc(_ context.Context,
 	svc *corev1.Service, cfg *corev1.Service_Spec_Config) (*Upstream, error) {
@@ -115,6 +130,7 @@ func (l *LBManager) doGetUpstream(
 			Port:     ucorev1.EndpointRealPort(u),
 			SNIHost:  getSNIHost(url.Hostname()),
 			URL:      url,
+			Path:     murl.Path,
 		}, nil
 	}
 
@@ -161,6 +177,7 @@ func (l *LBManager) doGetUpstream(
 		Ed25519PublicKey: conn.Ed25519PublicKey,
 		SessionRef:       umetav1.GetObjectReference(sess),
 		URL:              url,
+		Path:             murl.Path,
 	}
 
 	return ret, nil

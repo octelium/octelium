@@ -226,3 +226,59 @@ func TestMCPCommonConfig(t *testing.T) {
 
 	assert.Equal(t, "/prefix", pr.Out.Header.Get("X-Forwarded-Prefix"))
 }
+
+func newUpstreamPathService(mode corev1.Service_Spec_Mode) *corev1.Service {
+	return &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: mode,
+		},
+	}
+}
+
+func TestGetUpstreamPathLLM(t *testing.T) {
+	svc := newUpstreamPathService(corev1.Service_Spec_LLM)
+
+	assert.Equal(t, "/api/v1/chat/completions",
+		getUpstreamPath(svc, "/api/v1", "/v1/chat/completions"))
+	assert.Equal(t, "/openai/v1/chat/completions",
+		getUpstreamPath(svc, "/openai/v1", "/v1/chat/completions"))
+	assert.Equal(t, "/inference/v1/responses",
+		getUpstreamPath(svc, "/inference/v1", "/v1/responses"))
+	assert.Equal(t, "/v1beta/openai/chat/completions",
+		getUpstreamPath(svc, "/v1beta/openai", "/v1/chat/completions"))
+	assert.Equal(t, "/api/v1/models",
+		getUpstreamPath(svc, "/api/v1", "/v1/models"))
+	assert.Equal(t, "/api/v1/models/gpt-4o",
+		getUpstreamPath(svc, "/api/v1", "/v1/models/gpt-4o"))
+	assert.Equal(t, "/anthropic/v1/messages",
+		getUpstreamPath(svc, "/anthropic/v1", "/v1/messages"))
+
+	assert.Equal(t, "/v1/chat/completions",
+		getUpstreamPath(svc, "", "/v1/chat/completions"))
+}
+
+func TestGetUpstreamPathMCP(t *testing.T) {
+	svc := newUpstreamPathService(corev1.Service_Spec_MCP)
+
+	assert.Equal(t, "/api/mcp", getUpstreamPath(svc, "/api/mcp", "/mcp"))
+	assert.Equal(t, "/mcp", getUpstreamPath(svc, "/mcp", "/mcp"))
+	assert.Equal(t, "/messages", getUpstreamPath(svc, "/messages", "/mcp"))
+	assert.Equal(t, "/api/mcp", getUpstreamPath(svc, "/api/mcp", "/"))
+
+	assert.Equal(t, "/mcp", getUpstreamPath(svc, "", "/mcp"))
+}
+
+func TestGetUpstreamPathOtherModes(t *testing.T) {
+	for _, mode := range []corev1.Service_Spec_Mode{
+		corev1.Service_Spec_HTTP,
+		corev1.Service_Spec_WEB,
+		corev1.Service_Spec_GRPC,
+		corev1.Service_Spec_KUBERNETES,
+	} {
+		svc := newUpstreamPathService(mode)
+
+		assert.Equal(t, "/v1/chat/completions",
+			getUpstreamPath(svc, "/api/v1", "/v1/chat/completions"), mode.String())
+		assert.Equal(t, "/foo", getUpstreamPath(svc, "/api", "/foo"), mode.String())
+	}
+}

@@ -33,6 +33,7 @@ import (
 	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -89,6 +90,21 @@ func (h *directResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+}
+
+func getUpstreamPath(svc *corev1.Service, upstreamPath, reqPath string) string {
+	if upstreamPath == "" {
+		return reqPath
+	}
+
+	switch {
+	case ucorev1.ToService(svc).IsLLM():
+		return upstreamPath + strings.TrimPrefix(reqPath, httputils.LLMVersionPrefix)
+	case ucorev1.ToService(svc).IsMCP():
+		return upstreamPath
+	default:
+		return reqPath
 	}
 }
 
@@ -181,6 +197,12 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.URL.Host = upstream.HostPort
 			} else {
 				outReq.URL.Host = upstream.URL.Host
+			}
+
+			if pth := getUpstreamPath(svc, upstream.GetPath(),
+				outReq.URL.Path); pth != outReq.URL.Path {
+				outReq.URL.Path = pth
+				outReq.URL.RawPath = ""
 			}
 
 			outReq.URL.RawQuery = strings.ReplaceAll(outReq.URL.RawQuery, ";", "&")

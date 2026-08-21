@@ -103,6 +103,7 @@ func TestLoadBalancer(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, "https://google.com", u.URL.String())
 		assert.Equal(t, "google.com:443", u.HostPort)
+		assert.Equal(t, "/search", u.GetPath())
 	}
 
 	{
@@ -362,4 +363,15 @@ func TestSetUpstreamSession(t *testing.T) {
 	})
 	assert.NotNil(t, err)
 	assert.Equal(t, ErrNoUpstream, err)
+}
+
+func TestUpstreamGetPath(t *testing.T) {
+	assert.Equal(t, "", (*Upstream)(nil).GetPath())
+	assert.Equal(t, "", (&Upstream{}).GetPath())
+	assert.Equal(t, "", (&Upstream{Path: "/"}).GetPath())
+	assert.Equal(t, "", (&Upstream{Path: "v1"}).GetPath())
+
+	assert.Equal(t, "/api/v1", (&Upstream{Path: "/api/v1"}).GetPath())
+	assert.Equal(t, "/api/v1", (&Upstream{Path: "/api/v1/"}).GetPath())
+	assert.Equal(t, "/mcp", (&Upstream{Path: "/mcp"}).GetPath())
 }

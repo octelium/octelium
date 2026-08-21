@@ -175,6 +175,8 @@ var llmRoutesAnthropic = []llmRoute{
 
 const llmModelsPrefix = "/v1/models/"
 
+const LLMVersionPrefix = "/v1"
+
 func getLLMRoutes(protocol corev1.Service_Spec_Config_LLM_Protocol) []llmRoute {
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:

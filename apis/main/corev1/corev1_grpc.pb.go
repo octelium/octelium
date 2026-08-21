@@ -103,10 +103,15 @@ const (
 // MainServiceClient is the client API for MainService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// MainService is the main Cluster management API. It provides the CRUD
+// operations over the Cluster resources (e.g. Users, Groups, Devices,
+// Sessions, Namespaces, Services, Policies, Credentials, Secrets,
+// IdentityProviders, etc...) as well as over the Cluster configuration itself.
 type MainServiceClient interface {
 	// CreatePolicy creates a Policy
 	CreatePolicy(ctx context.Context, in *Policy, opts ...grpc.CallOption) (*Policy, error)
-	// ListPolicy lists Policy
+	// ListPolicy lists Policies
 	ListPolicy(ctx context.Context, in *ListPolicyOptions, opts ...grpc.CallOption) (*PolicyList, error)
 	// UpdatePolicy updates a Policy
 	UpdatePolicy(ctx context.Context, in *Policy, opts ...grpc.CallOption) (*Policy, error)
@@ -160,7 +165,7 @@ type MainServiceClient interface {
 	DeleteSecret(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
 	// GetSecret retrieves a specific Secret
 	GetSecret(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Secret, error)
-	// UpdateSecret creates a Secret
+	// UpdateSecret updates a Secret
 	UpdateSecret(ctx context.Context, in *Secret, opts ...grpc.CallOption) (*Secret, error)
 	// CreateGroup creates a Group
 	CreateGroup(ctx context.Context, in *Group, opts ...grpc.CallOption) (*Group, error)
@@ -182,7 +187,7 @@ type MainServiceClient interface {
 	UpdateDevice(ctx context.Context, in *Device, opts ...grpc.CallOption) (*Device, error)
 	// CreateCredential creates a Credential
 	CreateCredential(ctx context.Context, in *Credential, opts ...grpc.CallOption) (*Credential, error)
-	// UpdateCredential creates a Credential
+	// UpdateCredential updates a Credential
 	UpdateCredential(ctx context.Context, in *Credential, opts ...grpc.CallOption) (*Credential, error)
 	// DeleteCredential deletes a Credential
 	DeleteCredential(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
@@ -198,7 +203,7 @@ type MainServiceClient interface {
 	GetIdentityProvider(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*IdentityProvider, error)
 	// ListIdentityProvider lists IdentityProviders
 	ListIdentityProvider(ctx context.Context, in *ListIdentityProviderOptions, opts ...grpc.CallOption) (*IdentityProviderList, error)
-	// UpdateIdentityProvider updates an UpdateIdentityProvider
+	// UpdateIdentityProvider updates an IdentityProvider
 	UpdateIdentityProvider(ctx context.Context, in *IdentityProvider, opts ...grpc.CallOption) (*IdentityProvider, error)
 	// DeleteIdentityProvider deletes an IdentityProvider
 	DeleteIdentityProvider(ctx context.Context, in *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error)
@@ -210,9 +215,9 @@ type MainServiceClient interface {
 	ListGateway(ctx context.Context, in *ListGatewayOptions, opts ...grpc.CallOption) (*GatewayList, error)
 	// GetGateway retrieves a specific Gateway
 	GetGateway(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Gateway, error)
-	// GetClusterConfig gets the Cluster Configuration.
+	// GetClusterConfig retrieves the Cluster Configuration
 	GetClusterConfig(ctx context.Context, in *GetClusterConfigRequest, opts ...grpc.CallOption) (*ClusterConfig, error)
-	// UpdateConfig updates the Cluster Configuration.
+	// UpdateClusterConfig updates the Cluster Configuration
 	UpdateClusterConfig(ctx context.Context, in *ClusterConfig, opts ...grpc.CallOption) (*ClusterConfig, error)
 	// ListAuthenticator lists Authenticators
 	ListAuthenticator(ctx context.Context, in *ListAuthenticatorOptions, opts ...grpc.CallOption) (*AuthenticatorList, error)
@@ -885,10 +890,15 @@ func (c *mainServiceClient) GetConfig(ctx context.Context, in *metav1.GetOptions
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
+//
+// MainService is the main Cluster management API. It provides the CRUD
+// operations over the Cluster resources (e.g. Users, Groups, Devices,
+// Sessions, Namespaces, Services, Policies, Credentials, Secrets,
+// IdentityProviders, etc...) as well as over the Cluster configuration itself.
 type MainServiceServer interface {
 	// CreatePolicy creates a Policy
 	CreatePolicy(context.Context, *Policy) (*Policy, error)
-	// ListPolicy lists Policy
+	// ListPolicy lists Policies
 	ListPolicy(context.Context, *ListPolicyOptions) (*PolicyList, error)
 	// UpdatePolicy updates a Policy
 	UpdatePolicy(context.Context, *Policy) (*Policy, error)
@@ -942,7 +952,7 @@ type MainServiceServer interface {
 	DeleteSecret(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
 	// GetSecret retrieves a specific Secret
 	GetSecret(context.Context, *metav1.GetOptions) (*Secret, error)
-	// UpdateSecret creates a Secret
+	// UpdateSecret updates a Secret
 	UpdateSecret(context.Context, *Secret) (*Secret, error)
 	// CreateGroup creates a Group
 	CreateGroup(context.Context, *Group) (*Group, error)
@@ -964,7 +974,7 @@ type MainServiceServer interface {
 	UpdateDevice(context.Context, *Device) (*Device, error)
 	// CreateCredential creates a Credential
 	CreateCredential(context.Context, *Credential) (*Credential, error)
-	// UpdateCredential creates a Credential
+	// UpdateCredential updates a Credential
 	UpdateCredential(context.Context, *Credential) (*Credential, error)
 	// DeleteCredential deletes a Credential
 	DeleteCredential(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
@@ -980,7 +990,7 @@ type MainServiceServer interface {
 	GetIdentityProvider(context.Context, *metav1.GetOptions) (*IdentityProvider, error)
 	// ListIdentityProvider lists IdentityProviders
 	ListIdentityProvider(context.Context, *ListIdentityProviderOptions) (*IdentityProviderList, error)
-	// UpdateIdentityProvider updates an UpdateIdentityProvider
+	// UpdateIdentityProvider updates an IdentityProvider
 	UpdateIdentityProvider(context.Context, *IdentityProvider) (*IdentityProvider, error)
 	// DeleteIdentityProvider deletes an IdentityProvider
 	DeleteIdentityProvider(context.Context, *metav1.DeleteOptions) (*metav1.OperationResult, error)
@@ -992,9 +1002,9 @@ type MainServiceServer interface {
 	ListGateway(context.Context, *ListGatewayOptions) (*GatewayList, error)
 	// GetGateway retrieves a specific Gateway
 	GetGateway(context.Context, *metav1.GetOptions) (*Gateway, error)
-	// GetClusterConfig gets the Cluster Configuration.
+	// GetClusterConfig retrieves the Cluster Configuration
 	GetClusterConfig(context.Context, *GetClusterConfigRequest) (*ClusterConfig, error)
-	// UpdateConfig updates the Cluster Configuration.
+	// UpdateClusterConfig updates the Cluster Configuration
 	UpdateClusterConfig(context.Context, *ClusterConfig) (*ClusterConfig, error)
 	// ListAuthenticator lists Authenticators
 	ListAuthenticator(context.Context, *ListAuthenticatorOptions) (*AuthenticatorList, error)

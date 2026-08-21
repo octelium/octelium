@@ -35,11 +35,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Type is the field by which the list is ordered
 type CommonListOptions_OrderBy_Type int32
 
 const (
+	// TYPE_UNSET falls back to the default behavior which is to order the
+	// list by the creation date.
 	CommonListOptions_OrderBy_TYPE_UNSET CommonListOptions_OrderBy_Type = 0
-	CommonListOptions_OrderBy_NAME       CommonListOptions_OrderBy_Type = 1
+	// NAME orders the list by the objects' names
+	CommonListOptions_OrderBy_NAME CommonListOptions_OrderBy_Type = 1
+	// CREATED_AT orders the list by the objects' creation dates
 	CommonListOptions_OrderBy_CREATED_AT CommonListOptions_OrderBy_Type = 2
 )
 
@@ -84,12 +89,16 @@ func (CommonListOptions_OrderBy_Type) EnumDescriptor() ([]byte, []int) {
 	return file_metav1_proto_rawDescGZIP(), []int{10, 0, 0}
 }
 
+// Mode is the direction in which the list is ordered
 type CommonListOptions_OrderBy_Mode int32
 
 const (
+	// MODE_UNSET falls back to the default direction
 	CommonListOptions_OrderBy_MODE_UNSET CommonListOptions_OrderBy_Mode = 0
-	CommonListOptions_OrderBy_ASC        CommonListOptions_OrderBy_Mode = 1
-	CommonListOptions_OrderBy_DESC       CommonListOptions_OrderBy_Mode = 2
+	// ASC orders the list in an ascending order
+	CommonListOptions_OrderBy_ASC CommonListOptions_OrderBy_Mode = 1
+	// DESC orders the list in a descending order
+	CommonListOptions_OrderBy_DESC CommonListOptions_OrderBy_Mode = 2
 )
 
 // Enum value maps for CommonListOptions_OrderBy_Mode.
@@ -133,6 +142,10 @@ func (CommonListOptions_OrderBy_Mode) EnumDescriptor() ([]byte, []int) {
 	return file_metav1_proto_rawDescGZIP(), []int{10, 0, 1}
 }
 
+// Metadata is the metadata that is common to every Cluster resource. It
+// carries the resource's identity (i.e. its UID and name), its
+// human-readable information as well as the Cluster-managed bookkeeping of the
+// resource's versioning and provenance.
 type Metadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// UID is the unique UUID value for the object assigned by the Cluster.
@@ -156,8 +169,8 @@ type Metadata struct {
 	Labels map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Tags is an optional array of tags that classify the Resource.
 	Tags []string `protobuf:"bytes,8,rep,name=tags,proto3" json:"tags,omitempty"`
-	// Labels is a map of string keys and values that can be used to store
-	// metadata about the object.
+	// Annotations is a map of string keys and values that can be used to store
+	// arbitrary metadata about the object.
 	Annotations map[string]string `protobuf:"bytes,9,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// PicURL is the Picture URL of the resource.
 	PicURL string `protobuf:"bytes,10,opt,name=picURL,proto3" json:"picURL,omitempty"`
@@ -355,6 +368,8 @@ func (x *Metadata) GetSystemLabels() map[string]string {
 	return nil
 }
 
+// ObjectReference is a reference to another Cluster resource. It identifies
+// the referenced resource by its kind and either its UID or its name.
 type ObjectReference struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// APIVersion is the API version of the reference resource
@@ -436,8 +451,12 @@ func (x *ObjectReference) GetResourceVersion() string {
 	return ""
 }
 
+// Duration is a length of time that is expressed in a single unit of choice.
+// Exactly one of the units is set (e.g. `seconds: 30`).
 type Duration struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Type sets the unit in which the Duration is expressed
+	//
 	// Types that are valid to be assigned to Type:
 	//
 	//	*Duration_Milliseconds
@@ -605,9 +624,11 @@ func (*Duration_Weeks) isDuration_Type() {}
 
 func (*Duration_Months) isDuration_Type() {}
 
+// DeleteOptions is the request of the Delete methods. The object to be deleted
+// is identified by either its UID or its name.
 type DeleteOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// UID is the objet's UID.
+	// UID is the object's UID.
 	Uid string `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty"`
 	// Name is the object name that needs to be deleted. Either the name or the
 	// UID must be used.
@@ -660,6 +681,8 @@ func (x *DeleteOptions) GetName() string {
 	return ""
 }
 
+// GetOptions is the request of the Get methods. The object to be retrieved is
+// identified by either its UID or its name.
 type GetOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// UID is the object's UID
@@ -714,6 +737,8 @@ func (x *GetOptions) GetName() string {
 	return ""
 }
 
+// OperationResult is the response of the methods that return no resource (e.g.
+// the Delete methods). It is intentionally empty.
 type OperationResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -750,6 +775,7 @@ func (*OperationResult) Descriptor() ([]byte, []int) {
 	return file_metav1_proto_rawDescGZIP(), []int{5}
 }
 
+// DualStackIP is a pair of an IPv4 and an IPv6 address.
 type DualStackIP struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// IPv4 is the IPv4 address.
@@ -804,6 +830,7 @@ func (x *DualStackIP) GetIpv6() string {
 	return ""
 }
 
+// DualStackNetwork is a pair of an IPv4 and an IPv6 network range.
 type DualStackNetwork struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// V4 is the IPv4 network address represented as CIDR notation IP address
@@ -860,15 +887,17 @@ func (x *DualStackNetwork) GetV6() string {
 	return ""
 }
 
+// ListResponseMeta is the pagination information that is common to every List
+// response.
 type ListResponseMeta struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Page is the page number. Starts with zero.
 	Page uint32 `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
-	// ItemsPerPage is number of items per page.
+	// ItemsPerPage is the number of items per page.
 	ItemsPerPage uint32 `protobuf:"varint,2,opt,name=itemsPerPage,proto3" json:"itemsPerPage,omitempty"`
 	// TotalCount is the total count of items that can be obtained.
 	TotalCount uint32 `protobuf:"varint,3,opt,name=totalCount,proto3" json:"totalCount,omitempty"`
-	// HasMore shows whether there a next page is available
+	// HasMore shows whether a next page is available
 	HasMore       bool `protobuf:"varint,4,opt,name=hasMore,proto3" json:"hasMore,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -932,17 +961,21 @@ func (x *ListResponseMeta) GetHasMore() bool {
 	return false
 }
 
+// LogMetadata is the metadata that is common to every log entry (i.e. the
+// AccessLogs and the ComponentLogs). It is the log-entry counterpart of the
+// Metadata of the Cluster resources.
 type LogMetadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ID is the unique ID for the log entry
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// CreatedAt is the timestamp of creation.
 	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=createdAt,proto3" json:"createdAt,omitempty"`
-	// Actor is the actor whose action triggered the log entry (i.e. the User,
-	// their Session and Device if available)
+	// ActorRef is the reference of the actor whose action triggered the log
+	// entry (i.e. the User, their Session and Device if available)
 	ActorRef *ObjectReference `protobuf:"bytes,3,opt,name=actorRef,proto3" json:"actorRef,omitempty"`
-	// Target is the target of the action that triggered the log entry (e.g. the
-	// Service and its Namespace in the case of a SERVICE log entry)
+	// TargetRef is the reference of the target of the action that triggered the
+	// log entry (e.g. the Service and its Namespace in the case of a SERVICE log
+	// entry)
 	TargetRef     *ObjectReference `protobuf:"bytes,4,opt,name=targetRef,proto3" json:"targetRef,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1006,6 +1039,8 @@ func (x *LogMetadata) GetTargetRef() *ObjectReference {
 	return nil
 }
 
+// CommonListOptions is the listing options that are common to every List
+// request.
 type CommonListOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Page is the page number, starts at zero.
@@ -1069,9 +1104,12 @@ func (x *CommonListOptions) GetOrderBy() *CommonListOptions_OrderBy {
 	return nil
 }
 
+// OrderBy sets the ordering of the returned list
 type CommonListOptions_OrderBy struct {
-	state         protoimpl.MessageState         `protogen:"open.v1"`
-	Type          CommonListOptions_OrderBy_Type `protobuf:"varint,1,opt,name=type,proto3,enum=octelium.api.main.meta.v1.CommonListOptions_OrderBy_Type" json:"type,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Type is the field by which the list is ordered
+	Type CommonListOptions_OrderBy_Type `protobuf:"varint,1,opt,name=type,proto3,enum=octelium.api.main.meta.v1.CommonListOptions_OrderBy_Type" json:"type,omitempty"`
+	// Mode is the direction in which the list is ordered
 	Mode          CommonListOptions_OrderBy_Mode `protobuf:"varint,2,opt,name=mode,proto3,enum=octelium.api.main.meta.v1.CommonListOptions_OrderBy_Mode" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
