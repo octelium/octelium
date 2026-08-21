@@ -162,7 +162,7 @@ func applyMCPGateway(t *testing.T, a *applyCtx) {
 							harness.MatchRule("deny-echo", 0,
 								corev1.Policy_Spec_Rule_DENY,
 								`ctx.request.mcp.method == "tools/call" && ctx.request.mcp.name == "echo"`),
-							harness.MatchRule("allow-rest", 10,
+							harness.MatchRule("allow-rest", 1,
 								corev1.Policy_Spec_Rule_ALLOW, `true`),
 						},
 					},

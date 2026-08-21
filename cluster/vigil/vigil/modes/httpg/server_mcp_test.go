@@ -186,6 +186,7 @@ type tstMCPEnv struct {
 	svcV       *corev1.Service
 	usr        *tstuser.User
 	upstream   *tstSrvMCP
+	authz      *corev1.Service_Spec_Authorization
 	domain     string
 }
 
@@ -247,24 +248,29 @@ func (e *tstMCPEnv) start(t *testing.T, ctx context.Context,
 					Mcp: mcpCfg,
 				},
 			},
-			Authorization: &corev1.Service_Spec_Authorization{
-				InlinePolicies: []*corev1.InlinePolicy{
-					{
-						Spec: &corev1.Policy_Spec{
-							Rules: []*corev1.Policy_Spec_Rule{
-								{
-									Effect: corev1.Policy_Spec_Rule_ALLOW,
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
+			Authorization: func() *corev1.Service_Spec_Authorization {
+				if e.authz != nil {
+					return e.authz
+				}
+				return &corev1.Service_Spec_Authorization{
+					InlinePolicies: []*corev1.InlinePolicy{
+						{
+							Spec: &corev1.Policy_Spec{
+								Rules: []*corev1.Policy_Spec_Rule{
+									{
+										Effect: corev1.Policy_Spec_Rule_ALLOW,
+										Condition: &corev1.Condition{
+											Type: &corev1.Condition_MatchAny{
+												MatchAny: true,
+											},
 										},
 									},
 								},
 							},
 						},
 					},
-				},
-			},
+				}
+			}(),
 		},
 	})
 	assert.Nil(t, err, "%+v", err)
@@ -900,4 +906,214 @@ func TestServerMCPWellKnown(t *testing.T) {
 		res["resource"])
 
 	assert.Equal(t, cnt, env.upstream.getReqCount())
+}
+
+func TestServerMCPLuaToolName(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["params"]["name"] = "delete-production"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	params := env.upstream.getLastBodyMap()["params"].(map[string]any)
+	assert.Equal(t, "delete-production", params["name"])
+
+	res := map[string]any{}
+	assert.Nil(t, json.Unmarshal(resp.Body(), &res))
+
+	content := res["result"].(map[string]any)["content"].([]any)
+	assert.Equal(t, "delete-production", content[0].(map[string]any)["text"])
+}
+
+func TestServerMCPLuaArguments(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-args", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["params"]["arguments"]["environment"] = "sandbox"
+  body["params"]["arguments"]["injected"] = "octelium"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	params := env.upstream.getLastBodyMap()["params"].(map[string]any)
+	assert.Equal(t, "read-report", params["name"])
+
+	args := params["arguments"].(map[string]any)
+	assert.Equal(t, "sandbox", args["environment"])
+	assert.Equal(t, "octelium", args["injected"])
+}
+
+func TestServerMCPLuaAuthorization(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.authz = &corev1.Service_Spec_Authorization{
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:     "deny-delete-production",
+							Priority: 0,
+							Effect:   corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: `ctx.request.mcp.method == "tools/call" && ctx.request.mcp.name == "delete-production"`,
+								},
+							},
+						},
+						{
+							Name:     "allow-rest",
+							Priority: 1,
+							Effect:   corev1.Policy_Spec_Rule_ALLOW,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  if body["params"] ~= nil then
+    body["params"]["name"] = "delete-production"
+    octelium.req.setRequestBody(json.encode(body))
+  end
+end
+`),
+		},
+	}, "")
+
+	{
+		cnt := env.upstream.getReqCount()
+
+		resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode(), resp.String())
+
+		assert.Equal(t, cnt, env.upstream.getReqCount())
+	}
+
+	{
+		resp := env.postMCP(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/list",
+		})
+		assert.True(t, resp.IsSuccess(), resp.String())
+	}
+}
+
+func TestServerMCPLuaPostAuth(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.authz = &corev1.Service_Spec_Authorization{
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:     "deny-delete-production",
+							Priority: 0,
+							Effect:   corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: `ctx.request.mcp.name == "delete-production"`,
+								},
+							},
+						},
+						{
+							Name:     "allow-rest",
+							Priority: 1,
+							Effect:   corev1.Policy_Spec_Rule_ALLOW,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["params"]["name"] = "delete-production"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	params := env.upstream.getLastBodyMap()["params"].(map[string]any)
+	assert.Equal(t, "delete-production", params["name"])
+}
+
+func TestServerMCPLuaResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+function onResponse(ctx)
+  local body = json.decode(octelium.req.getResponseBody())
+  body["result"]["content"][1]["text"] = "redacted-by-octelium"
+  octelium.req.setResponseBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	res := map[string]any{}
+	assert.Nil(t, json.Unmarshal(resp.Body(), &res))
+
+	content := res["result"].(map[string]any)["content"].([]any)
+	assert.Equal(t, "redacted-by-octelium", content[0].(map[string]any)["text"])
 }

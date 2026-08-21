@@ -243,6 +243,7 @@ type tstLLMEnv struct {
 	svcV       *corev1.Service
 	usr        *tstuser.User
 	upstream   *tstSrvLLM
+	authz      *corev1.Service_Spec_Authorization
 }
 
 func newLLMEnv(t *testing.T, ctx context.Context) *tstLLMEnv {
@@ -304,24 +305,29 @@ func (e *tstLLMEnv) start(t *testing.T, ctx context.Context,
 					Llm: llmCfg,
 				},
 			},
-			Authorization: &corev1.Service_Spec_Authorization{
-				InlinePolicies: []*corev1.InlinePolicy{
-					{
-						Spec: &corev1.Policy_Spec{
-							Rules: []*corev1.Policy_Spec_Rule{
-								{
-									Effect: corev1.Policy_Spec_Rule_ALLOW,
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
+			Authorization: func() *corev1.Service_Spec_Authorization {
+				if e.authz != nil {
+					return e.authz
+				}
+				return &corev1.Service_Spec_Authorization{
+					InlinePolicies: []*corev1.InlinePolicy{
+						{
+							Spec: &corev1.Policy_Spec{
+								Rules: []*corev1.Policy_Spec_Rule{
+									{
+										Effect: corev1.Policy_Spec_Rule_ALLOW,
+										Condition: &corev1.Condition{
+											Type: &corev1.Condition_MatchAny{
+												MatchAny: true,
+											},
 										},
 									},
 								},
 							},
 						},
 					},
-				},
-			},
+				}
+			}(),
 		},
 	})
 	assert.Nil(t, err, "%+v", err)
@@ -821,4 +827,255 @@ func TestServerLLMAnthropic(t *testing.T) {
 
 		assert.Equal(t, cnt, env.upstream.getReqCount())
 	}
+}
+
+func newLuaPlugin(name string, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase,
+	inline string) *corev1.Service_Spec_Config_HTTP_Plugin {
+	return &corev1.Service_Spec_Config_HTTP_Plugin{
+		Name:  name,
+		Phase: phase,
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+		Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+			Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+					Inline: inline,
+				},
+			},
+		},
+	}
+}
+
+func TestServerLLMLuaModel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["model"] = "lua-model"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+		Model: &corev1.Service_Spec_Config_LLM_Model{
+			Type: &corev1.Service_Spec_Config_LLM_Model_Eval{
+				Eval: `ctx.request.llm.model + "-fromctx"`,
+			},
+		},
+	}, "")
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(env.newChatBody("gpt-4o")).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	assert.Equal(t, "lua-model-fromctx", env.upstream.getLastBodyMap()["model"])
+}
+
+func TestServerLLMLuaMessages(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-prompt", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["messages"] = {
+    {role = "system", content = "octelium-guardrail"},
+    {role = "user", content = "rewritten-prompt"},
+  }
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(env.newChatBody("gpt-4o")).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	messages := env.upstream.getLastBodyMap()["messages"].([]any)
+	assert.Equal(t, 2, len(messages))
+
+	assert.Equal(t, "system", messages[0].(map[string]any)["role"])
+	assert.Equal(t, "octelium-guardrail", messages[0].(map[string]any)["content"])
+	assert.Equal(t, "rewritten-prompt", messages[1].(map[string]any)["content"])
+}
+
+func TestServerLLMLuaReasoning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("set-reasoning", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["reasoning_effort"] = "low"
+  body["reasoning"] = {effort = "low", summary = "concise"}
+  body["max_tokens"] = 64
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+		Limits: &corev1.Service_Spec_Config_LLM_Limits{
+			MaxOutputTokens: 128,
+		},
+	}, "")
+
+	body := env.newChatBody("gpt-4o")
+	body["reasoning_effort"] = "high"
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(body).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	upstreamBody := env.upstream.getLastBodyMap()
+	assert.Equal(t, "low", upstreamBody["reasoning_effort"])
+	assert.Equal(t, float64(64), upstreamBody["max_tokens"])
+
+	reasoning := upstreamBody["reasoning"].(map[string]any)
+	assert.Equal(t, "low", reasoning["effort"])
+	assert.Equal(t, "concise", reasoning["summary"])
+}
+
+func TestServerLLMLuaModelOrdering(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["model"] = "lua-post-model"
+  body["messages"] = {{role = "user", content = "from-lua"}}
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+		Model: &corev1.Service_Spec_Config_LLM_Model{
+			Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+				Value: "config-model",
+			},
+		},
+	}, "")
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(env.newChatBody("gpt-4o")).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	upstreamBody := env.upstream.getLastBodyMap()
+	assert.Equal(t, "config-model", upstreamBody["model"])
+
+	messages := upstreamBody["messages"].([]any)
+	assert.Equal(t, "from-lua", messages[0].(map[string]any)["content"])
+}
+
+func TestServerLLMLuaAuthorization(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.authz = &corev1.Service_Spec_Authorization{
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:     "deny-lua-model",
+							Priority: 0,
+							Effect:   corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: `ctx.request.llm.model == "lua-model"`,
+								},
+							},
+						},
+						{
+							Name:     "allow-rest",
+							Priority: 1,
+							Effect:   corev1.Policy_Spec_Rule_ALLOW,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["model"] = "lua-model"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	cnt := env.upstream.getReqCount()
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(env.newChatBody("gpt-4o")).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode(), resp.String())
+
+	assert.Equal(t, cnt, env.upstream.getReqCount())
+}
+
+func TestServerLLMLuaResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			newLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+function onResponse(ctx)
+  local body = json.decode(octelium.req.getResponseBody())
+  body["choices"][1]["message"]["content"] = "redacted-by-octelium"
+  octelium.req.setResponseBody(json.encode(body))
+end
+`),
+		},
+	}, "")
+
+	resp, err := resty.New().SetDebug(true).R().
+		SetBody(env.newChatBody("gpt-4o")).
+		Post(env.getURL("/v1/chat/completions"))
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, resp.IsSuccess(), resp.String())
+
+	res := map[string]any{}
+	assert.Nil(t, json.Unmarshal(resp.Body(), &res))
+
+	choices := res["choices"].([]any)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	assert.Equal(t, "redacted-by-octelium", message["content"])
 }

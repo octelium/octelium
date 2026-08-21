@@ -173,7 +173,7 @@ func applyLLMGateway(t *testing.T, a *applyCtx, upstream *harness.LLMSrv) {
 							harness.MatchRule("deny-model", 0,
 								corev1.Policy_Spec_Rule_DENY,
 								`ctx.request.llm.model == "e2e-denied"`),
-							harness.MatchRule("allow-rest", 10,
+							harness.MatchRule("allow-rest", 1,
 								corev1.Policy_Spec_Rule_ALLOW, `true`),
 						},
 					},
