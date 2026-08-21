@@ -32,6 +32,7 @@ var manifestFS embed.FS
 type manifestVars struct {
 	WSEchoPort int
 	MCPPort    int
+	LLMPort    int
 }
 
 func renderManifests(t *testing.T, vars manifestVars) (string, []string) {

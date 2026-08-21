@@ -30,3 +30,17 @@ spec:
     upstream:
       url: http://localhost:{{ .MCPPort }}
       user: root
+---
+kind: Service
+metadata:
+  name: llm-echo
+spec:
+  mode: LLM
+  isPublic: true
+  port: 80
+  config:
+    upstream:
+      url: http://localhost:{{ .LLMPort }}
+      user: root
+    llm:
+      protocol: OPENAI

@@ -41,6 +41,7 @@ var applyServices = []string{
 	"s3",
 	"opensearch",
 	"mcp-echo",
+	"llm-echo",
 	"clickhouse",
 	"llama",
 	"mongo",
@@ -65,6 +66,7 @@ func testApply(t *testing.T, h *harness.H) {
 
 	wsSrv := h.StartHTTPUpstream(t, &harness.TestSrvHTTP{IsWS: true})
 	mcpSrv := h.StartMCPUpstream(t, nil)
+	llmSrv := h.StartLLMUpstream(t, nil)
 
 	t.Run("Secrets", func(t *testing.T) {
 		h.MustRun(t, "octeliumctl create secret password --value password")
@@ -75,6 +77,7 @@ func testApply(t *testing.T, h *harness.H) {
 	dir, names := renderManifests(t, manifestVars{
 		WSEchoPort: wsSrv.Port,
 		MCPPort:    mcpSrv.Port,
+		LLMPort:    llmSrv.Port,
 	})
 
 	t.Run("Apply", func(t *testing.T) {
@@ -117,6 +120,8 @@ func testApply(t *testing.T, h *harness.H) {
 		{"WebSocket", applyWebSocket},
 		{"NATS", applyNATS},
 		{"MCP", applyMCP},
+		{"MCPGateway", applyMCPGateway},
+		{"LLMGateway", func(t *testing.T, a *applyCtx) { applyLLMGateway(t, a, llmSrv) }},
 		{"OpenSearch", applyOpenSearch},
 		{"ClickHouse", applyClickHouse},
 		{"MySQL", applyMySQL},
