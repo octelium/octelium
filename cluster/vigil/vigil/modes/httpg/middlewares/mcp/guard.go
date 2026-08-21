@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 
@@ -323,28 +322,16 @@ func (m *guard) checkSingletonHeaders(req *http.Request, reqID json.RawMessage) 
 func (m *guard) checkOrigin(req *http.Request,
 	cfg *corev1.Service_Spec_Config_MCP) *WriteErrorOpts {
 
-	originCfg := cfg.GetOrigin()
-	if originCfg.GetDisable() {
+	if cfg.GetDisableOriginCheck() {
 		return nil
 	}
 
-	vals := req.Header.Values("Origin")
-	if len(vals) == 0 {
+	if len(req.Header.Values("Origin")) == 0 {
 		return nil
 	}
 
-	if len(vals) == 1 {
-		if origin, ok := normalizeOrigin(vals[0]); ok {
-			if isSameOrigin(req, origin) {
-				return nil
-			}
-
-			for _, allowed := range originCfg.GetAllowed() {
-				if normalized, ok := normalizeOrigin(allowed); ok && normalized == origin {
-					return nil
-				}
-			}
-		}
+	if httputils.GetCORSOrigin(req, cfg.GetCors(), m.domain) != "" {
+		return nil
 	}
 
 	return &WriteErrorOpts{
@@ -352,45 +339,6 @@ func (m *guard) checkOrigin(req *http.Request,
 		Code:       ErrCodeOriginRejected,
 		Message:    "Octelium: the Origin request header is not allowed",
 	}
-}
-
-func isSameOrigin(req *http.Request, origin string) bool {
-	if req.Host == "" {
-		return false
-	}
-
-	for _, scheme := range []string{"https", "http"} {
-		if self, ok := normalizeOrigin(scheme + "://" + req.Host); ok && self == origin {
-			return true
-		}
-	}
-
-	return false
-}
-
-func normalizeOrigin(arg string) (string, bool) {
-	u, err := url.Parse(arg)
-	if err != nil || u.Scheme == "" || u.Host == "" ||
-		u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", false
-	}
-
-	scheme := strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
-	if host == "" {
-		return "", false
-	}
-
-	port := u.Port()
-	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
-		port = ""
-	}
-
-	if port == "" {
-		return fmt.Sprintf("%s://%s", scheme, host), true
-	}
-
-	return fmt.Sprintf("%s://%s:%s", scheme, host, port), true
 }
 
 func (m *guard) checkContentType(req *http.Request, reqID json.RawMessage) *WriteErrorOpts {

@@ -57,9 +57,6 @@ func New(ctx context.Context,
 
 func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	reqCtx := middlewares.GetCtxRequestContext(req.Context())
-	if isPreflight := m.processCORSHeaders(rw, req, reqCtx); isPreflight {
-		return
-	}
 
 	if err := m.setRequestHeaders(req, reqCtx); err != nil {
 		zap.L().Warn("Could not setRequestHeaders", zap.Error(err))
@@ -330,45 +327,6 @@ func scrubLLMCredentialHeaders(req *http.Request) {
 	}
 }
 
-func (m *middleware) processCORSHeaders(rw http.ResponseWriter, req *http.Request, reqCtx *middlewares.RequestContext) bool {
-	svcCfg := reqCtx.ServiceConfig
-
-	cors := ucorev1.ToServiceConfig(svcCfg).GetHTTPCors()
-	if cors == nil {
-		return false
-	}
-
-	reqAcMethod := req.Header.Get("Access-Control-Request-Method")
-	originHeader := req.Header.Get("Origin")
-
-	if reqAcMethod != "" && originHeader != "" && req.Method == http.MethodOptions {
-		if cors.AllowCredentials {
-			rw.Header().Set("Access-Control-Allow-Credentials", "true")
-		}
-
-		if cors.AllowHeaders != "" {
-			rw.Header().Set("Access-Control-Allow-Headers", cors.AllowHeaders)
-		}
-
-		if cors.AllowMethods != "" {
-			rw.Header().Set("Access-Control-Allow-Methods", cors.AllowMethods)
-		}
-
-		allowed, match := m.isOriginAllowed(originHeader, cors.AllowOriginStringMatch)
-		if allowed {
-			rw.Header().Set("Access-Control-Allow-Origin", match)
-		}
-
-		if cors.MaxAge != "" {
-			rw.Header().Set("Access-Control-Max-Age", cors.MaxAge)
-		}
-
-		return true
-	}
-
-	return false
-}
-
 func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request, reqCtx *middlewares.RequestContext) {
 	svcCfg := reqCtx.ServiceConfig
 
@@ -401,35 +359,8 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 		}
 
 	}
-	if cors := ucorev1.ToServiceConfig(svcCfg).GetHTTPCors(); cors != nil {
-
-		originHeader := req.Header.Get("Origin")
-		allowed, match := m.isOriginAllowed(originHeader, cors.AllowOriginStringMatch)
-
-		if allowed {
-			rwHdr.Set("Access-Control-Allow-Origin", match)
-		}
-
-		if cors.AllowCredentials {
-			rwHdr.Set("Access-Control-Allow-Credentials", "true")
-		}
-		if cors.AllowHeaders != "" {
-			rwHdr.Set("Access-Control-Expose-Headers", cors.AllowHeaders)
-		}
-
-	}
 
 	rwHdr.Set("Server", "octelium")
-}
-
-func (m *middleware) isOriginAllowed(origin string, allowOriginList []string) (bool, string) {
-	for _, item := range allowOriginList {
-		if item == "*" || item == origin {
-			return true, item
-		}
-	}
-
-	return false, ""
 }
 
 const octeliumHeaderPrefix = "x-octelium-"

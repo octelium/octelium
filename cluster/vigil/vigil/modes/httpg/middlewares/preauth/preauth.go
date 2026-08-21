@@ -72,6 +72,20 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	corsCfg := ucorev1.ToServiceConfig(svc.Spec.Config).GetHTTPCors()
+	corsOrigin := httputils.GetCORSOrigin(req, corsCfg, m.domain)
+
+	if httputils.IsCORSPreflight(req) {
+		httputils.WriteCORSPreflight(w, req, corsCfg, corsOrigin, m.domain)
+		return
+	}
+
+	if _, ok := httputils.GetRequestOrigin(req); ok {
+		crw := newCORSResponseWriter(w, corsCfg, corsOrigin, m.domain)
+		defer crw.commit()
+		w = crw
+	}
+
 	var err error
 
 	additional := &additionalInfo{}

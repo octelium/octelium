@@ -310,7 +310,13 @@ func (s *ServiceConfig) GetHTTPCors() *corev1.Service_Spec_Config_HTTP_CORS {
 	if s == nil || s.Service_Spec_Config == nil {
 		return nil
 	}
-	return s.GetHttp().GetCors()
+	if ret := s.GetHttp().GetCors(); ret != nil {
+		return ret
+	}
+	if ret := s.GetMcp().GetCors(); ret != nil {
+		return ret
+	}
+	return s.GetLlm().GetCors()
 }
 
 func (s *ServiceConfig) GetHTTPPlugins() []*corev1.Service_Spec_Config_HTTP_Plugin {

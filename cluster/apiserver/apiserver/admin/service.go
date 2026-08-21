@@ -1841,8 +1841,6 @@ const (
 	maxMCPRequestBytesLimit     = 16 * 1024 * 1024
 	maxMCPStreamEventBytesLimit = 4 * 1024 * 1024
 
-	maxMCPAllowedOrigins    = 64
-	maxMCPOriginLen         = 256
 	maxMCPVisibilityHeaders = 128
 )
 
@@ -1864,7 +1862,7 @@ func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec
 		return err
 	}
 
-	if err := s.validateMCPOrigin(mcp.GetOrigin()); err != nil {
+	if err := s.validateHTTPCors(mcp.GetCors()); err != nil {
 		return err
 	}
 
@@ -1900,6 +1898,9 @@ func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec
 }
 
 const (
+	maxCorsAllowedOrigins = 64
+	maxCorsOriginLen      = 256
+
 	maxLLMModelLen = 256
 
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
@@ -1927,6 +1928,10 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 	}
 
 	if err := s.validateLLMVisibility(llm.GetVisibility()); err != nil {
+		return err
+	}
+
+	if err := s.validateHTTPCors(llm.GetCors()); err != nil {
 		return err
 	}
 
@@ -2112,30 +2117,38 @@ func (s *Server) validateMCPLimits(limits *corev1.Service_Spec_Config_MCP_Limits
 	return nil
 }
 
-func (s *Server) validateMCPOrigin(origin *corev1.Service_Spec_Config_MCP_Origin) error {
-	if origin == nil {
+func (s *Server) validateHTTPCors(cors *corev1.Service_Spec_Config_HTTP_CORS) error {
+	if cors == nil {
 		return nil
 	}
 
-	if len(origin.Allowed) > maxMCPAllowedOrigins {
-		return grpcutils.InvalidArg("Too many allowed MCP Origins")
+	if len(cors.AllowOriginStringMatch) > maxCorsAllowedOrigins {
+		return grpcutils.InvalidArg("Too many allowed CORS origins")
 	}
 
 	var seen []string
-	for _, arg := range origin.Allowed {
-		if len(arg) > maxMCPOriginLen {
-			return grpcutils.InvalidArg("The allowed Origin is too long")
+	for _, arg := range cors.AllowOriginStringMatch {
+		if arg == "*" {
+			if slices.Contains(seen, arg) {
+				return grpcutils.InvalidArg("Duplicate allowed CORS origin: %s", arg)
+			}
+			seen = append(seen, arg)
+			continue
+		}
+
+		if len(arg) > maxCorsOriginLen {
+			return grpcutils.InvalidArg("The allowed CORS origin is too long")
 		}
 
 		u, err := url.Parse(arg)
 		if err != nil || u.Scheme == "" || u.Host == "" ||
 			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			return grpcutils.InvalidArg(
-				`The allowed Origin must be in the "scheme://host[:port]" format: %s`, arg)
+				`The allowed CORS origin must be either "*" or in the "scheme://host[:port]" format: %s`, arg)
 		}
 
 		if slices.Contains(seen, arg) {
-			return grpcutils.InvalidArg("Duplicate allowed Origin: %s", arg)
+			return grpcutils.InvalidArg("Duplicate allowed CORS origin: %s", arg)
 		}
 		seen = append(seen, arg)
 	}

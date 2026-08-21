@@ -555,8 +555,8 @@ func TestGuardOrigin(t *testing.T) {
 		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
 			"Origin": "https://console.example.com",
 		}, &corev1.Service_Spec_Config_MCP{
-			Origin: &corev1.Service_Spec_Config_MCP_Origin{
-				Allowed: []string{"https://console.example.com:443"},
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowOriginStringMatch: []string{"https://console.example.com:443"},
 			},
 		})
 
@@ -567,7 +567,7 @@ func TestGuardOrigin(t *testing.T) {
 		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
 			"Origin": "https://evil.com",
 		}, &corev1.Service_Spec_Config_MCP{
-			Origin: &corev1.Service_Spec_Config_MCP_Origin{Disable: true},
+			DisableOriginCheck: true,
 		})
 
 		assert.True(t, ret.isNext)
@@ -658,5 +658,115 @@ func TestGuardInvalidHeaderName(t *testing.T) {
 		}, &corev1.Service_Spec_Config_MCP{})
 
 		assert.True(t, ret.isNext)
+	}
+}
+
+func TestGuardOriginCors(t *testing.T) {
+	ctx := context.Background()
+
+	serve := func(cfg *corev1.Service_Spec_Config_MCP, origin string) int {
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+		mdlwr, err := NewGuard(ctx, next, "example.com")
+		assert.Nil(t, err)
+
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-mcp.example.com/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Origin", origin)
+
+		req = req.WithContext(context.WithValue(ctx,
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt: time.Now(),
+				Service: &corev1.Service{
+					Metadata: &metav1.Metadata{Name: "my-mcp.default"},
+					Spec: &corev1.Service_Spec{
+						Mode:     corev1.Service_Spec_MCP,
+						IsPublic: true,
+					},
+					Status: &corev1.Service_Status{
+						NamespaceRef: &metav1.ObjectReference{Name: "default"},
+					},
+				},
+				ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Mcp{Mcp: cfg},
+				},
+				MCP: httputils.ParseMCPRequest(req, []byte(body)),
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		return rw.Result().StatusCode
+	}
+
+	{
+		cfg := &corev1.Service_Spec_Config_MCP{}
+		assert.Equal(t, http.StatusForbidden,
+			serve(cfg, "https://console.example.com"))
+	}
+
+	{
+		cfg := &corev1.Service_Spec_Config_MCP{
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowOriginStringMatch: []string{"https://console.example.com"},
+			},
+		}
+		assert.Equal(t, http.StatusOK, serve(cfg, "https://console.example.com"))
+	}
+
+	{
+		cfg := &corev1.Service_Spec_Config_MCP{
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowOriginStringMatch: []string{"https://console.example.com"},
+			},
+		}
+		assert.Equal(t, http.StatusForbidden,
+			serve(cfg, "https://evil.example.com"))
+	}
+}
+
+func TestGuardOriginClusterServices(t *testing.T) {
+
+	for _, origin := range []string{
+		"https://console.octelium.example.com",
+		"https://another-svc.example.com",
+		"https://example.com",
+	} {
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": origin,
+		}, &corev1.Service_Spec_Config_MCP{
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowClusterServices: true,
+			},
+		})
+
+		assert.True(t, ret.isNext, origin)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://notexample.com",
+		}, &corev1.Service_Spec_Config_MCP{
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowClusterServices: true,
+			},
+		})
+
+		assert.False(t, ret.isNext)
+		assert.Equal(t, http.StatusForbidden, ret.code)
+		assert.Equal(t, ErrCodeOriginRejected, ret.errCode)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://console.octelium.example.com",
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext)
+		assert.Equal(t, http.StatusForbidden, ret.code)
 	}
 }
