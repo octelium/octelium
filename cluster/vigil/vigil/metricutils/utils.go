@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 )
 
 func GetKey(arg string) string {
@@ -142,6 +143,9 @@ func NewCommonMetrics(ctx context.Context, svc *corev1.Service) (*CommonMetrics,
 	}
 
 	ret.CommonAttributeSet = GetServiceAttributes(svc)
+
+	zap.L().Debug("Initialized Vigil common metrics",
+		zap.String("attributes", ret.CommonAttributeSet.Encoded(attribute.DefaultEncoder())))
 
 	return ret, nil
 }
