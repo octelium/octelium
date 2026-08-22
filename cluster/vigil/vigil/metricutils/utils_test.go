@@ -266,3 +266,41 @@ func TestAddUsageSkipsOverflow(t *testing.T) {
 		}
 	}
 }
+
+func TestAddUsageRegistersZeroedCounters(t *testing.T) {
+	ctx := context.Background()
+	reader := setTestMeterProvider(t)
+
+	m, err := NewLLMMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
+	m.AddUsage(&LLMUsageOpts{
+		InputTokens:  10,
+		OutputTokens: 20,
+		TotalTokens:  30,
+	}, nil)
+
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(ctx, &rm))
+
+	for _, name := range []string{
+		"llm.tokens.input",
+		"llm.tokens.output",
+		"llm.tokens.total",
+		"llm.tokens.cache_read",
+		"llm.tokens.cache_write",
+		"llm.tokens.reasoning",
+		"llm.stream.events",
+	} {
+		findSumDataPoint(t, &rm, name)
+	}
+
+	assert.Equal(t, int64(0), findSumDataPoint(t, &rm, "llm.tokens.reasoning").Value)
+	assert.Equal(t, int64(10), findSumDataPoint(t, &rm, "llm.tokens.input").Value)
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, mt := range sm.Metrics {
+			assert.NotEqual(t, "llm.ttft", mt.Name)
+		}
+	}
+}

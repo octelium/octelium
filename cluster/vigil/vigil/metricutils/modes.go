@@ -150,7 +150,7 @@ func (m *LLMMetrics) AddUsage(opts *LLMUsageOpts, attrs metric.MeasurementOption
 		{m.TotalTokens, opts.TotalTokens},
 		{m.StreamEvents, opts.StreamEvents},
 	} {
-		if it.value > 0 && it.value <= math.MaxInt64 {
+		if it.value <= math.MaxInt64 {
 			it.counter.Add(ctx, int64(it.value), addOpts...)
 		}
 	}
