@@ -95,6 +95,7 @@ func (s *Server) handleUnaryRequest(ctx context.Context, req any, info *grpc.Una
 	case "List":
 		retItems, listMeta, err := s.doList(ctx, req.(*rmetav1.ListOptions), i.api, i.version, i.kind)
 		if err != nil {
+			s.commonMetrics.atRequestEnd(startedAt.AsTime(), commonAttrs(err, "list"))
 			return nil, err
 		}
 		ret, err := s.toResourceList(retItems, listMeta, i.api, i.version, i.kind)
