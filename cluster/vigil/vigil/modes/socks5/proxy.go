@@ -44,6 +44,8 @@ type proxy struct {
 	bytesFromDownstream int64
 	bytesToDownstream   int64
 
+	upstreamErr error
+
 	wg sync.WaitGroup
 }
 
@@ -63,6 +65,7 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 			zap.Error(err))
 
 		gosocks5.SendReply(p.dctx.downstreamWriter, statute.RepServerFailure, nil)
+		p.upstreamErr = err
 		return err
 	}
 

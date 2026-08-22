@@ -31,6 +31,8 @@ import (
 
 var defaultAddr = "octelium-collector.octelium.svc:8080"
 
+const defaultCardinalityLimit = 20000
+
 func CreateMetricsProvider(ctx context.Context, addr string) (*sdkmetric.MeterProvider, error) {
 
 	resource, err := getResource(ctx)
@@ -58,6 +60,7 @@ func CreateMetricsProvider(ctx context.Context, addr string) (*sdkmetric.MeterPr
 	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(resource),
 		sdkmetric.WithReader(reader),
+		sdkmetric.WithCardinalityLimit(defaultCardinalityLimit),
 	)
 
 	otel.SetMeterProvider(meterProvider)

@@ -40,9 +40,8 @@ import (
 )
 
 const (
-	maxMCPNameValues     = 128
-	maxGRPCServiceValues = 128
-	maxGRPCMethodValues  = 256
+	maxMCPNameValues   = 128
+	maxGRPCRouteValues = 256
 )
 
 type middleware struct {
@@ -50,8 +49,7 @@ type middleware struct {
 	commonMetrics *metricutils.CommonMetrics
 	llmMetrics    *metricutils.LLMMetrics
 	mcpNames      *metricutils.BoundedValues
-	grpcServices  *metricutils.BoundedValues
-	grpcMethods   *metricutils.BoundedValues
+	grpcRoutes    *metricutils.BoundedValues
 }
 
 func New(ctx context.Context, next http.Handler,
@@ -63,8 +61,7 @@ func New(ctx context.Context, next http.Handler,
 		commonMetrics: commonMetrics,
 		llmMetrics:    llmMetrics,
 		mcpNames:      metricutils.NewBoundedValues(maxMCPNameValues),
-		grpcServices:  metricutils.NewBoundedValues(maxGRPCServiceValues),
-		grpcMethods:   metricutils.NewBoundedValues(maxGRPCMethodValues),
+		grpcRoutes:    metricutils.NewBoundedValues(maxGRPCRouteValues),
 	}, nil
 }
 
@@ -209,6 +206,8 @@ func (m *middleware) getGRPCAttributes(crw *responseWriter,
 	}
 
 	grpcI := reqCtx.DownstreamInfo.GetRequest().GetGrpc()
+	service, method := m.getGRPCRoute(
+		grpcI.GetServiceFullName(), grpcI.GetMethod())
 
 	return []attribute.KeyValue{
 		{
@@ -220,15 +219,26 @@ func (m *middleware) getGRPCAttributes(crw *responseWriter,
 			Value: attribute.StringValue(statusClass),
 		},
 		{
-			Key: "req.grpc.service_full_name",
-			Value: attribute.StringValue(
-				m.grpcServices.Get(grpcI.GetServiceFullName())),
+			Key:   "req.grpc.service_full_name",
+			Value: attribute.StringValue(service),
 		},
 		{
 			Key:   "req.grpc.method",
-			Value: attribute.StringValue(m.grpcMethods.Get(grpcI.GetMethod())),
+			Value: attribute.StringValue(method),
 		},
 	}
+}
+
+func (m *middleware) getGRPCRoute(service, method string) (string, string) {
+	if service == "" || method == "" {
+		return metricutils.ValueUnset, metricutils.ValueUnset
+	}
+
+	if m.grpcRoutes.Get(service+"/"+method) == metricutils.ValueOther {
+		return metricutils.ValueOther, metricutils.ValueOther
+	}
+
+	return service, method
 }
 
 func getGRPCStatusCode(hdr http.Header) (int, bool) {
@@ -693,9 +703,14 @@ func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (r *responseWriter) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	f, ok := r.ResponseWriter.(http.Flusher)
+	if !ok {
+		return
 	}
+
+	r.setFirstByteAt()
+	r.resolveSSE()
+	f.Flush()
 }
 
 func (p *responseWriter) Push(target string, opts *http.PushOptions) error {

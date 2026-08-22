@@ -383,11 +383,21 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 
 	s.metricsStore.AtRequestStart()
 	s.metricsStore.AtSessionStart()
-	err = dctx.serve(ctx, s.lbManager, svc, s.secretMan)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, socks5Attrs)
-	s.metricsStore.AtSessionEnd(dctx.createdAt, socks5Attrs)
-	s.metricsStore.AddBytesTransferred(
-		dctx.proxy.bytesToDownstream, dctx.proxy.bytesFromDownstream, socks5Attrs)
+
+	func() {
+		defer func() {
+			s.metricsStore.AtRequestEnd(dctx.createdAt, socks5Attrs)
+			s.metricsStore.AtSessionEnd(dctx.createdAt, socks5Attrs)
+			s.metricsStore.AddBytesTransferred(
+				dctx.proxy.bytesToDownstream, dctx.proxy.bytesFromDownstream, socks5Attrs)
+
+			if dctx.proxy.upstreamErr != nil {
+				s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
+			}
+		}()
+
+		err = dctx.serve(ctx, s.lbManager, svc, s.secretMan)
+	}()
 
 	s.emitEndLog(startTime, dctx, authResp, target)
 
