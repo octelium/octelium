@@ -107,6 +107,7 @@ type Server struct {
 
 type metricsStore struct {
 	*metricutils.CommonMetrics
+	llmMetrics *metricutils.LLMMetrics
 }
 
 func (s *Server) svc() *corev1.Service {
@@ -140,6 +141,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 
 	var err error
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	if err != nil {
+		return nil, err
+	}
+
+	server.metricsStore.llmMetrics, err = metricutils.NewLLMMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +322,8 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	}
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return metrics.New(ctx, next, s.metricsStore.CommonMetrics)
+		return metrics.New(ctx, next,
+			s.metricsStore.CommonMetrics, s.metricsStore.llmMetrics)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

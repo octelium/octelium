@@ -72,9 +72,49 @@ func rcodeClassOf(rcode int) string {
 		return "REFUSED"
 	case dns.RcodeServerFailure:
 		return "SERVFAIL"
+	case dns.RcodeFormatError:
+		return "FORMERR"
+	case dns.RcodeNotImplemented:
+		return "NOTIMP"
+	case dns.RcodeNotAuth:
+		return "NOTAUTH"
 	default:
 		return "OTHER"
 	}
+}
+
+func malformedReason(r *dns.Msg) string {
+	switch {
+	case r.Response:
+		return "RESPONSE"
+	case r.Opcode != dns.OpcodeQuery:
+		return "OPCODE"
+	case len(r.Question) == 0:
+		return "NO_QUESTION"
+	default:
+		return "MULTI_QUESTION"
+	}
+}
+
+type countingResponseWriter struct {
+	dns.ResponseWriter
+
+	size      int
+	truncated bool
+	written   bool
+}
+
+func (w *countingResponseWriter) WriteMsg(m *dns.Msg) error {
+	err := w.ResponseWriter.WriteMsg(m)
+	if err != nil || m == nil {
+		return err
+	}
+
+	w.size = m.Len()
+	w.truncated = m.Truncated
+	w.written = true
+
+	return nil
 }
 
 type Server struct {
@@ -103,6 +143,7 @@ type Server struct {
 
 type metricsStore struct {
 	*metricutils.CommonMetrics
+	dnsMetrics *metricutils.DNSMetrics
 }
 
 func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
@@ -119,6 +160,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 
 	var err error
 	ret.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	if err != nil {
+		return nil, err
+	}
+
+	ret.metricsStore.dnsMetrics, err = metricutils.NewDNSMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +248,12 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		msg := new(dns.Msg)
 		msg.SetRcode(r, dns.RcodeFormatError)
 		_ = w.WriteMsg(msg)
+		s.metricsStore.dnsMetrics.AddMalformed(malformedReason(r))
 		return
 	}
+
+	cw := &countingResponseWriter{ResponseWriter: w}
+	w = cw
 
 	var (
 		state      = "DENIED"
@@ -227,6 +277,10 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			attrs = append(attrs, attribute.String("rcode_class", rcodeClass))
 		}
 		s.metricsStore.AtRequestEnd(startedAt, metric.WithAttributeSet(attribute.NewSet(attrs...)))
+
+		if cw.written {
+			s.metricsStore.dnsMetrics.RecordResponseBytes(cw.size, cw.truncated)
+		}
 	}()
 
 	svc := s.vCache.GetService()

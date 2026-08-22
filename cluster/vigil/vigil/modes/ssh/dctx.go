@@ -74,11 +74,13 @@ type dctx struct {
 	opts       *modes.Opts
 
 	commonMetrics *metricutils.CommonMetrics
+	sshMetrics    *metricutils.SSHMetrics
 }
 
 func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn net.Conn, sshConn *ssh.ServerConn, i *corev1.RequestContext,
 	upstreamSession *corev1.Session,
 	commonMetrics *metricutils.CommonMetrics,
+	sshMetrics *metricutils.SSHMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse, reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	ret := &dctx{
 		id:          vutils.GenerateLogID(),
@@ -95,6 +97,7 @@ func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn ne
 		reasonInit:      reasonInit,
 		opts:            opts,
 		commonMetrics:   commonMetrics,
+		sshMetrics:      sshMetrics,
 	}
 
 	svcCfg := ret.svcConfig
@@ -420,6 +423,7 @@ func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
 		go c.handleSessionRequests(ctx, nch)
 	default:
 		zap.L().Debug("Unsupported channel type", zap.String("type", nch.ChannelType()))
+		c.sshMetrics.AddChannel(metricutils.ValueOther, "DENIED")
 		nch.Reject(ssh.UnknownChannelType, fmt.Sprintf("Channel type: %s is unsupported", nch.ChannelType()))
 	}
 }

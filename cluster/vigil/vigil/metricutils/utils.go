@@ -49,6 +49,21 @@ type CommonMetrics struct {
 	BytesSent          metric.Int64Counter
 	BytesReceived      metric.Int64Counter
 	CommonAttributeSet attribute.Set
+
+	ActiveSessions  metric.Int64UpDownCounter
+	SessionDuration metric.Float64Histogram
+
+	ConnRejected metric.Int64Counter
+
+	RequestTTFB metric.Float64Histogram
+
+	PacketsSent     metric.Int64Counter
+	PacketsReceived metric.Int64Counter
+}
+
+var sessionDurationBoundaries = []float64{
+	100, 500, 1000, 5000, 15000, 60000, 300000, 900000,
+	1800000, 3600000, 14400000, 43200000, 86400000,
 }
 
 func NewCommonMetrics(ctx context.Context, svc *corev1.Service) (*CommonMetrics, error) {
@@ -87,6 +102,45 @@ func NewCommonMetrics(ctx context.Context, svc *corev1.Service) (*CommonMetrics,
 		return nil, err
 	}
 
+	ret.ActiveSessions, err = meter.Int64UpDownCounter("session.active",
+		metric.WithDescription("Number of active sessions"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.SessionDuration, err = meter.Float64Histogram("session.duration",
+		metric.WithUnit("ms"), metric.WithDescription("Session duration in milliseconds"),
+		metric.WithExplicitBucketBoundaries(sessionDurationBoundaries...))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.ConnRejected, err = meter.Int64Counter("conn.rejected",
+		metric.WithDescription(
+			"Total number of downstream connections rejected before a session is established"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.RequestTTFB, err = meter.Float64Histogram("req.ttfb",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Time to first response byte in milliseconds"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.PacketsSent, err = meter.Int64Counter("req.packets_sent",
+		metric.WithDescription("Total packets sent downstream"))
+	if err != nil {
+		return nil, err
+	}
+
+	ret.PacketsReceived, err = meter.Int64Counter("req.packets_received",
+		metric.WithDescription("Total packets received from downstream"))
+	if err != nil {
+		return nil, err
+	}
+
 	ret.CommonAttributeSet = GetServiceAttributes(svc)
 
 	return ret, nil
@@ -114,14 +168,85 @@ func (m *CommonMetrics) AtRequestEnd(startTime time.Time, additionalAttrSet metr
 	m.TotalRequests.Add(ctx, 1, metric.WithAttributeSet(m.CommonAttributeSet), additionalAttrSet)
 }
 
-func (m *CommonMetrics) AddBytesTransferred(sent, received int64) {
+func (m *CommonMetrics) AddBytesTransferred(sent, received int64,
+	additionalAttrSets ...metric.MeasurementOption) {
 	ctx := context.Background()
 
+	opts := m.addOpts(additionalAttrSets...)
+
 	if sent > 0 {
-		m.BytesSent.Add(ctx, sent, metric.WithAttributeSet(m.CommonAttributeSet))
+		m.BytesSent.Add(ctx, sent, opts...)
 	}
 
 	if received > 0 {
-		m.BytesReceived.Add(ctx, received, metric.WithAttributeSet(m.CommonAttributeSet))
+		m.BytesReceived.Add(ctx, received, opts...)
 	}
+}
+
+func (m *CommonMetrics) AddPacketsTransferred(sent, received int64,
+	additionalAttrSets ...metric.MeasurementOption) {
+	ctx := context.Background()
+
+	opts := m.addOpts(additionalAttrSets...)
+
+	if sent > 0 {
+		m.PacketsSent.Add(ctx, sent, opts...)
+	}
+
+	if received > 0 {
+		m.PacketsReceived.Add(ctx, received, opts...)
+	}
+}
+
+func (m *CommonMetrics) AtSessionStart() {
+	m.ActiveSessions.Add(context.Background(), 1,
+		metric.WithAttributeSet(m.CommonAttributeSet))
+}
+
+func (m *CommonMetrics) AtSessionEnd(startTime time.Time,
+	additionalAttrSets ...metric.MeasurementOption) {
+	ctx := context.Background()
+
+	m.ActiveSessions.Add(ctx, -1, metric.WithAttributeSet(m.CommonAttributeSet))
+
+	durationMs := float64(time.Since(startTime).Nanoseconds()) / 1000000
+	m.SessionDuration.Record(ctx, durationMs, m.recordOpts(additionalAttrSets...)...)
+}
+
+func (m *CommonMetrics) AddConnRejected(stage string,
+	additionalAttrSets ...metric.MeasurementOption) {
+	opts := m.addOpts(additionalAttrSets...)
+	opts = append(opts, metric.WithAttributes(attribute.String("stage", stage)))
+
+	m.ConnRejected.Add(context.Background(), 1, opts...)
+}
+
+func (m *CommonMetrics) addOpts(
+	additionalAttrSets ...metric.MeasurementOption) []metric.AddOption {
+	ret := make([]metric.AddOption, 0, len(additionalAttrSets)+1)
+	ret = append(ret, metric.WithAttributeSet(m.CommonAttributeSet))
+
+	for _, attrSet := range additionalAttrSets {
+		if attrSet == nil {
+			continue
+		}
+		ret = append(ret, attrSet)
+	}
+
+	return ret
+}
+
+func (m *CommonMetrics) recordOpts(
+	additionalAttrSets ...metric.MeasurementOption) []metric.RecordOption {
+	ret := make([]metric.RecordOption, 0, len(additionalAttrSets)+1)
+	ret = append(ret, metric.WithAttributeSet(m.CommonAttributeSet))
+
+	for _, attrSet := range additionalAttrSets {
+		if attrSet == nil {
+			continue
+		}
+		ret = append(ret, attrSet)
+	}
+
+	return ret
 }

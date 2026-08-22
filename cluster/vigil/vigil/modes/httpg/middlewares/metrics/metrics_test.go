@@ -82,11 +82,14 @@ func TestServeHTTPDeniedReason(t *testing.T) {
 	commonMetrics, err := metricutils.NewCommonMetrics(ctx, newTestSvc())
 	assert.Nil(t, err)
 
+	llmMetrics, err := metricutils.NewLLMMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	})
 
-	mdlwr, err := New(ctx, next, commonMetrics)
+	mdlwr, err := New(ctx, next, commonMetrics, llmMetrics)
 	assert.Nil(t, err)
 
 	reqCtx := &middlewares.RequestContext{
@@ -124,11 +127,14 @@ func TestServeHTTPAllowedNoReason(t *testing.T) {
 	commonMetrics, err := metricutils.NewCommonMetrics(ctx, newTestSvc())
 	assert.Nil(t, err)
 
+	llmMetrics, err := metricutils.NewLLMMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mdlwr, err := New(ctx, next, commonMetrics)
+	mdlwr, err := New(ctx, next, commonMetrics, llmMetrics)
 	assert.Nil(t, err)
 
 	reqCtx := &middlewares.RequestContext{

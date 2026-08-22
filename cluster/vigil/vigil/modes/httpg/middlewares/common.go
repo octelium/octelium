@@ -102,7 +102,42 @@ type RequestContext struct {
 
 	LLM *httputils.LLMRequest
 
+	MCPResponse *MCPResponseInfo
+	LLMResponse *LLMResponseInfo
+
 	BodyDigest [sha256.Size]byte
+}
+
+type MCPResponseInfo struct {
+	IsProtocolError bool
+	IsToolError     bool
+	ErrorCode       int32
+	EventCount      uint64
+}
+
+type LLMResponseInfo struct {
+	Model        string
+	FinishReason string
+
+	Usage       httputils.LLMUsage
+	UsageSource corev1.AccessLog_Entry_Info_LLM_Usage_Source
+
+	EventCount       uint64
+	TimeToFirstToken time.Duration
+}
+
+func (r *LLMResponseInfo) GetModel() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
+func (r *LLMResponseInfo) GetFinishReason() string {
+	if r == nil {
+		return ""
+	}
+	return r.FinishReason
 }
 
 func (r *RequestContext) SetReqCtxMap() {

@@ -34,9 +34,12 @@ import (
 type proxy struct {
 	lbManager *loadbalancer.LBManager
 	dctx      *dctx
-	recvBytes int64
-	sentBytes int64
 	wg        sync.WaitGroup
+
+	bytesToDownstream   int64
+	bytesFromDownstream int64
+
+	upstreamErr error
 }
 
 func newProxy(dctx *dctx, lbManager *loadbalancer.LBManager) *proxy {
@@ -52,12 +55,15 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 	upstreamConn, err := p.getUpstreamConn(ctx, svc, secretMan)
 	if err != nil {
 		zap.L().Warn("Could not get upstream conn", zap.Error(err))
+		p.upstreamErr = err
 		return
 	}
 
 	p.doServe(conn, upstreamConn)
 	zap.L().Debug("Done serving",
-		zap.String("id", p.dctx.id), zap.Int64("received", p.recvBytes), zap.Int64("sent", p.sentBytes))
+		zap.String("id", p.dctx.id),
+		zap.Int64("bytesFromDownstream", p.bytesFromDownstream),
+		zap.Int64("bytesToDownstream", p.bytesToDownstream))
 }
 
 func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) (net.Conn, error) {
@@ -91,14 +97,14 @@ func (p *proxy) doServe(clientConn, backendConn net.Conn) {
 	p.wg.Wait()
 }
 
-func (p *proxy) connCopy(dst, src net.Conn, isRecv bool) {
+func (p *proxy) connCopy(dst, src net.Conn, isToDownstream bool) {
 	defer p.wg.Done()
 
 	n, _ := io.Copy(dst, src)
-	if isRecv {
-		p.recvBytes = n
+	if isToDownstream {
+		p.bytesToDownstream = n
 	} else {
-		p.sentBytes = n
+		p.bytesFromDownstream = n
 	}
 
 	if err := closeWrite(dst); err != nil {

@@ -119,18 +119,33 @@ func (m *middleware) serveMCP(w http.ResponseWriter, req *http.Request,
 	m.next.ServeHTTP(crw, req)
 
 	if reqCtx.DownstreamInfo == nil {
+		obs.setRequestContext(reqCtx)
 		return
 	}
 
 	if !crw.isSSE {
 		obs.onFinalBody(crw.body.Bytes())
+		obs.setRequestContext(reqCtx)
 		otelutils.EmitAccessLog(
 			m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseComplete, "", 0))
 		return
 	}
 
+	obs.setRequestContext(reqCtx)
 	otelutils.EmitAccessLog(
 		m.getMCPAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, connID, 1))
+}
+
+func (o *mcpObserver) setRequestContext(reqCtx *middlewares.RequestContext) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	reqCtx.MCPResponse = &middlewares.MCPResponseInfo{
+		IsProtocolError: o.isProtocolError,
+		IsToolError:     o.isToolError,
+		ErrorCode:       o.errorCode,
+		EventCount:      o.eventCount,
+	}
 }
 
 func (m *middleware) getMCPAccessLog(

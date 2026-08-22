@@ -17,6 +17,7 @@
 package socks5
 
 import (
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"net"
 	"strconv"
 	"strings"
@@ -143,5 +144,18 @@ func (t *target) toLogAddressType() corev1.AccessLog_Entry_Info_SOCKS5_AddressTy
 		return corev1.AccessLog_Entry_Info_SOCKS5_IPV6
 	default:
 		return corev1.AccessLog_Entry_Info_SOCKS5_ADDRESS_TYPE_UNSPECIFIED
+	}
+}
+
+func (t *target) metricAddressType() string {
+	switch t.addrType {
+	case addressTypeIPv4:
+		return "IPV4"
+	case addressTypeIPv6:
+		return "IPV6"
+	case addressTypeDomain:
+		return "DOMAIN"
+	default:
+		return metricutils.ValueUnknown
 	}
 }

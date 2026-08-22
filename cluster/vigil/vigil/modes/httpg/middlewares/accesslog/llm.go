@@ -121,19 +121,58 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 
 	m.next.ServeHTTP(crw, req)
 
-	if reqCtx.DownstreamInfo == nil {
-		return
-	}
-
 	if !crw.isSSE {
 		obs.onFinalBody(crw.body.Bytes())
+		obs.setRequestContext(reqCtx, crw, logPhaseComplete)
+
+		if reqCtx.DownstreamInfo == nil {
+			return
+		}
 		otelutils.EmitAccessLog(
 			m.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseComplete, "", 0))
 		return
 	}
 
+	obs.setRequestContext(reqCtx, crw, logPhaseStreamClose)
+
+	if reqCtx.DownstreamInfo == nil {
+		return
+	}
+
 	otelutils.EmitAccessLog(
 		m.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, connID, 1))
+}
+
+func (o *llmObserver) setRequestContext(reqCtx *middlewares.RequestContext,
+	crw *responseWriter, phase logPhase) {
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	usage := getLLMUsage(reqCtx, crw, o, phase)
+
+	ret := &middlewares.LLMResponseInfo{
+		Model:        o.model,
+		FinishReason: o.finishReason,
+		EventCount:   o.eventCount,
+		UsageSource:  usage.GetSource(),
+		Usage: httputils.LLMUsage{
+			InputTokens:              usage.GetInputTokens(),
+			OutputTokens:             usage.GetOutputTokens(),
+			TotalTokens:              usage.GetTotalTokens(),
+			CacheReadInputTokens:     usage.GetCacheReadInputTokens(),
+			CacheCreationInputTokens: usage.GetCacheCreationInputTokens(),
+			ReasoningTokens:          usage.GetReasoningTokens(),
+		},
+	}
+
+	if !o.firstTokenAt.IsZero() {
+		if d := o.firstTokenAt.Sub(reqCtx.CreatedAt); d > 0 {
+			ret.TimeToFirstToken = d
+		}
+	}
+
+	reqCtx.LLMResponse = ret
 }
 
 func (m *middleware) getLLMAccessLog(

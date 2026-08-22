@@ -160,6 +160,8 @@ func (s *Server) closeDctx(dctx *dctx) {
 	otelutils.EmitAccessLog(logE)
 
 	s.metricsStore.AddBytesTransferred(dctx.bytesToClient.Load(), dctx.bytesFromClient.Load())
+	s.metricsStore.AddPacketsTransferred(
+		dctx.packetsToClient.Load(), dctx.packetsFromClient.Load())
 
 	s.dctxMap.mu.Lock()
 	delete(s.dctxMap.dctxMap, dctx.addr.String())
@@ -169,8 +171,11 @@ func (s *Server) closeDctx(dctx *dctx) {
 
 func (s *Server) replyLoop(dctx *dctx) {
 	s.metricsStore.AtRequestStart()
+	s.metricsStore.AtSessionStart()
 	defer s.closeDctx(dctx)
 	defer s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	defer s.metricsStore.AtSessionEnd(dctx.createdAt,
+		metric.WithAttributes(attribute.String("state", "ALLOWED")))
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       dctx.createdAt,
@@ -201,6 +206,7 @@ func (s *Server) replyLoop(dctx *dctx) {
 			i += written
 		}
 		dctx.bytesToClient.Add(int64(read))
+		dctx.packetsToClient.Add(1)
 	}
 }
 
@@ -331,6 +337,7 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		i += written
 	}
 	dctx.bytesFromClient.Add(int64(n))
+	dctx.packetsFromClient.Add(1)
 
 	return nil
 }

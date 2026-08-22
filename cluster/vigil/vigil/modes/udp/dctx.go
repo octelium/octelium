@@ -40,6 +40,9 @@ type dctx struct {
 
 	bytesToClient   atomic.Int64
 	bytesFromClient atomic.Int64
+
+	packetsToClient   atomic.Int64
+	packetsFromClient atomic.Int64
 }
 
 func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {

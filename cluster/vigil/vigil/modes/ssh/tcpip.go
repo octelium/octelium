@@ -53,6 +53,7 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 
 	if svcCfg == nil || svcCfg.GetSsh() == nil || !svcCfg.GetSsh().EnableLocalPortForwarding {
 		zap.L().Debug("Handling TCPIP rejected since local port forwarding is not enabled", zap.String("id", c.id))
+		c.sshMetrics.AddChannel("direct-tcpip", "DENIED")
 		nch.Reject(ssh.UnknownChannelType,
 			fmt.Sprintf("Channel type: %s is unsupported", nch.ChannelType()))
 		return
@@ -66,6 +67,7 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 	if err := ssh.Unmarshal(nch.ExtraData(), tcpIPReq); err != nil {
 		zap.L().Debug("Could not parse Direct TCP_IP request",
 			zap.String("id", c.id), zap.Error(err))
+		c.sshMetrics.AddChannel("direct-tcpip", "DENIED")
 		nch.Reject(ssh.Prohibited, "invalid direct-tcpip request")
 		return
 	}
@@ -74,9 +76,12 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 	if err != nil {
 		zap.L().Debug("Could not accept the new channel",
 			zap.String("id", c.id), zap.Error(err))
+		c.sshMetrics.AddChannel("direct-tcpip", "DENIED")
 		return
 	}
 	defer ch.Close()
+
+	c.sshMetrics.AddChannel("direct-tcpip", "ALLOWED")
 
 	remoteAddr := net.JoinHostPort(tcpIPReq.Host, fmt.Sprintf("%d", tcpIPReq.Port))
 

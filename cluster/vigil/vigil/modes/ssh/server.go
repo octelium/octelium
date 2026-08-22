@@ -84,6 +84,7 @@ type Server struct {
 
 type metricsStore struct {
 	*metricutils.CommonMetrics
+	sshMetrics *metricutils.SSHMetrics
 }
 
 func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
@@ -152,6 +153,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		return nil, err
 	}
 
+	server.metricsStore.sshMetrics, err = metricutils.NewSSHMetrics(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+
 	return server, nil
 }
 
@@ -216,6 +222,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	_ = c.SetDeadline(time.Time{})
 	if err != nil {
 		zap.L().Debug("Could not establish a newServerConn")
+		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
 	}
@@ -336,10 +343,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		s.opts,
 		c, sshConn, i,
 		upstreamSession,
-		s.metricsStore.CommonMetrics,
+		s.metricsStore.CommonMetrics, s.metricsStore.sshMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.octeliumC, svc, s.lbManager, s.userSigner, s.secretMan); err != nil {
 		zap.L().Warn("Could not connect to upstream", zap.Error(err))
+		s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
 		sshConn.Close()
 		c.Close()
 		return
@@ -373,6 +381,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	s.dctxMap.mu.Unlock()
 
 	s.metricsStore.AtRequestStart()
+	s.metricsStore.AtSessionStart()
 
 	defer func() {
 		logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -396,7 +405,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		s.dctxMap.mu.Unlock()
 	}()
 
-	defer s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	defer s.metricsStore.AtRequestEnd(dctx.createdAt,
+		metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	defer s.metricsStore.AtSessionEnd(dctx.createdAt,
+		metric.WithAttributes(attribute.Bool("req.ssh.is_essh",
+			ucorev1.ToService(svc).IsESSH())))
 
 	go dctx.startKeepAliveUpstreamLoop(ctx)
 

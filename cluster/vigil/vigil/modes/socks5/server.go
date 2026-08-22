@@ -376,10 +376,18 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 
 	s.emitConnectLog(startTime, dctx.id, authResp, target, true)
 
+	socks5Attrs := metric.WithAttributes(
+		attribute.String("state", "ALLOWED"),
+		attribute.String("socks5.target_type", target.metricAddressType()),
+	)
+
 	s.metricsStore.AtRequestStart()
+	s.metricsStore.AtSessionStart()
 	err = dctx.serve(ctx, s.lbManager, svc, s.secretMan)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
-	s.metricsStore.AddBytesTransferred(dctx.proxy.sentBytes, dctx.proxy.recvBytes)
+	s.metricsStore.AtRequestEnd(dctx.createdAt, socks5Attrs)
+	s.metricsStore.AtSessionEnd(dctx.createdAt, socks5Attrs)
+	s.metricsStore.AddBytesTransferred(
+		dctx.proxy.bytesToDownstream, dctx.proxy.bytesFromDownstream, socks5Attrs)
 
 	s.emitEndLog(startTime, dctx, authResp, target)
 
@@ -478,8 +486,8 @@ func (s *Server) emitEndLog(
 			Host:          target.host,
 			Port:          uint32(target.port),
 			AddressType:   target.toLogAddressType(),
-			ReceivedBytes: uint64(dctx.proxy.recvBytes),
-			SentBytes:     uint64(dctx.proxy.sentBytes),
+			ReceivedBytes: uint64(dctx.proxy.bytesFromDownstream),
+			SentBytes:     uint64(dctx.proxy.bytesToDownstream),
 			UpstreamHost:  dctx.upstreamHost,
 			UpstreamPort:  uint32(dctx.upstreamPort),
 		},

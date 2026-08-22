@@ -107,6 +107,7 @@ type dctx struct {
 
 	downstreamConn *countingConn
 	commonMetrics  *metricutils.CommonMetrics
+	dbMetrics      *metricutils.DBMetrics
 }
 
 func newDctx(ctx context.Context, conn net.Conn,
@@ -116,6 +117,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 	vCache *vcache.Cache,
 	downstreamConn *countingConn,
 	commonMetrics *metricutils.CommonMetrics,
+	dbMetrics *metricutils.DBMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
 	reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	return &dctx{
@@ -140,6 +142,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 
 		downstreamConn: downstreamConn,
 		commonMetrics:  commonMetrics,
+		dbMetrics:      dbMetrics,
 	}
 }
 
@@ -329,11 +332,26 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				if pendingSync {
 					continue
 				}
+				authzStartedAt := time.Now()
 				proceed, reason, err := c.authorizeCommand(ctx, message)
 				if err != nil {
+					c.dbMetrics.AddCommand(postgresCommandName(message),
+						"ERROR", metricutils.ValueUnset)
 					c.downstreamCh <- err
 					return
 				}
+
+				state := "ALLOWED"
+				if !proceed {
+					state = "DENIED"
+				}
+
+				if c.isAuthorizingCommands() {
+					c.dbMetrics.RecordAuthz(authzStartedAt, state)
+				}
+				c.dbMetrics.AddCommand(postgresCommandName(message), state,
+					reason.GetType().String())
+
 				c.setMessageLog(message, reason)
 				if !proceed {
 					pendingSync = true
@@ -453,6 +471,41 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 			}
 		}
 
+	}
+}
+
+func (c *dctx) isAuthorizingCommands() bool {
+	auth := c.svcConfig.GetPostgres().GetAuthorization()
+	return auth != nil &&
+		auth.Mode == corev1.Service_Spec_Config_Postgres_Authorization_ALL
+}
+
+func postgresCommandName(msg pgproto3.FrontendMessage) string {
+	switch msg.(type) {
+	case *pgproto3.Query:
+		return "QUERY"
+	case *pgproto3.Parse:
+		return "PARSE"
+	case *pgproto3.Bind:
+		return "BIND"
+	case *pgproto3.Execute:
+		return "EXECUTE"
+	case *pgproto3.Close:
+		return "CLOSE"
+	case *pgproto3.FunctionCall:
+		return "FUNCTION_CALL"
+	case *pgproto3.Describe:
+		return "DESCRIBE"
+	case *pgproto3.Flush:
+		return "FLUSH"
+	case *pgproto3.CopyData:
+		return "COPY_DATA"
+	case *pgproto3.CopyDone:
+		return "COPY_DONE"
+	case *pgproto3.CopyFail:
+		return "COPY_FAIL"
+	default:
+		return metricutils.ValueOther
 	}
 }
 

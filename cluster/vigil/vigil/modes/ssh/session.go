@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -187,12 +188,15 @@ func (c *dctx) handleSessionDownstreamReq(req *ssh.Request, ch ssh.Channel, sess
 			return err
 		}
 
+		c.sshMetrics.AddRequest(req.Type, "ALLOWED", metricutils.ValueUnset)
+
 		if req.WantReply {
 			req.Reply(ok, nil)
 		}
 	case "subsystem":
 		svcCfg := c.svcConfig
 		if svcCfg == nil || svcCfg.GetSsh() == nil || !svcCfg.GetSsh().EnableSubsystem {
+			c.sshMetrics.AddRequest(req.Type, "DENIED", "SUBSYSTEM_DISABLED")
 			return req.Reply(false, []byte("Subsystem requests are not supported"))
 		}
 
@@ -201,11 +205,14 @@ func (c *dctx) handleSessionDownstreamReq(req *ssh.Request, ch ssh.Channel, sess
 			return err
 		}
 
+		c.sshMetrics.AddRequest(req.Type, "ALLOWED", metricutils.ValueUnset)
+
 		if req.WantReply {
 			req.Reply(ok, nil)
 		}
 	default:
 		zap.L().Debug("Unsupported session req", zap.String("type", req.Type))
+		c.sshMetrics.AddRequest(metricutils.ValueOther, "DENIED", "UNSUPPORTED")
 		return req.Reply(false, nil)
 	}
 
@@ -242,8 +249,11 @@ func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChan
 	sesschan, reqs, err := newChannel.Accept()
 	if err != nil {
 		zap.L().Debug("Could not accept a new channel", zap.Error(err))
+		c.sshMetrics.AddChannel("session", "DENIED")
 		return
 	}
+
+	c.sshMetrics.AddChannel("session", "ALLOWED")
 
 	defer sesschan.Close()
 

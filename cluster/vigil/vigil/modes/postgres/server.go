@@ -85,6 +85,7 @@ type Server struct {
 
 type metricsStore struct {
 	*metricutils.CommonMetrics
+	dbMetrics *metricutils.DBMetrics
 }
 
 func (s *Server) svc() *corev1.Service {
@@ -119,6 +120,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 
 	var err error
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	if err != nil {
+		return nil, err
+	}
+
+	server.metricsStore.dbMetrics, err = metricutils.NewDBMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
 		return nil, err
 	}
@@ -175,10 +181,12 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	startupMessage, pgBackend, err := s.getStartupMessage(ctx, svc, c)
 	if err != nil {
 		zap.L().Debug("Could not get startup msg", zap.Error(err))
+		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
 	}
 	if startupMessage == nil || pgBackend == nil {
+		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
 	}
@@ -230,10 +238,11 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	dctx := newDctx(ctx,
 		c, i, s.secretMan, pgBackend, startupMessage,
 		s.octovigilC, s.vCache,
-		cc, s.metricsStore.CommonMetrics,
+		cc, s.metricsStore.CommonMetrics, s.metricsStore.dbMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
 		zap.L().Error("Could not connect", zap.Error(err), zap.String("id", dctx.id))
+		s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
 		c.Close()
 		return
 	}
@@ -271,8 +280,17 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	}
 
 	s.metricsStore.AtRequestStart()
-	dctx.serve(ctx)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	s.metricsStore.AtSessionStart()
+
+	func() {
+		defer func() {
+			attrs := metric.WithAttributes(attribute.String("state", "ALLOWED"))
+			s.metricsStore.AtRequestEnd(dctx.createdAt, attrs)
+			s.metricsStore.AtSessionEnd(dctx.createdAt, attrs)
+		}()
+
+		dctx.serve(ctx)
+	}()
 
 	defer dctx.close()
 

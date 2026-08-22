@@ -248,9 +248,23 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	s.dctxMap.mu.Unlock()
 
 	s.metricsStore.AtRequestStart()
-	dctx.serve(ctx, s.lbManager, svc, s.secretMan)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
-	s.metricsStore.AddBytesTransferred(dctx.proxy.recvBytes, dctx.proxy.sentBytes)
+	s.metricsStore.AtSessionStart()
+
+	func() {
+		defer func() {
+			attrs := metric.WithAttributes(attribute.String("state", "ALLOWED"))
+			s.metricsStore.AtRequestEnd(dctx.createdAt, attrs)
+			s.metricsStore.AtSessionEnd(dctx.createdAt, attrs)
+			s.metricsStore.AddBytesTransferred(
+				dctx.proxy.bytesToDownstream, dctx.proxy.bytesFromDownstream, attrs)
+
+			if dctx.proxy.upstreamErr != nil {
+				s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
+			}
+		}()
+
+		dctx.serve(ctx, s.lbManager, svc, s.secretMan)
+	}()
 
 	dctx.close()
 
@@ -268,8 +282,8 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	logEnd.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
 		Tcp: &corev1.AccessLog_Entry_Info_TCP{
 			Type:          corev1.AccessLog_Entry_Info_TCP_END,
-			ReceivedBytes: uint64(dctx.proxy.recvBytes),
-			SentBytes:     uint64(dctx.proxy.sentBytes),
+			ReceivedBytes: uint64(dctx.proxy.bytesFromDownstream),
+			SentBytes:     uint64(dctx.proxy.bytesToDownstream),
 		},
 	}
 	otelutils.EmitAccessLog(logEnd)

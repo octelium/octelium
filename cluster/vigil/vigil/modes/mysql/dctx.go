@@ -60,12 +60,14 @@ type dctx struct {
 	authResp  *coctovigilv1.AuthenticateAndAuthorizeResponse
 
 	commonMetrics *metricutils.CommonMetrics
+	dbMetrics     *metricutils.DBMetrics
 }
 
 func newDctx(ctx context.Context, conn net.Conn,
 	i *corev1.RequestContext, secretMan *secretman.SecretManager,
 	downstreamConnSQL *server.Conn,
 	commonMetrics *metricutils.CommonMetrics,
+	dbMetrics *metricutils.DBMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse) *dctx {
 
 	return &dctx{
@@ -83,6 +85,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 		svcConfig:     vigilutils.GetServiceConfig(ctx, authResp),
 		authResp:      authResp,
 		commonMetrics: commonMetrics,
+		dbMetrics:     dbMetrics,
 	}
 }
 
@@ -241,12 +244,17 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 			switch {
 			case pkt.isQuit():
 				zap.L().Debug("Got quit msg. Exiting...")
+				c.dbMetrics.AddCommand("QUIT", "ALLOWED", metricutils.ValueUnset)
 				c.downstreamCh <- nil
 				return
 			case pkt.isChangeUser():
+				c.dbMetrics.AddCommand("CHANGE_USER", "DENIED", "UNSUPPORTED")
 				c.downstreamCh <- errors.Errorf("Cannot change user")
 				return
 			}
+
+			c.dbMetrics.AddCommand(mysqlCommandName(pkt),
+				"ALLOWED", metricutils.ValueUnset)
 
 			zap.L().Debug("downstream msg",
 				zap.Int("seq", int(packetBytes[3])),
@@ -299,6 +307,37 @@ func getRawPacket(pkt []byte) []byte {
 	return ret
 }
 */
+
+func mysqlCommandName(packet *mysqlPacket) string {
+	switch {
+	case packet.isQuery():
+		return "QUERY"
+	case packet.isInitDB():
+		return "INIT_DB"
+	case packet.isCreateDB():
+		return "CREATE_DB"
+	case packet.isDropDB():
+		return "DROP_DB"
+	case packet.isPreparedStatement():
+		return "PREPARE_STATEMENT"
+	case packet.isExecuteStatement():
+		return "EXECUTE_STATEMENT"
+	case packet.isCloseStatement():
+		return "CLOSE_STATEMENT"
+	case packet.isResetStatement():
+		return "RESET_STATEMENT"
+	case packet.isFetchStatement():
+		return "FETCH_STATEMENT"
+	case packet.isChangeUser():
+		return "CHANGE_USER"
+	case packet.isQuit():
+		return "QUIT"
+	case packet.isDebug():
+		return "DEBUG"
+	default:
+		return metricutils.ValueOther
+	}
+}
 
 func (c *dctx) setLog(packet *mysqlPacket) {
 

@@ -18,6 +18,8 @@ package metricutils
 
 import (
 	"context"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,6 +175,94 @@ func TestAddBytesTransferredSkipsZero(t *testing.T) {
 		for _, mt := range sm.Metrics {
 			assert.NotEqual(t, "req.bytes_sent", mt.Name)
 			assert.NotEqual(t, "req.bytes_received", mt.Name)
+		}
+	}
+}
+
+func TestAtSessionEndWithDurationAttrs(t *testing.T) {
+	ctx := context.Background()
+	reader := setTestMeterProvider(t)
+
+	m, err := NewCommonMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
+	for i := 0; i < 3; i++ {
+		m.AtSessionStart()
+		m.AtSessionEnd(time.Now(),
+			metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	}
+
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(ctx, &rm))
+
+	activeDP := findSumDataPoint(t, &rm, "session.active")
+	assert.Equal(t, int64(0), activeDP.Value)
+
+	_, ok := activeDP.Attributes.Value("state")
+	assert.False(t, ok)
+
+	durationDP := findHistogramDataPoint(t, &rm, "session.duration")
+	assert.Equal(t, uint64(3), durationDP.Count)
+
+	stateVal, ok := durationDP.Attributes.Value("state")
+	assert.True(t, ok)
+	assert.Equal(t, "ALLOWED", stateVal.AsString())
+}
+
+func TestAddConnRejected(t *testing.T) {
+	ctx := context.Background()
+	reader := setTestMeterProvider(t)
+
+	m, err := NewCommonMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
+	m.AddConnRejected("HANDSHAKE")
+
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(ctx, &rm))
+
+	dp := findSumDataPoint(t, &rm, "conn.rejected")
+	assert.Equal(t, int64(1), dp.Value)
+
+	stageVal, ok := dp.Attributes.Value("stage")
+	assert.True(t, ok)
+	assert.Equal(t, "HANDSHAKE", stageVal.AsString())
+}
+
+func TestBoundedValues(t *testing.T) {
+	b := NewBoundedValues(2)
+
+	assert.Equal(t, ValueUnset, b.Get(""))
+	assert.Equal(t, "a", b.Get("a"))
+	assert.Equal(t, "b", b.Get("b"))
+	assert.Equal(t, "a", b.Get("a"))
+	assert.Equal(t, ValueOther, b.Get("c"))
+
+	assert.Equal(t, ValueOther,
+		NewBoundedValues(8).Get(strings.Repeat("x", maxBoundedValueLen+1)))
+}
+
+func TestAddUsageSkipsOverflow(t *testing.T) {
+	ctx := context.Background()
+	reader := setTestMeterProvider(t)
+
+	m, err := NewLLMMetrics(ctx, newTestSvc())
+	assert.Nil(t, err)
+
+	m.AddUsage(&LLMUsageOpts{
+		InputTokens:  math.MaxUint64,
+		OutputTokens: 42,
+	}, nil)
+
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(ctx, &rm))
+
+	outputDP := findSumDataPoint(t, &rm, "llm.tokens.output")
+	assert.Equal(t, int64(42), outputDP.Value)
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, mt := range sm.Metrics {
+			assert.NotEqual(t, "llm.tokens.input", mt.Name)
 		}
 	}
 }

@@ -41,8 +41,8 @@ type proxy struct {
 	lbManager *loadbalancer.LBManager
 	dctx      *dctx
 
-	recvBytes int64
-	sentBytes int64
+	bytesFromDownstream int64
+	bytesToDownstream   int64
 
 	wg sync.WaitGroup
 }
@@ -77,8 +77,8 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 	zap.L().Debug("Done serving SOCKS5 connection",
 		zap.String("id", p.dctx.id),
 		zap.String("target", p.dctx.target.addr),
-		zap.Int64("received", p.recvBytes),
-		zap.Int64("sent", p.sentBytes))
+		zap.Int64("bytesFromDownstream", p.bytesFromDownstream),
+		zap.Int64("bytesToDownstream", p.bytesToDownstream))
 
 	return nil
 }
@@ -200,21 +200,21 @@ func (p *proxy) doServe(clientWriter io.Writer, clientReader io.Reader, upstream
 	p.wg.Wait()
 }
 
-func (p *proxy) connCopy(dst io.Writer, src io.Reader, isRecv bool) {
+func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool) {
 	defer p.wg.Done()
 
 	n, err := io.Copy(dst, src)
 	if err != nil && !isExpectedNetErr(err) {
 		zap.L().Debug("SOCKS5 copy error",
 			zap.String("id", p.dctx.id),
-			zap.Bool("isRecv", isRecv),
+			zap.Bool("isFromDownstream", isFromDownstream),
 			zap.Error(err))
 	}
 
-	if isRecv {
-		p.recvBytes = n
+	if isFromDownstream {
+		p.bytesFromDownstream = n
 	} else {
-		p.sentBytes = n
+		p.bytesToDownstream = n
 	}
 
 	if err := closeWrite(dst); err != nil {

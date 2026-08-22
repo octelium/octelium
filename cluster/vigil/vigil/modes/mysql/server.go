@@ -88,6 +88,7 @@ type Server struct {
 
 type metricsStore struct {
 	*metricutils.CommonMetrics
+	dbMetrics *metricutils.DBMetrics
 }
 
 func (s *Server) svc() *corev1.Service {
@@ -118,6 +119,11 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 	server.dctxMap.dctxMap = make(map[string]*dctx)
 	var err error
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
+	if err != nil {
+		return nil, err
+	}
+
+	server.metricsStore.dbMetrics, err = metricutils.NewDBMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
 		return nil, err
 	}
@@ -214,15 +220,18 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	downstreamConn, err := s.getDownstreamConn(c)
 	if err != nil {
+		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
 	}
 
 	zap.L().Debug("Got downstream conn", zap.Int("seq", int(downstreamConn.Sequence)))
 
-	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn, s.metricsStore.CommonMetrics, authResp)
+	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn,
+		s.metricsStore.CommonMetrics, s.metricsStore.dbMetrics, authResp)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
 		zap.L().Error("Could not connect", zap.Error(err), zap.String("id", dctx.id))
+		s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
 		downstreamConn.Close()
 		c.Close()
 		return
@@ -252,8 +261,17 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	}
 
 	s.metricsStore.AtRequestStart()
-	dctx.serve(ctx)
-	s.metricsStore.AtRequestEnd(dctx.createdAt, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	s.metricsStore.AtSessionStart()
+
+	func() {
+		defer func() {
+			attrs := metric.WithAttributes(attribute.String("state", "ALLOWED"))
+			s.metricsStore.AtRequestEnd(dctx.createdAt, attrs)
+			s.metricsStore.AtSessionEnd(dctx.createdAt, attrs)
+		}()
+
+		dctx.serve(ctx)
+	}()
 
 	defer dctx.close()
 
