@@ -76,6 +76,32 @@ func (h *H) SessionAddrs(t *testing.T) []string {
 	return ret
 }
 
+func (h *H) LocalSessionAddrs(t *testing.T) []netip.Addr {
+	t.Helper()
+
+	addrs := h.SessionAddrs(t)
+	if len(addrs) == 0 {
+		return nil
+	}
+
+	out, err := h.Output(t.Context(), "ip -o addr show")
+	if err != nil {
+		t.Fatalf("Could not list the host addresses: %+v: %s", err, out)
+	}
+
+	var ret []netip.Addr
+	for _, addr := range addrs {
+		if deviceHoldingAddr(string(out), addr) == "" {
+			continue
+		}
+		if parsed, err := netip.ParseAddr(addr); err == nil {
+			ret = append(ret, parsed)
+		}
+	}
+
+	return ret
+}
+
 func (h *H) TunDevice(t *testing.T) (string, error) {
 	t.Helper()
 

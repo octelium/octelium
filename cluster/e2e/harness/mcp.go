@@ -50,6 +50,21 @@ func (s *MCPSrv) doEcho(ctx context.Context,
 	}, nil, nil
 }
 
+type mcpTransferParams struct {
+	Amount int `json:"amount"`
+}
+
+func (s *MCPSrv) doTransfer(ctx context.Context,
+	req *mcp.CallToolRequest, params *mcpTransferParams) (*mcp.CallToolResult, any, error) {
+	zap.L().Debug("New mcp doTransfer req", zap.Any("req", req), zap.Any("params", params))
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("transferred %d", params.Amount)},
+		},
+	}, nil, nil
+}
+
 func (s *MCPSrv) Run(ctx context.Context) error {
 	addr := fmt.Sprintf("localhost:%d", s.Port)
 
@@ -62,6 +77,11 @@ func (s *MCPSrv) Run(ctx context.Context) error {
 		Name:        "echo",
 		Description: "Echo the input",
 	}, s.doEcho)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "transfer",
+		Description: "Transfer an amount",
+	}, s.doTransfer)
 
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ type DNSClient struct {
 	c *dns.Client
 }
 
-func (h *H) ClusterDNSAddr(t *testing.T) string {
+func (h *H) ClusterDNSAddrs(t *testing.T) ([]netip.Addr, int) {
 	t.Helper()
 
 	svc := h.GetService(t, DNSServiceName)
@@ -47,50 +48,62 @@ func (h *H) ClusterDNSAddr(t *testing.T) string {
 		t.Fatalf("The Service %s has no port", DNSServiceName)
 	}
 
+	var ret []netip.Addr
 	for _, addr := range svc.Status.Addresses {
-		if addr.DualStackIP != nil && addr.DualStackIP.Ipv4 != "" {
-			return net.JoinHostPort(addr.DualStackIP.Ipv4,
-				fmt.Sprintf("%d", svc.Status.Port))
+		if addr.DualStackIP == nil {
+			continue
+		}
+		for _, val := range []string{addr.DualStackIP.Ipv4, addr.DualStackIP.Ipv6} {
+			if parsed, err := netip.ParseAddr(val); err == nil {
+				ret = append(ret, parsed)
+			}
 		}
 	}
 
-	t.Fatalf("The Service %s has no IPv4 address", DNSServiceName)
-	return ""
+	return ret, int(svc.Status.Port)
 }
 
 func (h *H) DNSClient(t *testing.T) *DNSClient {
 	t.Helper()
 
-	var source net.IP
-	for _, addr := range h.SessionAddrs(t) {
-		ip := net.ParseIP(addr)
-		if ip == nil || ip.To4() == nil {
-			continue
+	sources := h.LocalSessionAddrs(t)
+	if len(sources) == 0 {
+		t.Fatalf("No host interface holds any of the Session addresses %v. "+
+			"The Cluster DNS only answers queries coming from a Session address",
+			h.SessionAddrs(t))
+	}
+
+	servers, port := h.ClusterDNSAddrs(t)
+
+	for _, source := range sources {
+		for _, server := range servers {
+			if source.Is4() != server.Is4() {
+				continue
+			}
+
+			ret := &DNSClient{
+				Server: net.JoinHostPort(server.String(), fmt.Sprintf("%d", port)),
+				Source: source.String(),
+				c: &dns.Client{
+					Net:     "udp",
+					Timeout: dnsQueryTimeout,
+					Dialer: &net.Dialer{
+						LocalAddr: &net.UDPAddr{IP: net.IP(source.AsSlice())},
+						Timeout:   dnsQueryTimeout,
+					},
+				},
+			}
+
+			zap.L().Debug("Built the Cluster DNS client",
+				zap.String("server", ret.Server), zap.String("source", ret.Source))
+
+			return ret
 		}
-		source = ip
-		break
-	}
-	if source == nil {
-		t.Fatalf("The Session has no IPv4 connection address to query the Cluster DNS from")
 	}
 
-	ret := &DNSClient{
-		Server: h.ClusterDNSAddr(t),
-		Source: source.String(),
-		c: &dns.Client{
-			Net:     "udp",
-			Timeout: dnsQueryTimeout,
-			Dialer: &net.Dialer{
-				LocalAddr: &net.UDPAddr{IP: source},
-				Timeout:   dnsQueryTimeout,
-			},
-		},
-	}
-
-	zap.L().Debug("Built the Cluster DNS client",
-		zap.String("server", ret.Server), zap.String("source", ret.Source))
-
-	return ret
+	t.Fatalf("None of the local Session addresses %v can reach the Cluster DNS addresses %v",
+		sources, servers)
+	return nil
 }
 
 func (c *DNSClient) Exchange(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {

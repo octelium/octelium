@@ -194,6 +194,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Request: downstreamReq.Request,
 			Service: svc,
 		}
+		reqCtx.ServiceConfig = svc.Spec.Config
 		reqCtx.AuthResponse = &coctovigilv1.AuthenticateAndAuthorizeResponse{
 			RequestContext: reqCtx.DownstreamInfo,
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +71,37 @@ func testAnonymousAuthorization(t *testing.T, h *harness.H) {
 
 	t.Run("AnonymousOpen", func(t *testing.T) {
 		waitStatus(t, "/", http.StatusOK)
+	})
+
+	t.Run("ServiceConfigApplies", func(t *testing.T) {
+		svc.Spec.Config.Type = &corev1.Service_Spec_Config_Http{
+			Http: &corev1.Service_Spec_Config_HTTP{
+				Header: &corev1.Service_Spec_Config_HTTP_Header{
+					AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+						{
+							Key: "X-E2E-Anonymous",
+							Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{
+								Value: "on",
+							},
+						},
+					},
+				},
+			},
+		}
+		svc = h.UpdateService(t, svc)
+
+		h.Eventually(t, "the anonymous Service to apply its own Config", authzBudget,
+			func(ctx context.Context) error {
+				res, err := h.HTTPPublic(svc.Metadata.Name).R().SetContext(ctx).Get("/")
+				if err != nil {
+					return err
+				}
+				if got := res.Header().Get("X-E2E-Anonymous"); got != "on" {
+					return errors.Errorf("the client saw X-E2E-Anonymous %q, want %q",
+						got, "on")
+				}
+				return nil
+			})
 	})
 
 	t.Run("AuthorizationClosesIt", func(t *testing.T) {
