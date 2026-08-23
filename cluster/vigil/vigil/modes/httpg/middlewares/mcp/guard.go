@@ -69,7 +69,7 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 	mcpReq := reqCtx.MCP
 	reqID := mcpReq.GetRequestIDRaw()
 
-	if o := m.checkOrigin(req, cfg); o != nil {
+	if o := m.checkOrigin(req, cfg, reqCtx.Service); o != nil {
 		return o
 	}
 
@@ -320,7 +320,7 @@ func (m *guard) checkSingletonHeaders(req *http.Request, reqID json.RawMessage) 
 }
 
 func (m *guard) checkOrigin(req *http.Request,
-	cfg *corev1.Service_Spec_Config_MCP) *WriteErrorOpts {
+	cfg *corev1.Service_Spec_Config_MCP, svc *corev1.Service) *WriteErrorOpts {
 
 	if cfg.GetDisableOriginCheck() {
 		return nil
@@ -330,7 +330,8 @@ func (m *guard) checkOrigin(req *http.Request,
 		return nil
 	}
 
-	if httputils.GetCORSOrigin(req, cfg.GetCors(), m.domain) != "" {
+	if httputils.GetCORSOrigin(req, cfg.GetCors(), svc, m.domain) != "" {
+		req.Header.Del("Origin")
 		return nil
 	}
 

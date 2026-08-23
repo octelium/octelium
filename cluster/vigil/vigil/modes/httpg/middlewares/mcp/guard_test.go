@@ -62,6 +62,7 @@ type guardResult struct {
 	errBodyID   any
 	errBodyData map[string]any
 	hasBodyID   bool
+	nextOrigin  string
 }
 
 func serveGuard(t *testing.T, method, path, body string,
@@ -85,7 +86,28 @@ func serveGuard(t *testing.T, method, path, body string,
 	return serveGuardHeader(t, method, path, body, hdr, deleted, cfg)
 }
 
+func serveGuardHost(t *testing.T, host, method, path, body string,
+	headers map[string]string, cfg *corev1.Service_Spec_Config_MCP) *guardResult {
+
+	hdr := http.Header{}
+	for k, v := range headers {
+		if v == "" {
+			continue
+		}
+		hdr.Set(k, v)
+	}
+
+	return serveGuardOpts(t, host, method, path, body, hdr, nil, cfg)
+}
+
 func serveGuardHeader(t *testing.T, method, path, body string,
+	headers http.Header, deleted []string,
+	cfg *corev1.Service_Spec_Config_MCP) *guardResult {
+
+	return serveGuardOpts(t, "my-mcp.example.com", method, path, body, headers, deleted, cfg)
+}
+
+func serveGuardOpts(t *testing.T, host, method, path, body string,
 	headers http.Header, deleted []string,
 	cfg *corev1.Service_Spec_Config_MCP) *guardResult {
 
@@ -94,12 +116,13 @@ func serveGuardHeader(t *testing.T, method, path, body string,
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ret.isNext = true
+		ret.nextOrigin = r.Header.Get("Origin")
 	})
 
 	mdlwr, err := NewGuard(ctx, next, testDomain)
 	assert.Nil(t, err)
 
-	req := httptest.NewRequest(method, "http://my-mcp.example.com"+path, strings.NewReader(body))
+	req := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(body))
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -768,5 +791,71 @@ func TestGuardOriginClusterServices(t *testing.T) {
 
 		assert.False(t, ret.isNext)
 		assert.Equal(t, http.StatusForbidden, ret.code)
+	}
+}
+
+func TestGuardOriginPublicFQDN(t *testing.T) {
+
+	for _, origin := range []string{
+		"https://my-mcp.example.com",
+		"https://my-mcp.default.example.com",
+		"https://my-mcp.local.example.com",
+	} {
+		ret := serveGuardHost(t, "my-mcp.default.example.com", http.MethodPost, "/mcp",
+			toolsCallBody, map[string]string{
+				"Origin": origin,
+			}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext, origin)
+	}
+
+	for _, origin := range []string{
+		"https://evil.com",
+		"https://my-mcp.default.example.com.evil.com",
+		"https://other-mcp.example.com",
+	} {
+		ret := serveGuardHost(t, "my-mcp.default.example.com", http.MethodPost, "/mcp",
+			toolsCallBody, map[string]string{
+				"Origin": origin,
+			}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext, origin)
+		assert.Equal(t, ErrCodeOriginRejected, ret.errCode, origin)
+	}
+}
+
+func TestGuardOriginNotForwardedUpstream(t *testing.T) {
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://my-mcp.example.com",
+		}, &corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext)
+		assert.Empty(t, ret.nextOrigin)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://console.example.com",
+		}, &corev1.Service_Spec_Config_MCP{
+			Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+				AllowClusterServices: true,
+			},
+		})
+
+		assert.True(t, ret.isNext)
+		assert.Empty(t, ret.nextOrigin)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp", toolsCallBody, map[string]string{
+			"Origin": "https://evil.com",
+		}, &corev1.Service_Spec_Config_MCP{
+			DisableOriginCheck: true,
+		})
+
+		assert.True(t, ret.isNext)
+		assert.Equal(t, "https://evil.com", ret.nextOrigin)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 )
 
 func NormalizeOrigin(arg string) (string, bool) {
@@ -58,6 +59,26 @@ func IsSameOrigin(req *http.Request, origin string) bool {
 	for _, scheme := range []string{"https", "http"} {
 		if self, ok := NormalizeOrigin(scheme + "://" + req.Host); ok && self == origin {
 			return true
+		}
+	}
+
+	return false
+}
+
+func IsServiceOrigin(svc *corev1.Service, domain, origin string) bool {
+	if svc == nil || svc.Status == nil || svc.Status.NamespaceRef == nil ||
+		domain == "" || origin == "" {
+		return false
+	}
+
+	for _, host := range []string{
+		vutils.GetServicePublicFQDN(svc, domain),
+		vutils.GetServicePrivateFQDN(svc, domain),
+	} {
+		for _, scheme := range []string{"https", "http"} {
+			if self, ok := NormalizeOrigin(scheme + "://" + host); ok && self == origin {
+				return true
+			}
 		}
 	}
 
@@ -113,7 +134,7 @@ func allowCORSCredentials(cfg *corev1.Service_Spec_Config_HTTP_CORS,
 }
 
 func GetCORSOrigin(req *http.Request,
-	cfg *corev1.Service_Spec_Config_HTTP_CORS, domain string) string {
+	cfg *corev1.Service_Spec_Config_HTTP_CORS, svc *corev1.Service, domain string) string {
 
 	origin, ok := GetRequestOrigin(req)
 	if !ok {
@@ -121,6 +142,10 @@ func GetCORSOrigin(req *http.Request,
 	}
 
 	if IsSameOrigin(req, origin) {
+		return origin
+	}
+
+	if IsServiceOrigin(svc, domain, origin) {
 		return origin
 	}
 

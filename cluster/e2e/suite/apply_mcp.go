@@ -288,12 +288,17 @@ func applyMCPGateway(t *testing.T, a *applyCtx) {
 		waitStatus(t, c, "the MCP tool call above the argument limit to be rejected",
 			callArgs("transfer", map[string]any{"amount": 500}), http.StatusForbidden)
 
-		res, err := post(c, callArgs("transfer", map[string]any{"amount": 10})).Post("/")
+		result, err := newSession(t).CallTool(t.Context(), &mcp.CallToolParams{
+			Name:      "transfer",
+			Arguments: map[string]any{"amount": 10},
+		})
 		require.Nil(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode(), res.String())
-		assert.Contains(t, res.String(), "transferred 10")
 
-		res, err = post(c, callBody("echo")).Post("/")
+		textContent, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "transferred 10", textContent.Text)
+
+		res, err := post(c, callBody("echo")).Post("/")
 		require.Nil(t, err)
 		assert.Equal(t, http.StatusOK, res.StatusCode(), res.String())
 
