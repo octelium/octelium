@@ -202,19 +202,6 @@ func testAuthenticatorRegistration(t *testing.T, h *harness.H) {
 			"creating a TOTP Authenticator for a WORKLOAD User returned an unexpected error: %+v",
 			err)
 	})
-
-	t.Run("FIDORequiresBrowser", func(t *testing.T) {
-		sess := newHumanSession(t, h)
-
-		_, err := sess.C().CreateAuthenticator(sess.Ctx(t.Context()),
-			&authv1.CreateAuthenticatorRequest{
-				Type: authv1.Authenticator_Status_FIDO,
-			})
-		require.NotNil(t, err, "FIDO Authenticators require a browser Session")
-		assert.True(t, grpcerr.IsPermissionDenied(err),
-			"creating a FIDO Authenticator outside a browser returned an unexpected error: %+v",
-			err)
-	})
 }
 
 func testAuthenticatorAuthentication(t *testing.T, h *harness.H) {

@@ -44,6 +44,8 @@ func Phases() []Phase {
 		{"AuthenticatorRegistration", testAuthenticatorRegistration},
 		{"AuthenticatorAuthentication", testAuthenticatorAuthentication},
 		{"AuthenticatorAccess", testAuthenticatorAccess},
+		{"AuthenticatorFIDOAccess", testAuthenticatorFIDOAccess},
+		{"PasskeyLogin", testPasskeyLogin},
 		{"DeviceRegistration", testDeviceRegistration},
 		{"AuthServerLogout", testAuthServerLogout},
 		{"GeoIP", testGeoIP},

@@ -5,11 +5,13 @@ go 1.26.5
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
+	github.com/descope/virtualwebauthn v1.0.4
 	github.com/elastic/go-elasticsearch/v9 v9.1.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/lib/pq v1.11.2
 	github.com/miekg/dns v1.1.72
@@ -69,7 +71,6 @@ require (
 	github.com/google/go-attestation v0.6.0 // indirect
 	github.com/google/go-tpm v0.9.6 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
