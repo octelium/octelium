@@ -71,10 +71,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 
 	nullifyCurrAndUpdate := func() error {
 		s.prependToLastAttempts(authn)
-		authn, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
-		if err != nil {
-			return s.errInternalErr(err)
+		updated, updateErr := s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+		if updateErr != nil {
+			return s.errInternalErr(updateErr)
 		}
+		authn = updated
 		return nil
 	}
 
