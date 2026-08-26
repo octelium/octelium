@@ -12,6 +12,7 @@
     "build-staging": "tsc && vite build --mode staging"
   },
   "dependencies": {
+    "@fontsource/ubuntu": "^5.3.0",
     "@mantine/core": "^9.5.2",
     "@mantine/hooks": "^9.5.2",
     "@octelium/apis": "^1.0.7",
