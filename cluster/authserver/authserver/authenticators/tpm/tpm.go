@@ -18,7 +18,6 @@ package tpm
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 
@@ -108,10 +107,6 @@ func (c *TPMFactor) Begin(ctx context.Context, req *authenticators.BeginReq) (*a
 	}, nil
 }
 
-func (c *TPMFactor) verifyEKCert(ekCrt *x509.Certificate) error {
-	return nil
-}
-
 func (c *TPMFactor) Finish(ctx context.Context, reqCtx *authenticators.FinishReq) (*authenticators.FinishResp, error) {
 
 	var err error
@@ -165,6 +160,8 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 		}
 
 		var ekBytes []byte
+		var endorsement *corev1.Authenticator_Status_Info_TPM_Endorsement
+
 		if req.Req.PreChallenge.GetTpm().GetEkCertificateDER() != nil {
 			ekCert, err := attest.ParseEKCertificate(req.Req.PreChallenge.GetTpm().GetEkCertificateDER())
 			if err != nil {
@@ -172,12 +169,10 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 			}
 			zap.L().Debug("ekCert successfully parsed", zap.Any("ekCert", ekCert))
 
-			if _, ok := ekCert.PublicKey.(*rsa.PublicKey); !ok {
-				return nil, errors.Errorf("publicKey must be RSA")
-			}
-
-			if err := c.verifyEKCert(ekCert); err != nil {
-				return nil, errors.Errorf("Could not verify ekCert: %+v", err)
+			endorsement, err = c.verifyEKCert(ekCert,
+				req.Req.PreChallenge.GetTpm().EkCertificateIntermediatesDER)
+			if err != nil {
+				return nil, err
 			}
 
 			ekBytes, err = x509.MarshalPKIXPublicKey(ekCert.PublicKey)
@@ -187,13 +182,17 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 
 		} else {
 
+			if c.isEKCertRequired() {
+				return nil, errors.Errorf("An ekCert must be provided")
+			}
+
 			pubKey, err := x509.ParsePKIXPublicKey(req.Req.PreChallenge.GetTpm().GetEkPublicKey())
 			if err != nil {
 				return nil, err
 			}
 
-			if _, ok := pubKey.(*rsa.PublicKey); !ok {
-				return nil, errors.Errorf("publicKey must be RSA")
+			endorsement = &corev1.Authenticator_Status_Info_TPM_Endorsement{
+				Verification: corev1.Authenticator_Status_Info_TPM_Endorsement_NO_CERTIFICATE,
 			}
 
 			ekBytes, err = x509.MarshalPKIXPublicKey(pubKey)
@@ -230,6 +229,7 @@ func (c *TPMFactor) BeginRegistration(ctx context.Context, req *authenticators.B
 						CreateAttestation: req.Req.PreChallenge.GetTpm().AttestationParameters.CreateAttestation,
 						CreateSignature:   req.Req.PreChallenge.GetTpm().AttestationParameters.CreateSignature,
 					},
+					Endorsement: endorsement,
 				},
 			},
 		}

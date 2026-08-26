@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -1141,5 +1142,106 @@ func getTestAuthenticationUpstream(url string,
 				},
 			},
 		},
+	}
+}
+
+func TestValidateCCAuthenticatorTPM(t *testing.T) {
+
+	rootCA, err := utils_cert.GenerateCARoot()
+	assert.Nil(t, err, "%+v", err)
+
+	rootCAPEM, err := rootCA.GetCertPEM()
+	assert.Nil(t, err, "%+v", err)
+
+	interCA, err := utils_cert.GenerateIntermediateCATmp("Test Intermediate CA", rootCA)
+	assert.Nil(t, err, "%+v", err)
+
+	interCAPEM, err := interCA.GetCertPEM()
+	assert.Nil(t, err, "%+v", err)
+
+	leaf, err := utils_cert.GenerateCertificateTmp("Test Leaf", rootCA, false)
+	assert.Nil(t, err, "%+v", err)
+
+	leafPEM, err := leaf.GetCertPEM()
+	assert.Nil(t, err, "%+v", err)
+
+	getTPM := func(trust *corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust) *corev1.ClusterConfig_Spec_Authenticator_TPM {
+		return &corev1.ClusterConfig_Spec_Authenticator_TPM{
+			EndorsementTrust: trust,
+		}
+	}
+
+	assert.Nil(t, validateCCAuthenticatorTPM(nil))
+	assert.Nil(t, validateCCAuthenticatorTPM(getTPM(nil)))
+
+	assert.Nil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode: corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_DISABLED,
+		})))
+
+	assert.Nil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode:            corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+			TrustedCAs:      []string{rootCAPEM},
+			IntermediateCAs: []string{interCAPEM},
+		})))
+
+	for _, mode := range []corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_Mode{
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_VERIFY_IF_PRESENT,
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+	} {
+		assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+			&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+				Mode: mode,
+			})))
+
+		assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+			&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+				Mode:            mode,
+				IntermediateCAs: []string{interCAPEM},
+			})))
+	}
+
+	assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode: corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_Mode(100),
+		})))
+
+	assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode:       corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+			TrustedCAs: []string{leafPEM},
+		})))
+
+	assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode:            corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+			TrustedCAs:      []string{rootCAPEM},
+			IntermediateCAs: []string{leafPEM},
+		})))
+
+	assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode:       corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+			TrustedCAs: []string{"not a PEM certificate"},
+		})))
+
+	assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+		&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+			Mode:       corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+			TrustedCAs: []string{strings.Repeat("A", ccMaxTPMCALen+1)},
+		})))
+
+	{
+		var trustedCAs []string
+		for i := 0; i < ccMaxTPMCAs+1; i++ {
+			trustedCAs = append(trustedCAs, rootCAPEM)
+		}
+
+		assert.NotNil(t, validateCCAuthenticatorTPM(getTPM(
+			&corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust{
+				Mode:       corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED,
+				TrustedCAs: trustedCAs,
+			})))
 	}
 }

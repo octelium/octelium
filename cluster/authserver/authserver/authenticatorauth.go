@@ -440,6 +440,16 @@ func (s *server) validatePreChallenge(req *authv1.RegisterAuthenticatorBeginRequ
 			}
 		}
 
+		if len(arg.EkCertificateIntermediatesDER) > 4 {
+			return s.errInvalidArg("Too many ekCertificateIntermediatesDER")
+		}
+
+		for _, itm := range arg.EkCertificateIntermediatesDER {
+			if err := checkBytes(itm, "ekCertificateIntermediatesDER"); err != nil {
+				return err
+			}
+		}
+
 		if arg.AttestationParameters == nil {
 			return s.errInvalidArg("Nil attestationParams")
 		}

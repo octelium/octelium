@@ -559,3 +559,50 @@ func TestDoPostAuthenticatorAuthenticationRules(t *testing.T) {
 			}))
 	}
 }
+
+func TestValidatePreChallenge(t *testing.T) {
+	s := &server{}
+
+	getPreChallenge := func(intermediates [][]byte) *authv1.RegisterAuthenticatorBeginRequest_PreChallenge {
+		return &authv1.RegisterAuthenticatorBeginRequest_PreChallenge{
+			Type: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_Tpm{
+				Tpm: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM{
+					AkBytes: []byte("akBytes"),
+					EkType: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_EkPublicKey{
+						EkPublicKey: []byte("ekPublicKey"),
+					},
+					AttestationParameters: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_AttestationParameters{
+						Public:            []byte("public"),
+						CreateData:        []byte("createData"),
+						CreateAttestation: []byte("createAttestation"),
+						CreateSignature:   []byte("createSignature"),
+					},
+					EkCertificateIntermediatesDER: intermediates,
+				},
+			},
+		}
+	}
+
+	assert.Nil(t, s.validatePreChallenge(nil))
+	assert.Nil(t, s.validatePreChallenge(getPreChallenge(nil)))
+	assert.Nil(t, s.validatePreChallenge(getPreChallenge([][]byte{
+		[]byte("intermediate"),
+	})))
+
+	assert.NotNil(t, s.validatePreChallenge(getPreChallenge([][]byte{
+		[]byte("intermediate"), {}, []byte("intermediate"),
+	})))
+
+	assert.NotNil(t, s.validatePreChallenge(getPreChallenge([][]byte{
+		make([]byte, 3001),
+	})))
+
+	{
+		var intermediates [][]byte
+		for i := 0; i < 5; i++ {
+			intermediates = append(intermediates, []byte("intermediate"))
+		}
+
+		assert.NotNil(t, s.validatePreChallenge(getPreChallenge(intermediates)))
+	}
+}

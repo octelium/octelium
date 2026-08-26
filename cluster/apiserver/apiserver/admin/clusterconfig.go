@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 )
 
 const (
@@ -40,6 +41,8 @@ const (
 	ccMaxXFFNumTrustedHops = 64
 	ccMaxURLLen            = 1024
 	ccMaxNameLen           = 256
+	ccMaxTPMCAs            = 64
+	ccMaxTPMCALen          = 8192
 )
 
 func (s *Server) GetClusterConfig(ctx context.Context, req *corev1.GetClusterConfigRequest) (*corev1.ClusterConfig, error) {
@@ -363,6 +366,10 @@ func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterC
 		return err
 	}
 
+	if err := validateCCAuthenticatorTPM(cfg.Tpm); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -413,6 +420,68 @@ func validateCCAuthenticatorFIDO(fido *corev1.ClusterConfig_Spec_Authenticator_F
 	default:
 		return grpcutils.InvalidArg("Invalid FIDO attestationConveyancePreference")
 	}
+}
+
+func validateCCAuthenticatorTPM(tpm *corev1.ClusterConfig_Spec_Authenticator_TPM) error {
+	if tpm == nil {
+		return nil
+	}
+
+	trust := tpm.EndorsementTrust
+	if trust == nil {
+		return nil
+	}
+
+	switch trust.Mode {
+	case corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_MODE_UNKNOWN,
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_DISABLED,
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_VERIFY_IF_PRESENT,
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED:
+	default:
+		return grpcutils.InvalidArg("Invalid endorsementTrust mode")
+	}
+
+	if err := validateCCAuthenticatorTPMCAs(trust.TrustedCAs, "trustedCAs"); err != nil {
+		return err
+	}
+
+	if err := validateCCAuthenticatorTPMCAs(trust.IntermediateCAs, "intermediateCAs"); err != nil {
+		return err
+	}
+
+	switch trust.Mode {
+	case corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_VERIFY_IF_PRESENT,
+		corev1.ClusterConfig_Spec_Authenticator_TPM_EndorsementTrust_REQUIRE_VERIFIED:
+		if len(trust.TrustedCAs) == 0 {
+			return grpcutils.InvalidArg(
+				"The endorsementTrust mode %s requires at least one trustedCA", trust.Mode.String())
+		}
+	}
+
+	return nil
+}
+
+func validateCCAuthenticatorTPMCAs(caPEMs []string, fieldName string) error {
+	if len(caPEMs) > ccMaxTPMCAs {
+		return grpcutils.InvalidArg("Too many %s", fieldName)
+	}
+
+	for _, caPEM := range caPEMs {
+		if len(caPEM) > ccMaxTPMCALen {
+			return grpcutils.InvalidArg("The %s entry is too long", fieldName)
+		}
+
+		ca, err := utils_cert.ParseX509LeafCertificateChainPEM([]byte(caPEM))
+		if err != nil {
+			return grpcutils.InvalidArg("Could not parse the %s entry: %+v", fieldName, err)
+		}
+
+		if !ca.IsCA {
+			return grpcutils.InvalidArg("The %s entry is not a CA certificate", fieldName)
+		}
+	}
+
+	return nil
 }
 
 func validateIngress(c *corev1.ClusterConfig) error {
