@@ -1,10 +1,10 @@
 import { RouteObject } from "react-router-dom";
-import Root from "./index";
+import Login from "./index";
 
 const loginRouter = (): RouteObject => {
   return {
     path: "login",
-    element: <Root />,
+    element: <Login />,
     /*
     children: [
       {

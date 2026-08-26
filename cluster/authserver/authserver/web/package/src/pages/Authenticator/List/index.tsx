@@ -4,7 +4,7 @@ import { getClientAuth } from "@/utils/client";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useQuery } from "@tanstack/react-query";
 
-import { Loader } from "@mantine/core";
+import { Button, Loader } from "@mantine/core";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -53,7 +53,7 @@ const Page = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const { isError, isLoading, data } = useQuery({
+  const { isError, isLoading, data, refetch } = useQuery({
     queryKey: ["getAvailableAuthenticator"],
     queryFn: async () => {
       if (isDev()) {
@@ -69,7 +69,7 @@ const Page = () => {
   if (isLoading) {
     return (
       <div className="w-full flex items-center justify-center my-24">
-        <Loader />
+        <Loader aria-label="Loading authenticators" />
       </div>
     );
   }
@@ -77,8 +77,13 @@ const Page = () => {
   if (isError || !data) {
     return (
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
-          Could not load your Authenticators. Please refresh and try again.
+        <div className="flex flex-col items-center justify-center my-4 text-center" role="alert">
+          <div className="font-bold text-xl text-slate-700">
+            Could not load your Authenticators.
+          </div>
+          <Button className="mt-4" onClick={() => refetch()}>
+            Try again
+          </Button>
         </div>
       </div>
     );

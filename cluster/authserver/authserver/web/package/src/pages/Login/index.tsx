@@ -4,9 +4,9 @@ import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 
 import LogoMain from "@/components/LogoMain";
-import { isDev } from "@/utils";
+import { getSafeRedirectURL, isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
-import { Divider } from "@mantine/core";
+import { Divider, Loader } from "@mantine/core";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "react-hot-toast";
@@ -31,6 +31,12 @@ interface authReqCommon {
   userAgent: string;
 }
 
+const isAuthResponse = (value: unknown): value is authResponse =>
+  typeof value === "object" &&
+  value !== null &&
+  "loginURL" in value &&
+  typeof value.loginURL === "string";
+
 interface State {
   domain: string;
   identityProviders?: StateProvider[];
@@ -44,6 +50,29 @@ interface StateProvider {
 }
 
 const PASSKEY_ID = "__passkey__";
+
+const normalizeState = (value: unknown): State => {
+  if (typeof value !== "object" || value === null) {
+    return { domain: "", identityProviders: [], isPasskeyLoginEnabled: false };
+  }
+
+  const state = value as Partial<State>;
+  const identityProviders = Array.isArray(state.identityProviders)
+    ? state.identityProviders.filter(
+        (provider): provider is StateProvider =>
+          typeof provider === "object" &&
+          provider !== null &&
+          typeof provider.uid === "string" &&
+          typeof provider.displayName === "string",
+      )
+    : [];
+
+  return {
+    domain: typeof state.domain === "string" ? state.domain : "",
+    identityProviders,
+    isPasskeyLoginEnabled: state.isPasskeyLoginEnabled === true,
+  };
+};
 
 const PROVIDER_ICONS: { keywords: string[]; Icon: IconType }[] = [
   { keywords: ["github"], Icon: FaGithub },
@@ -76,27 +105,19 @@ function getProviderIcon(displayName: string): {
 }
 
 function getState(): State {
-  if (!isDev()) {
-    return (
-      (window as Window & { __OCTELIUM_STATE__?: State }).__OCTELIUM_STATE__ ??
-      ({ domain: "" } as State)
-    );
-  }
-
-  return {
-    domain: "example.com",
-    isPasskeyLoginEnabled: true,
-    identityProviders: [
-      {
-        uid: "github",
-        displayName: "GitHub",
-      },
-      {
-        uid: "gitlab-1",
-        displayName: "Gitlab",
-      },
-    ],
-  } as State;
+  return normalizeState(
+    isDev()
+      ? {
+          domain: "example.com",
+          isPasskeyLoginEnabled: true,
+          identityProviders: [
+            { uid: "github", displayName: "GitHub" },
+            { uid: "gitlab-1", displayName: "Gitlab" },
+          ],
+        }
+      : (window as Window & { __OCTELIUM_STATE__?: unknown })
+          .__OCTELIUM_STATE__,
+  );
 }
 
 const Passkey = (props: {
@@ -109,6 +130,13 @@ const Passkey = (props: {
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (
+        typeof PublicKeyCredential === "undefined" ||
+        typeof PublicKeyCredential.parseRequestOptionsFromJSON !== "function"
+      ) {
+        throw new Error("Passkeys are not supported by this browser");
+      }
+
       const { response } = await c.authenticateWithPasskeyBegin(
         Auth.AuthenticateWithPasskeyBeginRequest.create({
           query: props.query,
@@ -118,9 +146,12 @@ const Passkey = (props: {
       const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
         JSON.parse(response.request),
       );
-      const credential = (await navigator.credentials.get({
+      const credential = await navigator.credentials.get({
         publicKey,
-      })) as PublicKeyCredential;
+      });
+      if (!(credential instanceof PublicKeyCredential)) {
+        throw new Error("No passkey credential was returned");
+      }
 
       return await c.authenticateWithPasskey(
         Auth.AuthenticateWithPasskeyRequest.create({
@@ -148,7 +179,7 @@ const Passkey = (props: {
         aria-busy={props.pending === PASSKEY_ID}
         className={twMerge(
           "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-          "shadow-2xl rounded-lg cursor-pointer",
+          "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
           "bg-[#242323] hover:bg-black text-white text-lg",
           busy ? "!bg-[#777] shadow-none" : undefined,
         )}
@@ -157,8 +188,14 @@ const Passkey = (props: {
         }}
       >
         <span className="flex items-center justify-center gap-2 font-bold text-lg">
-          <IoIosFingerPrint className="h-8 w-8 shrink-0" aria-hidden />
-          <span className="font-semibold">Login with a Passkey</span>
+          {busy ? (
+            <Loader size="sm" color="gray" aria-label="Signing in" />
+          ) : (
+            <IoIosFingerPrint className="h-8 w-8 shrink-0" aria-hidden />
+          )}
+          <span className="font-semibold">
+            {busy ? "Signing in…" : "Login with a Passkey"}
+          </span>
         </span>
       </button>
     </div>
@@ -169,6 +206,9 @@ const Page = () => {
   const state = getState();
 
   const [pending, setPending] = React.useState<string | null>(null);
+  const [hasLoginError] = React.useState(() =>
+    new URLSearchParams(window.location.search).has("error"),
+  );
   const [reqCommon] = React.useState<authReqCommon>(() => ({
     query: new URLSearchParams(window.location.search).toString() || undefined,
     userAgent: window.navigator.userAgent,
@@ -177,11 +217,6 @@ const Page = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   React.useEffect(() => {
-    const err = searchParams.get("error");
-    if (err) {
-      console.log("Error: ", err);
-    }
-
     if (searchParams.toString()) {
       setSearchParams(new URLSearchParams(), { replace: true });
     }
@@ -209,13 +244,13 @@ const Page = () => {
         if (!res.ok) {
           throw new Error(`begin failed: ${res.status}`);
         }
-        return res.json();
+        return res.json() as Promise<unknown>;
       })
-      .then((data: authResponse) => {
-        if (!data.loginURL) {
+      .then((data) => {
+        if (!isAuthResponse(data)) {
           throw new Error("missing loginURL");
         }
-        window.location.href = data.loginURL;
+        window.location.assign(getSafeRedirectURL(data.loginURL));
       })
       .catch(() => {
         setPending(null);
@@ -228,6 +263,17 @@ const Page = () => {
       <div className="flex items-center justify-center mt-4 mb-3">
         <LogoMain />
       </div>
+
+      {hasLoginError && (
+        <div
+          className="container mx-auto mt-2 max-w-lg px-2 md:px-4"
+          role="alert"
+        >
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-semibold text-red-700">
+            We could not start sign-in. Please try again.
+          </div>
+        </div>
+      )}
 
       {!hasProviders && (
         <div className="container mx-auto mt-2 p-2 md:p-8 w-full max-w-lg">
@@ -265,7 +311,7 @@ const Page = () => {
                 <button
                   className={twMerge(
                     "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-                    "shadow-2xl rounded-lg cursor-pointer",
+                    "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
                     "bg-[#242323] hover:bg-black text-white text-lg",
                     busy ? "!bg-[#777] shadow-none" : undefined,
                   )}
@@ -274,11 +320,16 @@ const Page = () => {
                   key={c.uid}
                   onClick={() => beginLogin(c.uid)}
                 >
-                  <div className="w-full flex flex-row items-center justify-center gap-2">
+                  <div className="flex w-full min-w-0 flex-row flex-wrap items-center justify-center gap-2">
                     {found && Icon && (
                       <Icon className="h-6 w-6 shrink-0" aria-hidden />
                     )}
-                    <span className="font-semibold">{c.displayName}</span>
+                    {pending === c.uid && (
+                      <Loader size="sm" color="gray" aria-label="Signing in" />
+                    )}
+                    <span className="min-w-0 break-words font-semibold">
+                      {pending === c.uid ? "Signing in…" : c.displayName}
+                    </span>
                   </div>
                 </button>
               );

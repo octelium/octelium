@@ -9,3 +9,29 @@ body {
   margin: 0;
   font-family: "Ubuntu", sans-serif;
 }
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #0891b2;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

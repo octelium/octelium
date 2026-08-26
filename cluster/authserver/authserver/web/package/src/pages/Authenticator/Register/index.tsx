@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { getDomain, isDev } from "@/utils";
+import { getPortalURL, isDev } from "@/utils";
 
 import { getClientAuth } from "@/utils/client";
 import { getResourceRef } from "@/utils/pb";
@@ -110,6 +110,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
               size="lg"
               autoFocus
               value={otp}
+              disabled={mutationFinish.isPending}
               onChange={setOtp}
               onComplete={(val) => {
                 mutationFinish.mutate(val);
@@ -151,6 +152,13 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (
+        typeof PublicKeyCredential === "undefined" ||
+        typeof PublicKeyCredential.parseCreationOptionsFromJSON !== "function"
+      ) {
+        throw new Error("Security keys are not supported by this browser");
+      }
+
       const { response } = await c.registerAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
@@ -168,6 +176,9 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       const credential = (await navigator.credentials.create({
         publicKey,
       })) as PublicKeyCredential;
+      if (!credential) {
+        throw new Error("No security key credential was returned");
+      }
 
       return await c.registerAuthenticatorFinish(
         Auth.AuthenticateWithAuthenticatorRequest.create({
@@ -319,10 +330,12 @@ const Page = () => {
                 },
               ].map((x) => (
                 <button
+                  type="button"
                   key={x.name}
+                  disabled={mutation.isPending}
                   className={twMerge(
                     "w-full px-3 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
-                    "shadow-2xl rounded-lg cursor-pointer font-bold",
+                    "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed font-bold",
                     "bg-[#242323] hover:bg-black text-white text-lg",
                     mutation.isPending ? "!bg-[#777] shadow-none" : undefined,
                   )}
@@ -332,9 +345,12 @@ const Page = () => {
                     });
                   }}
                 >
-                  <div className="flex items-center">
-                    <span className="font-bold text-xl">{x.name}</span>
-                    <span className="font-bold text-sm flex-1 text-left ml-4 text-slate-300">
+                  <div className="flex w-full flex-col items-start gap-2 text-left sm:flex-row sm:items-center">
+                    {mutation.isPending && (
+                      <Loader size="sm" color="gray" aria-label="Creating authenticator" />
+                    )}
+                    <span className="shrink-0 font-bold text-xl">{x.name}</span>
+                    <span className="min-w-0 text-left text-sm font-bold text-slate-300 sm:ml-2">
                       {x.description}
                     </span>
                   </div>
@@ -366,7 +382,7 @@ export const ReturnToPortal = () => {
     <div className="w-full flex items-center mt-8 text-center justify-center">
       <a
         className="text-center font-bold text-gray-700 hover:text-gray-900 transition-all duration-500 text-shadow-2xs"
-        href={`https://portal.${getDomain()}`}
+        href={getPortalURL()}
       >
         Return to Portal
       </a>

@@ -1,5 +1,5 @@
 import LogoMain from "@/components/LogoMain";
-import { getDomain } from "@/utils";
+import { getPortalURL } from "@/utils";
 
 const Page = () => {
   return (
@@ -22,7 +22,7 @@ const Page = () => {
           Visit Octelium Portal{" "}
           <a
             className="text-zinc-800 hover:text-black transition-all duration-500"
-            href={`https://portal.${getDomain()}`}
+            href={getPortalURL()}
           >
             here
           </a>{" "}

@@ -3,12 +3,19 @@ import * as React from "react";
 import { twMerge } from "tailwind-merge";
 
 import LogoMain from "@/components/LogoMain";
-import { getDomain } from "@/utils";
+import { getDomain, getSafeRedirectURL } from "@/utils";
+import { Loader } from "@mantine/core";
 import { toast } from "react-hot-toast";
 
 interface approvalResponse {
   redirectURL: string;
 }
+
+const isApprovalResponse = (value: unknown): value is approvalResponse =>
+  typeof value === "object" &&
+  value !== null &&
+  "redirectURL" in value &&
+  typeof value.redirectURL === "string";
 
 const Page = () => {
   const [pending, setPending] = React.useState(false);
@@ -28,13 +35,13 @@ const Page = () => {
         if (!res.ok) {
           throw new Error(`approval failed: ${res.status}`);
         }
-        return res.json();
+        return res.json() as Promise<unknown>;
       })
-      .then((data: approvalResponse) => {
-        if (!data.redirectURL) {
+      .then((data) => {
+        if (!isApprovalResponse(data)) {
           throw new Error("missing redirectURL");
         }
-        window.location.href = data.redirectURL;
+        window.location.assign(getSafeRedirectURL(data.redirectURL));
       })
       .catch(() => {
         setPending(false);
@@ -69,7 +76,7 @@ const Page = () => {
           <button
             className={twMerge(
               "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-              "shadow-2xl rounded-lg cursor-pointer",
+              "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
               "bg-[#242323] hover:bg-black text-white text-lg",
               pending ? "!bg-[#777] shadow-none" : undefined,
             )}
@@ -77,20 +84,22 @@ const Page = () => {
             aria-busy={pending}
             onClick={() => decide(true)}
           >
-            <span className="font-semibold">Approve</span>
+            {pending ? <Loader size="sm" color="gray" aria-label="Approving" /> : null}
+            <span className="font-semibold">{pending ? "Approving…" : "Approve"}</span>
           </button>
 
           <button
             className={twMerge(
               "w-full px-2 py-3 transition-all duration-500",
-              "rounded-lg cursor-pointer",
+              "rounded-lg cursor-pointer disabled:cursor-not-allowed",
               "text-zinc-500 hover:text-black",
               pending ? "!text-[#aaa]" : undefined,
             )}
             disabled={pending}
             onClick={() => decide(false)}
           >
-            <span className="font-semibold">Reject</span>
+            {pending ? <Loader size="sm" color="gray" aria-label="Rejecting" /> : null}
+            <span className="font-semibold">{pending ? "Rejecting…" : "Reject"}</span>
           </button>
         </div>
       </div>

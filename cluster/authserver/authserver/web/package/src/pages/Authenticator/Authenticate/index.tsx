@@ -90,11 +90,17 @@ const TOTP = (props: {
         autoFocus
         size="lg"
         value={otp}
+        disabled={mutation.isPending}
         onChange={setOtp}
         onComplete={(val) => {
           mutation.mutate(val);
         }}
       />
+      {mutation.isPending && (
+        <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-slate-500" role="status">
+          <Loader size="xs" /> Verifying…
+        </div>
+      )}
     </div>
   );
 };
@@ -110,6 +116,13 @@ const Fido = (props: {
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (
+        typeof PublicKeyCredential === "undefined" ||
+        typeof PublicKeyCredential.parseRequestOptionsFromJSON !== "function"
+      ) {
+        throw new Error("Security keys are not supported by this browser");
+      }
+
       const { response } = await c.authenticateAuthenticatorBegin(
         Auth.AuthenticateAuthenticatorBeginRequest.create({
           authenticatorRef: getResourceRef(authn),
@@ -126,6 +139,9 @@ const Fido = (props: {
       const credential = (await navigator.credentials.get({
         publicKey,
       })) as PublicKeyCredential;
+      if (!credential) {
+        throw new Error("No security key credential was returned");
+      }
 
       return await c.authenticateWithAuthenticator(
         Auth.AuthenticateWithAuthenticatorRequest.create({
@@ -163,7 +179,11 @@ const Fido = (props: {
   return (
     <div className="w-full flex flex-col items-center justify-center my-4">
       {mutation.isPending && (
-        <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+        <h2
+          className="font-bold text-xl text-slate-700 flex items-center justify-center gap-2 my-4 text-center"
+          role="status"
+        >
+          <Loader size="sm" />
           Waiting for your security key
         </h2>
       )}
@@ -192,9 +212,10 @@ export const Authenticator = (props: {
   const { authn, query } = props;
   const [open, setOpen] = React.useState(false);
   const [isEdit, setIsEdit] = React.useState(false);
-  const [displayName, setDisplayName] = React.useState<string>(
-    authn.spec!.displayName,
+  const [displayName, setDisplayName] = React.useState(
+    authn.spec?.displayName ?? "",
   );
+  const canonicalName = authn.metadata?.name ?? "Unnamed authenticator";
 
   const isDelete = useDisclosure(false);
   const c = getClientAuth();
@@ -221,7 +242,10 @@ export const Authenticator = (props: {
   const mutationUpdate = useMutation({
     mutationFn: async () => {
       const req = Auth.Authenticator.clone(authn);
-      req.spec!.displayName = displayName ?? "";
+      if (!req.spec) {
+        throw new Error("Authenticator specification is missing");
+      }
+      req.spec.displayName = displayName.trim();
 
       await c.updateAuthenticator(req);
     },
@@ -256,17 +280,17 @@ export const Authenticator = (props: {
         "mb-4",
       )}
     >
-      <div className="flex items-center">
-        <div className="w-full font-bold flex-1">
-          <div className="flex items-center">
-            <span className="text-white bg-slate-800 rounded-lg py-2 px-2 text-xs shadow-md">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <div className="min-w-0 flex-1 font-bold">
+          <div className="flex min-w-0 items-start gap-2">
+            <span className="flex-none text-white bg-slate-800 rounded-lg py-2 px-2 text-xs shadow-md">
               {authn.status?.type === Auth.Authenticator_Status_Type.FIDO &&
                 "FIDO"}
               {authn.status?.type === Auth.Authenticator_Status_Type.TOTP &&
                 "TOTP"}
             </span>{" "}
-            <div className="ml-1 flex-1 w-full">
-              <div className="text-black ml-1 flex items-center w-full">
+            <div className="min-w-0 flex-1">
+              <div className="text-black flex min-w-0 items-center w-full">
                 <Tooltip label="Edit Display Name">
                   <ActionIcon
                     variant="transparent"
@@ -285,24 +309,35 @@ export const Authenticator = (props: {
 
                 {!isEdit && (
                   <span>
-                    {authn.spec!.displayName.length > 0
-                      ? authn.spec!.displayName
-                      : authn.metadata!.name}
+                    {displayName.length > 0 ? displayName : canonicalName}
                   </span>
                 )}
                 {isEdit && (
-                  <div className="flex items-center flex-1 w-full">
+                  <div className="flex min-w-0 flex-1 items-center w-full">
                     <Input
                       placeholder="My Authenticator"
                       variant={"unstyled"}
+                      aria-label="Authenticator display name"
                       value={displayName}
                       onChange={(e) => {
                         setDisplayName(e.target.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === "Enter" &&
+                          !mutationUpdate.isPending &&
+                          displayName.trim().length > 0
+                        ) {
+                          mutationUpdate.mutate();
+                        }
                       }}
                     />
 
                     <ActionIcon
                       aria-label="Submit"
+                      disabled={
+                        mutationUpdate.isPending || displayName.trim().length === 0
+                      }
                       loading={mutationUpdate.isPending}
                       onClick={() => {
                         mutationUpdate.mutate();
@@ -314,9 +349,9 @@ export const Authenticator = (props: {
                 )}
               </div>
 
-              {authn.spec!.displayName.length > 0 && (
-                <div className="text-slate-700 text-xs ml-1">
-                  {authn.metadata!.name}
+              {displayName.length > 0 && (
+                <div className="break-words text-slate-700 text-xs">
+                  {canonicalName}
                 </div>
               )}
               {!!authn.status?.description && (
@@ -331,9 +366,10 @@ export const Authenticator = (props: {
             <TimeAgo rfc3339={authn.metadata?.createdAt} />
           </div>
         </div>
-        <div className="flex flex-col items-center">
+        <div className="flex w-full flex-row items-center gap-2 sm:w-auto sm:flex-col sm:items-stretch">
           {authn.status?.isRegistered && (
             <Button
+              className="w-full sm:w-auto"
               onClick={() => {
                 setOpen(!open);
               }}
@@ -343,7 +379,7 @@ export const Authenticator = (props: {
             </Button>
           )}
           <Button
-            className="mt-3 !rounded-md !transition-all !duration-500 !border-slate-500"
+            className="mt-0 w-full !rounded-md !transition-all !duration-500 !border-slate-500 sm:mt-3"
             fullWidth
             size="compact-xs"
             variant="outline"
@@ -364,6 +400,16 @@ export const Authenticator = (props: {
             {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
               <TOTP authn={authn} query={query} />
             )}
+
+            {authn.status?.type !== Auth.Authenticator_Status_Type.FIDO &&
+              authn.status?.type !== Auth.Authenticator_Status_Type.TOTP && (
+                <div
+                  className="my-4 text-center text-sm font-semibold text-red-700"
+                  role="alert"
+                >
+                  This authenticator type is not supported by this version of the portal.
+                </div>
+              )}
           </div>
         )}
       </Collapse>
@@ -469,8 +515,12 @@ export const ListAvailableAuthenticators = (props: {
           </Button>
         </h2>
         <div className="w-full">
-          {resp.availableAuthenticators.map((x) => (
-            <Authenticator key={x.metadata!.name} authn={x} query={query} />
+          {resp.availableAuthenticators.map((x, index) => (
+            <Authenticator
+              key={x.metadata?.uid || x.metadata?.name || index}
+              authn={x}
+              query={query}
+            />
           ))}
         </div>
       </div>
@@ -490,7 +540,7 @@ const Page = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const { isError, isLoading, data } = useQuery({
+  const { isError, isLoading, data, refetch } = useQuery({
     queryKey: ["getAvailableAuthenticator"],
     queryFn: async () => {
       if (isDev()) {
@@ -506,7 +556,7 @@ const Page = () => {
   if (isLoading) {
     return (
       <div className="w-full flex items-center justify-center my-24">
-        <Loader />
+        <Loader aria-label="Loading authenticators" />
       </div>
     );
   }
@@ -514,8 +564,16 @@ const Page = () => {
   if (isError || !data) {
     return (
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
-          Could not load your Authenticators. Please refresh and try again.
+        <div
+          className="flex flex-col items-center justify-center my-4 text-center"
+          role="alert"
+        >
+          <div className="font-bold text-xl text-slate-700">
+            Could not load your Authenticators.
+          </div>
+          <Button className="mt-4" onClick={() => refetch()}>
+            Try again
+          </Button>
         </div>
       </div>
     );
@@ -536,6 +594,15 @@ const Page = () => {
               Auth.Authenticator_Status_Type.TOTP && (
               <TOTP authn={data.mainAuthenticator} query={query} />
             )}
+
+            {data.mainAuthenticator.status?.type !==
+              Auth.Authenticator_Status_Type.FIDO &&
+              data.mainAuthenticator.status?.type !==
+                Auth.Authenticator_Status_Type.TOTP && (
+                <div className="my-4 text-center text-sm font-semibold text-red-700" role="alert">
+                  This authenticator type is not supported by this version of the portal.
+                </div>
+              )}
           </div>
         )}
 

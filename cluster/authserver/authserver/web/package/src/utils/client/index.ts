@@ -6,11 +6,13 @@ export const getTransport = () => {
   const domain = getDomain();
   const scheme = location.protocol === "https:" ? "https" : "http";
 
-  let baseUrl = `${scheme}://octelium-api.${domain}`;
-
-  if (isDev()) {
-    baseUrl = `https://${window.location.host}`;
+  if (!isDev() && !domain) {
+    throw new Error("The Octelium domain is not configured.");
   }
+
+  const baseUrl = isDev()
+    ? window.location.origin
+    : `${scheme}://octelium-api.${domain}`;
 
   return new grpcWeb.GrpcWebFetchTransport({
     baseUrl,
@@ -21,6 +23,9 @@ export const getTransport = () => {
   });
 };
 
+let client: AuthGRPC.MainServiceClient | undefined;
+
 export const getClientAuth = (): AuthGRPC.MainServiceClient => {
-  return new AuthGRPC.MainServiceClient(getTransport());
+  client ??= new AuthGRPC.MainServiceClient(getTransport());
+  return client;
 };

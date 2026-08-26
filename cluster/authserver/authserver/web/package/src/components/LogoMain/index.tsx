@@ -2,6 +2,8 @@ const LogoMain = () => {
   return (
     <div className="w-40 h-40 md:w-60 md:h-60 rounded-[50%] bg-black shadow-2xl flex items-center justify-center transition-all duration-500 hover:bg-zinc-900 hover:shadow-xl">
       <svg
+        aria-hidden="true"
+        focusable="false"
         className="w-20 h-20 md:w-40 md:h-40"
         width="256"
         height="256"
