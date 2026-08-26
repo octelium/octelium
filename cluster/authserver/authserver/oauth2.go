@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -134,8 +135,18 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		return
 	}
 	var sess *corev1.Session
-	if len(sessList.Items) > 0 {
-		sess = sessList.Items[0]
+	for _, itm := range sessList.Items {
+		if ucorev1.ToSession(itm).IsExpired() {
+			zap.L().Debug("Skipping expired Credential Session",
+				zap.String("sess", itm.Metadata.Name))
+			continue
+		}
+
+		sess = itm
+		break
+	}
+
+	if sess != nil {
 
 		if sess.Status.IsLocked {
 			s.returnOAuth2Err(w, r, "invalid_client", 400)

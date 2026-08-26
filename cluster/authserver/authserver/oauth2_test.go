@@ -41,7 +41,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -1099,5 +1101,142 @@ func TestOAuth2TokenResponseHeaders(t *testing.T) {
 		res := doOAuth2TokenReq(t, srv, data)
 		assert.Equal(t, http.StatusBadRequest, res.statusCode)
 		assert.Equal(t, "invalid_scope", res.errResp.Error)
+	}
+}
+
+func TestOAuth2CredentialSessionReuse(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+		corev1.User_Spec_WORKLOAD, corev1.Session_Status_CLIENTLESS)
+	assert.Nil(t, err)
+
+	cred, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+	data := url.Values{}
+	data.Set("grant_type", "client_credentials")
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+
+	listCredSessions := func() []*corev1.Session {
+		sessList, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{
+				urscsrv.FilterFieldEQValStr("status.credentialRef.uid", cred.Metadata.Uid),
+			},
+		})
+		assert.Nil(t, err)
+		return sessList.Items
+	}
+
+	getTokenSession := func(res *oauth2TestResult) *corev1.Session {
+		claims, err := srv.jwkCtl.VerifyAccessToken(res.token.AccessToken)
+		assert.Nil(t, err, "%+v", err)
+
+		ret, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: claims.SessionUID,
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		return ret
+	}
+
+	var firstUID string
+
+	{
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+
+		sess := getTokenSession(res)
+		firstUID = sess.Metadata.Uid
+
+		assert.False(t, ucorev1.ToSession(sess).IsExpired())
+		assert.Equal(t, 1, len(listCredSessions()))
+	}
+
+	{
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+
+		assert.Equal(t, firstUID, getTokenSession(res).Metadata.Uid)
+		assert.Equal(t, 1, len(listCredSessions()))
+	}
+
+	{
+		sess := listCredSessions()[0]
+		sess.Spec.ExpiresAt = pbutils.Timestamp(time.Now().Add(-time.Hour))
+		_, err = srv.octeliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+
+		sess = getTokenSession(res)
+		assert.NotEqual(t, firstUID, sess.Metadata.Uid)
+		assert.False(t, ucorev1.ToSession(sess).IsExpired())
+		assert.True(t, ucorev1.ToSession(sess).IsValid())
+
+		assert.Equal(t, 2, len(listCredSessions()))
+	}
+
+	{
+		for _, itm := range listCredSessions() {
+			if ucorev1.ToSession(itm).IsExpired() {
+				continue
+			}
+
+			itm.Spec.ExpiresAt = pbutils.Timestamp(time.Now().Add(-time.Hour))
+			_, err = srv.octeliumC.CoreC().UpdateSession(ctx, itm)
+			assert.Nil(t, err)
+		}
+
+		var uids []string
+		for i := 0; i < 4; i++ {
+			res := doOAuth2TokenReq(t, srv, data)
+			assert.Equal(t, http.StatusOK, res.statusCode, "%d", i)
+
+			sess := getTokenSession(res)
+			assert.False(t, ucorev1.ToSession(sess).IsExpired(), "%d", i)
+
+			if !slices.Contains(uids, sess.Metadata.Uid) {
+				uids = append(uids, sess.Metadata.Uid)
+			}
+		}
+
+		assert.Equal(t, 1, len(uids))
+		assert.Equal(t, 3, len(listCredSessions()))
+	}
+
+	{
+		for _, itm := range listCredSessions() {
+			if ucorev1.ToSession(itm).IsExpired() {
+				continue
+			}
+
+			itm.Status.IsLocked = true
+			_, err = srv.octeliumC.CoreC().UpdateSession(ctx, itm)
+			assert.Nil(t, err)
+		}
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
 	}
 }
