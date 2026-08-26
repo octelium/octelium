@@ -1,7 +1,7 @@
 import { RouteObject } from "react-router-dom";
 import Root from "./index";
 
-export default (): RouteObject => {
+const loginRouter = (): RouteObject => {
   return {
     path: "login",
     element: <Root />,
@@ -15,3 +15,5 @@ export default (): RouteObject => {
     */
   };
 };
+
+export default loginRouter;

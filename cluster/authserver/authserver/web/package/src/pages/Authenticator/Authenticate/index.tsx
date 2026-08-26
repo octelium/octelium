@@ -150,14 +150,15 @@ const Fido = (props: {
       }
     },
   });
+  const { mutate } = mutation;
 
   React.useEffect(() => {
     if (startedRef.current) {
       return;
     }
     startedRef.current = true;
-    mutation.mutate();
-  }, []);
+    mutate();
+  }, [mutate]);
 
   return (
     <div className="w-full flex flex-col items-center justify-center my-4">
@@ -353,7 +354,7 @@ export const Authenticator = (props: {
         </div>
       </div>
 
-      <Collapse in={open} transitionDuration={300}>
+      <Collapse expanded={open} transitionDuration={300}>
         {open && (
           <div>
             {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
@@ -481,15 +482,13 @@ const Page = () => {
   const c = getClientAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const queryRef = React.useRef<URLSearchParams | null>(null);
-  if (queryRef.current === null) {
-    queryRef.current = new URLSearchParams(searchParams);
-  }
-  const query = queryRef.current;
+  const [query] = React.useState(() => new URLSearchParams(searchParams));
 
   React.useEffect(() => {
-    setSearchParams(new URLSearchParams(), { replace: true });
-  }, []);
+    if (searchParams.toString()) {
+      setSearchParams(new URLSearchParams(), { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { isError, isLoading, data } = useQuery({
     queryKey: ["getAvailableAuthenticator"],

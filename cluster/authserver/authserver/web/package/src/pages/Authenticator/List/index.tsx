@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Loader } from "@mantine/core";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ListAvailableAuthenticators } from "../Authenticate";
 import { ReturnToPortal } from "../Register";
@@ -45,15 +45,13 @@ const Page = () => {
   const c = getClientAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const queryRef = useRef<URLSearchParams | null>(null);
-  if (queryRef.current === null) {
-    queryRef.current = new URLSearchParams(searchParams);
-  }
-  const query = queryRef.current;
+  const [query] = useState(() => new URLSearchParams(searchParams));
 
   useEffect(() => {
-    setSearchParams(new URLSearchParams(), { replace: true });
-  }, []);
+    if (searchParams.toString()) {
+      setSearchParams(new URLSearchParams(), { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { isError, isLoading, data } = useQuery({
     queryKey: ["getAvailableAuthenticator"],

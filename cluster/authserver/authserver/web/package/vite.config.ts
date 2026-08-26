@@ -35,7 +35,7 @@ export default defineConfig({
             return false;
           }
           return "auto";
-        } catch (error) {
+        } catch {
           return "auto";
         }
       },

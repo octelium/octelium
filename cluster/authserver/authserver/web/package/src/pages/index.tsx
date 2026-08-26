@@ -4,7 +4,7 @@ import { Outlet } from "react-router-dom";
 
 import { Toaster } from "react-hot-toast";
 
-export default () => {
+const Root = () => {
   return (
     <div>
       <title>Octelium Login</title>
@@ -27,3 +27,5 @@ export default () => {
     </div>
   );
 };
+
+export default Root;

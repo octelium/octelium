@@ -60,7 +60,7 @@ const PROVIDER_ICONS: { keywords: string[]; Icon: IconType }[] = [
   { keywords: ["authentik"], Icon: SiAuthentik },
 ];
 
-export function getProviderIcon(displayName: string): {
+function getProviderIcon(displayName: string): {
   Icon: IconType | null;
   found: boolean;
 } {
@@ -78,7 +78,8 @@ export function getProviderIcon(displayName: string): {
 function getState(): State {
   if (!isDev()) {
     return (
-      ((window as any).__OCTELIUM_STATE__ as State) ?? ({ domain: "" } as State)
+      (window as Window & { __OCTELIUM_STATE__?: State }).__OCTELIUM_STATE__ ??
+      ({ domain: "" } as State)
     );
   }
 
@@ -133,7 +134,7 @@ const Passkey = (props: {
     onSuccess: () => {
       window.location.href = "/callback/success";
     },
-    onError: (err) => {
+    onError: () => {
       props.setPending(null);
 
       toast.error("Passkey sign-in failed. Please try again.");
@@ -168,25 +169,23 @@ const Page = () => {
   const state = getState();
 
   const [pending, setPending] = React.useState<string | null>(null);
-  const [reqCommon, setReqCommon] = React.useState<authReqCommon | null>(null);
+  const [reqCommon] = React.useState<authReqCommon>(() => ({
+    query: new URLSearchParams(window.location.search).toString() || undefined,
+    userAgent: window.navigator.userAgent,
+  }));
 
   const [searchParams, setSearchParams] = useSearchParams();
 
   React.useEffect(() => {
-    const query = searchParams.toString();
-
-    setReqCommon({
-      query: query || undefined,
-      userAgent: window.navigator.userAgent,
-    });
-
     const err = searchParams.get("error");
     if (err) {
       console.log("Error: ", err);
     }
 
-    setSearchParams(new URLSearchParams(), { replace: true });
-  }, []);
+    if (searchParams.toString()) {
+      setSearchParams(new URLSearchParams(), { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const busy = pending !== null;
   const providers = state.identityProviders ?? [];

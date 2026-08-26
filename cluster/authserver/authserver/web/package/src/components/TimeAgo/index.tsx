@@ -11,21 +11,25 @@ dayjs.extend(utc);
 import { Tooltip } from "@mantine/core";
 
 const TimeAgo = (props: { rfc3339?: Timestamp }) => {
+  const [, setTick] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!props.rfc3339) {
+      return;
+    }
+
+    const interval = setInterval(() => setTick((value) => value + 1), 10000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [props.rfc3339]);
+
   if (!props.rfc3339) {
     return <></>;
   }
 
   const t = Timestamp.toDate(props.rfc3339);
-  let [time, setTime] = React.useState(dayjs(t).fromNow());
-
-  React.useEffect(() => {
-    setTime(dayjs(t).fromNow());
-
-    const interval = setInterval(() => setTime(dayjs(t).fromNow()), 10000);
-    return () => {
-      clearInterval(interval);
-    };
-  }, [props.rfc3339]);
+  const time = dayjs(t).fromNow();
   return (
     <Tooltip
       label={

@@ -46,6 +46,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       toast.error("Could not start registration. Please try again.");
     },
   });
+  const { mutate: startTotp } = mutation;
 
   const mutationFinish = useMutation({
     mutationFn: async (otp: string) => {
@@ -77,8 +78,8 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       return;
     }
     startedRef.current = true;
-    mutation.mutate();
-  }, []);
+    startTotp();
+  }, [startTotp]);
 
   return (
     <div className="w-full flex items-center justify-center">
@@ -191,14 +192,15 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
       }
     },
   });
+  const { mutate: startFido } = mutation;
 
   React.useEffect(() => {
     if (startedRef.current) {
       return;
     }
     startedRef.current = true;
-    mutation.mutate();
-  }, []);
+    startFido();
+  }, [startFido]);
 
   return (
     <div className="w-full flex flex-col items-center justify-center my-4">

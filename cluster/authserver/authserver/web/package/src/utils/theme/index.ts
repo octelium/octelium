@@ -10,23 +10,8 @@ import {
   TextInput,
   Tooltip,
 } from "@mantine/core";
-// import { fontFamily } from ".";
-
 const theme = createTheme({
-  // fontFamily: fontFamily,
-  fontFamily: [
-    "-apple-system",
-    "BlinkMacSystemFont",
-    "Ubuntu",
-    '"Segoe UI"',
-    "Roboto",
-    '"Helvetica Neue"',
-    "Arial",
-    "sans-serif",
-    '"Apple Color Emoji"',
-    '"Segoe UI Emoji"',
-    '"Segoe UI Symbol"',
-  ].join(","),
+  fontFamily: "Ubuntu, sans-serif",
 
   primaryColor: "dark",
   autoContrast: true,

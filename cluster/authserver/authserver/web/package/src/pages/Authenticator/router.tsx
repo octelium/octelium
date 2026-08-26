@@ -3,7 +3,7 @@ import Authenticate from "./Authenticate";
 import List from "./List";
 import Register from "./Register";
 
-export default (): RouteObject => {
+const authenticatorRouter = (): RouteObject => {
   return {
     path: "authenticators",
     element: (
@@ -28,3 +28,5 @@ export default (): RouteObject => {
     ],
   };
 };
+
+export default authenticatorRouter;

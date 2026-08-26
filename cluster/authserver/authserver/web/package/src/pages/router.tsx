@@ -6,7 +6,7 @@ import Home from "./Home";
 import Root from "./index";
 import routerLogin from "./Login/router";
 
-export default (): RouteObject => {
+const router = (): RouteObject => {
   return {
     path: "/",
     element: <Root />,
@@ -26,3 +26,5 @@ export default (): RouteObject => {
     ],
   };
 };
+
+export default router;
