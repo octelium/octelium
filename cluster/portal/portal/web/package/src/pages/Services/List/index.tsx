@@ -8,6 +8,7 @@ import InfoItem from "@/components/InfoItem";
 import PageHeader from "@/components/PageHeader";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
+import ResourceName from "@/components/ResourceName";
 import {
   ResourceListItem,
   ResourceListLabel,
@@ -174,14 +175,11 @@ const ServiceItem = (props: { item: Service; domain: string }) => {
         <div className="flex min-w-0 flex-1 items-start gap-3">
           {getTypeIcon(item)}
           <div className="min-w-0 flex-1">
-            <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-extrabold text-slate-900">
-              <CopyText value={name} />
-              {displayName && (
-                <span className="font-semibold text-slate-500">
-                  {displayName}
-                </span>
-              )}
-            </h2>
+            <ResourceName
+              name={name}
+              displayName={displayName}
+              splitNamespace
+            />
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold">
               <ResourceListLabel label="Type">
                 {getType(item)}

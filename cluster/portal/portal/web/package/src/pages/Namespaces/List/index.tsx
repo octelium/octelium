@@ -3,10 +3,10 @@ import {
   ErrorState,
   ResourceListSkeleton,
 } from "@/components/AsyncState";
-import CopyText from "@/components/CopyText";
 import PageHeader from "@/components/PageHeader";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
+import ResourceName from "@/components/ResourceName";
 import {
   ResourceListItem,
   ResourceListWrapper,
@@ -35,12 +35,7 @@ const NamespaceItem = (props: { item: Namespace }) => {
             <Boxes size={20} aria-hidden />
           </div>
           <div className="min-w-0">
-            <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 text-base font-extrabold text-slate-900">
-              <CopyText value={name} />
-              {displayName && (
-                <span className="font-semibold text-slate-500">{displayName}</span>
-              )}
-            </h2>
+            <ResourceName name={name} displayName={displayName} />
             <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
               Namespace
             </p>
