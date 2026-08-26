@@ -48,7 +48,7 @@ const Item = (props: { item: Namespace; domain: string; skipNS?: boolean }) => {
               <CopyText value={item.metadata!.name} />
 
               {md.displayName && (
-                <Text className="ml-3" c="gray.7" inherit>
+                <Text component="span" className="ml-3" c="gray.7" inherit>
                   {md.displayName}
                 </Text>
               )}

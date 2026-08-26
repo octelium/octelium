@@ -10,7 +10,7 @@ export const getTransport = () => {
   let baseUrl = `${scheme}://octelium-api.${domain}`;
 
   if (isDev()) {
-    baseUrl = `https://${window.location.host}`;
+    baseUrl = `http://${window.location.host}`;
   }
 
   return new grpcWeb.GrpcWebFetchTransport({

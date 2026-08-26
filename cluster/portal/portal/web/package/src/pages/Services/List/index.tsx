@@ -161,7 +161,7 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
               />
 
               {md.displayName && (
-                <Text className="ml-3" c="gray.7" inherit>
+                <Text component="span" className="ml-3" c="gray.7" inherit>
                   {md.displayName}
                 </Text>
               )}
@@ -185,7 +185,7 @@ const Item = (props: { item: Service; domain: string; skipNS?: boolean }) => {
             {item.spec?.isTLS && <ResourceListLabel>TLS</ResourceListLabel>}
           </div>
 
-          <Collapse in={showDetails} transitionDuration={500}>
+          <Collapse expanded={showDetails} transitionDuration={500}>
             <ItemDetails item={item} domain={props.domain} />
           </Collapse>
         </div>
