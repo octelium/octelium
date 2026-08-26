@@ -12,6 +12,7 @@ const Footer = () => {
 
           <a
             target="_blank"
+            rel="noopener noreferrer"
             aria-label="Octelium on GitHub"
             className={twMerge(
               "font-extrabold text-sm md:text-xl",
@@ -26,7 +27,7 @@ const Footer = () => {
         </div>
 
         <div className="flex flex-col lg:flex-row items-center justify-center gap-x-3">
-          <a href="https://octelium.com" target="_blank">
+          <a href="https://octelium.com" target="_blank" rel="noopener noreferrer">
             <span className="flex items-center text-sm font-semibold transition-all duration-300 text-gray-500 hover:text-gray-600">
               © {new Date().getUTCFullYear()}{" "}
               <span className="ml-1">octelium.com</span>

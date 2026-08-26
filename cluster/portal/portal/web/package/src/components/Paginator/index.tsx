@@ -1,90 +1,42 @@
-import { ListResponseMeta } from "@octelium/apis/main/metav1";
+import { Pagination } from "@mantine/core";
+import type { ListResponseMeta } from "@octelium/apis/main/metav1";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import * as React from "react";
-import { twMerge } from "tailwind-merge";
 
-import { ActionIcon, Pagination, TextInput } from "@mantine/core";
-
-const Paginator = (props: { meta: ListResponseMeta; path: string }) => {
-  const { meta } = props;
+const Paginator = (props: { meta?: ListResponseMeta }) => {
   const navigate = useNavigate();
-  const totalPages = Math.ceil(meta.totalCount / meta.itemsPerPage);
-  const loc = useLocation();
-  let [searchParams, _] = useSearchParams();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const meta = props.meta;
 
-  if (meta.page == 0 && meta.totalCount <= meta.itemsPerPage) {
-    return <React.Fragment></React.Fragment>;
+  if (!meta || meta.itemsPerPage <= 0) {
+    return null;
   }
 
-  return (
-    <div className="flex items-center w-full justify-center my-4">
-       <Pagination
-          total={totalPages}
-          radius={"xl"}
-          value={meta.page + 1}
-          withEdges
-          color="#111"
-          onChange={(v) => {
-            let page = v;
-            searchParams.set("common.page", `${page}`);
-            navigate(`${loc.pathname}?${searchParams.toString()}`);
-            /*
-            const i = v;
-            if (props.onPageChange) {
-              props.onPageChange(i);
-            } else if (props.path) {
-              navigate(
-                `${props.path}${props.path.includes("?") ? "&" : "?"}page=${
-                  i - 1
-                }`
-              );
-            }
-            */
-          }}
-        />
-      {/*
-      <Pagination
-        variant="outlined"
-        count={totalPages}
-        page={meta.page}
-        onChange={(i, x) => {
-          navigate(
-            `${props.path}${props.path.includes("?") ? "&" : "?"}page=${x}`
-          );
-        }}
-      />
-      */}
-    </div>
-  );
+  const totalPages = Math.ceil(meta.totalCount / meta.itemsPerPage);
+  if (totalPages <= 1) {
+    return null;
+  }
+
+  const currentPage = Math.min(Math.max(meta.page + 1, 1), totalPages);
 
   return (
-    <div className="w-full flex items-center justify-center">
-      <div className="w-full flex items-center justify-center flex-wrap">
-        {[...Array(totalPages)].map((e, i) => {
-          return (
-            <button
-              key={i}
-              className={twMerge(
-                `flex items-center text-center justify-center`,
-                "mx-2 my-2  text-white font-bold py-1 px-2 rounded-md shadow-2xl",
-                meta.page === i
-                  ? `bg-slate-900 border-[1px] border-slate-900`
-                  : `bg-transparent border-[1px] border-slate-900 text-slate-700`
-              )}
-              onClick={() => {
-                navigate(
-                  `${props.path}${
-                    props.path.includes("?") ? "&" : "?"
-                  }page=${i}`
-                );
-              }}
-            >
-              {i + 1}
-            </button>
-          );
-        })}
-      </div>
+    <div className="flex w-full justify-center py-4">
+      <Pagination
+        aria-label="Pagination"
+        total={totalPages}
+        value={currentPage}
+        onChange={(value) => {
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.set("common.page", String(value - 1));
+          navigate(`${location.pathname}?${nextParams.toString()}`);
+        }}
+        size="sm"
+        radius="xl"
+        withEdges
+        color="#111"
+      />
     </div>
   );
 };
+
 export default Paginator;

@@ -1,6 +1,6 @@
 import { twMerge } from "tailwind-merge";
 
-export default (props: { children?: React.ReactNode; outlined?: boolean }) => {
+const Label = (props: { children?: React.ReactNode; outlined?: boolean }) => {
   return (
     <span
       className={twMerge(
@@ -15,3 +15,5 @@ export default (props: { children?: React.ReactNode; outlined?: boolean }) => {
     </span>
   );
 };
+
+export default Label;

@@ -7,6 +7,7 @@ const LinkItem = (props: { link: string; children?: React.ReactNode }) => {
       <a
         href={props.link}
         target="_blank"
+        rel="noopener noreferrer"
         className="mb-2 w-full transition-all duration-300 text-zinc-200 hover:text-white inline-flex items-center text-sm leading-none"
       >
         {props.children}
@@ -15,7 +16,7 @@ const LinkItem = (props: { link: string; children?: React.ReactNode }) => {
   );
 };
 
-export default () => {
+const Links = () => {
   return (
     <div className="flex flex-col my-4 font-bold bg-zinc-800 border-none rounded-lg p-3 shadow-lg m-2">
       <LinkItem link="https://github.com/octelium/octelium">
@@ -30,3 +31,5 @@ export default () => {
     </div>
   );
 };
+
+export default Links;

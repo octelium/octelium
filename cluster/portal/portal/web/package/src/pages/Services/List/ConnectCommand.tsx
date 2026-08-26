@@ -82,16 +82,14 @@ const ConnectCommand = (props: { service: Service; domain: string }) => {
   );
 
   const full = info ? info.commands.join("\n") : "";
-  const [typed, setTyped] = React.useState(reduced ? full.length : 0);
+  const [typed, setTyped] = React.useState(0);
   const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => {
     if (!info || reduced) {
-      setTyped(full.length);
       return;
     }
 
-    setTyped(0);
     let i = 0;
     const id = window.setInterval(() => {
       i += 1;
@@ -116,8 +114,9 @@ const ConnectCommand = (props: { service: Service; domain: string }) => {
     return null;
   }
 
-  const done = typed >= full.length;
-  const lines = full.slice(0, typed).split("\n");
+  const visibleLength = reduced ? full.length : typed;
+  const done = visibleLength >= full.length;
+  const lines = full.slice(0, visibleLength).split("\n");
 
   const onCopy = async () => {
     try {

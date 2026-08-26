@@ -1,6 +1,6 @@
 import { truncateUtf8 } from "@/utils";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaCheckDouble } from "react-icons/fa6";
 import { MdOutlineContentCopy } from "react-icons/md";
 
@@ -9,11 +9,17 @@ const CopyText = (props: {
   truncate?: number;
   hide?: boolean;
 }) => {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const timeoutRef = useRef<number | undefined>(undefined);
   const { value, hide } = props;
+
+  useEffect(() => () => window.clearTimeout(timeoutRef.current), []);
+
   if (!value) {
     return <></>;
   }
+
+  const copied = copyState === "copied";
 
   return (
     <span className="flex items-center justify-center">
@@ -25,14 +31,21 @@ const CopyText = (props: {
         </span>
       )}
       <button
+        type="button"
         className="hover:text-black p-0 rounded-full text-slate-700 transition-all duration-500 font-extrabold cursor-pointer"
-        aria-label="Copy to clipboard"
-        onClick={(e) => {
+        aria-label={copied ? "Copied" : "Copy to clipboard"}
+        onClick={async (e) => {
           e.stopPropagation();
           e.preventDefault();
-          navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1000);
+          try {
+            if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+            await navigator.clipboard.writeText(value);
+            setCopyState("copied");
+          } catch {
+            setCopyState("error");
+          }
+          window.clearTimeout(timeoutRef.current);
+          timeoutRef.current = window.setTimeout(() => setCopyState("idle"), 1200);
         }}
       >
         <AnimatePresence initial={false} mode="popLayout">
@@ -47,6 +60,9 @@ const CopyText = (props: {
           </motion.div>
         </AnimatePresence>
       </button>
+      <span className="sr-only" aria-live="polite">
+        {copyState === "copied" ? "Copied to clipboard" : copyState === "error" ? "Could not copy to clipboard" : ""}
+      </span>
     </span>
   );
 };

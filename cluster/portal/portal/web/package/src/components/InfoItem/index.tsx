@@ -5,9 +5,9 @@ export const InfoItem = (props: {
   title: string;
 }) => {
   return (
-    <div className="w-full flex text-sm font-bold mb-1">
-      <div className="flex text-black">{props.title}</div>
-      <div className="ml-2 text-gray-600">{props.children}</div>
+    <div className="grid w-full grid-cols-1 gap-1 text-sm sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-3">
+      <dt className="font-bold text-slate-800">{props.title}</dt>
+      <dd className="min-w-0 break-words font-medium text-slate-600">{props.children}</dd>
     </div>
   );
 };

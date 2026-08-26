@@ -2,10 +2,8 @@
 
 import Logo from "@/assets/l03.svg?react";
 import { useAppSelector } from "@/utils/hooks";
-import { useNavigate } from "react-router-dom";
 
 const TopBar = () => {
-  const navigate = useNavigate();
   const settings = useAppSelector((state) => state.settings);
   const picURL =
     settings.status?.session?.metadata?.picURL ??
@@ -17,6 +15,8 @@ const TopBar = () => {
         className="flex-none flex items-center justify-center"
         href="https://octelium.com"
         target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Octelium website"
       >
         <Logo className="w-40 h-auto stroke-cyan-400" />
       </a>
@@ -24,15 +24,18 @@ const TopBar = () => {
 
       <div className="flex-none flex items-center">
         <div className="flex items-center justify-center align-middle">
-          <div className="w-10 h-10 rounded-full border-white border-2 text-gray-600 hover:text-gray-900 font-bold transition-all duration-300">
+          <div
+            className="h-10 w-10 rounded-full border-2 border-white text-gray-600 transition-all duration-300"
+            title="Current user"
+          >
             {picURL ? (
               <img
-                className="rounded-full w-full h-full"
+                className="h-full w-full rounded-full object-cover"
                 src={picURL}
-                alt="User pic"
+                alt="Current user"
               />
             ) : (
-              <div className="rounded-full bg-sky-600 hover:bg-indigo-800 transition-all duration-300 w-full h-full"></div>
+              <div className="h-full w-full rounded-full bg-sky-600 transition-all duration-300 hover:bg-indigo-800" aria-hidden />
             )}
           </div>
         </div>

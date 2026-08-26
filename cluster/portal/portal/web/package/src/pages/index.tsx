@@ -9,66 +9,84 @@ import { useAppDispatch } from "@/utils/hooks";
 import { AppShell, Burger } from "@mantine/core";
 import { useDisclosure, useHeadroom } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
+import { ErrorState } from "@/components/AsyncState";
 
-export default () => {
+const Root = () => {
   const dispatch = useAppDispatch();
-  const [opened, { toggle }] = useDisclosure();
+  const [opened, { toggle, close }] = useDisclosure(false);
   const pinned = useHeadroom({ fixedAt: 120 });
+  const location = useLocation();
 
-  useQuery({
+  const statusQuery = useQuery({
     queryKey: ["user/getStatus"],
     queryFn: async () => {
       const { response } = await getClientUser().getStatus({});
-
-      dispatch(setStatus({ status: response }));
       return response;
     },
   });
 
+  useEffect(() => {
+    if (statusQuery.data) {
+      dispatch(setStatus({ status: statusQuery.data }));
+    }
+  }, [dispatch, statusQuery.data]);
+
+  useEffect(() => {
+    close();
+  }, [close, location.pathname]);
+
   return (
-    <div>
+    <div className="min-h-screen">
       <title>Octelium Portal</title>
-      <div className=" bg-slate-100 min-h-screen antialiased">
+      <div className="min-h-screen bg-slate-100 antialiased">
         <AppShell
           className="!bg-transparent"
-          header={{ height: 60, collapsed: !pinned, offset: false }}
+          header={{ height: 64, collapsed: !pinned, offset: true }}
           navbar={{
-            width: 300,
+            width: 260,
             breakpoint: "sm",
             collapsed: { mobile: !opened },
           }}
-          aside={{
-            width: 300,
-            breakpoint: "md",
-            collapsed: { desktop: false, mobile: true },
-          }}
           padding="md"
         >
-          <AppShell.Header className="!bg-slate-100">
-            <div className="flex flex-row items-center justify-center">
+          <AppShell.Header className="border-slate-200 !bg-slate-100">
+            <div className="flex h-full items-center">
               <Burger
                 opened={opened}
                 onClick={toggle}
                 hiddenFrom="sm"
                 size="sm"
+                aria-label={opened ? "Close navigation" : "Open navigation"}
               />
               <TopBar />
             </div>
           </AppShell.Header>
 
-          <AppShell.Main className="!bg-transparent h-full w-full mt-[60px]">
-            <div className="flex-1 flex flex-col min-h-full min-w-full items-center justify-center">
-              <div className="flex-1 w-full h-full">
+          <AppShell.Navbar className="border-slate-200 !bg-slate-100" p="md">
+            <Sidebar onNavigate={close} />
+          </AppShell.Navbar>
+
+          <AppShell.Main className="min-h-screen !bg-transparent">
+            <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-6xl flex-col">
+              {statusQuery.isError && (
+                <ErrorState
+                  title="Unable to load your session"
+                  message="Some portal data may be unavailable. Check your connection or sign in again."
+                  onRetry={() => statusQuery.refetch()}
+                />
+              )}
+              <div className="min-w-0 flex-1">
                 <Outlet />
               </div>
               <Footer />
             </div>
           </AppShell.Main>
-          <AppShell.Aside p="md" className="!bg-transparent">
-            <Sidebar />
-          </AppShell.Aside>
         </AppShell>
       </div>
     </div>
   );
 };
+
+export default Root;

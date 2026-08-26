@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { RouteObject } from "react-router-dom";
 import Home from "./Home";
 import Root from "./index";

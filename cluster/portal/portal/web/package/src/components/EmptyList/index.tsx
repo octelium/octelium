@@ -1,7 +1,7 @@
 import * as React from "react";
 import { twJoin } from "tailwind-merge";
 
-export default (props: { title: string; children?: React.ReactNode }) => {
+const EmptyList = (props: { title: string; children?: React.ReactNode }) => {
   return (
     <div className="flex flex-col items-center justify-center">
       <div
@@ -17,3 +17,5 @@ export default (props: { title: string; children?: React.ReactNode }) => {
     </div>
   );
 };
+
+export default EmptyList;

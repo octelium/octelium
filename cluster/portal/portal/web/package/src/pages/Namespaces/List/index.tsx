@@ -1,152 +1,124 @@
-import { getClientUser } from "@/utils/client";
-import { useAppSelector } from "@/utils/hooks";
-
 import {
-  ListNamespaceOptions,
-  ListServiceOptions,
-  Namespace,
-  NamespaceList,
-} from "@octelium/apis/main/userv1";
-import { useQuery } from "@tanstack/react-query";
-
+  EmptyState,
+  ErrorState,
+  ResourceListSkeleton,
+} from "@/components/AsyncState";
 import CopyText from "@/components/CopyText";
-import EmptyList from "@/components/EmptyList";
+import PageHeader from "@/components/PageHeader";
+import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
 import {
   ResourceListItem,
-  ResourceListLabel,
   ResourceListWrapper,
 } from "@/components/ResourceList";
-import { getDomain } from "@/utils";
-import { useSearchParams } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
+import { getClientUser } from "@/utils/client";
+import { useAppSelector } from "@/utils/hooks";
+import {
+  ListNamespaceOptions,
+  Namespace,
+  NamespaceList,
+} from "@octelium/apis/main/userv1";
+import { ArrowRight, Boxes } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 
-import parseQuery from "@/utils/parseQuery";
-import { Text } from "@mantine/core";
-
-const Item = (props: { item: Namespace; domain: string; skipNS?: boolean }) => {
-  const { item } = props;
-
-  const md = item.metadata!;
-  const qry = useQuery({
-    queryKey: ["user/main.listSvcByNamespace", item.metadata?.name],
-    queryFn: async () => {
-      return await getClientUser().listService(
-        ListServiceOptions.create({
-          namespace: item.metadata!.name,
-        }),
-      );
-    },
-  });
+const NamespaceItem = (props: { item: Namespace }) => {
+  const metadata = props.item.metadata;
+  const name = metadata?.name ?? "Unnamed namespace";
+  const displayName = metadata?.displayName;
 
   return (
-    <div className="font-semibold w-full">
-      <div className="flex items-start">
-        <div className="flex flex-col flex-1">
-          <div className="flex items-center font-bold">
-            <Text className="mr-2 flex flex-row" size="sm" fw={"bold"}>
-              <CopyText value={item.metadata!.name} />
-
-              {md.displayName && (
-                <Text component="span" className="ml-3" c="gray.7" inherit>
-                  {md.displayName}
-                </Text>
-              )}
-            </Text>
+    <ResourceListItem>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-zinc-900 text-white shadow-md">
+            <Boxes size={20} aria-hidden />
           </div>
-          <div className="w-full mt-1 flex flex-row">
-            {qry.isSuccess &&
-              qry.data &&
-              qry.data.response.listResponseMeta &&
-              qry.data.response.listResponseMeta.totalCount > 0 && (
-                <ResourceListLabel
-                  to={`/services?namespace=${item.metadata!.name}`}
-                >
-                  {qry.data.response.listResponseMeta.totalCount} Services
-                </ResourceListLabel>
+          <div className="min-w-0">
+            <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 text-base font-extrabold text-slate-900">
+              <CopyText value={name} />
+              {displayName && (
+                <span className="font-semibold text-slate-500">{displayName}</span>
               )}
+            </h2>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Namespace
+            </p>
           </div>
         </div>
+
+        <Link
+          className="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition-colors hover:border-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 sm:self-auto"
+          to={`/services?namespace=${encodeURIComponent(name)}`}
+        >
+          View services
+          <ArrowRight size={16} aria-hidden />
+        </Link>
       </div>
-    </div>
+    </ResourceListItem>
   );
 };
 
-const NamespaceListC = (props: { itemsList: NamespaceList }) => {
-  let [searchParams, _] = useSearchParams();
-  const path = `/namespaces`;
-
-  const domain = getDomain();
+const NamespaceResults = (props: { itemsList: NamespaceList }) => {
+  const items = props.itemsList.items ?? [];
 
   return (
-    <div>
-      <Paginator meta={props.itemsList.listResponseMeta!} path={path} />
-
-      <ResourceListWrapper>
-        {props.itemsList.items.length === 0 && (
-          <EmptyList title="No Namespaces Found"></EmptyList>
-        )}
-        {props.itemsList.items.map((item) => (
-          <ResourceListItem key={item.metadata!.uid}>
-            <Item
+    <>
+      <Paginator meta={props.itemsList.listResponseMeta} />
+      {items.length === 0 ? (
+        <EmptyState
+          title="No namespaces found"
+          message="There are no namespaces available for your account."
+        />
+      ) : (
+        <ResourceListWrapper>
+          {items.map((item, index) => (
+            <NamespaceItem
               item={item}
-              domain={domain}
-              skipNS={searchParams.has("namespace")}
+              key={item.metadata?.uid || item.metadata?.name || index}
             />
-          </ResourceListItem>
-        ))}
-      </ResourceListWrapper>
-
-      <Paginator meta={props.itemsList.listResponseMeta!} path={path} />
-    </div>
+          ))}
+        </ResourceListWrapper>
+      )}
+      <Paginator meta={props.itemsList.listResponseMeta} />
+    </>
   );
 };
 
 const Page = () => {
-  const settings = useAppSelector((state) => state.settings);
-
-  let [searchParams, _] = useSearchParams();
-
-  let opts = parseQuery<{ common: { page: number; itemsPerPage?: number } }>(
-    searchParams.toString(),
+  const itemsPerPage = useAppSelector(
+    (state) => state.settings.itemsPerPage ?? 10,
   );
-  if (opts.common && opts.common.page && opts.common.page > 0) {
-    opts.common.page = opts.common.page - 1;
-  }
-
-  let o = ListNamespaceOptions.fromJsonString(JSON.stringify(opts));
-  ListNamespaceOptions.mergePartial(o, {
-    common: {
-      itemsPerPage: settings.itemsPerPage,
-    },
+  const [searchParams] = useSearchParams();
+  const page = Math.max(Number(searchParams.get("common.page") ?? "1") || 1, 1);
+  const options = ListNamespaceOptions.create({
+    common: { page: page - 1, itemsPerPage },
   });
 
-  const qry = useQuery({
+  const query = useQuery({
     queryKey: [
       "user/main.listNamespaces",
-      ListNamespaceOptions.toJsonString(o),
+      ListNamespaceOptions.toJsonString(options),
     ],
-    queryFn: async () => {
-      return await getClientUser().listNamespace(o);
-    },
+    queryFn: async () => getClientUser().listNamespace(options),
   });
 
   return (
     <>
       <title>Namespaces - Octelium Portal</title>
-      <div className="mt-4 mb-6">
-        <div
-          className={twMerge(
-            "font-bold text-3xl text-gray-800 text-shadow-2xs",
-          )}
-        >
-          Namespaces
-        </div>
-      </div>
-
-      {qry.isSuccess && qry.data && (
-        <NamespaceListC itemsList={qry.data.response} />
+      <PageHeader
+        title="Namespaces"
+        description="Browse the namespaces available to your account and jump to their services."
+        actions={<PageSizeSelect />}
+      />
+      {query.isPending && <ResourceListSkeleton />}
+      {query.isError && (
+        <ErrorState
+          message="We could not load namespaces right now."
+          onRetry={() => query.refetch()}
+        />
       )}
+      {query.isSuccess && <NamespaceResults itemsList={query.data.response} />}
     </>
   );
 };

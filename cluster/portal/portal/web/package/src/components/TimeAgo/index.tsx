@@ -6,22 +6,20 @@ import relativeTime from "dayjs/plugin/relativeTime";
 dayjs.extend(relativeTime);
 
 const TimeAgo = (props: { rfc3339?: string }) => {
-  if (!props.rfc3339 || props.rfc3339.length === 0) {
-    return <React.Fragment></React.Fragment>;
-  }
-  let [time, setTime] = React.useState(dayjs(props.rfc3339).fromNow());
+  const [, setTick] = React.useState(0);
   React.useEffect(() => {
-    setTime(dayjs(props.rfc3339).fromNow());
+    if (!props.rfc3339) return;
 
     const interval = setInterval(
-      () => setTime(dayjs(props.rfc3339).fromNow()),
+      () => setTick((value) => value + 1),
       10000,
     );
     return () => {
       clearInterval(interval);
     };
   }, [props.rfc3339]);
-  return <React.Fragment>{time}</React.Fragment>;
+  if (!props.rfc3339) return null;
+  return <React.Fragment>{dayjs(props.rfc3339).fromNow()}</React.Fragment>;
 };
 
 export default TimeAgo;

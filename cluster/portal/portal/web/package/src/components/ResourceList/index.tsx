@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 import Label from "../Label";
 
@@ -8,33 +8,12 @@ export const ResourceListWrapper = (props: { children?: React.ReactNode }) => {
 
 export const ResourceListItem = (props: {
   children?: React.ReactNode;
-  path?: string;
+  className?: string;
 }) => {
-  const hasPath = props.path !== undefined && props.path.length > 0;
-  const navigate = useNavigate();
   return (
-    <div
-      className={twMerge(
-        "w-full",
-        hasPath ? "cursor-pointer" : undefined,
-        "transition-all duration-300",
-        "bg-white",
-        // "hover:bg-transparent",
-        "py-4 px-2",
-        "font-semibold",
-        "rounded-xl",
-        "shadow-sm shadow-slate-200",
-        "border-[2px] border-slate-300",
-        "mb-4",
-      )}
-      onClick={() => {
-        if (hasPath) {
-          navigate(props.path!);
-        }
-      }}
-    >
+    <article className={twMerge("w-full rounded-xl border-2 border-slate-200 bg-white p-4 font-semibold shadow-sm transition-shadow hover:shadow-md", props.className)}>
       {props.children}
-    </div>
+    </article>
   );
 };
 
@@ -44,7 +23,7 @@ export const ResourceListLabel = (props: {
   to?: string;
 }) => {
   return props.to ? (
-    <Link to={props.to}>
+    <Link className="inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900" to={props.to}>
       <Label>
         {props.label && (
           <span className="text-blue-300 mr-1">{props.label}</span>

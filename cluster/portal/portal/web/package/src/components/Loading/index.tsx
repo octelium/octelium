@@ -1,17 +1,9 @@
-import ClipLoader from "react-spinners/ClipLoader";
+import { Loader } from "@mantine/core";
 
 const Loading = () => {
   return (
-    <div>
-      <div className="min-h-[400px]">
-        <ClipLoader
-          color={"#111"}
-          loading={true}
-          size={150}
-          aria-label="Loading Spinner"
-          data-testid="loader"
-        />
-      </div>
+    <div className="flex min-h-[320px] items-center justify-center" role="status" aria-label="Loading">
+      <Loader color="dark" size="md" aria-label="Loading Spinner" />
     </div>
   );
 };
