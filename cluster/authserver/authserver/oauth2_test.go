@@ -432,6 +432,7 @@ func TestHandleOAuth2Assertion(t *testing.T) {
 
 type oauth2TestResult struct {
 	statusCode int
+	header     http.Header
 	token      *oauthAccessTokenResponse
 	errResp    *oauth2ErrorResponse
 }
@@ -452,6 +453,7 @@ func doOAuth2TokenReq(t *testing.T, srv *server, data url.Values) *oauth2TestRes
 
 	ret := &oauth2TestResult{
 		statusCode: resp.StatusCode,
+		header:     resp.Header,
 	}
 
 	if resp.StatusCode == http.StatusOK {
@@ -544,17 +546,23 @@ func TestReturnOAuth2Err(t *testing.T) {
 	entries := []entry{
 		{"invalid_request", 400},
 		{"invalid_client", 401},
-		{"invalid_scope", 401},
+		{"invalid_scope", 400},
 		{"unsupported_grant_type", 400},
 		{"server_error", 500},
 	}
 
 	for _, e := range entries {
 		w := httptest.NewRecorder()
-		srv.returnOAuth2Err(w, e.errCode, e.statusCode)
+		srv.returnOAuth2Err(w, httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+			e.errCode, e.statusCode)
 
 		resp := w.Result()
 		assert.Equal(t, e.statusCode, resp.StatusCode, "%s", e.errCode)
+
+		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"), "%s", e.errCode)
+		assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"), "%s", e.errCode)
+		assert.Equal(t, "no-cache", resp.Header.Get("Pragma"), "%s", e.errCode)
+		assert.Equal(t, "", resp.Header.Get("WWW-Authenticate"), "%s", e.errCode)
 
 		bb, err := io.ReadAll(resp.Body)
 		assert.Nil(t, err)
@@ -563,6 +571,47 @@ func TestReturnOAuth2Err(t *testing.T) {
 		ret := &oauth2ErrorResponse{}
 		assert.Nil(t, json.Unmarshal(bb, ret), "%s", e.errCode)
 		assert.Equal(t, e.errCode, ret.Error)
+		assert.Equal(t, getOAuth2ErrDescription(e.errCode), ret.ErrorDescription, "%s", e.errCode)
+		assert.True(t, ret.ErrorDescription != "", "%s", e.errCode)
+	}
+
+	{
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+		req.Header.Set("Authorization", "Basic aW52YWxpZDppbnZhbGlk")
+		srv.returnOAuth2Err(w, req, "invalid_client", 401)
+
+		resp := w.Result()
+		assert.Equal(t, 401, resp.StatusCode)
+		assert.Equal(t, `Basic realm="octelium", charset="UTF-8"`,
+			resp.Header.Get("WWW-Authenticate"))
+	}
+
+	{
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+		req.Header.Set("Authorization", "Basic aW52YWxpZDppbnZhbGlk")
+		srv.returnOAuth2Err(w, req, "invalid_request", 400)
+
+		resp := w.Result()
+		assert.Equal(t, 400, resp.StatusCode)
+		assert.Equal(t, "", resp.Header.Get("WWW-Authenticate"))
+	}
+
+	{
+		w := httptest.NewRecorder()
+		srv.returnOAuth2Err(w, httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+			"unknown_error_code", 400)
+
+		resp := w.Result()
+		bb, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+		resp.Body.Close()
+
+		ret := &oauth2ErrorResponse{}
+		assert.Nil(t, json.Unmarshal(bb, ret))
+		assert.Equal(t, "unknown_error_code", ret.Error)
+		assert.Equal(t, "", ret.ErrorDescription)
 	}
 }
 
@@ -705,7 +754,7 @@ func TestHandleOAuth2TokenRejections(t *testing.T) {
 		data.Set("scope", strings.Repeat("a", 2049))
 
 		res := doOAuth2TokenReq(t, srv, data)
-		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
 		assert.Equal(t, "invalid_scope", res.errResp.Error)
 	}
 
@@ -967,5 +1016,88 @@ func TestHandleOAuth2AssertionRejections(t *testing.T) {
 		res := doOAuth2TokenReq(t, srv, data)
 		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
 		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+}
+
+func TestOAuth2TokenResponseHeaders(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+		corev1.User_Spec_WORKLOAD, corev1.Session_Status_CLIENTLESS)
+	assert.Nil(t, err)
+
+	_, clientID, clientSecret := newOAuth2Credential(t, ctx, adminSrv, usrT.Usr.Metadata.Name)
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusOK, res.statusCode)
+		assert.True(t, res.token.AccessToken != "")
+
+		assert.Equal(t, "application/json", res.header.Get("Content-Type"))
+		assert.Equal(t, "no-store", res.header.Get("Cache-Control"))
+		assert.Equal(t, "no-cache", res.header.Get("Pragma"))
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "refresh_token")
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "unsupported_grant_type", res.errResp.Error)
+		assert.True(t, res.errResp.ErrorDescription != "")
+
+		assert.Equal(t, "application/json", res.header.Get("Content-Type"))
+		assert.Equal(t, "no-store", res.header.Get("Cache-Control"))
+		assert.Equal(t, "no-cache", res.header.Get("Pragma"))
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", utilrand.GetRandomString(200))
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusUnauthorized, res.statusCode)
+		assert.Equal(t, "invalid_client", res.errResp.Error)
+
+		assert.Equal(t, "no-store", res.header.Get("Cache-Control"))
+		assert.Equal(t, "", res.header.Get("WWW-Authenticate"))
+	}
+
+	{
+		data := url.Values{}
+		data.Set("grant_type", "client_credentials")
+		data.Set("client_id", clientID)
+		data.Set("client_secret", clientSecret)
+		data.Set("scope", strings.Repeat("a", 2049))
+
+		res := doOAuth2TokenReq(t, srv, data)
+		assert.Equal(t, http.StatusBadRequest, res.statusCode)
+		assert.Equal(t, "invalid_scope", res.errResp.Error)
 	}
 }

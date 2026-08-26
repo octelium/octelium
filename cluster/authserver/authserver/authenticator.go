@@ -78,7 +78,7 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 		if sess.Status.Type == corev1.Session_Status_CLIENTLESS {
 			return nil, s.errPermissionDenied("TPM Authenticators require CLIENT-based Sessions")
 		}
-	case authv1.Authenticator_Status_TYPE_UNKNOWN:
+	default:
 		return nil, s.errInvalidArg("Unknown type")
 	}
 

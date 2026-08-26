@@ -225,5 +225,54 @@ func (s *server) handleStatic() http.Handler {
 
 	httpFS := http.FS(subFS)
 
-	return http.FileServer(httpFS)
+	fileSrv := http.FileServer(httpFS)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setStaticSecurityHeaders(w)
+		fileSrv.ServeHTTP(&staticResponseWriter{ResponseWriter: w}, r)
+	})
+}
+
+func setStaticSecurityHeaders(w http.ResponseWriter) {
+	csp := strings.Join([]string{
+		"default-src 'none'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+		"form-action 'none'",
+	}, "; ")
+
+	w.Header().Set("Content-Security-Policy", csp)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+type staticResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *staticResponseWriter) WriteHeader(statusCode int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+
+		switch statusCode {
+		case http.StatusOK, http.StatusNotModified, http.StatusPartialContent:
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+		}
+	}
+
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *staticResponseWriter) Write(arg []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	return w.ResponseWriter.Write(arg)
 }

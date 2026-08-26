@@ -74,7 +74,7 @@ func (c *Cache) GetAuthenticatorByCredID(id []byte) (*corev1.Authenticator, erro
 		return nil, ErrNotFound
 	}
 
-	return ret, nil
+	return pbutils.Clone(ret).(*corev1.Authenticator), nil
 }
 
 func (c *Cache) DeleteAuthenticator(authn *corev1.Authenticator) error {

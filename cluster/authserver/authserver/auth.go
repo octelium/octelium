@@ -579,6 +579,7 @@ func (s *server) setLoginCookies(w http.ResponseWriter, accessToken, refreshToke
 	http.SetCookie(w, &http.Cookie{
 		Name:     "octelium_login_state",
 		Value:    "",
+		MaxAge:   -1,
 		Secure:   true,
 		HttpOnly: true,
 		Domain:   s.domain,

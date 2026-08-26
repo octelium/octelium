@@ -43,7 +43,7 @@ func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 100*1024)
 
 	if err := r.ParseForm(); err != nil {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (s *server) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
 	case "client_credentials":
 		s.handleOAuth2TokenClientCredentials(w, r)
 	default:
-		s.returnOAuth2Err(w, "unsupported_grant_type", 400)
+		s.returnOAuth2Err(w, r, "unsupported_grant_type", 400)
 		return
 	}
 }
@@ -67,7 +67,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 
 	var err error
 	ctx := r.Context()
-	w.Header().Set("Content-Type", "application/json")
+	s.setOAuth2TokenHeaders(w)
 
 	clientID := r.Form.Get("client_id")
 	clientSecret := r.Form.Get("client_secret")
@@ -75,52 +75,52 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	tkn, err := s.getCredentialFromToken(ctx, clientSecret)
 	if err != nil {
 		zap.L().Debug("Could not get authentication Token", zap.Error(err))
-		s.returnOAuth2Err(w, "invalid_client", 401)
+		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
 	if tkn.Spec.Type != corev1.Credential_Spec_OAUTH2 {
 		zap.L().Debug("Credential is not OAUTH2")
-		s.returnOAuth2Err(w, "invalid_client", 401)
+		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
 	if tkn.Status.Id != clientID {
 		zap.L().Debug("oauth2 clientID mismatch", zap.Error(err))
-		s.returnOAuth2Err(w, "invalid_client", 401)
+		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
 	scopeStr := r.Form.Get("scope")
 	scopes, err := checkAndGetOAuthScopeStr(scopeStr)
 	if err != nil {
-		s.returnOAuth2Err(w, "invalid_scope", 401)
+		s.returnOAuth2Err(w, r, "invalid_scope", 400)
 		return
 	}
 
 	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(tkn.Status.UserRef))
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
-			s.returnOAuth2Err(w, "invalid_client", 400)
+			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
 	if usr.Spec.Type != corev1.User_Spec_WORKLOAD {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	if usr.Spec.IsDisabled || usr.Status.IsLocked {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		},
 	})
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 	var sess *corev1.Session
@@ -138,12 +138,12 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		sess = sessList.Items[0]
 
 		if sess.Status.IsLocked {
-			s.returnOAuth2Err(w, "invalid_client", 400)
+			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
 
 		if sess.Spec.State == corev1.Session_Spec_REJECTED {
-			s.returnOAuth2Err(w, "invalid_client", 400)
+			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
 
@@ -160,13 +160,13 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 
 		sess, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
 		if err != nil {
-			s.returnOAuth2Err(w, "server_error", 500)
+			s.returnOAuth2Err(w, r, "server_error", 500)
 			return
 		}
 	} else {
 
 		if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
-			s.returnOAuth2Err(w, "invalid_request", 400)
+			s.returnOAuth2Err(w, r, "invalid_request", 400)
 			return
 		}
 		sess, err = sessionc.CreateSession(ctx, &sessionc.CreateSessionOpts{
@@ -200,19 +200,19 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			ClientAddr:    r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
 		})
 		if err != nil {
-			s.returnOAuth2Err(w, "server_error", 500)
+			s.returnOAuth2Err(w, r, "server_error", 500)
 			return
 		}
 	}
 
 	if err := s.updateAndAutoDeleteCredential(ctx, tkn); err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
 	accessToken, err := s.generateAccessToken(sess)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
@@ -224,7 +224,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
@@ -250,18 +250,50 @@ func checkAndGetOAuthScopeStr(arg string) ([]*corev1.Scope, error) {
 }
 
 type oauth2ErrorResponse struct {
-	Error string `json:"error,omitempty"`
+	Error            string `json:"error,omitempty"`
+	ErrorDescription string `json:"error_description,omitempty"`
 }
 
-func (s *server) returnOAuth2Err(w http.ResponseWriter, errCode string, statusCode int) {
+func getOAuth2ErrDescription(errCode string) string {
+	switch errCode {
+	case "invalid_request":
+		return "The request is missing a required parameter or is otherwise malformed"
+	case "invalid_client":
+		return "Client authentication failed"
+	case "invalid_scope":
+		return "The requested scope is invalid or malformed"
+	case "unsupported_grant_type":
+		return "The grant type is not supported by the Authorization Server"
+	case "server_error":
+		return "The Authorization Server encountered an unexpected condition"
+	default:
+		return ""
+	}
+}
+
+func (s *server) setOAuth2TokenHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+}
+
+func (s *server) returnOAuth2Err(w http.ResponseWriter,
+	r *http.Request, errCode string, statusCode int) {
 
 	resp := &oauth2ErrorResponse{
-		Error: errCode,
+		Error:            errCode,
+		ErrorDescription: getOAuth2ErrDescription(errCode),
 	}
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+
+	s.setOAuth2TokenHeaders(w)
+
+	if statusCode == http.StatusUnauthorized && r.Header.Get("Authorization") != "" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="octelium", charset="UTF-8"`)
 	}
 
 	w.WriteHeader(statusCode)
@@ -301,13 +333,13 @@ func (s *server) handleOAuth2Metadata(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	w.Header().Set("Content-Type", "application/json")
+	s.setOAuth2TokenHeaders(w)
 	assertion := r.Form.Get("client_assertion")
 
 	provider, err := s.getAssertionProviderFromAssertion(assertion)
 	if err != nil {
 		zap.L().Debug("Could not getAssertionProviderFromAssertion", zap.Error(err))
-		s.returnOAuth2Err(w, "invalid_client", 401)
+		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
@@ -316,40 +348,40 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 	})
 	if err != nil {
 		zap.L().Debug("Could not authenticateAssertion", zap.Error(err))
-		s.returnOAuth2Err(w, "invalid_client", 401)
+		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
 	if usr.Spec.Type != corev1.User_Spec_WORKLOAD {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	if usr.Spec.IsDisabled || usr.Status.IsLocked {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	scopeStr := r.Form.Get("scope")
 	scopes, err := checkAndGetOAuthScopeStr(scopeStr)
 	if err != nil {
-		s.returnOAuth2Err(w, "invalid_scope", 401)
+		s.returnOAuth2Err(w, r, "invalid_scope", 400)
 		return
 	}
 
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
 	if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	if err := s.doPostAuthenticationRules(ctx, provider.Provider(), usr, info); err != nil {
-		s.returnOAuth2Err(w, "invalid_request", 400)
+		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
@@ -365,13 +397,13 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		ClientAddr:         r.Header.Get(vutils.GetDownstreamIPHeaderCanonical()),
 	})
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
 	accessToken, err := s.generateAccessToken(sess)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 
@@ -383,7 +415,7 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
-		s.returnOAuth2Err(w, "server_error", 500)
+		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
 

@@ -19,8 +19,10 @@ package authserver
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -520,4 +523,70 @@ func TestHandleLoginClientRequestAuthenticatorReauth(t *testing.T) {
 	assert.Equal(t, http.StatusSeeOther, w.Result().StatusCode)
 	assert.Equal(t, fmt.Sprintf("%s/callback/success/approval", srv.rootURL),
 		w.Result().Header.Get("Location"))
+}
+
+func TestHandleStatic(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	hdlr := srv.handleStatic()
+
+	checkSecurityHeaders := func(resp *http.Response) {
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+		assert.True(t, strings.Contains(resp.Header.Get("Content-Security-Policy"),
+			"default-src 'none'"))
+		assert.True(t, strings.Contains(resp.Header.Get("Content-Security-Policy"),
+			"frame-ancestors 'none'"))
+	}
+
+	{
+		subFS, err := fs.Sub(fsWeb, "web")
+		assert.Nil(t, err)
+
+		var filePath string
+		assert.Nil(t, fs.WalkDir(subFS, ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if filePath == "" && !d.IsDir() && d.Name() != "index.html" {
+				filePath = path
+			}
+			return nil
+		}))
+		assert.True(t, filePath != "")
+
+		w := httptest.NewRecorder()
+		hdlr.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/"+filePath, nil))
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "%s", filePath)
+
+		checkSecurityHeaders(resp)
+		assert.Equal(t, "public, max-age=31536000, immutable", resp.Header.Get("Cache-Control"))
+	}
+
+	{
+		w := httptest.NewRecorder()
+		hdlr.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+			fmt.Sprintf("/assets/%s.js", utilrand.GetRandomStringCanonical(8)), nil))
+
+		resp := w.Result()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+		checkSecurityHeaders(resp)
+		assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	}
 }

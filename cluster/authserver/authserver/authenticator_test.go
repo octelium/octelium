@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -374,4 +375,51 @@ func TestGetAvailableAuthenticators(t *testing.T) {
 
 		assert.Equal(t, authn2.Metadata.Uid, res.AvailableAuthenticators[0].Metadata.Uid)
 	}
+}
+
+func TestCreateAuthenticatorUnknownType(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, cc)
+	assert.Nil(t, err)
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err)
+
+	usrT.Session.Status.IsBrowser = true
+	usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+	assert.Nil(t, err)
+
+	for _, typ := range []authv1.Authenticator_Status_Type{
+		authv1.Authenticator_Status_TYPE_UNKNOWN,
+		authv1.Authenticator_Status_Type(4),
+		authv1.Authenticator_Status_Type(1000),
+		authv1.Authenticator_Status_Type(-1),
+	} {
+		_, err := srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{
+			Type: typ,
+		})
+		assert.NotNil(t, err, "%d", typ)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%d", typ)
+	}
+
+	itmList, err := srv.octeliumC.CoreC().ListAuthenticator(ctx, urscsrv.FilterByUser(usrT.Usr))
+	assert.Nil(t, err)
+	assert.Equal(t, 0, len(itmList.Items))
 }

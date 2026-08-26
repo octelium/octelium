@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -1303,6 +1304,24 @@ func TestSetLoginCookies(t *testing.T) {
 	assert.True(t, byName["octelium_rt"].Secure)
 
 	assert.True(t, byName["octelium_rt"].Expires.After(byName["octelium_auth"].Expires))
+
+	assert.Equal(t, -1, byName["octelium_login_state"].MaxAge)
+	assert.True(t, byName["octelium_login_state"].HttpOnly)
+	assert.True(t, byName["octelium_login_state"].Secure)
+	assert.Equal(t, srv.domain, byName["octelium_login_state"].Domain)
+	assert.Equal(t, "/", byName["octelium_login_state"].Path)
+
+	{
+		var hdr string
+		for _, itm := range w.Result().Header["Set-Cookie"] {
+			if strings.HasPrefix(itm, "octelium_login_state=") {
+				hdr = itm
+			}
+		}
+
+		assert.True(t, hdr != "")
+		assert.True(t, strings.Contains(hdr, "Max-Age=0"), "%s", hdr)
+	}
 }
 
 func TestCheckSessionValid(t *testing.T) {

@@ -78,6 +78,25 @@ func TestCache(t *testing.T) {
 		assert.Nil(t, err)
 		assert.True(t, pbutils.IsEqual(authn, res))
 
+		{
+			res1, err := c.GetAuthenticatorByCredID(id)
+			assert.Nil(t, err)
+			res2, err := c.GetAuthenticatorByCredID(id)
+			assert.Nil(t, err)
+
+			assert.True(t, res1 != res2)
+			assert.True(t, res1 != authn)
+
+			res1.Status.GetInfo().GetFido().SignCount = 1337
+			res1.Status.IsRegistered = false
+
+			res3, err := c.GetAuthenticatorByCredID(id)
+			assert.Nil(t, err)
+			assert.Equal(t, uint32(0), res3.Status.GetInfo().GetFido().SignCount)
+			assert.True(t, res3.Status.IsRegistered)
+			assert.True(t, pbutils.IsEqual(authn, res3))
+		}
+
 		err = c.DeleteAuthenticator(authn)
 		assert.Nil(t, err)
 
