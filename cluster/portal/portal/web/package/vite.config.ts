@@ -4,11 +4,6 @@ import path from "path";
 import svgr from "vite-plugin-svgr";
 import { visualizer } from "rollup-plugin-visualizer";
 
-import { createRequire } from "module";
-import type { RollupCommonJSOptions } from "@rollup/plugin-commonjs";
-
-const require = createRequire(import.meta.url);
-
 const __dirname = path.resolve();
 
 export default defineConfig({
@@ -26,20 +21,6 @@ export default defineConfig({
   },
   build: {
     manifest: true,
-    commonjsOptions: {
-      defaultIsModuleExports(id) {
-        try {
-          const module = require(id);
-          if (module?.default) {
-            return false;
-          }
-          return "auto";
-        } catch {
-          return "auto";
-        }
-      },
-      transformMixedEsModules: true,
-    } as RollupCommonJSOptions,
   },
 
   server: {
