@@ -1,0 +1,256 @@
+.ow-root {
+  min-height: 100dvh;
+  background:
+    radial-gradient(900px 600px at 50% 38%, rgba(56, 189, 248, 0.08), transparent 62%),
+    #06080d;
+  color: #e6edf6;
+}
+
+.ow-shell {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ow-bootstrap-card {
+  width: min(100%, 440px);
+  padding: clamp(24px, 5vw, 40px);
+  background: rgba(15, 23, 42, 0.82);
+  border-color: rgba(148, 163, 184, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.ow-fallback {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #06080d;
+}
+
+.ow-fallback-card {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 440px);
+  padding: 32px;
+  text-align: center;
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--mantine-radius-md);
+}
+
+.ow-stage {
+  position: relative;
+  width: min(220px, 58vw);
+  height: min(220px, 58vw);
+  margin: 0 auto 12px;
+  display: grid;
+  place-items: center;
+}
+
+.ow-logo {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 16px 44px rgba(56, 189, 248, 0.28));
+}
+
+.ow-stage--working .ow-logo {
+  animation: ow-breathe 3s ease-in-out infinite;
+}
+
+.ow-halo {
+  position: absolute;
+  z-index: 1;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.30), transparent 70%);
+  opacity: 0.7;
+}
+
+.ow-stage--working .ow-halo {
+  animation: ow-glow 3s ease-in-out infinite;
+}
+
+.ow-ring {
+  position: absolute;
+  z-index: 2;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  border: 1px solid rgba(125, 211, 252, 0.40);
+  opacity: 0;
+}
+
+.ow-stage--working .ow-ring--1 {
+  animation: ow-ping 2.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.ow-stage--working .ow-ring--2 {
+  animation: ow-ping 2.8s cubic-bezier(0, 0, 0.2, 1) infinite 1.4s;
+}
+
+.ow-stage--error .ow-logo {
+  filter: drop-shadow(0 16px 44px rgba(248, 113, 113, 0.28));
+}
+
+.ow-stage--error .ow-halo {
+  background: radial-gradient(circle, rgba(248, 113, 113, 0.26), transparent 70%);
+}
+
+.ow-intro {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+}
+
+.ow-title {
+  color: #f8fafc;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.ow-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 24px;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.ow-error-details {
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.ow-error-details summary {
+  cursor: pointer;
+  color: #fca5a5;
+}
+
+.ow-error-details pre {
+  max-height: 160px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ow-session {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  overscroll-behavior: none;
+}
+
+.ow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  background: rgba(6, 8, 13, 0.96);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(6px);
+}
+
+.ow-toolbar-main {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.ow-status-badge {
+  text-transform: none;
+}
+
+.ow-toolbar button {
+  min-height: 34px;
+}
+
+.ow-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@keyframes ow-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.045); }
+}
+
+@keyframes ow-glow {
+  0%, 100% { opacity: 0.5; transform: scale(0.96); }
+  50% { opacity: 0.95; transform: scale(1.08); }
+}
+
+@keyframes ow-ping {
+  0% { opacity: 0.5; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.9); }
+}
+
+@media (max-width: 640px) {
+  .ow-shell {
+    padding: 16px;
+  }
+
+  .ow-bootstrap-card {
+    padding: 22px 18px;
+  }
+
+  .ow-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .ow-toolbar-main {
+    gap: 2px;
+  }
+
+  .ow-toolbar-main > :first-child {
+    flex-basis: 100%;
+  }
+
+  .ow-toolbar > button {
+    align-self: flex-end;
+  }
+
+  .ow-control-label {
+    display: none;
+  }
+
+  .ow-scale-label {
+    display: inline;
+  }
+
+  .ow-toolbar button {
+    min-width: 38px;
+    min-height: 38px;
+    padding-inline: 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .ow-stage--working .ow-ring--1 {
+    opacity: 0.35;
+  }
+}

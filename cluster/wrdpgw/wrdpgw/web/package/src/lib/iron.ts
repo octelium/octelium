@@ -39,8 +39,20 @@ export async function loadIronRdp(): Promise<LoadedIronRdp> {
 export function getReadyUserInteraction(event: Event): UserInteraction | null {
   const customEvent = event as CustomEvent;
   const detail = customEvent.detail;
+  const candidate = detail?.irgUserInteraction ?? detail;
 
-  return detail?.irgUserInteraction ?? detail ?? null;
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    typeof (candidate as UserInteraction).configBuilder !== "function" ||
+    typeof (candidate as UserInteraction).connect !== "function" ||
+    typeof (candidate as UserInteraction).setVisibility !== "function" ||
+    typeof (candidate as UserInteraction).shutdown !== "function"
+  ) {
+    return null;
+  }
+
+  return candidate as UserInteraction;
 }
 
 export function isIronError(error: unknown): error is IronError {

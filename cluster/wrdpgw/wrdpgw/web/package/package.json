@@ -14,6 +14,7 @@
   "dependencies": {
     "@devolutions/iron-remote-desktop": "0.11.0",
     "@devolutions/iron-remote-desktop-rdp": "0.7.0",
+    "@fontsource/ubuntu": "^5.3.0",
     "@mantine/core": "^9.5.2",
     "@mantine/hooks": "^9.5.2",
     "@mantine/notifications": "^9.5.2",

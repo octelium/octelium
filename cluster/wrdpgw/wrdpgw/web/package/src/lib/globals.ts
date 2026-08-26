@@ -11,10 +11,14 @@ declare global {
 
 export function getRdpWebGlobals(): Required<OcteliumRdpWebGlobals> {
   const globals = window.__OCTELIUM_RDP_WEB__ ?? {};
+  const webSocketPath =
+    typeof globals.webSocketPath === "string" ? globals.webSocketPath : "/ws";
+  const destination =
+    typeof globals.destination === "string" ? globals.destination.trim() : "";
 
   return {
-    webSocketPath: normalizePath(globals.webSocketPath || "/ws"),
-    destination: globals.destination?.trim() || "octelium-rdp:3389",
+    webSocketPath: normalizePath(webSocketPath),
+    destination: destination || "octelium-rdp:3389",
   };
 }
 
@@ -24,7 +28,7 @@ export function getWebSocketURL(path: string): string {
 }
 
 function normalizePath(path: string): string {
-  const trimmed = path.trim();
+  const trimmed = path.trim().replace(/^\/+/u, "/");
   if (trimmed === "") {
     return "/ws";
   }

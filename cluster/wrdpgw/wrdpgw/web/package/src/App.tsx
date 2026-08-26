@@ -1,12 +1,25 @@
-import { Badge, Button, Group, Tooltip } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Tooltip,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   AlertCircle,
   Keyboard,
   Maximize2,
+  Minimize2,
+  MonitorUp,
   Power,
-  RotateCcw,
+  RefreshCw,
 } from "lucide-react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { UserInteraction } from "@devolutions/iron-remote-desktop";
@@ -18,6 +31,7 @@ import {
   loadIronRdp,
   type RdpExtensions,
 } from "./lib/iron";
+import "./App.css";
 
 type ScreenScale = Parameters<UserInteraction["setScale"]>[0];
 
@@ -26,6 +40,56 @@ const SCREEN_SCALE: Record<"fit" | "real" | "full", ScreenScale> = {
   full: 2 as ScreenScale,
   real: 3 as ScreenScale,
 };
+
+type ConnectionState =
+  | "loading"
+  | "ready"
+  | "connecting"
+  | "connected"
+  | "disconnecting"
+  | "disconnected"
+  | "error";
+
+const FRIENDLY_CONNECTION_ERROR =
+  "We couldn't start the remote desktop session. Please try again.";
+
+type ErrorBoundaryProps = { children: ReactNode };
+type ErrorBoundaryState = { hasError: boolean };
+
+export class AppErrorBoundary extends Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
+  state: ErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Unexpected RDP web client error", error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="ow-fallback" role="alert">
+          <div className="ow-fallback-card">
+            <Text component="h1" className="ow-title">
+              Remote desktop unavailable
+            </Text>
+            <Text size="sm" c="dimmed">
+              An unexpected error interrupted the session. Please reload the
+              page to try again.
+            </Text>
+          </div>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 function OcteliumLogo({ size = 120 }: { size?: number }) {
   return (
@@ -89,80 +153,127 @@ export function App() {
   const [moduleReady, setModuleReady] = useState(false);
   const [interactionReady, setInteractionReady] = useState(false);
   const [sessionVisible, setSessionVisible] = useState(false);
-  const [connecting, setConnecting] = useState(false);
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>("loading");
   const [status, setStatus] = useState("Initializing RDP client...");
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const userInteractionRef = useRef<UserInteraction | null>(null);
   const remoteElementRef = useRef<HTMLElement | null>(null);
+  const readyListenerRef = useRef<((event: Event) => void) | null>(null);
   const autoStartedRef = useRef(false);
+  const loadAttemptRef = useRef(0);
+  const sessionAttemptRef = useRef(0);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void loadIronRdp()
-      .then((loaded) => {
-        if (cancelled) {
-          return;
-        }
-
-        setBackend(loaded.backend);
-        setExtensions(loaded.extensions);
-        setModuleReady(true);
-        setStatus("Ready");
-      })
-      .catch((err) => {
-        const msg = getErrorMessage(err);
-        setStatus("Failed to load RDP client");
-        setError(msg);
-        notifications.show({
-          color: "red",
-          title: "Failed to load RDP client",
-          message: msg,
-        });
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  const showError = useCallback((message: string, details?: string) => {
+    setError(message);
+    setErrorDetails(details && details !== message ? details : null);
+    setConnectionState("error");
   }, []);
 
+  const loadClient = useCallback(async () => {
+    const attempt = ++loadAttemptRef.current;
+
+    autoStartedRef.current = false;
+    setModuleReady(false);
+    setInteractionReady(false);
+    setConnectionState("loading");
+    setStatus("Loading secure RDP client...");
+    setError(null);
+    setErrorDetails(null);
+
+    try {
+      const loaded = await loadIronRdp();
+      if (attempt !== loadAttemptRef.current) {
+        return;
+      }
+
+      setBackend(loaded.backend);
+      setExtensions(loaded.extensions);
+      setModuleReady(true);
+      setStatus("Preparing remote desktop...");
+      setConnectionState("ready");
+    } catch (err) {
+      if (attempt !== loadAttemptRef.current) {
+        return;
+      }
+
+      showError(
+        "We couldn't load the secure remote desktop client. Please try again or reload the page.",
+        getErrorMessage(err),
+      );
+      setStatus("RDP client unavailable");
+    }
+  }, [showError]);
+
+  useEffect(() => {
+    // This effect intentionally starts the asynchronous client bootstrap once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadClient();
+
+    return () => {
+      loadAttemptRef.current += 1;
+      sessionAttemptRef.current += 1;
+    };
+  }, [loadClient]);
+
   const onRemoteElement = useCallback((el: HTMLElement | null) => {
-    if (!el || remoteElementRef.current === el) {
+    const previousElement = remoteElementRef.current;
+    if (previousElement && readyListenerRef.current) {
+      previousElement.removeEventListener("ready", readyListenerRef.current);
+    }
+
+    readyListenerRef.current = null;
+    remoteElementRef.current = el;
+    userInteractionRef.current = null;
+    setInteractionReady(false);
+
+    if (!el) {
       return;
     }
 
-    remoteElementRef.current = el;
-
-    el.addEventListener("ready", (event) => {
+    const readyListener = (event: Event) => {
       const ui = getReadyUserInteraction(event);
       if (!ui) {
-        setError("RDP component emitted ready without UserInteraction");
+        showError("The remote desktop client did not finish initializing.");
         return;
       }
 
       userInteractionRef.current = ui;
       setInteractionReady(true);
       setStatus("Ready");
-    });
-  }, []);
+      setConnectionState("ready");
+    };
+
+    readyListenerRef.current = readyListener;
+    el.addEventListener("ready", readyListener);
+  }, [showError]);
 
   const startSession = useCallback(async () => {
     const ui = userInteractionRef.current;
     const exts = extensions;
 
+    if (connectionState === "connecting" || connectionState === "connected") {
+      return;
+    }
+
     if (!moduleReady || !backend || !exts) {
-      setError("RDP client is still loading.");
+      setStatus("Loading secure RDP client...");
       return;
     }
 
     if (!ui) {
-      setError("RDP component is not ready yet.");
+      setStatus("Preparing remote desktop...");
       return;
     }
 
-    setConnecting(true);
+    const attempt = ++sessionAttemptRef.current;
+    setConnectionState("connecting");
     setError(null);
+    setErrorDetails(null);
     setStatus("Connecting...");
 
     try {
@@ -177,8 +288,8 @@ export function App() {
         .withProxyAddress(wsURL)
         .withAuthToken("octelium")
         .withDesktopSize({
-          width: Math.max(window.innerWidth, 1024),
-          height: Math.max(window.innerHeight, 768),
+          width: Math.max(window.innerWidth, 320),
+          height: Math.max(window.innerHeight, 240),
         })
         .withExtension(exts.displayControl(true));
 
@@ -187,32 +298,42 @@ export function App() {
       }
 
       const sessionInfo = await ui.connect(builder.build());
+      if (attempt !== sessionAttemptRef.current) {
+        return;
+      }
 
       setSessionVisible(true);
-      setConnecting(false);
+      setConnectionState("connected");
       setStatus("Connected");
       ui.setVisibility(true);
 
       const termInfo = await sessionInfo.run();
+      if (attempt !== sessionAttemptRef.current) {
+        return;
+      }
 
       setSessionVisible(false);
+      setConnectionState("disconnected");
       setStatus("Disconnected");
       console.debug("RDP session terminated", termInfo);
     } catch (err) {
-      const msg = getErrorMessage(err);
+      if (attempt !== sessionAttemptRef.current) {
+        return;
+      }
 
-      setConnecting(false);
       setSessionVisible(false);
       setStatus("Connection failed");
-      setError(msg);
-
-      notifications.show({
-        color: "red",
-        title: "RDP connection failed",
-        message: msg,
-      });
+      showError(FRIENDLY_CONNECTION_ERROR, getErrorMessage(err));
     }
-  }, [extensions, backend, moduleReady, wsURL, globals.destination]);
+  }, [
+    backend,
+    connectionState,
+    extensions,
+    globals.destination,
+    moduleReady,
+    showError,
+    wsURL,
+  ]);
 
   useEffect(() => {
     if (moduleReady && interactionReady && !autoStartedRef.current) {
@@ -222,15 +343,78 @@ export function App() {
   }, [moduleReady, interactionReady, startSession]);
 
   const shutdownSession = async () => {
+    sessionAttemptRef.current += 1;
+    setConnectionState("disconnecting");
     setStatus("Disconnecting...");
 
     try {
-      await userInteractionRef.current?.shutdown();
+      userInteractionRef.current?.shutdown();
     } finally {
       setSessionVisible(false);
+      setConnectionState("disconnected");
       setStatus("Disconnected");
     }
   };
+
+  const toggleFullscreen = async () => {
+    if (!document.fullscreenEnabled) {
+      notifications.show({
+        color: "yellow",
+        title: "Fullscreen unavailable",
+        message: "Your browser does not allow fullscreen mode here.",
+      });
+      return;
+    }
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      notifications.show({
+        color: "yellow",
+        title: "Fullscreen unavailable",
+        message: "Fullscreen mode could not be enabled in this browser.",
+      });
+    }
+  };
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionVisible || !canvasRef.current) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const resize = () => {
+      const ui = userInteractionRef.current;
+      if (!ui) {
+        return;
+      }
+
+      const width = Math.max(Math.floor(canvas.clientWidth), 320);
+      const height = Math.max(Math.floor(canvas.clientHeight), 240);
+      ui.resize(width, height);
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+
+    return () => observer.disconnect();
+  }, [sessionVisible]);
 
   const sendCtrlAltDel = () => {
     userInteractionRef.current?.ctrlAltDel();
@@ -244,55 +428,102 @@ export function App() {
     userInteractionRef.current?.setScale(SCREEN_SCALE[scale]);
   };
 
-  const working = !error && (connecting || !moduleReady || !interactionReady);
+  const connecting = connectionState === "connecting";
+  const working = !error &&
+    (connectionState === "loading" ||
+      connectionState === "ready" ||
+      connectionState === "connecting");
   const showButton =
-    !connecting && (!!error || (moduleReady && interactionReady));
-  const buttonDisabled = !error && (!moduleReady || !interactionReady);
+    !sessionVisible &&
+    !connecting &&
+    (connectionState === "error" || connectionState === "disconnected");
+  const actionLabel = error ? "Try again" : "Reconnect";
+  const handleBootstrapAction = () => {
+    if (!moduleReady || !interactionReady) {
+      void loadClient();
+      return;
+    }
+
+    void startSession();
+  };
 
   return (
     <div className="ow-root">
-      <style>{ROOT_STYLES}</style>
-
       {!sessionVisible && (
         <div className="ow-shell">
-          <div
-            className={`ow-stage ${error ? "ow-stage--error" : ""} ${working ? "ow-stage--working" : ""}`}
-          >
-            <span className="ow-ring ow-ring--1" />
-            <span className="ow-ring ow-ring--2" />
-            <span className="ow-halo" />
-            <span className="ow-logo">
-              <OcteliumLogo size={124} />
-            </span>
-          </div>
-
-          {error && (
-            <div className="ow-error" role="alert">
-              <AlertCircle size={16} aria-hidden />
-              <span className="ow-error-text">{error}</span>
-            </div>
-          )}
-
-          {showButton && (
-            <button
-              type="button"
-              className="ow-cta"
-              disabled={buttonDisabled}
-              onClick={() => void startSession()}
+          <Paper className="ow-bootstrap-card" withBorder shadow="md">
+            <div
+              className={`ow-stage ${error ? "ow-stage--error" : ""} ${working ? "ow-stage--working" : ""}`}
+              aria-hidden
             >
-              <RotateCcw size={16} aria-hidden />
-              {error ? "Try again" : "Connect"}
-            </button>
-          )}
+              <span className="ow-ring ow-ring--1" />
+              <span className="ow-ring ow-ring--2" />
+              <span className="ow-halo" />
+              <span className="ow-logo">
+                <OcteliumLogo size={124} />
+              </span>
+            </div>
+
+            <Stack gap="md" align="stretch">
+              <div className="ow-intro">
+                <Text component="h1" className="ow-title">
+                  Secure remote desktop
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Establishing a protected RDP session through Octelium.
+                </Text>
+              </div>
+
+              <div className="ow-status" role="status" aria-live="polite">
+                {working && <Loader size="sm" color="cyan" />}
+                {!working && connectionState === "disconnected" && (
+                  <MonitorUp size={16} aria-hidden />
+                )}
+                <span>{status}</span>
+              </div>
+
+              {error && (
+                <Alert
+                  color="red"
+                  variant="light"
+                  icon={<AlertCircle size={18} aria-hidden />}
+                  title="Remote desktop unavailable"
+                  role="alert"
+                >
+                  {error}
+                  {errorDetails && (
+                    <details className="ow-error-details">
+                      <summary>Technical details</summary>
+                      <pre>{errorDetails}</pre>
+                    </details>
+                  )}
+                </Alert>
+              )}
+
+              {showButton && (
+                <Button
+                  fullWidth
+                  size="md"
+                  color="dark"
+                  leftSection={<RefreshCw size={17} aria-hidden />}
+                  onClick={handleBootstrapAction}
+                  aria-label={actionLabel}
+                >
+                  {actionLabel}
+                </Button>
+              )}
+            </Stack>
+          </Paper>
         </div>
       )}
 
       <div
         className="ow-session"
+        aria-hidden={!sessionVisible}
         style={{ display: sessionVisible ? "flex" : "none" }}
       >
-        <Group justify="space-between" className="ow-toolbar">
-          <Group gap="xs">
+        <div className="ow-toolbar">
+          <Group gap="xs" className="ow-toolbar-main">
             <Badge color="teal" variant="light" className="ow-status-badge">
               {status}
             </Badge>
@@ -304,8 +535,9 @@ export function App() {
                 color="gray"
                 leftSection={<Keyboard size={14} />}
                 onClick={sendCtrlAltDel}
+                aria-label="Send Ctrl+Alt+Del"
               >
-                Ctrl+Alt+Del
+                <span className="ow-control-label">Ctrl+Alt+Del</span>
               </Button>
             </Tooltip>
 
@@ -314,9 +546,11 @@ export function App() {
                 size="xs"
                 variant="subtle"
                 color="gray"
+                leftSection={<Keyboard size={14} />}
                 onClick={sendMetaKey}
+                aria-label="Send Windows key"
               >
-                Meta
+                <span className="ow-control-label">Meta</span>
               </Button>
             </Tooltip>
 
@@ -325,35 +559,47 @@ export function App() {
               variant="subtle"
               color="gray"
               onClick={() => setScale("fit")}
+              aria-label="Fit remote desktop to window"
             >
-              Fit
+              <span className="ow-control-label ow-scale-label">Fit</span>
             </Button>
             <Button
               size="xs"
               variant="subtle"
               color="gray"
               onClick={() => setScale("real")}
+              aria-label="Use actual remote desktop size"
             >
-              Real
+              <span className="ow-control-label ow-scale-label">Real</span>
             </Button>
             <Button
               size="xs"
               variant="subtle"
               color="gray"
               onClick={() => setScale("full")}
+              aria-label="Fill available remote desktop area"
             >
-              Full
+              <span className="ow-control-label ow-scale-label">Full</span>
             </Button>
 
-            <Tooltip label="Fullscreen">
+            <Tooltip label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}>
               <Button
                 size="xs"
                 variant="subtle"
                 color="gray"
-                leftSection={<Maximize2 size={14} />}
-                onClick={() => document.documentElement.requestFullscreen()}
+                leftSection={
+                  isFullscreen ? (
+                    <Minimize2 size={14} />
+                  ) : (
+                    <Maximize2 size={14} />
+                  )
+                }
+                onClick={() => void toggleFullscreen()}
+                aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
               >
-                Fullscreen
+                <span className="ow-control-label">
+                  {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                </span>
               </Button>
             </Tooltip>
           </Group>
@@ -364,12 +610,13 @@ export function App() {
             variant="light"
             leftSection={<Power size={14} />}
             onClick={() => void shutdownSession()}
+            aria-label="Disconnect remote desktop session"
           >
-            Disconnect
+            <span className="ow-control-label">Disconnect</span>
           </Button>
-        </Group>
+        </div>
 
-        <div className="ow-canvas">
+        <div className="ow-canvas" ref={canvasRef}>
           {moduleReady && (
             <iron-remote-desktop
               ref={onRemoteElement}
@@ -385,181 +632,3 @@ export function App() {
     </div>
   );
 }
-
-const ROOT_STYLES = `
-.ow-root {
-  min-height: 100vh;
-  background:
-    radial-gradient(900px 600px at 50% 38%, rgba(56, 189, 248, 0.08), transparent 62%),
-    #06080d;
-  color: #e6edf6;
-}
-
-.ow-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 30px;
-  padding: 40px 24px;
-}
-
-.ow-stage {
-  position: relative;
-  width: 260px;
-  height: 260px;
-  display: grid;
-  place-items: center;
-}
-
-.ow-logo {
-  position: relative;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  filter: drop-shadow(0 16px 44px rgba(56, 189, 248, 0.28));
-}
-
-.ow-stage--working .ow-logo {
-  animation: ow-breathe 3s ease-in-out infinite;
-}
-
-.ow-halo {
-  position: absolute;
-  z-index: 1;
-  width: 150px;
-  height: 150px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(56, 189, 248, 0.30), transparent 70%);
-  opacity: 0.7;
-}
-
-.ow-stage--working .ow-halo {
-  animation: ow-glow 3s ease-in-out infinite;
-}
-
-.ow-ring {
-  position: absolute;
-  z-index: 2;
-  width: 132px;
-  height: 132px;
-  border-radius: 50%;
-  border: 1px solid rgba(125, 211, 252, 0.40);
-  opacity: 0;
-}
-
-.ow-stage--working .ow-ring--1 {
-  animation: ow-ping 2.8s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-.ow-stage--working .ow-ring--2 {
-  animation: ow-ping 2.8s cubic-bezier(0, 0, 0.2, 1) infinite 1.4s;
-}
-
-.ow-stage--error .ow-logo {
-  filter: drop-shadow(0 16px 44px rgba(248, 113, 113, 0.28));
-}
-
-.ow-stage--error .ow-halo {
-  background: radial-gradient(circle, rgba(248, 113, 113, 0.26), transparent 70%);
-}
-
-@keyframes ow-breathe {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.045); }
-}
-
-@keyframes ow-glow {
-  0%, 100% { opacity: 0.5; transform: scale(0.96); }
-  50% { opacity: 0.95; transform: scale(1.08); }
-}
-
-@keyframes ow-ping {
-  0% { opacity: 0.5; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.9); }
-}
-
-.ow-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  max-width: 380px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.08);
-  border: 1px solid rgba(248, 113, 113, 0.22);
-  text-align: left;
-}
-
-.ow-error-text {
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.ow-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 24px;
-  border-radius: 12px;
-  font-size: 14.5px;
-  font-weight: 600;
-  color: #04121b;
-  background: linear-gradient(180deg, #7dd3fc, #38bdf8);
-  border: 1px solid rgba(125, 211, 252, 0.5);
-  cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-  box-shadow: 0 10px 30px -12px rgba(56, 189, 248, 0.6);
-}
-
-.ow-cta:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 36px -12px rgba(56, 189, 248, 0.7);
-}
-
-.ow-cta:active:not(:disabled) { transform: translateY(0); }
-
-.ow-cta:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.ow-cta:focus-visible {
-  outline: 2px solid #7dd3fc;
-  outline-offset: 3px;
-}
-
-.ow-session {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  flex-direction: column;
-  background: #000;
-}
-
-.ow-toolbar {
-  padding: 8px 12px;
-  background: rgba(6, 8, 13, 0.96);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(6px);
-}
-
-.ow-status-badge { text-transform: none; }
-
-.ow-canvas {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ow-stage--working .ow-logo,
-  .ow-stage--working .ow-halo,
-  .ow-stage--working .ow-ring--1,
-  .ow-stage--working .ow-ring--2 {
-    animation: none;
-  }
-  .ow-stage--working .ow-ring--1 { opacity: 0.35; }
-  .ow-cta { transition: none; }
-}
-`;
