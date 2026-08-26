@@ -26,7 +26,21 @@ import {
   Service_Spec_Type,
 } from "@octelium/apis/main/userv1";
 import { Collapse, Select } from "@mantine/core";
-import { ChevronDown, ExternalLink, ShieldCheck } from "lucide-react";
+import {
+  Cable,
+  ChevronDown,
+  Database,
+  ExternalLink,
+  Globe2,
+  Monitor,
+  Network,
+  Radio,
+  Router,
+  Server,
+  ShieldCheck,
+  Terminal,
+} from "lucide-react";
+import { SiKubernetes, SiMysql, SiPostgresql } from "react-icons/si";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -52,9 +66,38 @@ const getType = (service: Service): string => {
   return SERVICE_TYPE_OPTIONS.find((option) => option.value === Service_Spec_Type[type ?? 0])?.label ?? "Unknown";
 };
 
+const SERVICE_TYPE_ICONS: Record<string, React.ElementType> = {
+  "Web App": Globe2,
+  HTTP: Globe2,
+  "gRPC": Network,
+  SSH: Terminal,
+  Kubernetes: SiKubernetes,
+  PostgreSQL: SiPostgresql,
+  MySQL: SiMysql,
+  TCP: Cable,
+  UDP: Radio,
+  DNS: Network,
+  SOCKS5: Router,
+  "RDP Web": Monitor,
+  Unknown: Server,
+};
+
 const getTypeIcon = (service: Service) => {
   const type = getType(service);
-  return <span className="text-center text-xs font-extrabold leading-tight md:text-sm">{type}</span>;
+  const TypeIcon = SERVICE_TYPE_ICONS[type] ?? Database;
+
+  return (
+    <div
+      className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-zinc-950 via-zinc-900 to-slate-700 text-white shadow-md ring-1 ring-inset ring-white/10"
+      role="img"
+      aria-label={`${type} service`}
+      title={type}
+    >
+      <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white/95">
+        <TypeIcon size={22} aria-hidden />
+      </span>
+    </div>
+  );
 };
 
 const ItemDetails = (props: { item: Service; domain: string }) => {
@@ -106,9 +149,7 @@ const ServiceItem = (props: { item: Service; domain: string }) => {
     <ResourceListItem>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="flex min-w-0 flex-1 items-start gap-3">
-          <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-zinc-900 px-1 text-white shadow-md">
-            {getTypeIcon(item)}
-          </div>
+          {getTypeIcon(item)}
           <div className="min-w-0 flex-1">
             <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-extrabold text-slate-900">
               <CopyText value={name} />

@@ -22,7 +22,7 @@ const CopyText = (props: {
   const copied = copyState === "copied";
 
   return (
-    <span className="flex items-center justify-center">
+    <span className="flex items-center justify-start">
       {!hide && (
         <span className="mx-1">
           {props.truncate && props.truncate > 0
