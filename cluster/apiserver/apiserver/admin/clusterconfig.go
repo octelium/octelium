@@ -416,10 +416,20 @@ func validateCCAuthenticatorFIDO(fido *corev1.ClusterConfig_Spec_Authenticator_F
 		corev1.ClusterConfig_Spec_Authenticator_FIDO_INDIRECT,
 		corev1.ClusterConfig_Spec_Authenticator_FIDO_NONE,
 		corev1.ClusterConfig_Spec_Authenticator_FIDO_ENTERPRISE:
-		return nil
 	default:
 		return grpcutils.InvalidArg("Invalid FIDO attestationConveyancePreference")
 	}
+
+	switch fido.UserVerification {
+	case corev1.ClusterConfig_Spec_Authenticator_FIDO_USER_VERIFICATION_UNSET,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_DISCOURAGED:
+	default:
+		return grpcutils.InvalidArg("Invalid FIDO userVerification")
+	}
+
+	return nil
 }
 
 func validateCCAuthenticatorTPM(tpm *corev1.ClusterConfig_Spec_Authenticator_TPM) error {

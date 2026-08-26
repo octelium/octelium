@@ -1245,3 +1245,47 @@ func TestValidateCCAuthenticatorTPM(t *testing.T) {
 			})))
 	}
 }
+
+func TestValidateCCAuthenticatorFIDO(t *testing.T) {
+
+	assert.Nil(t, validateCCAuthenticatorFIDO(nil))
+	assert.Nil(t, validateCCAuthenticatorFIDO(&corev1.ClusterConfig_Spec_Authenticator_FIDO{}))
+
+	for _, arg := range []corev1.ClusterConfig_Spec_Authenticator_FIDO_AttestationConveyancePreference{
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_ATTESTATION_CONVEYANCE_PREFERENCE_UNSET,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_DIRECT,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_INDIRECT,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_NONE,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_ENTERPRISE,
+	} {
+		assert.Nil(t, validateCCAuthenticatorFIDO(&corev1.ClusterConfig_Spec_Authenticator_FIDO{
+			AttestationConveyancePreference: arg,
+		}), "%v", arg)
+	}
+
+	for _, arg := range []corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification{
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_USER_VERIFICATION_UNSET,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED,
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_DISCOURAGED,
+	} {
+		assert.Nil(t, validateCCAuthenticatorFIDO(&corev1.ClusterConfig_Spec_Authenticator_FIDO{
+			UserVerification: arg,
+		}), "%v", arg)
+	}
+
+	for _, arg := range []corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification{
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification(4),
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification(1000),
+		corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification(-1),
+	} {
+		assert.NotNil(t, validateCCAuthenticatorFIDO(&corev1.ClusterConfig_Spec_Authenticator_FIDO{
+			UserVerification: arg,
+		}), "%v", arg)
+	}
+
+	assert.NotNil(t, validateCCAuthenticatorFIDO(&corev1.ClusterConfig_Spec_Authenticator_FIDO{
+		AttestationConveyancePreference: corev1.ClusterConfig_Spec_Authenticator_FIDO_AttestationConveyancePreference(1000),
+		UserVerification:                corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED,
+	}))
+}

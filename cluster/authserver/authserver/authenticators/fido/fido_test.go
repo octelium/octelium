@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -619,5 +620,60 @@ func TestBeginRegistrationDataMap(t *testing.T) {
 		assert.NotEqual(t,
 			resp.Response.ChallengeRequest.GetFido().Request,
 			resp2.Response.ChallengeRequest.GetFido().Request)
+	}
+}
+
+func TestGetUserVerificationRequirement(t *testing.T) {
+
+	assert.Equal(t, protocol.VerificationPreferred, getUserVerificationRequirement(nil))
+
+	{
+		cc := newTestClusterConfig()
+		assert.Equal(t, protocol.VerificationPreferred, getUserVerificationRequirement(cc))
+	}
+
+	{
+		cc := newTestClusterConfig()
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{}
+		assert.Equal(t, protocol.VerificationPreferred, getUserVerificationRequirement(cc))
+	}
+
+	type entry struct {
+		arg corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification
+		ret protocol.UserVerificationRequirement
+	}
+
+	entries := []entry{
+		{
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_USER_VERIFICATION_UNSET,
+			protocol.VerificationPreferred,
+		},
+		{
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED,
+			protocol.VerificationPreferred,
+		},
+		{
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED,
+			protocol.VerificationRequired,
+		},
+		{
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_DISCOURAGED,
+			protocol.VerificationDiscouraged,
+		},
+		{
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification(1000),
+			protocol.VerificationPreferred,
+		},
+	}
+
+	for _, e := range entries {
+		cc := newTestClusterConfig()
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			Fido: &corev1.ClusterConfig_Spec_Authenticator_FIDO{
+				UserVerification: e.arg,
+			},
+		}
+
+		assert.Equal(t, e.ret, getUserVerificationRequirement(cc), "%v", e.arg)
 	}
 }

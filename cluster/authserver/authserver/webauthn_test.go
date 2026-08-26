@@ -1227,3 +1227,158 @@ func TestFIDOAuthenticatorActionGuards(t *testing.T) {
 
 	assert.Nil(t, registerFIDO(t, srv, usrT, authn, newPasskeyFIDO(srv.domain, usrT.Usr)))
 }
+
+func newUnverifiedFIDO(domain string, usr *corev1.User) *virtualFIDO {
+	return newVirtualFIDO(domain, usr, virtualwebauthn.AuthenticatorOptions{
+		UserNotVerified: true,
+	})
+}
+
+func TestFIDOUserVerification(t *testing.T) {
+
+	srv, tst, adminSrv := newWebAuthnTestEnv(t)
+
+	setUserVerification := func(arg corev1.ClusterConfig_Spec_Authenticator_FIDO_UserVerification) {
+		setClusterAuthenticator(t, tst, &corev1.ClusterConfig_Spec_Authenticator{
+			Fido: &corev1.ClusterConfig_Spec_Authenticator_FIDO{
+				UserVerification: arg,
+			},
+		})
+	}
+
+	newUsr := func() *tstuser.User {
+		usrT, err := tstuser.NewUserWeb(tst.C.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err, "%+v", err)
+		return usrT
+	}
+
+	getRegistrationVerification := func(usrT *tstuser.User,
+		authn *corev1.Authenticator) protocol.UserVerificationRequirement {
+
+		req, err := beginFIDORegistration(t, srv, usrT, authn)
+		assert.Nil(t, err, "%+v", err)
+
+		opts := &protocol.PublicKeyCredentialCreationOptions{}
+		assert.Nil(t, json.Unmarshal([]byte(req), opts))
+
+		return opts.AuthenticatorSelection.UserVerification
+	}
+
+	{
+		setClusterAuthenticator(t, tst, &corev1.ClusterConfig_Spec_Authenticator{})
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+
+		assert.Equal(t, protocol.VerificationPreferred,
+			getRegistrationVerification(usrT, authn))
+	}
+
+	{
+		setUserVerification(
+			corev1.ClusterConfig_Spec_Authenticator_FIDO_USER_VERIFICATION_UNSET)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+
+		assert.Equal(t, protocol.VerificationPreferred,
+			getRegistrationVerification(usrT, authn))
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+
+		assert.Equal(t, protocol.VerificationPreferred,
+			getRegistrationVerification(usrT, authn))
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_DISCOURAGED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+
+		assert.Equal(t, protocol.VerificationDiscouraged,
+			getRegistrationVerification(usrT, authn))
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+
+		assert.Equal(t, protocol.VerificationRequired,
+			getRegistrationVerification(usrT, authn))
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+		d := newUnverifiedFIDO(srv.domain, usrT.Usr)
+
+		assert.Nil(t, registerFIDO(t, srv, usrT, authn, d))
+
+		resyncWebSession(t, srv, usrT)
+		_, err := authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
+		assert.Nil(t, err, "%+v", err)
+
+		usrT.Resync()
+		info := usrT.Session.Status.Authentication.Info
+		assert.False(t, info.GetAuthenticator().GetInfo().GetFido().UserVerified)
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+		d := newUnverifiedFIDO(srv.domain, usrT.Usr)
+
+		err := registerFIDO(t, srv, usrT, authn, d)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+
+		assert.False(t, srv.mustGetAuthenticator(t, authn).Status.IsRegistered)
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+		d := newVirtualFIDO(srv.domain, usrT.Usr, virtualwebauthn.AuthenticatorOptions{})
+
+		assert.Nil(t, registerFIDO(t, srv, usrT, authn, d))
+
+		resyncWebSession(t, srv, usrT)
+		_, err := authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
+		assert.Nil(t, err, "%+v", err)
+
+		usrT.Resync()
+		info := usrT.Session.Status.Authentication.Info
+		assert.True(t, info.GetAuthenticator().GetInfo().GetFido().UserVerified)
+	}
+
+	{
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_PREFERRED)
+
+		usrT := newUsr()
+		authn := createFIDOAuthenticator(t, srv, usrT)
+		d := newUnverifiedFIDO(srv.domain, usrT.Usr)
+
+		assert.Nil(t, registerFIDO(t, srv, usrT, authn, d))
+
+		setUserVerification(corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED)
+
+		resyncWebSession(t, srv, usrT)
+		_, err := authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+	}
+}

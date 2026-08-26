@@ -131,7 +131,7 @@ func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator, cc *corev1.
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			AuthenticatorAttachment: authenticatorAttachment,
 
-			UserVerification: protocol.VerificationPreferred,
+			UserVerification: getUserVerificationRequirement(cc),
 		},
 		AttestationPreference: func() protocol.ConveyancePreference {
 			if cc == nil || cc.Spec.Authenticator == nil || cc.Spec.Authenticator.Fido == nil {
@@ -155,6 +155,21 @@ func (c *WebAuthNFactor) getWebauthnCtl(authn *corev1.Authenticator, cc *corev1.
 		}(),
 		MDS: c.mds,
 	})
+}
+
+func getUserVerificationRequirement(cc *corev1.ClusterConfig) protocol.UserVerificationRequirement {
+	if cc == nil || cc.Spec.Authenticator == nil || cc.Spec.Authenticator.Fido == nil {
+		return protocol.VerificationPreferred
+	}
+
+	switch cc.Spec.Authenticator.Fido.UserVerification {
+	case corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED:
+		return protocol.VerificationRequired
+	case corev1.ClusterConfig_Spec_Authenticator_FIDO_DISCOURAGED:
+		return protocol.VerificationDiscouraged
+	default:
+		return protocol.VerificationPreferred
+	}
 }
 
 func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) (*authenticators.FinishResp, error) {
