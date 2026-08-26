@@ -13,10 +13,11 @@ import {
   ResourceListLabel,
   ResourceListWrapper,
 } from "@/components/ResourceList";
+import { getDomain, printResourceNameWithDisplay } from "@/utils";
 import { getClientUser } from "@/utils/client";
 import { useAppSelector } from "@/utils/hooks";
-import { getDomain, printResourceNameWithDisplay } from "@/utils";
 import { getServicePrivateFQDN, getServicePublicFQDN } from "@/utils/octelium";
+import { Collapse, Select } from "@mantine/core";
 import {
   ListNamespaceOptions,
   ListServiceOptions,
@@ -25,12 +26,14 @@ import {
   ServiceList,
   Service_Spec_Type,
 } from "@octelium/apis/main/userv1";
-import { Collapse, Select } from "@mantine/core";
+import { useQuery } from "@tanstack/react-query";
 import {
+  BrainCircuit,
   Cable,
-  ChevronDown,
   Database,
   ExternalLink,
+  Eye,
+  EyeOff,
   Globe2,
   Monitor,
   Network,
@@ -40,9 +43,13 @@ import {
   ShieldCheck,
   Terminal,
 } from "lucide-react";
-import { SiKubernetes, SiMysql, SiPostgresql } from "react-icons/si";
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  SiKubernetes,
+  SiModelcontextprotocol,
+  SiPostgresql,
+} from "react-icons/si";
+import { GrMysql } from "react-icons/gr";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ConnectCommand from "./ConnectCommand";
 
@@ -59,26 +66,34 @@ const SERVICE_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "DNS", label: "DNS" },
   { value: "SOCKS5", label: "SOCKS5" },
   { value: "RDP_WEB", label: "RDP Web" },
+  { value: "LLM", label: "AI / LLM" },
+  { value: "MCP", label: "MCP" },
 ];
 
 const getType = (service: Service): string => {
   const type = service.spec?.type;
-  return SERVICE_TYPE_OPTIONS.find((option) => option.value === Service_Spec_Type[type ?? 0])?.label ?? "Unknown";
+  return (
+    SERVICE_TYPE_OPTIONS.find(
+      (option) => option.value === Service_Spec_Type[type ?? 0],
+    )?.label ?? "Unknown"
+  );
 };
 
 const SERVICE_TYPE_ICONS: Record<string, React.ElementType> = {
   "Web App": Globe2,
   HTTP: Globe2,
-  "gRPC": Network,
+  gRPC: Network,
   SSH: Terminal,
   Kubernetes: SiKubernetes,
   PostgreSQL: SiPostgresql,
-  MySQL: SiMysql,
+  MySQL: GrMysql,
   TCP: Cable,
   UDP: Radio,
   DNS: Network,
   SOCKS5: Router,
   "RDP Web": Monitor,
+  "AI / LLM": BrainCircuit,
+  MCP: SiModelcontextprotocol,
   Unknown: Server,
 };
 
@@ -93,9 +108,7 @@ const getTypeIcon = (service: Service) => {
       aria-label={`${type} service`}
       title={type}
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white/95">
-        <TypeIcon size={22} aria-hidden />
-      </span>
+      <TypeIcon size={25} aria-hidden />
     </div>
   );
 };
@@ -144,23 +157,45 @@ const ServiceItem = (props: { item: Service; domain: string }) => {
     item.spec?.isPublic &&
     (item.spec.type === Service_Spec_Type.WEB ||
       item.spec.type === Service_Spec_Type.RDP_WEB);
+  const toggleExpandedFromCard = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, select, textarea, [role='button']")) {
+      return;
+    }
+    setExpanded((value) => !value);
+  };
 
   return (
-    <ResourceListItem>
+    <ResourceListItem
+      className={expanded ? "cursor-default" : "cursor-pointer"}
+      onClick={expanded ? undefined : toggleExpandedFromCard}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           {getTypeIcon(item)}
           <div className="min-w-0 flex-1">
             <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-extrabold text-slate-900">
               <CopyText value={name} />
-              {displayName && <span className="font-semibold text-slate-500">{displayName}</span>}
+              {displayName && (
+                <span className="font-semibold text-slate-500">
+                  {displayName}
+                </span>
+              )}
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold">
-              <ResourceListLabel label="Type">{getType(item)}</ResourceListLabel>
+              <ResourceListLabel label="Type">
+                {getType(item)}
+              </ResourceListLabel>
               {item.status?.namespace && (
-                <ResourceListLabel label="Namespace">{item.status.namespace}</ResourceListLabel>
+                <ResourceListLabel label="Namespace">
+                  {item.status.namespace}
+                </ResourceListLabel>
               )}
-              {item.spec?.port && <ResourceListLabel label="Port">{item.spec.port}</ResourceListLabel>}
+              {item.spec?.port && (
+                <ResourceListLabel label="Port">
+                  {item.spec.port}
+                </ResourceListLabel>
+              )}
               {item.spec?.isTLS && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
                   <ShieldCheck size={13} aria-hidden /> TLS
@@ -183,22 +218,30 @@ const ServiceItem = (props: { item: Service; domain: string }) => {
           )}
           <button
             type="button"
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition-colors hover:border-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+            className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-slate-300 text-slate-700 transition-colors hover:border-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
             aria-controls={detailsId}
             aria-expanded={expanded}
+            aria-label={
+              expanded ? "Hide service details" : "View service details"
+            }
+            title={expanded ? "Hide service details" : "View service details"}
             onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? "Hide details" : "Details"}
-            <ChevronDown
-              size={16}
-              aria-hidden
-              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
-            />
+            {expanded ? (
+              <EyeOff size={17} aria-hidden />
+            ) : (
+              <Eye size={17} aria-hidden />
+            )}
           </button>
         </div>
       </div>
 
-      <Collapse id={detailsId} expanded={expanded} transitionDuration={200} keepMounted={false}>
+      <Collapse
+        id={detailsId}
+        expanded={expanded}
+        transitionDuration={200}
+        keepMounted={false}
+      >
         <ItemDetails item={item} domain={props.domain} />
       </Collapse>
     </ResourceListItem>
@@ -211,7 +254,10 @@ const ServiceResults = (props: { itemsList: ServiceList; domain: string }) => {
   return (
     <>
       <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-500">
-        <span>{props.itemsList.listResponseMeta?.totalCount ?? items.length} services</span>
+        <span>
+          {props.itemsList.listResponseMeta?.totalCount ?? items.length}{" "}
+          services
+        </span>
       </div>
       <Paginator meta={props.itemsList.listResponseMeta} />
       {items.length === 0 ? (
@@ -240,13 +286,17 @@ const namespaceOptions = ListNamespaceOptions.create({
 });
 
 const Page = () => {
-  const itemsPerPage = useAppSelector((state) => state.settings.itemsPerPage ?? 10);
+  const itemsPerPage = useAppSelector(
+    (state) => state.settings.itemsPerPage ?? 10,
+  );
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const namespace = searchParams.get("namespace") ?? "";
   const typeName = searchParams.get("type");
   const page = Math.max(Number(searchParams.get("common.page") ?? "0") || 0, 0);
-  const selectedType = SERVICE_TYPE_OPTIONS.some((option) => option.value === typeName)
+  const selectedType = SERVICE_TYPE_OPTIONS.some(
+    (option) => option.value === typeName,
+  )
     ? Service_Spec_Type[typeName as keyof typeof Service_Spec_Type]
     : Service_Spec_Type.UNSET;
   const options = React.useMemo(
@@ -260,11 +310,17 @@ const Page = () => {
   );
 
   const query = useQuery({
-    queryKey: ["user/main.listService", ListServiceOptions.toJsonString(options)],
+    queryKey: [
+      "user/main.listService",
+      ListServiceOptions.toJsonString(options),
+    ],
     queryFn: async () => getClientUser().listService(options),
   });
   const namespacesQuery = useQuery({
-    queryKey: ["user/main.listNamespace", ListNamespaceOptions.toJsonString(namespaceOptions)],
+    queryKey: [
+      "user/main.listNamespace",
+      ListNamespaceOptions.toJsonString(namespaceOptions),
+    ],
     queryFn: async () => getClientUser().listNamespace(namespaceOptions),
     staleTime: 5 * 60 * 1000,
   });
@@ -279,7 +335,10 @@ const Page = () => {
 
   const namespaceData: { value: string; label: string }[] =
     namespacesQuery.data?.response.items
-      .filter((item: Namespace) => item.metadata?.name && item.metadata.name !== "octelium")
+      .filter(
+        (item: Namespace) =>
+          item.metadata?.name && item.metadata.name !== "octelium",
+      )
       .map((item: Namespace) => ({
         value: item.metadata!.name,
         label: printResourceNameWithDisplay(item.metadata!),
@@ -321,7 +380,9 @@ const Page = () => {
           onRetry={() => query.refetch()}
         />
       )}
-      {query.isSuccess && <ServiceResults itemsList={query.data.response} domain={getDomain()} />}
+      {query.isSuccess && (
+        <ServiceResults itemsList={query.data.response} domain={getDomain()} />
+      )}
     </>
   );
 };

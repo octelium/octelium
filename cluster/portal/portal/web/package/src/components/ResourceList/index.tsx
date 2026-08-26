@@ -1,17 +1,22 @@
 import { Link } from "react-router-dom";
+import type { MouseEventHandler } from "react";
 import { twMerge } from "tailwind-merge";
 import Label from "../Label";
 
 export const ResourceListWrapper = (props: { children?: React.ReactNode }) => {
-  return <div className="flex flex-col w-full">{props.children}</div>;
+  return <div className="flex w-full flex-col gap-3">{props.children}</div>;
 };
 
 export const ResourceListItem = (props: {
   children?: React.ReactNode;
   className?: string;
+  onClick?: MouseEventHandler<HTMLElement>;
 }) => {
   return (
-    <article className={twMerge("w-full rounded-xl border-2 border-slate-200 bg-white p-4 font-semibold shadow-sm transition-shadow hover:shadow-md", props.className)}>
+    <article
+      className={twMerge("w-full rounded-xl border-2 border-slate-200 bg-white p-4 font-semibold shadow-sm transition-shadow hover:shadow-md", props.className)}
+      onClick={props.onClick}
+    >
       {props.children}
     </article>
   );
