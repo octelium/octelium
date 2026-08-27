@@ -144,6 +144,67 @@ func TestController(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
+func TestResyncOrphanedAddresses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	netw, err := adminSrv.CreateNamespace(ctx, tests.GenNamespace())
+	assert.Nil(t, err)
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(netw.Metadata.Name))
+	assert.Nil(t, err)
+
+	regionRef := svc.Status.RegionRef
+
+	svc.Status.Addresses = []*corev1.Service_Status_Address{
+		{
+			DualStackIP: &metav1.DualStackIP{
+				Ipv4: "1.2.3.4",
+			},
+			PodRef: &metav1.ObjectReference{
+				ApiVersion: "k8s/core/v1",
+				Kind:       "Pod",
+				Name:       utilrand.GetRandomStringLowercase(8),
+				Uid:        vutils.UUIDv4(),
+			},
+		},
+	}
+
+	svc, err = fakeC.OcteliumC.CoreC().UpdateService(ctx, svc)
+	assert.Nil(t, err, "%+v", err)
+
+	kubeInformerFactory := informers.NewSharedInformerFactory(fakeC.K8sC, 0)
+	podInformer := kubeInformerFactory.Core().V1().Pods()
+
+	ctrl := NewController(podInformer, fakeC.OcteliumC, regionRef)
+
+	kubeInformerFactory.Start(ctx.Done())
+
+	kubeInformerFactory.WaitForCacheSync(ctx.Done())
+
+	go ctrl.Run(ctx, 1)
+
+	assert.Eventually(t, func() bool {
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: svc.Metadata.Name})
+		if err != nil || svcV.Status == nil {
+			return false
+		}
+		return len(svcV.Status.Addresses) == 0
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestGetPodIP(t *testing.T) {
 
 	{
@@ -267,5 +328,17 @@ func TestAddressesEqualMap(t *testing.T) {
 			},
 		}
 		assert.True(t, addressesEqualMap(current, desired))
+	}
+
+	{
+		current := []*corev1.Service_Status_Address{
+			addr("a", "1.1.1.1", ""),
+			addr("a", "1.1.1.1", ""),
+		}
+		desired := map[string]*corev1.Service_Status_Address{
+			"a": addr("a", "1.1.1.1", ""),
+			"b": addr("b", "2.2.2.2", ""),
+		}
+		assert.False(t, addressesEqualMap(current, desired))
 	}
 }

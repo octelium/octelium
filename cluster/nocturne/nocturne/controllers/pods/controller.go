@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/utilnet"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -47,6 +48,8 @@ import (
 const (
 	reconcileTimeout = 10 * time.Second
 	resyncInterval   = 3 * 60 * time.Second
+	resyncTimeout    = 30 * time.Second
+	resyncPageSize   = 500
 )
 
 type Controller struct {
@@ -188,37 +191,89 @@ func (c *Controller) periodicResync(ctx context.Context, interval time.Duration)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	c.enqueueAllServices(ctx)
+
 	for {
 		select {
 		case <-ticker.C:
-			c.enqueueAllServices()
+			c.enqueueAllServices(ctx)
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (c *Controller) enqueueAllServices() {
+func (c *Controller) enqueueAllServices(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, resyncTimeout)
+	defer cancel()
+
+	seen := make(map[string]struct{})
+
+	enqueue := func(svcName string) {
+		if _, already := seen[svcName]; already {
+			return
+		}
+		seen[svcName] = struct{}{}
+		c.enqueue(svcName)
+	}
+
+	svcList, err := c.listRegionServices(ctx)
+	if err != nil {
+		zap.L().Warn("Could not list Services", zap.Error(err))
+	} else {
+		for _, svc := range svcList {
+			enqueue(svc.Metadata.Name)
+		}
+	}
+
 	pods, err := c.podLister.List(labels.Everything())
 	if err != nil {
 		zap.L().Warn("Could not list pods", zap.Error(err))
 		return
 	}
 
-	seen := make(map[string]struct{})
 	for _, pod := range pods {
 		svcName, ok := pod.Labels["octelium.com/svc"]
 		if !ok {
 			continue
 		}
-		if _, already := seen[svcName]; already {
-			continue
-		}
-		seen[svcName] = struct{}{}
-		c.enqueue(svcName)
+		enqueue(svcName)
 	}
 
 	// zap.L().Debug("enqueueAllServices done", zap.Int("count", len(seen)))
+}
+
+func (c *Controller) listRegionServices(ctx context.Context) ([]*corev1.Service, error) {
+	var ret []*corev1.Service
+
+	hasMore := true
+	page := 0
+	for hasMore {
+		svcList, err := c.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+			Paginate:     true,
+			Page:         uint32(page),
+			ItemsPerPage: resyncPageSize,
+			Filters: []*rmetav1.ListOptions_Filter{
+				urscsrv.FilterFieldEQValStr("status.regionRef.uid", c.regionRef.Uid),
+			},
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "list services")
+		}
+
+		ret = append(ret, svcList.Items...)
+
+		if svcList.ListResponseMeta == nil {
+			break
+		}
+
+		hasMore = svcList.ListResponseMeta.HasMore
+		if hasMore {
+			page += 1
+		}
+	}
+
+	return ret, nil
 }
 
 func (c *Controller) reconcile(ctx context.Context, svcName string) error {
@@ -316,10 +371,17 @@ func addressesEqualMap(
 		return false
 	}
 
+	seen := make(map[string]struct{}, len(current))
+
 	for _, addr := range current {
 		if addr.PodRef == nil {
 			return false
 		}
+		if _, already := seen[addr.PodRef.Uid]; already {
+			return false
+		}
+		seen[addr.PodRef.Uid] = struct{}{}
+
 		d, ok := desired[addr.PodRef.Uid]
 		if !ok {
 			return false
