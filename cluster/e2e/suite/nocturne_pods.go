@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -79,7 +80,7 @@ func podOcteliumIP(pod *k8scorev1.Pod) *metav1.DualStackIP {
 
 func servicePodList(ctx context.Context, h *harness.H, name string) ([]k8scorev1.Pod, error) {
 	podList, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
-		LabelSelector: fmt.Sprintf("octelium.com/svc=%s", name),
+		LabelSelector: fmt.Sprintf("octelium.com/svc=%s,octelium.com/component=svc", name),
 	})
 	if err != nil {
 		return nil, err
@@ -189,17 +190,18 @@ func waitServiceDropsPod(t *testing.T, h *harness.H, name string,
 		})
 }
 
-func waitServicePodsGone(t *testing.T, h *harness.H, name string) {
+func waitPodGone(t *testing.T, h *harness.H, name string) {
 	t.Helper()
 
-	h.Eventually(t, fmt.Sprintf("the Pods of the Service %s to be drained", name),
+	h.Eventually(t, fmt.Sprintf("the Pod %s to be drained", name),
 		harness.DeploymentBudget, func(ctx context.Context) error {
-			pods, err := servicePodList(ctx, h, name)
-			if err != nil {
-				return err
+			_, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).
+				Get(ctx, name, k8smetav1.GetOptions{})
+			if err == nil {
+				return errors.Errorf("the Pod %s is still present", name)
 			}
-			if len(pods) > 0 {
-				return errors.Errorf("the Service still has %d Pods", len(pods))
+			if !k8serr.IsNotFound(err) {
+				return err
 			}
 			return nil
 		})
@@ -369,7 +371,7 @@ func testNocturnePodReconciliation(t *testing.T, h *harness.H) {
 		stopComponent(t, h, "nocturne")
 
 		scaleServiceDeployment(t, h, hostname, 0)
-		waitServicePodsGone(t, h, svc.Metadata.Name)
+		waitPodGone(t, h, before[0].PodRef.Name)
 
 		waitComponentRunning(t, h, "nocturne")
 
