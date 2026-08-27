@@ -61,6 +61,7 @@ func Phases() []Phase {
 		{"NocturneUserDeletion", testNocturneUserDeletion},
 		{"NocturneDeviceDeletion", testNocturneDeviceDeletion},
 		{"NocturnePodAddresses", testNocturnePodAddresses},
+		{"NocturnePodReconciliation", testNocturnePodReconciliation},
 		{"NocturneRegionIngress", testNocturneRegionIngress},
 		{"Ingress", testIngress},
 		{"IngressCertificateRotation", testIngressCertificateRotation},
