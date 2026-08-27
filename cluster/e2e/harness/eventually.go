@@ -70,10 +70,12 @@ func (h *H) Consistently(t *testing.T, what string,
 	window time.Duration, fn func(ctx context.Context) error) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(t.Context(), window)
+	ctx, cancel := h.opCtx(t)
 	defer cancel()
 
 	started := time.Now()
+	deadline := time.After(window)
+
 	for {
 		if err := fn(ctx); err != nil {
 			t.Fatalf("%s did not hold: after %s: %+v",
@@ -81,7 +83,7 @@ func (h *H) Consistently(t *testing.T, what string,
 		}
 
 		select {
-		case <-ctx.Done():
+		case <-deadline:
 			return
 		case <-time.After(DefaultPollInterval):
 		}
