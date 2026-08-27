@@ -109,7 +109,7 @@ func (e *endpoint) WritePacket(pkt *stack.PacketBuffer) tcpip.Error {
 	}
 
 	view.Release()
-	zap.L().Debug("Dropping an outgoing netstack packet. The TUN queue is full")
+	// zap.L().Debug("Dropping an outgoing netstack packet. The TUN queue is full")
 
 	return &tcpip.ErrNoBufferSpace{}
 }
