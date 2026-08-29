@@ -15,7 +15,6 @@ const TopBar = () => {
         className="flex-none flex items-center justify-center"
         href="https://octelium.com"
         target="_blank"
-        rel="noopener noreferrer"
         aria-label="Octelium website"
       >
         <Logo className="w-40 h-auto stroke-cyan-400" />
@@ -35,7 +34,10 @@ const TopBar = () => {
                 alt="Current user"
               />
             ) : (
-              <div className="h-full w-full rounded-full bg-sky-600 transition-all duration-300 hover:bg-indigo-800" aria-hidden />
+              <div
+                className="h-full w-full rounded-full bg-sky-600 transition-all duration-300 hover:bg-indigo-800"
+                aria-hidden
+              />
             )}
           </div>
         </div>

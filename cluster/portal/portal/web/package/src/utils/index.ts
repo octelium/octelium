@@ -80,3 +80,9 @@ export const truncateUtf8 = (
 
   return out;
 };
+
+export const tokenizeQuery = (query: string): string[] =>
+  query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+export const matchesAllTokens = (haystack: string, tokens: string[]): boolean =>
+  tokens.every((token) => haystack.includes(token));

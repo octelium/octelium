@@ -73,7 +73,6 @@ export const ReleaseBox = () => {
     <a
       href={data.html_url}
       target="_blank"
-      rel="noopener noreferrer"
       className="block w-full rounded-xl border border-slate-200 p-3 transition-colors duration-500 hover:border-slate-300 hover:bg-slate-50"
     >
       <div className="flex items-center justify-between">

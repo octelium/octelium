@@ -12,7 +12,7 @@ import ReleaseBox from "../ReleaseBox";
 
 const items = [
   {
-    title: "Service",
+    title: "Services",
     url: "/services",
     icon: PanelTop,
   },

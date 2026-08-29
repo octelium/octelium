@@ -7,7 +7,6 @@ const LinkItem = (props: { link: string; children?: React.ReactNode }) => {
       <a
         href={props.link}
         target="_blank"
-        rel="noopener noreferrer"
         className="mb-2 w-full transition-all duration-300 text-zinc-200 hover:text-white inline-flex items-center text-sm leading-none"
       >
         {props.children}

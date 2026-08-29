@@ -24,3 +24,6 @@ export const getServicePublicURL = (
 ): string => {
   return `https://${getServicePublicFQDN(arg, domain)}`;
 };
+
+export const getServiceHostname = (arg: UserPB.Service): string =>
+  arg.status?.primaryHostname || arg.metadata?.name || "";
