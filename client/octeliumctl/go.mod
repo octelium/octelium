@@ -27,8 +27,8 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-resty/resty/v2 v2.17.2 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
-	github.com/google/go-attestation v0.6.0 // indirect
-	github.com/google/go-tpm v0.9.6 // indirect
+	github.com/google/go-attestation v0.6.4 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
@@ -45,7 +45,7 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zcalusic/sysinfo v1.1.3 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/term v0.44.0 // indirect

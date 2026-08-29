@@ -11,7 +11,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-webauthn/webauthn v0.15.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
-	github.com/google/go-attestation v0.6.0
+	github.com/google/go-attestation v0.6.4
 	github.com/google/go-github/v88 v88.0.0
 	github.com/google/go-tpm-tools v0.4.7
 	github.com/google/uuid v1.6.0
@@ -69,7 +69,7 @@ require (
 	github.com/google/cel-go v0.29.2 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
-	github.com/google/go-tpm v0.9.6 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
