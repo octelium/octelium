@@ -32,7 +32,7 @@ on:
         required: false
         default: ""
 env:
-  GO_VERSION: "1.26.5"
+  GO_VERSION: "1.26.6"
   SCENARIO: >-
     ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ inputs.spiffe && '-spiffe' || '' }}
 jobs:

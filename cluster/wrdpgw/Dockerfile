@@ -13,7 +13,7 @@ COPY cluster/wrdpgw/wrdpgw/credssp-rs/src /build/src
 RUN cargo build --release
 
 
-FROM golang:1.26.5-bookworm AS builder
+FROM golang:1.26.6-bookworm AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential pkg-config ca-certificates && \

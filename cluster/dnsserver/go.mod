@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/dnsserver
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2

@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/octelium-go
 
-go 1.26.5
+go 1.26.6
 
 replace github.com/octelium/octelium/apis => ../apis
 
