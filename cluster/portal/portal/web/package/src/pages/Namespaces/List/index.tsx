@@ -50,7 +50,7 @@ const NamespaceCard = (props: {
       title={`Show every Service in the ${name} Namespace`}
       className={twMerge(
         "group/item flex h-full flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4",
-        "shadow-xs transition-all duration-200",
+        "shadow-xs transition-all duration-500",
         "hover:border-slate-300 hover:bg-slate-50/70 hover:shadow-md hover:shadow-slate-900/5",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900",
       )}

@@ -16,7 +16,7 @@ export const ResourceListItem = (props: {
     <article
       className={twMerge(
         "group/item relative w-full rounded-xl border border-slate-200 bg-white p-4",
-        "shadow-xs transition-all duration-200",
+        "shadow-xs transition-all duration-500",
         "hover:border-slate-300 hover:bg-slate-50/70 hover:shadow-md hover:shadow-slate-900/5",
         "focus-within:border-slate-400",
         props.className,

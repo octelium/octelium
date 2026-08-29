@@ -78,8 +78,8 @@ const Mono = (props: { children?: React.ReactNode }) => (
 const ServiceTypeTile = (props: { info: ServiceTypeInfo }) => (
   <div
     className={twMerge(
-      "flex h-11 w-11 flex-none items-center justify-center rounded-xl",
-      "bg-gradient-to-br shadow-xs ring-1 transition-transform duration-200",
+      "flex h-11 w-11 flex-none items-center justify-center rounded-full",
+      "shadow-xs ring-1 transition-transform duration-200",
       "group-hover/item:scale-[1.04]",
       props.info.tile,
     )}
@@ -87,7 +87,7 @@ const ServiceTypeTile = (props: { info: ServiceTypeInfo }) => (
     aria-label={`${props.info.label} service`}
     title={props.info.label}
   >
-    <props.info.icon size={22} aria-hidden />
+    <props.info.icon size={22} className="text-white" aria-hidden />
   </div>
 );
 
