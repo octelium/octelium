@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
@@ -66,6 +67,8 @@ type server struct {
 
 	genCache *cache.Cache
 
+	indexPageC atomic.Pointer[indexPage]
+
 	webProvidersC struct {
 		sync.RWMutex
 		connectors []utils.Provider
@@ -95,6 +98,10 @@ const shutdownTimeout = 15 * time.Second
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
 	s.setTemplateGlobals(new)
+
+	if err := s.setIndexPage(); err != nil {
+		zap.L().Warn("Could not set index page", zap.Error(err))
+	}
 
 	if !pbutils.IsEqual(new.Spec.Authentication, old.Spec.Authentication) {
 		if new.Spec.Authentication != nil && new.Spec.Authentication.Geolocation != nil &&
@@ -139,11 +146,11 @@ func initServer(ctx context.Context,
 	}
 	ret.jwkCtl = jwkCtl
 
+	ret.setTemplateGlobals(clusterCfg)
+
 	if err := ret.setIdentityProviders(ctx); err != nil {
 		return nil, err
 	}
-
-	ret.setTemplateGlobals(clusterCfg)
 
 	watcherC := watchers.NewCoreV1(ret.octeliumC)
 
@@ -358,6 +365,10 @@ func (s *server) setIdentityProviders(ctx context.Context) error {
 	s.assertionProvidersC.Lock()
 	s.assertionProvidersC.connectors = assertionProvidersConnectors
 	s.assertionProvidersC.Unlock()
+
+	if err := s.setIndexPage(); err != nil {
+		return err
+	}
 
 	return nil
 }

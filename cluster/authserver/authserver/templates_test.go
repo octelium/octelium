@@ -405,3 +405,62 @@ func TestRenderLoggedIn(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+func TestRenderIndexCache(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	doRender := func() string {
+		w := httptest.NewRecorder()
+		srv.renderIndex(w)
+		resp := w.Result()
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		assert.Nil(t, err)
+
+		csp := resp.Header.Get("Content-Security-Policy")
+		match := rgxCSPNonce.FindStringSubmatch(csp)
+		assert.Equal(t, 2, len(match))
+
+		nonce := match[1]
+		assert.True(t, strings.Contains(string(body), fmt.Sprintf(`nonce="%s"`, nonce)))
+
+		return strings.ReplaceAll(string(body), nonce, "")
+	}
+
+	{
+		assert.Equal(t, doRender(), doRender())
+		assert.False(t, strings.Contains(doRender(), "spec-display"))
+	}
+
+	idp := newIdPWithNames(t, ctx, srv,
+		utilrand.GetRandomStringCanonical(8), "meta-display", "spec-display")
+
+	{
+		assert.Nil(t, srv.setIdentityProviders(ctx))
+
+		body := doRender()
+		assert.True(t, strings.Contains(body, "spec-display"))
+		assert.True(t, strings.Contains(body, idp.Metadata.Uid))
+	}
+
+	{
+		assert.Nil(t, srv.onClusterConfigUpdate(ctx, clusterCfg, clusterCfg))
+		assert.True(t, strings.Contains(doRender(), "spec-display"))
+	}
+}

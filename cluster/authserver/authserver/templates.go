@@ -25,9 +25,11 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -42,42 +44,66 @@ type indexTemplateArgs struct {
 	Globals template.JS
 }
 
-func (s *server) renderIndex(w http.ResponseWriter) {
-	nonce := utilrand.GetRandomStringCanonical(24)
+var getIndexHTML = sync.OnceValues(func() ([]byte, error) {
+	return fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
+})
 
-	data, err := s.getTemplateIndexArgs(nonce)
-	if err != nil {
-		zap.L().Error("Could not get index template args", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+type indexPage struct {
+	segments [][]byte
+	size     int
+}
+
+func newIndexPage(blob []byte, noncePlaceholder string) *indexPage {
+	ret := &indexPage{
+		segments: bytes.Split(blob, []byte(noncePlaceholder)),
 	}
 
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
+	for _, segment := range ret.segments {
+		ret.size += len(segment)
+	}
+
+	return ret
+}
+
+func (p *indexPage) render(nonce string) []byte {
+	ret := make([]byte, 0, p.size+(len(p.segments)-1)*len(nonce))
+
+	for i, segment := range p.segments {
+		if i > 0 {
+			ret = append(ret, nonce...)
+		}
+		ret = append(ret, segment...)
+	}
+
+	return ret
+}
+
+func (s *server) buildIndexPage() (*indexPage, error) {
+	noncePlaceholder := utilrand.GetRandomStringCanonical(32)
+
+	data, err := s.getTemplateIndexArgs(noncePlaceholder)
 	if err != nil {
-		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
-		w.WriteHeader(http.StatusNotFound)
-		return
+		return nil, err
+	}
+
+	blob, err := getIndexHTML()
+	if err != nil {
+		return nil, err
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(blob))
 	if err != nil {
-		zap.L().Error("Could not get index.html doc", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	var scripts bytes.Buffer
 	if err := indexTmpl2.Execute(&scripts, data); err != nil {
-		zap.L().Error("Could not execute index template", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	head := doc.Find("head").First()
 	if head.Length() == 0 {
-		zap.L().Error("Could not find head element in index.html")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return nil, errors.Errorf("Could not find head element in index.html")
 	}
 
 	head.AppendHtml(scripts.String())
@@ -85,14 +111,36 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 	var out bytes.Buffer
 	out.WriteString("<!DOCTYPE html>")
 	if err := goquery.Render(&out, head.Parent()); err != nil {
-		zap.L().Error("Could not render index.html", zap.Error(err))
+		return nil, err
+	}
+
+	return newIndexPage(out.Bytes(), noncePlaceholder), nil
+}
+
+func (s *server) setIndexPage() error {
+	page, err := s.buildIndexPage()
+	if err != nil {
+		return err
+	}
+
+	s.indexPageC.Store(page)
+
+	return nil
+}
+
+func (s *server) renderIndex(w http.ResponseWriter) {
+	page := s.indexPageC.Load()
+	if page == nil {
+		zap.L().Error("The index page has not been set")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
+	nonce := utilrand.GetRandomStringCanonical(24)
+
 	s.setDomainCookie(w)
 	s.setHTMLSecurityHeaders(w, nonce)
-	w.Write(out.Bytes())
+	w.Write(page.render(nonce))
 }
 
 func (s *server) getTemplateIndexArgs(nonce string) (*indexTemplateArgs, error) {
@@ -169,7 +217,7 @@ type templateGlobalsCluster struct {
 func (s *server) renderLoggedIn(w http.ResponseWriter) {
 	nonce := utilrand.GetRandomStringCanonical(24)
 
-	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
+	blob, err := getIndexHTML()
 	if err != nil {
 		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
 		w.WriteHeader(http.StatusNotFound)
