@@ -19,7 +19,6 @@ package llm
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 
@@ -61,6 +60,13 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	hasDownstreamInstructions, err := m.hasInstructions(reqCtx)
+	if err != nil {
+		zap.L().Warn("Could not read the LLM request instructions", zap.Error(err))
+		m.writeFailed(w, reqCtx)
+		return
+	}
+
 	for _, plugin := range plugins {
 		cfg := plugin.GetPrompt()
 		if cfg == nil {
@@ -72,7 +78,6 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			reqCtx:    reqCtx,
 			celEngine: m.celEngine,
 			plugin:    plugin,
-			typ:       corev1.AccessLog_Entry_Info_LLM_Plugin_PROMPT,
 			errCode:   ErrCodePromptDenied,
 		})
 		if !ok {
@@ -82,26 +87,13 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		rec, denied, err := m.apply(ctx, req, reqCtx, plugin, cfg)
+		denied, err := m.apply(ctx, req, reqCtx, cfg, hasDownstreamInstructions)
 		if err != nil {
 			zap.L().Warn("Could not apply the LLM Prompt Plugin",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
-			appendPluginRecord(reqCtx, &pluginRecord{
-				name:    plugin.GetName(),
-				typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_PROMPT,
-				outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED,
-			})
-			WriteError(w, &WriteErrorOpts{
-				Protocol:   reqCtx.LLM.GetProtocol(),
-				HTTPStatus: http.StatusInternalServerError,
-				Type:       ErrTypeAPI,
-				Code:       ErrCodePromptDenied,
-				Message:    "Octelium: could not apply the instructions of this Service",
-			})
+			m.writeFailed(w, reqCtx)
 			return
 		}
-
-		appendPluginRecord(reqCtx, rec)
 
 		if denied {
 			WriteError(w, &WriteErrorOpts{
@@ -119,79 +111,88 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(w, req)
 }
 
-func (m *prompt) apply(ctx context.Context, req *http.Request,
-	reqCtx *middlewares.RequestContext,
-	plugin *corev1.Service_Spec_Config_LLM_Plugin,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt) (*pluginRecord, bool, error) {
-
-	ret := &pluginRecord{
-		name:    plugin.GetName(),
-		typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_PROMPT,
-		outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH,
-	}
-
+func (m *prompt) hasInstructions(reqCtx *middlewares.RequestContext) (bool, error) {
 	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
-		return ret, false, nil
+		return false, nil
 	}
 
 	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
 	if err != nil {
-		return nil, false, err
+		return false, err
+	}
+
+	ret, err := d.instructions()
+	if err != nil {
+		return false, err
+	}
+
+	return ret != "", nil
+}
+
+func (m *prompt) writeFailed(w http.ResponseWriter, reqCtx *middlewares.RequestContext) {
+	WriteError(w, &WriteErrorOpts{
+		Protocol:   reqCtx.LLM.GetProtocol(),
+		HTTPStatus: http.StatusInternalServerError,
+		Type:       ErrTypeAPI,
+		Code:       ErrCodePromptDenied,
+		Message:    "Octelium: could not apply the instructions of this Service",
+	})
+}
+
+func (m *prompt) apply(ctx context.Context, req *http.Request,
+	reqCtx *middlewares.RequestContext,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt,
+	hasDownstreamInstructions bool) (bool, error) {
+
+	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
+		return false, nil
+	}
+
+	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	if err != nil {
+		return false, err
 	}
 
 	switch {
 	case cfg.GetSystem() != nil:
 		if !d.hasInstructionsCarrier() {
-			return ret, false, nil
+			return false, nil
 		}
-		denied, err := m.applySystem(ctx, reqCtx, d, cfg.GetSystem(), ret)
+		denied, err := m.applySystem(ctx, reqCtx, d, cfg.GetSystem(),
+			hasDownstreamInstructions)
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 		if denied {
-			ret.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-			return ret, true, nil
+			return true, nil
 		}
 	case cfg.GetMessage() != nil:
 		if !d.hasMessagesCarrier() {
-			return ret, false, nil
+			return false, nil
 		}
-		if err := m.applyMessage(ctx, reqCtx, d, cfg.GetMessage(), ret); err != nil {
-			return nil, false, err
+		if err := m.applyMessage(ctx, reqCtx, d, cfg.GetMessage()); err != nil {
+			return false, err
 		}
 	default:
-		return ret, false, nil
+		return false, nil
 	}
 
 	if !d.isChanged() {
-		return ret, false, nil
+		return false, nil
 	}
 
-	if err := writeDoc(req, reqCtx, d); err != nil {
-		return nil, false, err
-	}
-
-	ret.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_APPLIED
-	return ret, false, nil
+	return false, writeDoc(req, reqCtx, d)
 }
 
 func (m *prompt) applySystem(ctx context.Context, reqCtx *middlewares.RequestContext,
 	d *doc, cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt_System,
-	rec *pluginRecord) (bool, error) {
-
-	current, err := d.instructions()
-	if err != nil {
-		return false, err
-	}
+	hasDownstreamInstructions bool) (bool, error) {
 
 	switch cfg.GetMode() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_STRIP:
-		if current == "" {
-			return false, nil
-		}
-		return false, d.setInstructions("")
+		return false, d.replaceInstructions("")
 	case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REJECT:
-		if current != "" {
+		if hasDownstreamInstructions {
 			return true, nil
 		}
 	}
@@ -204,44 +205,23 @@ func (m *prompt) applySystem(ctx context.Context, reqCtx *middlewares.RequestCon
 		return false, nil
 	}
 
-	var ret string
 	switch cfg.GetMode() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REPLACE,
 		corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REJECT:
-		ret = content
+		return false, d.replaceInstructions(content)
 	case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_APPEND:
-		ret = joinInstructions(current, content)
+		return false, d.insertInstructions(content, false)
 	default:
-		ret = joinInstructions(content, current)
-	}
-
-	rec.injectedBytes = uint32(len(content))
-	return false, d.setInstructions(ret)
-}
-
-func joinInstructions(first, second string) string {
-	switch {
-	case first == "":
-		return second
-	case second == "":
-		return first
-	default:
-		return first + "\n\n" + second
+		return false, d.insertInstructions(content, true)
 	}
 }
 
 func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestContext,
-	d *doc, cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message,
-	rec *pluginRecord) error {
+	d *doc, cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message) error {
 
 	role := messageRole(cfg.GetRole())
 	if role == "" {
 		return nil
-	}
-
-	if role == roleAssistant && d.protocol != corev1.Service_Spec_Config_LLM_ANTHROPIC {
-		return errors.Errorf(
-			"Octelium: this protocol does not accept an assistant message that this Service inserts")
 	}
 
 	content, err := m.render(ctx, reqCtx, cfg.GetContent())
@@ -263,11 +243,6 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 	case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_BEFORE,
 		corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_AFTER:
 
-		raw, err := newTextContent(content)
-		if err != nil {
-			return err
-		}
-
 		idx := len(msgs)
 		if len(idxs) > 0 {
 			idx = idxs[len(idxs)-1]
@@ -277,17 +252,30 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 			}
 		}
 
+		if err := checkPrefill(d, role, idx == len(msgs)); err != nil {
+			return err
+		}
+
+		raw, err := newTextContent(content)
+		if err != nil {
+			return err
+		}
+
 		ret := make([]*message, 0, len(msgs)+1)
 		ret = append(ret, msgs[:idx]...)
 		ret = append(ret, &message{Role: role, Content: raw})
 		ret = append(ret, msgs[idx:]...)
 
-		rec.injectedBytes = uint32(len(content))
 		return d.setMessages(ret)
 
 	default:
 		if len(idxs) == 0 {
 			return nil
+		}
+
+		if err := checkPrefill(d, role,
+			idxs[len(idxs)-1] == len(msgs)-1); err != nil {
+			return err
 		}
 
 		isPrepend := cfg.GetPosition() !=
@@ -304,7 +292,6 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 			}
 			msgs[idx].Content = raw
 			isChanged = true
-			rec.injectedBytes = rec.injectedBytes + uint32(len(content))
 		}
 
 		if !isChanged {
@@ -313,6 +300,17 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 
 		return d.setMessages(msgs)
 	}
+}
+
+func checkPrefill(d *doc, role string, isTrailing bool) error {
+	if role != roleAssistant || !isTrailing {
+		return nil
+	}
+	if d.protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
+		return nil
+	}
+
+	return errors.Errorf("This protocol does not accept a trailing assistant message")
 }
 
 func messageRole(arg corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_Role) string {
@@ -377,13 +375,11 @@ func (m *prompt) render(ctx context.Context, reqCtx *middlewares.RequestContext,
 	}
 
 	if err != nil {
-		zap.L().Warn("Could not render the Prompt Plugin content", zap.Error(err))
-		return "", errors.Errorf("Octelium: could not render the instructions of this Service")
+		return "", err
 	}
 
 	if len(ret) > maxPromptContentBytes {
-		return "", errors.Errorf(
-			"Octelium: the rendered instructions of this Service are too large")
+		return "", errors.Errorf("The rendered instructions are too large: %d", len(ret))
 	}
 
 	return ret, nil
@@ -395,6 +391,10 @@ func writeDoc(req *http.Request, reqCtx *middlewares.RequestContext, d *doc) err
 		return err
 	}
 
+	if len(body) > maxMutatedRequestBytes {
+		return errors.Errorf("The mutated request is too large: %d", len(body))
+	}
+
 	if req.Body != nil {
 		req.Body.Close()
 	}
@@ -403,13 +403,9 @@ func writeDoc(req *http.Request, reqCtx *middlewares.RequestContext, d *doc) err
 	req.TransferEncoding = nil
 
 	reqCtx.Body = body
-	reqCtx.BodyJSONMap = nil
-	if len(body) > 0 {
-		bodyMap := make(map[string]any)
-		if err := json.Unmarshal(body, &bodyMap); err == nil {
-			reqCtx.BodyJSONMap = bodyMap
-		}
-	}
+	middlewares.SetLLMRequestContext(reqCtx, req)
+	reqCtx.SetReqCtxMap()
+	reqCtx.SetBodyDigest()
 
 	return nil
 }

@@ -1985,8 +1985,8 @@ const (
 	maxGuardrailScopes     = 8
 	maxGuardrailPatterns   = 128
 	maxGuardrailRegexLen   = 2048
-	maxGuardrailMaxBytes   = 8 * 1024 * 1024
 	maxGuardrailEntropyLen = 1024
+	minGuardrailEntropyLen = 16
 )
 
 func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec_Config) error {
@@ -2333,10 +2333,6 @@ func (s *Server) validatePluginGuardrail(ctx context.Context,
 		return err
 	}
 
-	if cfg.GetMaxBytes() > maxGuardrailMaxBytes {
-		return grpcutils.InvalidArg("Invalid Guardrail maxBytes value: %d", cfg.GetMaxBytes())
-	}
-
 	if len(cfg.GetPatterns()) == 0 {
 		return grpcutils.InvalidArg("The Guardrail Patterns are empty")
 	}
@@ -2398,6 +2394,20 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 		return grpcutils.InvalidArg("The Guardrail Pattern match must be set")
 	}
 
+	isEntropy := cfg.GetType() ==
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_HIGH_ENTROPY
+
+	if val := cfg.GetMinEntropyLength(); val > 0 {
+		if !isEntropy {
+			return grpcutils.InvalidArg(
+				"The Guardrail Pattern minEntropyLength can only be set for the HIGH_ENTROPY detector")
+		}
+		if val < minGuardrailEntropyLen || val > maxGuardrailEntropyLen {
+			return grpcutils.InvalidArg(
+				"Invalid Guardrail Pattern minEntropyLength value: %d", val)
+		}
+	}
+
 	var isRewrite bool
 	switch cfg.GetAction() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_ACTION_UNSET,
@@ -2432,11 +2442,11 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 			return grpcutils.InvalidArg(
 				"A Guardrail that inspects the tool definitions can only use the DENY and the LOG Actions")
 		}
-	}
-
-	if cfg.GetMinEntropyLength() > maxGuardrailEntropyLen {
-		return grpcutils.InvalidArg(
-			"Invalid Guardrail Pattern minEntropyLength value: %d", cfg.GetMinEntropyLength())
+		if cfg.GetType() ==
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_GCP_SERVICE_ACCOUNT_KEY {
+			return grpcutils.InvalidArg(
+				"The GCP_SERVICE_ACCOUNT_KEY detector matches the marker of a key rather than the key itself, so it can only use the DENY and the LOG Actions")
+		}
 	}
 
 	return nil

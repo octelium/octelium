@@ -101,6 +101,30 @@ func (d *doc) hasMessagesCarrier() bool {
 	return d.messagesKey() != ""
 }
 
+func (d *doc) hasToolsCarrier() bool {
+	switch d.operation {
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *doc) promptKey() string {
+	switch d.operation {
+	case corev1.RequestContext_Request_LLM_COMPLETIONS:
+		return "prompt"
+	case corev1.RequestContext_Request_LLM_EMBEDDINGS,
+		corev1.RequestContext_Request_LLM_MODERATIONS:
+		return "input"
+	default:
+		return ""
+	}
+}
+
 func (d *doc) hasInstructionMessages() bool {
 	switch d.operation {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
@@ -364,7 +388,7 @@ func (d *doc) instructions() (string, error) {
 	return ret, nil
 }
 
-func (d *doc) setInstructions(text string) error {
+func (d *doc) replaceInstructions(text string) error {
 	key := d.instructionsKey()
 
 	if key != "" {
@@ -413,12 +437,59 @@ func (d *doc) setInstructions(text string) error {
 		ret = append(ret, msg)
 	}
 
-	if !isStripped && key != "" {
+	if !isStripped && (key != "" || text == "") {
 		return nil
 	}
-	if !isStripped && key == "" && text == "" {
+
+	return d.setMessages(ret)
+}
+
+func (d *doc) insertInstructions(text string, isPrepend bool) error {
+	if text == "" {
 		return nil
 	}
+
+	if key := d.instructionsKey(); key != "" {
+		raw, ok, err := d.insertIntoContent(roleSystem, d.root[key], text, isPrepend)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.Errorf("Could not insert into the request instructions")
+		}
+		d.root[key] = raw
+		d.changed = true
+		return nil
+	}
+
+	if !d.hasInstructionMessages() {
+		return errors.Errorf("This operation carries no system instructions")
+	}
+
+	msgs, err := d.messages()
+	if err != nil {
+		return err
+	}
+
+	content, err := json.Marshal(text)
+	if err != nil {
+		return err
+	}
+	inserted := &message{Role: roleSystem, Content: content}
+
+	idx := 0
+	if !isPrepend {
+		for i, msg := range msgs {
+			if isInstructionRole(msg.Role) {
+				idx = i + 1
+			}
+		}
+	}
+
+	ret := make([]*message, 0, len(msgs)+1)
+	ret = append(ret, msgs[:idx]...)
+	ret = append(ret, inserted)
+	ret = append(ret, msgs[idx:]...)
 
 	return d.setMessages(ret)
 }
@@ -568,6 +639,14 @@ func (d *doc) textParts(
 		}
 	}
 
+	if hasScope(scopes, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT) {
+		if key := d.promptKey(); key != "" {
+			if raw, ok := d.root[key]; ok {
+				ret = append(ret, d.promptParts(key, raw)...)
+			}
+		}
+	}
+
 	if hasScope(scopes, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_DEFINITIONS) {
 		if raw := d.toolsRaw(); len(raw) > 0 {
 			ret = append(ret, &textPart{
@@ -581,6 +660,57 @@ func (d *doc) textParts(
 }
 
 const scopeNone = corev1.Service_Spec_Config_LLM_Plugin_Guardrail_SCOPE_UNSET
+
+func (d *doc) promptParts(key string, raw json.RawMessage) []*textPart {
+	scope := corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT
+
+	apply := func(updated json.RawMessage) error {
+		d.root[key] = updated
+		d.changed = true
+		return nil
+	}
+
+	if len(raw) > 0 && raw[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return nil
+		}
+
+		var ret []*textPart
+		for i := range items {
+			idx := i
+			if len(items[idx]) == 0 || items[idx][0] != '"' {
+				ret = append(ret, &textPart{scope: scope, text: string(items[idx])})
+				continue
+			}
+
+			var cur string
+			if err := json.Unmarshal(items[idx], &cur); err != nil {
+				continue
+			}
+
+			ret = append(ret, &textPart{
+				scope: scope,
+				text:  cur,
+				set: func(updated string) error {
+					val, err := json.Marshal(updated)
+					if err != nil {
+						return err
+					}
+					items[idx] = val
+					out, err := json.Marshal(items)
+					if err != nil {
+						return err
+					}
+					return apply(out)
+				},
+			})
+		}
+		return ret
+	}
+
+	return d.contentParts(scope, roleUser, raw, apply)
+}
 
 func (d *doc) scopeOfMessage(
 	msg *message) corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Scope {
@@ -694,7 +824,10 @@ func scopeOfBlock(
 	}
 
 	switch typ {
-	case "tool_result", "function_call_output", "mcp_tool_result":
+	case "tool_result", "function_call_output", "mcp_tool_result",
+		"web_search_tool_result", "code_execution_tool_result",
+		"bash_code_execution_tool_result", "text_editor_code_execution_tool_result",
+		"mcp_tool_use", "server_tool_use", "search_result":
 		return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS
 	default:
 		return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT
@@ -714,7 +847,7 @@ func (d *doc) blockTextParts(scope corev1.Service_Spec_Config_LLM_Plugin_Guardra
 	}
 
 	var ret []*textPart
-	for _, key := range []string{"text", "input_text", "output_text", "output"} {
+	for _, key := range []string{"text", "input_text", "output_text", "output", "content"} {
 		raw, ok := blocks[idx][key]
 		if !ok || len(raw) == 0 {
 			continue

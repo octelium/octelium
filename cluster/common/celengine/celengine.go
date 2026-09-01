@@ -241,7 +241,7 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 		return nil, errors.Errorf("Expression is too long")
 	}
 
-	key := getKey(exp)
+	key := getProgKey(exp, typ)
 	cacheI, ok := e.c.Get(key)
 	if ok {
 		return cacheI.(cel.Program), nil
@@ -286,6 +286,13 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 func getKey(script string) string {
 	hsh := sha256.Sum256([]byte(script))
 	return fmt.Sprintf("%x", hsh[:24])
+}
+
+func getProgKey(script string, typ *types.Type) string {
+	if typ == nil {
+		return getKey(script)
+	}
+	return getKey(script + "\x00" + typ.String())
 }
 
 func (e *CELEngine) EvalCondition(ctx context.Context, condition *corev1.Condition, inputMap map[string]any) (bool, error) {

@@ -62,7 +62,12 @@ func (rw *guardResponseWriter) WriteHeader(statusCode int) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 
-	if rw.hdrWritten {
+	if statusCode >= 100 && statusCode < 200 {
+		rw.ResponseWriter.WriteHeader(statusCode)
+		return
+	}
+
+	if rw.hdrWritten || rw.isResolved {
 		return
 	}
 	rw.statusCode = statusCode
@@ -93,14 +98,6 @@ func (rw *guardResponseWriter) resolve() {
 	rw.Header().Del("Content-Length")
 }
 
-func (rw *guardResponseWriter) maxBytes() int {
-	ret := maxGuardrailMaxBytes
-	for _, active := range rw.actives {
-		ret = min(ret, guardrailMaxBytes(active.cfg.GetMaxBytes()))
-	}
-	return ret
-}
-
 func (rw *guardResponseWriter) Write(b []byte) (int, error) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
@@ -123,7 +120,7 @@ func (rw *guardResponseWriter) Write(b []byte) (int, error) {
 
 	rw.buf.Write(b)
 
-	if rw.buf.Len() > rw.maxBytes() {
+	if rw.buf.Len() > maxGuardrailResponseBytes {
 		rw.isOverflowed = true
 		rw.buf.Reset()
 	}
@@ -158,7 +155,8 @@ func (rw *guardResponseWriter) finish() {
 	}
 
 	if rw.isOverflowed {
-		rw.writeBlocked(rw.overflowedGuardrail())
+		zap.L().Warn("The LLM response is too large to be inspected by a Guardrail")
+		rw.writeBlocked(rw.actives[0])
 		return
 	}
 
@@ -183,53 +181,18 @@ func (rw *guardResponseWriter) finish() {
 	rw.ResponseWriter.Write(body)
 }
 
-func (rw *guardResponseWriter) overflowedGuardrail() *activeGuardrail {
-	var ret *activeGuardrail
-	for _, active := range rw.actives {
-		if ret == nil ||
-			guardrailMaxBytes(active.cfg.GetMaxBytes()) <
-				guardrailMaxBytes(ret.cfg.GetMaxBytes()) {
-			ret = active
-		}
-	}
-
-	if ret != nil {
-		appendPluginRecord(rw.reqCtx, &pluginRecord{
-			name:    ret.name(),
-			typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_GUARDRAIL,
-			outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED,
-		})
-	}
-
-	return ret
-}
-
 func (rw *guardResponseWriter) inspectText(text string) *activeGuardrail {
 	for _, active := range rw.actives {
-		rec := &pluginRecord{
-			name:    active.name(),
-			typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_GUARDRAIL,
-			outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH,
+		findings, err := active.set.inspect(text)
+		if err != nil {
+			zap.L().Warn("The LLM Guardrail could not inspect the response",
+				zap.String("plugin", active.name()), zap.Error(err))
+			return active
 		}
 
-		findings := active.set.inspect(text)
-		if len(findings) == 0 {
-			appendPluginRecord(rw.reqCtx, rec)
-			continue
+		if deniedFinding(findings) != nil {
+			return active
 		}
-
-		rec.rules = findingRuleNames(findings)
-		rec.matchCount = uint32(len(findings))
-
-		if deniedFinding(findings) == nil {
-			rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_LOGGED
-			appendPluginRecord(rw.reqCtx, rec)
-			continue
-		}
-
-		rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-		appendPluginRecord(rw.reqCtx, rec)
-		return active
 	}
 
 	return nil
@@ -297,7 +260,7 @@ func extractResponseText(body []byte) string {
 const maxResponseTextDepth = 24
 
 func walkResponseText(val any, depth int, out *strings.Builder) {
-	if depth > maxResponseTextDepth || out.Len() > maxGuardrailMaxBytes {
+	if depth > maxResponseTextDepth || out.Len() > maxGuardrailResponseBytes {
 		return
 	}
 

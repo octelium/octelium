@@ -46,7 +46,7 @@ type activeGuardrail struct {
 	cfg    *corev1.Service_Spec_Config_LLM_Plugin_Guardrail
 	set    *patternSet
 
-	replacements map[string]string
+	replacements map[int]string
 }
 
 func (a *activeGuardrail) name() string {
@@ -82,7 +82,6 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			reqCtx:    reqCtx,
 			celEngine: m.celEngine,
 			plugin:    plugin,
-			typ:       corev1.AccessLog_Entry_Info_LLM_Plugin_GUARDRAIL,
 			errCode:   ErrCodeGuardrail,
 		})
 		if !ok {
@@ -96,7 +95,7 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			zap.L().Warn("Could not build the LLM Guardrail patterns",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
-			m.writeFailed(w, reqCtx, cfg, plugin.GetName())
+			m.writeDenied(w, reqCtx, cfg)
 			return
 		}
 
@@ -104,7 +103,7 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			plugin:       plugin,
 			cfg:          cfg,
 			set:          set,
-			replacements: make(map[string]string),
+			replacements: make(map[int]string),
 		}
 
 		switch cfg.GetLeg() {
@@ -137,95 +136,68 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 	req *http.Request, reqCtx *middlewares.RequestContext, active *activeGuardrail) bool {
 
-	rec := &pluginRecord{
-		name:    active.name(),
-		typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_GUARDRAIL,
-		outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH,
-	}
-
 	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
-		appendPluginRecord(reqCtx, rec)
 		return true
 	}
 
 	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
 	if err != nil {
-		return m.onError(w, reqCtx, active, rec, err)
+		return m.onError(w, reqCtx, active, err)
 	}
 
 	parts, err := d.textParts(active.cfg.GetScopes())
 	if err != nil {
-		return m.onError(w, reqCtx, active, rec, err)
-	}
-
-	var total int
-	for _, part := range parts {
-		total = total + len(part.text)
-	}
-
-	if total > guardrailMaxBytes(active.cfg.GetMaxBytes()) {
-		rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-		appendPluginRecord(reqCtx, rec)
-		m.writeDenied(w, reqCtx, active.cfg)
-		return false
+		return m.onError(w, reqCtx, active, err)
 	}
 
 	var isChanged bool
-	var isLogged bool
 
 	for _, part := range parts {
-		findings := active.set.inspect(part.text)
+		findings, err := active.set.inspect(part.text)
+		if err != nil {
+			return m.onError(w, reqCtx, active, err)
+		}
 		if len(findings) == 0 {
 			continue
 		}
 
-		rec.rules = append(rec.rules, findingRuleNames(findings)...)
-
-		if f := deniedFinding(findings); f != nil {
-			rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-			rec.matchCount = rec.matchCount + 1
-			appendPluginRecord(reqCtx, rec)
+		if deniedFinding(findings) != nil {
 			m.writeDenied(w, reqCtx, active.cfg)
 			return false
 		}
 
 		if err := m.setReplacements(ctx, reqCtx, active, findings); err != nil {
-			return m.onError(w, reqCtx, active, rec, err)
+			return m.onError(w, reqCtx, active, err)
 		}
 
-		updated, count := rewrite(part.text, findings, active.replacements)
+		updated, count, err := rewrite(part.text, findings, active.replacements)
+		if err != nil {
+			return m.onError(w, reqCtx, active, err)
+		}
 		if count == 0 {
-			isLogged = true
-			rec.matchCount = rec.matchCount + uint32(len(findings))
 			continue
 		}
 
 		if part.set == nil {
-			rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-			appendPluginRecord(reqCtx, rec)
 			m.writeDenied(w, reqCtx, active.cfg)
 			return false
 		}
 
 		if err := part.set(updated); err != nil {
-			return m.onError(w, reqCtx, active, rec, err)
+			return m.onError(w, reqCtx, active, err)
 		}
 
-		rec.matchCount = rec.matchCount + count
 		isChanged = true
 	}
 
-	switch {
-	case isChanged:
-		if err := writeDoc(req, reqCtx, d); err != nil {
-			return m.onError(w, reqCtx, active, rec, err)
-		}
-		rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_REDACTED
-	case isLogged:
-		rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_LOGGED
+	if !isChanged {
+		return true
 	}
 
-	appendPluginRecord(reqCtx, rec)
+	if err := writeDoc(req, reqCtx, d); err != nil {
+		return m.onError(w, reqCtx, active, err)
+	}
+
 	return true
 }
 
@@ -238,7 +210,7 @@ func (m *guardrail) setReplacements(ctx context.Context,
 			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE {
 			continue
 		}
-		if _, ok := active.replacements[f.rule.name]; ok {
+		if _, ok := active.replacements[f.rule.idx]; ok {
 			continue
 		}
 
@@ -246,7 +218,7 @@ func (m *guardrail) setReplacements(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		active.replacements[f.rule.name] = ret
+		active.replacements[f.rule.idx] = ret
 	}
 
 	return nil
@@ -265,26 +237,37 @@ func (m *guardrail) render(ctx context.Context, reqCtx *middlewares.RequestConte
 		"ctx": reqCtx.ReqCtxMap,
 	}
 
+	var ret string
+	var err error
+
 	switch cfg.Type.(type) {
 	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Value:
-		return cfg.GetValue(), nil
+		ret = cfg.GetValue()
 	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Eval:
-		return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), inputMap)
+		ret, err = m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), inputMap)
 	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Opa:
-		return m.celEngine.EvalPolicyStringOPA(ctx, cfg.GetOpa(), inputMap)
+		ret, err = m.celEngine.EvalPolicyStringOPA(ctx, cfg.GetOpa(), inputMap)
 	default:
 		return "", errors.Errorf("The Guardrail Pattern replacement is not set")
 	}
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(ret) > maxReplacementBytes {
+		return "", errors.Errorf("The rendered replacement is too large: %d", len(ret))
+	}
+
+	return ret, nil
 }
 
 func (m *guardrail) onError(w http.ResponseWriter, reqCtx *middlewares.RequestContext,
-	active *activeGuardrail, rec *pluginRecord, err error) bool {
+	active *activeGuardrail, err error) bool {
 
 	zap.L().Warn("The LLM Guardrail could not reach a verdict",
 		zap.String("plugin", active.name()), zap.Error(err))
 
-	rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED
-	appendPluginRecord(reqCtx, rec)
 	m.writeDenied(w, reqCtx, active.cfg)
 	return false
 }
@@ -299,17 +282,4 @@ func (m *guardrail) writeDenied(w http.ResponseWriter,
 		Code:       ErrCodeGuardrail,
 		Message:    guardrailDenyMessage(cfg),
 	})
-}
-
-func (m *guardrail) writeFailed(w http.ResponseWriter,
-	reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail, name string) {
-
-	appendPluginRecord(reqCtx, &pluginRecord{
-		name:    name,
-		typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_GUARDRAIL,
-		outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED,
-	})
-
-	m.writeDenied(w, reqCtx, cfg)
 }

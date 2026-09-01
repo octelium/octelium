@@ -105,8 +105,6 @@ type RequestContext struct {
 	MCPResponse *MCPResponseInfo
 	LLMResponse *LLMResponseInfo
 
-	LLMPluginRecords []*corev1.AccessLog_Entry_Info_LLM_Plugin
-
 	BodyDigest [sha256.Size]byte
 }
 

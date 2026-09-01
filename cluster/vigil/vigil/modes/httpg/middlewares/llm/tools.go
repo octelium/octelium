@@ -71,7 +71,6 @@ func (m *tools) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			reqCtx:    reqCtx,
 			celEngine: m.celEngine,
 			plugin:    plugin,
-			typ:       corev1.AccessLog_Entry_Info_LLM_Plugin_TOOLS,
 			errCode:   ErrCodeToolDenied,
 		})
 		if !ok {
@@ -81,15 +80,10 @@ func (m *tools) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		rec, denied, err := m.apply(ctx, req, reqCtx, plugin, cfg)
+		denied, err := m.apply(ctx, req, reqCtx, cfg)
 		if err != nil {
 			zap.L().Warn("Could not apply the LLM Tools Plugin",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
-			appendPluginRecord(reqCtx, &pluginRecord{
-				name:    plugin.GetName(),
-				typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_TOOLS,
-				outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED,
-			})
 			WriteError(w, &WriteErrorOpts{
 				Protocol:   reqCtx.LLM.GetProtocol(),
 				HTTPStatus: http.StatusInternalServerError,
@@ -99,8 +93,6 @@ func (m *tools) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			})
 			return
 		}
-
-		appendPluginRecord(reqCtx, rec)
 
 		if denied {
 			WriteError(w, &WriteErrorOpts{
@@ -119,27 +111,24 @@ func (m *tools) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (m *tools) apply(ctx context.Context, req *http.Request,
 	reqCtx *middlewares.RequestContext,
-	plugin *corev1.Service_Spec_Config_LLM_Plugin,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools) (*pluginRecord, bool, error) {
-
-	rec := &pluginRecord{
-		name:    plugin.GetName(),
-		typ:     corev1.AccessLog_Entry_Info_LLM_Plugin_TOOLS,
-		outcome: corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH,
-	}
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools) (bool, error) {
 
 	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
-		return rec, false, nil
+		return false, nil
 	}
 
 	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
 	if err != nil {
-		return nil, false, err
+		return false, err
+	}
+
+	if !d.hasToolsCarrier() {
+		return false, nil
 	}
 
 	declared, entries, err := d.tools()
 	if err != nil {
-		return nil, false, err
+		return false, err
 	}
 
 	kept := make([]json.RawMessage, 0, len(entries))
@@ -151,28 +140,18 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 
 		switch decision {
 		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_DENY:
-			rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED
-			rec.rules = append(rec.rules, toolFilterLabel(filter))
-			rec.removedTools = append(rec.removedTools, t.label())
-			rec.matchCount = 1
-			return rec, true, nil
+			return true, nil
 
 		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REPLACE:
 			raw, err := m.render(ctx, reqCtx, filter.GetReplace())
 			if err != nil {
-				return nil, false, err
+				return false, err
 			}
 			kept = append(kept, raw)
 			keptNames = append(keptNames, toolEntryName(raw))
-			rec.rules = append(rec.rules, toolFilterLabel(filter))
-			rec.removedTools = append(rec.removedTools, t.label())
 			isFiltered = true
 
 		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE:
-			if filter != nil {
-				rec.rules = append(rec.rules, toolFilterLabel(filter))
-			}
-			rec.removedTools = append(rec.removedTools, t.label())
 			isFiltered = true
 
 		default:
@@ -181,20 +160,28 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 		}
 	}
 
+	var prepended []json.RawMessage
+	var prependedNames []string
+
 	for _, conf := range cfg.GetTools() {
 		raw, err := m.render(ctx, reqCtx, conf)
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 
 		if conf.GetPosition() == corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_PREPEND {
-			kept = append([]json.RawMessage{raw}, kept...)
-			keptNames = append([]string{toolEntryName(raw)}, keptNames...)
+			prepended = append(prepended, raw)
+			prependedNames = append(prependedNames, toolEntryName(raw))
 		} else {
 			kept = append(kept, raw)
 			keptNames = append(keptNames, toolEntryName(raw))
 		}
 		isFiltered = true
+	}
+
+	if len(prepended) > 0 {
+		kept = append(prepended, kept...)
+		keptNames = append(prependedNames, keptNames...)
 	}
 
 	if isFiltered {
@@ -203,7 +190,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 		} else {
 			raw, err := json.Marshal(kept)
 			if err != nil {
-				return nil, false, err
+				return false, err
 			}
 			d.setToolsRaw(raw)
 		}
@@ -212,16 +199,10 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 	m.applyChoice(d, cfg, keptNames)
 
 	if !d.isChanged() {
-		return rec, false, nil
+		return false, nil
 	}
 
-	if err := writeDoc(req, reqCtx, d); err != nil {
-		return nil, false, err
-	}
-
-	rec.outcome = corev1.AccessLog_Entry_Info_LLM_Plugin_APPLIED
-	rec.matchCount = uint32(len(rec.removedTools))
-	return rec, false, nil
+	return false, writeDoc(req, reqCtx, d)
 }
 
 func matchToolFilter(filters []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter,
@@ -263,17 +244,6 @@ func isToolFilterMatched(cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter
 		return glob.Match(cfg.GetType(), t.kind())
 	default:
 		return false
-	}
-}
-
-func toolFilterLabel(cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter) string {
-	switch cfg.Match.(type) {
-	case *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name:
-		return cfg.GetName()
-	case *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Type:
-		return cfg.GetType()
-	default:
-		return ""
 	}
 }
 

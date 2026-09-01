@@ -32,9 +32,11 @@ var (
 	rgxIBAN       = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b`)
 	rgxAWSKey     = regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b`)
 	rgxGCPKey     = regexp.MustCompile(`"type"\s*:\s*"service_account"`)
-	rgxPrivateKey = regexp.MustCompile(`-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----`)
-	rgxJWT        = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b`)
-	rgxEntropy    = regexp.MustCompile(`[A-Za-z0-9+/_\-]{16,}={0,2}`)
+	rgxPrivateKey = regexp.MustCompile(
+		`-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----`)
+	rgxPrivateKeyBegin = regexp.MustCompile(`-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----`)
+	rgxJWT             = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b`)
+	rgxEntropy         = regexp.MustCompile(`[A-Za-z0-9+/_\-]{16,}={0,2}`)
 )
 
 var rgxUSSSNPlain = regexp.MustCompile(`\b(\d{3})[ \-]?(\d{2})[ \-]?(\d{4})\b`)
@@ -46,13 +48,13 @@ type detectorMatch struct {
 }
 
 func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type,
-	text string, minEntropyLength uint32) []detectorMatch {
+	text string, minEntropyLength uint32, maxFindings int) []detectorMatch {
 
 	name := detectorName(typ)
 
 	simple := func(rgx *regexp.Regexp) []detectorMatch {
 		var ret []detectorMatch
-		for _, loc := range rgx.FindAllStringIndex(text, -1) {
+		for _, loc := range rgx.FindAllStringIndex(text, maxFindings) {
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
 		return ret
@@ -63,7 +65,7 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 		return simple(rgxEmail)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_CREDIT_CARD:
 		var ret []detectorMatch
-		for _, loc := range rgxCreditCard.FindAllStringIndex(text, -1) {
+		for _, loc := range rgxCreditCard.FindAllStringIndex(text, maxFindings) {
 			if !isLuhnValid(text[loc[0]:loc[1]]) {
 				continue
 			}
@@ -72,7 +74,7 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 		return ret
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_IBAN:
 		var ret []detectorMatch
-		for _, loc := range rgxIBAN.FindAllStringIndex(text, -1) {
+		for _, loc := range rgxIBAN.FindAllStringIndex(text, maxFindings) {
 			if !isIBANValid(text[loc[0]:loc[1]]) {
 				continue
 			}
@@ -81,7 +83,7 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 		return ret
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_US_SSN:
 		var ret []detectorMatch
-		for _, loc := range rgxUSSSNPlain.FindAllStringSubmatchIndex(text, -1) {
+		for _, loc := range rgxUSSSNPlain.FindAllStringSubmatchIndex(text, maxFindings) {
 			area := text[loc[2]:loc[3]]
 			group := text[loc[4]:loc[5]]
 			serial := text[loc[6]:loc[7]]
@@ -97,7 +99,11 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_GCP_SERVICE_ACCOUNT_KEY:
 		return simple(rgxGCPKey)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY:
-		return simple(rgxPrivateKey)
+		ret := simple(rgxPrivateKey)
+		if len(ret) > 0 {
+			return ret
+		}
+		return simple(rgxPrivateKeyBegin)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_JWT:
 		return simple(rgxJWT)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_HIGH_ENTROPY:
@@ -106,7 +112,7 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 			minLen = defaultMinEntropyLength
 		}
 		var ret []detectorMatch
-		for _, loc := range rgxEntropy.FindAllStringIndex(text, -1) {
+		for _, loc := range rgxEntropy.FindAllStringIndex(text, maxFindings) {
 			candidate := text[loc[0]:loc[1]]
 			if len(candidate) < minLen {
 				continue

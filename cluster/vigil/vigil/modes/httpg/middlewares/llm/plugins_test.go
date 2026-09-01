@@ -26,11 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type pluginResult struct {
@@ -39,19 +42,6 @@ type pluginResult struct {
 	upstream map[string]any
 	body     string
 	reqCtx   *middlewares.RequestContext
-}
-
-func (r *pluginResult) records() []*corev1.AccessLog_Entry_Info_LLM_Plugin {
-	return r.reqCtx.LLMPluginRecords
-}
-
-func (r *pluginResult) outcome(name string) corev1.AccessLog_Entry_Info_LLM_Plugin_Outcome {
-	for _, rec := range r.records() {
-		if rec.GetName() == name {
-			return rec.GetOutcome()
-		}
-	}
-	return corev1.AccessLog_Entry_Info_LLM_Plugin_OUTCOME_UNSET
 }
 
 type pluginOpts struct {
@@ -138,15 +128,39 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	bodyMap := make(map[string]any)
 	json.Unmarshal([]byte(o.body), &bodyMap)
 
+	llmReq := httputils.ParseLLMRequest(req, o.protocol, []byte(o.body))
+
+	httpC := &corev1.RequestContext_Request_HTTP{
+		Method:  http.MethodPost,
+		Path:    path,
+		Body:    []byte(o.body),
+		Size:    int64(len(o.body)),
+		BodyMap: mustMapToStruct(t, bodyMap),
+	}
+	downstreamReq := &coctovigilv1.DownstreamRequest{
+		Request: &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Llm{
+				Llm: middlewares.GetLLMRequestContext(llmReq, httpC),
+			},
+		},
+	}
+
 	reqCtx := &middlewares.RequestContext{
-		CreatedAt:     time.Now(),
-		Service:       newService(),
-		ServiceConfig: svcCfg,
-		Body:          []byte(o.body),
-		BodyJSONMap:   bodyMap,
-		ReqCtxMap:     o.reqCtxMap,
-		LLM: httputils.ParseLLMRequest(req,
-			o.protocol, []byte(o.body)),
+		CreatedAt:         time.Now(),
+		Service:           newService(),
+		ServiceConfig:     svcCfg,
+		Body:              []byte(o.body),
+		BodyJSONMap:       bodyMap,
+		LLM:               llmReq,
+		DownstreamRequest: downstreamReq,
+		DownstreamInfo: &corev1.RequestContext{
+			Request: downstreamReq.Request,
+		},
+	}
+	reqCtx.SetBodyDigest()
+	reqCtx.SetReqCtxMap()
+	if o.reqCtxMap != nil {
+		reqCtx.ReqCtxMap = o.reqCtxMap
 	}
 	ret.reqCtx = reqCtx
 
@@ -159,6 +173,12 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	ret.code = rw.Result().StatusCode
 	ret.body = rw.Body.String()
 
+	return ret
+}
+
+func mustMapToStruct(t *testing.T, arg map[string]any) *structpb.Struct {
+	ret, err := pbutils.MapToStruct(arg)
+	assert.Nil(t, err)
 	return ret
 }
 
@@ -191,7 +211,6 @@ func TestPromptSystem(t *testing.T) {
 		first := msgs[0].(map[string]any)
 		assert.Equal(t, "system", first["role"])
 		assert.Equal(t, "You are governed by Octelium", first["content"])
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_APPLIED, res.outcome("sys"))
 	}
 
 	{
@@ -268,7 +287,6 @@ func TestPromptSystemReject(t *testing.T) {
 
 		assert.False(t, res.isNext)
 		assert.Equal(t, http.StatusForbidden, res.code)
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED, res.outcome("sys"))
 	}
 
 	{
@@ -365,7 +383,6 @@ func TestPromptMessage(t *testing.T) {
 
 		assert.False(t, res.isNext)
 		assert.Equal(t, http.StatusInternalServerError, res.code)
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED, res.outcome("msg"))
 	}
 
 	{
@@ -413,7 +430,6 @@ func TestPromptUnsupportedOperation(t *testing.T) {
 	})
 
 	assert.True(t, res.isNext)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH, res.outcome("sys"))
 	assert.Nil(t, res.upstream["messages"])
 }
 
@@ -477,7 +493,6 @@ func TestToolsFilters(t *testing.T) {
 		assert.False(t, res.isNext)
 		assert.Equal(t, http.StatusForbidden, res.code)
 		assert.Contains(t, res.body, "no deletion here")
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED, res.outcome("tools"))
 	}
 }
 
@@ -682,8 +697,6 @@ func TestGuardrailRequestDeny(t *testing.T) {
 
 	assert.False(t, res.isNext)
 	assert.Equal(t, http.StatusForbidden, res.code)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED, res.outcome("pci"))
-	assert.Contains(t, res.records()[0].GetRules(), "credit_card")
 }
 
 func TestGuardrailRewrite(t *testing.T) {
@@ -710,7 +723,6 @@ func TestGuardrailRewrite(t *testing.T) {
 		msgs := res.upstream["messages"].([]any)
 		assert.Equal(t, "mail me at [REDACTED:EMAIL] please",
 			msgs[0].(map[string]any)["content"])
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_REDACTED, res.outcome("pii"))
 	}
 
 	{
@@ -891,7 +903,6 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 		assert.Equal(t, "the key is [REDACTED:AWS_ACCESS_KEY]",
 			input[1].(map[string]any)["output"])
 		assert.Equal(t, "c1", input[1].(map[string]any)["call_id"])
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_REDACTED, res.outcome("inj"))
 	}
 
 	{
@@ -912,34 +923,55 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 		})
 
 		assert.True(t, res.isNext)
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH, res.outcome("inj"))
 	}
 }
 
-func TestGuardrailOverflowIsNotABypass(t *testing.T) {
+func TestGuardrailDenseMatchIsNotABypass(t *testing.T) {
 
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-		strings.Repeat("a", 4096) + `"}]}`
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+			strings.Repeat("a", maxPatternFindings+1) + `"}]}`
 
-	res := servePlugins(t, &pluginOpts{
-		body: body,
-		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
-			newPlugin("big", &corev1.Service_Spec_Config_LLM_Plugin_Guardrail{
-				MaxBytes: 128,
-				Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					{
+		res := servePlugins(t, &pluginOpts{
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("dense",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
 						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
-							Regex: `never matches`,
+							Regex: `a`,
 						},
-					},
-				},
-			}),
-		},
-	})
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					}),
+			},
+		})
 
-	assert.False(t, res.isNext)
-	assert.Equal(t, http.StatusForbidden, res.code)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED, res.outcome("big"))
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+			strings.Repeat("a", 16) + `"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("dense",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+							Regex: `a`,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP,
+					}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		msgs := res.upstream["messages"].([]any)
+		assert.Equal(t, "", msgs[0].(map[string]any)["content"])
+	}
 }
 
 func TestGuardrailResponse(t *testing.T) {
@@ -966,7 +998,6 @@ func TestGuardrailResponse(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusForbidden, res.code)
 		assert.NotContains(t, res.body, "AKIAIOSFODNN7EXAMPLE")
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_BLOCKED, res.outcome("leak"))
 	}
 
 	{
@@ -991,7 +1022,6 @@ func TestGuardrailResponse(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusOK, res.code)
 		assert.Contains(t, res.body, "all good")
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_NO_MATCH, res.outcome("leak"))
 	}
 }
 
@@ -1045,7 +1075,6 @@ func TestPluginConditionError(t *testing.T) {
 
 	assert.False(t, res.isNext)
 	assert.Equal(t, http.StatusInternalServerError, res.code)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_FAILED, res.outcome("sys"))
 }
 
 func TestGuardrailLog(t *testing.T) {
@@ -1069,6 +1098,359 @@ func TestGuardrailLog(t *testing.T) {
 	assert.True(t, res.isNext)
 	msgs := res.upstream["messages"].([]any)
 	assert.Equal(t, "a@b.com", msgs[0].(map[string]any)["content"])
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Plugin_LOGGED, res.outcome("obs"))
-	assert.Equal(t, uint32(1), res.records()[0].GetMatchCount())
+}
+
+func TestGuardrailCompletionsPrompt(t *testing.T) {
+
+	{
+		body := `{"model":"gpt-3.5-turbo-instruct","prompt":"the key is AKIAIOSFODNN7EXAMPLE"}`
+
+		res := servePlugins(t, &pluginOpts{
+			path: "/v1/completions",
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("leak",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						},
+					}),
+			},
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		body := `{"model":"text-embedding-3-small","input":["hello","a@b.com"]}`
+
+		res := servePlugins(t, &pluginOpts{
+			path: "/v1/embeddings",
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("pii",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		input := res.upstream["input"].([]any)
+		assert.Equal(t, "hello", input[0])
+		assert.Equal(t, "[REDACTED:EMAIL]", input[1])
+	}
+}
+
+func TestGuardrailAnthropicNestedToolResult(t *testing.T) {
+
+	body := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"look"},` +
+		`{"type":"tool_result","tool_use_id":"t1","content":[` +
+		`{"type":"text","text":"the key is AKIAIOSFODNN7EXAMPLE"}]}]}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		path:     "/v1/messages",
+		body:     body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("inj", &corev1.Service_Spec_Config_LLM_Plugin_Guardrail{
+				Scopes: []corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Scope{
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS,
+				},
+				Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+
+	blocks := res.upstream["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	assert.Equal(t, "look", blocks[0].(map[string]any)["text"])
+
+	result := blocks[1].(map[string]any)
+	assert.Equal(t, "t1", result["tool_use_id"])
+	assert.Equal(t, "the key is [REDACTED:AWS_ACCESS_KEY]",
+		result["content"].([]any)[0].(map[string]any)["text"])
+}
+
+func TestGuardrailPrivateKeySpan(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+		`"here it is -----BEGIN RSA PRIVATE KEY-----\nMIIB0BEEF\n-----END RSA PRIVATE KEY----- ok"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("key",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
+	assert.Equal(t, "here it is [REDACTED:PRIVATE_KEY] ok", content)
+	assert.NotContains(t, content, "MIIB0BEEF")
+}
+
+func TestGuardrailOverlapPrecedence(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"abcdefghij"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("ovl",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Name: "wide",
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+						Regex: `abcdefgh`,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				},
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Name: "narrow",
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+						Regex: `cde`,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, "ij",
+		res.upstream["messages"].([]any)[0].(map[string]any)["content"])
+}
+
+func TestPromptPreservesInstructionStructure(t *testing.T) {
+
+	{
+		body := `{"model":"claude-sonnet-4","system":[` +
+			`{"type":"text","text":"Base rules","cache_control":{"type":"ephemeral"}}],` +
+			`"messages":[{"role":"user","content":"Hi"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			path:     "/v1/messages",
+			body:     body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+					Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+						System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+							Mode:    corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_PREPEND,
+							Content: newContentValue("Octelium rules"),
+						},
+					},
+				}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		blocks := res.upstream["system"].([]any)
+		assert.Equal(t, 2, len(blocks))
+		assert.Equal(t, "Octelium rules", blocks[0].(map[string]any)["text"])
+		assert.Equal(t, "Base rules", blocks[1].(map[string]any)["text"])
+		assert.NotNil(t, blocks[1].(map[string]any)["cache_control"])
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[` +
+			`{"role":"developer","content":"Base rules"},` +
+			`{"role":"user","content":"Hi"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+					Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+						System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+							Mode:    corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_PREPEND,
+							Content: newContentValue("Octelium rules"),
+						},
+					},
+				}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		msgs := res.upstream["messages"].([]any)
+		assert.Equal(t, 3, len(msgs))
+		assert.Equal(t, "system", msgs[0].(map[string]any)["role"])
+		assert.Equal(t, "Octelium rules", msgs[0].(map[string]any)["content"])
+		assert.Equal(t, "developer", msgs[1].(map[string]any)["role"])
+		assert.Equal(t, "Base rules", msgs[1].(map[string]any)["content"])
+	}
+}
+
+func TestPromptRejectIgnoresServiceContent(t *testing.T) {
+
+	res := servePlugins(t, &pluginOpts{
+		body: chatBody,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("first", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+				Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+					System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+						Mode:    corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_PREPEND,
+						Content: newContentValue("Octelium rules"),
+					},
+				},
+			}),
+			newPlugin("second", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+				Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+					System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+						Mode:    corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REJECT,
+						Content: newContentValue("More rules"),
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, http.StatusOK, res.code)
+	assert.Equal(t, "More rules",
+		res.upstream["messages"].([]any)[0].(map[string]any)["content"])
+}
+
+func TestPromptAssistantHistorical(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[` +
+		`{"role":"user","content":"Hi"},` +
+		`{"role":"assistant","content":"Hello"},` +
+		`{"role":"user","content":"More"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("msg", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+				Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_{
+					Message: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message{
+						Role:     corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_ASSISTANT,
+						Position: corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_APPEND,
+						Content:  newContentValue("(reviewed)"),
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	msgs := res.upstream["messages"].([]any)
+	assert.Equal(t, "Hello\n\n(reviewed)", msgs[1].(map[string]any)["content"])
+}
+
+func TestToolsPrependOrder(t *testing.T) {
+
+	res := servePlugins(t, &pluginOpts{
+		body: chatBody,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+				Tools: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{
+					{
+						Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{
+							Value: `{"type":"function","function":{"name":"one"}}`,
+						},
+						Position: corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_PREPEND,
+					},
+					{
+						Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{
+							Value: `{"type":"function","function":{"name":"two"}}`,
+						},
+						Position: corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_PREPEND,
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	tools := res.upstream["tools"].([]any)
+	assert.Equal(t, 2, len(tools))
+	assert.Equal(t, "one",
+		tools[0].(map[string]any)["function"].(map[string]any)["name"])
+	assert.Equal(t, "two",
+		tools[1].(map[string]any)["function"].(map[string]any)["name"])
+}
+
+func TestToolsUnsupportedOperation(t *testing.T) {
+
+	res := servePlugins(t, &pluginOpts{
+		path: "/v1/embeddings",
+		body: `{"model":"text-embedding-3-small","input":"Hello"}`,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+				Tools: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{
+					{
+						Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{
+							Value: `{"type":"function","function":{"name":"one"}}`,
+						},
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Nil(t, res.upstream["tools"])
+}
+
+func TestPluginObservesEarlierMutation(t *testing.T) {
+
+	res := servePlugins(t, &pluginOpts{
+		body: chatBody,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("guard", &corev1.Service_Spec_Config_LLM_Plugin_Guardrail{
+				Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+							Regex: `Hello`,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE,
+						Replace: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace{
+							Type: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Value{
+								Value: "Bonjour",
+							},
+						},
+					},
+				},
+			}),
+			newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+				Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+					System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+						Content: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content{
+							Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content_Eval{
+								Eval: `ctx.request.llm.http.bodyMap.messages[0].content`,
+							},
+						},
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	msgs := res.upstream["messages"].([]any)
+	assert.Equal(t, "Bonjour", msgs[0].(map[string]any)["content"])
+	assert.Equal(t, "Bonjour", msgs[1].(map[string]any)["content"])
 }
