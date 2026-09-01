@@ -47,9 +47,10 @@ type LLMRequest struct {
 
 	MaxOutputTokens uint64
 
-	HasTools  bool
-	ToolCount uint32
-	ToolNames []string
+	HasTools           bool
+	ToolCount          uint32
+	ToolNames          []string
+	MaxToolSchemaBytes uint32
 
 	InputItemCount uint32
 	HasImageInput  bool
@@ -99,6 +100,13 @@ func (r *LLMRequest) GetToolCount() uint32 {
 		return 0
 	}
 	return r.ToolCount
+}
+
+func (r *LLMRequest) GetMaxToolSchemaBytes() uint32 {
+	if r == nil {
+		return 0
+	}
+	return r.MaxToolSchemaBytes
 }
 
 func (r *LLMRequest) GetToolNames() []string {
@@ -258,12 +266,26 @@ type llmEnvelope struct {
 }
 
 type llmTool struct {
-	Name     string     `json:"name"`
-	Function *llmToolFn `json:"function"`
+	Name        string          `json:"name"`
+	Function    *llmToolFn      `json:"function"`
+	InputSchema json.RawMessage `json:"input_schema"`
+	Parameters  json.RawMessage `json:"parameters"`
 }
 
 type llmToolFn struct {
-	Name string `json:"name"`
+	Name       string          `json:"name"`
+	Parameters json.RawMessage `json:"parameters"`
+}
+
+func (t *llmTool) schemaLen() int {
+	switch {
+	case len(t.InputSchema) > 0:
+		return len(t.InputSchema)
+	case t.Function != nil && len(t.Function.Parameters) > 0:
+		return len(t.Function.Parameters)
+	default:
+		return len(t.Parameters)
+	}
 }
 
 func ParseLLMRequest(req *http.Request,
@@ -406,6 +428,10 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) {
 		if name != "" && len(name) <= maxLLMStringLen &&
 			len(r.ToolNames) < maxLLMToolNames {
 			r.ToolNames = append(r.ToolNames, name)
+		}
+
+		if n := tool.schemaLen(); n > int(r.MaxToolSchemaBytes) {
+			r.MaxToolSchemaBytes = uint32(n)
 		}
 
 		walker.walkRaw(rawTool, 0)

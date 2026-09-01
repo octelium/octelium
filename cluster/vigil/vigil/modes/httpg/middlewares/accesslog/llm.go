@@ -205,6 +205,8 @@ func (m *middleware) getLLMAccessLog(
 		}
 	}()
 
+	llmC.Plugins = reqCtx.LLMPluginRecords
+
 	if phase == logPhaseStreamOpen {
 		return logE
 	}

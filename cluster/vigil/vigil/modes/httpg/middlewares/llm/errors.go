@@ -40,6 +40,9 @@ const (
 	ErrCodeLimitExceeded   = "octelium_limit_exceeded"
 	ErrCodeUpstreamAuth    = "octelium_upstream_auth"
 	ErrCodeModelRewrite    = "octelium_model_rewrite"
+	ErrCodePromptDenied    = "octelium_prompt_denied"
+	ErrCodeToolDenied      = "octelium_tool_denied"
+	ErrCodeGuardrail       = "octelium_guardrail"
 )
 
 type openAIError struct {

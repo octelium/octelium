@@ -114,8 +114,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	defer closeGRPC()
 
 	for _, plugin := range plugins {
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
+		switch {
+		case plugin.GetExtProc() != nil:
 
 			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,

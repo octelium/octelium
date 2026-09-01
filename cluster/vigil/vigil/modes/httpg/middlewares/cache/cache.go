@@ -103,7 +103,12 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, plugin := range plugins {
-		cacheC := plugin.GetCache()
+		httpPlugin, ok := plugin.(*corev1.Service_Spec_Config_HTTP_Plugin)
+		if !ok {
+			continue
+		}
+
+		cacheC := httpPlugin.GetCache()
 		if cacheC == nil {
 			continue
 		}

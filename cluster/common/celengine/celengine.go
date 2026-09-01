@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -165,11 +166,16 @@ func (e *CELEngine) EvalPolicyString(ctx context.Context, exp string, input map[
 		return "", err
 	}
 
-	return out.Value().(string), nil
+	ret, ok := out.Value().(string)
+	if !ok {
+		return "", errors.Errorf("CEL expression result is a %T rather than a string", out.Value())
+	}
+
+	return ret, nil
 }
 
 func (e *CELEngine) EvalPolicyMapStrAny(ctx context.Context, exp string, input map[string]any) (map[string]any, error) {
-	prg, err := e.getOrSetProg(ctx, exp, cel.StringType)
+	prg, err := e.getOrSetProg(ctx, exp, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +193,11 @@ func (e *CELEngine) EvalPolicyMapStrAny(ctx context.Context, exp string, input m
 	return res, nil
 }
 
+func (e *CELEngine) AddPolicyMapAny(ctx context.Context, exp string) error {
+	_, err := e.getOrSetProg(ctx, exp, nil)
+	return err
+}
+
 func (e *CELEngine) AddPolicy(ctx context.Context, exp string) error {
 	_, err := e.getOrSetProg(ctx, exp, cel.BoolType)
 	return err
@@ -199,6 +210,20 @@ func (e *CELEngine) AddPolicyString(ctx context.Context, exp string) error {
 
 func (e *CELEngine) AddPolicyOPA(ctx context.Context, exp string) error {
 	return e.opaEngine.AddPolicy(ctx, exp)
+}
+
+func (e *CELEngine) EvalPolicyStringOPA(ctx context.Context, exp string, input map[string]any) (string, error) {
+	res, err := e.opaEngine.doEvalPolicy(ctx, exp, input, "eval", "result")
+	if err != nil {
+		return "", err
+	}
+
+	ret, ok := res.(string)
+	if !ok {
+		return "", errors.Errorf("Rego script result is a %T rather than a string", res)
+	}
+
+	return ret, nil
 }
 
 func (e *CELEngine) AddPolicyStringOPA(ctx context.Context, exp string) error {
@@ -228,12 +253,17 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 		return nil, errors.Errorf("Could not compile CEL expression: %s: %s", exp, iss.Err())
 	}
 
-	/*
-		if !reflect.DeepEqual(ast.OutputType(), typ) {
-			return nil, errors.Errorf("Invalid result type of CEL expression: %s. Output is: %s. Required is: %s",
-				exp, ast.OutputType().String(), typ.String())
+	if typ != nil {
+		switch outputType := ast.OutputType(); outputType {
+		case nil, types.DynType, types.AnyType:
+		default:
+			if !reflect.DeepEqual(outputType, typ) {
+				return nil, errors.Errorf(
+					"Invalid result type of CEL expression: %s. Output is: %s. Required is: %s",
+					exp, outputType.String(), typ.String())
+			}
 		}
-	*/
+	}
 
 	prg, err := e.env.Program(ast,
 		cel.EvalOptions(cel.OptOptimize),

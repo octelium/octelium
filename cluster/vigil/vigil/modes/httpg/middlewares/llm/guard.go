@@ -128,6 +128,16 @@ func (m *guard) checkLimits(llmReq *httputils.LLMRequest,
 		}
 	}
 
+	if val := limits.GetMaxToolSchemaBytes(); val > 0 && llmReq.MaxToolSchemaBytes > val {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       ErrTypeInvalidRequest,
+			Code:       ErrCodeLimitExceeded,
+			Message: fmt.Sprintf(
+				"Octelium: the request declares a tool whose schema is above %d bytes", val),
+		}
+	}
+
 	if val := limits.GetMaxOutputTokens(); val > 0 && llmReq.MaxOutputTokens > val {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,

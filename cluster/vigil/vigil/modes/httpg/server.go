@@ -375,6 +375,22 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewGuardrail(ctx, next, s.celEngine)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewTools(ctx, next, s.celEngine)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewPrompt(ctx, next, s.celEngine)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewRebuild(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return llm.NewModel(ctx, next, s.celEngine)
 	})
 

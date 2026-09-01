@@ -22,33 +22,42 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
 )
 
 type ShouldEnforcePluginOpts struct {
-	Plugin    *corev1.Service_Spec_Config_HTTP_Plugin
+	Plugin    ucorev1.HTTPPlugin
 	CELEngine *celengine.CELEngine
 	Phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
 }
 
 func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
-	plugin := o.Plugin
-	if plugin == nil {
+	isMatched, err := ShouldEnforcePluginErr(ctx, o)
+	if err != nil {
 		return false
 	}
+	return isMatched
+}
 
-	if plugin.IsDisabled {
-		return false
+func ShouldEnforcePluginErr(ctx context.Context, o *ShouldEnforcePluginOpts) (bool, error) {
+	plugin := o.Plugin
+	if plugin == nil {
+		return false, nil
+	}
+
+	if plugin.GetIsDisabled() {
+		return false, nil
 	}
 
 	if !matchesPhase(plugin, o.Phase) {
-		return false
+		return false, nil
 	}
 
-	cond := o.Plugin.Condition
+	cond := plugin.GetCondition()
 	if cond == nil {
-		return false
+		return false, nil
 	}
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
@@ -67,17 +76,18 @@ func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
 	isMatched, err := o.CELEngine.EvalCondition(ctx, cond, inputMap)
 	if err != nil {
 		zap.L().Error("Could not eval plugin condition", zap.Any("condition", cond))
+		return false, err
 	}
 
-	return isMatched
+	return isMatched, nil
 }
 
-func matchesPhase(plugin *corev1.Service_Spec_Config_HTTP_Plugin, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) bool {
+func matchesPhase(plugin ucorev1.HTTPPlugin, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase) bool {
 	switch phase {
 	case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
-		return plugin.Phase == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
+		return plugin.GetPhase() == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
 	case corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
-		switch plugin.Phase {
+		switch plugin.GetPhase() {
 		case corev1.Service_Spec_Config_HTTP_Plugin_PHASE_UNSET, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH:
 			return true
 		default:

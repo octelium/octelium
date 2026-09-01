@@ -56,8 +56,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, plugin := range plugins {
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Path_:
+		switch {
+		case plugin.GetPath() != nil:
 
 			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,

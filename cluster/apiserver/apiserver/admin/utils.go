@@ -53,6 +53,67 @@ func checkCELExpression(ctx context.Context, arg string) error {
 	return nil
 }
 
+func checkCELExpressionString(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty CEL expression")
+	}
+
+	if len(arg) > maxCELExpressionLen {
+		return grpcutils.InvalidArg("CEL expression is too long")
+	}
+
+	engine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return grpcutils.InternalWithErr(err)
+	}
+	if err := engine.AddPolicyString(ctx, arg); err != nil {
+		return grpcutils.InvalidArgWithErr(err)
+	}
+
+	return nil
+}
+
+func checkCELExpressionMap(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty CEL expression")
+	}
+
+	if len(arg) > maxCELExpressionLen {
+		return grpcutils.InvalidArg("CEL expression is too long")
+	}
+
+	engine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return grpcutils.InternalWithErr(err)
+	}
+	if err := engine.AddPolicyMapAny(ctx, arg); err != nil {
+		return grpcutils.InvalidArgWithErr(err)
+	}
+
+	return nil
+}
+
+func checkOPAString(ctx context.Context, arg string) error {
+	if strings.TrimSpace(arg) == "" {
+		return grpcutils.InvalidArg("Empty OPA script")
+	}
+
+	if len(arg) > maxOPAScriptLen {
+		return grpcutils.InvalidArg("OPA script is too large")
+	}
+
+	engine, err := celengine.New(ctx, &celengine.Opts{})
+	if err != nil {
+		return grpcutils.InternalWithErr(err)
+	}
+
+	if err := engine.AddPolicyStringOPA(ctx, arg); err != nil {
+		return grpcutils.InvalidArgWithErr(err)
+	}
+
+	return nil
+}
+
 func checkOPAMapAny(ctx context.Context, arg string) error {
 	if strings.TrimSpace(arg) == "" {
 		return grpcutils.InvalidArg("Empty OPA script")

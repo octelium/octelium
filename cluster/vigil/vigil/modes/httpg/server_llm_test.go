@@ -849,14 +849,34 @@ func newLuaPlugin(name string, phase corev1.Service_Spec_Config_HTTP_Plugin_Phas
 	}
 }
 
+func newLLMLuaPlugin(name string, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase,
+	inline string) *corev1.Service_Spec_Config_LLM_Plugin {
+	return &corev1.Service_Spec_Config_LLM_Plugin{
+		Name:  name,
+		Phase: phase,
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+		Type: &corev1.Service_Spec_Config_LLM_Plugin_Lua{
+			Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+					Inline: inline,
+				},
+			},
+		},
+	}
+}
+
 func TestServerLLMLuaModel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	env := newLLMEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["model"] = "lua-model"
@@ -886,8 +906,8 @@ func TestServerLLMLuaMessages(t *testing.T) {
 
 	env := newLLMEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-prompt", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("rewrite-prompt", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["messages"] = {
@@ -920,8 +940,8 @@ func TestServerLLMLuaReasoning(t *testing.T) {
 
 	env := newLLMEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("set-reasoning", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("set-reasoning", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["reasoning_effort"] = "low"
@@ -960,8 +980,8 @@ func TestServerLLMLuaModelOrdering(t *testing.T) {
 
 	env := newLLMEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["model"] = "lua-post-model"
@@ -1027,8 +1047,8 @@ func TestServerLLMLuaAuthorization(t *testing.T) {
 	}
 
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("set-model", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["model"] = "lua-model"
@@ -1055,8 +1075,8 @@ func TestServerLLMLuaResponse(t *testing.T) {
 
 	env := newLLMEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newLLMLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
 function onResponse(ctx)
   local body = json.decode(octelium.req.getResponseBody())
   body["choices"][1]["message"]["content"] = "redacted-by-octelium"

@@ -319,15 +319,47 @@ func (s *ServiceConfig) GetHTTPCors() *corev1.Service_Spec_Config_HTTP_CORS {
 	return s.GetLlm().GetCors()
 }
 
-func (s *ServiceConfig) GetHTTPPlugins() []*corev1.Service_Spec_Config_HTTP_Plugin {
+type HTTPPlugin interface {
+	GetName() string
+	GetIsDisabled() bool
+	GetPhase() corev1.Service_Spec_Config_HTTP_Plugin_Phase
+	GetCondition() *corev1.Condition
+
+	GetExtProc() *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc
+	GetLua() *corev1.Service_Spec_Config_HTTP_Plugin_Lua
+	GetDirect() *corev1.Service_Spec_Config_HTTP_Plugin_Direct
+	GetRateLimit() *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit
+	GetJsonSchema() *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema
+	GetPath() *corev1.Service_Spec_Config_HTTP_Plugin_Path
+}
+
+func (s *ServiceConfig) GetHTTPPlugins() []HTTPPlugin {
 	if s == nil || s.Service_Spec_Config == nil {
 		return nil
 	}
 	if ret := s.GetHttp().GetPlugins(); len(ret) > 0 {
-		return ret
+		return toHTTPPlugins(ret)
 	}
 	if ret := s.GetMcp().GetPlugins(); len(ret) > 0 {
-		return ret
+		return toHTTPPlugins(ret)
+	}
+	return toHTTPPlugins(s.GetLlm().GetPlugins())
+}
+
+func toHTTPPlugins[T HTTPPlugin](args []T) []HTTPPlugin {
+	if len(args) == 0 {
+		return nil
+	}
+	ret := make([]HTTPPlugin, 0, len(args))
+	for _, arg := range args {
+		ret = append(ret, arg)
+	}
+	return ret
+}
+
+func (s *ServiceConfig) GetLLMPlugins() []*corev1.Service_Spec_Config_LLM_Plugin {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
 	}
 	return s.GetLlm().GetPlugins()
 }

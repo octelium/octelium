@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime"
 	"net/url"
@@ -44,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/glob"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -371,7 +373,7 @@ func (s *Server) validateService(ctx context.Context,
 					return err
 				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
-				if err := checkCELExpression(ctx, rule.GetEval()); err != nil {
+				if err := checkCELExpressionMap(ctx, rule.GetEval()); err != nil {
 					return grpcutils.InvalidArg("Invalid eval: %s", rule.GetEval())
 				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
@@ -1427,7 +1429,7 @@ func (s *Server) validateHTTPHeader(ctx context.Context, hdrSpec *corev1.Service
 				return grpcutils.InvalidArg("invalid header value")
 			}
 		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-			if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+			if err := checkCELExpressionString(ctx, hdr.GetEval()); err != nil {
 				return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
 			}
 		default:
@@ -1447,7 +1449,7 @@ func (s *Server) validateHTTPHeader(ctx context.Context, hdrSpec *corev1.Service
 				return err
 			}
 		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-			if err := checkCELExpression(ctx, hdr.GetEval()); err != nil {
+			if err := checkCELExpressionString(ctx, hdr.GetEval()); err != nil {
 				return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
 			}
 		default:
@@ -1576,233 +1578,298 @@ func (s *Server) validateHTTPPath(pth *corev1.Service_Spec_Config_HTTP_Path) err
 	return nil
 }
 
-func (s *Server) validateHTTPPlugins(ctx context.Context, cfgName string, plugins []*corev1.Service_Spec_Config_HTTP_Plugin) error {
+func (s *Server) validatePluginCommon(ctx context.Context, cfgName string,
+	names []string, plugin ucorev1.HTTPPlugin) ([]string, error) {
+	if err := apivalidation.ValidateName(plugin.GetName(), 0, 0); err != nil {
+		return names, err
+	}
+	if slices.Contains(names, plugin.GetName()) {
+		return names, serr.InvalidArg("This Plugin name already exists: %s", cfgName)
+	}
+	names = append(names, plugin.GetName())
+
+	if err := s.validateCondition(ctx, plugin.GetCondition()); err != nil {
+		return names, err
+	}
+
+	return names, nil
+}
+
+func (s *Server) validatePluginShared(ctx context.Context, plugin ucorev1.HTTPPlugin) (bool, error) {
+	switch {
+	case plugin.GetLua() != nil:
+		return true, s.validatePluginLua(ctx, plugin.GetLua())
+	case plugin.GetDirect() != nil:
+		return true, s.validatePluginDirect(ctx, plugin.GetDirect())
+	case plugin.GetExtProc() != nil:
+		return true, s.validatePluginExtProc(ctx, plugin.GetExtProc())
+	case plugin.GetJsonSchema() != nil:
+		return true, s.validatePluginJSONSchema(ctx, plugin.GetJsonSchema())
+	case plugin.GetPath() != nil:
+		return true, s.validatePluginPath(ctx, plugin.GetPath())
+	case plugin.GetRateLimit() != nil:
+		return true, s.validatePluginRateLimit(ctx, plugin.GetRateLimit())
+	default:
+		return false, nil
+	}
+}
+
+func (s *Server) validateHTTPPlugins(ctx context.Context, cfgName string,
+	plugins []*corev1.Service_Spec_Config_HTTP_Plugin) error {
 	if len(plugins) == 0 {
 		return nil
 	}
 
-	if len(plugins) > 256 {
+	if len(plugins) > maxPlugins {
 		return grpcutils.InvalidArg("Too many plugins")
 	}
 
 	var names []string
+	var err error
 	for _, plugin := range plugins {
-
-		if err := apivalidation.ValidateName(plugin.Name, 0, 0); err != nil {
-			return err
-		}
-		if slices.Contains(names, plugin.Name) {
-			return serr.InvalidArg("This Plugin name already exists: %s", cfgName)
-		}
-		names = append(names, plugin.Name)
-
-		if err := s.validateCondition(ctx, plugin.Condition); err != nil {
+		if names, err = s.validatePluginCommon(ctx, cfgName, names, plugin); err != nil {
 			return err
 		}
 
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
-			if len(plugin.GetLua().GetInline()) == 0 {
-				return serr.InvalidArg("Lua script is empty")
-			}
+		isShared, err := s.validatePluginShared(ctx, plugin)
+		if err != nil {
+			return err
+		}
+		if isShared {
+			continue
+		}
 
-			if len(plugin.GetLua().GetInline()) > 20000 {
-				return serr.InvalidArg("Lua script is too large")
-			}
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_:
-			if plugin.GetDirect().StatusCode != 0 {
-				if err := apivalidation.ValidateHTTPStatusCode(
-					int64(plugin.GetDirect().StatusCode)); err != nil {
-					return err
-				}
-			}
-			if len(plugin.GetDirect().Headers) > 100 {
-				return grpcutils.InvalidArg("Too many headers")
-			}
-
-			for _, hdr := range plugin.GetDirect().Headers {
-				if !httpguts.ValidHeaderFieldName(hdr.Key) {
-					return grpcutils.InvalidArg("invalid header name")
-				}
-
-				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-					return grpcutils.InvalidArg("invalid header value")
-				}
-			}
-
-			if plugin.GetDirect().Body != nil {
-				switch plugin.GetDirect().Body.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline:
-					if len(plugin.GetDirect().Body.GetInline()) > 50000 {
-						return grpcutils.InvalidArg("inline is too large")
-					}
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes:
-					if len(plugin.GetDirect().Body.GetInlineBytes()) > 35000 {
-						return grpcutils.InvalidArg("inlineBytes is too large")
-					}
-
-				}
-			}
-
-		case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_:
-
-			confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
-			if confDuration > 6000*time.Millisecond {
-				return serr.InvalidArg("message timeout upper limit is exceeded")
-			}
-
-			switch plugin.GetExtProc().Type.(type) {
-			case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
-				if err := apivalidation.ValidateHostPort(
-					plugin.GetExtProc().GetAddress()); err != nil {
-					return err
-				}
-			case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Container_:
-				if plugin.GetExtProc().GetContainer().Image == "" {
-					return grpcutils.InvalidArg("Image address is empty")
-				}
-
-				if len(plugin.GetExtProc().GetContainer().Image) > 256 {
-					return grpcutils.InvalidArg("Image address is too long: %s",
-						plugin.GetExtProc().GetContainer().Image)
-				}
-			}
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
-			conf := plugin.GetCache()
-			if conf.Ttl != nil {
-				if err := apivalidation.ValidateDuration(conf.Ttl); err != nil {
-					return err
-				}
-			}
-			if conf.Key != nil {
-				switch conf.Key.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
-					if err := checkCELExpression(ctx, conf.Key.GetEval()); err != nil {
-						return err
-					}
-				default:
-					return grpcutils.InvalidArg("Invalid key type")
-				}
-			}
-
-			if conf.MaxSize > 256_000_000 {
-				return grpcutils.InvalidArg("Invalid maxSize value: %d", conf.MaxSize)
-			}
-
-		case *corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema:
-			conf := plugin.GetJsonSchema()
-			switch conf.Type.(type) {
-			case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline:
-				val := conf.GetInline()
-				if len(val) == 0 {
-					return grpcutils.InvalidArg("jsonSchema is empty")
-				}
-				if len(val) > 30000 {
-					return grpcutils.InvalidArg("jsonSchema is too large")
-				}
-				if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
-					return grpcutils.InvalidArg("invalid jsonSchema")
-				}
-
-			default:
-				return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
-			}
-
-			for _, hdr := range conf.Headers {
-				if !httpguts.ValidHeaderFieldName(hdr.Key) {
-					return grpcutils.InvalidArg("invalid header name")
-				}
-
-				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-					return grpcutils.InvalidArg("invalid header value")
-				}
-			}
-
-			if conf.Body != nil {
-				switch conf.Body.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
-					if len(conf.Body.GetInline()) > 50000 {
-						return grpcutils.InvalidArg("inline is too large")
-					}
-				case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
-					if len(conf.Body.GetInlineBytes()) > 35000 {
-						return grpcutils.InvalidArg("inlineBytes is too large")
-					}
-
-				}
-			}
-
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Path_:
-
-			pth := plugin.GetPath()
-			if pth.AddPrefix != "" {
-				if len(pth.AddPrefix) > 512 {
-					return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
-				}
-				if !govalidator.IsRequestURI(pth.AddPrefix) {
-					return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
-				}
-			}
-
-			if pth.RemovePrefix != "" {
-				if len(pth.RemovePrefix) > 512 {
-					return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
-				}
-				if !govalidator.IsRequestURI(pth.RemovePrefix) {
-					return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
-				}
-			}
-
-		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_:
-
-			conf := plugin.GetRateLimit()
-			if conf.Limit == 0 {
-				return grpcutils.InvalidArg("Limit must be set")
-			} else if conf.Limit < 0 {
-				return grpcutils.InvalidArg("Limit cannot be negative: %d", conf.Limit)
-			}
-
-			if conf.StatusCode != 0 {
-				if err := apivalidation.ValidateHTTPStatusCode(int64(conf.StatusCode)); err != nil {
-					return err
-				}
-			}
-			if conf.Window == nil {
-				return grpcutils.InvalidArg("Window duration must be set")
-			}
-
-			if err := apivalidation.ValidateDuration(conf.Window); err != nil {
+		switch {
+		case plugin.GetCache() != nil:
+			if err := s.validatePluginCache(ctx, plugin.GetCache()); err != nil {
 				return err
 			}
-
-			for _, hdr := range conf.Headers {
-				if !httpguts.ValidHeaderFieldName(hdr.Key) {
-					return grpcutils.InvalidArg("invalid header name")
-				}
-
-				if !httpguts.ValidHeaderFieldValue(hdr.Value) {
-					return grpcutils.InvalidArg("invalid header value")
-				}
-			}
-
-			if conf.Body != nil {
-				switch conf.Body.Type.(type) {
-				case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline:
-					if len(conf.Body.GetInline()) > 50000 {
-						return grpcutils.InvalidArg("inline is too large")
-					}
-				case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes:
-					if len(conf.Body.GetInlineBytes()) > 35000 {
-						return grpcutils.InvalidArg("inlineBytes is too large")
-					}
-
-				}
-			}
-
 		default:
 			return grpcutils.InvalidArg("plugin type must be set")
 		}
 	}
+
+	return nil
+}
+
+func (s *Server) validatePluginLua(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_Lua) error {
+	if len(conf.GetInline()) == 0 {
+		return serr.InvalidArg("Lua script is empty")
+	}
+
+	if len(conf.GetInline()) > 20000 {
+		return serr.InvalidArg("Lua script is too large")
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginDirect(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_Direct) error {
+	if conf.StatusCode != 0 {
+		if err := apivalidation.ValidateHTTPStatusCode(
+			int64(conf.StatusCode)); err != nil {
+			return err
+		}
+	}
+	if len(conf.Headers) > 100 {
+		return grpcutils.InvalidArg("Too many headers")
+	}
+
+	for _, hdr := range conf.Headers {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+			return grpcutils.InvalidArg("invalid header value")
+		}
+	}
+
+	if conf.Body != nil {
+		switch conf.Body.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline:
+			if len(conf.Body.GetInline()) > 50000 {
+				return grpcutils.InvalidArg("inline is too large")
+			}
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_InlineBytes:
+			if len(conf.Body.GetInlineBytes()) > 35000 {
+				return grpcutils.InvalidArg("inlineBytes is too large")
+			}
+
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginExtProc(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc) error {
+	confDuration := umetav1.ToDuration(conf.MessageTimeout).ToGo()
+	if confDuration > 6000*time.Millisecond {
+		return serr.InvalidArg("message timeout upper limit is exceeded")
+	}
+
+	switch conf.Type.(type) {
+	case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address:
+		if err := apivalidation.ValidateHostPort(
+			conf.GetAddress()); err != nil {
+			return err
+		}
+	case *corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Container_:
+		if conf.GetContainer().Image == "" {
+			return grpcutils.InvalidArg("Image address is empty")
+		}
+
+		if len(conf.GetContainer().Image) > 256 {
+			return grpcutils.InvalidArg("Image address is too long: %s",
+				conf.GetContainer().Image)
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginCache(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_Cache) error {
+	if conf.Ttl != nil {
+		if err := apivalidation.ValidateDuration(conf.Ttl); err != nil {
+			return err
+		}
+	}
+	if conf.Key != nil {
+		switch conf.Key.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
+			if err := checkCELExpressionString(ctx, conf.Key.GetEval()); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("Invalid key type")
+		}
+	}
+
+	if conf.MaxSize > 256_000_000 {
+		return grpcutils.InvalidArg("Invalid maxSize value: %d", conf.MaxSize)
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginJSONSchema(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema) error {
+	switch conf.Type.(type) {
+	case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline:
+		val := conf.GetInline()
+		if len(val) == 0 {
+			return grpcutils.InvalidArg("jsonSchema is empty")
+		}
+		if len(val) > 30000 {
+			return grpcutils.InvalidArg("jsonSchema is too large")
+		}
+		if _, err := jsonschemautils.Compile([]byte(val)); err != nil {
+			return grpcutils.InvalidArg("invalid jsonSchema")
+		}
+
+	default:
+		return grpcutils.InvalidArg("Invalid jsonSchema type. Currently it must be set to inline.")
+	}
+
+	for _, hdr := range conf.Headers {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+			return grpcutils.InvalidArg("invalid header value")
+		}
+	}
+
+	if conf.Body != nil {
+		switch conf.Body.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_Inline:
+			if len(conf.Body.GetInline()) > 50000 {
+				return grpcutils.InvalidArg("inline is too large")
+			}
+		case *corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Body_InlineBytes:
+			if len(conf.Body.GetInlineBytes()) > 35000 {
+				return grpcutils.InvalidArg("inlineBytes is too large")
+			}
+
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginPath(ctx context.Context,
+	pth *corev1.Service_Spec_Config_HTTP_Plugin_Path) error {
+	if pth.AddPrefix != "" {
+		if len(pth.AddPrefix) > 512 {
+			return grpcutils.InvalidArg("addPrefix is too long: %s", pth.AddPrefix)
+		}
+		if !govalidator.IsRequestURI(pth.AddPrefix) {
+			return grpcutils.InvalidArg("Invalid addPrefix: %s", pth.AddPrefix)
+		}
+	}
+
+	if pth.RemovePrefix != "" {
+		if len(pth.RemovePrefix) > 512 {
+			return grpcutils.InvalidArg("removePrefix is too long: %s", pth.RemovePrefix)
+		}
+		if !govalidator.IsRequestURI(pth.RemovePrefix) {
+			return grpcutils.InvalidArg("Invalid removePrefix: %s", pth.RemovePrefix)
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginRateLimit(ctx context.Context,
+	conf *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit) error {
+	if conf.Limit == 0 {
+		return grpcutils.InvalidArg("Limit must be set")
+	} else if conf.Limit < 0 {
+		return grpcutils.InvalidArg("Limit cannot be negative: %d", conf.Limit)
+	}
+
+	if conf.StatusCode != 0 {
+		if err := apivalidation.ValidateHTTPStatusCode(int64(conf.StatusCode)); err != nil {
+			return err
+		}
+	}
+	if conf.Window == nil {
+		return grpcutils.InvalidArg("Window duration must be set")
+	}
+
+	if err := apivalidation.ValidateDuration(conf.Window); err != nil {
+		return err
+	}
+
+	for _, hdr := range conf.Headers {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+			return grpcutils.InvalidArg("invalid header value")
+		}
+	}
+
+	if conf.Body != nil {
+		switch conf.Body.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_Inline:
+			if len(conf.Body.GetInline()) > 50000 {
+				return grpcutils.InvalidArg("inline is too large")
+			}
+		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Body_InlineBytes:
+			if len(conf.Body.GetInlineBytes()) > 35000 {
+				return grpcutils.InvalidArg("inlineBytes is too large")
+			}
+
+		}
+	}
+
 	return nil
 }
 
@@ -1907,6 +1974,19 @@ const (
 	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
 
 	maxLLMVisibilityHeaders = 128
+
+	maxPlugins = 256
+
+	maxPromptContentLen = 256 * 1024
+
+	maxToolFilters       = 128
+	maxToolDefinitionLen = 256 * 1024
+
+	maxGuardrailScopes     = 8
+	maxGuardrailPatterns   = 128
+	maxGuardrailRegexLen   = 2048
+	maxGuardrailMaxBytes   = 8 * 1024 * 1024
+	maxGuardrailEntropyLen = 1024
 )
 
 func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec_Config) error {
@@ -1947,16 +2027,442 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 		return err
 	}
 
-	if err := s.validateHTTPPlugins(ctx, cfg.Name, llm.GetPlugins()); err != nil {
+	if err := s.validateLLMPlugins(ctx, cfg.Name, llm.GetPlugins()); err != nil {
 		return err
 	}
 
-	for _, plugin := range llm.GetPlugins() {
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
-			return grpcutils.InvalidArg(
-				"The Cache plugin is unsupported for LLM Services: %s", plugin.Name)
+	return nil
+}
+
+func (s *Server) validateLLMPlugins(ctx context.Context, cfgName string,
+	plugins []*corev1.Service_Spec_Config_LLM_Plugin) error {
+	if len(plugins) == 0 {
+		return nil
+	}
+
+	if len(plugins) > maxPlugins {
+		return grpcutils.InvalidArg("Too many plugins")
+	}
+
+	var names []string
+	var err error
+	for _, plugin := range plugins {
+		if names, err = s.validatePluginCommon(ctx, cfgName, names, plugin); err != nil {
+			return err
 		}
+
+		isShared, err := s.validatePluginShared(ctx, plugin)
+		if err != nil {
+			return err
+		}
+		if isShared {
+			continue
+		}
+
+		switch plugin.GetPhase() {
+		case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
+			return grpcutils.InvalidArg(
+				"The %s Plugin cannot be invoked in the PRE_AUTH phase", plugin.GetName())
+		}
+
+		switch {
+		case plugin.GetPrompt() != nil:
+			if err := s.validatePluginPrompt(ctx, plugin.GetPrompt()); err != nil {
+				return err
+			}
+		case plugin.GetTools() != nil:
+			if err := s.validatePluginTools(ctx, plugin.GetTools()); err != nil {
+				return err
+			}
+		case plugin.GetGuardrail() != nil:
+			if err := s.validatePluginGuardrail(ctx, plugin.GetGuardrail()); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("plugin type must be set")
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginPrompt(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Prompt) error {
+
+	validateContent := func(content *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content,
+		isRequired bool) error {
+		if content == nil || content.Type == nil {
+			if isRequired {
+				return grpcutils.InvalidArg("The Prompt content is not set")
+			}
+			return nil
+		}
+
+		switch content.Type.(type) {
+		case *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content_Value:
+			if content.GetValue() == "" {
+				return grpcutils.InvalidArg("The Prompt content value is empty")
+			}
+			if len(content.GetValue()) > maxPromptContentLen {
+				return grpcutils.InvalidArg("The Prompt content value is too large")
+			}
+		case *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content_Eval:
+			if err := checkCELExpressionString(ctx, content.GetEval()); err != nil {
+				return err
+			}
+		case *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Content_Opa:
+			if err := checkOPAString(ctx, content.GetOpa()); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("Invalid Prompt content type")
+		}
+
+		return nil
+	}
+
+	switch cfg.Type.(type) {
+	case *corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_:
+		conf := cfg.GetSystem()
+
+		switch conf.GetMode() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_MODE_UNSET,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_PREPEND,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_APPEND,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REPLACE:
+			if err := validateContent(conf.GetContent(), true); err != nil {
+				return err
+			}
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_STRIP:
+			if conf.GetContent() != nil {
+				return grpcutils.InvalidArg(
+					"The STRIP Prompt mode inserts no content, so no content can be set")
+			}
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_REJECT:
+			if err := validateContent(conf.GetContent(), false); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("Invalid Prompt system mode")
+		}
+
+	case *corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_:
+		conf := cfg.GetMessage()
+
+		switch conf.GetRole() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_USER,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_ASSISTANT:
+		default:
+			return grpcutils.InvalidArg("The Prompt message role must be set")
+		}
+
+		switch conf.GetPosition() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_POSITION_UNSET,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_PREPEND,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_APPEND,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_BEFORE,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_AFTER:
+		default:
+			return grpcutils.InvalidArg("Invalid Prompt message position")
+		}
+
+		switch conf.GetSelector() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_SELECTOR_UNSET,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_LAST,
+			corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_FIRST:
+		case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_ALL:
+			switch conf.GetPosition() {
+			case corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_BEFORE,
+				corev1.Service_Spec_Config_LLM_Plugin_Prompt_Message_NEW_AFTER:
+				return grpcutils.InvalidArg(
+					"The ALL selector cannot be used with a whole new message")
+			}
+		default:
+			return grpcutils.InvalidArg("Invalid Prompt message selector")
+		}
+
+		if err := validateContent(conf.GetContent(), true); err != nil {
+			return err
+		}
+
+	default:
+		return grpcutils.InvalidArg("The Prompt type must be set")
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginTools(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools) error {
+
+	if len(cfg.GetFilters()) > maxToolFilters {
+		return grpcutils.InvalidArg("Too many Tools Filters")
+	}
+	if len(cfg.GetTools()) > maxToolFilters {
+		return grpcutils.InvalidArg("Too many Tools")
+	}
+
+	for _, filter := range cfg.GetFilters() {
+		switch filter.Match.(type) {
+		case *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name:
+			if err := glob.Validate(filter.GetName()); err != nil {
+				return grpcutils.InvalidArgWithErr(err)
+			}
+		case *corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Type:
+			if err := glob.Validate(filter.GetType()); err != nil {
+				return grpcutils.InvalidArgWithErr(err)
+			}
+		default:
+			return grpcutils.InvalidArg("The Tools Filter match must be set")
+		}
+
+		switch filter.GetDecision() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_DECISION_UNSET,
+			corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_ALLOW,
+			corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE,
+			corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_DENY:
+			if filter.GetReplace() != nil {
+				return grpcutils.InvalidArg(
+					"The Tools Filter replace can only be set for the REPLACE Decision")
+			}
+		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REPLACE:
+			if err := validateToolDefinition(ctx, filter.GetReplace()); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("Invalid Tools Filter decision")
+		}
+	}
+
+	for _, tool := range cfg.GetTools() {
+		if err := validateToolDefinition(ctx, tool); err != nil {
+			return err
+		}
+
+		switch tool.GetPosition() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_POSITION_UNSET,
+			corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_PREPEND,
+			corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_APPEND:
+		default:
+			return grpcutils.InvalidArg("Invalid Tools position")
+		}
+	}
+
+	switch cfg.GetChoice() {
+	case corev1.Service_Spec_Config_LLM_Plugin_Tools_CHOICE_UNSET,
+		corev1.Service_Spec_Config_LLM_Plugin_Tools_PRESERVE,
+		corev1.Service_Spec_Config_LLM_Plugin_Tools_NONE,
+		corev1.Service_Spec_Config_LLM_Plugin_Tools_AUTO:
+	default:
+		return grpcutils.InvalidArg("Invalid Tools choice value")
+	}
+
+	if err := s.validateGenStr(cfg.GetDenyMessage(), false, "denyMessage"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type toolDefinition interface {
+	GetValue() string
+	GetEval() string
+	GetOpa() string
+}
+
+func validateToolDefinition(ctx context.Context, cfg toolDefinition) error {
+	if cfg == nil || (cfg.GetValue() == "" && cfg.GetEval() == "" && cfg.GetOpa() == "") {
+		return grpcutils.InvalidArg("The tool definition is not set")
+	}
+
+	switch {
+	case cfg.GetValue() != "":
+		if len(cfg.GetValue()) > maxToolDefinitionLen {
+			return grpcutils.InvalidArg("The tool definition is too large")
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(cfg.GetValue()), &obj); err != nil {
+			return grpcutils.InvalidArg("The tool definition is not a JSON object")
+		}
+	case cfg.GetEval() != "":
+		if err := checkCELExpressionString(ctx, cfg.GetEval()); err != nil {
+			return err
+		}
+	case cfg.GetOpa() != "":
+		if err := checkOPAString(ctx, cfg.GetOpa()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validatePluginGuardrail(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) error {
+
+	var isResponse bool
+	switch cfg.GetLeg() {
+	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_LEG_UNSET,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST:
+	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_BOTH:
+		isResponse = true
+	default:
+		return grpcutils.InvalidArg("Invalid Guardrail leg")
+	}
+
+	if len(cfg.GetScopes()) > maxGuardrailScopes {
+		return grpcutils.InvalidArg("Too many Guardrail scopes")
+	}
+
+	var hasToolDefinitions bool
+	for _, scope := range cfg.GetScopes() {
+		switch scope {
+		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_INSTRUCTIONS,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS:
+		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_DEFINITIONS,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_ALL:
+			hasToolDefinitions = true
+		default:
+			return grpcutils.InvalidArg("Invalid Guardrail scope")
+		}
+	}
+
+	if err := s.validateGenStr(cfg.GetDenyMessage(), false, "denyMessage"); err != nil {
+		return err
+	}
+
+	if cfg.GetMaxBytes() > maxGuardrailMaxBytes {
+		return grpcutils.InvalidArg("Invalid Guardrail maxBytes value: %d", cfg.GetMaxBytes())
+	}
+
+	if len(cfg.GetPatterns()) == 0 {
+		return grpcutils.InvalidArg("The Guardrail Patterns are empty")
+	}
+	if len(cfg.GetPatterns()) > maxGuardrailPatterns {
+		return grpcutils.InvalidArg("Too many Guardrail Patterns")
+	}
+
+	var names []string
+	for _, pattern := range cfg.GetPatterns() {
+		if err := s.validateGuardrailPattern(ctx, pattern,
+			isResponse, hasToolDefinitions); err != nil {
+			return err
+		}
+
+		name := pattern.GetName()
+		if name == "" {
+			continue
+		}
+		if slices.Contains(names, name) {
+			return grpcutils.InvalidArg(
+				"This Guardrail Pattern name already exists: %s", name)
+		}
+		names = append(names, name)
+	}
+
+	return nil
+}
+
+func (s *Server) validateGuardrailPattern(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern,
+	isResponse, hasToolDefinitions bool) error {
+
+	if cfg.GetName() != "" {
+		if err := apivalidation.ValidateName(cfg.GetName(), 0, 0); err != nil {
+			return err
+		}
+	}
+
+	switch cfg.Match.(type) {
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex:
+		if cfg.GetRegex() == "" {
+			return grpcutils.InvalidArg("The Guardrail Pattern regex is empty")
+		}
+		if len(cfg.GetRegex()) > maxGuardrailRegexLen {
+			return grpcutils.InvalidArg("The Guardrail Pattern regex is too long")
+		}
+		if _, err := regexp.Compile(cfg.GetRegex()); err != nil {
+			return grpcutils.InvalidArg("Could not compile the Guardrail Pattern regex")
+		}
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_:
+		if cfg.GetType() ==
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_TYPE_UNSET {
+			return grpcutils.InvalidArg("The Guardrail Pattern type must be set")
+		}
+		if _, ok := corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_name[int32(cfg.GetType())]; !ok {
+			return grpcutils.InvalidArg("Invalid Guardrail Pattern type")
+		}
+	default:
+		return grpcutils.InvalidArg("The Guardrail Pattern match must be set")
+	}
+
+	var isRewrite bool
+	switch cfg.GetAction() {
+	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_ACTION_UNSET,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_LOG:
+		if cfg.GetReplace() != nil {
+			return grpcutils.InvalidArg(
+				"The Guardrail Pattern replace can only be set for the REPLACE Action")
+		}
+	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP:
+		isRewrite = true
+		if cfg.GetReplace() != nil {
+			return grpcutils.InvalidArg(
+				"The Guardrail Pattern replace can only be set for the REPLACE Action")
+		}
+	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE:
+		isRewrite = true
+		if err := s.validateGuardrailReplace(ctx, cfg.GetReplace()); err != nil {
+			return err
+		}
+	default:
+		return grpcutils.InvalidArg("Invalid Guardrail Pattern action")
+	}
+
+	if isRewrite {
+		if isResponse {
+			return grpcutils.InvalidArg(
+				"A Guardrail that inspects the response can only use the DENY and the LOG Actions")
+		}
+		if hasToolDefinitions {
+			return grpcutils.InvalidArg(
+				"A Guardrail that inspects the tool definitions can only use the DENY and the LOG Actions")
+		}
+	}
+
+	if cfg.GetMinEntropyLength() > maxGuardrailEntropyLen {
+		return grpcutils.InvalidArg(
+			"Invalid Guardrail Pattern minEntropyLength value: %d", cfg.GetMinEntropyLength())
+	}
+
+	return nil
+}
+
+func (s *Server) validateGuardrailReplace(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace) error {
+	if cfg == nil || cfg.Type == nil {
+		return grpcutils.InvalidArg("The Guardrail Pattern replace is not set")
+	}
+
+	switch cfg.Type.(type) {
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Value:
+		if err := s.validateGenStr(cfg.GetValue(), false, "value"); err != nil {
+			return err
+		}
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Eval:
+		if err := checkCELExpressionString(ctx, cfg.GetEval()); err != nil {
+			return err
+		}
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Opa:
+		if err := checkOPAString(ctx, cfg.GetOpa()); err != nil {
+			return err
+		}
+	default:
+		return grpcutils.InvalidArg("Invalid Guardrail Pattern replace type")
 	}
 
 	return nil
@@ -1994,7 +2500,7 @@ func (s *Server) validateLLMModel(ctx context.Context,
 			}
 		}
 	case *corev1.Service_Spec_Config_LLM_Model_Eval:
-		if err := checkCELExpression(ctx, model.GetEval()); err != nil {
+		if err := checkCELExpressionString(ctx, model.GetEval()); err != nil {
 			return grpcutils.InvalidArg("Invalid eval: %s", model.GetEval())
 		}
 	}

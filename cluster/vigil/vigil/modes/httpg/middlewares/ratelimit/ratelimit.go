@@ -66,8 +66,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, plugin := range plugins {
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_:
+		switch {
+		case plugin.GetRateLimit() != nil:
 
 			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,
@@ -79,7 +79,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			rateLimit := plugin.GetRateLimit()
 
-			key := m.getKey(ctx, plugin.Name, rateLimit, reqCtx)
+			key := m.getKey(ctx, plugin.GetName(), rateLimit, reqCtx)
 			if key == "" {
 				continue
 			}

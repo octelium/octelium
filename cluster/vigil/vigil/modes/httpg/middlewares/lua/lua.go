@@ -101,8 +101,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	for _, plugin := range plugins {
 
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Lua_:
+		switch {
+		case plugin.GetLua() != nil:
 			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,
 				CELEngine: m.celEngine,
@@ -113,7 +113,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			fnProto, err := m.getLuaFnProto(plugin.GetLua())
 			if err != nil {
-				if m.isRejected(rw, plugin.Name, "compile", err) {
+				if m.isRejected(rw, plugin.GetName(), "compile", err) {
 					return
 				}
 				continue
@@ -124,10 +124,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				rw:         crw,
 				fnProto:    fnProto,
 				reqCtxMap:  reqCtxMap,
-				pluginName: plugin.Name,
+				pluginName: plugin.GetName(),
 			})
 			if err != nil {
-				if m.isRejected(rw, plugin.Name, "load", err) {
+				if m.isRejected(rw, plugin.GetName(), "load", err) {
 					return
 				}
 				continue
