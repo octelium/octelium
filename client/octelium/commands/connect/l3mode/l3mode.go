@@ -68,13 +68,18 @@ func isSupported(isV6 bool) (bool, error) {
 				continue
 			}
 			ip := ipNet.IP
-			if ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
-				ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			if ip.IsLoopback() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 				continue
 			}
-			if isV6 == (ip.To4() == nil) {
-				return true, nil
+			if isV6 != (ip.To4() == nil) {
+				continue
 			}
+
+			if !isV6 && ip.IsLinkLocalUnicast() {
+				continue
+			}
+
+			return true, nil
 		}
 	}
 
