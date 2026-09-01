@@ -60,12 +60,8 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	hasDownstreamInstructions, err := m.hasInstructions(reqCtx)
-	if err != nil {
-		zap.L().Warn("Could not read the LLM request instructions", zap.Error(err))
-		m.writeFailed(w, reqCtx)
-		return
-	}
+	var hasDownstreamInstructions bool
+	var isInstructionsRead bool
 
 	for _, plugin := range plugins {
 		cfg := plugin.GetPrompt()
@@ -85,6 +81,18 @@ func (m *prompt) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		if !isEnforced {
 			continue
+		}
+
+		if !isInstructionsRead {
+			ret, err := m.hasInstructions(reqCtx)
+			if err != nil {
+				zap.L().Warn("Could not read the LLM request instructions",
+					zap.Error(err))
+				m.writeFailed(w, reqCtx)
+				return
+			}
+			hasDownstreamInstructions = ret
+			isInstructionsRead = true
 		}
 
 		denied, err := m.apply(ctx, req, reqCtx, cfg, hasDownstreamInstructions)

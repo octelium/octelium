@@ -2340,22 +2340,11 @@ func (s *Server) validatePluginGuardrail(ctx context.Context,
 		return grpcutils.InvalidArg("Too many Guardrail Patterns")
 	}
 
-	var names []string
 	for _, pattern := range cfg.GetPatterns() {
 		if err := s.validateGuardrailPattern(ctx, pattern,
 			isResponse, hasToolDefinitions); err != nil {
 			return err
 		}
-
-		name := pattern.GetName()
-		if name == "" {
-			continue
-		}
-		if slices.Contains(names, name) {
-			return grpcutils.InvalidArg(
-				"This Guardrail Pattern name already exists: %s", name)
-		}
-		names = append(names, name)
 	}
 
 	return nil
@@ -2364,12 +2353,6 @@ func (s *Server) validatePluginGuardrail(ctx context.Context,
 func (s *Server) validateGuardrailPattern(ctx context.Context,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern,
 	isResponse, hasToolDefinitions bool) error {
-
-	if cfg.GetName() != "" {
-		if err := apivalidation.ValidateName(cfg.GetName(), 0, 0); err != nil {
-			return err
-		}
-	}
 
 	switch cfg.Match.(type) {
 	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex:
@@ -2411,8 +2394,7 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 	var isRewrite bool
 	switch cfg.GetAction() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_ACTION_UNSET,
-		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
-		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_LOG:
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY:
 		if cfg.GetReplace() != nil {
 			return grpcutils.InvalidArg(
 				"The Guardrail Pattern replace can only be set for the REPLACE Action")
@@ -2436,16 +2418,16 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 	if isRewrite {
 		if isResponse {
 			return grpcutils.InvalidArg(
-				"A Guardrail that inspects the response can only use the DENY and the LOG Actions")
+				"A Guardrail that inspects the response can only use the DENY Action")
 		}
 		if hasToolDefinitions {
 			return grpcutils.InvalidArg(
-				"A Guardrail that inspects the tool definitions can only use the DENY and the LOG Actions")
+				"A Guardrail that inspects the tool definitions can only use the DENY Action")
 		}
 		if cfg.GetType() ==
 			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_GCP_SERVICE_ACCOUNT_KEY {
 			return grpcutils.InvalidArg(
-				"The GCP_SERVICE_ACCOUNT_KEY detector matches the marker of a key rather than the key itself, so it can only use the DENY and the LOG Actions")
+				"The GCP_SERVICE_ACCOUNT_KEY detector matches the marker of a key rather than the key itself, so it can only use the DENY Action")
 		}
 	}
 

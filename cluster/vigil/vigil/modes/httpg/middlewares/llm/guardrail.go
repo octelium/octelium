@@ -68,7 +68,6 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var requestLeg []*activeGuardrail
 	var responseLeg []*activeGuardrail
 
 	for _, plugin := range plugins {
@@ -106,20 +105,16 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			replacements: make(map[int]string),
 		}
 
-		switch cfg.GetLeg() {
-		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE:
-			responseLeg = append(responseLeg, active)
-		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_BOTH:
-			requestLeg = append(requestLeg, active)
-			responseLeg = append(responseLeg, active)
-		default:
-			requestLeg = append(requestLeg, active)
+		if cfg.GetLeg() != corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE {
+			if !m.applyRequest(ctx, w, req, reqCtx, active) {
+				return
+			}
 		}
-	}
 
-	for _, active := range requestLeg {
-		if !m.applyRequest(ctx, w, req, reqCtx, active) {
-			return
+		switch cfg.GetLeg() {
+		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_BOTH:
+			responseLeg = append(responseLeg, active)
 		}
 	}
 

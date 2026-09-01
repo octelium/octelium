@@ -735,7 +735,6 @@ func TestGuardrailRewrite(t *testing.T) {
 				newGuardrailPlugin("pii",
 					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-						Name: "mail",
 						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
 							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
 						},
@@ -789,14 +788,12 @@ func TestGuardrailOverlappingSpans(t *testing.T) {
 			newGuardrailPlugin("ovl",
 				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Name: "short",
 					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
 						Regex: `abc`,
 					},
 					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP,
 				},
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Name: "long",
 					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
 						Regex: `abcdefgh`,
 					},
@@ -1077,29 +1074,6 @@ func TestPluginConditionError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, res.code)
 }
 
-func TestGuardrailLog(t *testing.T) {
-
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"a@b.com"}]}`
-
-	res := servePlugins(t, &pluginOpts{
-		body: body,
-		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
-			newGuardrailPlugin("obs",
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
-					},
-					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_LOG,
-				}),
-		},
-	})
-
-	assert.True(t, res.isNext)
-	msgs := res.upstream["messages"].([]any)
-	assert.Equal(t, "a@b.com", msgs[0].(map[string]any)["content"])
-}
-
 func TestGuardrailCompletionsPrompt(t *testing.T) {
 
 	{
@@ -1222,14 +1196,12 @@ func TestGuardrailOverlapPrecedence(t *testing.T) {
 			newGuardrailPlugin("ovl",
 				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Name: "wide",
 					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
 						Regex: `abcdefgh`,
 					},
 					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
 				},
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Name: "narrow",
 					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
 						Regex: `cde`,
 					},
@@ -1453,4 +1425,277 @@ func TestPluginObservesEarlierMutation(t *testing.T) {
 	msgs := res.upstream["messages"].([]any)
 	assert.Equal(t, "Bonjour", msgs[0].(map[string]any)["content"])
 	assert.Equal(t, "Bonjour", msgs[1].(map[string]any)["content"])
+}
+
+func TestGuardrailDetectorCandidateExhaustion(t *testing.T) {
+
+	newSSNGuardrail := func() []*corev1.Service_Spec_Config_LLM_Plugin {
+		return []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("ssn",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_US_SSN,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+				}),
+		}
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+			strings.Repeat("000000000 ", maxPatternFindings+1) + `123-45-6789"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body:    body,
+			plugins: newSSNGuardrail(),
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+			strings.Repeat("000000000 ", maxPatternFindings-1) + `123-45-6789"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body:    body,
+			plugins: newSSNGuardrail(),
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+			strings.Repeat("000000000 ", maxPatternFindings-1) + `ok"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body:    body,
+			plugins: newSSNGuardrail(),
+		})
+
+		assert.True(t, res.isNext)
+	}
+}
+
+func TestGuardrailSequentialConditions(t *testing.T) {
+
+	newSecond := func() *corev1.Service_Spec_Config_LLM_Plugin {
+		ret := newGuardrailPlugin("second",
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+			&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+					Regex: `Bonjour`,
+				},
+				Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+			})
+		ret.Condition = &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.llm.http.bodyMap.messages[0].content == "Bonjour"`,
+			},
+		}
+		return ret
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("first",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+							Regex: `Hello`,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE,
+						Replace: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace{
+							Type: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Value{
+								Value: "Bonjour",
+							},
+						},
+					}),
+				newSecond(),
+			},
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecond(),
+			},
+		})
+
+		assert.True(t, res.isNext)
+	}
+}
+
+func TestGuardrailAdjacentSpans(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"abcdef"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("adj",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+						Regex: `abc`,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				},
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+						Regex: `def`,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, "[REDACTED]",
+		res.upstream["messages"].([]any)[0].(map[string]any)["content"])
+}
+
+func TestGuardrailTruncatedPrivateKey(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+		`"here it is -----BEGIN RSA PRIVATE KEY-----\nMIIB0BEEF\n"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("key",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
+	assert.Equal(t, "here it is [REDACTED:PRIVATE_KEY]", content)
+	assert.NotContains(t, content, "MIIB0BEEF")
+}
+
+func TestPromptDoesNotParseWhenItCannotRun(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":{"role":"user"}}`
+
+	plugin := newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+		Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+			System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+				Content: newContentValue("You are a Service"),
+			},
+		},
+	})
+	plugin.IsDisabled = true
+
+	res := servePlugins(t, &pluginOpts{
+		body:    body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, map[string]any{"role": "user"}, res.upstream["messages"])
+}
+
+func TestGuardrailToolResultScope(t *testing.T) {
+
+	newAWSGuardrail := func(
+		scope corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Scope,
+	) *corev1.Service_Spec_Config_LLM_Plugin {
+		ret := newGuardrailPlugin("aws",
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+			&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+					Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+				},
+				Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+			})
+		ret.GetGuardrail().Scopes =
+			[]corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Scope{scope}
+		return ret
+	}
+
+	serve := func(body string,
+		scope corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Scope) *pluginResult {
+		return servePlugins(t, &pluginOpts{
+			protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			path:     "/v1/messages",
+			body:     body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newAWSGuardrail(scope),
+			},
+		})
+	}
+
+	toolResultBody := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":[` +
+		`{"type":"advisor_tool_result","content":[` +
+		`{"type":"text","text":"AKIAIOSFODNN7EXAMPLE"}]}]}]}`
+
+	toolUseBody := `{"model":"claude-sonnet-4","messages":[{"role":"assistant","content":[` +
+		`{"type":"server_tool_use","input":{"query":"AKIAIOSFODNN7EXAMPLE"}}]}]}`
+
+	{
+		res := serve(toolResultBody,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS)
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		res := serve(toolUseBody,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS)
+
+		assert.True(t, res.isNext)
+	}
+
+	{
+		res := serve(toolUseBody,
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT)
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+}
+
+func TestGuardrailTrailingTruncatedPrivateKey(t *testing.T) {
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+		`"-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY----- and ` +
+		`-----BEGIN EC PRIVATE KEY-----\nMIIB0BEEF\n"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("key",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
+	assert.Equal(t, "[REDACTED:PRIVATE_KEY] and [REDACTED:PRIVATE_KEY]", content)
+	assert.NotContains(t, content, "MIIB0BEEF")
 }

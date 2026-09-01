@@ -18,6 +18,7 @@ package llm
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
@@ -823,11 +824,9 @@ func scopeOfBlock(
 		return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT
 	}
 
-	switch typ {
-	case "tool_result", "function_call_output", "mcp_tool_result",
-		"web_search_tool_result", "code_execution_tool_result",
-		"bash_code_execution_tool_result", "text_editor_code_execution_tool_result",
-		"mcp_tool_use", "server_tool_use", "search_result":
+	switch {
+	case typ == "tool_result" || typ == "function_call_output" ||
+		typ == "search_result" || strings.HasSuffix(typ, "_tool_result"):
 		return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_TOOL_RESULTS
 	default:
 		return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT

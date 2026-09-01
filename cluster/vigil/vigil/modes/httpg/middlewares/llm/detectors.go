@@ -48,42 +48,56 @@ type detectorMatch struct {
 }
 
 func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type,
-	text string, minEntropyLength uint32, maxFindings int) []detectorMatch {
+	text string, minEntropyLength uint32, maxFindings int) ([]detectorMatch, bool) {
 
 	name := detectorName(typ)
 
-	simple := func(rgx *regexp.Regexp) []detectorMatch {
+	find := func(rgx *regexp.Regexp) ([][]int, bool) {
+		locs := rgx.FindAllStringIndex(text, maxFindings+1)
+		return locs, len(locs) > maxFindings
+	}
+
+	findSubmatch := func(rgx *regexp.Regexp) ([][]int, bool) {
+		locs := rgx.FindAllStringSubmatchIndex(text, maxFindings+1)
+		return locs, len(locs) > maxFindings
+	}
+
+	simple := func(rgx *regexp.Regexp) ([]detectorMatch, bool) {
+		locs, isExhausted := find(rgx)
 		var ret []detectorMatch
-		for _, loc := range rgx.FindAllStringIndex(text, maxFindings) {
+		for _, loc := range locs {
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
-		return ret
+		return ret, isExhausted
 	}
 
 	switch typ {
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL:
 		return simple(rgxEmail)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_CREDIT_CARD:
+		locs, isExhausted := find(rgxCreditCard)
 		var ret []detectorMatch
-		for _, loc := range rgxCreditCard.FindAllStringIndex(text, maxFindings) {
+		for _, loc := range locs {
 			if !isLuhnValid(text[loc[0]:loc[1]]) {
 				continue
 			}
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
-		return ret
+		return ret, isExhausted
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_IBAN:
+		locs, isExhausted := find(rgxIBAN)
 		var ret []detectorMatch
-		for _, loc := range rgxIBAN.FindAllStringIndex(text, maxFindings) {
+		for _, loc := range locs {
 			if !isIBANValid(text[loc[0]:loc[1]]) {
 				continue
 			}
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
-		return ret
+		return ret, isExhausted
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_US_SSN:
+		locs, isExhausted := findSubmatch(rgxUSSSNPlain)
 		var ret []detectorMatch
-		for _, loc := range rgxUSSSNPlain.FindAllStringSubmatchIndex(text, maxFindings) {
+		for _, loc := range locs {
 			area := text[loc[2]:loc[3]]
 			group := text[loc[4]:loc[5]]
 			serial := text[loc[6]:loc[7]]
@@ -93,17 +107,25 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 			}
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
-		return ret
+		return ret, isExhausted
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY:
 		return simple(rgxAWSKey)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_GCP_SERVICE_ACCOUNT_KEY:
 		return simple(rgxGCPKey)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY:
-		ret := simple(rgxPrivateKey)
-		if len(ret) > 0 {
-			return ret
+		ret, isExhausted := simple(rgxPrivateKey)
+		if isExhausted {
+			return ret, true
 		}
-		return simple(rgxPrivateKeyBegin)
+		var tail int
+		if len(ret) > 0 {
+			tail = ret[len(ret)-1].end
+		}
+		if loc := rgxPrivateKeyBegin.FindStringIndex(text[tail:]); loc != nil {
+			ret = append(ret, detectorMatch{
+				name: name, start: tail + loc[0], end: len(text)})
+		}
+		return ret, false
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_JWT:
 		return simple(rgxJWT)
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_HIGH_ENTROPY:
@@ -111,8 +133,9 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 		if minLen == 0 {
 			minLen = defaultMinEntropyLength
 		}
+		locs, isExhausted := find(rgxEntropy)
 		var ret []detectorMatch
-		for _, loc := range rgxEntropy.FindAllStringIndex(text, maxFindings) {
+		for _, loc := range locs {
 			candidate := text[loc[0]:loc[1]]
 			if len(candidate) < minLen {
 				continue
@@ -122,9 +145,9 @@ func runDetector(typ corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Typ
 			}
 			ret = append(ret, detectorMatch{name: name, start: loc[0], end: loc[1]})
 		}
-		return ret
+		return ret, isExhausted
 	default:
-		return nil
+		return nil, false
 	}
 }
 

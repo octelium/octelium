@@ -108,24 +108,20 @@ func newPatternSet(
 
 	for i, conf := range cfg.GetPatterns() {
 		rule := &patternRule{
-			cfg:  conf,
-			idx:  i,
-			name: conf.GetName(),
+			cfg: conf,
+			idx: i,
 		}
 
 		switch conf.Match.(type) {
 		case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex:
 			rgx, err := compileRegex(conf.GetRegex())
 			if err != nil {
-				return nil, errors.Errorf("Could not compile the Guardrail Pattern %q",
-					conf.GetName())
+				return nil, errors.Errorf("Could not compile the Guardrail Pattern %d", i)
 			}
 			rule.rgx = rgx
 		case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_:
 			rule.typ = conf.GetType()
-			if rule.name == "" {
-				rule.name = detectorName(conf.GetType())
-			}
+			rule.name = detectorName(conf.GetType())
 		default:
 			return nil, errors.Errorf("The Guardrail Pattern match is not set")
 		}
@@ -158,8 +154,13 @@ func (p *patternSet) inspect(text string) ([]*finding, error) {
 				count++
 			}
 		} else {
-			for _, m := range runDetector(rule.typ, text,
-				rule.cfg.GetMinEntropyLength(), maxPatternFindings+1) {
+			matches, isExhausted := runDetector(rule.typ, text,
+				rule.cfg.GetMinEntropyLength(), maxPatternFindings)
+			if isExhausted {
+				return nil, errors.Errorf(
+					"The Guardrail Pattern %d matched too many times", rule.idx)
+			}
+			for _, m := range matches {
 				ret = append(ret, &finding{rule: rule, start: m.start, end: m.end})
 				count++
 			}
@@ -167,7 +168,7 @@ func (p *patternSet) inspect(text string) ([]*finding, error) {
 
 		if count > maxPatternFindings {
 			return nil, errors.Errorf(
-				"The Guardrail Pattern %q matched too many times", rule.name)
+				"The Guardrail Pattern %d matched too many times", rule.idx)
 		}
 	}
 
@@ -220,7 +221,7 @@ func rewrite(text string, findings []*finding,
 		}
 
 		cur := merged[len(merged)-1]
-		if f.start > cur.end {
+		if f.start >= cur.end {
 			merged = append(merged, &finding{rule: f.rule, start: f.start, end: f.end})
 			continue
 		}
@@ -233,11 +234,12 @@ func rewrite(text string, findings []*finding,
 		}
 	}
 
-	var projected int
+	projected := len(text)
 	for _, f := range merged {
-		projected = projected + len(findingReplacement(f, replacements))
+		projected = projected - (f.end - f.start) +
+			len(findingReplacement(f, replacements))
 	}
-	if len(text)+projected > maxMutatedRequestBytes {
+	if projected > maxMutatedRequestBytes {
 		return "", 0, errors.Errorf("The rewritten content is too large")
 	}
 
