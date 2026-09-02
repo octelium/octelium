@@ -35,7 +35,6 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/common"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
-	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/jsonschemautils"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
@@ -1289,6 +1288,10 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return 22
 		}
 
+		if l.Spec.Mode == corev1.Service_Spec_RDP_WEB {
+			return 8080
+		}
+
 		if l.IsManagedService() {
 			return 8080
 		}
@@ -1324,6 +1327,8 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 			return 3306
 		case corev1.Service_Spec_SOCKS5:
 			return 1080
+		case corev1.Service_Spec_RDP:
+			return 3389
 		default:
 			return 0
 		}
@@ -1351,23 +1356,8 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 		svc.Status.RegionRef = umetav1.GetObjectReference(rgn)
 	}
 
-	if svc.Spec.Mode == corev1.Service_Spec_RDP_WEB {
-		svc.Status.ManagedService = &corev1.Service_Status_ManagedService{
-			Image:              oc.GetImage(oc.WRRDPGW, ""),
-			Type:               "wrdpgw",
-			ReadOnlyFileSystem: true,
-			HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
-				Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
-					Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{
-						Port: vutils.HealthCheckPortManagedService,
-					},
-				},
-			},
-		}
-	} else {
-		if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
-			svc.Status.ManagedService = nil
-		}
+	if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
+		svc.Status.ManagedService = nil
 	}
 
 	return nil

@@ -14,11 +14,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -27,7 +28,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,14 +37,23 @@ import (
 	"github.com/coder/websocket"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
-	"github.com/octelium/octelium/cluster/common/commoninit"
-	"github.com/octelium/octelium/cluster/common/healthcheck"
+	"github.com/octelium/octelium/cluster/common/ocrypto"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
-	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/accesslog"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/auth"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/compress"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/metrics"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/preauth"
+	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -64,18 +73,26 @@ const (
 	maxMessageSize    = 64 * 1024 * 1024
 )
 
-type server struct {
-	octeliumC octeliumc.ClientInterface
-	svcUID    string
+type Server struct {
+	octeliumC  octeliumc.ClientInterface
+	octovigilC *octovigilc.Client
 
 	vCache    *vcache.Cache
 	lbManager *loadbalancer.LBManager
 
+	lis     net.Listener
 	httpSrv *http.Server
 
 	mu        sync.Mutex
 	isClosed  bool
 	secretMan *secretman.SecretManager
+
+	crtMan struct {
+		mu  sync.RWMutex
+		crt *corev1.Secret
+	}
+	metricsStore *metricutils.CommonMetrics
+	domain       string
 }
 
 type templateGlobals struct {
@@ -88,66 +105,74 @@ var indexTmpl = template.Must(template.New("state").Parse(
 	`<script nonce="{{ .Nonce }}">window.__OCTELIUM_RDP_WEB__ = {{ .Globals }}</script>`,
 ))
 
-func newServer(ctx context.Context, octeliumC octeliumc.ClientInterface, svc *corev1.Service) (*server, error) {
-	var err error
-
-	ret := &server{
-		octeliumC: octeliumC,
-		svcUID:    svc.Metadata.Uid,
+func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
+	ret := &Server{
+		octeliumC:  opts.OcteliumC,
+		octovigilC: opts.OctovigilC,
+		vCache:     opts.VCache,
+		lbManager:  opts.LBManager,
+		secretMan:  opts.SecretMan,
 	}
 
-	ret.vCache, err = vcache.NewCache(ctx)
+	var err error
+	ret.metricsStore, err = metricutils.NewCommonMetrics(ctx, opts.VCache.GetService())
 	if err != nil {
 		return nil, err
 	}
 
-	ret.vCache.SetService(svc)
-	ret.lbManager = loadbalancer.NewLbManager(octeliumC, ret.vCache)
+	cc, err := ret.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ret.domain = cc.Status.Domain
 
-	ret.httpSrv = &http.Server{
-		Handler:           ret.getMux(),
-		Addr:              vutils.ManagedServiceAddr,
+	return ret, nil
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	svc := s.vCache.GetService()
+	addr := fmt.Sprintf(":%d", ucorev1.ToService(svc).RealPort())
+
+	handler, err := s.getHTTPHandler(ctx)
+	if err != nil {
+		return err
+	}
+
+	if svc.Spec.IsTLS {
+		tlsCfg, err := s.getTLSConfig(ctx)
+		if err != nil {
+			return err
+		}
+		s.lis, err = tls.Listen("tcp", addr, tlsCfg)
+	} else {
+		s.lis, err = net.Listen("tcp", addr)
+	}
+	if err != nil {
+		return err
+	}
+
+	s.httpSrv = &http.Server{
+		Handler:           handler,
+		Addr:              addr,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
-	ret.secretMan, err = secretman.New(ctx, octeliumC, ret.vCache)
-	if err != nil {
-		return nil, err
-	}
-
-	return ret, nil
-}
-
-func (s *server) run(ctx context.Context) error {
-	if err := s.lbManager.Run(ctx); err != nil {
-		return err
-	}
-
-	if err := s.secretMan.ApplyService(ctx); err != nil {
-		return err
-	}
-
-	watcher := watchers.NewCoreV1(s.octeliumC)
-	if err := watcher.Service(ctx, nil, s.onServiceAdd, s.onServiceUpdate, s.onServiceDelete); err != nil {
-		return err
-	}
-
 	go func() {
-		zap.L().Info("wrdpgw is running",
-			zap.String("addr", vutils.ManagedServiceAddr),
+		zap.L().Info("webrdp is running",
+			zap.String("addr", addr),
 			zap.String("webSocketPath", webSocketPath))
 
-		if err := s.httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			zap.L().Error("wrdpgw HTTP server exited", zap.Error(err))
+		if err := s.httpSrv.Serve(s.lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			zap.L().Error("webrdp HTTP server exited", zap.Error(err))
 		}
 	}()
 
 	return nil
 }
 
-func (s *server) close() error {
+func (s *Server) Close() error {
 	s.mu.Lock()
 	if s.isClosed {
 		s.mu.Unlock()
@@ -155,6 +180,9 @@ func (s *server) close() error {
 	}
 	s.isClosed = true
 	s.mu.Unlock()
+	if s.httpSrv == nil {
+		return nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -164,37 +192,85 @@ func (s *server) close() error {
 		return err
 	}
 
-	zap.L().Debug("wrdpgw closed")
+	zap.L().Debug("webrdp closed")
 	return nil
 }
 
-func (s *server) onServiceAdd(ctx context.Context, svc *corev1.Service) error {
-	if svc.Metadata.Uid != s.svcUID {
-		return nil
-	}
-
-	zap.L().Debug("wrdpgw onServiceAdd", zap.Any("svc", svc))
-
-	s.vCache.SetService(svc)
-	return s.secretMan.ApplyService(ctx)
-}
-
-func (s *server) onServiceUpdate(ctx context.Context, new, old *corev1.Service) error {
-	if new.Metadata.Uid != s.svcUID {
-		return nil
-	}
-
-	zap.L().Debug("wrdpgw onServiceUpdate", zap.Any("new", new), zap.Any("old", old))
-
-	s.vCache.SetService(new)
-	return s.secretMan.ApplyService(ctx)
-}
-
-func (s *server) onServiceDelete(ctx context.Context, svc *corev1.Service) error {
+func (s *Server) SetClusterCertificate(crt *corev1.Secret) error {
+	s.crtMan.mu.Lock()
+	defer s.crtMan.mu.Unlock()
+	s.crtMan.crt = crt
 	return nil
 }
 
-func (s *server) getMux() *http.ServeMux {
+func (s *Server) getTLSConfig(ctx context.Context) (*tls.Config, error) {
+	crt, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: vutils.ClusterCertSecretName})
+	if err != nil && !grpcerr.IsNotFound(err) {
+		return nil, err
+	}
+
+	s.crtMan.mu.Lock()
+	s.crtMan.crt = crt
+	s.crtMan.mu.Unlock()
+
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		MaxVersion: tls.VersionTLS13,
+		NextProtos: []string{"http/1.1"},
+		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			s.crtMan.mu.RLock()
+			defer s.crtMan.mu.RUnlock()
+			return ocrypto.GetTLSCertificate(s.crtMan.crt)
+		},
+	}, nil
+}
+
+func (s *Server) getHTTPHandler(ctx context.Context) (http.Handler, error) {
+	chain := middlewares.New()
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			svc := s.vCache.GetService()
+			reqCtx := &middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+			}
+
+			ctx := context.WithValue(r.Context(), middlewares.CtxRequestContext, reqCtx)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		}), nil
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return metrics.New(ctx, next, s.metricsStore, nil)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return preauth.New(ctx, next, s.octeliumC, s.domain)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return compress.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return accesslog.New(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return auth.New(ctx, next, s.octeliumC, s.octovigilC, s.domain)
+	})
+
+	handler, err := chain.Then(s.getMux())
+	if err != nil {
+		return nil, err
+	}
+
+	return http.AllowQuerySemicolons(handler), nil
+}
+
+func (s *Server) getMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc(fmt.Sprintf("GET %s", webSocketPath), s.handleWebSocket)
@@ -210,10 +286,10 @@ func (s *server) getMux() *http.ServeMux {
 	return mux
 }
 
-func (s *server) handleStatic() http.Handler {
+func (s *Server) handleStatic() http.Handler {
 	subFS, err := fs.Sub(fsWeb, "web")
 	if err != nil {
-		zap.L().Fatal("Could not initialize wrdpgw static fs", zap.Error(err))
+		zap.L().Fatal("Could not initialize webrdp static fs", zap.Error(err))
 	}
 
 	fileServer := http.FileServer(http.FS(subFS))
@@ -224,30 +300,30 @@ func (s *server) handleStatic() http.Handler {
 	})
 }
 
-func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.renderIndex(w)
 }
 
-func (s *server) renderIndex(w http.ResponseWriter) {
+func (s *Server) renderIndex(w http.ResponseWriter) {
 	nonce := utilrand.GetRandomStringCanonical(24)
 
 	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
 	if err != nil {
-		zap.L().Error("Could not read wrdpgw index.html", zap.Error(err))
+		zap.L().Error("Could not read webrdp index.html", zap.Error(err))
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(blob))
 	if err != nil {
-		zap.L().Error("Could not parse wrdpgw index.html", zap.Error(err))
+		zap.L().Error("Could not parse webrdp index.html", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	globalsJSON, err := json.Marshal(s.buildTemplateGlobals())
 	if err != nil {
-		zap.L().Error("Could not marshal wrdpgw globals", zap.Error(err))
+		zap.L().Error("Could not marshal webrdp globals", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -260,14 +336,14 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 		Nonce:   nonce,
 		Globals: template.JS(globalsJSON),
 	}); err != nil {
-		zap.L().Error("Could not execute wrdpgw index template", zap.Error(err))
+		zap.L().Error("Could not execute webrdp index template", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	head := doc.Find("head").First()
 	if head.Length() == 0 {
-		zap.L().Error("No <head> in wrdpgw index.html")
+		zap.L().Error("No <head> in webrdp index.html")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +361,7 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 	var out bytes.Buffer
 	out.WriteString("<!DOCTYPE html>")
 	if err := goquery.Render(&out, head.Parent()); err != nil {
-		zap.L().Error("Could not render wrdpgw index.html", zap.Error(err))
+		zap.L().Error("Could not render webrdp index.html", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -294,14 +370,14 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 	w.Write(out.Bytes())
 }
 
-func (s *server) buildTemplateGlobals() *templateGlobals {
+func (s *Server) buildTemplateGlobals() *templateGlobals {
 	ret := &templateGlobals{
 		WebSocketPath: webSocketPath,
 	}
 
 	cred, err := s.getInjectedCredential(context.Background())
 	if err != nil {
-		zap.L().Debug("Could not resolve wrdpgw injected credential for globals", zap.Error(err))
+		zap.L().Debug("Could not resolve webrdp injected credential for globals", zap.Error(err))
 		return ret
 	}
 
@@ -309,7 +385,7 @@ func (s *server) buildTemplateGlobals() *templateGlobals {
 	return ret
 }
 
-func (s *server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
+func (s *Server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
 	csp := strings.Join([]string{
 		"default-src 'none'",
 		fmt.Sprintf("script-src 'self' 'nonce-%s' 'wasm-unsafe-eval'", nonce),
@@ -335,15 +411,15 @@ func (s *server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 }
 
-func (s *server) setStaticHeaders(w http.ResponseWriter) {
+func (s *Server) setStaticHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 }
 
-func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
-	zap.L().Debug("wrdpgw websocket connection attempt",
+	zap.L().Debug("webrdp websocket connection attempt",
 		zap.String("remoteAddr", r.RemoteAddr),
 		zap.String("requestURI", r.RequestURI),
 		zap.String("method", r.Method),
@@ -355,7 +431,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		zap.L().Debug("Could not accept wrdpgw websocket", zap.Error(err))
+		zap.L().Debug("Could not accept webrdp websocket", zap.Error(err))
 		return
 	}
 	defer ws.CloseNow()
@@ -366,7 +442,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	msgType, reqBytes, err := ws.Read(ctx)
 	if err != nil {
-		zap.L().Debug("Could not read wrdpgw RDCleanPath request", zap.Error(err))
+		zap.L().Debug("Could not read webrdp RDCleanPath request", zap.Error(err))
 		return
 	}
 
@@ -391,7 +467,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	cred, err := s.getInjectedCredential(ctx)
 	if err != nil {
-		zap.L().Debug("Could not resolve wrdpgw injected credential", zap.Error(err))
+		zap.L().Debug("Could not resolve webrdp injected credential", zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
 		ws.Close(websocket.StatusInternalError, "could not resolve injected credential")
 		return
@@ -399,7 +475,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	trust, err := s.getUpstreamTLSTrust()
 	if err != nil {
-		zap.L().Debug("Could not resolve wrdpgw upstream TLS trust", zap.Error(err))
+		zap.L().Debug("Could not resolve webrdp upstream TLS trust", zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
 		ws.Close(websocket.StatusInternalError, "could not resolve upstream TLS trust")
 		return
@@ -407,7 +483,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	upstream, err := s.getUpstream(ctx)
 	if err != nil {
-		zap.L().Debug("Could not get wrdpgw upstream",
+		zap.L().Debug("Could not get webrdp upstream",
 			zap.String("requestedDestination", rdcpReq.Destination),
 			zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathHTTPError(http.StatusBadGateway))
@@ -486,7 +562,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	wsConn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	defer wsConn.Close()
 
-	zap.L().Debug("wrdpgw session started",
+	zap.L().Debug("webrdp session started",
 		zap.String("remoteAddr", r.RemoteAddr),
 		zap.String("requestedDestination", rdcpReq.Destination),
 		zap.String("upstream", upstream.HostPort),
@@ -499,7 +575,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	recvBytes, sentBytes := relay(ctx, wsConn, handshake.TLSConn, rewriteSelectedProtocol)
 
-	zap.L().Debug("wrdpgw session ended",
+	zap.L().Debug("webrdp session ended",
 		zap.String("remoteAddr", r.RemoteAddr),
 		zap.String("requestedDestination", rdcpReq.Destination),
 		zap.String("upstream", upstream.HostPort),
@@ -520,7 +596,7 @@ func writeRDCleanPathError(ctx context.Context, ws *websocket.Conn, pdu []byte) 
 	}
 }
 
-func (s *server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error) {
+func (s *Server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error) {
 	svc := s.vCache.GetService()
 	if svc == nil {
 		return nil, errors.Errorf("could not get Service from vcache")
@@ -532,7 +608,7 @@ func (s *server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error
 	}
 
 	if upstream == nil || upstream.HostPort == "" {
-		return nil, errors.Errorf("empty wrdpgw upstream")
+		return nil, errors.Errorf("empty webrdp upstream")
 	}
 
 	return upstream, nil
@@ -554,7 +630,7 @@ func (r *firstChunkLogger) Read(p []byte) (int, error) {
 	n, err := r.src.Read(p)
 	if n > 0 && !r.logged {
 		r.logged = true
-		zap.L().Debug("wrdpgw relay first chunk",
+		zap.L().Debug("webrdp relay first chunk",
 			zap.String("direction", r.direction),
 			zap.Int("length", n),
 			zap.String("hex", fmt.Sprintf("%x", p[:n])))
@@ -613,14 +689,14 @@ func rewriteMCSSelectedProtocol(buf []byte, target uint32) {
 		buf[fieldAt+2] = byte(target >> 16)
 		buf[fieldAt+3] = byte(target >> 24)
 
-		zap.L().Debug("wrdpgw rewrote MCS serverSelectedProtocol",
+		zap.L().Debug("webrdp rewrote MCS serverSelectedProtocol",
 			zap.Int("offset", fieldAt),
 			zap.Uint32("from", current),
 			zap.Uint32("to", target))
 		return
 	}
 
-	zap.L().Debug("wrdpgw did not find MCS CS_CORE to rewrite serverSelectedProtocol")
+	zap.L().Debug("webrdp did not find MCS CS_CORE to rewrite serverSelectedProtocol")
 }
 
 func relay(ctx context.Context, downstream net.Conn, upstream net.Conn, rewriteSelectedProtocol uint32) (uint64, uint64) {
@@ -641,7 +717,7 @@ func relay(ctx context.Context, downstream net.Conn, upstream net.Conn, rewriteS
 	first := <-resCh
 
 	if !isExpectedNetErr(first.err) {
-		zap.L().Debug("wrdpgw relay copy ended with error",
+		zap.L().Debug("webrdp relay copy ended with error",
 			zap.String("direction", first.direction),
 			zap.Error(first.err))
 	}
@@ -654,11 +730,11 @@ func relay(ctx context.Context, downstream net.Conn, upstream net.Conn, rewriteS
 	case second = <-resCh:
 	case <-ctx.Done():
 	case <-time.After(2 * time.Second):
-		zap.L().Debug("Timed out waiting for wrdpgw relay copy shutdown")
+		zap.L().Debug("Timed out waiting for webrdp relay copy shutdown")
 	}
 
 	if !isExpectedNetErr(second.err) {
-		zap.L().Debug("wrdpgw relay copy ended with error",
+		zap.L().Debug("webrdp relay copy ended with error",
 			zap.String("direction", second.direction),
 			zap.Error(second.err))
 	}
@@ -683,7 +759,7 @@ func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.R
 
 	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 		if closeErr := cw.CloseWrite(); closeErr != nil && !isExpectedNetErr(closeErr) {
-			zap.L().Debug("Could not CloseWrite in wrdpgw relay",
+			zap.L().Debug("Could not CloseWrite in webrdp relay",
 				zap.String("direction", direction),
 				zap.Error(closeErr))
 		}
@@ -721,39 +797,4 @@ func isExpectedNetErr(err error) bool {
 	return strings.Contains(msg, "use of closed network connection") ||
 		strings.Contains(msg, "connection reset by peer") ||
 		strings.Contains(msg, "broken pipe")
-}
-
-func Run(ctx context.Context) error {
-	octeliumC, err := octeliumc.NewClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	if err := commoninit.Run(ctx, nil); err != nil {
-		return err
-	}
-
-	svc, err := octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
-		Uid: os.Getenv("OCTELIUM_SVC_UID"),
-	})
-	if err != nil {
-		return err
-	}
-
-	s, err := newServer(ctx, octeliumC, svc)
-	if err != nil {
-		return err
-	}
-
-	if err := s.run(ctx); err != nil {
-		return err
-	}
-
-	healthcheck.Run(vutils.HealthCheckPortManagedService)
-
-	zap.L().Info("wrdpgw is running", zap.String("svc", svc.Metadata.Name))
-
-	<-ctx.Done()
-
-	return s.close()
 }

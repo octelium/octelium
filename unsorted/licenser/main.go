@@ -44,7 +44,6 @@ func doMain(ctx context.Context) error {
 		"portal",
 		"rscserver",
 		"vigil",
-		"wrdpgw",
 	}
 
 	clientComponents := []string{

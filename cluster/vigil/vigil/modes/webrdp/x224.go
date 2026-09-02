@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import (
 	"encoding/binary"

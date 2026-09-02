@@ -4,13 +4,13 @@
 # it under the terms of the GNU Affero General Public License version 3.
 
 [package]
-name = "wrdpgw_credssp"
+name = "webrdp_credssp"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-name = "wrdpgw_credssp"
+name = "webrdp_credssp"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]

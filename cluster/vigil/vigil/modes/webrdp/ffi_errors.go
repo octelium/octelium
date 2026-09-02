@@ -14,12 +14,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import "github.com/pkg/errors"
 
 var (
-	errCredsspUnavailable = errors.New("wrdpgw secretless RDP requires cgo and the wrdpgw_credssp build tag")
+	errCredsspUnavailable = errors.New("webrdp secretless RDP requires cgo and the webrdp_credssp build tag")
 	errCredsspKDCRequired = errors.New("CredSSP requires Kerberos KDC access")
 	errCredsspAuthFailed  = errors.New("CredSSP authentication failed")
 )

@@ -43,10 +43,12 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/mysql"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/postgres"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/rdp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/socks5"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/ssh"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/tcp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/udp"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/webrdp"
 )
 
 type Server struct {
@@ -173,6 +175,9 @@ func (s *Server) createServer(ctx context.Context) error {
 	case corev1.Service_Spec_TCP, corev1.Service_Spec_MODE_UNSET:
 		zap.L().Debug("Starting in TCP mode")
 		s.server, err = tcp.New(ctx, opts)
+	case corev1.Service_Spec_RDP:
+		zap.L().Debug("Starting in RDP mode")
+		s.server, err = rdp.New(ctx, opts)
 	case corev1.Service_Spec_DNS:
 		zap.L().Debug("Starting in DNS mode")
 		s.server, err = dns.New(ctx, opts)
@@ -180,11 +185,13 @@ func (s *Server) createServer(ctx context.Context) error {
 		corev1.Service_Spec_KUBERNETES,
 		corev1.Service_Spec_GRPC,
 		corev1.Service_Spec_WEB,
-		corev1.Service_Spec_RDP_WEB,
 		corev1.Service_Spec_MCP,
 		corev1.Service_Spec_LLM:
 		zap.L().Debug("Starting in HTTP mode", zap.String("mode", mode.String()))
 		s.server, err = httpg.New(ctx, opts)
+	case corev1.Service_Spec_RDP_WEB:
+		zap.L().Debug("Starting in Web RDP mode")
+		s.server, err = webrdp.New(ctx, opts)
 	case corev1.Service_Spec_POSTGRES:
 		zap.L().Debug("Starting in Postgres mode", zap.String("mode", mode.String()))
 		s.server, err = postgres.New(ctx, opts)

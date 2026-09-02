@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import (
 	"context"
@@ -95,10 +95,10 @@ func performRDPHandshake(ctx context.Context, p *rdpHandshakeParams) (*rdpHandsh
 
 	if tcpConn, ok := rawConn.(*net.TCPConn); ok {
 		if err := tcpConn.SetKeepAlive(true); err != nil {
-			zap.L().Debug("Could not enable wrdpgw TCP keepalive", zap.Error(err))
+			zap.L().Debug("Could not enable webrdp TCP keepalive", zap.Error(err))
 		}
 		if err := tcpConn.SetKeepAlivePeriod(30 * time.Second); err != nil {
-			zap.L().Debug("Could not set wrdpgw TCP keepalive period", zap.Error(err))
+			zap.L().Debug("Could not set webrdp TCP keepalive period", zap.Error(err))
 		}
 	}
 

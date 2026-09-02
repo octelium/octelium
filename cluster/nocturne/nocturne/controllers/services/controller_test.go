@@ -21,6 +21,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -59,6 +60,18 @@ func TestController(t *testing.T) {
 
 	err = c.OnAdd(ctx, svcV)
 	assert.Nil(t, err)
+
+	rdpReq := tests.GenService(netw.Metadata.Name)
+	rdpReq.Spec.Mode = corev1.Service_Spec_RDP_WEB
+	rdpReq.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
+		Url: "rdp://localhost",
+	}
+	rdpSvc, err := adminSrv.CreateService(ctx, rdpReq)
+	assert.Nil(t, err)
+
+	rdpPodSpec := c.newPodSpec(rdpSvc)
+	assert.Equal(t, 1, len(rdpPodSpec.Containers))
+	assert.Equal(t, "vigil", rdpPodSpec.Containers[0].Name)
 
 	err = c.OnDelete(ctx, svcV)
 	assert.Nil(t, err)

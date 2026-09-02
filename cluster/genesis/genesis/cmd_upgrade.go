@@ -23,7 +23,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
-	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -116,8 +115,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		}
 
 		for _, svc := range svcList.Items {
-			if svc.Status.ManagedService != nil {
-				svc.Status.ManagedService.Image = oc.GetImage(oc.WRRDPGW, "")
+			if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
+				svc.Status.ManagedService = nil
 				if _, err := g.octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
 					zap.L().Warn("Could not updateService", zap.Any("svc", svc), zap.Error(err))
 				}

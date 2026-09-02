@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (s *server) getInjectedCredential(ctx context.Context) (*injectedCredential, error) {
+func (s *Server) getInjectedCredential(ctx context.Context) (*injectedCredential, error) {
 	svc := s.vCache.GetService()
 	if svc == nil {
 		return nil, errors.Errorf("could not get Service from vcache")
@@ -70,7 +70,7 @@ func (s *server) getInjectedCredential(ctx context.Context) (*injectedCredential
 	}, nil
 }
 
-func (s *server) getUpstreamTLSTrust() (*tlsTrustPolicy, error) {
+func (s *Server) getUpstreamTLSTrust() (*tlsTrustPolicy, error) {
 	svc := s.vCache.GetService()
 	if svc == nil {
 		return nil, errors.Errorf("could not get Service from vcache")
@@ -88,7 +88,7 @@ func (s *server) getUpstreamTLSTrust() (*tlsTrustPolicy, error) {
 
 	upstreamTLS := rdp.GetUpstreamTLS()
 	if upstreamTLS == nil {
-		zap.L().Warn("wrdpgw upstream TLS trust is not configured, accepting any upstream certificate")
+		zap.L().Warn("webrdp upstream TLS trust is not configured, accepting any upstream certificate")
 		return &tlsTrustPolicy{allowAnyCert: true}, nil
 	}
 
@@ -103,10 +103,10 @@ func (s *server) getUpstreamTLSTrust() (*tlsTrustPolicy, error) {
 
 	if len(pins) == 0 {
 		if upstreamTLS.GetAllowAnyCert() {
-			zap.L().Warn("wrdpgw upstream TLS trust allows any upstream certificate")
+			zap.L().Warn("webrdp upstream TLS trust allows any upstream certificate")
 			return &tlsTrustPolicy{allowAnyCert: true}, nil
 		}
-		return nil, errors.Errorf("wrdpgw upstream TLS trust has neither pinned fingerprints nor allowAnyCert")
+		return nil, errors.Errorf("webrdp upstream TLS trust has neither pinned fingerprints nor allowAnyCert")
 	}
 
 	return &tlsTrustPolicy{pinnedSHA256: pins}, nil

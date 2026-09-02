@@ -1,4 +1,4 @@
-//go:build !cgo || !wrdpgw_credssp
+//go:build !cgo || !webrdp_credssp
 
 /*
  * Copyright Octelium Labs, LLC. All rights reserved.
@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 const (
 	credsspStateReplyNeeded = 0

@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package wrdpgw
+package webrdp
 
 import (
 	"context"
@@ -34,7 +34,11 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
+	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -79,6 +83,26 @@ func (s *echoSrv) close() {
 	if s.lis != nil {
 		s.lis.Close()
 	}
+}
+
+func newServer(ctx context.Context, octeliumC octeliumc.ClientInterface, svc *corev1.Service) (*Server, error) {
+	vCache, err := vcache.NewCache(ctx)
+	if err != nil {
+		return nil, err
+	}
+	vCache.SetService(svc)
+
+	secretMan, err := secretman.New(ctx, octeliumC, vCache)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{
+		octeliumC: octeliumC,
+		vCache:    vCache,
+		lbManager: loadbalancer.NewLbManager(octeliumC, vCache),
+		secretMan: secretMan,
+	}, nil
 }
 
 func TestRenderIndex(t *testing.T) {
@@ -141,7 +165,7 @@ func TestRenderIndex(t *testing.T) {
 }
 
 func TestSecurityHeaders(t *testing.T) {
-	srv := &server{}
+	srv := &Server{}
 
 	w := httptest.NewRecorder()
 	srv.setIndexSecurityHeaders(w, "testnonce")
@@ -159,7 +183,7 @@ func TestSecurityHeaders(t *testing.T) {
 }
 
 func TestStaticHeaders(t *testing.T) {
-	srv := &server{}
+	srv := &Server{}
 
 	w := httptest.NewRecorder()
 	srv.setStaticHeaders(w)

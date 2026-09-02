@@ -14,24 +14,24 @@ use sspi::credssp::{ClientMode, ClientState, CredSspClient, CredSspMode, TsReque
 use sspi::ntlm::NtlmConfig;
 use sspi::{AuthIdentity, Credentials, Secret, Username};
 
-const WRDPGW_OK: i32 = 0;
-const WRDPGW_ERR_INVALID_ARGUMENT: i32 = 1;
-const WRDPGW_ERR_CREDSSP: i32 = 5;
+const WEBRDP_OK: i32 = 0;
+const WEBRDP_ERR_INVALID_ARGUMENT: i32 = 1;
+const WEBRDP_ERR_CREDSSP: i32 = 5;
 #[allow(dead_code)]
-const WRDPGW_ERR_KERBEROS_KDC_REQUIRED: i32 = 6;
+const WEBRDP_ERR_KERBEROS_KDC_REQUIRED: i32 = 6;
 #[allow(dead_code)]
-const WRDPGW_ERR_AUTH_FAILED: i32 = 7;
-const WRDPGW_ERR_INTERNAL: i32 = 255;
+const WEBRDP_ERR_AUTH_FAILED: i32 = 7;
+const WEBRDP_ERR_INTERNAL: i32 = 255;
 
 const CREDSSP_STATE_REPLY_NEEDED: i32 = 0;
 const CREDSSP_STATE_FINAL: i32 = 1;
 
-pub struct WrdpgwCredssp {
+pub struct WebRDPCredssp {
     client: CredSspClient,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wrdpgw_credssp_new(
+pub unsafe extern "C" fn webrdp_credssp_new(
     server_pubkey: *const u8,
     server_pubkey_len: usize,
     domain: *const u8,
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
     password_len: usize,
     target: *const u8,
     target_len: usize,
-    out_client: *mut *mut WrdpgwCredssp,
+    out_client: *mut *mut WebRDPCredssp,
     out_error: *mut *mut c_char,
 ) -> i32 {
     if !out_error.is_null() {
@@ -51,7 +51,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
 
     if out_client.is_null() {
         set_error(out_error, "null out_client");
-        return WRDPGW_ERR_INVALID_ARGUMENT;
+        return WEBRDP_ERR_INVALID_ARGUMENT;
     }
 
     *out_client = ptr::null_mut();
@@ -74,15 +74,15 @@ pub unsafe extern "C" fn wrdpgw_credssp_new(
     match res {
         Ok(Ok(client)) => {
             *out_client = Box::into_raw(Box::new(client));
-            WRDPGW_OK
+            WEBRDP_OK
         }
         Ok(Err((kind, msg))) => {
             set_error(out_error, &msg);
             kind
         }
         Err(_) => {
-            set_error(out_error, "panic in wrdpgw_credssp_new");
-            WRDPGW_ERR_INTERNAL
+            set_error(out_error, "panic in webrdp_credssp_new");
+            WEBRDP_ERR_INTERNAL
         }
     }
 }
@@ -98,26 +98,26 @@ unsafe fn new_impl(
     password_len: usize,
     target: *const u8,
     target_len: usize,
-) -> Result<WrdpgwCredssp, (i32, String)> {
+) -> Result<WebRDPCredssp, (i32, String)> {
     let pubkey = match bytes(server_pubkey, server_pubkey_len) {
         Some(b) if !b.is_empty() => b.to_vec(),
-        _ => return Err((WRDPGW_ERR_INVALID_ARGUMENT, "missing server public key".into())),
+        _ => return Err((WEBRDP_ERR_INVALID_ARGUMENT, "missing server public key".into())),
     };
 
     let domain = utf8(domain, domain_len)
-        .map_err(|_| (WRDPGW_ERR_INVALID_ARGUMENT, "invalid domain encoding".to_string()))?;
+        .map_err(|_| (WEBRDP_ERR_INVALID_ARGUMENT, "invalid domain encoding".to_string()))?;
     let username = utf8(username, username_len)
-        .map_err(|_| (WRDPGW_ERR_INVALID_ARGUMENT, "invalid username encoding".to_string()))?;
+        .map_err(|_| (WEBRDP_ERR_INVALID_ARGUMENT, "invalid username encoding".to_string()))?;
     if username.is_empty() {
-        return Err((WRDPGW_ERR_INVALID_ARGUMENT, "missing username".into()));
+        return Err((WEBRDP_ERR_INVALID_ARGUMENT, "missing username".into()));
     }
     let password = utf8(password, password_len)
-        .map_err(|_| (WRDPGW_ERR_INVALID_ARGUMENT, "invalid password encoding".to_string()))?;
+        .map_err(|_| (WEBRDP_ERR_INVALID_ARGUMENT, "invalid password encoding".to_string()))?;
     let target = utf8(target, target_len)
-        .map_err(|_| (WRDPGW_ERR_INVALID_ARGUMENT, "invalid target encoding".to_string()))?;
+        .map_err(|_| (WEBRDP_ERR_INVALID_ARGUMENT, "invalid target encoding".to_string()))?;
 
     let uname = Username::new(&username, if domain.is_empty() { None } else { Some(&domain) })
-        .map_err(|e| (WRDPGW_ERR_INVALID_ARGUMENT, format!("invalid username: {e}")))?;
+        .map_err(|e| (WEBRDP_ERR_INVALID_ARGUMENT, format!("invalid username: {e}")))?;
 
     let identity = AuthIdentity {
         username: uname,
@@ -131,14 +131,14 @@ unsafe fn new_impl(
         ClientMode::Ntlm(NtlmConfig::default()),
         target,
     )
-    .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("credssp init: {e}")))?;
+    .map_err(|e| (WEBRDP_ERR_CREDSSP, format!("credssp init: {e}")))?;
 
-    Ok(WrdpgwCredssp { client })
+    Ok(WebRDPCredssp { client })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wrdpgw_credssp_step(
-    client: *mut WrdpgwCredssp,
+pub unsafe extern "C" fn webrdp_credssp_step(
+    client: *mut WebRDPCredssp,
     incoming: *const u8,
     incoming_len: usize,
     out_outgoing: *mut *mut u8,
@@ -152,7 +152,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_step(
 
     if out_outgoing.is_null() || out_outgoing_len.is_null() || out_state.is_null() {
         set_error(out_error, "null output pointer");
-        return WRDPGW_ERR_INVALID_ARGUMENT;
+        return WEBRDP_ERR_INVALID_ARGUMENT;
     }
 
     *out_outgoing = ptr::null_mut();
@@ -167,26 +167,26 @@ pub unsafe extern "C" fn wrdpgw_credssp_step(
             *out_outgoing = p;
             *out_outgoing_len = l;
             *out_state = state;
-            WRDPGW_OK
+            WEBRDP_OK
         }
         Ok(Err((kind, msg))) => {
             set_error(out_error, &msg);
             kind
         }
         Err(_) => {
-            set_error(out_error, "panic in wrdpgw_credssp_step");
-            WRDPGW_ERR_INTERNAL
+            set_error(out_error, "panic in webrdp_credssp_step");
+            WEBRDP_ERR_INTERNAL
         }
     }
 }
 
 unsafe fn step_impl(
-    client: *mut WrdpgwCredssp,
+    client: *mut WebRDPCredssp,
     incoming: *const u8,
     incoming_len: usize,
 ) -> Result<(Vec<u8>, i32), (i32, String)> {
     if client.is_null() {
-        return Err((WRDPGW_ERR_INVALID_ARGUMENT, "null client".into()));
+        return Err((WEBRDP_ERR_INVALID_ARGUMENT, "null client".into()));
     }
     let client = &mut *client;
 
@@ -194,16 +194,16 @@ unsafe fn step_impl(
         TsRequest::default()
     } else {
         let b = bytes(incoming, incoming_len)
-            .ok_or((WRDPGW_ERR_INVALID_ARGUMENT, "null incoming buffer".to_string()))?;
+            .ok_or((WEBRDP_ERR_INVALID_ARGUMENT, "null incoming buffer".to_string()))?;
         TsRequest::from_buffer(b)
-            .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("decode TSRequest: {e}")))?
+            .map_err(|e| (WEBRDP_ERR_CREDSSP, format!("decode TSRequest: {e}")))?
     };
 
     let state = client
         .client
         .process(ts_request)
         .resolve_to_result()
-        .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("credssp: {e}")))?;
+        .map_err(|e| (WEBRDP_ERR_CREDSSP, format!("credssp: {e}")))?;
 
     let (req, st) = match state {
         ClientState::ReplyNeeded(req) => (req, CREDSSP_STATE_REPLY_NEEDED),
@@ -212,13 +212,13 @@ unsafe fn step_impl(
 
     let mut buf = Vec::with_capacity(req.buffer_len() as usize);
     req.encode_ts_request(&mut buf)
-        .map_err(|e| (WRDPGW_ERR_CREDSSP, format!("encode TSRequest: {e}")))?;
+        .map_err(|e| (WEBRDP_ERR_CREDSSP, format!("encode TSRequest: {e}")))?;
 
     Ok((buf, st))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wrdpgw_credssp_free(client: *mut WrdpgwCredssp) {
+pub unsafe extern "C" fn webrdp_credssp_free(client: *mut WebRDPCredssp) {
     if client.is_null() {
         return;
     }
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn wrdpgw_credssp_free(client: *mut WrdpgwCredssp) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wrdpgw_free_bytes(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn webrdp_free_bytes(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 {
         return;
     }
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn wrdpgw_free_bytes(ptr: *mut u8, len: usize) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wrdpgw_free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn webrdp_free_string(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }

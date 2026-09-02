@@ -3,9 +3,11 @@ module github.com/octelium/octelium/cluster/vigil
 go 1.26.6
 
 require (
+	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/cenkalti/backoff/v5 v5.0.3
+	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/go-mysql-org/go-mysql v1.14.0
@@ -47,6 +49,7 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect

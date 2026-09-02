@@ -1648,6 +1648,44 @@ func TestServiceHostUser(t *testing.T) {
 		svc.Metadata.SpecLabels[fmt.Sprintf("host-user-%s", usr.Metadata.Name)])
 }
 
+func TestRDPServices(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	webReq := tests.GenService("")
+	webReq.Spec.Mode = corev1.Service_Spec_RDP_WEB
+	webReq.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
+		Url: "rdp://localhost",
+	}
+
+	webSvc, err := srv.CreateService(ctx, webReq)
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, uint32(8080), webSvc.Status.Port)
+	assert.Nil(t, webSvc.Status.ManagedService)
+
+	webSvc.Status.ManagedService = &corev1.Service_Status_ManagedService{Type: "wrdpgw"}
+	webSvc, err = srv.UpdateService(ctx, webSvc)
+	assert.Nil(t, err, "%+v", err)
+	assert.Nil(t, webSvc.Status.ManagedService)
+
+	rdpReq := tests.GenService("")
+	rdpReq.Spec.Mode = corev1.Service_Spec_RDP
+	rdpReq.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
+		Url: "rdp://localhost",
+	}
+
+	rdpSvc, err := srv.CreateService(ctx, rdpReq)
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, uint32(3389), rdpSvc.Status.Port)
+	assert.Nil(t, rdpSvc.Status.ManagedService)
+}
+
 func TestValidateMCPVisibility(t *testing.T) {
 	s := &Server{}
 

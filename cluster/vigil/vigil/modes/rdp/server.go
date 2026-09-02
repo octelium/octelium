@@ -14,18 +14,24 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package main
+package rdp
 
 import (
-	"github.com/octelium/octelium/cluster/common/components"
-	"github.com/octelium/octelium/cluster/wrdpgw/wrdpgw"
+	"context"
+
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/tcp"
 )
 
-func init() {
-	components.SetComponentNamespace(components.ComponentNamespaceOctelium)
-	components.SetComponentType(components.WRRDPGW)
+type Server struct {
+	*tcp.Server
 }
 
-func main() {
-	components.RunComponent(wrdpgw.Run, nil)
+func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
+	srv, err := tcp.New(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{Server: srv}, nil
 }
