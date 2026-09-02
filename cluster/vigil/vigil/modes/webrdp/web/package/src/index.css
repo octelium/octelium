@@ -39,4 +39,8 @@ iron-remote-desktop {
   min-width: 0;
   min-height: 0;
   background: #000;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }

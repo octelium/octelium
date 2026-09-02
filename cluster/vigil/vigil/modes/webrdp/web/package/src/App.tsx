@@ -13,6 +13,7 @@ import { notifications } from "@mantine/notifications";
 import {
   AlertCircle,
   Keyboard,
+  KeyboardOff,
   Maximize2,
   Minimize2,
   MonitorUp,
@@ -31,6 +32,8 @@ import {
   loadIronRdp,
   type RdpExtensions,
 } from "./lib/iron";
+import { createSoftKeyboard, type SoftKeyboard } from "./lib/keyboard";
+import { attachTouchInput } from "./lib/touch";
 import "./App.css";
 
 type ScreenScale = Parameters<UserInteraction["setScale"]>[0];
@@ -62,6 +65,10 @@ type DesktopSize = { width: number; height: number };
 function toEvenSize(value: number, min: number): number {
   const size = Math.max(Math.floor(value), min);
   return size % 2 === 0 ? size : size - 1;
+}
+
+function isTouchDevice(): boolean {
+  return window.matchMedia("(pointer: coarse)").matches;
 }
 
 type ErrorBoundaryProps = { children: ReactNode };
@@ -170,6 +177,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  const isTouch = useMemo(() => isTouchDevice(), []);
 
   const userInteractionRef = useRef<UserInteraction | null>(null);
   const remoteElementRef = useRef<HTMLElement | null>(null);
@@ -179,6 +189,9 @@ export function App() {
   const sessionAttemptRef = useRef(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const desktopSizeRef = useRef<DesktopSize | null>(null);
+  const softKeyboardRef = useRef<SoftKeyboard | null>(null);
+  const detachTouchRef = useRef<(() => void) | null>(null);
+  const keyboardVisibleRef = useRef(false);
 
   const getCanvasSize = useCallback((): DesktopSize => {
     const canvas = canvasRef.current;
@@ -246,12 +259,28 @@ export function App() {
     };
   }, [loadClient]);
 
+  const setKeyboardVisibility = useCallback((visible: boolean) => {
+    keyboardVisibleRef.current = visible;
+    setKeyboardVisible(visible);
+    userInteractionRef.current?.setKeyboardUnicodeMode(visible);
+  }, []);
+
+  const releaseMobileInput = useCallback(() => {
+    detachTouchRef.current?.();
+    detachTouchRef.current = null;
+    softKeyboardRef.current?.dispose();
+    softKeyboardRef.current = null;
+    keyboardVisibleRef.current = false;
+    setKeyboardVisible(false);
+  }, []);
+
   const onRemoteElement = useCallback((el: HTMLElement | null) => {
     const previousElement = remoteElementRef.current;
     if (previousElement && readyListenerRef.current) {
       previousElement.removeEventListener("ready", readyListenerRef.current);
     }
 
+    releaseMobileInput();
     readyListenerRef.current = null;
     remoteElementRef.current = el;
     userInteractionRef.current = null;
@@ -269,6 +298,14 @@ export function App() {
       }
 
       userInteractionRef.current = ui;
+
+      if (isTouch) {
+        detachTouchRef.current = attachTouchInput(el);
+        softKeyboardRef.current = createSoftKeyboard(el, {
+          onVisibilityChange: setKeyboardVisibility,
+        });
+      }
+
       setInteractionReady(true);
       setStatus("Ready");
       setConnectionState("ready");
@@ -276,7 +313,7 @@ export function App() {
 
     readyListenerRef.current = readyListener;
     el.addEventListener("ready", readyListener);
-  }, [showError]);
+  }, [isTouch, releaseMobileInput, setKeyboardVisibility, showError]);
 
   const startSession = useCallback(async () => {
     const ui = userInteractionRef.current;
@@ -304,7 +341,7 @@ export function App() {
 
     try {
       ui.setEnableClipboard(true);
-      ui.setKeyboardUnicodeMode(false);
+      ui.setKeyboardUnicodeMode(keyboardVisibleRef.current);
 
       const desktopSize = getCanvasSize();
       desktopSizeRef.current = desktopSize;
@@ -369,12 +406,27 @@ export function App() {
     }
   }, [moduleReady, interactionReady, startSession]);
 
+  const toggleKeyboard = () => {
+    const softKeyboard = softKeyboardRef.current;
+    if (!softKeyboard) {
+      return;
+    }
+
+    if (keyboardVisibleRef.current) {
+      softKeyboard.close();
+      return;
+    }
+
+    softKeyboard.open();
+  };
+
   const shutdownSession = async () => {
     sessionAttemptRef.current += 1;
     setConnectionState("disconnecting");
     setStatus("Disconnecting...");
 
     try {
+      softKeyboardRef.current?.close();
       userInteractionRef.current?.shutdown();
     } finally {
       setSessionVisible(false);
@@ -429,6 +481,10 @@ export function App() {
     const resize = () => {
       const ui = userInteractionRef.current;
       if (!ui) {
+        return;
+      }
+
+      if (keyboardVisibleRef.current) {
         return;
       }
 
@@ -571,6 +627,30 @@ export function App() {
             <Badge color="teal" variant="light" className="ow-status-badge">
               {status}
             </Badge>
+
+            {isTouch && (
+              <Tooltip label={keyboardVisible ? "Hide keyboard" : "Keyboard"}>
+                <Button
+                  size="xs"
+                  variant={keyboardVisible ? "light" : "subtle"}
+                  color={keyboardVisible ? "teal" : "gray"}
+                  leftSection={
+                    keyboardVisible ? (
+                      <KeyboardOff size={14} />
+                    ) : (
+                      <Keyboard size={14} />
+                    )
+                  }
+                  onClick={toggleKeyboard}
+                  aria-label={
+                    keyboardVisible ? "Hide the keyboard" : "Show the keyboard"
+                  }
+                  aria-pressed={keyboardVisible}
+                >
+                  <span className="ow-control-label">Keyboard</span>
+                </Button>
+              </Tooltip>
+            )}
 
             <Tooltip label="Ctrl+Alt+Del">
               <Button
