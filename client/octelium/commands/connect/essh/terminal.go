@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"syscall"
 
@@ -71,6 +70,18 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 		zap.String("id", ret.id), zap.Any("ptyReq", sessCtx.ptyParams))
 
 	var err error
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		if ret.pty != nil {
+			ret.pty.Close()
+		}
+		if ret.tty != nil {
+			ret.tty.Close()
+		}
+	}()
 
 	if !ret.noPty {
 
@@ -96,8 +107,6 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 
 	shellPath, err := getShellPath(dctx.usr.Username)
 	if err != nil {
-		ret.pty.Close()
-		ret.tty.Close()
 		return nil, err
 	}
 
@@ -132,21 +141,19 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 	}
 
 	if !dctx.sameUser {
-		uid, err := strconv.ParseUint(dctx.usr.Uid, 10, 32)
-		if err != nil {
-			return nil, err
-		}
-		gid, err := strconv.ParseUint(dctx.usr.Gid, 10, 32)
+		credential, err := getSysProcCredential(dctx.usr)
 		if err != nil {
 			return nil, err
 		}
 
-		zap.L().Debug("uid-gid", zap.Uint64("uid", uid), zap.Uint64("gid", gid))
+		zap.L().Debug("uid-gid", zap.Uint32("uid", credential.Uid), zap.Uint32("gid", credential.Gid))
 
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
+		cmd.SysProcAttr.Credential = credential
 	}
+	cmd.WaitDelay = processWaitDelay
 
 	ret.cmd = cmd
+	success = true
 
 	zap.L().Debug("terminal successfully created", zap.String("id", ret.id))
 
@@ -167,7 +174,7 @@ func (t *terminal) setWinSize(w, h uint16) error {
 	return nil
 }
 
-func (t *terminal) run(ctx context.Context) error {
+func (t *terminal) run(ctx context.Context, req *ssh.Request) error {
 	zap.L().Debug("Running terminal", zap.String("tid", t.id))
 	var once sync.Once
 	var err error
@@ -186,6 +193,15 @@ func (t *terminal) run(ctx context.Context) error {
 	}
 
 	if err := t.cmd.Start(); err != nil {
+		return err
+	}
+	t.sessCtx.cmd = t.cmd
+	if err := replySuccess(req); err != nil {
+		killProcessGroup(t.cmd)
+		_ = t.cmd.Wait()
+		if stdinPipe != nil {
+			stdinPipe.Close()
+		}
 		return err
 	}
 
@@ -214,7 +230,9 @@ func (t *terminal) run(ctx context.Context) error {
 		t.mu.Unlock()
 	}
 
+	t.sessCtx.wg.Add(1)
 	go func(ctx context.Context) {
+		defer t.sessCtx.wg.Done()
 		err := t.waitAndClose(ctx)
 		if err != nil {
 			zap.S().Debugf("terminal wait err: %+v", err)
@@ -237,25 +255,20 @@ func (t *terminal) waitAndClose(ctx context.Context) error {
 		waitCh <- err
 	}()
 
-	statusCode := 0
+	forced := false
+	var waitErr error
 	select {
 	case <-ctx.Done():
-		statusCode = 130
-	case err := <-waitCh:
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			zap.L().Debug("exit code....", zap.Int("code", exiterr.ExitCode()))
-			statusCode = exiterr.ExitCode()
-		}
+		forced = true
+		killProcessGroup(t.cmd)
+		waitErr = <-waitCh
+	case waitErr = <-waitCh:
 	case <-t.closeCh:
-		if t.cmd.Process != nil {
-			if err := t.cmd.Process.Kill(); err != nil {
-				zap.L().Debug("cmd kill err", zap.Error(err))
-			}
-		}
-
+		killProcessGroup(t.cmd)
+		waitErr = <-waitCh
 	}
 
-	if err := t.sessCtx.sendSessionExitStatus(statusCode); err != nil && !errors.Is(err, io.EOF) {
+	if err := t.sessCtx.sendSessionExit(waitErr, forced); err != nil && !errors.Is(err, io.EOF) {
 		zap.L().Warn("Could not send exit-status req", zap.Error(err))
 	}
 
@@ -277,6 +290,7 @@ func (t *terminal) close() error {
 		return nil
 	}
 	t.isClosed = true
+	killProcessGroup(t.cmd)
 
 	if !t.noPty {
 

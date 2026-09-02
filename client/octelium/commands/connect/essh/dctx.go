@@ -38,6 +38,7 @@ type dctx struct {
 	sshConn *ssh.ServerConn
 
 	mu sync.Mutex
+	wg sync.WaitGroup
 
 	isClosed bool
 
@@ -101,7 +102,7 @@ func (c *dctx) getEnv(additional []*envVar) []string {
 	for _, keyVal := range curEnv {
 
 		switch {
-		case strings.HasPrefix(keyVal, "OCTELIUM_DOMAIN"):
+		case strings.HasPrefix(keyVal, "OCTELIUM_DOMAIN="):
 			env = append(env, keyVal)
 		}
 	}

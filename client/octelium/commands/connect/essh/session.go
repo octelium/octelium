@@ -24,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"strconv"
 	"sync"
 	"syscall"
 
@@ -45,18 +44,21 @@ type ptyReqParams struct {
 
 func (c *dctx) doHandleSessionReqs(ctx context.Context, reqs <-chan *ssh.Request, ch ssh.Channel) {
 	var closer sync.Once
+	ctx, cancelFn := context.WithCancel(ctx)
 
 	sessCtx := &sessCtx{
 		ch: ch,
 	}
 	closeFunc := func() {
 		zap.L().Debug("Closing sess req channel")
+		cancelFn()
 		ch.Close()
 		if sessCtx.term != nil {
 			if err := sessCtx.term.close(); err != nil {
 				zap.L().Debug("Error closing terminal", zap.Error(err))
 			}
 		}
+		sessCtx.wg.Wait()
 	}
 
 	defer closer.Do(closeFunc)
@@ -82,9 +84,11 @@ func (c *dctx) doHandleSessionReqs(ctx context.Context, reqs <-chan *ssh.Request
 type sessCtx struct {
 	ch        ssh.Channel
 	term      *terminal
+	cmd       *exec.Cmd
 	ptyParams *ptyReqParams
 	env       []*envVar
 	started   bool
+	wg        sync.WaitGroup
 }
 
 func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
@@ -105,6 +109,10 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 		if err != nil {
 			replyFailure(req)
 			return err
+		}
+		if ptyParams.W == 0 || ptyParams.H == 0 || ptyParams.W > 65535 || ptyParams.H > 65535 {
+			replyFailure(req)
+			return errors.Errorf("invalid terminal dimensions")
 		}
 
 		sessCtx.ptyParams = ptyParams
@@ -131,12 +139,12 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 
 		sessCtx.term = term
 
-		if err := term.run(ctx); err != nil {
+		if err := term.run(ctx, req); err != nil {
 			replyFailure(req)
 			return err
 		}
 
-		return replySuccess(req)
+		return nil
 
 	case "exec":
 		if sessCtx.started {
@@ -151,7 +159,7 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 			return err
 		}
 
-		return replySuccess(req)
+		return nil
 
 	case "subsystem":
 		if sessCtx.started {
@@ -176,7 +184,7 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 				replyFailure(req)
 				return err
 			}
-			return replySuccess(req)
+			return nil
 
 		default:
 			zap.L().Debug("Unsupported subsystem", zap.String("subsystem", payload.Value))
@@ -229,6 +237,30 @@ func (c *dctx) handleSessionReq(ctx context.Context, sessCtx *sessCtx, req *ssh.
 	case "keepalive@openssh.com":
 		return replySuccess(req)
 
+	case "signal":
+		if !sessCtx.started || sessCtx.cmd == nil {
+			replyFailure(req)
+			return errors.Errorf("signal request before session start")
+		}
+
+		var payload struct{ Signal string }
+		if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+			replyFailure(req)
+			return err
+		}
+
+		sig, err := getSSHSignal(payload.Signal)
+		if err != nil {
+			replyFailure(req)
+			return err
+		}
+		if err := signalProcessGroup(sessCtx.cmd, sig); err != nil {
+			replyFailure(req)
+			return err
+		}
+
+		return replySuccess(req)
+
 	default:
 		zap.L().Debug("Unsupported session req type", zap.String("type", req.Type))
 		replyFailure(req)
@@ -265,27 +297,17 @@ func setOrAppendEnv(env []*envVar, key, val string) []*envVar {
 
 func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *ssh.Request) error {
 	var err error
-	// var r execRequest
-	zap.L().Debug("exec payload", zap.String("payload", string(req.Payload)))
 
 	ch := sessCtx.ch
-
-	/*
-		if err := ssh.Unmarshal(req.Payload, &r); err != nil {
-			return err
-		}
-	*/
 
 	var payload = struct{ Value string }{}
 	if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
 		return err
 	}
 
-	zap.L().Debug("Payload cmd", zap.String("val", payload.Value))
-
 	cmdStr := payload.Value
 
-	zap.L().Debug("Handling exec req", zap.String("command", cmdStr))
+	zap.L().Debug("Handling exec req")
 
 	usr := c.usr
 
@@ -294,24 +316,21 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, shellPath, "-c", cmdStr)
+	cmd := exec.Command(shellPath, "-c", cmdStr)
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
 
 	if !c.sameUser {
-		uid, err := strconv.ParseUint(usr.Uid, 10, 32)
-		if err != nil {
-			return err
-		}
-		gid, err := strconv.ParseUint(usr.Gid, 10, 32)
+		credential, err := getSysProcCredential(usr)
 		if err != nil {
 			return err
 		}
 
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
+		cmd.SysProcAttr.Credential = credential
 	}
+	cmd.WaitDelay = processWaitDelay
 
 	if usr.HomeDir != "" {
 		cmd.Dir = usr.HomeDir
@@ -331,13 +350,22 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 		inPipe.Close()
 		return err
 	}
+	sessCtx.cmd = cmd
+	if err := replySuccess(req); err != nil {
+		killProcessGroup(cmd)
+		_ = cmd.Wait()
+		inPipe.Close()
+		return err
+	}
 
 	go func() {
 		io.Copy(inPipe, ch)
 		inPipe.Close()
 	}()
 
+	sessCtx.wg.Add(1)
 	go func(ctx context.Context) {
+		defer sessCtx.wg.Done()
 
 		waitCh := make(chan error, 1)
 		go func() {
@@ -348,27 +376,23 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 			waitCh <- err
 		}()
 
+		forced := false
+		var waitErr error
 		select {
 		case <-ctx.Done():
+			forced = true
 			zap.L().Debug("ctx done. Exiting exec...")
 			killProcessGroup(cmd)
+			waitErr = <-waitCh
 
-			sessCtx.sendSessionExitStatus(130)
-
-		case err := <-waitCh:
-			zap.L().Debug("cmd wait done...", zap.Error(err))
-			if err == nil {
-				sessCtx.sendSessionExitStatus(0)
-			} else if exiterr, ok := err.(*exec.ExitError); ok {
-				zap.L().Debug("exit code....", zap.Int("code", exiterr.ExitCode()))
-				sessCtx.sendSessionExitStatus(exiterr.ExitCode())
-			}
+		case waitErr = <-waitCh:
+			zap.L().Debug("cmd wait done...", zap.Error(waitErr))
+		}
+		if err := sessCtx.sendSessionExit(waitErr, forced); err != nil && !errors.Is(err, io.EOF) {
+			zap.L().Debug("Could not send session exit", zap.Error(err))
 		}
 
-		// c.close()
 		ch.Close()
-
-		// zap.L().Debug("ssh channel closed")
 
 	}(ctx)
 
@@ -392,6 +416,50 @@ func (c *sessCtx) sendSessionExitStatus(statusCode int) error {
 	return err
 }
 
+func (c *sessCtx) sendSessionExitSignal(sig ssh.Signal, coreDumped bool) error {
+	zap.L().Debug("Sending exit-signal request", zap.String("signal", string(sig)))
+
+	req := struct {
+		Signal     string
+		CoreDumped bool
+		Error      string
+		Lang       string
+	}{
+		Signal:     string(sig),
+		CoreDumped: coreDumped,
+	}
+	_, err := c.ch.SendRequest("exit-signal", false, ssh.Marshal(&req))
+	if closeErr := c.ch.CloseWrite(); err == nil {
+		err = closeErr
+	}
+
+	return err
+}
+
+func (c *sessCtx) sendSessionExit(waitErr error, forced bool) error {
+	if forced {
+		return c.sendSessionExitStatus(130)
+	}
+	if waitErr == nil {
+		return c.sendSessionExitStatus(0)
+	}
+
+	exitErr, ok := waitErr.(*exec.ExitError)
+	if !ok {
+		return c.sendSessionExitStatus(255)
+	}
+	waitStatus, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !waitStatus.Signaled() {
+		return c.sendSessionExitStatus(exitErr.ExitCode())
+	}
+
+	sig, err := getSSHSignalName(waitStatus.Signal())
+	if err != nil {
+		return c.sendSessionExitStatus(255)
+	}
+	return c.sendSessionExitSignal(sig, waitStatus.CoreDump())
+}
+
 func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChannel) {
 
 	zap.L().Debug("Accepting a new channel")
@@ -411,12 +479,6 @@ func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *s
 
 	if os.Getenv("OCTELIUM_ESSH_SFTP_DISABLE") == "true" {
 		return errors.Errorf("eSSH SFTP is disabled")
-	}
-
-	if req.WantReply {
-		if err := req.Reply(true, nil); err != nil {
-			return err
-		}
 	}
 
 	root := "/"
@@ -440,8 +502,14 @@ func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *s
 		ch.Close()
 		return errors.Errorf("Could not create sftp server: %+v", err)
 	}
+	if err := replySuccess(req); err != nil {
+		srv.Close()
+		return err
+	}
 
+	sessCtx.wg.Add(1)
 	go func() {
+		defer sessCtx.wg.Done()
 		defer ch.Close()
 
 		errCh := make(chan error, 1)
@@ -452,6 +520,7 @@ func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *s
 		select {
 		case <-ctx.Done():
 			srv.Close()
+			<-errCh
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, io.EOF) {
 				zap.L().Debug("sftp server exited...", zap.Error(err))
@@ -488,6 +557,9 @@ func parseEnv(payload []byte) (string, string, error) {
 	}
 	key := kv.Key
 	val := kv.Value
+	if !isValidEnvKey(key) {
+		return "", "", errors.Errorf("Invalid env var key: %s", key)
+	}
 
 	if !slices.Contains(allowedEnvVars, key) {
 		if os.Getenv("OCTELIUM_ESSH_ALLOW_ANY_ENV") != "true" {
@@ -496,6 +568,22 @@ func parseEnv(payload []byte) (string, string, error) {
 	}
 
 	return key, val, nil
+}
+
+func isValidEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for idx, ch := range key {
+		if ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' {
+			continue
+		}
+		if idx > 0 && ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 var allowedEnvVars = []string{

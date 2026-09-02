@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
+	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -35,7 +36,7 @@ type Server struct {
 }
 
 func NewServer(opts *Opts) (*Server, error) {
-	return &Server{}, nil
+	return nil, errors.Errorf("eSSH is not currently supported on Windows")
 }
 
 func (s *Server) Start(ctx context.Context) error {

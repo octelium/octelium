@@ -55,14 +55,11 @@ func parsePasswdFile() (map[string]passwdEntry, error) {
 	}
 
 	defer file.Close()
-	lines := bufio.NewReader(file)
+	lines := bufio.NewScanner(file)
+	lines.Buffer(make([]byte, 4096), 1024*1024)
 	entries := make(map[string]passwdEntry)
-	for {
-		line, _, err := lines.ReadLine()
-		if err != nil {
-			break
-		}
-		name, entry, err := parseLine(string(line))
+	for lines.Scan() {
+		name, entry, err := parseLine(lines.Text())
 		if err != nil {
 			return nil, err
 		}
@@ -70,6 +67,9 @@ func parsePasswdFile() (map[string]passwdEntry, error) {
 			continue
 		}
 		entries[name] = entry
+	}
+	if err := lines.Err(); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }

@@ -41,12 +41,16 @@ const (
 type Server struct {
 	sshConfig *ssh.ServerConfig
 	isClosed  bool
+	isStarted bool
 	mu        sync.Mutex
+	wg        sync.WaitGroup
+	closeDone chan struct{}
 
 	opts     *Opts
 	cancelFn context.CancelFunc
 
 	listeners []net.Listener
+	conns     map[net.Conn]struct{}
 
 	connSem chan struct{}
 
@@ -83,7 +87,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
-	defer dctx.close()
+	defer func() {
+		dctx.close()
+		dctx.wg.Wait()
+	}()
 
 	for {
 		select {
@@ -95,13 +102,17 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 				zap.L().Debug("eSSH: no more reqs. Exiting handleConn loop")
 				return
 			}
-			go dctx.handleGlobalReq(req)
+			dctx.handleGlobalReq(req)
 		case nch, ok := <-chans:
 			if !ok || nch == nil {
 				zap.L().Debug("eSSH: Nil nch. Exiting handleConn loop")
 				return
 			}
-			go dctx.handleNewChannel(ctx, nch)
+			dctx.wg.Add(1)
+			go func() {
+				defer dctx.wg.Done()
+				dctx.handleNewChannel(ctx, nch)
+			}()
 		}
 	}
 }
@@ -127,9 +138,9 @@ func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
 
 	switch nch.ChannelType() {
 	case "session":
-		go c.handleSessionRequests(ctx, nch)
+		c.handleSessionRequests(ctx, nch)
 	case "direct-tcpip":
-		go c.handleTCPIPChan(ctx, nch)
+		c.handleTCPIPChan(ctx, nch)
 	default:
 		zap.L().Debug("Unsupported channel", zap.String("channelType", nch.ChannelType()))
 		nch.Reject(ssh.UnknownChannelType, fmt.Sprintf("Unsupported channel type: %s", nch.ChannelType()))
@@ -137,46 +148,117 @@ func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	if ctx == nil {
+		return errors.Errorf("nil context")
+	}
+
+	s.mu.Lock()
+	if s.isClosed {
+		s.mu.Unlock()
+		return errors.Errorf("eSSH server is already closed")
+	}
+	if s.isStarted {
+		s.mu.Unlock()
+		return errors.Errorf("eSSH server is already started")
+	}
+	s.isStarted = true
 	ctx, cancelFn := context.WithCancel(ctx)
 	s.cancelFn = cancelFn
+	s.mu.Unlock()
 
+	var listeners []net.Listener
 	for _, listenerAddr := range s.opts.ListenAddrs {
 
 		zap.L().Debug("Starting running eSSH server",
 			zap.Any("listenAddr", listenerAddr))
 
-		lis, err := s.getListener(listenerAddr)
+		lis, err := s.getListener(ctx, listenerAddr)
 		if err != nil {
+			cancelFn()
+			for _, listener := range listeners {
+				listener.Close()
+			}
+			s.mu.Lock()
+			if !s.isClosed {
+				s.isStarted = false
+				s.cancelFn = nil
+			}
+			s.mu.Unlock()
 			return err
 		}
-		s.listeners = append(s.listeners, lis)
-
-		go func(ctx context.Context) {
-			if err := s.doRun(ctx, lis); err != nil {
-				zap.L().Debug("essh: Could not doRun ipv4", zap.Error(err))
-			}
-		}(ctx)
+		listeners = append(listeners, lis)
 	}
+
+	s.mu.Lock()
+	if s.isClosed || ctx.Err() != nil {
+		ctxErr := ctx.Err()
+		if !s.isClosed {
+			s.isStarted = false
+			s.cancelFn = nil
+		}
+		s.mu.Unlock()
+		cancelFn()
+		for _, listener := range listeners {
+			listener.Close()
+		}
+		if ctxErr != nil {
+			return ctxErr
+		}
+		return errors.Errorf("eSSH server was closed during startup")
+	}
+	s.listeners = listeners
+	s.wg.Add(len(listeners))
+	s.mu.Unlock()
+
+	for _, lis := range listeners {
+		go func(ctx context.Context, lis net.Listener) {
+			defer s.wg.Done()
+			if err := s.doRun(ctx, lis); err != nil {
+				zap.L().Debug("essh: Could not run listener", zap.Error(err))
+			}
+		}(ctx, lis)
+	}
+	go func() {
+		<-ctx.Done()
+		_ = s.Close()
+	}()
 
 	return nil
 }
 
 func (s *Server) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.isClosed {
+		closeDone := s.closeDone
+		s.mu.Unlock()
+		<-closeDone
 		return nil
 	}
 
 	zap.L().Debug("Starting closing eSSH server")
 	s.isClosed = true
-	s.cancelFn()
+	cancelFn := s.cancelFn
+	listeners := append([]net.Listener(nil), s.listeners...)
+	conns := make([]net.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	s.mu.Unlock()
 
-	for _, lis := range s.listeners {
-		lis.Close()
+	if cancelFn != nil {
+		cancelFn()
 	}
 
+	for _, lis := range listeners {
+		lis.Close()
+	}
+	for _, conn := range conns {
+		conn.Close()
+	}
+	s.wg.Wait()
+
 	zap.L().Debug("eSSH server is now closed")
+	close(s.closeDone)
 
 	return nil
 }
@@ -189,7 +271,11 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 			zap.L().Debug("Could not accept eSSH conn", zap.Error(err))
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 				zap.L().Debug("eSSH Timeout err", zap.Error(opErr))
-				time.Sleep(100 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(100 * time.Millisecond):
+				}
 				continue
 			}
 
@@ -198,8 +284,7 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 				zap.L().Debug("shutting down eSSH server")
 				return nil
 			default:
-				time.Sleep(100 * time.Millisecond)
-				continue
+				return err
 			}
 		}
 
@@ -213,9 +298,24 @@ func (s *Server) doRun(ctx context.Context, lis net.Listener) error {
 			continue
 		}
 
+		s.mu.Lock()
+		if s.isClosed {
+			s.mu.Unlock()
+			<-s.connSem
+			conn.Close()
+			continue
+		}
+		s.conns[conn] = struct{}{}
+		s.wg.Add(1)
+		s.mu.Unlock()
+
 		go func(conn net.Conn) {
 			defer func() {
 				<-s.connSem
+				s.mu.Lock()
+				delete(s.conns, conn)
+				s.mu.Unlock()
+				s.wg.Done()
 			}()
 			s.handleConn(ctx, conn)
 		}(conn)
@@ -237,11 +337,39 @@ func NewServer(opts *Opts) (*Server, error) {
 	if cliutils.IsWindows() {
 		return nil, errors.Errorf("eSSH is not currently supported on Windows")
 	}
+	if opts == nil {
+		return nil, errors.Errorf("nil eSSH server opts")
+	}
+	if opts.Signer == nil {
+		return nil, errors.Errorf("nil eSSH host signer")
+	}
+	if opts.CAPubKey == nil {
+		return nil, errors.Errorf("nil eSSH CA public key")
+	}
+	if opts.GoNetCtl == nil {
+		return nil, errors.Errorf("nil eSSH GoNet controller")
+	}
+	if len(opts.ListenAddrs) == 0 {
+		return nil, errors.Errorf("empty eSSH listen addresses")
+	}
+	for _, addr := range opts.ListenAddrs {
+		if addr == "" {
+			return nil, errors.Errorf("empty eSSH listen address")
+		}
+	}
+	caPubKeyBytes := opts.CAPubKey.Marshal()
+	if len(caPubKeyBytes) == 0 {
+		return nil, errors.Errorf("empty eSSH CA public key")
+	}
+	optsCopy := *opts
+	optsCopy.ListenAddrs = append([]string(nil), opts.ListenAddrs...)
 
 	server := &Server{
-		opts:     opts,
-		sameUser: true,
-		connSem:  make(chan struct{}, maxConcurrentConns),
+		opts:      &optsCopy,
+		sameUser:  true,
+		connSem:   make(chan struct{}, maxConcurrentConns),
+		conns:     make(map[net.Conn]struct{}),
+		closeDone: make(chan struct{}),
 	}
 
 	usr, err := user.Current()
@@ -249,13 +377,13 @@ func NewServer(opts *Opts) (*Server, error) {
 		return nil, err
 	}
 
-	if usr.Uid == "0" && usr.Username == "root" {
+	if usr.Uid == "0" {
 		zap.L().Debug("eSSH server is running as root")
 
-		if opts.User != "" {
-			usr, err := user.Lookup(opts.User)
+		if server.opts.User != "" {
+			usr, err := user.Lookup(server.opts.User)
 			if err != nil {
-				return nil, errors.Errorf("Could not look up host user: %s. %+v", opts.User, err)
+				return nil, errors.Errorf("Could not look up host user: %s. %+v", server.opts.User, err)
 			}
 
 			server.usr = usr
@@ -282,7 +410,7 @@ func NewServer(opts *Opts) (*Server, error) {
 						return false
 					}
 
-					return utils.SecureBytesEqual(authBytes, opts.CAPubKey.Marshal())
+					return utils.SecureBytesEqual(authBytes, caPubKeyBytes)
 				},
 			}
 
@@ -296,12 +424,12 @@ func NewServer(opts *Opts) (*Server, error) {
 			return ret, nil
 		},
 	}
-	server.sshConfig.AddHostKey(opts.Signer)
+	server.sshConfig.AddHostKey(server.opts.Signer)
 
 	return server, nil
 }
 
-func (s *Server) getListener(listenerAddr string) (net.Listener, error) {
+func (s *Server) getListener(ctx context.Context, listenerAddr string) (net.Listener, error) {
 	var err error
 	var listener net.Listener
 	for i := 0; i < 100; i++ {
@@ -330,7 +458,11 @@ func (s *Server) getListener(listenerAddr string) (net.Listener, error) {
 		}
 
 		zap.L().Warn("Could not listen on TCP port", zap.String("addr", listenerAddr), zap.Error(err))
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
-	return nil, errors.Errorf("Could not listen on TCP port on %s:.", listenerAddr)
+	return nil, errors.Wrapf(err, "Could not listen on TCP port on %s", listenerAddr)
 }

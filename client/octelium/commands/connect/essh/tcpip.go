@@ -80,22 +80,20 @@ func (c *dctx) handleTCPIPChan(ctx context.Context, nch ssh.NewChannel) {
 		errCh <- struct{}{}
 	}()
 
-	go func() {
-		defer ch.Close()
-		defer dconn.Close()
+	defer ch.Close()
+	defer dconn.Close()
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-errCh:
-		}
+	select {
+	case <-ctx.Done():
+		return
+	case <-errCh:
+	}
 
-		select {
-		case <-ctx.Done():
-		case <-errCh:
-		case <-time.After(tcpipTerminationDelay):
-			zap.L().Debug("Timed out waiting for the forwarded conn to drain",
-				zap.String("dest", dest))
-		}
-	}()
+	select {
+	case <-ctx.Done():
+	case <-errCh:
+	case <-time.After(tcpipTerminationDelay):
+		zap.L().Debug("Timed out waiting for the forwarded conn to drain",
+			zap.String("dest", dest))
+	}
 }
