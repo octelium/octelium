@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
-	"github.com/google/cel-go/common/types/traits"
+	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/common/types/ref"
+	"cel.dev/cel-go/common/types/traits"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/checker/decls"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/checker/decls"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine/cellib"
 	"github.com/patrickmn/go-cache"
