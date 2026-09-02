@@ -136,6 +136,7 @@ const (
 	// API semantics (i.e. the operation, the model, the streaming mode and
 	// the token usage) for access control, access logging and metrics.
 	Service_Spec_LLM Service_Spec_Mode = 14
+	// RDP is the RDP mode
 	Service_Spec_RDP Service_Spec_Mode = 15
 )
 
