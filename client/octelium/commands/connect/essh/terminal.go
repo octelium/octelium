@@ -113,6 +113,9 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 	env := dctx.getEnv(sessCtx.env)
 
 	setEnv(&env, "SHELL", shellPath)
+	if ret.tty != nil {
+		setEnv(&env, "SSH_TTY", ret.tty.Name())
+	}
 
 	cmd := &exec.Cmd{
 		Path: shellPath,

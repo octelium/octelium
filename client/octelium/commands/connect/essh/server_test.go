@@ -27,7 +27,9 @@ import (
 	"io"
 	"net"
 	"os/user"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -128,12 +130,12 @@ func TestServer(t *testing.T) {
 	stdinPipe, err := sess.StdinPipe()
 	require.NoError(t, err)
 	require.NoError(t, sess.Shell())
-	_, err = stdinPipe.Write([]byte("printf 'ready\\n'; exit\r\n"))
+	_, err = stdinPipe.Write([]byte("printf 'ready:%s\\n' \"$SSH_TTY\"; exit\r\n"))
 	require.NoError(t, err)
 	require.NoError(t, sess.Wait())
 	output, err := io.ReadAll(stdoutPipe)
 	require.NoError(t, err)
-	assert.Contains(t, string(output), "ready")
+	assert.Contains(t, string(output), "ready:/")
 }
 
 func TestExecAndSignalExit(t *testing.T) {
@@ -151,6 +153,21 @@ func TestExecAndSignalExit(t *testing.T) {
 	var exitErr *ssh.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, "TERM", exitErr.Signal())
+}
+
+func TestExecEnv(t *testing.T) {
+	_, sshC := newTestServer(t)
+
+	sess, err := sshC.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, sess.Setenv("GIT_PROTOCOL", "version=2"))
+	output, err := sess.Output("printf '%s\\n%s\\n%s\\n' \"$SHELL\" \"$SSH_CONNECTION\" \"$GIT_PROTOCOL\"")
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	require.Len(t, lines, 3)
+	assert.NotEmpty(t, lines[0])
+	assert.Len(t, strings.Fields(lines[1]), 4)
+	assert.Equal(t, "version=2", lines[2])
 }
 
 func TestExecProcessGroupCleanup(t *testing.T) {
@@ -262,8 +279,18 @@ func TestEnvValidation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "TERM", key)
 	assert.Equal(t, "xterm", val)
+	key, val, err = parseEnv(ssh.Marshal(&struct{ Key, Value string }{"OCTELIUM_TEST", "octelium"}))
+	require.NoError(t, err)
+	assert.Equal(t, "OCTELIUM_TEST", key)
+	assert.Equal(t, "octelium", val)
+	key, val, err = parseEnv(ssh.Marshal(&struct{ Key, Value string }{"CORDIUM_TEST", "cordium"}))
+	require.NoError(t, err)
+	assert.Equal(t, "CORDIUM_TEST", key)
+	assert.Equal(t, "cordium", val)
 
 	t.Setenv("OCTELIUM_ESSH_ALLOW_ANY_ENV", "true")
+	_, _, err = parseEnv(ssh.Marshal(&struct{ Key, Value string }{"SSH_AUTH_SOCK", "/tmp/agent.sock"}))
+	assert.Error(t, err)
 	_, _, err = parseEnv(ssh.Marshal(&struct{ Key, Value string }{"INVALID=KEY", "value"}))
 	assert.Error(t, err)
 	_, _, err = parseEnv(ssh.Marshal(&struct{ Key, Value string }{"1INVALID", "value"}))
@@ -273,10 +300,38 @@ func TestEnvValidation(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv("OCTELIUM_DOMAIN", "example.com")
 	t.Setenv("OCTELIUM_DOMAIN_SECRET", "secret")
+	t.Setenv("CORDIUM_SANDBOX", "sandbox")
+	t.Setenv("UNRELATED_ENV_VAR", "value")
 	dctx := &dctx{usr: usr}
 	env := dctx.getEnv(nil)
 	assert.Contains(t, env, "OCTELIUM_DOMAIN=example.com")
-	assert.NotContains(t, env, "OCTELIUM_DOMAIN_SECRET=secret")
+	assert.Contains(t, env, "OCTELIUM_DOMAIN_SECRET=secret")
+	assert.Contains(t, env, "CORDIUM_SANDBOX=sandbox")
+	assert.NotContains(t, env, "UNRELATED_ENV_VAR=value")
+}
+
+func TestSSHAuthSockEnv(t *testing.T) {
+	usr, err := user.Current()
+	require.NoError(t, err)
+	sockPath := filepath.Join(t.TempDir(), "agent.sock")
+	lis, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
+	defer lis.Close()
+
+	t.Setenv("SSH_AUTH_SOCK", sockPath)
+	dctx := &dctx{usr: usr, sameUser: true}
+	assert.NotContains(t, dctx.getEnv(nil), "SSH_AUTH_SOCK="+sockPath)
+
+	t.Setenv("OCTELIUM_ESSH_INHERIT_SSH_AUTH_SOCK", "true")
+	assert.Contains(t, dctx.getEnv(nil), "SSH_AUTH_SOCK="+sockPath)
+
+	dctx.sameUser = false
+	assert.NotContains(t, dctx.getEnv(nil), "SSH_AUTH_SOCK="+sockPath)
+
+	dctx.sameUser = true
+	missingSockPath := filepath.Join(t.TempDir(), "missing.sock")
+	t.Setenv("SSH_AUTH_SOCK", missingSockPath)
+	assert.NotContains(t, dctx.getEnv(nil), "SSH_AUTH_SOCK="+missingSockPath)
 }
 
 func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, error) {

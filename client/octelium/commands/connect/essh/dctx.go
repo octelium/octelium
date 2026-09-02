@@ -102,7 +102,9 @@ func (c *dctx) getEnv(additional []*envVar) []string {
 	for _, keyVal := range curEnv {
 
 		switch {
-		case strings.HasPrefix(keyVal, "OCTELIUM_DOMAIN="):
+		case strings.HasPrefix(keyVal, "OCTELIUM_"):
+			env = append(env, keyVal)
+		case strings.HasPrefix(keyVal, "CORDIUM_"):
 			env = append(env, keyVal)
 		}
 	}
@@ -123,6 +125,21 @@ func (c *dctx) getEnv(additional []*envVar) []string {
 		setEnv(&env, "PATH", val)
 	} else {
 		setEnv(&env, "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	if c.sameUser && os.Getenv("OCTELIUM_ESSH_INHERIT_SSH_AUTH_SOCK") == "true" {
+		if val := os.Getenv("SSH_AUTH_SOCK"); val != "" {
+			if info, err := os.Stat(val); err == nil && info.Mode()&os.ModeSocket != 0 {
+				setEnv(&env, "SSH_AUTH_SOCK", val)
+			}
+		}
+	}
+	if c.conn != nil && c.conn.LocalAddr() != nil && c.conn.RemoteAddr() != nil {
+		localHost, localPort, localErr := net.SplitHostPort(c.conn.LocalAddr().String())
+		remoteHost, remotePort, remoteErr := net.SplitHostPort(c.conn.RemoteAddr().String())
+		if localErr == nil && remoteErr == nil {
+			setEnv(&env, "SSH_CLIENT", fmt.Sprintf("%s %s %s", remoteHost, remotePort, localPort))
+			setEnv(&env, "SSH_CONNECTION", fmt.Sprintf("%s %s %s %s", remoteHost, remotePort, localHost, localPort))
+		}
 	}
 
 	for _, e := range additional {

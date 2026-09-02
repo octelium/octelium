@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -340,6 +341,7 @@ func (c *dctx) handleSessionReqExec(ctx context.Context, sessCtx *sessCtx, req *
 	cmd.Stderr = ch.Stderr()
 
 	cmd.Env = c.getEnv(sessCtx.env)
+	setEnv(&cmd.Env, "SHELL", shellPath)
 
 	inPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -560,8 +562,13 @@ func parseEnv(payload []byte) (string, string, error) {
 	if !isValidEnvKey(key) {
 		return "", "", errors.Errorf("Invalid env var key: %s", key)
 	}
+	if key == "SSH_AUTH_SOCK" {
+		return "", "", errors.Errorf("Denied adding the env var key: %s", key)
+	}
 
-	if !slices.Contains(allowedEnvVars, key) {
+	if !slices.Contains(allowedEnvVars, key) &&
+		!strings.HasPrefix(key, "OCTELIUM_") &&
+		!strings.HasPrefix(key, "CORDIUM_") {
 		if os.Getenv("OCTELIUM_ESSH_ALLOW_ANY_ENV") != "true" {
 			return "", "", errors.Errorf("Denied adding the env var key: %s", key)
 		}
@@ -595,6 +602,7 @@ var allowedEnvVars = []string{
 	"DISPLAY",
 
 	"LANG",
+	"LANGUAGE",
 	"LC_ALL",
 	"LC_CTYPE",
 	"LC_MESSAGES",
@@ -607,6 +615,7 @@ var allowedEnvVars = []string{
 	"LC_NAME",
 	"LC_PAPER",
 	"LC_TELEPHONE",
+	"LC_IDENTIFICATION",
 
 	"TZ",
 
@@ -614,7 +623,9 @@ var allowedEnvVars = []string{
 	"VISUAL",
 	"PAGER",
 	"MANPAGER",
+	"NO_COLOR",
 
+	"GIT_PROTOCOL",
 	"GIT_AUTHOR_NAME",
 	"GIT_AUTHOR_EMAIL",
 	"GIT_COMMITTER_NAME",
