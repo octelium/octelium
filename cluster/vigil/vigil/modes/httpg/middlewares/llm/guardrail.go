@@ -34,7 +34,12 @@ type guardrail struct {
 }
 
 func NewGuardrail(ctx context.Context, next http.Handler,
-	celEngine *celengine.CELEngine) (http.Handler, error) {
+	celEngine *celengine.CELEngine, svc *corev1.Service) (http.Handler, error) {
+
+	if hasSecretsPattern(svc) {
+		warmSecretScanner()
+	}
+
 	return &guardrail{
 		next:      next,
 		celEngine: celEngine,

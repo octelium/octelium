@@ -65,11 +65,18 @@ func compileRegex(arg string) (*regexp.Regexp, error) {
 }
 
 type patternRule struct {
-	cfg  *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern
-	idx  int
-	name string
-	rgx  *regexp.Regexp
-	typ  corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type
+	cfg       *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern
+	idx       int
+	name      string
+	rgx       *regexp.Regexp
+	typ       corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type
+	isSecrets bool
+	excludes  map[string]struct{}
+}
+
+func (r *patternRule) isExcluded(arg string) bool {
+	_, ok := r.excludes[strings.ToLower(arg)]
+	return ok
 }
 
 func (r *patternRule) action() corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action {
@@ -122,6 +129,12 @@ func newPatternSet(
 		case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_:
 			rule.typ = conf.GetType()
 			rule.name = detectorName(conf.GetType())
+		case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_:
+			rule.isSecrets = true
+			rule.excludes = make(map[string]struct{})
+			for _, exclude := range conf.GetSecrets().GetExcludeRules() {
+				rule.excludes[strings.ToLower(exclude)] = struct{}{}
+			}
 		default:
 			return nil, errors.Errorf("The Guardrail Pattern match is not set")
 		}
@@ -138,24 +151,48 @@ func newPatternSet(
 
 type finding struct {
 	rule  *patternRule
+	name  string
 	start int
 	end   int
 }
 
 func (p *patternSet) inspect(text string) ([]*finding, error) {
 	var ret []*finding
+	var secrets []*secretMatch
+	var isScanned bool
 
 	for _, rule := range p.rules {
 		var count int
 
-		if rule.rgx != nil {
+		switch {
+		case rule.rgx != nil:
 			for _, loc := range rule.rgx.FindAllStringIndex(text, maxPatternFindings+1) {
 				ret = append(ret, &finding{rule: rule, start: loc[0], end: loc[1]})
 				count++
 			}
-		} else {
-			matches, isExhausted := runDetector(rule.typ, text,
-				rule.cfg.GetMinEntropyLength(), maxPatternFindings)
+		case rule.isSecrets:
+			if !isScanned {
+				scanner, err := getSecretScanner()
+				if err != nil {
+					return nil, err
+				}
+				matches, err := scanner.scan(text, maxPatternFindings)
+				if err != nil {
+					return nil, err
+				}
+				secrets = matches
+				isScanned = true
+			}
+			for _, m := range secrets {
+				if rule.isExcluded(m.rule) {
+					continue
+				}
+				ret = append(ret, &finding{
+					rule: rule, name: m.rule, start: m.start, end: m.end})
+				count++
+			}
+		default:
+			matches, isExhausted := runDetector(rule.typ, text, maxPatternFindings)
 			if isExhausted {
 				return nil, errors.Errorf(
 					"The Guardrail Pattern %d matched too many times", rule.idx)
@@ -216,13 +253,15 @@ func rewrite(text string, findings []*finding,
 	var merged []*finding
 	for _, f := range sorted {
 		if len(merged) == 0 {
-			merged = append(merged, &finding{rule: f.rule, start: f.start, end: f.end})
+			merged = append(merged, &finding{
+				rule: f.rule, name: f.name, start: f.start, end: f.end})
 			continue
 		}
 
 		cur := merged[len(merged)-1]
 		if f.start >= cur.end {
-			merged = append(merged, &finding{rule: f.rule, start: f.start, end: f.end})
+			merged = append(merged, &finding{
+				rule: f.rule, name: f.name, start: f.start, end: f.end})
 			continue
 		}
 
@@ -231,6 +270,7 @@ func rewrite(text string, findings []*finding,
 		}
 		if isRuleMoreDestructive(f.rule, cur.rule) {
 			cur.rule = f.rule
+			cur.name = f.name
 		}
 	}
 
@@ -273,6 +313,9 @@ func findingReplacement(f *finding, replacements map[int]string) string {
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE:
 		return replacements[f.rule.idx]
 	default:
+		if f.name != "" {
+			return redactPlaceholder(f.name)
+		}
 		return redactPlaceholder(f.rule.name)
 	}
 }

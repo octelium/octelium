@@ -375,7 +375,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return llm.NewGuardrail(ctx, next, s.celEngine)
+		return llm.NewGuardrail(ctx, next, s.celEngine, svc)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

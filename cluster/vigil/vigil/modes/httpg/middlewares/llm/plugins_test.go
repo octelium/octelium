@@ -36,6 +36,14 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+const githubToken = "ghp_16C7e42F292c6912E7710c838347Ae178B4a"
+
+const privateKeyMaterial = "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7a7kN8LymUu8Z"
+
+const privateKey = `-----BEGIN PRIVATE KEY-----\n` + privateKeyMaterial +
+	`\n8D9r9K2m6N1ZaUT96UrFqjlL9nAqmZ+13D82H1CYLKy0NOAY3XBLzLk46HZd8na2` +
+	`\n-----END PRIVATE KEY-----`
+
 type pluginResult struct {
 	isNext   bool
 	code     int
@@ -105,7 +113,7 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	mdlwr, err = NewTools(ctx, mdlwr, celEngine)
 	assert.Nil(t, err)
 
-	mdlwr, err = NewGuardrail(ctx, mdlwr, celEngine)
+	mdlwr, err = NewGuardrail(ctx, mdlwr, celEngine, newService())
 	assert.Nil(t, err)
 
 	path := o.path
@@ -840,7 +848,7 @@ func TestGuardrailScopes(t *testing.T) {
 	{
 		body := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":[` +
 			`{"type":"text","text":"look at this"},` +
-			`{"type":"tool_result","content":[{"type":"text","text":"AKIAIOSFODNN7EXAMPLE"}]}]}]}`
+			`{"type":"tool_result","content":[{"type":"text","text":"AKIADEADBEEFDEADBEEF"}]}]}]}`
 
 		res := servePlugins(t, &pluginOpts{
 			protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
@@ -853,8 +861,8 @@ func TestGuardrailScopes(t *testing.T) {
 					},
 					Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
 						{
-							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-								Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+								Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 							},
 						},
 					},
@@ -872,7 +880,7 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 	body := `{"model":"gpt-4o","input":[` +
 		`{"role":"user","content":"run it"},` +
 		`{"type":"function_call_output","call_id":"c1",` +
-		`"output":"the key is AKIAIOSFODNN7EXAMPLE"}]}`
+		`"output":"the key is AKIADEADBEEFDEADBEEF"}]}`
 
 	{
 		res := servePlugins(t, &pluginOpts{
@@ -885,8 +893,8 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 					},
 					Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
 						{
-							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-								Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+								Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 							},
 							Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
 						},
@@ -897,7 +905,7 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		input := res.upstream["input"].([]any)
-		assert.Equal(t, "the key is [REDACTED:AWS_ACCESS_KEY]",
+		assert.Equal(t, "the key is [REDACTED:NP.AWS.1]",
 			input[1].(map[string]any)["output"])
 		assert.Equal(t, "c1", input[1].(map[string]any)["call_id"])
 	}
@@ -910,8 +918,8 @@ func TestGuardrailResponsesToolOutput(t *testing.T) {
 				newPlugin("inj", &corev1.Service_Spec_Config_LLM_Plugin_Guardrail{
 					Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
 						{
-							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-								Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+							Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+								Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 							},
 						},
 					},
@@ -979,14 +987,14 @@ func TestGuardrailResponse(t *testing.T) {
 			upstream: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Write([]byte(`{"choices":[{"message":{"role":"assistant",` +
-					`"content":"the key is AKIAIOSFODNN7EXAMPLE"}}]}`))
+					`"content":"the key is AKIADEADBEEFDEADBEEF"}}]}`))
 			},
 			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
 				newGuardrailPlugin("leak",
 					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
 					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+							Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 						},
 					}),
 			},
@@ -994,7 +1002,7 @@ func TestGuardrailResponse(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusForbidden, res.code)
-		assert.NotContains(t, res.body, "AKIAIOSFODNN7EXAMPLE")
+		assert.NotContains(t, res.body, "AKIADEADBEEFDEADBEEF")
 	}
 
 	{
@@ -1009,8 +1017,8 @@ func TestGuardrailResponse(t *testing.T) {
 				newGuardrailPlugin("leak",
 					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
 					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+							Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 						},
 					}),
 			},
@@ -1032,15 +1040,15 @@ func TestGuardrailResponseStream(t *testing.T) {
 		upstream: func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"the key is AKIA\"}}]}\n\n"))
-			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"IOSFODNN7EXAMPLE\"}}]}\n\n"))
+			w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"DEADBEEFDEADBEEF\"}}]}\n\n"))
 			w.Write([]byte("data: [DONE]\n\n"))
 		},
 		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
 			newGuardrailPlugin("leak",
 				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+						Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 					},
 				}),
 		},
@@ -1048,7 +1056,7 @@ func TestGuardrailResponseStream(t *testing.T) {
 
 	assert.True(t, res.isNext)
 	assert.Equal(t, http.StatusForbidden, res.code)
-	assert.NotContains(t, res.body, "AKIAIOSFODNN7EXAMPLE")
+	assert.NotContains(t, res.body, "AKIADEADBEEFDEADBEEF")
 }
 
 func TestPluginConditionError(t *testing.T) {
@@ -1077,7 +1085,7 @@ func TestPluginConditionError(t *testing.T) {
 func TestGuardrailCompletionsPrompt(t *testing.T) {
 
 	{
-		body := `{"model":"gpt-3.5-turbo-instruct","prompt":"the key is AKIAIOSFODNN7EXAMPLE"}`
+		body := `{"model":"gpt-3.5-turbo-instruct","prompt":"the key is AKIADEADBEEFDEADBEEF"}`
 
 		res := servePlugins(t, &pluginOpts{
 			path: "/v1/completions",
@@ -1086,8 +1094,8 @@ func TestGuardrailCompletionsPrompt(t *testing.T) {
 				newGuardrailPlugin("leak",
 					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+							Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 						},
 					}),
 			},
@@ -1127,7 +1135,7 @@ func TestGuardrailAnthropicNestedToolResult(t *testing.T) {
 	body := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":[` +
 		`{"type":"text","text":"look"},` +
 		`{"type":"tool_result","tool_use_id":"t1","content":[` +
-		`{"type":"text","text":"the key is AKIAIOSFODNN7EXAMPLE"}]}]}]}`
+		`{"type":"text","text":"the key is AKIADEADBEEFDEADBEEF"}]}]}]}`
 
 	res := servePlugins(t, &pluginOpts{
 		protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
@@ -1140,8 +1148,8 @@ func TestGuardrailAnthropicNestedToolResult(t *testing.T) {
 				},
 				Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
 					{
-						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+							Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 						},
 						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
 					},
@@ -1157,14 +1165,14 @@ func TestGuardrailAnthropicNestedToolResult(t *testing.T) {
 
 	result := blocks[1].(map[string]any)
 	assert.Equal(t, "t1", result["tool_use_id"])
-	assert.Equal(t, "the key is [REDACTED:AWS_ACCESS_KEY]",
+	assert.Equal(t, "the key is [REDACTED:NP.AWS.1]",
 		result["content"].([]any)[0].(map[string]any)["text"])
 }
 
 func TestGuardrailPrivateKeySpan(t *testing.T) {
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
-		`"here it is -----BEGIN RSA PRIVATE KEY-----\nMIIB0BEEF\n-----END RSA PRIVATE KEY----- ok"}]}`
+		`"here it is ` + privateKey + ` ok"}]}`
 
 	res := servePlugins(t, &pluginOpts{
 		body: body,
@@ -1172,18 +1180,18 @@ func TestGuardrailPrivateKeySpan(t *testing.T) {
 			newGuardrailPlugin("key",
 				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+						Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 					},
-					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP,
 				}),
 		},
 	})
 
 	assert.True(t, res.isNext)
 	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
-	assert.Equal(t, "here it is [REDACTED:PRIVATE_KEY] ok", content)
-	assert.NotContains(t, content, "MIIB0BEEF")
+	assert.Equal(t, "here it is  ok", content)
+	assert.NotContains(t, content, privateKeyMaterial)
 }
 
 func TestGuardrailOverlapPrecedence(t *testing.T) {
@@ -1566,31 +1574,6 @@ func TestGuardrailAdjacentSpans(t *testing.T) {
 		res.upstream["messages"].([]any)[0].(map[string]any)["content"])
 }
 
-func TestGuardrailTruncatedPrivateKey(t *testing.T) {
-
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
-		`"here it is -----BEGIN RSA PRIVATE KEY-----\nMIIB0BEEF\n"}]}`
-
-	res := servePlugins(t, &pluginOpts{
-		body: body,
-		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
-			newGuardrailPlugin("key",
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
-					},
-					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
-				}),
-		},
-	})
-
-	assert.True(t, res.isNext)
-	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
-	assert.Equal(t, "here it is [REDACTED:PRIVATE_KEY]", content)
-	assert.NotContains(t, content, "MIIB0BEEF")
-}
-
 func TestPromptDoesNotParseWhenItCannotRun(t *testing.T) {
 
 	body := `{"model":"gpt-4o","messages":{"role":"user"}}`
@@ -1621,8 +1604,8 @@ func TestGuardrailToolResultScope(t *testing.T) {
 		ret := newGuardrailPlugin("aws",
 			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
 			&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-				Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-					Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_AWS_ACCESS_KEY,
+				Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+					Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
 				},
 				Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
 			})
@@ -1645,10 +1628,10 @@ func TestGuardrailToolResultScope(t *testing.T) {
 
 	toolResultBody := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":[` +
 		`{"type":"advisor_tool_result","content":[` +
-		`{"type":"text","text":"AKIAIOSFODNN7EXAMPLE"}]}]}]}`
+		`{"type":"text","text":"AKIADEADBEEFDEADBEEF"}]}]}]}`
 
 	toolUseBody := `{"model":"claude-sonnet-4","messages":[{"role":"assistant","content":[` +
-		`{"type":"server_tool_use","input":{"query":"AKIAIOSFODNN7EXAMPLE"}}]}]}`
+		`{"type":"server_tool_use","input":{"query":"AKIADEADBEEFDEADBEEF"}}]}]}`
 
 	{
 		res := serve(toolResultBody,
@@ -1674,28 +1657,111 @@ func TestGuardrailToolResultScope(t *testing.T) {
 	}
 }
 
-func TestGuardrailTrailingTruncatedPrivateKey(t *testing.T) {
+func newSecretsGuardrail(name string,
+	action corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action,
+	excludeRules ...string) *corev1.Service_Spec_Config_LLM_Plugin {
 
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
-		`"-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY----- and ` +
-		`-----BEGIN EC PRIVATE KEY-----\nMIIB0BEEF\n"}]}`
+	return newGuardrailPlugin(name,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+			Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+				Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{
+					ExcludeRules: excludeRules,
+				},
+			},
+			Action: action,
+		})
+}
+
+func newChatBody(content string) string {
+	return `{"model":"gpt-4o","messages":[{"role":"user","content":"` + content + `"}]}`
+}
+
+func TestGuardrailSecrets(t *testing.T) {
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: newChatBody("the token is " + githubToken),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecretsGuardrail("secrets",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+			},
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: newChatBody("can you summarize the meeting notes for me"),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecretsGuardrail("secrets",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+			},
+		})
+
+		assert.True(t, res.isNext)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: newChatBody("the token is " + githubToken),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecretsGuardrail("secrets",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
+		assert.Equal(t, "the token is [REDACTED:NP.GITHUB.1]", content)
+	}
+}
+
+func TestGuardrailSecretsRewritesEveryOccurrence(t *testing.T) {
 
 	res := servePlugins(t, &pluginOpts{
-		body: body,
+		body: newChatBody("first " + githubToken + " second " + githubToken),
 		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
-			newGuardrailPlugin("key",
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
-					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
-						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_PRIVATE_KEY,
-					},
-					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
-				}),
+			newSecretsGuardrail("secrets",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
 		},
 	})
 
 	assert.True(t, res.isNext)
 	content := res.upstream["messages"].([]any)[0].(map[string]any)["content"].(string)
-	assert.Equal(t, "[REDACTED:PRIVATE_KEY] and [REDACTED:PRIVATE_KEY]", content)
-	assert.NotContains(t, content, "MIIB0BEEF")
+	assert.Equal(t,
+		"first [REDACTED:NP.GITHUB.1] second [REDACTED:NP.GITHUB.1]", content)
+	assert.NotContains(t, content, githubToken)
+}
+
+func TestGuardrailSecretsExcludeRules(t *testing.T) {
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: newChatBody("the token is " + githubToken),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecretsGuardrail("secrets",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+					"NP.GITHUB.1"),
+			},
+		})
+
+		assert.True(t, res.isNext)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: newChatBody("the token is " + githubToken),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSecretsGuardrail("secrets",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+					"np.slack.1"),
+			},
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+	}
 }

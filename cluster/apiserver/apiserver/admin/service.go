@@ -1982,11 +1982,10 @@ const (
 	maxToolFilters       = 128
 	maxToolDefinitionLen = 256 * 1024
 
-	maxGuardrailScopes     = 8
-	maxGuardrailPatterns   = 128
-	maxGuardrailRegexLen   = 2048
-	maxGuardrailEntropyLen = 1024
-	minGuardrailEntropyLen = 16
+	maxGuardrailScopes       = 8
+	maxGuardrailPatterns     = 128
+	maxGuardrailRegexLen     = 2048
+	maxGuardrailExcludeRules = 128
 )
 
 func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec_Config) error {
@@ -2373,22 +2372,18 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 		if _, ok := corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_name[int32(cfg.GetType())]; !ok {
 			return grpcutils.InvalidArg("Invalid Guardrail Pattern type")
 		}
+	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_:
+		excludeRules := cfg.GetSecrets().GetExcludeRules()
+		if len(excludeRules) > maxGuardrailExcludeRules {
+			return grpcutils.InvalidArg("Too many Guardrail Pattern excludeRules")
+		}
+		for _, excludeRule := range excludeRules {
+			if err := s.validateGenStr(excludeRule, true, "excludeRules"); err != nil {
+				return err
+			}
+		}
 	default:
 		return grpcutils.InvalidArg("The Guardrail Pattern match must be set")
-	}
-
-	isEntropy := cfg.GetType() ==
-		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_HIGH_ENTROPY
-
-	if val := cfg.GetMinEntropyLength(); val > 0 {
-		if !isEntropy {
-			return grpcutils.InvalidArg(
-				"The Guardrail Pattern minEntropyLength can only be set for the HIGH_ENTROPY detector")
-		}
-		if val < minGuardrailEntropyLen || val > maxGuardrailEntropyLen {
-			return grpcutils.InvalidArg(
-				"Invalid Guardrail Pattern minEntropyLength value: %d", val)
-		}
 	}
 
 	var isRewrite bool
@@ -2423,11 +2418,6 @@ func (s *Server) validateGuardrailPattern(ctx context.Context,
 		if hasToolDefinitions {
 			return grpcutils.InvalidArg(
 				"A Guardrail that inspects the tool definitions can only use the DENY Action")
-		}
-		if cfg.GetType() ==
-			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_GCP_SERVICE_ACCOUNT_KEY {
-			return grpcutils.InvalidArg(
-				"The GCP_SERVICE_ACCOUNT_KEY detector matches the marker of a key rather than the key itself, so it can only use the DENY Action")
 		}
 	}
 

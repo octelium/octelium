@@ -68,7 +68,7 @@ build-rscserver:
 build-cloudman:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-cloudman github.com/octelium/octelium/cluster/cloudman
 build-vigil:
-	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-vigil github.com/octelium/octelium/cluster/vigil
+	CGO_ENABLED=1 GOOS=linux go build -tags vectorscan $(LDFLAGS) -o bin/octelium-vigil github.com/octelium/octelium/cluster/vigil
 build-octovigil:
 	CGO_ENABLED=0 GOOS=linux go build $(LDFLAGS) -o bin/octelium-octovigil github.com/octelium/octelium/cluster/octovigil
 build-portal:
