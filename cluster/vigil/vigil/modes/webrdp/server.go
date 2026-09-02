@@ -144,11 +144,14 @@ func (s *Server) Run(ctx context.Context) error {
 			return err
 		}
 		s.lis, err = tls.Listen("tcp", addr, tlsCfg)
+		if err != nil {
+			return err
+		}
 	} else {
 		s.lis, err = net.Listen("tcp", addr)
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	s.httpSrv = &http.Server{
@@ -462,8 +465,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	zap.L().Debug("Decoded RDCleanPath request",
 		zap.String("destination", rdcpReq.Destination),
-		zap.Int("clientX224Length", len(rdcpReq.X224ConnectionPDU)),
-		zap.String("clientX224Hex", fmt.Sprintf("%x", rdcpReq.X224ConnectionPDU)))
+		zap.Int("clientX224Length", len(rdcpReq.X224ConnectionPDU)))
 
 	cred, err := s.getInjectedCredential(ctx)
 	if err != nil {
@@ -534,7 +536,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("upstream", upstream.HostPort),
 		zap.Bool("secretless", cred != nil),
 		zap.Int("x224ForBrowserLength", len(handshake.X224PDU)),
-		zap.String("x224ForBrowserHex", fmt.Sprintf("%x", handshake.X224PDU)),
 		zap.Int("certChainCount", len(handshake.CertChain)))
 	resp, err := encodeRDCleanPathResponse(
 		handshake.ServerAddr,
@@ -552,8 +553,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("requestedDestination", rdcpReq.Destination),
 		zap.String("upstream", upstream.HostPort),
 		zap.Bool("secretless", cred != nil),
-		zap.Int("responseLength", len(resp)),
-		zap.String("responseHex", fmt.Sprintf("%x", resp)))
+		zap.Int("responseLength", len(resp)))
 	if err := ws.Write(ctx, websocket.MessageBinary, resp); err != nil {
 		zap.L().Debug("Could not write RDCleanPath response", zap.Error(err))
 		return

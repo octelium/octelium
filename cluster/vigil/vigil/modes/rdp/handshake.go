@@ -19,7 +19,6 @@ package rdp
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net"
 	"time"
 
@@ -114,18 +113,11 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 	zap.L().Debug("Performing RDP handshake with upstream",
 		zap.String("upstream", p.Upstream.HostPort),
 		zap.Bool("secretless", secretless),
-		zap.Int("requestLength", len(x224Request)),
-		zap.String("requestHex", fmt.Sprintf("%x", x224Request)))
+		zap.Int("requestLength", len(x224Request)))
 
 	if _, err := rawConn.Write(x224Request); err != nil {
 		return nil, err
 	}
-
-	zap.L().Debug("RDP handshake X.224 request sent",
-		zap.String("upstream", p.Upstream.HostPort),
-		zap.Bool("secretless", secretless),
-		zap.Int("requestLength", len(x224Request)),
-		zap.String("requestHex", fmt.Sprintf("%x", x224Request)))
 
 	x224Response, err := ReadTPKT(rawConn)
 	if err != nil {
@@ -135,8 +127,7 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 	zap.L().Debug("RDP handshake X.224 response received",
 		zap.String("upstream", p.Upstream.HostPort),
 		zap.Bool("secretless", secretless),
-		zap.Int("responseLength", len(x224Response)),
-		zap.String("responseHex", fmt.Sprintf("%x", x224Response)))
+		zap.Int("responseLength", len(x224Response)))
 
 	if IsNegotiationFailure(x224Response) {
 		return &HandshakeResult{
@@ -187,13 +178,6 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 			return nil, err
 		}
 
-		zap.L().Debug("Performing CredSSP handshake with upstream",
-			zap.String("upstream", p.Upstream.HostPort),
-			zap.Bool("secretless", secretless),
-			zap.String("credsspTarget", credsspTarget(p.Upstream)),
-			zap.Int("serverPublicKeyLength", len(serverPublicKey)),
-			zap.String("serverPublicKeyHex", fmt.Sprintf("%x", serverPublicKey)))
-
 		if err := driveCredSSP(tlsConn, p.Credential, serverPublicKey, credsspTarget(p.Upstream)); err != nil {
 			return nil, err
 		}
@@ -201,9 +185,7 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 		zap.L().Debug("CredSSP handshake with upstream completed",
 			zap.String("upstream", p.Upstream.HostPort),
 			zap.Bool("secretless", secretless),
-			zap.String("credsspTarget", credsspTarget(p.Upstream)),
-			zap.Int("serverPublicKeyLength", len(serverPublicKey)),
-			zap.String("serverPublicKeyHex", fmt.Sprintf("%x", serverPublicKey)))
+			zap.String("credsspTarget", credsspTarget(p.Upstream)))
 
 		synthetic, err := synthesizeSSLConfirm(x224Response)
 		if err != nil {
@@ -213,8 +195,7 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 		zap.L().Debug("Synthesized X.224 connection confirm for downstream",
 			zap.String("upstream", p.Upstream.HostPort),
 			zap.Bool("secretless", secretless),
-			zap.Int("syntheticLength", len(synthetic)),
-			zap.String("syntheticHex", fmt.Sprintf("%x", synthetic)))
+			zap.Int("syntheticLength", len(synthetic)))
 		x224ForDownstream = synthetic
 	}
 

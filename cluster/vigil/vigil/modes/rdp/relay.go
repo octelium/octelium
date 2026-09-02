@@ -18,10 +18,10 @@ package rdp
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -31,24 +31,18 @@ import (
 
 type copyResult struct {
 	direction string
-	n         int64
 	err       error
 }
 
-type firstChunkLogger struct {
-	src       io.Reader
-	direction string
-	logged    bool
+type countingReader struct {
+	src io.Reader
+	n   atomic.Int64
 }
 
-func (r *firstChunkLogger) Read(p []byte) (int, error) {
+func (r *countingReader) Read(p []byte) (int, error) {
 	n, err := r.src.Read(p)
-	if n > 0 && !r.logged {
-		r.logged = true
-		zap.L().Debug("RDP relay first chunk",
-			zap.String("direction", r.direction),
-			zap.Int("length", n),
-			zap.String("hex", fmt.Sprintf("%x", p[:n])))
+	if n > 0 {
+		r.n.Add(int64(n))
 	}
 	return n, err
 }
@@ -118,7 +112,10 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 	rewriteSelectedProtocol bool) (uint64, uint64) {
 	resCh := make(chan copyResult, 2)
 
-	var downstreamSrc io.Reader = &firstChunkLogger{src: downstream, direction: "downstream_to_upstream"}
+	fromDownstream := &countingReader{src: downstream}
+	toDownstream := &countingReader{src: upstream}
+
+	var downstreamSrc io.Reader = fromDownstream
 	if rewriteSelectedProtocol {
 		downstreamSrc = &mcsSelectedProtocolRewriter{
 			src:    downstreamSrc,
@@ -127,8 +124,7 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 	}
 
 	go copyConn(resCh, "downstream_to_upstream", upstream, downstreamSrc)
-	go copyConn(resCh, "upstream_to_downstream", downstream,
-		&firstChunkLogger{src: upstream, direction: "upstream_to_downstream"})
+	go copyConn(resCh, "upstream_to_downstream", downstream, toDownstream)
 
 	first := <-resCh
 
@@ -155,23 +151,11 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 			zap.Error(second.err))
 	}
 
-	var receivedBytes uint64
-	var sentBytes uint64
-
-	for _, res := range []copyResult{first, second} {
-		switch res.direction {
-		case "downstream_to_upstream":
-			receivedBytes = safeUint64(res.n)
-		case "upstream_to_downstream":
-			sentBytes = safeUint64(res.n)
-		}
-	}
-
-	return receivedBytes, sentBytes
+	return safeUint64(fromDownstream.n.Load()), safeUint64(toDownstream.n.Load())
 }
 
 func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.Reader) {
-	n, err := io.Copy(dst, src)
+	_, err := io.Copy(dst, src)
 
 	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 		if closeErr := cw.CloseWrite(); closeErr != nil && !isExpectedNetErr(closeErr) {
@@ -183,7 +167,6 @@ func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.R
 
 	resCh <- copyResult{
 		direction: direction,
-		n:         n,
 		err:       err,
 	}
 }

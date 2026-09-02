@@ -264,7 +264,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 				dctx.proxy.bytesToDownstream, dctx.proxy.bytesFromDownstream, attrs)
 
 			if dctx.proxy.upstreamErr != nil {
-				s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
+				s.metricsStore.AddConnRejected(dctx.proxy.rejectReason)
 			}
 		}()
 

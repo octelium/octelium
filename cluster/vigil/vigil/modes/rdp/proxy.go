@@ -27,6 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	rejectReasonHandshake    = "HANDSHAKE"
+	rejectReasonUpstreamDial = "UPSTREAM_DIAL"
+)
+
 type proxy struct {
 	lbManager *loadbalancer.LBManager
 	dctx      *dctx
@@ -34,7 +39,13 @@ type proxy struct {
 	bytesToDownstream   int64
 	bytesFromDownstream int64
 
-	upstreamErr error
+	upstreamErr  error
+	rejectReason string
+}
+
+func (p *proxy) fail(reason string, err error) {
+	p.upstreamErr = err
+	p.rejectReason = reason
 }
 
 func newProxy(dctx *dctx, lbManager *loadbalancer.LBManager) *proxy {
@@ -48,14 +59,14 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 	cred, err := GetInjectedCredential(ctx, secretMan, p.dctx.svcConfig)
 	if err != nil {
 		zap.L().Warn("Could not get RDP injected credential", zap.Error(err))
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
 	upstream, err := p.lbManager.GetUpstream(ctx, p.dctx.authResp)
 	if err != nil {
 		zap.L().Warn("Could not get RDP upstream", zap.Error(err))
-		p.upstreamErr = err
+		p.fail(rejectReasonUpstreamDial, err)
 		return
 	}
 
@@ -65,14 +76,14 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 	}
 
 	if !SupportsSSL(p.dctx.clientX224) {
-		p.upstreamErr = errors.Errorf("RDP client does not support TLS")
+		p.fail(rejectReasonHandshake, errors.Errorf("RDP client does not support TLS"))
 		return
 	}
 
 	trust, err := GetUpstreamTLSTrust(p.dctx.svcConfig)
 	if err != nil {
 		zap.L().Warn("Could not get RDP upstream TLS trust", zap.Error(err))
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
@@ -84,13 +95,13 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 	})
 	if err != nil {
 		zap.L().Warn("Could not perform RDP handshake", zap.Error(err))
-		p.upstreamErr = err
+		p.fail(rejectReasonUpstreamDial, err)
 		return
 	}
 
 	p.bytesToDownstream += int64(len(handshake.X224PDU))
 	if _, err := p.dctx.conn.Write(handshake.X224PDU); err != nil {
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
@@ -100,23 +111,23 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 	defer handshake.TLSConn.Close()
 
 	if tlsCfg == nil {
-		p.upstreamErr = errors.Errorf("missing downstream RDP TLS config")
+		p.fail(rejectReasonHandshake, errors.Errorf("missing downstream RDP TLS config"))
 		return
 	}
 
 	downstreamTLS := tls.Server(p.dctx.conn, tlsCfg)
 	if err := downstreamTLS.SetDeadline(time.Now().Add(tlsHandshakeTimeout)); err != nil {
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
 	if err := downstreamTLS.HandshakeContext(ctx); err != nil {
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
 	if err := downstreamTLS.SetDeadline(time.Time{}); err != nil {
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
@@ -129,7 +140,7 @@ func (p *proxy) servePassthrough(ctx context.Context, upstream *loadbalancer.Ups
 	upstreamConn, x224Response, err := DialPassthrough(ctx, upstream, p.dctx.clientX224)
 	if err != nil {
 		zap.L().Warn("Could not connect to RDP upstream", zap.Error(err))
-		p.upstreamErr = err
+		p.fail(rejectReasonUpstreamDial, err)
 		return
 	}
 	defer upstreamConn.Close()
@@ -138,7 +149,7 @@ func (p *proxy) servePassthrough(ctx context.Context, upstream *loadbalancer.Ups
 	p.bytesToDownstream += int64(len(x224Response))
 
 	if _, err := p.dctx.conn.Write(x224Response); err != nil {
-		p.upstreamErr = err
+		p.fail(rejectReasonHandshake, err)
 		return
 	}
 
