@@ -1679,6 +1679,9 @@ func TestRDPServices(t *testing.T) {
 	rdpReq.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
 		Url: "rdp://localhost",
 	}
+	rdpReq.Spec.Config.Type = &corev1.Service_Spec_Config_Rdp{
+		Rdp: &corev1.Service_Spec_Config_RDP{},
+	}
 
 	rdpSvc, err := srv.CreateService(ctx, rdpReq)
 	assert.Nil(t, err, "%+v", err)

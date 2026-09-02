@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package webrdp
+package rdp
 
 import (
 	"crypto/rsa"
@@ -28,12 +28,12 @@ import (
 	"github.com/pkg/errors"
 )
 
-type tlsTrustPolicy struct {
+type TLSTrustPolicy struct {
 	pinnedSHA256 [][32]byte
 	allowAnyCert bool
 }
 
-func (p *tlsTrustPolicy) verifyPeerCertificate(rawCerts [][]byte) error {
+func (p *TLSTrustPolicy) verifyPeerCertificate(rawCerts [][]byte) error {
 	if p == nil {
 		return errors.Errorf("missing upstream TLS trust policy")
 	}
@@ -59,7 +59,7 @@ func (p *tlsTrustPolicy) verifyPeerCertificate(rawCerts [][]byte) error {
 	return errors.Errorf("no upstream TLS trust configured")
 }
 
-func buildUpstreamTLSConfig(upstream *loadbalancer.Upstream, trust *tlsTrustPolicy) *tls.Config {
+func buildUpstreamTLSConfig(upstream *loadbalancer.Upstream, trust *TLSTrustPolicy) *tls.Config {
 	return &tls.Config{
 		ServerName:         getTLSServerName(upstream),
 		InsecureSkipVerify: true,

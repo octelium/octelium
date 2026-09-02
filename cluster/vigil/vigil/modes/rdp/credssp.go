@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package webrdp
+package rdp
 
 import (
 	"crypto/tls"
@@ -30,9 +30,10 @@ const (
 	credsspStepTimeout   = 15 * time.Second
 	credsspMaxTSRequest  = 16 * 1024 * 1024
 	credsspMaxRoundTrips = 8
+	derTagSequence       = 0x30
 )
 
-func driveCredSSP(tlsConn *tls.Conn, cred *injectedCredential, serverPubkey []byte, target string) error {
+func driveCredSSP(tlsConn *tls.Conn, cred *Credential, serverPubkey []byte, target string) error {
 	if cred == nil {
 		return errors.Errorf("missing injected credential")
 	}

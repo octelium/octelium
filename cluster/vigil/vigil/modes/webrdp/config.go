@@ -18,15 +18,13 @@ package webrdp
 
 import (
 	"context"
-	"encoding/hex"
-	"strings"
 
-	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/rdp"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
-func (s *Server) getInjectedCredential(ctx context.Context) (*injectedCredential, error) {
+func (s *Server) getInjectedCredential(ctx context.Context) (*rdp.Credential, error) {
 	svc := s.vCache.GetService()
 	if svc == nil {
 		return nil, errors.Errorf("could not get Service from vcache")
@@ -34,99 +32,14 @@ func (s *Server) getInjectedCredential(ctx context.Context) (*injectedCredential
 
 	zap.L().Debug("Getting injected credential for service", zap.Any("svc", svc))
 
-	cfg := svc.Spec.GetConfig()
-	if cfg == nil {
-		return nil, nil
-	}
-
-	rdp := cfg.GetRdp()
-	if rdp == nil {
-		return nil, nil
-	}
-
-	auth := rdp.GetAuth()
-	if auth == nil {
-		return nil, nil
-	}
-
-	pwd := auth.GetPassword()
-	if pwd == nil || pwd.GetFromSecret() == "" {
-		return nil, nil
-	}
-
-	if auth.GetUser() == "" {
-		return nil, errors.Errorf("RDP injected credential is missing a username")
-	}
-
-	secret, err := s.secretMan.GetByName(ctx, pwd.GetFromSecret())
-	if err != nil {
-		return nil, err
-	}
-
-	return &injectedCredential{
-		Domain:   auth.GetDomain(),
-		Username: auth.GetUser(),
-		Password: ucorev1.ToSecret(secret).GetValueStr(),
-	}, nil
+	return rdp.GetInjectedCredential(ctx, s.secretMan, svc.Spec.Config)
 }
 
-func (s *Server) getUpstreamTLSTrust() (*tlsTrustPolicy, error) {
+func (s *Server) getUpstreamTLSTrust() (*rdp.TLSTrustPolicy, error) {
 	svc := s.vCache.GetService()
 	if svc == nil {
 		return nil, errors.Errorf("could not get Service from vcache")
 	}
 
-	cfg := svc.Spec.GetConfig()
-	if cfg == nil {
-		return &tlsTrustPolicy{allowAnyCert: true}, nil
-	}
-
-	rdp := cfg.GetRdp()
-	if rdp == nil {
-		return &tlsTrustPolicy{allowAnyCert: true}, nil
-	}
-
-	upstreamTLS := rdp.GetUpstreamTLS()
-	if upstreamTLS == nil {
-		zap.L().Warn("webrdp upstream TLS trust is not configured, accepting any upstream certificate")
-		return &tlsTrustPolicy{allowAnyCert: true}, nil
-	}
-
-	var pins [][32]byte
-	for _, raw := range upstreamTLS.GetPinnedCertSHA256() {
-		pin, err := parseSHA256Pin(raw)
-		if err != nil {
-			return nil, err
-		}
-		pins = append(pins, pin)
-	}
-
-	if len(pins) == 0 {
-		if upstreamTLS.GetAllowAnyCert() {
-			zap.L().Warn("webrdp upstream TLS trust allows any upstream certificate")
-			return &tlsTrustPolicy{allowAnyCert: true}, nil
-		}
-		return nil, errors.Errorf("webrdp upstream TLS trust has neither pinned fingerprints nor allowAnyCert")
-	}
-
-	return &tlsTrustPolicy{pinnedSHA256: pins}, nil
-}
-
-func parseSHA256Pin(raw string) ([32]byte, error) {
-	var pin [32]byte
-
-	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), ":", "")
-	cleaned = strings.TrimPrefix(cleaned, "sha256/")
-
-	decoded, err := hex.DecodeString(cleaned)
-	if err != nil {
-		return pin, errors.Errorf("invalid SHA256 certificate pin")
-	}
-
-	if len(decoded) != 32 {
-		return pin, errors.Errorf("SHA256 certificate pin must be 32 bytes")
-	}
-
-	copy(pin[:], decoded)
-	return pin, nil
+	return rdp.GetUpstreamTLSTrust(svc.Spec.Config)
 }

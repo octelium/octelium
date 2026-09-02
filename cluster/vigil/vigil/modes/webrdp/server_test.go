@@ -18,9 +18,6 @@ package webrdp
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -37,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/rdp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -206,7 +204,7 @@ func TestRelay(t *testing.T) {
 
 	resCh := make(chan [2]uint64, 1)
 	go func() {
-		recv, sent := relay(ctx, downstream, upstreamConn, 0)
+		recv, sent := rdp.Relay(ctx, downstream, upstreamConn, false)
 		resCh <- [2]uint64{recv, sent}
 	}()
 
@@ -296,47 +294,4 @@ func TestWebSocketRejectsInvalidRDCleanPath(t *testing.T) {
 	}
 
 	assert.Equal(t, websocket.StatusUnsupportedData, websocket.CloseStatus(closeErr))
-}
-
-func TestRewriteMCSSelectedProtocol(t *testing.T) {
-	const mcsConnectInitialHex = "0300019f02f0807f658201930401010401010101ff301a020122020102020100020101020100020101020300ffff0201023019020101020101020101020101020100020101020204200201023020020300ffff020300fc17020300ffff020101020100020101020300ffff0201020482012d000500147c00018122000800100001c00044756361811601c0ea000400080040061a0301ca03aa0000000000000000690072006f006e007200640070002d007700650062000000000000000000000004000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001ca01000000000010000f0029080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006000100000000000000000000000000000000000000000002c00c00000000000000000003c0200002000000636c69707264720000008000647264796e76630000008000"
-
-	const fieldOffset = 349
-
-	buf, err := hex.DecodeString(mcsConnectInitialHex)
-	assert.Nil(t, err)
-
-	before := binary.LittleEndian.Uint32(buf[fieldOffset : fieldOffset+4])
-	assert.Equal(t, protocolSSL, before)
-
-	rewriteMCSSelectedProtocol(buf, protocolHybrid)
-
-	after := binary.LittleEndian.Uint32(buf[fieldOffset : fieldOffset+4])
-	assert.Equal(t, protocolHybrid, after)
-}
-
-func TestRewriteMCSSelectedProtocolNoCoreData(t *testing.T) {
-	buf := []byte("not an MCS connect initial and has no CS_CORE block")
-	original := append([]byte(nil), buf...)
-
-	rewriteMCSSelectedProtocol(buf, protocolHybrid)
-
-	assert.Equal(t, original, buf)
-}
-
-func TestSafeUint64(t *testing.T) {
-	assert.Equal(t, uint64(0), safeUint64(-1))
-	assert.Equal(t, uint64(0), safeUint64(-9999))
-	assert.Equal(t, uint64(0), safeUint64(0))
-	assert.Equal(t, uint64(123), safeUint64(123))
-}
-
-func TestIsExpectedNetErr(t *testing.T) {
-	assert.True(t, isExpectedNetErr(nil))
-	assert.True(t, isExpectedNetErr(io.EOF))
-	assert.True(t, isExpectedNetErr(net.ErrClosed))
-	assert.True(t, isExpectedNetErr(errors.New("use of closed network connection")))
-	assert.True(t, isExpectedNetErr(errors.New("connection reset by peer")))
-	assert.True(t, isExpectedNetErr(errors.New("write: broken pipe")))
-	assert.False(t, isExpectedNetErr(errors.New("some unexpected failure")))
 }

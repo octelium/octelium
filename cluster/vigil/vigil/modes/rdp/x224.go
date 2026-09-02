@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package webrdp
+package rdp
 
 import (
 	"encoding/binary"
@@ -62,6 +62,34 @@ func buildX224ConnectionRequest(requested uint32) []byte {
 	return out
 }
 
+func ValidateConnectionRequest(x224 []byte) error {
+	if len(x224) < 11 {
+		return errors.Errorf("X.224 connection request is too short")
+	}
+
+	if x224[0] != tpktVersion {
+		return errors.Errorf("invalid TPKT version: %d", x224[0])
+	}
+
+	if x224[5] != x224TypeCR {
+		return errors.Errorf("invalid X.224 connection request type: %d", x224[5])
+	}
+
+	return nil
+}
+
+func SupportsSSL(x224 []byte) bool {
+	for i := 11; i+8 <= len(x224); i++ {
+		if x224[i] != negTypeRequest || x224[i+2] != 0x08 || x224[i+3] != 0x00 {
+			continue
+		}
+
+		return binary.LittleEndian.Uint32(x224[i+4:i+8])&protocolSSL != 0
+	}
+
+	return false
+}
+
 func rdpConfirmSelectedProtocol(x224 []byte) (uint32, bool) {
 	if len(x224) < 19 {
 		return 0, false
@@ -98,7 +126,7 @@ func synthesizeSSLConfirm(realConfirm []byte) ([]byte, error) {
 	return out, nil
 }
 
-func isRDPNegotiationFailure(x224 []byte) bool {
+func IsNegotiationFailure(x224 []byte) bool {
 	if len(x224) < 19 {
 		return false
 	}
@@ -122,7 +150,7 @@ func isRDPNegotiationFailure(x224 []byte) bool {
 	return true
 }
 
-func readTPKT(r io.Reader) ([]byte, error) {
+func ReadTPKT(r io.Reader) ([]byte, error) {
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, err

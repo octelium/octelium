@@ -8,8 +8,8 @@ RUN cd /build && npm ci && npm run build
 FROM rust:1-bookworm AS builder-rust
 
 WORKDIR /build
-COPY cluster/vigil/vigil/modes/webrdp/credssp-rs/Cargo.toml /build/Cargo.toml
-COPY cluster/vigil/vigil/modes/webrdp/credssp-rs/src /build/src
+COPY cluster/vigil/vigil/modes/rdp/credssp-rs/Cargo.toml /build/Cargo.toml
+COPY cluster/vigil/vigil/modes/rdp/credssp-rs/src /build/src
 RUN cargo build --release
 
 
@@ -25,9 +25,9 @@ WORKDIR /build
 
 COPY --from=builder-web /build/dist /build/cluster/vigil/vigil/modes/webrdp/web
 
-RUN mkdir -p /build/cluster/vigil/vigil/modes/webrdp/.libs
-COPY --from=builder-rust /build/target/release/libwebrdp_credssp.a /build/cluster/vigil/vigil/modes/webrdp/.libs/libwebrdp_credssp.a
-RUN test -f /build/cluster/vigil/vigil/modes/webrdp/.libs/libwebrdp_credssp.a
+RUN mkdir -p /build/cluster/vigil/vigil/modes/rdp/.libs
+COPY --from=builder-rust /build/target/release/libwebrdp_credssp.a /build/cluster/vigil/vigil/modes/rdp/.libs/libwebrdp_credssp.a
+RUN test -f /build/cluster/vigil/vigil/modes/rdp/.libs/libwebrdp_credssp.a
 
 RUN make build-vigil
 

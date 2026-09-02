@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package webrdp
+package rdp
 
 /*
 #cgo CFLAGS: -I${SRCDIR}

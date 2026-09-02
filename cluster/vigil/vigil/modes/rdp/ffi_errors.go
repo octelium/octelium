@@ -1,5 +1,3 @@
-//go:build !cgo || !webrdp_credssp
-
 /*
  * Copyright Octelium Labs, LLC. All rights reserved.
  *
@@ -16,21 +14,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package webrdp
+package rdp
 
-const (
-	credsspStateReplyNeeded = 0
-	credsspStateFinal       = 1
+import "github.com/pkg/errors"
+
+var (
+	errCredsspUnavailable = errors.New("secretless RDP requires cgo and the webrdp_credssp build tag")
+	errCredsspKDCRequired = errors.New("CredSSP requires Kerberos KDC access")
+	errCredsspAuthFailed  = errors.New("CredSSP authentication failed")
 )
-
-type ffiCredssp struct{}
-
-func ffiCredsspNew(serverPubkey []byte, domain, username, password, target string) (*ffiCredssp, error) {
-	return nil, errCredsspUnavailable
-}
-
-func (c *ffiCredssp) step(incoming []byte) ([]byte, int, error) {
-	return nil, 0, errCredsspUnavailable
-}
-
-func (c *ffiCredssp) free() {}

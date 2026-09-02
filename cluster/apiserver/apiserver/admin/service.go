@@ -1045,8 +1045,8 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 		}
 
 	case *corev1.Service_Spec_Config_Rdp:
-		if spec.Mode != corev1.Service_Spec_RDP_WEB {
-			return grpcutils.InvalidArg("RDP_WEB mode must be set for RDP config to be used")
+		if spec.Mode != corev1.Service_Spec_RDP && spec.Mode != corev1.Service_Spec_RDP_WEB {
+			return grpcutils.InvalidArg("RDP or RDP_WEB mode must be set for RDP config to be used")
 		}
 		rdp := cfg.GetRdp()
 		if rdp.GetAuth() != nil && rdp.GetAuth().GetPassword() != nil {
