@@ -337,9 +337,7 @@ func (c *WebAuthNFactor) BeginRegistration(ctx context.Context,
 			},
 		}),
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
-		webauthn.WithExtensions(protocol.AuthenticationExtensions{
-			"credProps": true,
-		}))
+		webauthn.WithExtensions(webauthn.WithExtensionCredProps()))
 	if err != nil {
 		return nil, err
 	}
@@ -433,12 +431,8 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 	}
 
 	var isResidentKey bool
-	if parsedResponse.ClientExtensionResults != nil {
-		if credProps, ok := parsedResponse.ClientExtensionResults["credProps"].(map[string]any); ok {
-			if rk, ok := credProps["rk"].(bool); ok {
-				isResidentKey = rk
-			}
-		}
+	if credProps := parsedResponse.ClientExtensionResults.CredProps; credProps != nil && credProps.RK != nil {
+		isResidentKey = *credProps.RK
 	}
 
 	aaguid, err := uuid.FromBytes(cred.Authenticator.AAGUID)
@@ -471,7 +465,7 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 						return false
 					default:
 						if c.mds != nil {
-							if err := cred.Verify(c.mds); err == nil {
+							if err := cred.Verify(c.mds, webauthnctl.Config.Attestation, webauthnctl.Config.Signature); err == nil {
 								return true
 							} else {
 								zap.L().Debug("Could not verify attestation", zap.Error(err))
