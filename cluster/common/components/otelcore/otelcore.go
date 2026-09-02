@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -88,7 +89,7 @@ func (c *otelCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 		return err
 	}
 
-	rec.SetBody(log.StringValue(string(lrJSON)))
+	rec.SetBody(attribute.StringValue(string(lrJSON)))
 	rec.SetTimestamp(ent.Time)
 	rec.SetObservedTimestamp(pbutils.Now().AsTime())
 	rec.SetSeverity(log.Severity(ent.Level))
