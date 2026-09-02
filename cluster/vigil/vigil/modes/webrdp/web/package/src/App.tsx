@@ -308,7 +308,6 @@ export function App() {
 
       const desktopSize = getCanvasSize();
       desktopSizeRef.current = desktopSize;
-      console.debug("RDP negotiating desktop size", desktopSize);
 
       const builder = ui
         .configBuilder()
@@ -444,7 +443,6 @@ export function App() {
       }
 
       desktopSizeRef.current = size;
-      console.debug("RDP resizing desktop", size);
       ui.resize(size.width, size.height);
     };
 

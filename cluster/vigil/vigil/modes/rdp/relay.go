@@ -29,8 +29,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const relayProgressInterval = 10 * time.Second
-
 type copyResult struct {
 	direction string
 	err       error
@@ -128,10 +126,6 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 	go copyConn(resCh, "downstream_to_upstream", upstream, downstreamSrc)
 	go copyConn(resCh, "upstream_to_downstream", downstream, toDownstream)
 
-	doneCh := make(chan struct{})
-	defer close(doneCh)
-	go logRelayProgress(ctx, doneCh, fromDownstream, toDownstream)
-
 	first := <-resCh
 
 	if !isExpectedNetErr(first.err) {
@@ -158,25 +152,6 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 	}
 
 	return safeUint64(fromDownstream.n.Load()), safeUint64(toDownstream.n.Load())
-}
-
-func logRelayProgress(ctx context.Context, doneCh <-chan struct{},
-	fromDownstream, toDownstream *countingReader) {
-	ticker := time.NewTicker(relayProgressInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-doneCh:
-			return
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			zap.L().Debug("RDP relay progress",
-				zap.Int64("receivedBytes", fromDownstream.n.Load()),
-				zap.Int64("sentBytes", toDownstream.n.Load()))
-		}
-	}
 }
 
 func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.Reader) {
