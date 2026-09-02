@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { UserInteraction } from "@devolutions/iron-remote-desktop";
 
-import { getRdpWebGlobals, getWebSocketURL } from "./lib/globals";
+import { getLogLevel, getRdpWebGlobals, getWebSocketURL } from "./lib/globals";
 import {
   getErrorMessage,
   getReadyUserInteraction,
@@ -52,6 +52,17 @@ type ConnectionState =
 
 const FRIENDLY_CONNECTION_ERROR =
   "We couldn't start the remote desktop session. Please try again.";
+
+const RESIZE_DEBOUNCE_MS = 400;
+const MIN_DESKTOP_WIDTH = 320;
+const MIN_DESKTOP_HEIGHT = 240;
+
+type DesktopSize = { width: number; height: number };
+
+function toEvenSize(value: number, min: number): number {
+  const size = Math.max(Math.floor(value), min);
+  return size % 2 === 0 ? size : size - 1;
+}
 
 type ErrorBoundaryProps = { children: ReactNode };
 type ErrorBoundaryState = { hasError: boolean };
@@ -167,6 +178,21 @@ export function App() {
   const loadAttemptRef = useRef(0);
   const sessionAttemptRef = useRef(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const desktopSizeRef = useRef<DesktopSize | null>(null);
+
+  const getCanvasSize = useCallback((): DesktopSize => {
+    const canvas = canvasRef.current;
+    return {
+      width: toEvenSize(
+        canvas?.clientWidth || window.innerWidth,
+        MIN_DESKTOP_WIDTH,
+      ),
+      height: toEvenSize(
+        canvas?.clientHeight || window.innerHeight,
+        MIN_DESKTOP_HEIGHT,
+      ),
+    };
+  }, []);
 
   const showError = useCallback((message: string, details?: string) => {
     setError(message);
@@ -186,7 +212,7 @@ export function App() {
     setErrorDetails(null);
 
     try {
-      const loaded = await loadIronRdp();
+      const loaded = await loadIronRdp(getLogLevel());
       if (attempt !== loadAttemptRef.current) {
         return;
       }
@@ -280,6 +306,10 @@ export function App() {
       ui.setEnableClipboard(true);
       ui.setKeyboardUnicodeMode(false);
 
+      const desktopSize = getCanvasSize();
+      desktopSizeRef.current = desktopSize;
+      console.debug("RDP negotiating desktop size", desktopSize);
+
       const builder = ui
         .configBuilder()
         .withUsername("")
@@ -287,10 +317,7 @@ export function App() {
         .withDestination(globals.destination)
         .withProxyAddress(wsURL)
         .withAuthToken("octelium")
-        .withDesktopSize({
-          width: Math.max(window.innerWidth, 320),
-          height: Math.max(window.innerHeight, 240),
-        })
+        .withDesktopSize(desktopSize)
         .withExtension(exts.displayControl(true));
 
       if (exts.enableCredssp) {
@@ -329,6 +356,7 @@ export function App() {
     backend,
     connectionState,
     extensions,
+    getCanvasSize,
     globals.destination,
     moduleReady,
     showError,
@@ -397,24 +425,43 @@ export function App() {
       return;
     }
 
-    const canvas = canvasRef.current;
+    let timer: number | undefined;
+
     const resize = () => {
       const ui = userInteractionRef.current;
       if (!ui) {
         return;
       }
 
-      const width = Math.max(Math.floor(canvas.clientWidth), 320);
-      const height = Math.max(Math.floor(canvas.clientHeight), 240);
-      ui.resize(width, height);
+      const size = getCanvasSize();
+      const current = desktopSizeRef.current;
+      if (
+        current &&
+        current.width === size.width &&
+        current.height === size.height
+      ) {
+        return;
+      }
+
+      desktopSizeRef.current = size;
+      console.debug("RDP resizing desktop", size);
+      ui.resize(size.width, size.height);
     };
 
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
+    const scheduleResize = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(resize, RESIZE_DEBOUNCE_MS);
+    };
 
-    return () => observer.disconnect();
-  }, [sessionVisible]);
+    scheduleResize();
+    const observer = new ResizeObserver(scheduleResize);
+    observer.observe(canvasRef.current);
+
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [getCanvasSize, sessionVisible]);
 
   const sendCtrlAltDel = () => {
     userInteractionRef.current?.ctrlAltDel();
@@ -518,9 +565,8 @@ export function App() {
       )}
 
       <div
-        className="ow-session"
+        className={`ow-session ${sessionVisible ? "" : "ow-session--hidden"}`}
         aria-hidden={!sessionVisible}
-        style={{ display: sessionVisible ? "flex" : "none" }}
       >
         <div className="ow-toolbar">
           <Group gap="xs" className="ow-toolbar-main">

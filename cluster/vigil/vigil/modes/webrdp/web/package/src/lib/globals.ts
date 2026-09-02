@@ -22,6 +22,18 @@ export function getRdpWebGlobals(): Required<OcteliumRdpWebGlobals> {
   };
 }
 
+const LOG_LEVELS = ["OFF", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
+
+export function getLogLevel(): string {
+  const level = new URLSearchParams(window.location.search).get("rdpLogLevel");
+  if (!level) {
+    return "INFO";
+  }
+
+  const normalized = level.trim().toUpperCase();
+  return LOG_LEVELS.includes(normalized) ? normalized : "INFO";
+}
+
 export function getWebSocketURL(path: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}${normalizePath(path)}`;

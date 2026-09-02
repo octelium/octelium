@@ -15,13 +15,13 @@ export type LoadedIronRdp = {
   extensions: RdpExtensions;
 };
 
-export async function loadIronRdp(): Promise<LoadedIronRdp> {
+export async function loadIronRdp(logLevel: string): Promise<LoadedIronRdp> {
   const [coreMod, rdpMod] = await Promise.all([
     import("@devolutions/iron-remote-desktop"),
     import("@devolutions/iron-remote-desktop-rdp"),
   ]);
 
-  await rdpMod.init("INFO");
+  await rdpMod.init(logLevel);
 
   void coreMod;
 

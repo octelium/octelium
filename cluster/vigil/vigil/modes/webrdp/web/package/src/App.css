@@ -152,6 +152,11 @@
   overscroll-behavior: none;
 }
 
+.ow-session--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .ow-toolbar {
   display: flex;
   align-items: center;
