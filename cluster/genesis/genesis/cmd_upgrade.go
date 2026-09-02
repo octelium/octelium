@@ -104,26 +104,6 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		return err
 	}
 
-	{
-		svcList, err := g.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
-			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("spec.mode", corev1.Service_Spec_RDP_WEB.String()),
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		for _, svc := range svcList.Items {
-			if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
-				svc.Status.ManagedService = nil
-				if _, err := g.octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
-					zap.L().Warn("Could not updateService", zap.Any("svc", svc), zap.Error(err))
-				}
-			}
-		}
-	}
-
 	if err := g.updateServicesUpgradeUID(ctx, regionV); err != nil {
 		zap.L().Warn("Could not updateServicesUpgradeUID", zap.Error(err))
 	}
