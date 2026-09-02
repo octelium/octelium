@@ -1356,10 +1356,6 @@ func (s *Server) setServiceMetadataStatus(ctx context.Context, svc *corev1.Servi
 		svc.Status.RegionRef = umetav1.GetObjectReference(rgn)
 	}
 
-	if svc.Status.ManagedService != nil && svc.Status.ManagedService.Type == "wrdpgw" {
-		svc.Status.ManagedService = nil
-	}
-
 	return nil
 }
 

@@ -1669,11 +1669,6 @@ func TestRDPServices(t *testing.T) {
 	assert.Equal(t, uint32(8080), webSvc.Status.Port)
 	assert.Nil(t, webSvc.Status.ManagedService)
 
-	webSvc.Status.ManagedService = &corev1.Service_Status_ManagedService{Type: "wrdpgw"}
-	webSvc, err = srv.UpdateService(ctx, webSvc)
-	assert.Nil(t, err, "%+v", err)
-	assert.Nil(t, webSvc.Status.ManagedService)
-
 	rdpReq := tests.GenService("")
 	rdpReq.Spec.Mode = corev1.Service_Spec_RDP
 	rdpReq.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
