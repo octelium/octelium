@@ -69,6 +69,20 @@ type anthropicErrorResponse struct {
 	Error *anthropicError `json:"error"`
 }
 
+type geminiError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+type geminiErrorResponse struct {
+	Error *geminiError `json:"error"`
+}
+
+type bedrockErrorResponse struct {
+	Message string `json:"message"`
+}
+
 type WriteErrorOpts struct {
 	Protocol   corev1.Service_Spec_Config_LLM_Protocol
 	HTTPStatus int
@@ -103,6 +117,18 @@ func getErrorResponse(o *WriteErrorOpts) any {
 				Message: o.Message,
 			},
 		}
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return &geminiErrorResponse{
+			Error: &geminiError{
+				Code:    o.HTTPStatus,
+				Message: o.Message,
+				Status:  getGeminiErrorStatus(o.HTTPStatus),
+			},
+		}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return &bedrockErrorResponse{
+			Message: o.Message,
+		}
 	default:
 		return &openAIErrorResponse{
 			Error: &openAIError{
@@ -111,6 +137,27 @@ func getErrorResponse(o *WriteErrorOpts) any {
 				Code:    o.Code,
 			},
 		}
+	}
+}
+
+func getGeminiErrorStatus(httpStatus int) string {
+	switch httpStatus {
+	case http.StatusBadRequest, http.StatusUnsupportedMediaType:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusRequestEntityTooLarge:
+		return "INVALID_ARGUMENT"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusInternalServerError:
+		return "INTERNAL"
+	default:
+		return "UNKNOWN"
 	}
 }
 

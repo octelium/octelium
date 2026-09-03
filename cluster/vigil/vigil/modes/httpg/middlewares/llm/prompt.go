@@ -232,6 +232,7 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 	if role == "" {
 		return nil
 	}
+	role = d.roleName(role)
 
 	content, err := m.render(ctx, reqCtx, cfg.GetContent())
 	if err != nil {
@@ -265,14 +266,18 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 			return err
 		}
 
-		raw, err := newTextContent(content)
+		raw, err := d.newTextContent(role, content)
 		if err != nil {
 			return err
 		}
 
 		ret := make([]*message, 0, len(msgs)+1)
 		ret = append(ret, msgs[:idx]...)
-		ret = append(ret, &message{Role: role, Content: raw})
+		ret = append(ret, &message{
+			Role:       role,
+			Content:    raw,
+			contentKey: d.contentKey(),
+		})
 		ret = append(ret, msgs[idx:]...)
 
 		return d.setMessages(ret)
@@ -312,10 +317,13 @@ func (m *prompt) applyMessage(ctx context.Context, reqCtx *middlewares.RequestCo
 }
 
 func checkPrefill(d *doc, role string, isTrailing bool) error {
-	if role != roleAssistant || !isTrailing {
+	if role != d.roleName(roleAssistant) || !isTrailing {
 		return nil
 	}
-	if d.protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
+
+	switch d.protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		corev1.Service_Spec_Config_LLM_BEDROCK:
 		return nil
 	}
 

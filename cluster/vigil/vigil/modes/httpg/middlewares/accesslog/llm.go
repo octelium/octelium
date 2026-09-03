@@ -73,6 +73,24 @@ func (o *llmObserver) onSSEEvent(event []byte) {
 	}
 }
 
+func (o *llmObserver) onEventMessage(data []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.eventCount++
+
+	msg := httputils.ParseLLMResponse(data)
+	if msg == nil {
+		return
+	}
+
+	o.setResponse(msg)
+
+	if msg.HasContentDelta && o.firstTokenAt.IsZero() {
+		o.firstTokenAt = time.Now()
+	}
+}
+
 func (o *llmObserver) onFinalBody(body []byte) {
 	msg := httputils.ParseLLMResponse(body)
 	if msg == nil {
@@ -110,9 +128,10 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 	crw.maxSSEEvent = getMaxLLMStreamEventBytes(reqCtx)
 	crw.maxBody = maxLLMResponseBodyBytes
 	crw.onSSEEvent = obs.onSSEEvent
+	crw.onEventMessage = obs.onEventMessage
 
 	crw.onFirstByte = func() {
-		if reqCtx.DownstreamInfo == nil || !crw.isSSE {
+		if reqCtx.DownstreamInfo == nil || !crw.isStreaming() {
 			return
 		}
 		otelutils.EmitAccessLog(
@@ -121,7 +140,7 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 
 	m.next.ServeHTTP(crw, req)
 
-	if !crw.isSSE {
+	if !crw.isStreaming() {
 		obs.onFinalBody(crw.body.Bytes())
 		obs.setRequestContext(reqCtx, crw, logPhaseComplete)
 

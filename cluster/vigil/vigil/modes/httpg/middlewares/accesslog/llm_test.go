@@ -17,6 +17,7 @@
 package accesslog
 
 import (
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -424,4 +425,98 @@ func TestLLMAccessLogOversizedStreamEventSingleWrite(t *testing.T) {
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
 	assert.Equal(t, uint64(1), llmC.EventCount)
 	assert.Equal(t, "stop", llmC.FinishReason)
+}
+
+func newEventStreamMessage(payload []byte) []byte {
+	total := 12 + len(payload) + 4
+
+	ret := make([]byte, 0, total)
+	ret = binary.BigEndian.AppendUint32(ret, uint32(total))
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = append(ret, payload...)
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+
+	return ret
+}
+
+func TestLLMAccessLogEventStream(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{
+		Protocol: corev1.Service_Spec_Config_LLM_BEDROCK,
+	})
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://my-llm.example.com/model/anthropic.claude-v1:0/converse-stream",
+		strings.NewReader(llmReqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+	crw.maxSSEEvent = defaultMaxLLMStreamEventBytes
+	crw.maxBody = maxLLMResponseBodyBytes
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+
+	crw.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+
+	for _, payload := range []string{
+		`{"role":"assistant"}`,
+		`{"contentBlockIndex":0,"delta":{"text":"Hello"}}`,
+		`{"stopReason":"end_turn"}`,
+		`{"usage":{"inputTokens":11,"outputTokens":22,"totalTokens":33}}`,
+	} {
+		_, err := crw.Write(newEventStreamMessage([]byte(payload)))
+		assert.Nil(t, err)
+	}
+
+	assert.True(t, crw.isEventStream)
+	assert.True(t, crw.isStreaming())
+
+	md := &middleware{}
+	logE := md.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, "", 0)
+	assert.NotNil(t, logE)
+
+	llmC := logE.Entry.Info.GetLlm()
+	assert.Equal(t, uint64(4), llmC.EventCount)
+	assert.Equal(t, "end_turn", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	assert.Equal(t, uint64(11), llmC.Usage.InputTokens)
+	assert.Equal(t, uint64(22), llmC.Usage.OutputTokens)
+	assert.Equal(t, uint64(33), llmC.Usage.TotalTokens)
+}
+
+func TestLLMAccessLogEventStreamSplitWrites(t *testing.T) {
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+	crw.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+
+	msg := newEventStreamMessage(
+		[]byte(`{"usage":{"inputTokens":11,"outputTokens":22,"totalTokens":33}}`))
+
+	for i := range msg {
+		_, err := crw.Write(msg[i : i+1])
+		assert.Nil(t, err)
+	}
+
+	assert.Equal(t, int64(1), crw.eventCount())
+	assert.Equal(t, uint64(33), obs.usage.TotalTokens)
+}
+
+func TestLLMAccessLogEventStreamInvalid(t *testing.T) {
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+	crw.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+
+	_, err := crw.Write([]byte("this is not a valid event stream at all"))
+	assert.Nil(t, err)
+
+	assert.True(t, crw.sseTruncated)
+	assert.Equal(t, int64(0), crw.eventCount())
 }

@@ -2550,7 +2550,9 @@ func (s *Server) validateLLMProtocol(protocol corev1.Service_Spec_Config_LLM_Pro
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET,
 		corev1.Service_Spec_Config_LLM_OPENAI,
-		corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		corev1.Service_Spec_Config_LLM_GEMINI,
+		corev1.Service_Spec_Config_LLM_BEDROCK:
 		return nil
 	default:
 		return grpcutils.InvalidArg("Unsupported LLM protocol")

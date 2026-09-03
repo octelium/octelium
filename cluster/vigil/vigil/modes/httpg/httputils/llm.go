@@ -18,6 +18,7 @@ package httputils
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -155,6 +156,10 @@ func GetLLMProtocol(cfg *corev1.Service_Spec_Config_LLM) corev1.Service_Spec_Con
 	switch cfg.GetProtocol() {
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return corev1.Service_Spec_Config_LLM_ANTHROPIC
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return corev1.Service_Spec_Config_LLM_GEMINI
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return corev1.Service_Spec_Config_LLM_BEDROCK
 	default:
 		return corev1.Service_Spec_Config_LLM_OPENAI
 	}
@@ -183,7 +188,24 @@ var llmRoutesAnthropic = []llmRoute{
 
 const llmModelsPrefix = "/v1/models/"
 
+const llmGeminiModelsPath = "/v1beta/models"
+
+const llmBedrockModelPrefix = "/model/"
+
 const LLMVersionPrefix = "/v1"
+
+const llmGeminiVersionPrefix = "/v1beta"
+
+func GetLLMVersionPrefix(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return llmGeminiVersionPrefix
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return ""
+	default:
+		return LLMVersionPrefix
+	}
+}
 
 func getLLMRoutes(protocol corev1.Service_Spec_Config_LLM_Protocol) []llmRoute {
 	switch protocol {
@@ -194,31 +216,179 @@ func getLLMRoutes(protocol corev1.Service_Spec_Config_LLM_Protocol) []llmRoute {
 	}
 }
 
+type llmRouteMatch struct {
+	operation corev1.RequestContext_Request_LLM_Operation
+	model     string
+	isStream  bool
+}
+
 func MatchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
 	method, path string) (corev1.RequestContext_Request_LLM_Operation, bool) {
+
+	match, ok := matchLLMRoute(protocol, method, path)
+	if !ok {
+		return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+	}
+
+	return match.operation, true
+}
+
+func matchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	method, path string) (*llmRouteMatch, bool) {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return matchLLMRouteGemini(method, path)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return matchLLMRouteBedrock(method, path)
+	}
 
 	for _, route := range getLLMRoutes(protocol) {
 		if route.path != path {
 			continue
 		}
 		if route.method != method {
-			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+			return nil, false
 		}
-		return route.operation, true
+		return &llmRouteMatch{operation: route.operation}, true
 	}
 
 	if strings.HasPrefix(path, llmModelsPrefix) {
 		model := path[len(llmModelsPrefix):]
 		if model == "" || strings.Contains(model, "/") {
-			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+			return nil, false
 		}
 		if method != http.MethodGet {
-			return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+			return nil, false
 		}
-		return corev1.RequestContext_Request_LLM_MODELS_GET, true
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_MODELS_GET,
+			model:     model,
+		}, true
 	}
 
-	return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+	return nil, false
+}
+
+func matchLLMRouteGemini(method, path string) (*llmRouteMatch, bool) {
+	if path == llmGeminiModelsPath {
+		if method != http.MethodGet {
+			return nil, false
+		}
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_MODELS_LIST,
+		}, true
+	}
+
+	if !strings.HasPrefix(path, llmGeminiModelsPath+"/") {
+		return nil, false
+	}
+
+	rest := path[len(llmGeminiModelsPath)+1:]
+	if rest == "" || strings.Contains(rest, "/") {
+		return nil, false
+	}
+
+	model, verb, hasVerb := strings.Cut(rest, ":")
+	if model == "" {
+		return nil, false
+	}
+
+	if !hasVerb {
+		if method != http.MethodGet {
+			return nil, false
+		}
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_MODELS_GET,
+			model:     model,
+		}, true
+	}
+
+	if method != http.MethodPost {
+		return nil, false
+	}
+
+	switch verb {
+	case "generateContent":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+			model:     model,
+		}, true
+	case "streamGenerateContent":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+			model:     model,
+			isStream:  true,
+		}, true
+	case "countTokens":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_COUNT_TOKENS,
+			model:     model,
+		}, true
+	case "embedContent", "batchEmbedContents":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_EMBED_CONTENT,
+			model:     model,
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+func matchLLMRouteBedrock(method, path string) (*llmRouteMatch, bool) {
+	if !strings.HasPrefix(path, llmBedrockModelPrefix) {
+		return nil, false
+	}
+
+	rest := path[len(llmBedrockModelPrefix):]
+
+	idx := strings.LastIndex(rest, "/")
+	if idx <= 0 {
+		return nil, false
+	}
+
+	model, verb := rest[:idx], rest[idx+1:]
+
+	if method != http.MethodPost {
+		return nil, false
+	}
+
+	switch verb {
+	case "converse":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_CONVERSE,
+			model:     model,
+		}, true
+	case "converse-stream":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_CONVERSE,
+			model:     model,
+			isStream:  true,
+		}, true
+	case "invoke":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_INVOKE_MODEL,
+			model:     model,
+		}, true
+	case "invoke-with-response-stream":
+		return &llmRouteMatch{
+			operation: corev1.RequestContext_Request_LLM_INVOKE_MODEL,
+			model:     model,
+			isStream:  true,
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+func isLLMStreamInBody(protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI,
+		corev1.Service_Spec_Config_LLM_BEDROCK:
+		return false
+	default:
+		return true
+	}
 }
 
 func IsLLMOperationBodyParsed(operation corev1.RequestContext_Request_LLM_Operation) bool {
@@ -229,7 +399,10 @@ func IsLLMOperationBodyParsed(operation corev1.RequestContext_Request_LLM_Operat
 		corev1.RequestContext_Request_LLM_EMBEDDINGS,
 		corev1.RequestContext_Request_LLM_MODERATIONS,
 		corev1.RequestContext_Request_LLM_MESSAGES,
-		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
+		corev1.RequestContext_Request_LLM_COUNT_TOKENS,
+		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+		corev1.RequestContext_Request_LLM_EMBED_CONTENT,
+		corev1.RequestContext_Request_LLM_CONVERSE:
 		return true
 	default:
 		return false
@@ -241,7 +414,10 @@ func IsLLMOperationStreamable(operation corev1.RequestContext_Request_LLM_Operat
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
 		corev1.RequestContext_Request_LLM_COMPLETIONS,
-		corev1.RequestContext_Request_LLM_MESSAGES:
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+		corev1.RequestContext_Request_LLM_CONVERSE,
+		corev1.RequestContext_Request_LLM_INVOKE_MODEL:
 		return true
 	default:
 		return false
@@ -263,6 +439,29 @@ type llmEnvelope struct {
 	System       json.RawMessage `json:"system"`
 
 	Tools json.RawMessage `json:"tools"`
+
+	Contents          json.RawMessage      `json:"contents"`
+	SystemInstruction json.RawMessage      `json:"systemInstruction"`
+	GenerationConfig  *llmGenerationConfig `json:"generationConfig"`
+
+	InferenceConfig *llmInferenceConfig `json:"inferenceConfig"`
+	ToolConfig      *llmToolConfig      `json:"toolConfig"`
+}
+
+type llmGenerationConfig struct {
+	MaxOutputTokens json.RawMessage `json:"maxOutputTokens"`
+}
+
+type llmInferenceConfig struct {
+	MaxTokens json.RawMessage `json:"maxTokens"`
+}
+
+type llmToolConfig struct {
+	Tools json.RawMessage `json:"tools"`
+}
+
+type llmToolGroup struct {
+	FunctionDeclarations []json.RawMessage `json:"functionDeclarations"`
 }
 
 type llmTool struct {
@@ -270,11 +469,17 @@ type llmTool struct {
 	Function    *llmToolFn      `json:"function"`
 	InputSchema json.RawMessage `json:"input_schema"`
 	Parameters  json.RawMessage `json:"parameters"`
+	ToolSpec    *llmToolSpec    `json:"toolSpec"`
 }
 
 type llmToolFn struct {
 	Name       string          `json:"name"`
 	Parameters json.RawMessage `json:"parameters"`
+}
+
+type llmToolSpec struct {
+	Name        string          `json:"name"`
+	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
 func (t *llmTool) schemaLen() int {
@@ -283,8 +488,97 @@ func (t *llmTool) schemaLen() int {
 		return len(t.InputSchema)
 	case t.Function != nil && len(t.Function.Parameters) > 0:
 		return len(t.Function.Parameters)
+	case t.ToolSpec != nil && len(t.ToolSpec.InputSchema) > 0:
+		return len(t.ToolSpec.InputSchema)
 	default:
 		return len(t.Parameters)
+	}
+}
+
+func (e *llmEnvelope) toolsRaw(
+	protocol corev1.Service_Spec_Config_LLM_Protocol) json.RawMessage {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return flattenLLMToolGroups(e.Tools)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		if e.ToolConfig == nil {
+			return nil
+		}
+		return e.ToolConfig.Tools
+	default:
+		return e.Tools
+	}
+}
+
+func flattenLLMToolGroups(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var groups []json.RawMessage
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return nil
+	}
+
+	var ret []json.RawMessage
+	for _, rawGroup := range groups {
+		group := &llmToolGroup{}
+		if err := json.Unmarshal(rawGroup, group); err != nil {
+			continue
+		}
+		if len(group.FunctionDeclarations) == 0 {
+			ret = append(ret, rawGroup)
+			continue
+		}
+		ret = append(ret, group.FunctionDeclarations...)
+	}
+
+	if len(ret) == 0 {
+		return nil
+	}
+
+	out, err := json.Marshal(ret)
+	if err != nil {
+		return nil
+	}
+
+	return out
+}
+
+func (e *llmEnvelope) inputRaw(
+	protocol corev1.Service_Spec_Config_LLM_Protocol) []json.RawMessage {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return []json.RawMessage{e.SystemInstruction, e.Contents}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return []json.RawMessage{e.System, e.Messages}
+	default:
+		return []json.RawMessage{
+			e.Instructions, e.System, e.Prompt, e.Messages, e.Input,
+		}
+	}
+}
+
+func (e *llmEnvelope) maxOutputTokensRaw(
+	protocol corev1.Service_Spec_Config_LLM_Protocol) []json.RawMessage {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		if e.GenerationConfig == nil {
+			return nil
+		}
+		return []json.RawMessage{e.GenerationConfig.MaxOutputTokens}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		if e.InferenceConfig == nil {
+			return nil
+		}
+		return []json.RawMessage{e.InferenceConfig.MaxTokens}
+	default:
+		return []json.RawMessage{
+			e.MaxOutputTokens, e.MaxCompletionTokens, e.MaxTokens,
+		}
 	}
 }
 
@@ -300,16 +594,16 @@ func ParseLLMRequest(req *http.Request,
 		return ret
 	}
 
-	ret.Operation, ret.IsKnownRoute = MatchLLMRoute(ret.Protocol, req.Method, req.URL.Path)
+	match, isKnownRoute := matchLLMRoute(ret.Protocol, req.Method, req.URL.Path)
+	ret.IsKnownRoute = isKnownRoute
 
 	if !ret.IsKnownRoute {
 		return ret
 	}
 
-	if ret.Operation == corev1.RequestContext_Request_LLM_MODELS_GET {
-		ret.setModel(strings.TrimPrefix(req.URL.Path, llmModelsPrefix))
-		return ret
-	}
+	ret.Operation = match.operation
+	ret.Stream = match.isStream
+	ret.setModel(match.model)
 
 	if !IsLLMOperationBodyParsed(ret.Operation) {
 		return ret
@@ -333,23 +627,21 @@ func ParseLLMRequest(req *http.Request,
 
 	ret.IsBodyValid = true
 
-	if len(env.Model) > 0 {
+	if len(env.Model) > 0 && ret.Model == "" && !ret.IsModelTooLong {
 		var v string
 		if err := json.Unmarshal(env.Model, &v); err == nil {
 			ret.setModel(v)
 		}
 	}
 
-	if len(env.Stream) > 0 {
+	if len(env.Stream) > 0 && isLLMStreamInBody(ret.Protocol) {
 		var v bool
 		if err := json.Unmarshal(env.Stream, &v); err == nil {
 			ret.Stream = v
 		}
 	}
 
-	for _, raw := range []json.RawMessage{
-		env.MaxOutputTokens, env.MaxCompletionTokens, env.MaxTokens,
-	} {
+	for _, raw := range env.maxOutputTokensRaw(ret.Protocol) {
 		if len(raw) == 0 {
 			continue
 		}
@@ -361,9 +653,7 @@ func ParseLLMRequest(req *http.Request,
 
 	walker := &llmTextWalker{}
 
-	for _, raw := range []json.RawMessage{
-		env.Instructions, env.System, env.Prompt, env.Messages, env.Input,
-	} {
+	for _, raw := range env.inputRaw(ret.Protocol) {
 		if len(raw) == 0 {
 			continue
 		}
@@ -371,7 +661,7 @@ func ParseLLMRequest(req *http.Request,
 		walker.walkRaw(raw, 0)
 	}
 
-	ret.parseTools(env.Tools, walker)
+	ret.parseTools(env.toolsRaw(ret.Protocol), walker)
 
 	ret.HasImageInput = walker.hasImage
 	ret.HasAudioInput = walker.hasAudio
@@ -425,6 +715,9 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) {
 		if name == "" && tool.Function != nil {
 			name = tool.Function.Name
 		}
+		if name == "" && tool.ToolSpec != nil {
+			name = tool.ToolSpec.Name
+		}
 		if name != "" && len(name) <= maxLLMStringLen &&
 			len(r.ToolNames) < maxLLMToolNames {
 			r.ToolNames = append(r.ToolNames, name)
@@ -468,11 +761,15 @@ type llmTextWalker struct {
 }
 
 var llmBinaryKeys = map[string]struct{}{
-	"data":      {},
-	"url":       {},
-	"image_url": {},
-	"file_data": {},
-	"b64_json":  {},
+	"data":       {},
+	"url":        {},
+	"image_url":  {},
+	"file_data":  {},
+	"b64_json":   {},
+	"bytes":      {},
+	"fileUri":    {},
+	"inlineData": {},
+	"fileData":   {},
 }
 
 func (w *llmTextWalker) walkRaw(raw json.RawMessage, depth int) {
@@ -550,6 +847,29 @@ func getLLMModality(obj map[string]any) llmModality {
 			case strings.HasPrefix(mediaType, "audio/"):
 				return llmModalityAudio
 			}
+		}
+	}
+
+	for _, key := range []string{"inlineData", "fileData"} {
+		src, ok := obj[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		mimeType, ok := src["mimeType"].(string)
+		if !ok {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(mimeType, "image/"), strings.HasPrefix(mimeType, "video/"):
+			return llmModalityImage
+		case strings.HasPrefix(mimeType, "audio/"):
+			return llmModalityAudio
+		}
+	}
+
+	for _, key := range []string{"image", "video", "document"} {
+		if _, ok := obj[key].(map[string]any); ok {
+			return llmModalityImage
 		}
 	}
 
@@ -683,6 +1003,44 @@ type llmResponseEnvelope struct {
 
 	Response json.RawMessage `json:"response"`
 	Message  json.RawMessage `json:"message"`
+
+	StopReasonCamel string `json:"stopReason"`
+
+	Output json.RawMessage `json:"output"`
+
+	Candidates []struct {
+		FinishReason string          `json:"finishReason"`
+		Content      json.RawMessage `json:"content"`
+	} `json:"candidates"`
+
+	UsageMetadata *llmUsageGemini `json:"usageMetadata"`
+
+	ModelVersion json.RawMessage `json:"modelVersion"`
+	ResponseID   json.RawMessage `json:"responseId"`
+}
+
+type llmUsageGemini struct {
+	PromptTokenCount        uint64 `json:"promptTokenCount"`
+	CandidatesTokenCount    uint64 `json:"candidatesTokenCount"`
+	TotalTokenCount         uint64 `json:"totalTokenCount"`
+	ThoughtsTokenCount      uint64 `json:"thoughtsTokenCount"`
+	CachedContentTokenCount uint64 `json:"cachedContentTokenCount"`
+}
+
+func (u *llmUsageGemini) toUsage() LLMUsage {
+	ret := LLMUsage{
+		InputTokens:          u.PromptTokenCount,
+		OutputTokens:         u.CandidatesTokenCount + u.ThoughtsTokenCount,
+		ReasoningTokens:      u.ThoughtsTokenCount,
+		CacheReadInputTokens: u.CachedContentTokenCount,
+
+		providerTotalTokens: u.TotalTokenCount,
+	}
+
+	ret.setTotalTokens()
+	ret.IsSet = true
+
+	return ret
 }
 
 type llmUsageJSON struct {
@@ -695,6 +1053,13 @@ type llmUsageJSON struct {
 
 	CacheReadInputTokens     uint64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens uint64 `json:"cache_creation_input_tokens"`
+
+	InputTokensCamel  uint64 `json:"inputTokens"`
+	OutputTokensCamel uint64 `json:"outputTokens"`
+	TotalTokensCamel  uint64 `json:"totalTokens"`
+
+	CacheReadInputTokensCamel  uint64 `json:"cacheReadInputTokens"`
+	CacheWriteInputTokensCamel uint64 `json:"cacheWriteInputTokens"`
 
 	PromptTokensDetails *struct {
 		CachedTokens uint64 `json:"cached_tokens"`
@@ -715,13 +1080,15 @@ type llmUsageJSON struct {
 
 func (u *llmUsageJSON) toUsage() LLMUsage {
 	ret := LLMUsage{
-		InputTokens:  max(u.PromptTokens, u.InputTokens),
-		OutputTokens: max(u.CompletionTokens, u.OutputTokens),
+		InputTokens:  max(u.PromptTokens, u.InputTokens, u.InputTokensCamel),
+		OutputTokens: max(u.CompletionTokens, u.OutputTokens, u.OutputTokensCamel),
 
-		CacheReadInputTokens:     u.CacheReadInputTokens,
-		CacheCreationInputTokens: u.CacheCreationInputTokens,
+		CacheReadInputTokens: max(u.CacheReadInputTokens,
+			u.CacheReadInputTokensCamel),
+		CacheCreationInputTokens: max(u.CacheCreationInputTokens,
+			u.CacheWriteInputTokensCamel),
 
-		providerTotalTokens: u.TotalTokens,
+		providerTotalTokens: max(u.TotalTokens, u.TotalTokensCamel),
 		cacheTokensAdditive: u.CacheReadInputTokens > 0 ||
 			u.CacheCreationInputTokens > 0,
 	}
@@ -761,7 +1128,7 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 	ret := &LLMResponse{}
 	ret.setFromEnvelope(env)
 
-	for _, raw := range []json.RawMessage{env.Response, env.Message} {
+	for _, raw := range []json.RawMessage{env.Response, env.Message, env.Output} {
 		if len(raw) == 0 {
 			continue
 		}
@@ -776,16 +1143,22 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 }
 
 func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
-	if len(env.ID) > 0 {
+	for _, raw := range []json.RawMessage{env.ID, env.ResponseID} {
+		if len(raw) == 0 {
+			continue
+		}
 		var v string
-		if err := json.Unmarshal(env.ID, &v); err == nil && v != "" {
+		if err := json.Unmarshal(raw, &v); err == nil && v != "" {
 			r.ResponseID = v
 		}
 	}
 
-	if len(env.Model) > 0 {
+	for _, raw := range []json.RawMessage{env.Model, env.ModelVersion} {
+		if len(raw) == 0 {
+			continue
+		}
 		var v string
-		if err := json.Unmarshal(env.Model, &v); err == nil && v != "" {
+		if err := json.Unmarshal(raw, &v); err == nil && v != "" {
 			r.Model = v
 		}
 	}
@@ -795,8 +1168,12 @@ func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
 	switch {
 	case env.StopReason != "":
 		r.FinishReason = env.StopReason
+	case env.StopReasonCamel != "":
+		r.FinishReason = env.StopReasonCamel
 	case len(env.Choices) > 0 && env.Choices[0].FinishReason != "":
 		r.FinishReason = env.Choices[0].FinishReason
+	case len(env.Candidates) > 0 && env.Candidates[0].FinishReason != "":
+		r.FinishReason = env.Candidates[0].FinishReason
 	case delta != nil && delta.StopReason != "":
 		r.FinishReason = delta.StopReason
 	case isLLMTerminalStatus(env.Status):
@@ -805,6 +1182,14 @@ func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
 
 	if env.Usage != nil {
 		r.Usage.Merge(env.Usage.toUsage())
+	}
+
+	if env.UsageMetadata != nil {
+		r.Usage.Merge(env.UsageMetadata.toUsage())
+	}
+
+	if len(env.Candidates) > 0 && hasLLMPartsText(env.Candidates[0].Content) {
+		r.HasContentDelta = true
 	}
 
 	if delta != nil {
@@ -891,6 +1276,65 @@ func hasLLMDeltaContent(raw json.RawMessage) bool {
 	}
 
 	return true
+}
+
+const LLMEventStreamMediaType = "application/vnd.amazon.eventstream"
+
+const (
+	llmEventStreamPreludeLen = 12
+	llmEventStreamCRCLen     = 4
+
+	maxLLMEventStreamMessageLen = 24 * 1024 * 1024
+)
+
+func NextLLMEventStreamMessage(buf []byte) ([]byte, int) {
+	if len(buf) < llmEventStreamPreludeLen {
+		return nil, 0
+	}
+
+	totalLen := int(binary.BigEndian.Uint32(buf[0:4]))
+	headersLen := int(binary.BigEndian.Uint32(buf[4:8]))
+
+	if totalLen < llmEventStreamPreludeLen+llmEventStreamCRCLen ||
+		totalLen > maxLLMEventStreamMessageLen {
+		return nil, -1
+	}
+
+	if headersLen > totalLen-llmEventStreamPreludeLen-llmEventStreamCRCLen {
+		return nil, -1
+	}
+
+	if len(buf) < totalLen {
+		return nil, 0
+	}
+
+	payload := buf[llmEventStreamPreludeLen+headersLen : totalLen-llmEventStreamCRCLen]
+
+	return bytes.Clone(payload), totalLen
+}
+
+func hasLLMPartsText(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+
+	var content struct {
+		Parts []struct {
+			Text         string          `json:"text"`
+			FunctionCall json.RawMessage `json:"functionCall"`
+		} `json:"parts"`
+	}
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return false
+	}
+
+	for _, part := range content.Parts {
+		if part.Text != "" || len(part.FunctionCall) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isLLMTerminalStatus(arg string) bool {

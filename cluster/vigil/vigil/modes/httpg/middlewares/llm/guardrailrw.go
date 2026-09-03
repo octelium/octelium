@@ -44,6 +44,7 @@ type guardResponseWriter struct {
 	isPassthrough bool
 	isResolved    bool
 	isSSE         bool
+	isEventStream bool
 	isOverflowed  bool
 
 	buf bytes.Buffer
@@ -95,6 +96,7 @@ func (rw *guardResponseWriter) resolve() {
 	mediaType := strings.TrimSpace(
 		strings.Split(rw.Header().Get("Content-Type"), ";")[0])
 	rw.isSSE = strings.EqualFold(mediaType, "text/event-stream")
+	rw.isEventStream = strings.EqualFold(mediaType, httputils.LLMEventStreamMediaType)
 
 	rw.Header().Del("Content-Length")
 }
@@ -164,9 +166,12 @@ func (rw *guardResponseWriter) finish() {
 	body := rw.buf.Bytes()
 
 	var text string
-	if rw.isSSE {
+	switch {
+	case rw.isSSE:
 		text = extractSSEText(body)
-	} else {
+	case rw.isEventStream:
+		text = extractEventStreamText(body)
+	default:
 		text = extractResponseText(body)
 	}
 
@@ -247,6 +252,38 @@ func extractSSEText(body []byte) string {
 	return out.String()
 }
 
+func extractEventStreamText(body []byte) string {
+	var out strings.Builder
+
+	for len(body) > 0 {
+		payload, n := httputils.NextLLMEventStreamMessage(body)
+		if n <= 0 {
+			break
+		}
+		body = body[n:]
+
+		if len(payload) == 0 {
+			continue
+		}
+
+		text := extractResponseText(payload)
+		if text == "" {
+			continue
+		}
+
+		if out.Len() > 0 {
+			out.WriteString("\n")
+		}
+		out.WriteString(text)
+
+		if out.Len() > commonguardrail.MaxResponseBytes {
+			break
+		}
+	}
+
+	return out.String()
+}
+
 func extractResponseText(body []byte) string {
 	var val any
 	if err := json.Unmarshal(body, &val); err != nil {
@@ -275,7 +312,8 @@ func walkResponseText(val any, depth int, out *strings.Builder) {
 				walkResponseText(arg, depth+1, out)
 			}
 		}
-		for _, key := range []string{"choices", "delta", "message", "output", "arguments"} {
+		for _, key := range []string{"choices", "delta", "message", "output", "arguments",
+			"candidates", "parts", "functionCall", "args"} {
 			if arg, ok := cur[key]; ok {
 				walkResponseText(arg, depth+1, out)
 			}

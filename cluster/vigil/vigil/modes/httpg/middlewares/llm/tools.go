@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
@@ -321,6 +322,10 @@ func (m *tools) applyChoice(d *doc,
 	switch cfg.GetChoice() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Tools_NONE:
 		raw := d.newToolChoice("none")
+		if len(raw) == 0 {
+			d.setToolsRaw(nil)
+			return
+		}
 		if string(raw) != string(current) {
 			d.setToolChoice(raw)
 		}
@@ -333,10 +338,19 @@ func (m *tools) applyChoice(d *doc,
 }
 
 func (d *doc) newToolChoice(mode string) json.RawMessage {
-	if d.protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
+	switch d.protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return json.RawMessage(`{"type":"` + mode + `"}`)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return json.RawMessage(`{"mode":"` + strings.ToUpper(mode) + `"}`)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		if mode == toolChoiceNone {
+			return nil
+		}
+		return json.RawMessage(`{"` + mode + `":{}}`)
+	default:
+		return json.RawMessage(`"` + mode + `"`)
 	}
-	return json.RawMessage(`"` + mode + `"`)
 }
 
 func toolChoiceMode(raw json.RawMessage) string {
@@ -354,23 +368,42 @@ func toolChoiceMode(raw json.RawMessage) string {
 	case '{':
 		var obj struct {
 			Type string `json:"type"`
+			Mode string `json:"mode"`
 		}
 		if err := json.Unmarshal(raw, &obj); err != nil {
 			return ""
 		}
-		return obj.Type
+		if obj.Type != "" {
+			return obj.Type
+		}
+		return strings.ToLower(obj.Mode)
 	default:
 		return ""
 	}
 }
 
+const (
+	toolChoiceAuto = "auto"
+	toolChoiceNone = "none"
+)
+
 func isAutoToolChoice(raw json.RawMessage) bool {
 	switch toolChoiceMode(raw) {
-	case "auto", "none":
+	case toolChoiceAuto, toolChoiceNone:
 		return true
-	default:
+	}
+
+	var obj map[string]json.RawMessage
+	if len(raw) == 0 || raw[0] != '{' ||
+		json.Unmarshal(raw, &obj) != nil {
 		return false
 	}
+
+	if _, ok := obj[toolChoiceAuto]; ok {
+		return true
+	}
+
+	return false
 }
 
 func toolChoiceName(raw json.RawMessage) string {
@@ -383,6 +416,10 @@ func toolChoiceName(raw json.RawMessage) string {
 		Function *struct {
 			Name string `json:"name"`
 		} `json:"function"`
+		Tool *struct {
+			Name string `json:"name"`
+		} `json:"tool"`
+		AllowedFunctionNames []string `json:"allowedFunctionNames"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return ""
@@ -390,6 +427,12 @@ func toolChoiceName(raw json.RawMessage) string {
 
 	if obj.Function != nil && obj.Function.Name != "" {
 		return obj.Function.Name
+	}
+	if obj.Tool != nil && obj.Tool.Name != "" {
+		return obj.Tool.Name
+	}
+	if len(obj.AllowedFunctionNames) == 1 {
+		return obj.AllowedFunctionNames[0]
 	}
 	return obj.Name
 }

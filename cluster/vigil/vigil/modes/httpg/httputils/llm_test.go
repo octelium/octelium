@@ -17,6 +17,7 @@
 package httputils
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -586,5 +587,288 @@ func TestParseLLMResponseUsageNoProviderTotal(t *testing.T) {
 
 		assert.NotNil(t, msg)
 		assert.Equal(t, uint64(150), msg.Usage.TotalTokens)
+	}
+}
+
+func TestMatchLLMRouteGemini(t *testing.T) {
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_GENERATE_CONTENT, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:streamGenerateContent")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_GENERATE_CONTENT, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:countTokens")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_COUNT_TOKENS, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/text-embedding-004:embedContent")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBED_CONTENT, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodGet, "/v1beta/models")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_LIST, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodGet, "/v1beta/models/gemini-2.5-pro")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, operation)
+	}
+
+	for _, path := range []string{
+		"/v1/chat/completions",
+		"/v1beta/models/gemini-2.5-pro:unknownVerb",
+		"/v1beta/models/:generateContent",
+		"/v1beta/models/nested/model:generateContent",
+	} {
+		_, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, path)
+		assert.False(t, ok, path)
+	}
+
+	{
+		_, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodGet, "/v1beta/models/gemini-2.5-pro:generateContent")
+		assert.False(t, ok)
+	}
+}
+
+func TestMatchLLMRouteBedrock(t *testing.T) {
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_BEDROCK,
+			http.MethodPost, "/model/anthropic.claude-sonnet-4-5-v1:0/converse")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_BEDROCK,
+			http.MethodPost, "/model/anthropic.claude-sonnet-4-5-v1:0/converse-stream")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_BEDROCK,
+			http.MethodPost, "/model/anthropic.claude-sonnet-4-5-v1:0/invoke")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_INVOKE_MODEL, operation)
+	}
+
+	{
+		operation, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_BEDROCK,
+			http.MethodPost,
+			"/model/arn:aws:bedrock:us-east-1:1/inference-profile/us.anthropic.x/converse")
+		assert.True(t, ok)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, operation)
+	}
+
+	for _, path := range []string{
+		"/v1/chat/completions",
+		"/model/anthropic.claude/unknown",
+		"/model/converse",
+	} {
+		_, ok := MatchLLMRoute(corev1.Service_Spec_Config_LLM_BEDROCK,
+			http.MethodPost, path)
+		assert.False(t, ok, path)
+	}
+}
+
+func TestParseLLMRequestGemini(t *testing.T) {
+	body := `{"contents":[{"role":"user","parts":[{"text":"Hello there"}]}],` +
+		`"systemInstruction":{"parts":[{"text":"You are helpful"}]},` +
+		`"generationConfig":{"maxOutputTokens":512},` +
+		`"tools":[{"functionDeclarations":[` +
+		`{"name":"get_weather","parameters":{"type":"object"}},` +
+		`{"name":"send_email","parameters":{"type":"object"}}]}]}`
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://localhost/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+		strings.NewReader(body))
+
+	llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_GEMINI, []byte(body))
+
+	assert.True(t, llmReq.IsKnownRoute)
+	assert.True(t, llmReq.IsBodyValid)
+	assert.True(t, llmReq.Stream)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_GENERATE_CONTENT, llmReq.Operation)
+	assert.Equal(t, "gemini-2.5-pro", llmReq.Model)
+	assert.Equal(t, uint64(512), llmReq.MaxOutputTokens)
+	assert.True(t, llmReq.HasTools)
+	assert.Equal(t, uint32(2), llmReq.ToolCount)
+	assert.Equal(t, []string{"get_weather", "send_email"}, llmReq.ToolNames)
+	assert.True(t, llmReq.EstimatedInputTokens > 0)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_COMPLETE, llmReq.EstimateQuality)
+}
+
+func TestParseLLMRequestBedrock(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":[{"text":"Hello there"}]}],` +
+		`"system":[{"text":"You are helpful"}],` +
+		`"inferenceConfig":{"maxTokens":900},` +
+		`"toolConfig":{"tools":[{"toolSpec":{"name":"get_weather",` +
+		`"inputSchema":{"json":{"type":"object"}}}}]}}`
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://localhost/model/anthropic.claude-sonnet-4-5-v1:0/converse-stream",
+		strings.NewReader(body))
+
+	llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_BEDROCK, []byte(body))
+
+	assert.True(t, llmReq.IsKnownRoute)
+	assert.True(t, llmReq.IsBodyValid)
+	assert.True(t, llmReq.Stream)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, llmReq.Operation)
+	assert.Equal(t, "anthropic.claude-sonnet-4-5-v1:0", llmReq.Model)
+	assert.Equal(t, uint64(900), llmReq.MaxOutputTokens)
+	assert.True(t, llmReq.HasTools)
+	assert.Equal(t, uint32(1), llmReq.ToolCount)
+	assert.Equal(t, []string{"get_weather"}, llmReq.ToolNames)
+	assert.True(t, llmReq.EstimatedInputTokens > 0)
+}
+
+func TestParseLLMRequestInvokeModel(t *testing.T) {
+	body := `{"anthropic_version":"bedrock-2023-05-31","messages":[]}`
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://localhost/model/anthropic.claude-sonnet-4-5-v1:0/invoke",
+		strings.NewReader(body))
+
+	llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_BEDROCK, []byte(body))
+
+	assert.True(t, llmReq.IsKnownRoute)
+	assert.False(t, llmReq.IsBodyValid)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_INVOKE_MODEL, llmReq.Operation)
+	assert.Equal(t, "anthropic.claude-sonnet-4-5-v1:0", llmReq.Model)
+}
+
+func TestParseLLMResponseGemini(t *testing.T) {
+	body := `{"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},` +
+		`"finishReason":"STOP"}],"modelVersion":"gemini-2.5-pro","responseId":"abc",` +
+		`"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":22,` +
+		`"thoughtsTokenCount":7,"totalTokenCount":40}}`
+
+	res := ParseLLMResponse([]byte(body))
+	assert.NotNil(t, res)
+	assert.Equal(t, "gemini-2.5-pro", res.Model)
+	assert.Equal(t, "abc", res.ResponseID)
+	assert.Equal(t, "STOP", res.FinishReason)
+	assert.True(t, res.HasContentDelta)
+	assert.True(t, res.Usage.IsSet)
+	assert.Equal(t, uint64(11), res.Usage.InputTokens)
+	assert.Equal(t, uint64(29), res.Usage.OutputTokens)
+	assert.Equal(t, uint64(7), res.Usage.ReasoningTokens)
+	assert.Equal(t, uint64(40), res.Usage.TotalTokens)
+}
+
+func TestParseLLMResponseBedrock(t *testing.T) {
+	{
+		body := `{"output":{"message":{"role":"assistant","content":[{"text":"Hi"}]}},` +
+			`"stopReason":"end_turn",` +
+			`"usage":{"inputTokens":11,"outputTokens":22,"totalTokens":33}}`
+
+		res := ParseLLMResponse([]byte(body))
+		assert.NotNil(t, res)
+		assert.Equal(t, "end_turn", res.FinishReason)
+		assert.True(t, res.Usage.IsSet)
+		assert.Equal(t, uint64(11), res.Usage.InputTokens)
+		assert.Equal(t, uint64(22), res.Usage.OutputTokens)
+		assert.Equal(t, uint64(33), res.Usage.TotalTokens)
+	}
+
+	{
+		res := ParseLLMResponse([]byte(`{"delta":{"text":"Hello"}}`))
+		assert.NotNil(t, res)
+		assert.True(t, res.HasContentDelta)
+	}
+
+	{
+		res := ParseLLMResponse([]byte(
+			`{"usage":{"inputTokens":5,"outputTokens":6,"totalTokens":11}}`))
+		assert.NotNil(t, res)
+		assert.Equal(t, uint64(11), res.Usage.TotalTokens)
+	}
+}
+
+func newLLMEventStreamMessage(t *testing.T, headers, payload []byte) []byte {
+	total := 12 + len(headers) + len(payload) + 4
+	ret := make([]byte, 0, total)
+
+	ret = binary.BigEndian.AppendUint32(ret, uint32(total))
+	ret = binary.BigEndian.AppendUint32(ret, uint32(len(headers)))
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = append(ret, headers...)
+	ret = append(ret, payload...)
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+
+	assert.Equal(t, total, len(ret))
+
+	return ret
+}
+
+func TestNextLLMEventStreamMessage(t *testing.T) {
+	payload := []byte(`{"usage":{"inputTokens":5,"outputTokens":6,"totalTokens":11}}`)
+	headers := []byte("\x0b:event-type")
+
+	msg := newLLMEventStreamMessage(t, headers, payload)
+
+	{
+		out, n := NextLLMEventStreamMessage(msg)
+		assert.Equal(t, len(msg), n)
+		assert.Equal(t, string(payload), string(out))
+	}
+
+	{
+		_, n := NextLLMEventStreamMessage(msg[:len(msg)-1])
+		assert.Equal(t, 0, n)
+	}
+
+	{
+		_, n := NextLLMEventStreamMessage(msg[:4])
+		assert.Equal(t, 0, n)
+	}
+
+	{
+		invalid := make([]byte, len(msg))
+		copy(invalid, msg)
+		binary.BigEndian.PutUint32(invalid[0:4], 3)
+		_, n := NextLLMEventStreamMessage(invalid)
+		assert.Equal(t, -1, n)
+	}
+
+	{
+		invalid := make([]byte, len(msg))
+		copy(invalid, msg)
+		binary.BigEndian.PutUint32(invalid[4:8], uint32(len(msg)))
+		_, n := NextLLMEventStreamMessage(invalid)
+		assert.Equal(t, -1, n)
+	}
+
+	{
+		two := append(append([]byte{}, msg...), msg...)
+		out, n := NextLLMEventStreamMessage(two)
+		assert.Equal(t, len(msg), n)
+		assert.Equal(t, string(payload), string(out))
+
+		out, n = NextLLMEventStreamMessage(two[n:])
+		assert.Equal(t, len(msg), n)
+		assert.Equal(t, string(payload), string(out))
 	}
 }

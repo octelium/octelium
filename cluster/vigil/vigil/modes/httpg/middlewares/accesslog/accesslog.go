@@ -589,14 +589,16 @@ type responseWriter struct {
 	kind    streamKind
 	writeMu sync.Mutex
 
-	onFirstByte func()
-	onSSEEvent  func([]byte)
-	sseLineBuf  []byte
-	sseMu       sync.Mutex
-	sseEventCnt atomic.Int64
+	onFirstByte    func()
+	onSSEEvent     func([]byte)
+	onEventMessage func([]byte)
+	sseLineBuf     []byte
+	sseMu          sync.Mutex
+	sseEventCnt    atomic.Int64
 
 	sseResolved   bool
 	isSSE         bool
+	isEventStream bool
 	maxSSEEvent   int
 	maxBody       int
 	sseDiscarding bool
@@ -612,6 +614,11 @@ func (rw *responseWriter) resolveSSEKind() {
 	ct := rw.Header().Get("Content-Type")
 	mediaType := strings.TrimSpace(strings.Split(ct, ";")[0])
 	rw.isSSE = strings.EqualFold(mediaType, "text/event-stream")
+	rw.isEventStream = strings.EqualFold(mediaType, httputils.LLMEventStreamMediaType)
+}
+
+func (rw *responseWriter) isStreaming() bool {
+	return rw.isSSE || rw.isEventStream
 }
 
 func newResponseWriter(w http.ResponseWriter, kind streamKind) *responseWriter {
@@ -648,9 +655,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 			rw.parseSSEEvents(b[:n])
 		case streamKindMCP, streamKindLLM:
 			rw.resolveSSEKind()
-			if rw.isSSE {
+			switch {
+			case rw.isSSE:
 				rw.parseSSEEvents(b[:n])
-			} else {
+			case rw.isEventStream:
+				rw.parseEventStream(b[:n])
+			default:
 				rw.bufferBody(b[:n])
 			}
 		}
@@ -677,6 +687,41 @@ func (rw *responseWriter) bufferBody(p []byte) {
 		rw.body.Write(p)
 	} else {
 		rw.body.Write(p[:remaining])
+	}
+}
+
+func (rw *responseWriter) parseEventStream(p []byte) {
+	if rw.onEventMessage == nil {
+		return
+	}
+
+	rw.sseMu.Lock()
+	defer rw.sseMu.Unlock()
+
+	if rw.sseDiscarding {
+		return
+	}
+
+	rw.sseLineBuf = append(rw.sseLineBuf, p...)
+
+	for {
+		payload, n := httputils.NextLLMEventStreamMessage(rw.sseLineBuf)
+		if n == 0 {
+			break
+		}
+		if n < 0 {
+			rw.sseDiscarding = true
+			rw.sseTruncated = true
+			rw.sseLineBuf = nil
+			return
+		}
+
+		rw.sseLineBuf = rw.sseLineBuf[n:]
+		rw.sseEventCnt.Add(1)
+
+		if len(payload) > 0 {
+			rw.onEventMessage(payload)
+		}
 	}
 }
 

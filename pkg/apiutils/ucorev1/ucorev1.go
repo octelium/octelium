@@ -414,6 +414,10 @@ func (s *ServiceConfig) GetLLMProtocol() corev1.Service_Spec_Config_LLM_Protocol
 	switch s.GetLlm().GetProtocol() {
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return corev1.Service_Spec_Config_LLM_ANTHROPIC
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return corev1.Service_Spec_Config_LLM_GEMINI
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return corev1.Service_Spec_Config_LLM_BEDROCK
 	default:
 		return corev1.Service_Spec_Config_LLM_OPENAI
 	}
