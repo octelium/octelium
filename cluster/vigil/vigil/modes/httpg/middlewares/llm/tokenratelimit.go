@@ -103,15 +103,28 @@ func (m *tokenRateLimit) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		res, isAllowed := m.reserve(ctx, reqCtx, plugin.GetName(), cfg)
+		key, err := m.getKey(ctx, plugin.GetName(), cfg.GetKey(), reqCtx)
+		if err != nil {
+			zap.L().Warn("Could not evaluate the LLM token rate limit key",
+				zap.String("plugin", plugin.GetName()), zap.Error(err))
+			m.release(ctx, reservations)
+			WriteError(w, &WriteErrorOpts{
+				Protocol:   reqCtx.LLM.GetProtocol(),
+				HTTPStatus: http.StatusInternalServerError,
+				Type:       ErrTypeAPI,
+				Code:       ErrCodeTokenRateLimit,
+				Message:    "Octelium: could not evaluate the Plugins of this Service",
+			})
+			return
+		}
+
+		res, isAllowed := m.reserve(ctx, reqCtx, key, cfg)
 		if !isAllowed {
 			m.release(ctx, reservations)
 			m.writeDenied(w, reqCtx, cfg)
 			return
 		}
-		if res != nil {
-			reservations = append(reservations, res)
-		}
+		reservations = append(reservations, res)
 	}
 
 	if len(reservations) > 0 {
@@ -124,12 +137,12 @@ func (m *tokenRateLimit) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (m *tokenRateLimit) reserve(ctx context.Context,
-	reqCtx *middlewares.RequestContext, name string,
+	reqCtx *middlewares.RequestContext, key []byte,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit) (*reservation, bool) {
 
 	ret := &reservation{
 		cfg:    cfg,
-		key:    m.getKey(ctx, name, cfg.GetKey(), reqCtx),
+		key:    key,
 		id:     utilrand.GetRandomBytesMust(reservationIDBytes),
 		amount: getReservedTokens(reqCtx, cfg),
 	}
@@ -146,7 +159,7 @@ func (m *tokenRateLimit) reserve(ctx context.Context,
 		if grpcerr.IsInternal(err) {
 			zap.L().Warn("ReserveSlidingWindow error", zap.Error(err))
 		}
-		return nil, true
+		return ret, true
 	}
 
 	if !resp.IsAllowed {
@@ -158,9 +171,6 @@ func (m *tokenRateLimit) reserve(ctx context.Context,
 
 func (m *tokenRateLimit) reconcile(ctx context.Context,
 	reqCtx *middlewares.RequestContext, reservations []*reservation) {
-
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconcileTimeout)
-	defer cancel()
 
 	for _, res := range reservations {
 		amount, ok := getReconciledTokens(reqCtx, res)
@@ -181,6 +191,9 @@ func (m *tokenRateLimit) release(ctx context.Context, reservations []*reservatio
 func (m *tokenRateLimit) setReservation(ctx context.Context,
 	res *reservation, amount int64) {
 
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconcileTimeout)
+	defer cancel()
+
 	if _, err := m.octeliumC.RateLimitC().ReconcileSlidingWindow(ctx,
 		&rratelimitv1.ReconcileSlidingWindowRequest{
 			Key:    res.key,
@@ -196,7 +209,7 @@ func (m *tokenRateLimit) setReservation(ctx context.Context,
 
 func (m *tokenRateLimit) getKey(ctx context.Context, name string,
 	key *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key,
-	reqCtx *middlewares.RequestContext) []byte {
+	reqCtx *middlewares.RequestContext) ([]byte, error) {
 
 	var ret string
 	if reqCtx.DownstreamInfo != nil && reqCtx.DownstreamInfo.Session != nil {
@@ -212,7 +225,10 @@ func (m *tokenRateLimit) getKey(ctx context.Context, name string,
 			res, err := m.celEngine.EvalPolicyString(ctx, key.GetEval(), map[string]any{
 				"ctx": reqCtx.ReqCtxMap,
 			})
-			if err == nil && res != "" {
+			if err != nil {
+				return nil, err
+			}
+			if res != "" {
 				ret = res
 			}
 		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerUser:
@@ -222,7 +238,7 @@ func (m *tokenRateLimit) getKey(ctx context.Context, name string,
 		}
 	}
 
-	return vutils.Sha256Sum([]byte(fmt.Sprintf("%s:%s:%s", m.svcUID, name, ret)))
+	return vutils.Sha256Sum([]byte(fmt.Sprintf("%s:%s:%s", m.svcUID, name, ret))), nil
 }
 
 func (m *tokenRateLimit) writeDenied(w http.ResponseWriter,
@@ -251,8 +267,8 @@ func getReservedTokens(reqCtx *middlewares.RequestContext,
 	case corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_OUTPUT:
 		return toTokenAmount(getReservedOutputTokens(reqCtx, cfg))
 	default:
-		return toTokenAmount(reqCtx.LLM.GetEstimatedInputTokens()) +
-			toTokenAmount(getReservedOutputTokens(reqCtx, cfg))
+		return min(toTokenAmount(reqCtx.LLM.GetEstimatedInputTokens())+
+			toTokenAmount(getReservedOutputTokens(reqCtx, cfg)), maxReservationTokens)
 	}
 }
 
@@ -290,10 +306,11 @@ func getUsageTokens(resp *middlewares.LLMResponseInfo,
 
 	switch cfg.GetScope() {
 	case corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_INPUT:
-		if resp.Usage.TotalTokens < resp.Usage.OutputTokens {
-			return 0
+		ret := resp.Usage.InputTokens
+		if resp.Usage.TotalTokens > resp.Usage.OutputTokens {
+			ret = max(ret, resp.Usage.TotalTokens-resp.Usage.OutputTokens)
 		}
-		return toTokenAmount(resp.Usage.TotalTokens - resp.Usage.OutputTokens)
+		return toTokenAmount(ret)
 	case corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_OUTPUT:
 		return toTokenAmount(resp.Usage.OutputTokens)
 	default:

@@ -154,11 +154,15 @@ type ReserveSlidingWindowRequest struct {
 	// ID uniquely identifies the reservation within the key. It is the handle
 	// that ReconcileSlidingWindow later uses and it makes the reservation
 	// idempotent: reserving twice with the same ID replaces the weight of the
-	// entry instead of adding a second one.
+	// entry instead of adding a second one, and a repeat that would exceed the
+	// limit leaves the earlier entry exactly as it was.
 	Id []byte `protobuf:"bytes,4,opt,name=id,proto3" json:"id,omitempty"`
 	// Amount is the weight that is reserved. Zero is allowed and it checks the
 	// window without consuming any of it, which is how an operation whose cost
-	// cannot be known in advance is still refused once the window is exhausted.
+	// cannot be known in advance is still refused once the window is over its
+	// limit. Note that a window whose total is exactly its limit still admits
+	// such a reservation, since the limit is the largest total that is allowed
+	// rather than the smallest one that is refused.
 	Amount        int64 `protobuf:"varint,5,opt,name=amount,proto3" json:"amount,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -293,12 +297,13 @@ type ReconcileSlidingWindowRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Key    []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Window *metav1.Duration       `protobuf:"bytes,2,opt,name=window,proto3" json:"window,omitempty"`
-	// ID is the ID of the reservation that is reconciled. A reservation that has
-	// already left the window is re-entered at the current time rather than
-	// ignored, so that an operation which outlives the window is still charged to
-	// the window in which it completed. An ID that was never reserved at all is
-	// therefore entered rather than rejected, since the two are indistinguishable
-	// once the window has moved past the reservation.
+	// ID is the ID of the reservation that is reconciled. The reconciled entry is
+	// always timestamped at the current time rather than kept at the time of its
+	// own reservation, so that the window that is charged is the one in which the
+	// operation completed and so that an operation which outlived the window of
+	// its own reservation is charged rather than lost. An ID that was never
+	// reserved at all is therefore entered rather than rejected, since the two
+	// are indistinguishable once the window has moved past the reservation.
 	Id            []byte `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
 	Amount        int64  `protobuf:"varint,4,opt,name=amount,proto3" json:"amount,omitempty"`
 	unknownFields protoimpl.UnknownFields

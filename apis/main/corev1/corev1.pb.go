@@ -17313,15 +17313,24 @@ func (x *Service_Spec_Config_LLM_Plugin_Guardrail) GetDenyMessage() string {
 //
 // Octelium therefore reserves before the request is proxied and
 // reconciles after the response has been observed. The reservation
-// is what the request is expected to consume and it occupies the
-// window for as long as the request is in flight, so that the
-// concurrent requests of the same identity see one another. The
+// occupies the window from the moment the request is admitted, so
+// that the concurrent requests of the same identity see one another
+// rather than each of them seeing the same stale capacity. The
 // reconciliation then replaces that reservation by what the request
 // actually consumed, which returns the unused part of an
 // over-reservation to the window and charges the excess of an
-// under-reservation to it. A request that is refused, and a request
-// that never reached the upstream at all, releases its reservation
-// in full.
+// under-reservation to it, and it charges that final count at the
+// moment the request completed rather than at the moment it was
+// admitted, so that a request is accounted the same way whether it
+// took an instant or outlived its own window.
+//
+// Note that a request which is still in flight once the window has
+// moved past its own admission stops occupying that window until it
+// completes. That follows from counting the requests that fall
+// within a window rather than the ones that are open, and it means
+// that a Service whose requests routinely run for longer than the
+// window is bounded by the requests that completed rather than by
+// the ones that are still running.
 //
 // The reservation is calculated from the request as the upstream
 // receives it, which is after every other Plugin has already mutated
@@ -17337,11 +17346,16 @@ func (x *Service_Spec_Config_LLM_Plugin_Guardrail) GetDenyMessage() string {
 // reported, which is the only authoritative count and which Octelium
 // already observes for the AccessLogs, including across a streamed
 // response. Whenever that usage is only partially observed (e.g. a
-// stream ended before its usage event) the larger of the two counts
-// is charged, and whenever it is unavailable altogether the
-// reservation is kept as it is rather than returned, since a
-// consumption that could not be measured is not a consumption that
-// did not happen.
+// stream ended before its usage event) the larger of the reservation
+// and the observed count is charged. Whenever a response carried no
+// usage at all the reservation is kept as it is rather than
+// returned, since a consumption that could not be measured is not a
+// consumption that did not happen. The exception is an upstream that
+// answered with an error and reported no usage, which releases the
+// reservation in full, since a provider does not bill a request that
+// it refused and a Service whose upstream is failing has no reason
+// to spend its quota on those failures. A request that never reached
+// the upstream at all releases its reservation in the same way.
 //
 // Note that a request which declares no output maximum of its own
 // and whose Plugin sets no `defaultOutputTokens` reserves nothing

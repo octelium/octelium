@@ -48,7 +48,9 @@ type fakeRateLimit struct {
 	rratelimitv1.MainServiceClient
 
 	entries map[string]map[string]int64
-	err     error
+
+	reserveErr   error
+	reconcileErr error
 
 	reserveCount   int
 	reconcileCount int
@@ -64,8 +66,8 @@ func (c *fakeRateLimit) ReserveSlidingWindow(ctx context.Context,
 	req *rratelimitv1.ReserveSlidingWindowRequest,
 	opts ...grpc.CallOption) (*rratelimitv1.ReserveSlidingWindowResponse, error) {
 
-	if c.err != nil {
-		return nil, c.err
+	if c.reserveErr != nil {
+		return nil, c.reserveErr
 	}
 
 	c.reserveCount++
@@ -89,8 +91,8 @@ func (c *fakeRateLimit) ReconcileSlidingWindow(ctx context.Context,
 	req *rratelimitv1.ReconcileSlidingWindowRequest,
 	opts ...grpc.CallOption) (*rratelimitv1.ReconcileSlidingWindowResponse, error) {
 
-	if c.err != nil {
-		return nil, c.err
+	if c.reconcileErr != nil {
+		return nil, c.reconcileErr
 	}
 
 	c.reconcileCount++
@@ -213,6 +215,22 @@ func TestTokenRateLimitReservesEstimateAndMaxOutput(t *testing.T) {
 	assert.True(t, res.isNext)
 	assert.Equal(t,
 		int64(res.reqCtx.LLM.GetEstimatedInputTokens())+900, rateLimitC.sum())
+}
+
+func TestTokenRateLimitClampsHugeOutputMax(t *testing.T) {
+	rateLimitC := newFakeRateLimit()
+
+	servePlugins(t, &pluginOpts{
+		body: `{"model":"gpt-4o","max_tokens":1152921504606846976,` +
+			`"messages":[{"role":"user","content":"Hello"}]}`,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("tpm", newTokenRateLimit(1<<50,
+				corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL)),
+		},
+		rateLimitC: rateLimitC,
+	})
+
+	assert.Equal(t, int64(maxReservationTokens), rateLimitC.sum())
 }
 
 func TestTokenRateLimitDenied(t *testing.T) {
@@ -493,7 +511,7 @@ func TestTokenRateLimitPluginDisabled(t *testing.T) {
 
 func TestTokenRateLimitFailOpen(t *testing.T) {
 	rateLimitC := newFakeRateLimit()
-	rateLimitC.err = errors.New("Redis is down")
+	rateLimitC.reserveErr = errors.New("Redis is down")
 
 	res := servePlugins(t, &pluginOpts{
 		body: chatBodyWithMaxTokens,
@@ -507,7 +525,80 @@ func TestTokenRateLimitFailOpen(t *testing.T) {
 
 	assert.True(t, res.isNext)
 	assert.Equal(t, http.StatusOK, res.code)
-	assert.Equal(t, 0, rateLimitC.reconcileCount)
+	assert.Equal(t, 1, rateLimitC.reconcileCount)
+	assert.Equal(t, int64(33), rateLimitC.sum())
+}
+
+func TestTokenRateLimitKeyEvalError(t *testing.T) {
+	newEvalKeyPlugin := func(name string,
+		eval string) *corev1.Service_Spec_Config_LLM_Plugin {
+		cfg := newTokenRateLimit(100000,
+			corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL)
+		cfg.Key = &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval{
+				Eval: eval,
+			},
+		}
+		return newPlugin(name, cfg)
+	}
+
+	{
+		rateLimitC := newFakeRateLimit()
+
+		res := servePlugins(t, &pluginOpts{
+			body: chatBodyWithMaxTokens,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newEvalKeyPlugin("tpm", `((((`),
+			},
+			rateLimitC: rateLimitC,
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusInternalServerError, res.code)
+		assert.Equal(t, 0, rateLimitC.reserveCount)
+	}
+
+	{
+		rateLimitC := newFakeRateLimit()
+
+		res := servePlugins(t, &pluginOpts{
+			body: chatBodyWithMaxTokens,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newPlugin("tpm", newTokenRateLimit(100000,
+					corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL)),
+				newEvalKeyPlugin("daily", `((((`),
+			},
+			rateLimitC: rateLimitC,
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusInternalServerError, res.code)
+		assert.Equal(t, 1, rateLimitC.reserveCount)
+		assert.Equal(t, int64(0), rateLimitC.sum())
+	}
+}
+
+func TestTokenRateLimitInconsistentProviderUsage(t *testing.T) {
+	rateLimitC := newFakeRateLimit()
+
+	servePlugins(t, &pluginOpts{
+		body: chatBodyWithMaxTokens,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("tpm", newTokenRateLimit(100000,
+				corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_INPUT)),
+		},
+		rateLimitC: rateLimitC,
+		llmResponse: &middlewares.LLMResponseInfo{
+			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER,
+			Usage: httputils.LLMUsage{
+				InputTokens:  11,
+				OutputTokens: 22,
+				TotalTokens:  5,
+			},
+		},
+	})
+
+	assert.Equal(t, int64(11), rateLimitC.sum())
 }
 
 func TestTokenRateLimitKeyPerUser(t *testing.T) {

@@ -309,4 +309,174 @@ func TestReserveSlidingWindow(t *testing.T) {
 		})
 		assert.NotNil(t, err)
 	}
+
+	{
+		_, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    utilrand.GetRandomBytesMust(32),
+			Limit:  100,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: 1,
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key: utilrand.GetRandomBytesMust(32),
+			Window: &metav1.Duration{
+				Type: &metav1.Duration_Seconds{
+					Seconds: 0,
+				},
+			},
+			Limit:  100,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: 1,
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    utilrand.GetRandomBytesMust(32),
+			Window: window,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: 1,
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    utilrand.GetRandomBytesMust(32),
+			Window: window,
+			Limit:  100,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: maxSlidingWindowAmount + 1,
+		})
+		assert.NotNil(t, err)
+	}
+}
+
+func TestReserveSlidingWindowDeniedUpdate(t *testing.T) {
+	srvCache := &srvRateLimit{
+		redisC: redisutils.NewClient(),
+	}
+
+	ctx := context.Background()
+
+	window := &metav1.Duration{
+		Type: &metav1.Duration_Seconds{
+			Seconds: 10,
+		},
+	}
+
+	key := utilrand.GetRandomBytesMust(32)
+	id1 := utilrand.GetRandomBytesMust(16)
+	id2 := utilrand.GetRandomBytesMust(16)
+
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     id1,
+			Amount: 60,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsAllowed)
+	}
+
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     id2,
+			Amount: 30,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsAllowed)
+		assert.Equal(t, int64(90), resp.Total)
+	}
+
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     id1,
+			Amount: 80,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, resp.IsAllowed)
+		assert.Equal(t, int64(90), resp.Total)
+	}
+
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: 10,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsAllowed)
+		assert.Equal(t, int64(100), resp.Total)
+	}
+}
+
+func TestReconcileSlidingWindowTimestamp(t *testing.T) {
+	srvCache := &srvRateLimit{
+		redisC: redisutils.NewClient(),
+	}
+
+	ctx := context.Background()
+
+	window := &metav1.Duration{
+		Type: &metav1.Duration_Seconds{
+			Seconds: 4,
+		},
+	}
+
+	key := utilrand.GetRandomBytesMust(32)
+	id := utilrand.GetRandomBytesMust(16)
+
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     id,
+			Amount: 20,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsAllowed)
+	}
+
+	time.Sleep(3 * time.Second)
+	{
+		resp, err := srvCache.ReconcileSlidingWindow(ctx, &rratelimitv1.ReconcileSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Id:     id,
+			Amount: 30,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, int64(30), resp.Total)
+	}
+
+	time.Sleep(2 * time.Second)
+	{
+		resp, err := srvCache.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+			Key:    key,
+			Window: window,
+			Limit:  100,
+			Id:     utilrand.GetRandomBytesMust(16),
+			Amount: 71,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, resp.IsAllowed)
+		assert.Equal(t, int64(30), resp.Total)
+	}
 }
