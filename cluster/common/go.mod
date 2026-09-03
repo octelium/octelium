@@ -11,7 +11,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/kaptinlin/jsonschema v0.6.5
-	github.com/lib/pq v1.11.2
+	github.com/lib/pq v1.12.3
 	github.com/mileusna/useragent v1.3.5
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000
@@ -150,4 +150,4 @@ replace github.com/octelium/octelium/cluster/rscserver => ../rscserver
 
 replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
 
-// replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576
+replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576

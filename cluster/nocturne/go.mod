@@ -77,7 +77,7 @@ require (
 	github.com/lestrrat-go/httprc/v3 v3.0.5 // indirect
 	github.com/lestrrat-go/jwx/v3 v3.1.1 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
-	github.com/lib/pq v1.11.2 // indirect
+	github.com/lib/pq v1.12.3 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mileusna/useragent v1.3.5 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
