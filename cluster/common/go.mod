@@ -18,7 +18,7 @@ require (
 	github.com/octelium/octelium/cluster/rscserver v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/open-policy-agent/opa v1.20.1
-	github.com/oschwald/geoip2-golang/v2 v2.1.0
+	github.com/oschwald/geoip2-golang/v2 v2.3.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/spiffe/go-spiffe/v2 v2.7.0
@@ -101,7 +101,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/oschwald/maxminddb-golang/v2 v2.1.1 // indirect
+	github.com/oschwald/maxminddb-golang/v2 v2.5.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
