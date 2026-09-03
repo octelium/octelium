@@ -402,11 +402,6 @@ func doGetPublishedService(ctx context.Context,
 		return nil, err
 	}
 
-	switch svc.Spec.Type {
-	case userv1.Service_Spec_DNS, userv1.Service_Spec_UDP:
-		return nil, errors.Errorf("UDP-based published Services are currently unsupported.")
-	}
-
 	return &cliconfigv1.Connection_Preferences_PublishedService{
 		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
 		Name:        svc.Metadata.Name,

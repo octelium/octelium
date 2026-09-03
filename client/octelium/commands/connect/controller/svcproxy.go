@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy/userspace/tcp"
+	"github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy/userspace/udp"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"gvisor.dev/gvisor/pkg/sync"
@@ -63,7 +65,7 @@ func (s *serviceProxy) Start(ctx context.Context) error {
 		case cliconfigv1.Connection_Preferences_PublishedService_TCP:
 			l.startTCP(ctx)
 		case cliconfigv1.Connection_Preferences_PublishedService_UDP:
-			zap.L().Warn("UDP-based published Services are currently unsupported. Skipping...")
+			l.startUDP(ctx)
 		}
 	}
 
@@ -103,11 +105,12 @@ type listener struct {
 	gonet *Net
 	typ   cliconfigv1.Connection_Preferences_PublishedService_L4Type
 
-	lis net.Listener
+	lis    net.Listener
+	udpLis *udp.Listener
 
 	mu       sync.Mutex
 	isClosed bool
-	conns    map[net.Conn]struct{}
+	conns    map[io.Closer]struct{}
 }
 
 func (l *listener) close() error {
@@ -120,6 +123,9 @@ func (l *listener) close() error {
 	if l.lis != nil {
 		l.lis.Close()
 	}
+	if l.udpLis != nil {
+		l.udpLis.Close()
+	}
 
 	for conn := range l.conns {
 		conn.Close()
@@ -129,7 +135,7 @@ func (l *listener) close() error {
 	return nil
 }
 
-func (l *listener) addConn(conn net.Conn) bool {
+func (l *listener) addConn(conn io.Closer) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -137,14 +143,14 @@ func (l *listener) addConn(conn net.Conn) bool {
 		return false
 	}
 	if l.conns == nil {
-		l.conns = make(map[net.Conn]struct{})
+		l.conns = make(map[io.Closer]struct{})
 	}
 	l.conns[conn] = struct{}{}
 
 	return true
 }
 
-func (l *listener) removeConn(conn net.Conn) {
+func (l *listener) removeConn(conn io.Closer) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.conns, conn)
@@ -157,6 +163,17 @@ func (l *listener) setLis(lis net.Listener) bool {
 		return false
 	}
 	l.lis = lis
+
+	return true
+}
+
+func (l *listener) setUDPLis(lis *udp.Listener) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.isClosed {
+		return false
+	}
+	l.udpLis = lis
 
 	return true
 }
@@ -181,6 +198,11 @@ func newListener(svc *cliconfigv1.Connection_Preferences_PublishedService, ctl *
 
 func (l *listener) startTCP(ctx context.Context) error {
 	go l.doStartTCP(ctx)
+	return nil
+}
+
+func (l *listener) startUDP(ctx context.Context) error {
+	go l.doStartUDP(ctx)
 	return nil
 }
 
@@ -262,6 +284,91 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 	}
 }
 
+func (l *listener) doStartUDP(ctx context.Context) error {
+
+	pp, err := udp.NewProxy(l.svcFQDN)
+	if err != nil {
+		zap.L().Error("Could not initialize new UDP proxy", zap.Error(err))
+		return err
+	}
+
+	listenerAddr := net.JoinHostPort(l.hostAddress, fmt.Sprintf("%d", l.hostPort))
+
+	udpAddr, err := net.ResolveUDPAddr("udp", listenerAddr)
+	if err != nil {
+		zap.L().Error("Could not resolve the UDP listener addr",
+			zap.String("addr", listenerAddr), zap.Error(err))
+		return err
+	}
+
+	lis, err := func() (*udp.Listener, error) {
+
+		var err error
+		var listener *udp.Listener
+		for i := range 100 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
+			listener, err = udp.Listen("udp", udpAddr)
+			if err == nil {
+				return listener, nil
+			}
+
+			zap.L().Warn("Could not listen on UDP port",
+				zap.String("addr", listenerAddr), zap.Error(err), zap.Int("attempt", i))
+			time.Sleep(250 * time.Millisecond)
+		}
+		return nil, errors.Errorf("Could not listen on UDP port on %s:.", listenerAddr)
+	}()
+	if err != nil {
+		zap.L().Error("Could not listen on UDP", zap.String("addr", listenerAddr), zap.Error(err))
+		return err
+	}
+
+	if !l.setUDPLis(lis) {
+		zap.L().Debug("UDP listener was closed before it started", zap.String("addr", listenerAddr))
+		return lis.Close()
+	}
+
+	zap.L().Debug("UDP listener successfully started", zap.String("addr", listenerAddr))
+
+	defer l.close()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			conn, err := lis.Accept()
+			if err != nil {
+				zap.L().Debug("Could not accept conn", zap.String("addr", listenerAddr), zap.Error(err))
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
+			if !l.addConn(conn) {
+				conn.Close()
+				return nil
+			}
+
+			go func(conn *udp.Conn) {
+				defer l.removeConn(conn)
+
+				zap.L().Debug("Starting serving connection", zap.String("addr", listenerAddr))
+				connBackend, err := l.getConnBackendUDP()
+				if err != nil {
+					zap.L().Error("Could not get conn backend", zap.Error(err))
+					conn.Close()
+					return
+				}
+				pp.ServeUDPConn(conn, connBackend)
+				zap.L().Debug("Done serving connection", zap.String("addr", listenerAddr))
+			}(conn)
+		}
+	}
+}
+
 func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 	var connBackend tcp.WriteCloser
 
@@ -304,7 +411,53 @@ func (l *listener) getConnBackendTCP() (tcp.WriteCloser, error) {
 	return connBackend, nil
 }
 
+func (l *listener) getConnBackendUDP() (net.Conn, error) {
+	var connBackend net.Conn
+
+	if l.gonet != nil {
+		addrs, err := l.gonet.LookupHost(l.svcFQDN)
+		if err != nil {
+			return nil, errors.Errorf("Could not lookupHost via gVisor: %s", err)
+		}
+		if len(addrs) == 0 {
+			return nil, errors.Errorf("Could not resolve Service: %s", l.svcFQDN)
+		}
+
+		udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(addrs[0], fmt.Sprintf("%d", l.port)))
+		if err != nil {
+			return nil, err
+		}
+		connBackend, err = l.gonet.DialUDP(nil, udpAddr)
+		if err != nil {
+			return nil, errors.Errorf("Could not dialUDP via gVisor: %s", err)
+		}
+
+	} else {
+
+		resolvedServiceIP, err := l.resolveService()
+		if err != nil {
+			return nil, err
+		}
+
+		udpAddr, err := net.ResolveUDPAddr("udp",
+			net.JoinHostPort(resolvedServiceIP.String(), fmt.Sprintf("%d", l.port)))
+		if err != nil {
+			return nil, err
+		}
+
+		connBackend, err = net.DialUDP("udp", nil, udpAddr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return connBackend, nil
+}
+
 func (l *listener) resolveService() (net.IP, error) {
+	if ip := net.ParseIP(l.svcFQDN); ip != nil {
+		return ip, nil
+	}
+
 	dnsServer := l.ctl.getCurrentDNS()
 	if dnsServer == nil {
 		return nil, errors.Errorf("No DNS servers available to resolve the Service: %s", l.svcFQDN)

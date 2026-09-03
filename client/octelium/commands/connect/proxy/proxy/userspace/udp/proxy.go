@@ -33,27 +33,25 @@ func NewProxy(address string) (*Proxy, error) {
 // ServeUDP implements the Handler interface.
 func (p *Proxy) ServeUDP(conn *Conn) {
 
-	// needed because of e.g. server.trackedConnection
-	defer conn.Close()
-
 	connBackend, err := net.Dial("udp", p.target)
 	if err != nil {
-
+		conn.Close()
 		return
 	}
 
-	// maybe not needed, but just in case
+	p.ServeUDPConn(conn, connBackend)
+}
+
+func (p *Proxy) ServeUDPConn(conn *Conn, connBackend net.Conn) {
+
+	defer conn.Close()
 	defer connBackend.Close()
 
-	errChan := make(chan error)
+	errChan := make(chan error, 2)
 	go p.connCopy(conn, connBackend, errChan)
 	go p.connCopy(connBackend, conn, errChan)
 
-	err = <-errChan
-	if err != nil {
-
-	}
-
+	<-errChan
 	<-errChan
 }
 
