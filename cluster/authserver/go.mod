@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/coreos/go-oidc/v3 v3.17.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
 	github.com/descope/virtualwebauthn v1.0.4
 	github.com/go-jose/go-jose/v4 v4.1.4
