@@ -2048,6 +2048,8 @@ const (
 
 	maxLLMReasoningTokens = 1024 * 1024
 
+	maxLLMTokenRateLimitTokens = 1024 * 1024 * 1024
+
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
 	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
 
@@ -2165,6 +2167,10 @@ func (s *Server) validateLLMPlugins(ctx context.Context, cfgName string,
 			}
 		case plugin.GetReasoning() != nil:
 			if err := s.validateLLMReasoning(ctx, plugin.GetReasoning()); err != nil {
+				return err
+			}
+		case plugin.GetTokenRateLimit() != nil:
+			if err := s.validateLLMTokenRateLimit(ctx, plugin.GetTokenRateLimit()); err != nil {
 				return err
 			}
 		default:
@@ -2618,6 +2624,62 @@ func (s *Server) validateLLMReasoning(ctx context.Context,
 		}
 	default:
 		return grpcutils.InvalidArg("The LLM reasoning type must be set")
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMTokenRateLimit(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit) error {
+
+	switch cfg.GetScope() {
+	case corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_SCOPE_UNSET,
+		corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL,
+		corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_INPUT,
+		corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_OUTPUT:
+	default:
+		return grpcutils.InvalidArg("Invalid token rate limit scope")
+	}
+
+	if cfg.Limit == 0 {
+		return grpcutils.InvalidArg("Limit must be set")
+	} else if cfg.Limit < 0 {
+		return grpcutils.InvalidArg("Limit cannot be negative: %d", cfg.Limit)
+	}
+
+	if cfg.Window == nil {
+		return grpcutils.InvalidArg("Window duration must be set")
+	}
+
+	if err := apivalidation.ValidateDuration(cfg.Window); err != nil {
+		return err
+	}
+
+	if cfg.DefaultOutputTokens > maxLLMTokenRateLimitTokens {
+		return grpcutils.InvalidArg("defaultOutputTokens is too large")
+	}
+
+	if key := cfg.GetKey(); key != nil {
+		switch key.Type.(type) {
+		case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval:
+			if err := checkCELExpressionString(ctx, key.GetEval()); err != nil {
+				return grpcutils.InvalidArg("Invalid eval: %s", key.GetEval())
+			}
+		}
+	}
+
+	if err := s.validateGenStr(cfg.GetDenyMessage(), false, "denyMessage"); err != nil {
+		return err
+	}
+
+	for _, hdr := range cfg.GetHeaders() {
+		if !httpguts.ValidHeaderFieldName(hdr.Key) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
+
+		if !httpguts.ValidHeaderFieldValue(hdr.Value) {
+			return grpcutils.InvalidArg("invalid header value")
+		}
 	}
 
 	return nil

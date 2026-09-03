@@ -28,6 +28,7 @@ const (
 	ErrTypeAuthentication = "authentication_error"
 	ErrTypePermission     = "permission_error"
 	ErrTypeNotFound       = "not_found_error"
+	ErrTypeRateLimit      = "rate_limit_error"
 	ErrTypeAPI            = "api_error"
 )
 
@@ -44,6 +45,7 @@ const (
 	ErrCodeToolDenied      = "octelium_tool_denied"
 	ErrCodeGuardrail       = "octelium_guardrail"
 	ErrCodeReasoning       = "octelium_reasoning"
+	ErrCodeTokenRateLimit  = "octelium_token_rate_limit"
 )
 
 type openAIError struct {

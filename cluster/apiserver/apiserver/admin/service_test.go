@@ -1820,6 +1820,108 @@ func TestValidateLLMReasoning(t *testing.T) {
 	}))
 }
 
+func newTokenRateLimit() *corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit {
+	return &corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit{
+		Scope: corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL,
+		Limit: 500000,
+		Window: &metav1.Duration{
+			Type: &metav1.Duration_Minutes{Minutes: 1},
+		},
+	}
+}
+
+func TestValidateLLMTokenRateLimit(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMTokenRateLimit(ctx, newTokenRateLimit()))
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Scope = corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_SCOPE_UNSET
+		assert.Nil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.DefaultOutputTokens = 4096
+		cfg.DenyMessage = "You are out of tokens"
+		cfg.Key = &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerUser{
+				PerUser: true,
+			},
+		}
+		cfg.Headers = []*corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_KeyValue{
+			{
+				Key:   "Retry-After",
+				Value: "60",
+			},
+		}
+		assert.Nil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Key = &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval{
+				Eval: `ctx.user.metadata.uid`,
+			},
+		}
+		assert.Nil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Scope = corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_Scope(1000)
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Limit = 0
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Limit = -1
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Window = nil
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.DefaultOutputTokens = maxLLMTokenRateLimitTokens + 1
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Key = &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval{
+				Eval: `((((`,
+			},
+		}
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+
+	{
+		cfg := newTokenRateLimit()
+		cfg.Headers = []*corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_KeyValue{
+			{
+				Key:   "Retry After",
+				Value: "60",
+			},
+		}
+		assert.NotNil(t, s.validateLLMTokenRateLimit(ctx, cfg))
+	}
+}
+
 func newMCPGuardrailPattern(
 	action corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action) *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern {
 	return &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{

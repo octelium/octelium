@@ -286,6 +286,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 			}
 
 			ctx := context.WithValue(r.Context(), middlewares.CtxRequestContext, reqCtx)
+			defer reqCtx.RunOnResponse()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}), nil
 	})
@@ -400,6 +401,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return llm.NewReasoning(ctx, next, s.celEngine)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewTokenRateLimit(ctx, next, s.celEngine, s.octeliumC, s.svcUID)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

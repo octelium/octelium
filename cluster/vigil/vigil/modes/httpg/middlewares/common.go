@@ -106,6 +106,8 @@ type RequestContext struct {
 	LLMResponse *LLMResponseInfo
 
 	BodyDigest [sha256.Size]byte
+
+	OnResponse []func()
 }
 
 type MCPResponseInfo struct {
@@ -154,6 +156,16 @@ func (r *RequestContext) SetBodyDigest() {
 
 func (r *RequestContext) IsBodyChanged() bool {
 	return sha256.Sum256(r.Body) != r.BodyDigest
+}
+
+func (r *RequestContext) AddOnResponse(fn func()) {
+	r.OnResponse = append(r.OnResponse, fn)
+}
+
+func (r *RequestContext) RunOnResponse() {
+	for _, fn := range r.OnResponse {
+		fn()
+	}
 }
 
 func GetCtxRequestContext(ctx context.Context) *RequestContext {

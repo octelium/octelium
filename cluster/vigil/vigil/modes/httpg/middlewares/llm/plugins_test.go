@@ -62,6 +62,10 @@ type pluginOpts struct {
 	reasoning *corev1.Service_Spec_Config_LLM_Reasoning
 	reqCtxMap map[string]any
 	upstream  http.HandlerFunc
+
+	rateLimitC  *fakeRateLimit
+	llmResponse *middlewares.LLMResponseInfo
+	downstream  *corev1.RequestContext
 }
 
 func newPlugin(name string,
@@ -85,6 +89,8 @@ func newPlugin(name string,
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Model{Model: cur}
 	case *corev1.Service_Spec_Config_LLM_Reasoning:
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Reasoning{Reasoning: cur}
+	case *corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit:
+		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_{TokenRateLimit: cur}
 	}
 
 	return ret
@@ -113,6 +119,14 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	})
 
 	var mdlwr http.Handler = next
+
+	if o.rateLimitC == nil {
+		o.rateLimitC = newFakeRateLimit()
+	}
+
+	mdlwr, err = NewTokenRateLimit(ctx, mdlwr, celEngine,
+		&fakeOcteliumC{rateLimitC: o.rateLimitC}, newService().Metadata.Uid)
+	assert.Nil(t, err)
 
 	mdlwr, err = NewReasoning(ctx, mdlwr, celEngine)
 	assert.Nil(t, err)
@@ -168,6 +182,14 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 		},
 	}
 
+	downstreamInfo := &corev1.RequestContext{
+		Request: downstreamReq.Request,
+	}
+	if o.downstream != nil {
+		downstreamInfo.Session = o.downstream.Session
+		downstreamInfo.User = o.downstream.User
+	}
+
 	reqCtx := &middlewares.RequestContext{
 		CreatedAt:         time.Now(),
 		Service:           newService(),
@@ -176,9 +198,7 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 		BodyJSONMap:       bodyMap,
 		LLM:               llmReq,
 		DownstreamRequest: downstreamReq,
-		DownstreamInfo: &corev1.RequestContext{
-			Request: downstreamReq.Request,
-		},
+		DownstreamInfo:    downstreamInfo,
 	}
 	reqCtx.SetBodyDigest()
 	reqCtx.SetReqCtxMap()
@@ -192,6 +212,11 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 
 	rw := httptest.NewRecorder()
 	mdlwr.ServeHTTP(rw, req)
+
+	if o.llmResponse != nil {
+		reqCtx.LLMResponse = o.llmResponse
+	}
+	reqCtx.RunOnResponse()
 
 	ret.code = rw.Result().StatusCode
 	ret.body = rw.Body.String()

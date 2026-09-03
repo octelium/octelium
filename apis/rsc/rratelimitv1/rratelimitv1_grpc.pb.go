@@ -33,7 +33,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MainService_CheckSlidingWindow_FullMethodName = "/octelium.api.rsc.ratelimit.v1.MainService/CheckSlidingWindow"
+	MainService_CheckSlidingWindow_FullMethodName     = "/octelium.api.rsc.ratelimit.v1.MainService/CheckSlidingWindow"
+	MainService_ReserveSlidingWindow_FullMethodName   = "/octelium.api.rsc.ratelimit.v1.MainService/ReserveSlidingWindow"
+	MainService_ReconcileSlidingWindow_FullMethodName = "/octelium.api.rsc.ratelimit.v1.MainService/ReconcileSlidingWindow"
 )
 
 // MainServiceClient is the client API for MainService service.
@@ -41,6 +43,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MainServiceClient interface {
 	CheckSlidingWindow(ctx context.Context, in *CheckSlidingWindowRequest, opts ...grpc.CallOption) (*CheckSlidingWindowResponse, error)
+	ReserveSlidingWindow(ctx context.Context, in *ReserveSlidingWindowRequest, opts ...grpc.CallOption) (*ReserveSlidingWindowResponse, error)
+	ReconcileSlidingWindow(ctx context.Context, in *ReconcileSlidingWindowRequest, opts ...grpc.CallOption) (*ReconcileSlidingWindowResponse, error)
 }
 
 type mainServiceClient struct {
@@ -61,11 +65,33 @@ func (c *mainServiceClient) CheckSlidingWindow(ctx context.Context, in *CheckSli
 	return out, nil
 }
 
+func (c *mainServiceClient) ReserveSlidingWindow(ctx context.Context, in *ReserveSlidingWindowRequest, opts ...grpc.CallOption) (*ReserveSlidingWindowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReserveSlidingWindowResponse)
+	err := c.cc.Invoke(ctx, MainService_ReserveSlidingWindow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) ReconcileSlidingWindow(ctx context.Context, in *ReconcileSlidingWindowRequest, opts ...grpc.CallOption) (*ReconcileSlidingWindowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcileSlidingWindowResponse)
+	err := c.cc.Invoke(ctx, MainService_ReconcileSlidingWindow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MainServiceServer is the server API for MainService service.
 // All implementations must embed UnimplementedMainServiceServer
 // for forward compatibility.
 type MainServiceServer interface {
 	CheckSlidingWindow(context.Context, *CheckSlidingWindowRequest) (*CheckSlidingWindowResponse, error)
+	ReserveSlidingWindow(context.Context, *ReserveSlidingWindowRequest) (*ReserveSlidingWindowResponse, error)
+	ReconcileSlidingWindow(context.Context, *ReconcileSlidingWindowRequest) (*ReconcileSlidingWindowResponse, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -78,6 +104,12 @@ type UnimplementedMainServiceServer struct{}
 
 func (UnimplementedMainServiceServer) CheckSlidingWindow(context.Context, *CheckSlidingWindowRequest) (*CheckSlidingWindowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckSlidingWindow not implemented")
+}
+func (UnimplementedMainServiceServer) ReserveSlidingWindow(context.Context, *ReserveSlidingWindowRequest) (*ReserveSlidingWindowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReserveSlidingWindow not implemented")
+}
+func (UnimplementedMainServiceServer) ReconcileSlidingWindow(context.Context, *ReconcileSlidingWindowRequest) (*ReconcileSlidingWindowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReconcileSlidingWindow not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}
 func (UnimplementedMainServiceServer) testEmbeddedByValue()                     {}
@@ -118,6 +150,42 @@ func _MainService_CheckSlidingWindow_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MainService_ReserveSlidingWindow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveSlidingWindowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).ReserveSlidingWindow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_ReserveSlidingWindow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).ReserveSlidingWindow(ctx, req.(*ReserveSlidingWindowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_ReconcileSlidingWindow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcileSlidingWindowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).ReconcileSlidingWindow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_ReconcileSlidingWindow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).ReconcileSlidingWindow(ctx, req.(*ReconcileSlidingWindowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MainService_ServiceDesc is the grpc.ServiceDesc for MainService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -128,6 +196,14 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckSlidingWindow",
 			Handler:    _MainService_CheckSlidingWindow_Handler,
+		},
+		{
+			MethodName: "ReserveSlidingWindow",
+			Handler:    _MainService_ReserveSlidingWindow_Handler,
+		},
+		{
+			MethodName: "ReconcileSlidingWindow",
+			Handler:    _MainService_ReconcileSlidingWindow_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
