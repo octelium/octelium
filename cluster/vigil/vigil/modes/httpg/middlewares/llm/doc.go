@@ -48,6 +48,9 @@ const (
 
 	partsKey      = "parts"
 	toolConfigKey = "toolConfig"
+
+	embedContentKey  = "content"
+	embedRequestsKey = "requests"
 )
 
 type doc struct {
@@ -85,9 +88,19 @@ func (d *doc) instructionsKey() string {
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return "system"
 	case corev1.Service_Spec_Config_LLM_GEMINI:
-		return "systemInstruction"
+		switch d.operation {
+		case corev1.RequestContext_Request_LLM_GENERATE_CONTENT:
+			return "systemInstruction"
+		default:
+			return ""
+		}
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
-		return "system"
+		switch d.operation {
+		case corev1.RequestContext_Request_LLM_CONVERSE:
+			return "system"
+		default:
+			return ""
+		}
 	default:
 		switch d.operation {
 		case corev1.RequestContext_Request_LLM_RESPONSES:
@@ -160,27 +173,26 @@ func (d *doc) hasMessagesCarrier() bool {
 }
 
 func (d *doc) hasToolsCarrier() bool {
-	switch d.operation {
-	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
-		corev1.RequestContext_Request_LLM_RESPONSES,
-		corev1.RequestContext_Request_LLM_MESSAGES,
-		corev1.RequestContext_Request_LLM_COUNT_TOKENS,
-		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
-		corev1.RequestContext_Request_LLM_CONVERSE:
-		return true
-	default:
-		return false
-	}
+	return d.hasInferenceCarrier()
 }
 
 func (d *doc) hasReasoningCarrier() bool {
+	return d.hasInferenceCarrier()
+}
+
+func (d *doc) hasInferenceCarrier() bool {
+	switch d.protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return d.operation == corev1.RequestContext_Request_LLM_GENERATE_CONTENT
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return d.operation == corev1.RequestContext_Request_LLM_CONVERSE
+	}
+
 	switch d.operation {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
 		corev1.RequestContext_Request_LLM_MESSAGES,
-		corev1.RequestContext_Request_LLM_COUNT_TOKENS,
-		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
-		corev1.RequestContext_Request_LLM_CONVERSE:
+		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
 		return true
 	default:
 		return false
@@ -614,6 +626,10 @@ func (d *doc) instructionsContent() json.RawMessage {
 		return raw
 	}
 
+	return geminiParts(raw)
+}
+
+func geminiParts(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 || raw[0] != '{' {
 		return raw
 	}
@@ -624,6 +640,18 @@ func (d *doc) instructionsContent() json.RawMessage {
 	}
 
 	return obj[partsKey]
+}
+
+func setGeminiParts(cur, raw json.RawMessage) (json.RawMessage, error) {
+	obj := make(map[string]json.RawMessage)
+	if len(cur) > 0 && cur[0] == '{' {
+		if err := json.Unmarshal(cur, &obj); err != nil {
+			obj = make(map[string]json.RawMessage)
+		}
+	}
+	obj[partsKey] = raw
+
+	return json.Marshal(obj)
 }
 
 func (d *doc) setInstructionsContent(raw json.RawMessage) error {
@@ -638,7 +666,7 @@ func (d *doc) setInstructionsContent(raw json.RawMessage) error {
 		return nil
 	}
 
-	out, err := json.Marshal(map[string]json.RawMessage{partsKey: raw})
+	out, err := setGeminiParts(d.root[key], raw)
 	if err != nil {
 		return err
 	}
@@ -955,6 +983,58 @@ func (d *doc) setGeminiFunctionDeclarations(raw json.RawMessage) {
 	d.changed = true
 }
 
+func (d *doc) dropProviderTools() {
+	if d.protocol != corev1.Service_Spec_Config_LLM_GEMINI {
+		return
+	}
+
+	raw, ok := d.root["tools"]
+	if !ok || len(raw) == 0 {
+		return
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return
+	}
+
+	ret := make([]json.RawMessage, 0, len(entries))
+	for _, entry := range entries {
+		if !hasGeminiFunctionDeclarations(entry) {
+			continue
+		}
+		ret = append(ret, entry)
+	}
+
+	if len(ret) == len(entries) {
+		return
+	}
+
+	if len(ret) == 0 {
+		delete(d.root, "tools")
+		d.changed = true
+		return
+	}
+
+	out, err := json.Marshal(ret)
+	if err != nil {
+		return
+	}
+
+	d.root["tools"] = out
+	d.changed = true
+}
+
+func hasGeminiFunctionDeclarations(entry json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &obj); err != nil {
+		return false
+	}
+
+	_, ok := obj["functionDeclarations"]
+	return ok
+}
+
 func isGeminiToolGroup(entry json.RawMessage) bool {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &obj); err != nil {
@@ -1135,6 +1215,8 @@ func (d *doc) textParts(
 	}
 
 	if hasScope(scopes, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT) {
+		ret = append(ret, d.embedParts()...)
+
 		if key := d.promptKey(); key != "" {
 			if raw, ok := d.root[key]; ok {
 				ret = append(ret, d.promptParts(key, raw)...)
@@ -1155,6 +1237,74 @@ func (d *doc) textParts(
 }
 
 const scopeNone = corev1.Service_Spec_Config_LLM_Plugin_Guardrail_SCOPE_UNSET
+
+func (d *doc) embedParts() []*textPart {
+	if d.protocol != corev1.Service_Spec_Config_LLM_GEMINI ||
+		d.operation != corev1.RequestContext_Request_LLM_EMBED_CONTENT {
+		return nil
+	}
+
+	scope := corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT
+
+	var ret []*textPart
+
+	if cur, ok := d.root[embedContentKey]; ok {
+		ret = append(ret, d.contentParts(scope, roleUser, geminiParts(cur),
+			func(updated json.RawMessage) error {
+				raw, err := setGeminiParts(cur, updated)
+				if err != nil {
+					return err
+				}
+				d.root[embedContentKey] = raw
+				d.changed = true
+				return nil
+			})...)
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal(d.root[embedRequestsKey], &entries); err != nil {
+		return ret
+	}
+
+	for i := range entries {
+		idx := i
+
+		obj := make(map[string]json.RawMessage)
+		if err := json.Unmarshal(entries[idx], &obj); err != nil {
+			continue
+		}
+
+		cur, ok := obj[embedContentKey]
+		if !ok {
+			continue
+		}
+
+		ret = append(ret, d.contentParts(scope, roleUser, geminiParts(cur),
+			func(updated json.RawMessage) error {
+				raw, err := setGeminiParts(cur, updated)
+				if err != nil {
+					return err
+				}
+				obj[embedContentKey] = raw
+
+				entry, err := json.Marshal(obj)
+				if err != nil {
+					return err
+				}
+				entries[idx] = entry
+
+				out, err := json.Marshal(entries)
+				if err != nil {
+					return err
+				}
+				d.root[embedRequestsKey] = out
+				d.changed = true
+				return nil
+			})...)
+	}
+
+	return ret
+}
 
 func (d *doc) promptParts(key string, raw json.RawMessage) []*textPart {
 	scope := corev1.Service_Spec_Config_LLM_Plugin_Guardrail_CONTENT

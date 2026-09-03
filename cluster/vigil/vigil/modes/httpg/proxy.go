@@ -203,8 +203,14 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 			if pth := getUpstreamPath(svc, upstream.GetPath(),
 				outReq.URL.Path); pth != outReq.URL.Path {
+				rawPath := getUpstreamPath(svc, upstream.GetPath(),
+					outReq.URL.EscapedPath())
 				outReq.URL.Path = pth
-				outReq.URL.RawPath = ""
+				if rawPath != pth {
+					outReq.URL.RawPath = rawPath
+				} else {
+					outReq.URL.RawPath = ""
+				}
 			}
 
 			outReq.URL.RawQuery = strings.ReplaceAll(outReq.URL.RawQuery, ";", "&")

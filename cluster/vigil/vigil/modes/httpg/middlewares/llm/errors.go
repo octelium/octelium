@@ -103,6 +103,10 @@ func WriteError(w http.ResponseWriter, o *WriteErrorOpts) {
 	hdr.Set("Server", "octelium")
 	hdr.Del("Content-Length")
 
+	if o.Protocol == corev1.Service_Spec_Config_LLM_BEDROCK {
+		hdr.Set("X-Amzn-Errortype", getBedrockErrorType(o.HTTPStatus))
+	}
+
 	w.WriteHeader(o.HTTPStatus)
 	w.Write(body)
 }
@@ -158,6 +162,22 @@ func getGeminiErrorStatus(httpStatus int) string {
 		return "INTERNAL"
 	default:
 		return "UNKNOWN"
+	}
+}
+
+func getBedrockErrorType(httpStatus int) string {
+	switch httpStatus {
+	case http.StatusBadRequest, http.StatusMethodNotAllowed,
+		http.StatusUnsupportedMediaType, http.StatusRequestEntityTooLarge:
+		return "ValidationException"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "AccessDeniedException"
+	case http.StatusNotFound:
+		return "ResourceNotFoundException"
+	case http.StatusTooManyRequests:
+		return "ThrottlingException"
+	default:
+		return "InternalServerException"
 	}
 }
 

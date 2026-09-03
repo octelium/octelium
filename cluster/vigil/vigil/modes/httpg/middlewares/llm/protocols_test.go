@@ -17,6 +17,7 @@
 package llm
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -333,6 +334,7 @@ func TestToolsBedrock(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, res.code)
 	assert.Contains(t, res.body, "this tool is not allowed")
 	assert.NotContains(t, res.body, ErrCodeToolDenied)
+	assert.Equal(t, "AccessDeniedException", res.header.Get("X-Amzn-Errortype"))
 }
 
 func TestReasoningGemini(t *testing.T) {
@@ -407,6 +409,45 @@ func TestModelGemini(t *testing.T) {
 
 	assert.True(t, res.isNext)
 	assert.Equal(t, "gemini-2.5-pro", res.reqCtx.LLM.GetModel())
+	assert.Equal(t, "/v1beta/models/gemini-2.5-flash:generateContent", res.upstreamPath)
+
+	_, ok := res.upstream["model"]
+	assert.False(t, ok)
+}
+
+func TestModelBedrock(t *testing.T) {
+	const arn = "arn:aws:bedrock:us-east-1:123456789012:" +
+		"inference-profile/us.anthropic.claude-sonnet-4-5-v1:0"
+
+	o := newBedrockOpts(bedrockBody)
+	o.model = &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{Value: arn},
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, "/model/"+arn+"/converse", res.upstreamPath)
+	assert.Equal(t, "/model/arn:aws:bedrock:us-east-1:123456789012:"+
+		"inference-profile%2Fus.anthropic.claude-sonnet-4-5-v1:0/converse",
+		res.upstreamRawPath)
+
+	_, ok := res.upstream["model"]
+	assert.False(t, ok)
+}
+
+func TestModelGeminiInvalidName(t *testing.T) {
+	o := newGeminiOpts(geminiBody)
+	o.model = &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+			Value: "gemini-2.5-flash:generateContent",
+		},
+	}
+
+	res := servePlugins(t, o)
+
+	assert.False(t, res.isNext)
+	assert.Equal(t, http.StatusInternalServerError, res.code)
 }
 
 func TestGuardrailGemini(t *testing.T) {
@@ -616,5 +657,300 @@ func TestToolsGeminiProviderHosted(t *testing.T) {
 			assert.True(t, ok)
 			assert.Equal(t, name, decl["name"])
 		}
+	}
+}
+
+const geminiEmbedPath = "/v1beta/models/text-embedding-004:embedContent"
+
+const geminiBatchEmbedPath = "/v1beta/models/text-embedding-004:batchEmbedContents"
+
+const geminiCountTokensPath = "/v1beta/models/gemini-2.5-pro:countTokens"
+
+func newGeminiOptsAt(path, body string) *pluginOpts {
+	return &pluginOpts{
+		protocol: corev1.Service_Spec_Config_LLM_GEMINI,
+		path:     path,
+		body:     body,
+	}
+}
+
+func TestGuardrailGeminiEmbedContent(t *testing.T) {
+	body := `{"content":{"role":"user","parts":[{"text":"my key is ` +
+		githubToken + `"}]}}`
+
+	o := newGeminiOptsAt(geminiEmbedPath, body)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newSecretsGuardrail("gr",
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+
+	content, ok := res.upstream["content"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "user", content["role"])
+
+	parts, ok := content["parts"].([]any)
+	assert.True(t, ok)
+	assert.NotContains(t, partText(t, parts[0]), githubToken)
+}
+
+func TestGuardrailGeminiBatchEmbedContents(t *testing.T) {
+	body := `{"requests":[{"model":"models/text-embedding-004",` +
+		`"content":{"parts":[{"text":"my key is ` + githubToken + `"}]}}]}`
+
+	o := newGeminiOptsAt(geminiBatchEmbedPath, body)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newSecretsGuardrail("gr",
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+
+	requests, ok := res.upstream["requests"].([]any)
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(requests))
+
+	entry, ok := requests[0].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "models/text-embedding-004", entry["model"])
+
+	content, ok := entry["content"].(map[string]any)
+	assert.True(t, ok)
+
+	parts, ok := content["parts"].([]any)
+	assert.True(t, ok)
+	assert.NotContains(t, partText(t, parts[0]), githubToken)
+}
+
+func TestGuardrailGeminiEmbedContentDenied(t *testing.T) {
+	body := `{"content":{"parts":[{"text":"my key is ` + githubToken + `"}]}}`
+
+	o := newGeminiOptsAt(geminiEmbedPath, body)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newSecretsGuardrail("gr",
+			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.False(t, res.isNext)
+	assert.Equal(t, http.StatusForbidden, res.code)
+}
+
+func TestPromptSystemGeminiEmbedContent(t *testing.T) {
+	o := newGeminiOptsAt(geminiEmbedPath, `{"content":{"parts":[{"text":"Hello"}]}}`)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+			Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+				System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+					Content: newContentValue("Governed by Octelium"),
+				},
+			},
+		}),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, 1, len(res.upstream))
+
+	_, ok := res.upstream["systemInstruction"]
+	assert.False(t, ok)
+}
+
+func TestGeminiCountTokensCarriers(t *testing.T) {
+	o := newGeminiOptsAt(geminiCountTokensPath, geminiBody)
+	o.reasoning = newReasoningLevelCfg(corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newPlugin("sys", &corev1.Service_Spec_Config_LLM_Plugin_Prompt{
+			Type: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System_{
+				System: &corev1.Service_Spec_Config_LLM_Plugin_Prompt_System{
+					Content: newContentValue("Governed by Octelium"),
+				},
+			},
+		}),
+		newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+			Tools: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{
+				{
+					Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{
+						Value: `{"name":"octelium_audit"}`,
+					},
+				},
+			},
+		}),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, 1, len(res.upstream))
+
+	for _, key := range []string{"systemInstruction", "tools", "generationConfig"} {
+		_, ok := res.upstream[key]
+		assert.False(t, ok, key)
+	}
+}
+
+func TestToolsGeminiAllowedFunctionNames(t *testing.T) {
+	newBody := func(names string) string {
+		return `{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],` +
+			`"tools":[{"functionDeclarations":[{"name":"read_file"},` +
+			`{"name":"rm_rf"},{"name":"rm_all"}]}],` +
+			`"toolConfig":{"functionCallingConfig":{"mode":"ANY",` +
+			`"allowedFunctionNames":` + names + `}}}`
+	}
+
+	plugins := []*corev1.Service_Spec_Config_LLM_Plugin{
+		newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+			Filters: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter{
+				{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name{
+						Name: "rm_*",
+					},
+					Decision: corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE,
+				},
+			},
+		}),
+	}
+
+	{
+		o := newGeminiOpts(newBody(`["read_file","rm_rf"]`))
+		o.plugins = plugins
+
+		res := servePlugins(t, o)
+
+		fnCfg := upstreamToolChoice(t, res.upstream)
+		assert.Equal(t, "ANY", fnCfg["mode"])
+
+		names, ok := fnCfg["allowedFunctionNames"].([]any)
+		assert.True(t, ok)
+		assert.Equal(t, []any{"read_file"}, names)
+	}
+
+	{
+		o := newGeminiOpts(newBody(`["rm_rf","rm_all"]`))
+		o.plugins = plugins
+
+		res := servePlugins(t, o)
+
+		fnCfg := upstreamToolChoice(t, res.upstream)
+		assert.Equal(t, "AUTO", fnCfg["mode"])
+
+		_, ok := fnCfg["allowedFunctionNames"]
+		assert.False(t, ok)
+	}
+}
+
+func TestToolsGeminiNoneProviderHosted(t *testing.T) {
+	body := `{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],` +
+		`"tools":[{"googleSearch":{}},` +
+		`{"functionDeclarations":[{"name":"read_file"}]}]}`
+
+	o := newGeminiOpts(body)
+	o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+		newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+			Choice: corev1.Service_Spec_Config_LLM_Plugin_Tools_NONE,
+		}),
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+
+	groups, ok := res.upstream["tools"].([]any)
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(groups))
+
+	group, ok := groups[0].(map[string]any)
+	assert.True(t, ok)
+
+	_, ok = group["functionDeclarations"]
+	assert.True(t, ok)
+
+	assert.Equal(t, "NONE", upstreamToolChoice(t, res.upstream)["mode"])
+}
+
+func upstreamToolChoice(t *testing.T, upstream map[string]any) map[string]any {
+	cfg, ok := upstream["toolConfig"].(map[string]any)
+	assert.True(t, ok)
+
+	ret, ok := cfg["functionCallingConfig"].(map[string]any)
+	assert.True(t, ok)
+
+	return ret
+}
+
+func newBedrockEventStreamMessage(payload string) []byte {
+	total := 12 + len(payload) + 4
+
+	ret := make([]byte, 0, total)
+	ret = binary.BigEndian.AppendUint32(ret, uint32(total))
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = append(ret, []byte(payload)...)
+	ret = binary.BigEndian.AppendUint32(ret, 0)
+
+	return ret
+}
+
+func TestGuardrailBedrockResponseStream(t *testing.T) {
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.path = "/model/anthropic.claude-sonnet-4-5-v1:0/converse-stream"
+		o.upstream = func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+			w.Write(newBedrockEventStreamMessage(
+				`{"contentBlockIndex":0,"delta":{"text":"the key is AKIA"}}`))
+			w.Write(newBedrockEventStreamMessage(
+				`{"contentBlockIndex":0,"delta":{"text":"DEADBEEFDEADBEEF"}}`))
+			w.Write(newBedrockEventStreamMessage(`{"stopReason":"end_turn"}`))
+		}
+		o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("leak",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+						Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
+					},
+				}),
+		}
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+		assert.NotContains(t, res.body, "AKIADEADBEEFDEADBEEF")
+	}
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.path = "/model/anthropic.claude-sonnet-4-5-v1:0/converse-stream"
+		o.upstream = func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+			w.Write(newBedrockEventStreamMessage(
+				`{"contentBlockIndex":0,"delta":{"text":"all good"}}`))
+			w.Write([]byte("truncated"))
+		}
+		o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("leak",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+						Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
+					},
+				}),
+		}
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, http.StatusForbidden, res.code)
+		assert.NotContains(t, res.body, "all good")
 	}
 }

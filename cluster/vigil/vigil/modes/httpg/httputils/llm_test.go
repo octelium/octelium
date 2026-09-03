@@ -872,3 +872,150 @@ func TestNextLLMEventStreamMessage(t *testing.T) {
 		assert.Equal(t, string(payload), string(out))
 	}
 }
+
+func TestSetLLMModelPath(t *testing.T) {
+
+	{
+		path, rawPath := SetLLMModelPath(corev1.Service_Spec_Config_LLM_GEMINI,
+			"/v1beta/models/gemini-2.5-pro:generateContent", "gemini-2.5-flash")
+		assert.Equal(t, "/v1beta/models/gemini-2.5-flash:generateContent", path)
+		assert.Equal(t, path, rawPath)
+	}
+
+	{
+		path, _ := SetLLMModelPath(corev1.Service_Spec_Config_LLM_GEMINI,
+			"/v1beta/models/gemini-2.5-pro", "gemini-2.5-flash")
+		assert.Equal(t, "", path)
+	}
+
+	{
+		path, rawPath := SetLLMModelPath(corev1.Service_Spec_Config_LLM_BEDROCK,
+			"/model/anthropic.claude-v1:0/converse-stream",
+			"arn:aws:bedrock:us-east-1:1234:inference-profile/us.anthropic.claude")
+		assert.Equal(t,
+			"/model/arn:aws:bedrock:us-east-1:1234:inference-profile/"+
+				"us.anthropic.claude/converse-stream", path)
+		assert.Equal(t,
+			"/model/arn:aws:bedrock:us-east-1:1234:inference-profile%2F"+
+				"us.anthropic.claude/converse-stream", rawPath)
+	}
+
+	{
+		path, _ := SetLLMModelPath(corev1.Service_Spec_Config_LLM_BEDROCK,
+			"/model/anthropic.claude-v1:0", "anthropic.claude-v2:0")
+		assert.Equal(t, "", path)
+	}
+
+	{
+		path, _ := SetLLMModelPath(corev1.Service_Spec_Config_LLM_OPENAI,
+			"/v1/chat/completions", "gpt-4o")
+		assert.Equal(t, "", path)
+	}
+}
+
+func TestNextLLMJSONArrayMessage(t *testing.T) {
+	body := []byte(`[{"candidates":[{"content":{"parts":[{"text":"a]}"}]}}]},` +
+		"\r\n" + `{"usageMetadata":{"totalTokenCount":11}}]`)
+
+	var msgs []string
+	for len(body) > 0 {
+		payload, n := NextLLMJSONArrayMessage(body)
+		assert.True(t, n > 0)
+		body = body[n:]
+		if len(payload) > 0 {
+			msgs = append(msgs, string(payload))
+		}
+	}
+
+	assert.Equal(t, 2, len(msgs))
+	assert.Equal(t, `{"candidates":[{"content":{"parts":[{"text":"a]}"}]}}]}`, msgs[0])
+	assert.Equal(t, `{"usageMetadata":{"totalTokenCount":11}}`, msgs[1])
+
+	{
+		_, n := NextLLMJSONArrayMessage([]byte(`[{"a":1`))
+		assert.Equal(t, 0, n)
+	}
+
+	{
+		_, n := NextLLMJSONArrayMessage([]byte(`data: {"a":1}`))
+		assert.Equal(t, -1, n)
+	}
+
+	{
+		_, n := NextLLMJSONArrayMessage([]byte("  \r\n"))
+		assert.Equal(t, 4, n)
+	}
+}
+
+func TestParseLLMRequestGeminiEmbed(t *testing.T) {
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/text-embedding-004:embedContent",
+			`{"content":{"parts":[{"text":"`+strings.Repeat("a", 400)+`"}]}}`)
+
+		assert.True(t, llmReq.IsKnownRoute)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBED_CONTENT,
+			llmReq.Operation)
+		assert.Equal(t, "text-embedding-004", llmReq.Model)
+		assert.True(t, llmReq.EstimatedInputTokens >= 100)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_COMPLETE,
+			llmReq.EstimateQuality)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/text-embedding-004:batchEmbedContents",
+			`{"requests":[{"model":"models/text-embedding-004","content":{"parts":`+
+				`[{"text":"`+strings.Repeat("a", 400)+`"}]}}]}`)
+
+		assert.Equal(t, uint32(1), llmReq.InputItemCount)
+		assert.True(t, llmReq.EstimatedInputTokens >= 100)
+	}
+}
+
+func TestParseLLMRequestGeminiOpaque(t *testing.T) {
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],`+
+				`"cachedContent":"cachedContents/abcd"}`)
+
+		assert.Equal(t, corev1.RequestContext_Request_LLM_PARTIAL,
+			llmReq.EstimateQuality)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[{"role":"user","parts":[{"inline_data":`+
+				`{"mime_type":"image/png","data":"`+strings.Repeat("A", 4000)+`"}}]}]}`)
+
+		assert.True(t, llmReq.HasImageInput)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_PARTIAL,
+			llmReq.EstimateQuality)
+		assert.True(t, llmReq.EstimatedInputTokens >= llmTokensPerImage)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[{"role":"user","parts":[{"fileData":`+
+				`{"mimeType":"application/pdf","fileUri":"https://example.com/a.pdf"}}]}]}`)
+
+		assert.False(t, llmReq.HasImageInput)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_PARTIAL,
+			llmReq.EstimateQuality)
+	}
+}
+
+func TestParseLLMRequestBedrockDocument(t *testing.T) {
+	llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_BEDROCK,
+		http.MethodPost, "/model/anthropic.claude-v1:0/converse",
+		`{"messages":[{"role":"user","content":[{"document":{"format":"pdf",`+
+			`"name":"a","source":{"bytes":"`+strings.Repeat("A", 4000)+`"}}}]}]}`)
+
+	assert.False(t, llmReq.HasImageInput)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_PARTIAL, llmReq.EstimateQuality)
+}

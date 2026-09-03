@@ -51,6 +51,10 @@ type pluginResult struct {
 	upstream map[string]any
 	body     string
 	reqCtx   *middlewares.RequestContext
+
+	upstreamPath    string
+	upstreamRawPath string
+	header          http.Header
 }
 
 type pluginOpts struct {
@@ -105,6 +109,8 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ret.isNext = true
+		ret.upstreamPath = r.URL.Path
+		ret.upstreamRawPath = r.URL.EscapedPath()
 
 		out, err := io.ReadAll(r.Body)
 		assert.Nil(t, err)
@@ -220,6 +226,7 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 
 	ret.code = rw.Result().StatusCode
 	ret.body = rw.Body.String()
+	ret.header = rw.Result().Header
 
 	return ret
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -381,6 +382,48 @@ func matchLLMRouteBedrock(method, path string) (*llmRouteMatch, bool) {
 	}
 }
 
+func IsLLMModelInPath(protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI,
+		corev1.Service_Spec_Config_LLM_BEDROCK:
+		return true
+	default:
+		return false
+	}
+}
+
+func SetLLMModelPath(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	path, model string) (string, string) {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		rest, ok := strings.CutPrefix(path, llmGeminiModelsPath+"/")
+		if !ok {
+			return "", ""
+		}
+		_, verb, hasVerb := strings.Cut(rest, ":")
+		if !hasVerb {
+			return "", ""
+		}
+		return llmGeminiModelsPath + "/" + model + ":" + verb,
+			llmGeminiModelsPath + "/" + url.PathEscape(model) + ":" + verb
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		rest, ok := strings.CutPrefix(path, llmBedrockModelPrefix)
+		if !ok {
+			return "", ""
+		}
+		idx := strings.LastIndex(rest, "/")
+		if idx <= 0 {
+			return "", ""
+		}
+		verb := rest[idx+1:]
+		return llmBedrockModelPrefix + model + "/" + verb,
+			llmBedrockModelPrefix + url.PathEscape(model) + "/" + verb
+	default:
+		return "", ""
+	}
+}
+
 func isLLMStreamInBody(protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_GEMINI,
@@ -443,6 +486,11 @@ type llmEnvelope struct {
 	Contents          json.RawMessage      `json:"contents"`
 	SystemInstruction json.RawMessage      `json:"systemInstruction"`
 	GenerationConfig  *llmGenerationConfig `json:"generationConfig"`
+
+	Content                json.RawMessage `json:"content"`
+	Requests               json.RawMessage `json:"requests"`
+	GenerateContentRequest json.RawMessage `json:"generateContentRequest"`
+	CachedContent          json.RawMessage `json:"cachedContent"`
 
 	InferenceConfig *llmInferenceConfig `json:"inferenceConfig"`
 	ToolConfig      *llmToolConfig      `json:"toolConfig"`
@@ -551,7 +599,8 @@ func (e *llmEnvelope) inputRaw(
 
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_GEMINI:
-		return []json.RawMessage{e.SystemInstruction, e.Contents}
+		return []json.RawMessage{e.SystemInstruction, e.Contents, e.Content,
+			e.Requests, e.GenerateContentRequest}
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
 		return []json.RawMessage{e.System, e.Messages}
 	default:
@@ -652,6 +701,10 @@ func ParseLLMRequest(req *http.Request,
 	}
 
 	walker := &llmTextWalker{}
+
+	if len(env.CachedContent) > 0 {
+		walker.isTruncated = true
+	}
 
 	for _, raw := range env.inputRaw(ret.Protocol) {
 		if len(raw) == 0 {
@@ -761,15 +814,17 @@ type llmTextWalker struct {
 }
 
 var llmBinaryKeys = map[string]struct{}{
-	"data":       {},
-	"url":        {},
-	"image_url":  {},
-	"file_data":  {},
-	"b64_json":   {},
-	"bytes":      {},
-	"fileUri":    {},
-	"inlineData": {},
-	"fileData":   {},
+	"data":        {},
+	"url":         {},
+	"image_url":   {},
+	"file_data":   {},
+	"b64_json":    {},
+	"bytes":       {},
+	"fileUri":     {},
+	"file_uri":    {},
+	"inlineData":  {},
+	"inline_data": {},
+	"fileData":    {},
 }
 
 func (w *llmTextWalker) walkRaw(raw json.RawMessage, depth int) {
@@ -811,6 +866,8 @@ func (w *llmTextWalker) walkObject(obj map[string]any, depth int) {
 		w.imageCount++
 	case llmModalityAudio:
 		w.hasAudio = true
+	case llmModalityOpaque:
+		w.isTruncated = true
 	}
 
 	for key, val := range obj {
@@ -827,6 +884,7 @@ const (
 	llmModalityNone llmModality = iota
 	llmModalityImage
 	llmModalityAudio
+	llmModalityOpaque
 )
 
 func getLLMModality(obj map[string]any) llmModality {
@@ -836,44 +894,52 @@ func getLLMModality(obj map[string]any) llmModality {
 			return llmModalityImage
 		case "audio", "input_audio", "input_audio_buffer":
 			return llmModalityAudio
+		case "document", "file", "input_file":
+			return llmModalityOpaque
 		}
 	}
 
 	if src, ok := obj["source"].(map[string]any); ok {
 		if mediaType, ok := src["media_type"].(string); ok {
-			switch {
-			case strings.HasPrefix(mediaType, "image/"):
-				return llmModalityImage
-			case strings.HasPrefix(mediaType, "audio/"):
-				return llmModalityAudio
-			}
+			return getLLMMediaModality(mediaType)
 		}
 	}
 
-	for _, key := range []string{"inlineData", "fileData"} {
+	for _, key := range []string{"inlineData", "inline_data", "fileData", "file_data"} {
 		src, ok := obj[key].(map[string]any)
 		if !ok {
 			continue
 		}
-		mimeType, ok := src["mimeType"].(string)
-		if !ok {
-			continue
+		for _, cur := range []string{"mimeType", "mime_type"} {
+			if mimeType, ok := src[cur].(string); ok {
+				return getLLMMediaModality(mimeType)
+			}
 		}
-		switch {
-		case strings.HasPrefix(mimeType, "image/"), strings.HasPrefix(mimeType, "video/"):
-			return llmModalityImage
-		case strings.HasPrefix(mimeType, "audio/"):
-			return llmModalityAudio
-		}
+		return llmModalityOpaque
 	}
 
-	for _, key := range []string{"image", "video", "document"} {
+	if _, ok := obj["image"].(map[string]any); ok {
+		return llmModalityImage
+	}
+
+	for _, key := range []string{"video", "document"} {
 		if _, ok := obj[key].(map[string]any); ok {
-			return llmModalityImage
+			return llmModalityOpaque
 		}
 	}
 
 	return llmModalityNone
+}
+
+func getLLMMediaModality(mediaType string) llmModality {
+	switch {
+	case strings.HasPrefix(mediaType, "image/"):
+		return llmModalityImage
+	case strings.HasPrefix(mediaType, "audio/"):
+		return llmModalityAudio
+	default:
+		return llmModalityOpaque
+	}
 }
 
 func (w *llmTextWalker) addText(arg string) {
@@ -1311,6 +1377,51 @@ func NextLLMEventStreamMessage(buf []byte) ([]byte, int) {
 	payload := buf[llmEventStreamPreludeLen+headersLen : totalLen-llmEventStreamCRCLen]
 
 	return bytes.Clone(payload), totalLen
+}
+
+func NextLLMJSONArrayMessage(buf []byte) ([]byte, int) {
+	idx := 0
+	for idx < len(buf) {
+		switch buf[idx] {
+		case ' ', '\t', '\r', '\n', ',', '[', ']':
+			idx++
+			continue
+		case '{':
+		default:
+			return nil, -1
+		}
+		break
+	}
+
+	if idx >= len(buf) {
+		return nil, idx
+	}
+
+	var depth int
+	var isString bool
+	var isEscaped bool
+
+	for i := idx; i < len(buf); i++ {
+		cur := buf[i]
+		switch {
+		case isEscaped:
+			isEscaped = false
+		case isString && cur == '\\':
+			isEscaped = true
+		case cur == '"':
+			isString = !isString
+		case isString:
+		case cur == '{':
+			depth++
+		case cur == '}':
+			depth--
+			if depth == 0 {
+				return bytes.Clone(buf[idx : i+1]), i + 1
+			}
+		}
+	}
+
+	return nil, 0
 }
 
 func hasLLMPartsText(raw json.RawMessage) bool {

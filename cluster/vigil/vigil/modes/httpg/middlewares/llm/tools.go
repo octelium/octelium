@@ -315,17 +315,27 @@ func (m *tools) applyChoice(d *doc,
 	}
 
 	if name := toolChoiceName(current); name != "" && !containsString(keptNames, name) {
-		d.setToolChoice(d.newToolChoice("auto"))
+		d.setToolChoice(d.newToolChoice(toolChoiceAuto))
 		return
+	}
+
+	if raw, isReconciled := reconcileAllowedNames(current, keptNames); isReconciled {
+		if len(raw) == 0 {
+			d.setToolChoice(d.newToolChoice(toolChoiceAuto))
+			return
+		}
+		d.setToolChoice(raw)
+		current = raw
 	}
 
 	switch cfg.GetChoice() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Tools_NONE:
-		raw := d.newToolChoice("none")
+		raw := d.newToolChoice(toolChoiceNone)
 		if len(raw) == 0 {
 			d.setToolsRaw(nil)
 			return
 		}
+		d.dropProviderTools()
 		if string(raw) != string(current) {
 			d.setToolChoice(raw)
 		}
@@ -333,8 +343,59 @@ func (m *tools) applyChoice(d *doc,
 		if len(current) == 0 || isAutoToolChoice(current) {
 			return
 		}
-		d.setToolChoice(d.newToolChoice("auto"))
+		d.setToolChoice(d.newToolChoice(toolChoiceAuto))
 	}
+}
+
+func reconcileAllowedNames(raw json.RawMessage,
+	keptNames []string) (json.RawMessage, bool) {
+
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil, false
+	}
+
+	obj := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, false
+	}
+
+	cur, ok := obj[allowedFunctionNamesKey]
+	if !ok {
+		return nil, false
+	}
+
+	var names []string
+	if err := json.Unmarshal(cur, &names); err != nil {
+		return nil, false
+	}
+
+	ret := make([]string, 0, len(names))
+	for _, name := range names {
+		if containsString(keptNames, name) {
+			ret = append(ret, name)
+		}
+	}
+
+	if len(ret) == len(names) {
+		return nil, false
+	}
+
+	if len(ret) == 0 {
+		return nil, true
+	}
+
+	val, err := json.Marshal(ret)
+	if err != nil {
+		return nil, false
+	}
+	obj[allowedFunctionNamesKey] = val
+
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+
+	return out, true
 }
 
 func (d *doc) newToolChoice(mode string) json.RawMessage {
@@ -385,6 +446,8 @@ func toolChoiceMode(raw json.RawMessage) string {
 const (
 	toolChoiceAuto = "auto"
 	toolChoiceNone = "none"
+
+	allowedFunctionNamesKey = "allowedFunctionNames"
 )
 
 func isAutoToolChoice(raw json.RawMessage) bool {

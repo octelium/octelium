@@ -520,3 +520,65 @@ func TestLLMAccessLogEventStreamInvalid(t *testing.T) {
 	assert.True(t, crw.sseTruncated)
 	assert.Equal(t, int64(0), crw.eventCount())
 }
+
+func TestLLMAccessLogJSONArrayStream(t *testing.T) {
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+	crw.Header().Set("Content-Type", "application/json")
+
+	body := `[{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]},` + "\r\n" +
+		`{"candidates":[{"finishReason":"STOP"}],"usageMetadata":` +
+		`{"promptTokenCount":11,"candidatesTokenCount":22,"totalTokenCount":33}}]`
+
+	for i := 0; i < len(body); i += 7 {
+		_, err := crw.Write([]byte(body[i:min(i+7, len(body))]))
+		assert.Nil(t, err)
+	}
+
+	assert.True(t, crw.isJSONArray)
+	assert.True(t, crw.isStreaming())
+	assert.Equal(t, int64(2), crw.eventCount())
+	assert.Equal(t, "STOP", obs.finishReason)
+	assert.Equal(t, uint64(33), obs.usage.TotalTokens)
+	assert.False(t, crw.sseTruncated)
+}
+
+func TestLLMAccessLogJSONObjectIsBuffered(t *testing.T) {
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+	crw.Header().Set("Content-Type", "application/json")
+
+	_, err := crw.Write([]byte(`{"usageMetadata":{"totalTokenCount":33}}`))
+	assert.Nil(t, err)
+
+	assert.False(t, crw.isJSONArray)
+	assert.False(t, crw.isStreaming())
+	assert.Equal(t, int64(0), crw.eventCount())
+	assert.Equal(t, `{"usageMetadata":{"totalTokenCount":33}}`, crw.body.String())
+}
+
+func TestLLMAccessLogEventStreamOversized(t *testing.T) {
+	rw := httptest.NewRecorder()
+	crw := newResponseWriter(rw, streamKindLLM)
+	crw.maxSSEEvent = 1024
+
+	obs := &llmObserver{}
+	crw.onEventMessage = obs.onEventMessage
+	crw.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+
+	msg := newEventStreamMessage([]byte(
+		`{"usage":{"inputTokens":11,"outputTokens":22,"totalTokens":` +
+			strings.Repeat("3", 4096) + `}}`))
+
+	_, err := crw.Write(msg[:len(msg)-1])
+	assert.Nil(t, err)
+
+	assert.True(t, crw.sseTruncated)
+	assert.Equal(t, int64(0), crw.eventCount())
+}

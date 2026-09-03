@@ -599,6 +599,8 @@ type responseWriter struct {
 	sseResolved   bool
 	isSSE         bool
 	isEventStream bool
+	jsonResolved  bool
+	isJSONArray   bool
 	maxSSEEvent   int
 	maxBody       int
 	sseDiscarding bool
@@ -618,7 +620,21 @@ func (rw *responseWriter) resolveSSEKind() {
 }
 
 func (rw *responseWriter) isStreaming() bool {
-	return rw.isSSE || rw.isEventStream
+	return rw.isSSE || rw.isEventStream || rw.isJSONArray
+}
+
+func (rw *responseWriter) resolveJSONArray(p []byte) {
+	if rw.jsonResolved || rw.onEventMessage == nil {
+		return
+	}
+
+	trimmed := bytes.TrimLeft(p, " \t\r\n")
+	if len(trimmed) == 0 {
+		return
+	}
+
+	rw.jsonResolved = true
+	rw.isJSONArray = trimmed[0] == '['
 }
 
 func newResponseWriter(w http.ResponseWriter, kind streamKind) *responseWriter {
@@ -661,7 +677,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 			case rw.isEventStream:
 				rw.parseEventStream(b[:n])
 			default:
-				rw.bufferBody(b[:n])
+				rw.resolveJSONArray(b[:n])
+				if rw.isJSONArray {
+					rw.parseJSONArray(b[:n])
+				} else {
+					rw.bufferBody(b[:n])
+				}
 			}
 		}
 
@@ -710,9 +731,7 @@ func (rw *responseWriter) parseEventStream(p []byte) {
 			break
 		}
 		if n < 0 {
-			rw.sseDiscarding = true
-			rw.sseTruncated = true
-			rw.sseLineBuf = nil
+			rw.discardStream()
 			return
 		}
 
@@ -723,6 +742,60 @@ func (rw *responseWriter) parseEventStream(p []byte) {
 			rw.onEventMessage(payload)
 		}
 	}
+
+	if len(rw.sseLineBuf) > rw.maxStreamEventBuf() {
+		rw.discardStream()
+	}
+}
+
+func (rw *responseWriter) parseJSONArray(p []byte) {
+	if rw.onEventMessage == nil {
+		return
+	}
+
+	rw.sseMu.Lock()
+	defer rw.sseMu.Unlock()
+
+	if rw.sseDiscarding {
+		return
+	}
+
+	rw.sseLineBuf = append(rw.sseLineBuf, p...)
+
+	for {
+		payload, n := httputils.NextLLMJSONArrayMessage(rw.sseLineBuf)
+		if n == 0 {
+			break
+		}
+		if n < 0 {
+			rw.discardStream()
+			return
+		}
+
+		rw.sseLineBuf = rw.sseLineBuf[n:]
+
+		if len(payload) > 0 {
+			rw.sseEventCnt.Add(1)
+			rw.onEventMessage(payload)
+		}
+	}
+
+	if len(rw.sseLineBuf) > rw.maxStreamEventBuf() {
+		rw.discardStream()
+	}
+}
+
+func (rw *responseWriter) discardStream() {
+	rw.sseDiscarding = true
+	rw.sseTruncated = true
+	rw.sseLineBuf = nil
+}
+
+func (rw *responseWriter) maxStreamEventBuf() int {
+	if rw.maxSSEEvent > 0 {
+		return rw.maxSSEEvent
+	}
+	return defaultMaxSSELineBuf
 }
 
 func (rw *responseWriter) parseSSEEvents(p []byte) {
@@ -735,10 +808,7 @@ func (rw *responseWriter) parseSSEEvents(p []byte) {
 
 	rw.sseLineBuf = append(rw.sseLineBuf, p...)
 
-	maxSSELineBuf := defaultMaxSSELineBuf
-	if rw.maxSSEEvent > 0 {
-		maxSSELineBuf = rw.maxSSEEvent
-	}
+	maxSSELineBuf := rw.maxStreamEventBuf()
 
 	for {
 		idx, sep := indexSSEDelimiter(rw.sseLineBuf)

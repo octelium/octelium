@@ -165,14 +165,11 @@ func (rw *guardResponseWriter) finish() {
 
 	body := rw.buf.Bytes()
 
-	var text string
-	switch {
-	case rw.isSSE:
-		text = extractSSEText(body)
-	case rw.isEventStream:
-		text = extractEventStreamText(body)
-	default:
-		text = extractResponseText(body)
+	text, isValid := rw.responseText(body)
+	if !isValid {
+		zap.L().Warn("The LLM response could not be decoded by a Guardrail")
+		rw.writeBlocked(rw.actives[0])
+		return
 	}
 
 	if active := rw.inspectText(text); active != nil {
@@ -185,6 +182,17 @@ func (rw *guardResponseWriter) finish() {
 		rw.ResponseWriter.WriteHeader(rw.statusCode)
 	}
 	rw.ResponseWriter.Write(body)
+}
+
+func (rw *guardResponseWriter) responseText(body []byte) (string, bool) {
+	switch {
+	case rw.isSSE:
+		return extractSSEText(body), true
+	case rw.isEventStream:
+		return extractEventStreamText(body)
+	default:
+		return extractResponseText(body), true
+	}
 }
 
 func (rw *guardResponseWriter) inspectText(text string) *activeGuardrail {
@@ -252,13 +260,13 @@ func extractSSEText(body []byte) string {
 	return out.String()
 }
 
-func extractEventStreamText(body []byte) string {
+func extractEventStreamText(body []byte) (string, bool) {
 	var out strings.Builder
 
 	for len(body) > 0 {
 		payload, n := httputils.NextLLMEventStreamMessage(body)
 		if n <= 0 {
-			break
+			return out.String(), false
 		}
 		body = body[n:]
 
@@ -266,22 +274,14 @@ func extractEventStreamText(body []byte) string {
 			continue
 		}
 
-		text := extractResponseText(payload)
-		if text == "" {
-			continue
-		}
-
-		if out.Len() > 0 {
-			out.WriteString("\n")
-		}
-		out.WriteString(text)
+		out.WriteString(extractResponseText(payload))
 
 		if out.Len() > commonguardrail.MaxResponseBytes {
 			break
 		}
 	}
 
-	return out.String()
+	return out.String(), true
 }
 
 func extractResponseText(body []byte) string {

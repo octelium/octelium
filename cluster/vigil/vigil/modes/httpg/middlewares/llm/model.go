@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
@@ -114,8 +115,11 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 		return nil
 	}
 
-	if !httputils.IsLLMOperationBodyParsed(reqCtx.LLM.GetOperation()) ||
-		!reqCtx.LLM.IsBodyValid {
+	protocol := reqCtx.LLM.GetProtocol()
+	isModelInPath := httputils.IsLLMModelInPath(protocol)
+
+	if !isModelInPath && (!httputils.IsLLMOperationBodyParsed(reqCtx.LLM.GetOperation()) ||
+		!reqCtx.LLM.IsBodyValid) {
 		return nil
 	}
 
@@ -128,8 +132,13 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 		return nil
 	}
 
-	if err := checkModelName(target); err != nil {
+	if err := checkModelName(protocol, target); err != nil {
 		return err
+	}
+
+	if isModelInPath {
+		setModelPath(req, protocol, target)
+		return nil
 	}
 
 	bodyMap := make(map[string]json.RawMessage)
@@ -160,7 +169,23 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 	return nil
 }
 
-func checkModelName(arg string) error {
+func setModelPath(req *http.Request,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, target string) {
+
+	path, rawPath := httputils.SetLLMModelPath(protocol, req.URL.Path, target)
+	if path == "" {
+		return
+	}
+
+	req.URL.Path = path
+	if rawPath != path {
+		req.URL.RawPath = rawPath
+	} else {
+		req.URL.RawPath = ""
+	}
+}
+
+func checkModelName(protocol corev1.Service_Spec_Config_LLM_Protocol, arg string) error {
 	if len(arg) > maxLLMModelLen {
 		return errors.Errorf("The model name is too long: %d", len(arg))
 	}
@@ -169,6 +194,11 @@ func checkModelName(arg string) error {
 		if arg[i] < 0x20 || arg[i] == 0x7f {
 			return errors.Errorf("The model name contains an invalid control character")
 		}
+	}
+
+	if protocol == corev1.Service_Spec_Config_LLM_GEMINI &&
+		strings.ContainsAny(arg, "/:") {
+		return errors.Errorf("The model name contains an invalid character")
 	}
 
 	return nil
