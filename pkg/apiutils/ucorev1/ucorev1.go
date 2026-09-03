@@ -364,6 +364,13 @@ func (s *ServiceConfig) GetLLMPlugins() []*corev1.Service_Spec_Config_LLM_Plugin
 	return s.GetLlm().GetPlugins()
 }
 
+func (s *ServiceConfig) GetMCPPlugins() []*corev1.Service_Spec_Config_MCP_Plugin {
+	if s == nil || s.Service_Spec_Config == nil {
+		return nil
+	}
+	return s.GetMcp().GetPlugins()
+}
+
 func (s *ServiceConfig) GetHTTPVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
 	if s == nil || s.Service_Spec_Config == nil {
 		return nil

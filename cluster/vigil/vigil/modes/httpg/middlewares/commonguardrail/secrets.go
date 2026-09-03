@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package llm
+package commonguardrail
 
 import (
 	"strings"
@@ -66,7 +66,7 @@ func getSecretScanner() (*secretScanner, error) {
 
 		secretScannerRef = &secretScanner{matcher: m}
 
-		zap.L().Debug("Loaded the LLM Guardrail secret detector",
+		zap.L().Debug("Loaded the Guardrail secret detector",
 			zap.Int("rules", len(rules)),
 			zap.Duration("duration", time.Since(startedAt)))
 	})
@@ -78,25 +78,38 @@ func getSecretScanner() (*secretScanner, error) {
 	return secretScannerRef, nil
 }
 
-func warmSecretScanner() {
+func WarmSecretScanner() {
 	go func() {
 		if _, err := getSecretScanner(); err != nil {
-			zap.L().Warn("Could not load the LLM Guardrail secret detector",
+			zap.L().Warn("Could not load the Guardrail secret detector",
 				zap.Error(err))
 		}
 	}()
 }
 
-func hasSecretsPattern(svc *corev1.Service) bool {
+func HasSecretsPattern(svc *corev1.Service) bool {
 	cfgs := append([]*corev1.Service_Spec_Config{svc.GetSpec().GetConfig()},
 		svc.GetSpec().GetDynamicConfig().GetConfigs()...)
 
+	hasSecrets := func(
+		patterns []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern) bool {
+		for _, pattern := range patterns {
+			if pattern.GetSecrets() != nil {
+				return true
+			}
+		}
+		return false
+	}
+
 	for _, cfg := range cfgs {
 		for _, plugin := range cfg.GetLlm().GetPlugins() {
-			for _, pattern := range plugin.GetGuardrail().GetPatterns() {
-				if pattern.GetSecrets() != nil {
-					return true
-				}
+			if hasSecrets(plugin.GetGuardrail().GetPatterns()) {
+				return true
+			}
+		}
+		for _, plugin := range cfg.GetMcp().GetPlugins() {
+			if hasSecrets(plugin.GetGuardrail().GetPatterns()) {
+				return true
 			}
 		}
 	}

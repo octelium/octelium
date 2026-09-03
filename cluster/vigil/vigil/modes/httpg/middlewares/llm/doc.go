@@ -34,6 +34,12 @@ const (
 
 const functionToolKind = "function"
 
+const (
+	reasoningKey       = "reasoning"
+	reasoningEffortKey = "reasoning_effort"
+	thinkingKey        = "thinking"
+)
+
 type doc struct {
 	protocol  corev1.Service_Spec_Config_LLM_Protocol
 	operation corev1.RequestContext_Request_LLM_Operation
@@ -112,6 +118,81 @@ func (d *doc) hasToolsCarrier() bool {
 	default:
 		return false
 	}
+}
+
+func (d *doc) hasReasoningCarrier() bool {
+	switch d.operation {
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *doc) isReasoningBudget() bool {
+	return d.protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC
+}
+
+func (d *doc) setReasoningEffort(effort string) error {
+	raw, err := json.Marshal(effort)
+	if err != nil {
+		return err
+	}
+
+	switch d.operation {
+	case corev1.RequestContext_Request_LLM_RESPONSES:
+		obj := make(map[string]json.RawMessage)
+		if cur, ok := d.root[reasoningKey]; ok {
+			if err := json.Unmarshal(cur, &obj); err != nil {
+				obj = make(map[string]json.RawMessage)
+			}
+		}
+		obj["effort"] = raw
+
+		val, err := json.Marshal(obj)
+		if err != nil {
+			return err
+		}
+		d.root[reasoningKey] = val
+	default:
+		d.root[reasoningEffortKey] = raw
+	}
+
+	d.changed = true
+
+	return nil
+}
+
+func (d *doc) setReasoningBudget(budget uint64) error {
+	raw, err := json.Marshal(map[string]any{
+		"type":          "enabled",
+		"budget_tokens": budget,
+	})
+	if err != nil {
+		return err
+	}
+
+	d.root[thinkingKey] = raw
+	d.changed = true
+
+	return nil
+}
+
+func (d *doc) disableReasoning() error {
+	raw, err := json.Marshal(map[string]any{
+		"type": "disabled",
+	})
+	if err != nil {
+		return err
+	}
+
+	d.root[thinkingKey] = raw
+	d.changed = true
+
+	return nil
 }
 
 func (d *doc) promptKey() string {

@@ -14,10 +14,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package llm
+package mcp
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -48,8 +50,8 @@ func NewGuardrail(ctx context.Context, next http.Handler,
 }
 
 type activeGuardrail struct {
-	plugin *corev1.Service_Spec_Config_LLM_Plugin
-	cfg    *corev1.Service_Spec_Config_LLM_Plugin_Guardrail
+	plugin *corev1.Service_Spec_Config_MCP_Plugin
+	cfg    *corev1.Service_Spec_Config_MCP_Plugin_Guardrail
 	set    *commonguardrail.PatternSet
 
 	replacements map[int]string
@@ -63,12 +65,12 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
 
-	if !ucorev1.ToService(reqCtx.Service).IsLLM() {
+	if !ucorev1.ToService(reqCtx.Service).IsMCP() {
 		m.next.ServeHTTP(w, req)
 		return
 	}
 
-	plugins := ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetLLMPlugins()
+	plugins := ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetMCPPlugins()
 	if len(plugins) == 0 {
 		m.next.ServeHTTP(w, req)
 		return
@@ -98,7 +100,7 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		set, err := commonguardrail.NewPatternSet(cfg.GetPatterns())
 		if err != nil {
-			zap.L().Warn("Could not build the LLM Guardrail patterns",
+			zap.L().Warn("Could not build the MCP Guardrail patterns",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
 			m.writeDenied(w, reqCtx, cfg)
 			return
@@ -111,15 +113,15 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			replacements: make(map[int]string),
 		}
 
-		if cfg.GetLeg() != corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE {
+		if cfg.GetLeg() != corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESPONSE {
 			if !m.applyRequest(ctx, w, req, reqCtx, active) {
 				return
 			}
 		}
 
 		switch cfg.GetLeg() {
-		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
-			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_BOTH:
+		case corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESPONSE,
+			corev1.Service_Spec_Config_MCP_Plugin_Guardrail_BOTH:
 			responseLeg = append(responseLeg, active)
 		}
 	}
@@ -137,18 +139,18 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 	req *http.Request, reqCtx *middlewares.RequestContext, active *activeGuardrail) bool {
 
-	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
+	if reqCtx.MCP == nil || !reqCtx.MCP.IsJSONRPC {
 		return true
 	}
 
-	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	d, err := newDoc(reqCtx.MCP.GetMethod(), reqCtx.Body)
 	if err != nil {
 		return m.onError(w, reqCtx, active, err)
 	}
 
-	parts, err := d.textParts(active.cfg.GetScopes())
-	if err != nil {
-		return m.onError(w, reqCtx, active, err)
+	parts := d.requestParts(active.cfg.GetScopes())
+	if len(parts) == 0 {
+		return true
 	}
 
 	var isChanged bool
@@ -171,17 +173,13 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 			return m.onError(w, reqCtx, active, err)
 		}
 
-		updated, count, err := commonguardrail.Rewrite(part.text, findings, active.replacements)
+		updated, count, err := commonguardrail.Rewrite(part.text, findings,
+			active.replacements)
 		if err != nil {
 			return m.onError(w, reqCtx, active, err)
 		}
 		if count == 0 {
 			continue
-		}
-
-		if part.set == nil {
-			m.writeDenied(w, reqCtx, active.cfg)
-			return false
 		}
 
 		if err := part.set(updated); err != nil {
@@ -266,7 +264,7 @@ func (m *guardrail) render(ctx context.Context, reqCtx *middlewares.RequestConte
 func (m *guardrail) onError(w http.ResponseWriter, reqCtx *middlewares.RequestContext,
 	active *activeGuardrail, err error) bool {
 
-	zap.L().Warn("The LLM Guardrail could not reach a verdict",
+	zap.L().Warn("The MCP Guardrail could not reach a verdict",
 		zap.String("plugin", active.name()), zap.Error(err))
 
 	m.writeDenied(w, reqCtx, active.cfg)
@@ -275,19 +273,43 @@ func (m *guardrail) onError(w http.ResponseWriter, reqCtx *middlewares.RequestCo
 
 func (m *guardrail) writeDenied(w http.ResponseWriter,
 	reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) {
+	cfg *corev1.Service_Spec_Config_MCP_Plugin_Guardrail) {
 	WriteError(w, &WriteErrorOpts{
-		Protocol:   reqCtx.LLM.GetProtocol(),
 		HTTPStatus: http.StatusForbidden,
-		Type:       ErrTypePermission,
 		Code:       ErrCodeGuardrail,
 		Message:    guardrailDenyMessage(cfg),
+		RequestID:  reqCtx.MCP.GetRequestIDRaw(),
 	})
 }
 
-func guardrailDenyMessage(cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) string {
+func guardrailDenyMessage(cfg *corev1.Service_Spec_Config_MCP_Plugin_Guardrail) string {
 	if msg := cfg.GetDenyMessage(); msg != "" {
 		return msg
 	}
 	return "Octelium: this content is not allowed by this Service"
+}
+
+func writeDoc(req *http.Request, reqCtx *middlewares.RequestContext, d *doc) error {
+	body, err := d.bytes()
+	if err != nil {
+		return err
+	}
+
+	if len(body) > commonguardrail.MaxMutatedBytes {
+		return errors.Errorf("The mutated request is too large: %d", len(body))
+	}
+
+	if req.Body != nil {
+		req.Body.Close()
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.TransferEncoding = nil
+
+	reqCtx.Body = body
+	middlewares.SetMCPRequestContext(reqCtx, req)
+	reqCtx.SetReqCtxMap()
+	reqCtx.SetBodyDigest()
+
+	return nil
 }

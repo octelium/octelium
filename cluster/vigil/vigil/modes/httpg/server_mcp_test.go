@@ -349,6 +349,26 @@ func (e *tstMCPEnv) getHost() string {
 	return fmt.Sprintf("localhost:%d", ucorev1.ToService(e.svcV).RealPort())
 }
 
+func newMCPLuaPlugin(name string, phase corev1.Service_Spec_Config_HTTP_Plugin_Phase,
+	inline string) *corev1.Service_Spec_Config_MCP_Plugin {
+	return &corev1.Service_Spec_Config_MCP_Plugin{
+		Name:  name,
+		Phase: phase,
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+		Type: &corev1.Service_Spec_Config_MCP_Plugin_Lua{
+			Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+					Inline: inline,
+				},
+			},
+		},
+	}
+}
+
 func newMCPToolCallBody(name string) map[string]any {
 	return map[string]any{
 		"jsonrpc": "2.0",
@@ -914,8 +934,8 @@ func TestServerMCPLuaToolName(t *testing.T) {
 
 	env := newMCPEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+			newMCPLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["params"]["name"] = "delete-production"
@@ -944,8 +964,8 @@ func TestServerMCPLuaArguments(t *testing.T) {
 
 	env := newMCPEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-args", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+			newMCPLuaPlugin("rewrite-args", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["params"]["arguments"]["environment"] = "sandbox"
@@ -1004,8 +1024,8 @@ func TestServerMCPLuaAuthorization(t *testing.T) {
 	}
 
 	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+			newMCPLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   if body["params"] ~= nil then
@@ -1073,8 +1093,8 @@ func TestServerMCPLuaPostAuth(t *testing.T) {
 	}
 
 	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+			newMCPLuaPlugin("rewrite-name", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
 function onRequest(ctx)
   local body = json.decode(octelium.req.getRequestBody())
   body["params"]["name"] = "delete-production"
@@ -1097,8 +1117,8 @@ func TestServerMCPLuaResponse(t *testing.T) {
 
 	env := newMCPEnv(t, ctx)
 	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
-		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
-			newLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
+		Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+			newMCPLuaPlugin("rewrite-response", corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH, `
 function onResponse(ctx)
   local body = json.decode(octelium.req.getResponseBody())
   body["result"]["content"][1]["text"] = "redacted-by-octelium"

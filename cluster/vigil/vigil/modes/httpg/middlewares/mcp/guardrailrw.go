@@ -14,17 +14,17 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package llm
+package mcp
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonguardrail"
 	"go.uber.org/zap"
@@ -156,21 +156,21 @@ func (rw *guardResponseWriter) finish() {
 	}
 
 	if rw.isOverflowed {
-		zap.L().Warn("The LLM response is too large to be inspected by a Guardrail")
+		zap.L().Warn("The MCP response is too large to be inspected by a Guardrail")
 		rw.writeBlocked(rw.actives[0])
 		return
 	}
 
 	body := rw.buf.Bytes()
 
-	var text string
+	var messages [][]byte
 	if rw.isSSE {
-		text = extractSSEText(body)
+		messages = extractSSEMessages(body)
 	} else {
-		text = extractResponseText(body)
+		messages = [][]byte{body}
 	}
 
-	if active := rw.inspectText(text); active != nil {
+	if active := rw.inspect(messages); active != nil {
 		rw.writeBlocked(active)
 		return
 	}
@@ -182,11 +182,21 @@ func (rw *guardResponseWriter) finish() {
 	rw.ResponseWriter.Write(body)
 }
 
-func (rw *guardResponseWriter) inspectText(text string) *activeGuardrail {
+func (rw *guardResponseWriter) inspect(messages [][]byte) *activeGuardrail {
 	for _, active := range rw.actives {
+		var out strings.Builder
+		for _, message := range messages {
+			writeResultText(message, active.cfg.GetScopes(), &out)
+		}
+
+		text := out.String()
+		if text == "" {
+			continue
+		}
+
 		findings, err := active.set.Inspect(text)
 		if err != nil {
-			zap.L().Warn("The LLM Guardrail could not inspect the response",
+			zap.L().Warn("The MCP Guardrail could not inspect the response",
 				zap.String("plugin", active.name()), zap.Error(err))
 			return active
 		}
@@ -201,13 +211,13 @@ func (rw *guardResponseWriter) inspectText(text string) *activeGuardrail {
 
 func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
 	if rw.hdrWritten {
-		zap.L().Warn("An LLM Guardrail matched a response that was already committed")
+		zap.L().Warn("An MCP Guardrail matched a response that was already committed")
 		return
 	}
 
 	rw.hdrWritten = true
 
-	var cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail
+	var cfg *corev1.Service_Spec_Config_MCP_Plugin_Guardrail
 	if active != nil {
 		cfg = active.cfg
 	}
@@ -217,16 +227,15 @@ func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
 	hdr.Del("Transfer-Encoding")
 
 	WriteError(rw.ResponseWriter, &WriteErrorOpts{
-		Protocol:   rw.reqCtx.LLM.GetProtocol(),
 		HTTPStatus: http.StatusForbidden,
-		Type:       ErrTypePermission,
 		Code:       ErrCodeGuardrail,
 		Message:    guardrailDenyMessage(cfg),
+		RequestID:  rw.reqCtx.MCP.GetRequestIDRaw(),
 	})
 }
 
-func extractSSEText(body []byte) string {
-	var out strings.Builder
+func extractSSEMessages(body []byte) [][]byte {
+	var ret [][]byte
 
 	for _, line := range bytes.Split(body, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -235,54 +244,117 @@ func extractSSEText(body []byte) string {
 		}
 
 		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(data) == 0 || httputils.IsLLMStreamDone(data) {
+		if len(data) == 0 {
 			continue
 		}
 
-		if text := extractResponseText(data); text != "" {
-			out.WriteString(text)
+		ret = append(ret, data)
+	}
+
+	return ret
+}
+
+func writeResultText(body []byte,
+	scopes []corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Scope,
+	out *strings.Builder) {
+
+	root := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(body, &root); err != nil {
+		return
+	}
+
+	raw, ok := root[resultKey]
+	if !ok {
+		return
+	}
+
+	result := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return
+	}
+
+	if hasScope(scopes,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_RESULTS, true) {
+		writeBlockText(result["content"], out)
+		writeAllText(result["structuredContent"], out)
+	}
+
+	if hasScope(scopes,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESOURCE_CONTENTS, true) {
+		writeBlockText(result["contents"], out)
+	}
+
+	if hasScope(scopes,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_PROMPT_MESSAGES, true) {
+		writeBlockText(result["messages"], out)
+	}
+
+	if hasScope(scopes,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_DEFINITIONS, true) {
+		if tools, ok := result["tools"]; ok {
+			out.Write(tools)
 		}
 	}
-
-	return out.String()
 }
 
-func extractResponseText(body []byte) string {
+func writeBlockText(raw json.RawMessage, out *strings.Builder) {
 	var val any
-	if err := json.Unmarshal(body, &val); err != nil {
-		return ""
+	if err := json.Unmarshal(raw, &val); err != nil {
+		return
 	}
-
-	var out strings.Builder
-	walkResponseText(val, 0, &out)
-	return out.String()
+	walkBlockText(val, 0, out)
 }
 
-const maxResponseTextDepth = 24
+func writeAllText(raw json.RawMessage, out *strings.Builder) {
+	var val any
+	if err := json.Unmarshal(raw, &val); err != nil {
+		return
+	}
+	walkAllText(val, 0, out)
+}
 
-func walkResponseText(val any, depth int, out *strings.Builder) {
-	if depth > maxResponseTextDepth || out.Len() > commonguardrail.MaxResponseBytes {
+func walkBlockText(val any, depth int, out *strings.Builder) {
+	if depth > maxDocDepth || out.Len() > commonguardrail.MaxResponseBytes {
 		return
 	}
 
 	switch cur := val.(type) {
 	case map[string]any:
-		for _, key := range []string{"text", "content", "output_text", "reasoning", "refusal"} {
-			switch arg := cur[key].(type) {
-			case string:
-				out.WriteString(arg)
-			case map[string]any, []any:
-				walkResponseText(arg, depth+1, out)
-			}
+		if arg, ok := cur["text"].(string); ok {
+			out.WriteString(arg)
 		}
-		for _, key := range []string{"choices", "delta", "message", "output", "arguments"} {
+		for _, key := range []string{"resource", "content", "contents"} {
 			if arg, ok := cur[key]; ok {
-				walkResponseText(arg, depth+1, out)
+				walkBlockText(arg, depth+1, out)
 			}
 		}
 	case []any:
 		for _, arg := range cur {
-			walkResponseText(arg, depth+1, out)
+			walkBlockText(arg, depth+1, out)
+		}
+	}
+}
+
+func walkAllText(val any, depth int, out *strings.Builder) {
+	if depth > maxDocDepth || out.Len() > commonguardrail.MaxResponseBytes {
+		return
+	}
+
+	switch cur := val.(type) {
+	case string:
+		out.WriteString(cur)
+	case map[string]any:
+		keys := make([]string, 0, len(cur))
+		for key := range cur {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			walkAllText(cur[key], depth+1, out)
+		}
+	case []any:
+		for _, arg := range cur {
+			walkAllText(arg, depth+1, out)
 		}
 	}
 }

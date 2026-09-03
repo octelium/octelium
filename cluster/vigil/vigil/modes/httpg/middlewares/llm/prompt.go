@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonguardrail"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -399,7 +400,7 @@ func writeDoc(req *http.Request, reqCtx *middlewares.RequestContext, d *doc) err
 		return err
 	}
 
-	if len(body) > maxMutatedRequestBytes {
+	if len(body) > commonguardrail.MaxMutatedBytes {
 		return errors.Errorf("The mutated request is too large: %d", len(body))
 	}
 

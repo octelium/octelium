@@ -43,6 +43,7 @@ const (
 	ErrCodePromptDenied    = "octelium_prompt_denied"
 	ErrCodeToolDenied      = "octelium_tool_denied"
 	ErrCodeGuardrail       = "octelium_guardrail"
+	ErrCodeReasoning       = "octelium_reasoning"
 )
 
 type openAIError struct {

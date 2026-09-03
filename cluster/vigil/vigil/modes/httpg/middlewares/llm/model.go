@@ -56,7 +56,12 @@ func (m *model) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := m.setModel(req, reqCtx); err != nil {
+	cfg, ok := m.resolve(ctx, w, reqCtx)
+	if !ok {
+		return
+	}
+
+	if err := m.setModel(req, reqCtx, cfg); err != nil {
 		zap.L().Warn("Could not set the LLM upstream model", zap.Error(err))
 		WriteError(w, &WriteErrorOpts{
 			Protocol:   reqCtx.LLM.GetProtocol(),
@@ -71,8 +76,40 @@ func (m *model) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(w, req)
 }
 
-func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext) error {
-	cfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetLLM().GetModel()
+func (m *model) resolve(ctx context.Context, w http.ResponseWriter,
+	reqCtx *middlewares.RequestContext) (*corev1.Service_Spec_Config_LLM_Model, bool) {
+
+	svcCfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig)
+	ret := svcCfg.GetLLM().GetModel()
+
+	for _, plugin := range svcCfg.GetLLMPlugins() {
+		cfg := plugin.GetModel()
+		if cfg == nil {
+			continue
+		}
+
+		isEnforced, ok := shouldEnforcePlugin(ctx, &enforcePluginOpts{
+			w:         w,
+			reqCtx:    reqCtx,
+			celEngine: m.celEngine,
+			plugin:    plugin,
+			errCode:   ErrCodeModelRewrite,
+		})
+		if !ok {
+			return nil, false
+		}
+		if !isEnforced {
+			continue
+		}
+
+		ret = cfg
+	}
+
+	return ret, true
+}
+
+func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
+	cfg *corev1.Service_Spec_Config_LLM_Model) error {
 	if cfg == nil || cfg.Type == nil {
 		return nil
 	}
@@ -146,6 +183,10 @@ func (m *model) getModel(ctx context.Context,
 		return cfg.GetValue(), nil
 	case *corev1.Service_Spec_Config_LLM_Model_Eval:
 		return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), map[string]any{
+			"ctx": reqCtx.ReqCtxMap,
+		})
+	case *corev1.Service_Spec_Config_LLM_Model_Opa:
+		return m.celEngine.EvalPolicyStringOPA(ctx, cfg.GetOpa(), map[string]any{
 			"ctx": reqCtx.ReqCtxMap,
 		})
 	default:

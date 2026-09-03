@@ -1762,6 +1762,194 @@ func TestValidateLLMModel(t *testing.T) {
 	}
 }
 
+func TestValidateLLMReasoning(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, nil))
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+			Level: corev1.Service_Spec_Config_LLM_Reasoning_NONE,
+		},
+	}))
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
+			MaxTokens: 4096,
+		},
+	}))
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Eval{
+			Eval: `ctx.request.llm.model == "gpt-5" ? "HIGH" : "LOW"`,
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx,
+		&corev1.Service_Spec_Config_LLM_Reasoning{}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+			Level: corev1.Service_Spec_Config_LLM_Reasoning_LEVEL_UNSET,
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+			Level: corev1.Service_Spec_Config_LLM_Reasoning_Level(1000),
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
+			MaxTokens: 0,
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
+			MaxTokens: maxLLMReasoningTokens + 1,
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Eval{
+			Eval: `((((`,
+		},
+	}))
+}
+
+func newMCPGuardrailPattern(
+	action corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action) *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern {
+	return &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+		Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+			Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
+		},
+		Action: action,
+	}
+}
+
+func TestValidateMCPGuardrail(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
+			},
+		}))
+
+	assert.Nil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Leg: corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESPONSE,
+			Scopes: []corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Scope{
+				corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_DEFINITIONS,
+			},
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+			},
+		}))
+
+	assert.NotNil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{}))
+
+	assert.NotNil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Leg: corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Leg(1000),
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+			},
+		}))
+
+	assert.NotNil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Scopes: []corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Scope{
+				corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Scope(1000),
+			},
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+			},
+		}))
+
+	assert.NotNil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Leg: corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESPONSE,
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT),
+			},
+		}))
+
+	assert.NotNil(t, s.validateMCPGuardrail(ctx,
+		&corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+			Scopes: []corev1.Service_Spec_Config_MCP_Plugin_Guardrail_Scope{
+				corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_DEFINITIONS,
+			},
+			Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+				newMCPGuardrailPattern(
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP),
+			},
+		}))
+}
+
+func TestValidateMCPPlugins(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	newPlugin := func(name string) *corev1.Service_Spec_Config_MCP_Plugin {
+		return &corev1.Service_Spec_Config_MCP_Plugin{
+			Name: name,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{MatchAny: true},
+			},
+			Type: &corev1.Service_Spec_Config_MCP_Plugin_Guardrail_{
+				Guardrail: &corev1.Service_Spec_Config_MCP_Plugin_Guardrail{
+					Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						newMCPGuardrailPattern(
+							corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY),
+					},
+				},
+			},
+		}
+	}
+
+	assert.Nil(t, s.validateMCPPlugins(ctx, "default", nil))
+
+	assert.Nil(t, s.validateMCPPlugins(ctx, "default",
+		[]*corev1.Service_Spec_Config_MCP_Plugin{newPlugin("g1"), newPlugin("g2")}))
+
+	assert.NotNil(t, s.validateMCPPlugins(ctx, "default",
+		[]*corev1.Service_Spec_Config_MCP_Plugin{newPlugin("g1"), newPlugin("g1")}))
+
+	{
+		plugin := newPlugin("g1")
+		plugin.Phase = corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
+		assert.NotNil(t, s.validateMCPPlugins(ctx, "default",
+			[]*corev1.Service_Spec_Config_MCP_Plugin{plugin}))
+	}
+
+	{
+		plugin := newPlugin("g1")
+		plugin.Type = nil
+		assert.NotNil(t, s.validateMCPPlugins(ctx, "default",
+			[]*corev1.Service_Spec_Config_MCP_Plugin{plugin}))
+	}
+
+	{
+		var plugins []*corev1.Service_Spec_Config_MCP_Plugin
+		for range maxPlugins + 1 {
+			plugins = append(plugins, newPlugin("g1"))
+		}
+		assert.NotNil(t, s.validateMCPPlugins(ctx, "default", plugins))
+	}
+}
+
 func TestValidateLLMLimits(t *testing.T) {
 	s := &Server{}
 

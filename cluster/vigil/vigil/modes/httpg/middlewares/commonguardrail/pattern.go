@@ -14,7 +14,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package llm
+package commonguardrail
 
 import (
 	"bytes"
@@ -29,11 +29,12 @@ import (
 )
 
 const (
-	maxGuardrailResponseBytes = 8 * 1024 * 1024
-	maxPatternFindings        = 4096
-	maxReplacementBytes       = 8 * 1024
-	maxMutatedRequestBytes    = 32 * 1024 * 1024
-	maxRegexCacheEntries      = 1024
+	MaxResponseBytes    = 8 * 1024 * 1024
+	MaxPatternFindings  = 4096
+	MaxReplacementBytes = 8 * 1024
+	MaxMutatedBytes     = 32 * 1024 * 1024
+
+	maxRegexCacheEntries = 1024
 )
 
 var rgxCache sync.Map
@@ -64,9 +65,10 @@ func compileRegex(arg string) (*regexp.Regexp, error) {
 	return ret, nil
 }
 
-type patternRule struct {
-	cfg       *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern
-	idx       int
+type Rule struct {
+	Cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern
+	Idx int
+
 	name      string
 	rgx       *regexp.Regexp
 	typ       corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type
@@ -74,21 +76,21 @@ type patternRule struct {
 	excludes  map[string]struct{}
 }
 
-func (r *patternRule) isExcluded(arg string) bool {
+func (r *Rule) isExcluded(arg string) bool {
 	_, ok := r.excludes[strings.ToLower(arg)]
 	return ok
 }
 
-func (r *patternRule) action() corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action {
-	if ret := r.cfg.GetAction(); ret !=
+func (r *Rule) Action() corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Action {
+	if ret := r.Cfg.GetAction(); ret !=
 		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_ACTION_UNSET {
 		return ret
 	}
 	return corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY
 }
 
-func (r *patternRule) isRewrite() bool {
-	return rewriteRank(r.action()) > 0
+func (r *Rule) IsRewrite() bool {
+	return rewriteRank(r.Action()) > 0
 }
 
 func rewriteRank(
@@ -105,18 +107,18 @@ func rewriteRank(
 	}
 }
 
-type patternSet struct {
-	rules []*patternRule
+type PatternSet struct {
+	rules []*Rule
 }
 
-func newPatternSet(
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) (*patternSet, error) {
-	ret := &patternSet{}
+func NewPatternSet(
+	patterns []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern) (*PatternSet, error) {
+	ret := &PatternSet{}
 
-	for i, conf := range cfg.GetPatterns() {
-		rule := &patternRule{
-			cfg: conf,
-			idx: i,
+	for i, conf := range patterns {
+		rule := &Rule{
+			Cfg: conf,
+			Idx: i,
 		}
 
 		switch conf.Match.(type) {
@@ -149,15 +151,15 @@ func newPatternSet(
 	return ret, nil
 }
 
-type finding struct {
-	rule  *patternRule
-	name  string
-	start int
-	end   int
+type Finding struct {
+	Rule  *Rule
+	Name  string
+	Start int
+	End   int
 }
 
-func (p *patternSet) inspect(text string) ([]*finding, error) {
-	var ret []*finding
+func (p *PatternSet) Inspect(text string) ([]*Finding, error) {
+	var ret []*Finding
 	var secrets []*secretMatch
 	var isScanned bool
 
@@ -166,8 +168,8 @@ func (p *patternSet) inspect(text string) ([]*finding, error) {
 
 		switch {
 		case rule.rgx != nil:
-			for _, loc := range rule.rgx.FindAllStringIndex(text, maxPatternFindings+1) {
-				ret = append(ret, &finding{rule: rule, start: loc[0], end: loc[1]})
+			for _, loc := range rule.rgx.FindAllStringIndex(text, MaxPatternFindings+1) {
+				ret = append(ret, &Finding{Rule: rule, Start: loc[0], End: loc[1]})
 				count++
 			}
 		case rule.isSecrets:
@@ -176,7 +178,7 @@ func (p *patternSet) inspect(text string) ([]*finding, error) {
 				if err != nil {
 					return nil, err
 				}
-				matches, err := scanner.scan(text, maxPatternFindings)
+				matches, err := scanner.scan(text, MaxPatternFindings)
 				if err != nil {
 					return nil, err
 				}
@@ -187,34 +189,34 @@ func (p *patternSet) inspect(text string) ([]*finding, error) {
 				if rule.isExcluded(m.rule) {
 					continue
 				}
-				ret = append(ret, &finding{
-					rule: rule, name: m.rule, start: m.start, end: m.end})
+				ret = append(ret, &Finding{
+					Rule: rule, Name: m.rule, Start: m.start, End: m.end})
 				count++
 			}
 		default:
-			matches, isExhausted := runDetector(rule.typ, text, maxPatternFindings)
+			matches, isExhausted := runDetector(rule.typ, text, MaxPatternFindings)
 			if isExhausted {
 				return nil, errors.Errorf(
-					"The Guardrail Pattern %d matched too many times", rule.idx)
+					"The Guardrail Pattern %d matched too many times", rule.Idx)
 			}
 			for _, m := range matches {
-				ret = append(ret, &finding{rule: rule, start: m.start, end: m.end})
+				ret = append(ret, &Finding{Rule: rule, Start: m.start, End: m.end})
 				count++
 			}
 		}
 
-		if count > maxPatternFindings {
+		if count > MaxPatternFindings {
 			return nil, errors.Errorf(
-				"The Guardrail Pattern %d matched too many times", rule.idx)
+				"The Guardrail Pattern %d matched too many times", rule.Idx)
 		}
 	}
 
 	return ret, nil
 }
 
-func deniedFinding(findings []*finding) *finding {
+func DeniedFinding(findings []*Finding) *Finding {
 	for _, f := range findings {
-		if f.rule.action() ==
+		if f.Rule.Action() ==
 			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY {
 			return f
 		}
@@ -222,15 +224,15 @@ func deniedFinding(findings []*finding) *finding {
 	return nil
 }
 
-func rewrite(text string, findings []*finding,
+func Rewrite(text string, findings []*Finding,
 	replacements map[int]string) (string, uint32, error) {
 
-	sorted := make([]*finding, 0, len(findings))
+	sorted := make([]*Finding, 0, len(findings))
 	for _, f := range findings {
-		if !f.rule.isRewrite() {
+		if !f.Rule.IsRewrite() {
 			continue
 		}
-		if f.start < 0 || f.end > len(text) || f.start >= f.end {
+		if f.Start < 0 || f.End > len(text) || f.Start >= f.End {
 			continue
 		}
 		sorted = append(sorted, f)
@@ -241,45 +243,45 @@ func rewrite(text string, findings []*finding,
 	}
 
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].start != sorted[j].start {
-			return sorted[i].start < sorted[j].start
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
 		}
-		if sorted[i].end != sorted[j].end {
-			return sorted[i].end > sorted[j].end
+		if sorted[i].End != sorted[j].End {
+			return sorted[i].End > sorted[j].End
 		}
-		return sorted[i].rule.idx < sorted[j].rule.idx
+		return sorted[i].Rule.Idx < sorted[j].Rule.Idx
 	})
 
-	var merged []*finding
+	var merged []*Finding
 	for _, f := range sorted {
 		if len(merged) == 0 {
-			merged = append(merged, &finding{
-				rule: f.rule, name: f.name, start: f.start, end: f.end})
+			merged = append(merged, &Finding{
+				Rule: f.Rule, Name: f.Name, Start: f.Start, End: f.End})
 			continue
 		}
 
 		cur := merged[len(merged)-1]
-		if f.start >= cur.end {
-			merged = append(merged, &finding{
-				rule: f.rule, name: f.name, start: f.start, end: f.end})
+		if f.Start >= cur.End {
+			merged = append(merged, &Finding{
+				Rule: f.Rule, Name: f.Name, Start: f.Start, End: f.End})
 			continue
 		}
 
-		if f.end > cur.end {
-			cur.end = f.end
+		if f.End > cur.End {
+			cur.End = f.End
 		}
-		if isRuleMoreDestructive(f.rule, cur.rule) {
-			cur.rule = f.rule
-			cur.name = f.name
+		if isRuleMoreDestructive(f.Rule, cur.Rule) {
+			cur.Rule = f.Rule
+			cur.Name = f.Name
 		}
 	}
 
 	projected := len(text)
 	for _, f := range merged {
-		projected = projected - (f.end - f.start) +
+		projected = projected - (f.End - f.Start) +
 			len(findingReplacement(f, replacements))
 	}
-	if projected > maxMutatedRequestBytes {
+	if projected > MaxMutatedBytes {
 		return "", 0, errors.Errorf("The rewritten content is too large")
 	}
 
@@ -287,9 +289,9 @@ func rewrite(text string, findings []*finding,
 	var count uint32
 	last := 0
 	for _, f := range merged {
-		out.WriteString(text[last:f.start])
+		out.WriteString(text[last:f.Start])
 		out.WriteString(findingReplacement(f, replacements))
-		last = f.end
+		last = f.End
 		count++
 	}
 	out.WriteString(text[last:])
@@ -297,26 +299,26 @@ func rewrite(text string, findings []*finding,
 	return out.String(), count, nil
 }
 
-func isRuleMoreDestructive(arg, cur *patternRule) bool {
-	argRank := rewriteRank(arg.action())
-	curRank := rewriteRank(cur.action())
+func isRuleMoreDestructive(arg, cur *Rule) bool {
+	argRank := rewriteRank(arg.Action())
+	curRank := rewriteRank(cur.Action())
 	if argRank != curRank {
 		return argRank > curRank
 	}
-	return arg.idx < cur.idx
+	return arg.Idx < cur.Idx
 }
 
-func findingReplacement(f *finding, replacements map[int]string) string {
-	switch f.rule.action() {
+func findingReplacement(f *Finding, replacements map[int]string) string {
+	switch f.Rule.Action() {
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_STRIP:
 		return ""
 	case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REPLACE:
-		return replacements[f.rule.idx]
+		return replacements[f.Rule.Idx]
 	default:
-		if f.name != "" {
-			return redactPlaceholder(f.name)
+		if f.Name != "" {
+			return redactPlaceholder(f.Name)
 		}
-		return redactPlaceholder(f.rule.name)
+		return redactPlaceholder(f.Rule.name)
 	}
 }
 
@@ -325,11 +327,4 @@ func redactPlaceholder(name string) string {
 		return "[REDACTED]"
 	}
 	return "[REDACTED:" + strings.ToUpper(name) + "]"
-}
-
-func guardrailDenyMessage(cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) string {
-	if msg := cfg.GetDenyMessage(); msg != "" {
-		return msg
-	}
-	return "Octelium: this content is not allowed by this Service"
 }

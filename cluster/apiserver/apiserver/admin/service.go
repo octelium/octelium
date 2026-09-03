@@ -1935,15 +1935,105 @@ func (s *Server) validateMCPConfig(ctx context.Context, cfg *corev1.Service_Spec
 		return err
 	}
 
-	if err := s.validateHTTPPlugins(ctx, cfg.Name, mcp.GetPlugins()); err != nil {
+	if err := s.validateMCPPlugins(ctx, cfg.Name, mcp.GetPlugins()); err != nil {
 		return err
 	}
 
-	for _, plugin := range mcp.GetPlugins() {
-		switch plugin.Type.(type) {
-		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_:
+	return nil
+}
+
+func (s *Server) validateMCPPlugins(ctx context.Context, cfgName string,
+	plugins []*corev1.Service_Spec_Config_MCP_Plugin) error {
+	if len(plugins) == 0 {
+		return nil
+	}
+
+	if len(plugins) > maxPlugins {
+		return grpcutils.InvalidArg("Too many plugins")
+	}
+
+	var names []string
+	var err error
+	for _, plugin := range plugins {
+		if names, err = s.validatePluginCommon(ctx, cfgName, names, plugin); err != nil {
+			return err
+		}
+
+		isShared, err := s.validatePluginShared(ctx, plugin)
+		if err != nil {
+			return err
+		}
+		if isShared {
+			continue
+		}
+
+		switch plugin.GetPhase() {
+		case corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH:
 			return grpcutils.InvalidArg(
-				"The Cache plugin is unsupported for MCP Services: %s", plugin.Name)
+				"The %s Plugin cannot be invoked in the PRE_AUTH phase", plugin.GetName())
+		}
+
+		switch {
+		case plugin.GetGuardrail() != nil:
+			if err := s.validateMCPGuardrail(ctx, plugin.GetGuardrail()); err != nil {
+				return err
+			}
+		default:
+			return grpcutils.InvalidArg("plugin type must be set")
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateMCPGuardrail(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_MCP_Plugin_Guardrail) error {
+
+	var isResponse bool
+	switch cfg.GetLeg() {
+	case corev1.Service_Spec_Config_MCP_Plugin_Guardrail_LEG_UNSET,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_REQUEST:
+	case corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESPONSE,
+		corev1.Service_Spec_Config_MCP_Plugin_Guardrail_BOTH:
+		isResponse = true
+	default:
+		return grpcutils.InvalidArg("Invalid Guardrail leg")
+	}
+
+	if len(cfg.GetScopes()) > maxGuardrailScopes {
+		return grpcutils.InvalidArg("Too many Guardrail scopes")
+	}
+
+	var hasToolDefinitions bool
+	for _, scope := range cfg.GetScopes() {
+		switch scope {
+		case corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_ARGUMENTS,
+			corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_RESULTS,
+			corev1.Service_Spec_Config_MCP_Plugin_Guardrail_RESOURCE_CONTENTS,
+			corev1.Service_Spec_Config_MCP_Plugin_Guardrail_PROMPT_MESSAGES:
+		case corev1.Service_Spec_Config_MCP_Plugin_Guardrail_TOOL_DEFINITIONS,
+			corev1.Service_Spec_Config_MCP_Plugin_Guardrail_ALL:
+			hasToolDefinitions = true
+		default:
+			return grpcutils.InvalidArg("Invalid Guardrail scope")
+		}
+	}
+
+	if err := s.validateGenStr(cfg.GetDenyMessage(), false, "denyMessage"); err != nil {
+		return err
+	}
+
+	if len(cfg.GetPatterns()) == 0 {
+		return grpcutils.InvalidArg("The Guardrail Patterns are empty")
+	}
+	if len(cfg.GetPatterns()) > maxGuardrailPatterns {
+		return grpcutils.InvalidArg("Too many Guardrail Patterns")
+	}
+
+	for _, pattern := range cfg.GetPatterns() {
+		if err := s.validateGuardrailPattern(ctx, pattern,
+			isResponse, hasToolDefinitions); err != nil {
+			return err
 		}
 	}
 
@@ -1955,6 +2045,8 @@ const (
 	maxCorsOriginLen      = 256
 
 	maxLLMModelLen = 256
+
+	maxLLMReasoningTokens = 1024 * 1024
 
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
 	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
@@ -1985,6 +2077,10 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 	}
 
 	if err := s.validateLLMModel(ctx, llm.GetModel()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMReasoning(ctx, llm.GetReasoning()); err != nil {
 		return err
 	}
 
@@ -2061,6 +2157,14 @@ func (s *Server) validateLLMPlugins(ctx context.Context, cfgName string,
 			}
 		case plugin.GetGuardrail() != nil:
 			if err := s.validatePluginGuardrail(ctx, plugin.GetGuardrail()); err != nil {
+				return err
+			}
+		case plugin.GetModel() != nil:
+			if err := s.validateLLMModel(ctx, plugin.GetModel()); err != nil {
+				return err
+			}
+		case plugin.GetReasoning() != nil:
+			if err := s.validateLLMReasoning(ctx, plugin.GetReasoning()); err != nil {
 				return err
 			}
 		default:
@@ -2471,6 +2575,49 @@ func (s *Server) validateLLMModel(ctx context.Context,
 		if err := checkCELExpressionString(ctx, model.GetEval()); err != nil {
 			return grpcutils.InvalidArg("Invalid eval: %s", model.GetEval())
 		}
+	case *corev1.Service_Spec_Config_LLM_Model_Opa:
+		if err := checkOPAString(ctx, model.GetOpa()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMReasoning(ctx context.Context,
+	reasoning *corev1.Service_Spec_Config_LLM_Reasoning) error {
+	if reasoning == nil {
+		return nil
+	}
+
+	switch reasoning.Type.(type) {
+	case *corev1.Service_Spec_Config_LLM_Reasoning_Level_:
+		if reasoning.GetLevel() ==
+			corev1.Service_Spec_Config_LLM_Reasoning_LEVEL_UNSET {
+			return grpcutils.InvalidArg("The LLM reasoning level must be set")
+		}
+		if _, ok := corev1.Service_Spec_Config_LLM_Reasoning_Level_name[int32(
+			reasoning.GetLevel())]; !ok {
+			return grpcutils.InvalidArg("Invalid LLM reasoning level")
+		}
+	case *corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens:
+		if reasoning.GetMaxTokens() == 0 {
+			return grpcutils.InvalidArg(
+				"The LLM reasoning maxTokens cannot be zero. Use the NONE level instead")
+		}
+		if reasoning.GetMaxTokens() > maxLLMReasoningTokens {
+			return grpcutils.InvalidArg("The LLM reasoning maxTokens is too large")
+		}
+	case *corev1.Service_Spec_Config_LLM_Reasoning_Eval:
+		if err := checkCELExpressionString(ctx, reasoning.GetEval()); err != nil {
+			return grpcutils.InvalidArg("Invalid eval: %s", reasoning.GetEval())
+		}
+	case *corev1.Service_Spec_Config_LLM_Reasoning_Opa:
+		if err := checkOPAString(ctx, reasoning.GetOpa()); err != nil {
+			return err
+		}
+	default:
+		return grpcutils.InvalidArg("The LLM reasoning type must be set")
 	}
 
 	return nil

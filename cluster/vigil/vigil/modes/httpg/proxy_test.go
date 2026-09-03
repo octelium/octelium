@@ -194,7 +194,7 @@ func TestMCPCommonConfig(t *testing.T) {
 				Path: &corev1.Service_Spec_Config_HTTP_Path{
 					AddPrefix: "/api",
 				},
-				Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
 					{Name: "tst"},
 				},
 			},

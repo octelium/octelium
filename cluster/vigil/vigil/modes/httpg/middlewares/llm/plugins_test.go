@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonguardrail"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -57,6 +58,8 @@ type pluginOpts struct {
 	path      string
 	body      string
 	plugins   []*corev1.Service_Spec_Config_LLM_Plugin
+	model     *corev1.Service_Spec_Config_LLM_Model
+	reasoning *corev1.Service_Spec_Config_LLM_Reasoning
 	reqCtxMap map[string]any
 	upstream  http.HandlerFunc
 }
@@ -78,6 +81,10 @@ func newPlugin(name string,
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_{Tools: cur}
 	case *corev1.Service_Spec_Config_LLM_Plugin_Guardrail:
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_{Guardrail: cur}
+	case *corev1.Service_Spec_Config_LLM_Model:
+		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Model{Model: cur}
+	case *corev1.Service_Spec_Config_LLM_Reasoning:
+		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Reasoning{Reasoning: cur}
 	}
 
 	return ret
@@ -107,6 +114,12 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 
 	var mdlwr http.Handler = next
 
+	mdlwr, err = NewReasoning(ctx, mdlwr, celEngine)
+	assert.Nil(t, err)
+
+	mdlwr, err = NewModel(ctx, mdlwr, celEngine)
+	assert.Nil(t, err)
+
 	mdlwr, err = NewPrompt(ctx, mdlwr, celEngine)
 	assert.Nil(t, err)
 
@@ -126,8 +139,10 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	req.Header.Set("Content-Type", "application/json")
 
 	cfg := &corev1.Service_Spec_Config_LLM{
-		Protocol: o.protocol,
-		Plugins:  o.plugins,
+		Protocol:  o.protocol,
+		Plugins:   o.plugins,
+		Model:     o.model,
+		Reasoning: o.reasoning,
 	}
 	svcCfg := &corev1.Service_Spec_Config{
 		Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},
@@ -935,7 +950,7 @@ func TestGuardrailDenseMatchIsNotABypass(t *testing.T) {
 
 	{
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-			strings.Repeat("a", maxPatternFindings+1) + `"}]}`
+			strings.Repeat("a", commonguardrail.MaxPatternFindings+1) + `"}]}`
 
 		res := servePlugins(t, &pluginOpts{
 			body: body,
@@ -1452,7 +1467,7 @@ func TestGuardrailDetectorCandidateExhaustion(t *testing.T) {
 
 	{
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-			strings.Repeat("000000000 ", maxPatternFindings+1) + `123-45-6789"}]}`
+			strings.Repeat("000000000 ", commonguardrail.MaxPatternFindings+1) + `123-45-6789"}]}`
 
 		res := servePlugins(t, &pluginOpts{
 			body:    body,
@@ -1465,7 +1480,7 @@ func TestGuardrailDetectorCandidateExhaustion(t *testing.T) {
 
 	{
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-			strings.Repeat("000000000 ", maxPatternFindings-1) + `123-45-6789"}]}`
+			strings.Repeat("000000000 ", commonguardrail.MaxPatternFindings-1) + `123-45-6789"}]}`
 
 		res := servePlugins(t, &pluginOpts{
 			body:    body,
@@ -1478,7 +1493,7 @@ func TestGuardrailDetectorCandidateExhaustion(t *testing.T) {
 
 	{
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-			strings.Repeat("000000000 ", maxPatternFindings-1) + `ok"}]}`
+			strings.Repeat("000000000 ", commonguardrail.MaxPatternFindings-1) + `ok"}]}`
 
 		res := servePlugins(t, &pluginOpts{
 			body:    body,
