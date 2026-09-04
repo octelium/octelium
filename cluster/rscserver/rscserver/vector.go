@@ -47,6 +47,9 @@ const (
 	defaultVectorSearchLimit  = 8
 	vectorNoExpiryScore       = 9007199254740991
 	vectorKeyGrace            = 10 * time.Second
+
+	vectorBackendProbeAttempts = 3
+	vectorBackendProbeBackoff  = 2 * time.Second
 )
 
 type vectorBackend interface {
@@ -97,17 +100,30 @@ func newSrvVector(ctx context.Context, redisC *redis.Client) *srvVector {
 }
 
 func newVectorBackend(ctx context.Context, redisC *redis.Client) vectorBackend {
-	err := redisC.FT_List(ctx).Err()
-	switch {
-	case err == nil:
-		zap.L().Debug("Redis Search is available. Using it for the vector store")
-		return newVectorBackendSearch(redisC)
-	case isRedisUnknownCommandErr(err):
-		zap.L().Debug("Redis Search is unavailable. Using the fallback vector store")
-	default:
-		zap.L().Warn("Could not check whether Redis Search is available. Using the fallback vector store",
+	for i := range vectorBackendProbeAttempts {
+		isSupported, err := checkVectorSearch(ctx, redisC)
+		if err == nil {
+			if isSupported {
+				zap.L().Debug("Redis Search is available. Using it for the vector store")
+				return newVectorBackendSearch(redisC)
+			}
+
+			zap.L().Debug("Redis Search is unavailable. Using the fallback vector store")
+			return &vectorBackendFallback{
+				redisC: redisC,
+			}
+		}
+
+		zap.L().Warn("Could not check whether Redis Search is available. Trying again",
 			zap.Error(err))
+
+		if i+1 < vectorBackendProbeAttempts && ctx.Err() == nil {
+			time.Sleep(vectorBackendProbeBackoff)
+		}
 	}
+
+	zap.L().Error("Could not check whether Redis Search is available. " +
+		"Using the fallback vector store, which is not interoperable with the Redis Search one")
 
 	return &vectorBackendFallback{
 		redisC: redisC,

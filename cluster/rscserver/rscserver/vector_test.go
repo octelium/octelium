@@ -70,11 +70,10 @@ func runTestVectorBackends(t *testing.T, fn func(t *testing.T, srv *srvVector)) 
 		fn(t, newTestSrvVectorFallback())
 	})
 
-	if !hasRedisSearch(t) {
-		return
-	}
-
 	t.Run("search", func(t *testing.T) {
+		if !hasRedisSearch(t) {
+			t.Skip("Redis Search is unavailable")
+		}
 		fn(t, newTestSrvVectorSearch())
 	})
 }
@@ -796,6 +795,256 @@ func TestVectorSearchPartitionEntries(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.Empty(t, keys)
 	}
+}
+
+func TestVectorReplaceAcrossDimensions(t *testing.T) {
+	runTestVectorBackends(t, doTestVectorReplaceAcrossDimensions)
+}
+
+func doTestVectorReplaceAcrossDimensions(t *testing.T, srv *srvVector) {
+
+	ctx := context.Background()
+
+	collection := []byte(utilrand.GetRandomString(8))
+	partition := []byte(utilrand.GetRandomString(8))
+
+	t.Cleanup(func() {
+		srv.DeleteCollection(context.Background(), &rvectorv1.DeleteCollectionRequest{
+			Collection: collection,
+		})
+	})
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("id-1"),
+					Vector: []float32{1, 0},
+					Data:   []byte("data-old"),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("id-1"),
+					Vector: []float32{0, 0, 1},
+					Data:   []byte("data-new"),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Vector:     []float32{1, 0},
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Empty(t, resp.Results)
+	}
+
+	{
+		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Vector:     []float32{0, 0, 1},
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(resp.Results))
+		assert.Equal(t, []byte("data-new"), resp.Results[0].Data)
+	}
+
+	for i := 0; i < maxVectorPartitionEntries+maxVectorEntries; i += maxVectorEntries {
+		req := &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Duration: &metav1.Duration{
+				Type: &metav1.Duration_Minutes{
+					Minutes: 10,
+				},
+			},
+		}
+		for j := range maxVectorEntries {
+			req.Entries = append(req.Entries, &rvectorv1.Entry{
+				Id:     []byte(fmt.Sprintf("flood-%06d", i+j)),
+				Vector: []float32{float32(i + j + 2), 1},
+				Data:   []byte("flood"),
+			})
+		}
+
+		_, err := srv.UpsertVectors(ctx, req)
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		resp, err := srv.GetVectors(ctx, &rvectorv1.GetVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Ids:        [][]byte{[]byte("id-1")},
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(resp.Results))
+		assert.Equal(t, []byte("data-new"), resp.Results[0].Data)
+	}
+}
+
+func TestVectorMaxPartitionEntriesAcrossDimensions(t *testing.T) {
+	runTestVectorBackends(t, doTestVectorMaxPartitionEntriesAcrossDimensions)
+}
+
+func doTestVectorMaxPartitionEntriesAcrossDimensions(t *testing.T, srv *srvVector) {
+
+	ctx := context.Background()
+
+	collection := []byte(utilrand.GetRandomString(8))
+	partition := []byte(utilrand.GetRandomString(8))
+
+	t.Cleanup(func() {
+		srv.DeleteCollection(context.Background(), &rvectorv1.DeleteCollectionRequest{
+			Collection: collection,
+		})
+	})
+
+	total := maxVectorPartitionEntries
+
+	for _, dimension := range []int{2, 3} {
+		for i := 0; i < total; i += maxVectorEntries {
+			req := &rvectorv1.UpsertVectorsRequest{
+				Collection: collection,
+				Partition:  partition,
+			}
+			for j := range maxVectorEntries {
+				vector := make([]float32, dimension)
+				vector[0] = float32(i + j + 1)
+				vector[dimension-1] = 1
+
+				req.Entries = append(req.Entries, &rvectorv1.Entry{
+					Id:     []byte(fmt.Sprintf("d%d-id-%06d", dimension, i+j)),
+					Vector: vector,
+					Data:   []byte("data"),
+				})
+			}
+
+			_, err := srv.UpsertVectors(ctx, req)
+			assert.Nil(t, err, "%+v", err)
+		}
+	}
+
+	var found int
+	for _, dimension := range []int{2, 3} {
+		var ids [][]byte
+		for i := range total {
+			ids = append(ids, []byte(fmt.Sprintf("d%d-id-%06d", dimension, i)))
+			if len(ids) < maxVectorIDs {
+				continue
+			}
+
+			resp, err := srv.GetVectors(ctx, &rvectorv1.GetVectorsRequest{
+				Collection: collection,
+				Partition:  partition,
+				Ids:        ids,
+			})
+			assert.Nil(t, err, "%+v", err)
+			found += len(resp.Results)
+			ids = nil
+		}
+	}
+
+	assert.Equal(t, maxVectorPartitionEntries, found)
+}
+
+func TestVectorSearchIndexLoss(t *testing.T) {
+
+	if !hasRedisSearch(t) {
+		t.Skip("Redis Search is unavailable")
+	}
+
+	srv := newTestSrvVectorSearch()
+
+	ctx := context.Background()
+
+	collection := []byte(utilrand.GetRandomString(8))
+	partition := []byte(utilrand.GetRandomString(8))
+
+	t.Cleanup(func() {
+		srv.DeleteCollection(context.Background(), &rvectorv1.DeleteCollectionRequest{
+			Collection: collection,
+		})
+	})
+
+	vector := []float32{1, 0, 0, 0, 1, 0, 1}
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("id-1"),
+					Vector: vector,
+					Data:   []byte("data-1"),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	assert.Nil(t, srv.redisC.FTDropIndex(ctx, getVectorSearchIndex(len(vector))).Err())
+
+	{
+		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Vector:     vector,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Empty(t, resp.Results)
+	}
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("id-2"),
+					Vector: vector,
+					Data:   []byte("data-2"),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	var results []*rvectorv1.Result
+	for range 30 {
+		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Vector:     vector,
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		results = resp.Results
+		if len(results) == 2 {
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	assert.Equal(t, 2, len(results))
 }
 
 func TestVectorSearchIsolatedFromFallback(t *testing.T) {

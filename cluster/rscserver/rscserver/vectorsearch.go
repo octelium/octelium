@@ -19,6 +19,8 @@ package rscserver
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,12 +29,16 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
 	vectorSearchIndexPrefix = "octelium:vec:idx"
 	vectorSearchEntryPrefix = "octelium:vec:e"
 	vectorSearchDataPrefix  = "octelium:vec:d"
+
+	vectorSearchProbeIndex     = "octelium:vec:idx:probe"
+	vectorSearchProbeDimension = 2
 
 	vectorSearchFieldCollection = "c"
 	vectorSearchFieldPartition  = "p"
@@ -88,6 +94,14 @@ func getVectorSearchEntryDataKey(entryKey string) (string, bool) {
 	return fmt.Sprintf("%s:%s:%s:%s", vectorSearchDataPrefix, args[4], args[5], args[6]), true
 }
 
+func getVectorSearchCollectionMatches(collection []byte) []string {
+	collectionHex := vutils.Sha256SumHex(collection)
+	return []string{
+		fmt.Sprintf("%s:*:%s:*", vectorSearchEntryPrefix, collectionHex),
+		fmt.Sprintf("%s:%s:*", vectorSearchDataPrefix, collectionHex),
+	}
+}
+
 func getVectorSearchCollectionFilter(collection []byte) string {
 	return fmt.Sprintf("@%s:{%s}", vectorSearchFieldCollection, vutils.Sha256SumHex(collection))
 }
@@ -95,6 +109,14 @@ func getVectorSearchCollectionFilter(collection []byte) string {
 func getVectorSearchPartitionFilter(collection, partition []byte) string {
 	return fmt.Sprintf("%s @%s:{%s}", getVectorSearchCollectionFilter(collection),
 		vectorSearchFieldPartition, vutils.Sha256SumHex(partition))
+}
+
+func getVectorSearchExpiresAt(doc redis.Document) int64 {
+	ret, err := strconv.ParseInt(doc.Fields[vectorSearchFieldExpiresAt], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return ret
 }
 
 func isRedisIndexNotFoundErr(err error) bool {
@@ -111,19 +133,13 @@ func isRedisIndexExistsErr(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
-func (b *vectorBackendSearch) setIndex(ctx context.Context, dimension int) error {
-	b.mu.Lock()
-	_, ok := b.indexes[dimension]
-	b.mu.Unlock()
+func createVectorSearchIndex(ctx context.Context, redisC *redis.Client,
+	index, prefix string, dimension int) error {
 
-	if ok {
-		return nil
-	}
-
-	err := b.redisC.FTCreate(ctx, getVectorSearchIndex(dimension),
+	err := redisC.FTCreate(ctx, index,
 		&redis.FTCreateOptions{
 			OnHash: true,
-			Prefix: []any{getVectorSearchEntryPrefix(dimension)},
+			Prefix: []any{prefix},
 		},
 		&redis.FieldSchema{
 			FieldName: vectorSearchFieldCollection,
@@ -153,11 +169,61 @@ func (b *vectorBackendSearch) setIndex(ctx context.Context, dimension int) error
 		return err
 	}
 
+	return nil
+}
+
+func checkVectorSearch(ctx context.Context, redisC *redis.Client) (bool, error) {
+
+	if db := redisC.Options().DB; db != 0 {
+		zap.L().Warn("Redis Search indexes can only be created on the Redis database 0",
+			zap.Int("db", db))
+		return false, nil
+	}
+
+	if err := redisC.FT_List(ctx).Err(); err != nil {
+		if isRedisUnknownCommandErr(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if err := createVectorSearchIndex(ctx, redisC, vectorSearchProbeIndex,
+		fmt.Sprintf("%s:", vectorSearchProbeIndex), vectorSearchProbeDimension); err != nil {
+		return false, err
+	}
+
+	if err := redisC.FTDropIndex(ctx, vectorSearchProbeIndex).Err(); err != nil {
+		zap.L().Debug("Could not drop the Redis Search probe index", zap.Error(err))
+	}
+
+	return true, nil
+}
+
+func (b *vectorBackendSearch) setIndex(ctx context.Context, dimension int) error {
+	b.mu.Lock()
+	_, ok := b.indexes[dimension]
+	b.mu.Unlock()
+
+	if ok {
+		return nil
+	}
+
+	if err := createVectorSearchIndex(ctx, b.redisC, getVectorSearchIndex(dimension),
+		getVectorSearchEntryPrefix(dimension), dimension); err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	b.indexes[dimension] = struct{}{}
 	b.mu.Unlock()
 
 	return nil
+}
+
+func (b *vectorBackendSearch) forgetIndex(dimension int) {
+	b.mu.Lock()
+	delete(b.indexes, dimension)
+	b.mu.Unlock()
 }
 
 func (b *vectorBackendSearch) getIndexDimensions(ctx context.Context) ([]int, error) {
@@ -186,6 +252,16 @@ func (b *vectorBackendSearch) getIndexDimensions(ctx context.Context) ([]int, er
 
 func (b *vectorBackendSearch) upsert(ctx context.Context, opts *vectorUpsertOpts) error {
 
+	dimensions, err := b.getIndexDimensions(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !slices.Contains(dimensions, opts.dimension) {
+		b.forgetIndex(opts.dimension)
+		dimensions = append(dimensions, opts.dimension)
+	}
+
 	if err := b.setIndex(ctx, opts.dimension); err != nil {
 		return err
 	}
@@ -198,11 +274,21 @@ func (b *vectorBackendSearch) upsert(ctx context.Context, opts *vectorUpsertOpts
 		}
 	}
 
-	pipe := b.redisC.Pipeline()
+	pipe := b.redisC.TxPipeline()
+
+	var stale []string
 
 	for _, entry := range opts.entries {
 		entryKey := getVectorSearchEntryKey(opts.dimension,
 			opts.collection, opts.partition, entry.Id)
+
+		for _, dimension := range dimensions {
+			if dimension == opts.dimension {
+				continue
+			}
+			stale = append(stale,
+				getVectorSearchEntryKey(dimension, opts.collection, opts.partition, entry.Id))
+		}
 
 		pipe.HSet(ctx, entryKey, map[string]any{
 			vectorSearchFieldCollection: vutils.Sha256SumHex(opts.collection),
@@ -222,47 +308,84 @@ func (b *vectorBackendSearch) upsert(ctx context.Context, opts *vectorUpsertOpts
 		}
 	}
 
+	if len(stale) > 0 {
+		pipe.Del(ctx, stale...)
+	}
+
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
 
-	return b.evict(ctx, opts)
+	return b.evict(ctx, opts, dimensions)
 }
 
-func (b *vectorBackendSearch) evict(ctx context.Context, opts *vectorUpsertOpts) error {
+func (b *vectorBackendSearch) evict(ctx context.Context,
+	opts *vectorUpsertOpts, dimensions []int) error {
 
-	index := getVectorSearchIndex(opts.dimension)
 	filter := getVectorSearchPartitionFilter(opts.collection, opts.partition)
 
-	total, err := b.redisC.FTSearchWithArgs(ctx, index, filter, &redis.FTSearchOptions{
-		CountOnly:      true,
-		DialectVersion: vectorSearchDialect,
-	}).Result()
-	if err != nil {
-		return err
+	var total int
+
+	for _, dimension := range dimensions {
+		res, err := b.redisC.FTSearchWithArgs(ctx, getVectorSearchIndex(dimension), filter,
+			&redis.FTSearchOptions{
+				CountOnly:      true,
+				DialectVersion: vectorSearchDialect,
+			}).Result()
+		if err != nil {
+			if isRedisIndexNotFoundErr(err) {
+				b.forgetIndex(dimension)
+				continue
+			}
+			return err
+		}
+
+		total += res.Total
 	}
 
-	excess := total.Total - maxVectorPartitionEntries
+	excess := total - maxVectorPartitionEntries
 	if excess <= 0 {
 		return nil
 	}
 
-	res, err := b.redisC.FTSearchWithArgs(ctx, index, filter, &redis.FTSearchOptions{
-		NoContent: true,
-		SortBy: []redis.FTSearchSortBy{
-			{
-				FieldName: vectorSearchFieldExpiresAt,
-				Asc:       true,
-			},
-		},
-		Limit:          excess,
-		DialectVersion: vectorSearchDialect,
-	}).Result()
-	if err != nil {
-		return err
+	var docs []redis.Document
+
+	for _, dimension := range dimensions {
+		res, err := b.redisC.FTSearchWithArgs(ctx, getVectorSearchIndex(dimension), filter,
+			&redis.FTSearchOptions{
+				Return: []redis.FTSearchReturn{
+					{
+						FieldName: vectorSearchFieldExpiresAt,
+					},
+				},
+				SortBy: []redis.FTSearchSortBy{
+					{
+						FieldName: vectorSearchFieldExpiresAt,
+						Asc:       true,
+					},
+				},
+				Limit:          excess,
+				DialectVersion: vectorSearchDialect,
+			}).Result()
+		if err != nil {
+			if isRedisIndexNotFoundErr(err) {
+				b.forgetIndex(dimension)
+				continue
+			}
+			return err
+		}
+
+		docs = append(docs, res.Docs...)
 	}
 
-	return b.deleteDocs(ctx, res.Docs)
+	if len(docs) > excess {
+		sort.SliceStable(docs, func(i, j int) bool {
+			return getVectorSearchExpiresAt(docs[i]) < getVectorSearchExpiresAt(docs[j])
+		})
+		docs = docs[:excess]
+	}
+
+	return b.deleteDocs(ctx, docs)
 }
 
 func (b *vectorBackendSearch) deleteDocs(ctx context.Context, docs []redis.Document) error {
@@ -317,11 +440,13 @@ func (b *vectorBackendSearch) get(ctx context.Context,
 func (b *vectorBackendSearch) search(ctx context.Context,
 	opts *vectorSearchOpts) ([]*rvectorv1.Result, error) {
 
+	dimension := len(opts.vector)
+
 	query := fmt.Sprintf("(%s)=>[KNN %d @%s $%s AS %s]",
 		getVectorSearchPartitionFilter(opts.collection, opts.partition),
 		opts.limit, vectorSearchFieldVector, vectorSearchParamVector, vectorSearchFieldScore)
 
-	res, err := b.redisC.FTSearchWithArgs(ctx, getVectorSearchIndex(len(opts.vector)), query,
+	res, err := b.redisC.FTSearchWithArgs(ctx, getVectorSearchIndex(dimension), query,
 		&redis.FTSearchOptions{
 			Return: []redis.FTSearchReturn{
 				{
@@ -344,10 +469,21 @@ func (b *vectorBackendSearch) search(ctx context.Context,
 			},
 		}).Result()
 	if err != nil {
-		if isRedisIndexNotFoundErr(err) {
-			return nil, nil
+		if !isRedisIndexNotFoundErr(err) {
+			return nil, err
 		}
-		return nil, err
+
+		b.mu.Lock()
+		_, hadIndex := b.indexes[dimension]
+		delete(b.indexes, dimension)
+		b.mu.Unlock()
+
+		if hadIndex {
+			zap.L().Warn("The Redis Search vector index no longer exists. It is re-created on the next upsert",
+				zap.Int("dimension", dimension))
+		}
+
+		return nil, nil
 	}
 
 	var matches []*rvectorv1.Result
@@ -424,34 +560,24 @@ func (b *vectorBackendSearch) delete(ctx context.Context, opts *vectorDeleteOpts
 
 func (b *vectorBackendSearch) deleteCollection(ctx context.Context, collection []byte) error {
 
-	dimensions, err := b.getIndexDimensions(ctx)
-	if err != nil {
-		return err
-	}
+	for _, match := range getVectorSearchCollectionMatches(collection) {
+		var cursor uint64
 
-	filter := getVectorSearchCollectionFilter(collection)
-
-	for _, dimension := range dimensions {
 		for {
-			res, err := b.redisC.FTSearchWithArgs(ctx, getVectorSearchIndex(dimension), filter,
-				&redis.FTSearchOptions{
-					NoContent:      true,
-					Limit:          vectorSearchPageSize,
-					DialectVersion: vectorSearchDialect,
-				}).Result()
+			keys, next, err := b.redisC.Scan(ctx, cursor, match, vectorSearchPageSize).Result()
 			if err != nil {
-				if isRedisIndexNotFoundErr(err) {
-					break
+				return err
+			}
+
+			if len(keys) > 0 {
+				if err := b.redisC.Del(ctx, keys...).Err(); err != nil {
+					return err
 				}
-				return err
 			}
 
-			if len(res.Docs) == 0 {
+			cursor = next
+			if cursor == 0 {
 				break
-			}
-
-			if err := b.deleteDocs(ctx, res.Docs); err != nil {
-				return err
 			}
 		}
 	}
