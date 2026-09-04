@@ -105,6 +105,11 @@ type RequestContext struct {
 	MCPResponse *MCPResponseInfo
 	LLMResponse *LLMResponseInfo
 
+	LLMEmbeddings     map[string][]float32
+	LLMSemanticCache  *LLMSemanticCacheInfo
+	LLMSemanticRouter *LLMSemanticRouterInfo
+	LLMResponseDenied bool
+
 	BodyDigest [sha256.Size]byte
 
 	OnResponse []func()
@@ -126,6 +131,38 @@ type LLMResponseInfo struct {
 
 	EventCount       uint64
 	TimeToFirstToken time.Duration
+}
+
+type LLMSemanticCacheInfo struct {
+	Result     corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result
+	Similarity float32
+	IsStored   bool
+}
+
+func (r *LLMSemanticCacheInfo) IsHit() bool {
+	if r == nil {
+		return false
+	}
+	switch r.Result {
+	case corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
+		corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT:
+		return true
+	default:
+		return false
+	}
+}
+
+type LLMSemanticRouterInfo struct {
+	Route      string
+	Similarity float32
+	Model      string
+}
+
+func (r *LLMSemanticRouterInfo) GetModel() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
 }
 
 func (r *LLMResponseInfo) GetModel() string {

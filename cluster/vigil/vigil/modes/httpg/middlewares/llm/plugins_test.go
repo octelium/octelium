@@ -70,6 +70,9 @@ type pluginOpts struct {
 	rateLimitC  *fakeRateLimit
 	llmResponse *middlewares.LLMResponseInfo
 	downstream  *corev1.RequestContext
+
+	vectorC   *fakeVector
+	embedding *fakeEmbeddings
 }
 
 func newPlugin(name string,
@@ -95,6 +98,10 @@ func newPlugin(name string,
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_Reasoning{Reasoning: cur}
 	case *corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit:
 		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_{TokenRateLimit: cur}
+	case *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache:
+		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_{SemanticCache: cur}
+	case *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter:
+		ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter_{SemanticRouter: cur}
 	}
 
 	return ret
@@ -129,9 +136,25 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	if o.rateLimitC == nil {
 		o.rateLimitC = newFakeRateLimit()
 	}
+	if o.vectorC == nil {
+		o.vectorC = newFakeVector()
+	}
+
+	octeliumC := &fakeOcteliumC{rateLimitC: o.rateLimitC, vectorC: o.vectorC}
+
+	semanticOpts := &SemanticOpts{
+		CELEngine: celEngine,
+		SvcUID:    newService().Metadata.Uid,
+	}
+	if o.embedding != nil {
+		semanticOpts.Upstream = o.embedding.upstreamFn()
+	}
 
 	mdlwr, err = NewTokenRateLimit(ctx, mdlwr, celEngine,
-		&fakeOcteliumC{rateLimitC: o.rateLimitC}, newService().Metadata.Uid)
+		octeliumC, newService().Metadata.Uid)
+	assert.Nil(t, err)
+
+	mdlwr, err = NewSemanticCache(ctx, mdlwr, octeliumC, semanticOpts)
 	assert.Nil(t, err)
 
 	mdlwr, err = NewReasoning(ctx, mdlwr, celEngine)
@@ -141,6 +164,9 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	assert.Nil(t, err)
 
 	mdlwr, err = NewPrompt(ctx, mdlwr, celEngine)
+	assert.Nil(t, err)
+
+	mdlwr, err = NewSemanticRouter(ctx, mdlwr, semanticOpts)
 	assert.Nil(t, err)
 
 	mdlwr, err = NewTools(ctx, mdlwr, celEngine)
@@ -163,6 +189,9 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 		Plugins:   o.plugins,
 		Model:     o.model,
 		Reasoning: o.reasoning,
+	}
+	if o.embedding != nil {
+		cfg.Embedding = o.embedding.config()
 	}
 	svcCfg := &corev1.Service_Spec_Config{
 		Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},

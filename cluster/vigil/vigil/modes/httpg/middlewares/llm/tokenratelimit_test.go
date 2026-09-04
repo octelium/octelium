@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
+	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -38,10 +39,15 @@ const chatBodyWithMaxTokens = `{"model":"gpt-4o","max_tokens":900,` +
 type fakeOcteliumC struct {
 	octeliumc.ClientInterface
 	rateLimitC *fakeRateLimit
+	vectorC    *fakeVector
 }
 
 func (c *fakeOcteliumC) RateLimitC() rratelimitv1.MainServiceClient {
 	return c.rateLimitC
+}
+
+func (c *fakeOcteliumC) VectorC() rvectorv1.MainServiceClient {
+	return c.vectorC
 }
 
 type fakeRateLimit struct {

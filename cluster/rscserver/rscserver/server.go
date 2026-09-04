@@ -36,6 +36,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
+	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/redisutils"
@@ -213,6 +214,13 @@ func (s *Server) Run(ctx context.Context) error {
 			redisC: s.redisC,
 		}
 		rlockv1.RegisterMainServiceServer(s.grpcSrv, lockSrv)
+	}
+
+	{
+		vectorSrv := &srvVector{
+			redisC: s.redisC,
+		}
+		rvectorv1.RegisterMainServiceServer(s.grpcSrv, vectorSrv)
 	}
 
 	if s.opts.RegisterResourceFn != nil {

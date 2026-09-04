@@ -83,6 +83,14 @@ func (m *model) resolve(ctx context.Context, w http.ResponseWriter,
 	svcCfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig)
 	ret := svcCfg.GetLLM().GetModel()
 
+	if val := reqCtx.LLMSemanticRouter.GetModel(); val != "" {
+		ret = &corev1.Service_Spec_Config_LLM_Model{
+			Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+				Value: val,
+			},
+		}
+	}
+
 	for _, plugin := range svcCfg.GetLLMPlugins() {
 		cfg := plugin.GetModel()
 		if cfg == nil {

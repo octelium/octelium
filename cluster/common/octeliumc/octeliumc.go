@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
+	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/octeliumc/middlewares"
 	"github.com/octelium/octelium/cluster/common/spiffec"
@@ -40,6 +41,7 @@ type Client struct {
 	cacheC          rcachev1.MainServiceClient
 	rateLimitC      rratelimitv1.MainServiceClient
 	lockC           rlockv1.MainServiceClient
+	vectorC         rvectorv1.MainServiceClient
 	clusterV1UtilsC *clusterV1UtilsC
 }
 
@@ -98,6 +100,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 		cacheC:          rcachev1.NewMainServiceClient(grpcConn),
 		rateLimitC:      rratelimitv1.NewMainServiceClient(grpcConn),
 		lockC:           rlockv1.NewMainServiceClient(grpcConn),
+		vectorC:         rvectorv1.NewMainServiceClient(grpcConn),
 		clusterV1UtilsC: &clusterV1UtilsC{},
 	}
 
@@ -122,6 +125,10 @@ func (c *Client) LockC() rlockv1.MainServiceClient {
 	return c.lockC
 }
 
+func (c *Client) VectorC() rvectorv1.MainServiceClient {
+	return c.vectorC
+}
+
 func (c *Client) CoreV1Utils() CoreV1Utils {
 	return c.clusterV1UtilsC
 }
@@ -132,6 +139,7 @@ type ClientInterface interface {
 	CacheC() rcachev1.MainServiceClient
 	RateLimitC() rratelimitv1.MainServiceClient
 	LockC() rlockv1.MainServiceClient
+	VectorC() rvectorv1.MainServiceClient
 }
 
 type clusterV1UtilsC struct {

@@ -22,6 +22,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/pkg/errors"
@@ -273,6 +274,29 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
+func (s *Server) getLLMSemanticOpts() *llm.SemanticOpts {
+	return &llm.SemanticOpts{
+		CELEngine: s.celEngine,
+		SecretMan: s.secretMan,
+		SvcUID:    s.svcUID,
+		Upstream: func(ctx context.Context) (*url.URL, error) {
+			reqCtx := middlewares.GetCtxRequestContext(ctx)
+			upstream, err := s.lbManager.GetUpstream(ctx, reqCtx.AuthResponse)
+			if err != nil {
+				return nil, err
+			}
+
+			ret := *upstream.URL
+			if upstream.IsUser {
+				ret.Host = upstream.HostPort
+			}
+			ret.Path = ret.Path + upstream.GetPath()
+
+			return &ret, nil
+		},
+	}
+}
+
 func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.Handler, error) {
 	chain := middlewares.New()
 
@@ -388,6 +412,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewSemanticRouter(ctx, next, s.getLLMSemanticOpts())
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return llm.NewPrompt(ctx, next, s.celEngine)
 	})
 
@@ -401,6 +429,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return llm.NewReasoning(ctx, next, s.celEngine)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewSemanticCache(ctx, next, s.octeliumC, s.getLLMSemanticOpts())
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

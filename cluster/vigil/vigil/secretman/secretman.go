@@ -152,10 +152,56 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 		}
 	}
 
+	doSetAuthSecrets := func(authS *corev1.Service_Spec_Config_HTTP_Auth) {
+		if authS == nil {
+			return
+		}
+
+		if authS.GetBearer() != nil && authS.GetBearer().GetFromSecret() != "" {
+			doAppend(authS.GetBearer().GetFromSecret())
+		}
+
+		if authS.GetBasic() != nil && authS.GetBasic().GetPassword() != nil &&
+			authS.GetBasic().GetPassword().GetFromSecret() != "" {
+			doAppend(authS.GetBasic().GetPassword().GetFromSecret())
+		}
+
+		if authS.GetCustom() != nil && authS.GetCustom().GetValue() != nil &&
+			authS.GetCustom().GetValue().GetFromSecret() != "" {
+			doAppend(authS.GetCustom().GetValue().GetFromSecret())
+		}
+
+		if authS.GetSigv4() != nil && authS.GetSigv4().GetSecretAccessKey() != nil &&
+			authS.GetSigv4().GetSecretAccessKey().GetFromSecret() != "" {
+			doAppend(authS.GetSigv4().GetSecretAccessKey().GetFromSecret())
+		}
+
+		if authS.GetOauth2ClientCredentials() != nil &&
+			authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
+			authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret() != "" {
+			doAppend(authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret())
+		}
+	}
+
+	doSetEmbeddingSecrets := func(cfg *corev1.Service_Spec_Config_LLM_Embedding) {
+		if cfg.GetSource().GetUpstream() != nil {
+			doSetAuthSecrets(cfg.GetSource().GetUpstream().GetAuth())
+		}
+	}
+
 	doSetCfgSecrets := func(cfg *corev1.Service_Spec_Config) {
 		if cfg == nil {
 			return
 		}
+
+		if cfg.GetLlm() != nil {
+			doSetEmbeddingSecrets(cfg.GetLlm().GetEmbedding())
+			for _, plugin := range cfg.GetLlm().GetPlugins() {
+				doSetEmbeddingSecrets(plugin.GetSemanticCache().GetEmbedding())
+				doSetEmbeddingSecrets(plugin.GetSemanticRouter().GetEmbedding())
+			}
+		}
+
 		if cfg.GetSsh() != nil {
 			if cfg.GetSsh().Auth != nil &&
 				cfg.GetSsh().Auth.GetPassword() != nil &&
@@ -178,29 +224,11 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 		}
 
 		if authS := ucorev1.ToServiceConfig(cfg).GetHTTPAuth(); authS != nil {
-			if authS.GetBearer() != nil && authS.GetBearer().GetFromSecret() != "" {
-				doAppend(authS.GetBearer().GetFromSecret())
-			}
-
-			if authS.GetBasic() != nil && authS.GetBasic().GetPassword() != nil &&
-				authS.GetBasic().GetPassword().GetFromSecret() != "" {
-				doAppend(authS.GetBasic().GetPassword().GetFromSecret())
-			}
-
-			if authS.GetCustom() != nil && authS.GetCustom().GetValue() != nil &&
-				authS.GetCustom().GetValue().GetFromSecret() != "" {
-				doAppend(authS.GetCustom().GetValue().GetFromSecret())
-			}
-
-			if authS.GetSigv4() != nil && authS.GetSigv4().GetSecretAccessKey() != nil &&
-				authS.GetSigv4().GetSecretAccessKey().GetFromSecret() != "" {
-				doAppend(authS.GetSigv4().GetSecretAccessKey().GetFromSecret())
-			}
+			doSetAuthSecrets(authS)
 
 			if authS.GetOauth2ClientCredentials() != nil &&
 				authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
 				authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret() != "" {
-				doAppend(authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret())
 
 				defer s.setOAuth2CCToken(ctx, &GetOAuth2CCTokenReq{
 					ClientID:   authS.GetOauth2ClientCredentials().ClientID,

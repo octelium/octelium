@@ -87,8 +87,11 @@ func newLLMReqCtx(t *testing.T,
 
 func serveLLMLog(t *testing.T, cfg *corev1.Service_Spec_Config_LLM,
 	respBody string, isSSE bool) *corev1.AccessLog_Entry_Info_LLM {
+	return serveLLMLogCtx(t, newLLMReqCtx(t, cfg), respBody, isSSE)
+}
 
-	reqCtx := newLLMReqCtx(t, cfg)
+func serveLLMLogCtx(t *testing.T, reqCtx *middlewares.RequestContext,
+	respBody string, isSSE bool) *corev1.AccessLog_Entry_Info_LLM {
 
 	req := httptest.NewRequest(http.MethodPost,
 		"http://my-llm.example.com/v1/chat/completions", strings.NewReader(llmReqBody))
@@ -581,4 +584,55 @@ func TestLLMAccessLogEventStreamOversized(t *testing.T) {
 
 	assert.True(t, crw.sseTruncated)
 	assert.Equal(t, int64(0), crw.eventCount())
+}
+
+func TestLLMAccessLogSemantic(t *testing.T) {
+	{
+		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+		reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
+			Result:     corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT,
+			Similarity: 0.97,
+		}
+		reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
+			Route:      "code",
+			Similarity: 0.88,
+			Model:      "gpt-5",
+		}
+
+		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
+
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT,
+			llmC.SemanticCache.Result)
+		assert.InDelta(t, 0.97, llmC.SemanticCache.Similarity, 0.0001)
+		assert.False(t, llmC.SemanticCache.IsStored)
+
+		assert.Equal(t, "code", llmC.SemanticRouter.Route)
+		assert.Equal(t, "gpt-5", llmC.SemanticRouter.Model)
+		assert.InDelta(t, 0.88, llmC.SemanticRouter.Similarity, 0.0001)
+
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_CACHED, llmC.Usage.Source)
+		assert.Equal(t, uint64(20), llmC.Usage.TotalTokens)
+	}
+
+	{
+		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+		reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
+			Result:   corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			IsStored: true,
+		}
+
+		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
+
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			llmC.SemanticCache.Result)
+		assert.True(t, llmC.SemanticCache.IsStored)
+		assert.Nil(t, llmC.SemanticRouter)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	}
+
+	{
+		llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, llmRespBody, false)
+		assert.Nil(t, llmC.SemanticCache)
+		assert.Nil(t, llmC.SemanticRouter)
+	}
 }

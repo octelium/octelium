@@ -236,6 +236,8 @@ func (m *middleware) getLLMAccessLog(
 	llmC.Model = obs.model
 	llmC.FinishReason = obs.finishReason
 	llmC.Usage = getLLMUsage(reqCtx, crw, obs, phase)
+	llmC.SemanticCache = getLLMSemanticCache(reqCtx)
+	llmC.SemanticRouter = getLLMSemanticRouter(reqCtx)
 
 	if !obs.firstTokenAt.IsZero() {
 		if ms := obs.firstTokenAt.Sub(reqCtx.CreatedAt).Milliseconds(); ms >= 0 &&
@@ -251,8 +253,46 @@ func (m *middleware) getLLMAccessLog(
 	return logE
 }
 
+func getLLMSemanticCache(reqCtx *middlewares.RequestContext) *corev1.AccessLog_Entry_Info_LLM_SemanticCache {
+	cur := reqCtx.LLMSemanticCache
+	if cur == nil {
+		return nil
+	}
+
+	return &corev1.AccessLog_Entry_Info_LLM_SemanticCache{
+		Result:     cur.Result,
+		Similarity: cur.Similarity,
+		IsStored:   cur.IsStored,
+	}
+}
+
+func getLLMSemanticRouter(reqCtx *middlewares.RequestContext) *corev1.AccessLog_Entry_Info_LLM_SemanticRouter {
+	cur := reqCtx.LLMSemanticRouter
+	if cur == nil {
+		return nil
+	}
+
+	return &corev1.AccessLog_Entry_Info_LLM_SemanticRouter{
+		Route:      cur.Route,
+		Similarity: cur.Similarity,
+		Model:      cur.Model,
+	}
+}
+
 func getLLMUsage(reqCtx *middlewares.RequestContext, crw *responseWriter,
 	obs *llmObserver, phase logPhase) *corev1.AccessLog_Entry_Info_LLM_Usage {
+
+	if reqCtx.LLMSemanticCache.IsHit() {
+		return &corev1.AccessLog_Entry_Info_LLM_Usage{
+			Source:                   corev1.AccessLog_Entry_Info_LLM_Usage_CACHED,
+			InputTokens:              obs.usage.InputTokens,
+			OutputTokens:             obs.usage.OutputTokens,
+			TotalTokens:              obs.usage.TotalTokens,
+			CacheReadInputTokens:     obs.usage.CacheReadInputTokens,
+			CacheCreationInputTokens: obs.usage.CacheCreationInputTokens,
+			ReasoningTokens:          obs.usage.ReasoningTokens,
+		}
+	}
 
 	if !obs.usage.IsSet {
 		if crw.statusCode >= http.StatusBadRequest ||

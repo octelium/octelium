@@ -46,6 +46,8 @@ const (
 	ErrCodeGuardrail       = "octelium_guardrail"
 	ErrCodeReasoning       = "octelium_reasoning"
 	ErrCodeTokenRateLimit  = "octelium_token_rate_limit"
+	ErrCodeSemanticCache   = "octelium_semantic_cache"
+	ErrCodeSemanticRouter  = "octelium_semantic_router"
 )
 
 type openAIError struct {

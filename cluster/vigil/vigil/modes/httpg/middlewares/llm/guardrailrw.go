@@ -219,6 +219,7 @@ func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
 	}
 
 	rw.hdrWritten = true
+	rw.reqCtx.LLMResponseDenied = true
 
 	var cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail
 	if active != nil {
