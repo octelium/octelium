@@ -29,12 +29,12 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/elastic/go-elasticsearch/v9"
-	"github.com/go-redis/redis/v8"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/nats-io/nats.go"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"

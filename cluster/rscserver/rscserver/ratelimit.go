@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver/rerr"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/redis/go-redis/v9"
 )
 
 type srvRateLimit struct {
@@ -50,7 +50,7 @@ func (s *srvRateLimit) CheckSlidingWindow(ctx context.Context,
 
 	pipe.ZRemRangeByScore(ctx, key, "0", fmt.Sprint(windowStart))
 
-	pipe.ZAdd(ctx, key, &redis.Z{Score: float64(now), Member: now})
+	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now), Member: now})
 
 	countCmd := pipe.ZCard(ctx, key)
 

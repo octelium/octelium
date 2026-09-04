@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -66,8 +66,9 @@ func (s *Server) publishMessage(ctx context.Context, api, version, kind string, 
 	}
 
 	if err := s.redisC.XAdd(ctx, &redis.XAddArgs{
-		Stream:       getRscStreamKey(api, version, kind),
-		MaxLenApprox: rscStreamMaxLen,
+		Stream: getRscStreamKey(api, version, kind),
+		MaxLen: rscStreamMaxLen,
+		Approx: true,
 		Values: map[string]any{
 			rscStreamFieldData: string(data),
 		},

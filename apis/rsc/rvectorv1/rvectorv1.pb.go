@@ -45,7 +45,9 @@ type Entry struct {
 	Id []byte `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// Vector is the vector itself. Every value has to be finite: a NaN or an
 	// infinity is rejected rather than stored, since a single one of them makes
-	// the similarity of the entire Partition undefined. Note that the number of
+	// the similarity of the entire Partition undefined. A vector whose values
+	// are all zero is rejected for the same reason, since it has no direction
+	// and therefore no cosine similarity to anything. Note that the number of
 	// the values, which is the dimension of the vector, is bounded by an
 	// internal hard limit.
 	Vector []float32 `protobuf:"fixed32,2,rep,packed,name=vector,proto3" json:"vector,omitempty"`
@@ -190,9 +192,11 @@ type UpsertVectorsRequest struct {
 	// digest of the caller's identity and of an exact execution context). An
 	// empty Partition is a Partition of its own rather than a wildcard.
 	Partition []byte `protobuf:"bytes,2,opt,name=partition,proto3" json:"partition,omitempty"`
-	// Entries is the set of the entries that are stored. Note that an upsert is
-	// not atomic across the entries: an implementation is allowed to apply them
-	// one at a time.
+	// Entries is the set of the entries that are stored. Every one of them has
+	// to carry a vector of the same dimension, since a single request that mixed
+	// dimensions would silently split the corpus that it stores into parts that
+	// can never be searched together. Note that an upsert is not atomic across
+	// the entries: an implementation is allowed to apply them one at a time.
 	Entries []*Entry `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
 	// Duration is the lifetime of the entries. Zero stores them until they are
 	// deleted, which is what a corpus that is derived from a configuration

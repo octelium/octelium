@@ -18,21 +18,21 @@ package rscserver
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"sort"
+	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
-	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver/rerr"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 type srvVector struct {
-	redisC *redis.Client
+	redisC  *redis.Client
+	backend vectorBackend
 	rvectorv1.UnimplementedMainServiceServer
 }
 
@@ -49,97 +49,73 @@ const (
 	vectorKeyGrace            = 10 * time.Second
 )
 
-const vectorPruneLua = `
-local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-for i = 1, #expired do
-	redis.call('ZREM', KEYS[1], expired[i])
-	redis.call('HDEL', KEYS[2], expired[i])
-	redis.call('HDEL', KEYS[3], expired[i])
-end
-`
-
-const vectorExpiryLua = `
-local top = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-if #top == 0 then
-	redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
-else
-	local ttl = 0
-	if tonumber(top[2]) < noExpiry then
-		ttl = math.ceil(tonumber(top[2]) - now) + grace
-	end
-	for j = 1, 3 do
-		if ttl > 0 then
-			redis.call('PEXPIRE', KEYS[j], ttl)
-		else
-			redis.call('PERSIST', KEYS[j])
-		end
-	end
-end
-`
-
-var vectorUpsertScript = redis.NewScript(`
-local now = tonumber(ARGV[1])
-local grace = tonumber(ARGV[3])
-local noExpiry = tonumber(ARGV[5])
-` + vectorPruneLua + `
-local i = 6
-while i + 2 <= #ARGV do
-	redis.call('ZADD', KEYS[1], ARGV[2], ARGV[i])
-	redis.call('HSET', KEYS[2], ARGV[i], ARGV[i + 1])
-	redis.call('HSET', KEYS[3], ARGV[i], ARGV[i + 2])
-	i = i + 3
-end
-local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[4])
-if excess > 0 then
-	local evicted = redis.call('ZRANGE', KEYS[1], 0, excess - 1)
-	for j = 1, #evicted do
-		redis.call('ZREM', KEYS[1], evicted[j])
-		redis.call('HDEL', KEYS[2], evicted[j])
-		redis.call('HDEL', KEYS[3], evicted[j])
-	end
-end
-` + vectorExpiryLua + `
-return 1
-`)
-
-var vectorGetScript = redis.NewScript(vectorPruneLua + `
-local ret = {}
-for i = 2, #ARGV do
-	local data = redis.call('HGET', KEYS[3], ARGV[i])
-	if data then
-		ret[#ret + 1] = ARGV[i]
-		ret[#ret + 1] = data
-	end
-end
-return ret
-`)
-
-var vectorSearchScript = redis.NewScript(vectorPruneLua + `
-return redis.call('HGETALL', KEYS[2])
-`)
-
-var vectorDeleteScript = redis.NewScript(`
-local now = tonumber(ARGV[1])
-local grace = tonumber(ARGV[2])
-local noExpiry = tonumber(ARGV[3])
-` + vectorPruneLua + `
-for i = 4, #ARGV do
-	redis.call('ZREM', KEYS[1], ARGV[i])
-	redis.call('HDEL', KEYS[2], ARGV[i])
-	redis.call('HDEL', KEYS[3], ARGV[i])
-end
-` + vectorExpiryLua + `
-return 1
-`)
-
-func getVectorKeys(collection, partition []byte) []string {
-	prefix := fmt.Sprintf("octelium:vec:%s:%s",
-		vutils.Sha256SumHex(collection), vutils.Sha256SumHex(partition))
-	return []string{prefix, fmt.Sprintf("%s:v", prefix), fmt.Sprintf("%s:d", prefix)}
+type vectorBackend interface {
+	upsert(ctx context.Context, opts *vectorUpsertOpts) error
+	get(ctx context.Context, opts *vectorGetOpts) ([]*rvectorv1.Result, error)
+	search(ctx context.Context, opts *vectorSearchOpts) ([]*rvectorv1.Result, error)
+	delete(ctx context.Context, opts *vectorDeleteOpts) error
+	deleteCollection(ctx context.Context, collection []byte) error
 }
 
-func getVectorCollectionMatch(collection []byte) string {
-	return fmt.Sprintf("octelium:vec:%s:*", vutils.Sha256SumHex(collection))
+type vectorUpsertOpts struct {
+	collection []byte
+	partition  []byte
+	entries    []*rvectorv1.Entry
+	dimension  int
+	now        time.Time
+	score      int64
+}
+
+type vectorGetOpts struct {
+	collection []byte
+	partition  []byte
+	ids        [][]byte
+	now        time.Time
+}
+
+type vectorSearchOpts struct {
+	collection    []byte
+	partition     []byte
+	vector        []float32
+	minSimilarity float32
+	limit         int
+	now           time.Time
+}
+
+type vectorDeleteOpts struct {
+	collection []byte
+	partition  []byte
+	ids        [][]byte
+	now        time.Time
+}
+
+func newSrvVector(ctx context.Context, redisC *redis.Client) *srvVector {
+	return &srvVector{
+		redisC:  redisC,
+		backend: newVectorBackend(ctx, redisC),
+	}
+}
+
+func newVectorBackend(ctx context.Context, redisC *redis.Client) vectorBackend {
+	err := redisC.FT_List(ctx).Err()
+	switch {
+	case err == nil:
+		zap.L().Debug("Redis Search is available. Using it for the vector store")
+		return newVectorBackendSearch(redisC)
+	case isRedisUnknownCommandErr(err):
+		zap.L().Debug("Redis Search is unavailable. Using the fallback vector store")
+	default:
+		zap.L().Warn("Could not check whether Redis Search is available. Using the fallback vector store",
+			zap.Error(err))
+	}
+
+	return &vectorBackendFallback{
+		redisC: redisC,
+	}
+}
+
+func isRedisUnknownCommandErr(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unknown command")
 }
 
 func encodeVector(vec []float32) []byte {
@@ -183,19 +159,23 @@ func normalizeVector(vec []float32) []float32 {
 	return ret
 }
 
+func clampVectorSimilarity(arg float64) float32 {
+	switch {
+	case arg <= 0 || math.IsNaN(arg):
+		return 0
+	case arg > 1:
+		return 1
+	default:
+		return float32(arg)
+	}
+}
+
 func getVectorSimilarity(a, b []float32) float32 {
 	var sum float32
 	for i := range a {
 		sum += a[i] * b[i]
 	}
-	switch {
-	case sum <= 0:
-		return 0
-	case sum > 1:
-		return 1
-	default:
-		return sum
-	}
+	return clampVectorSimilarity(float64(sum))
 }
 
 func checkVectorCollection(collection []byte) error {
@@ -232,11 +212,19 @@ func checkVector(vec []float32) error {
 	if len(vec) > maxVectorDimension {
 		return grpcutils.InvalidArg("Vector dimension is too large: %d", len(vec))
 	}
+
+	var sum float64
 	for _, val := range vec {
 		if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
 			return grpcutils.InvalidArg("Vector values must be finite")
 		}
+		sum += float64(val) * float64(val)
 	}
+
+	if sum <= 0 {
+		return grpcutils.InvalidArg("Zero vectors are not allowed")
+	}
+
 	return nil
 }
 
@@ -266,8 +254,7 @@ func (s *srvVector) UpsertVectors(ctx context.Context,
 		score = now.Add(duration).UnixMilli()
 	}
 
-	args := []any{now.UnixMilli(), score, vectorKeyGrace.Milliseconds(),
-		maxVectorPartitionEntries, int64(vectorNoExpiryScore)}
+	dimension := len(req.Entries[0].Vector)
 
 	for _, entry := range req.Entries {
 		if err := checkVectorID(entry.Id); err != nil {
@@ -276,15 +263,23 @@ func (s *srvVector) UpsertVectors(ctx context.Context,
 		if err := checkVector(entry.Vector); err != nil {
 			return nil, err
 		}
+		if len(entry.Vector) != dimension {
+			return nil, grpcutils.InvalidArg("All the entries must have the same dimension: %d and %d",
+				dimension, len(entry.Vector))
+		}
 		if len(entry.Data) > maxVectorDataBytes {
 			return nil, grpcutils.InvalidArg("Entry data is too large: %d", len(entry.Data))
 		}
-
-		args = append(args, entry.Id, encodeVector(normalizeVector(entry.Vector)), entry.Data)
 	}
 
-	if err := vectorUpsertScript.Run(ctx, s.redisC,
-		getVectorKeys(req.Collection, req.Partition), args...).Err(); err != nil {
+	if err := s.backend.upsert(ctx, &vectorUpsertOpts{
+		collection: req.Collection,
+		partition:  req.Partition,
+		entries:    req.Entries,
+		dimension:  dimension,
+		now:        now,
+		score:      score,
+	}); err != nil {
 		return nil, rerr.InternalWithErr(err)
 	}
 
@@ -306,29 +301,25 @@ func (s *srvVector) GetVectors(ctx context.Context,
 		return nil, grpcutils.InvalidArg("Too many ids: %d", len(req.Ids))
 	}
 
-	args := []any{time.Now().UnixMilli()}
 	for _, id := range req.Ids {
 		if err := checkVectorID(id); err != nil {
 			return nil, err
 		}
-		args = append(args, id)
 	}
 
-	res, err := vectorGetScript.Run(ctx, s.redisC,
-		getVectorKeys(req.Collection, req.Partition), args...).StringSlice()
+	results, err := s.backend.get(ctx, &vectorGetOpts{
+		collection: req.Collection,
+		partition:  req.Partition,
+		ids:        req.Ids,
+		now:        time.Now(),
+	})
 	if err != nil {
 		return nil, rerr.InternalWithErr(err)
 	}
 
-	ret := &rvectorv1.GetVectorsResponse{}
-	for i := 0; i+1 < len(res); i += 2 {
-		ret.Results = append(ret.Results, &rvectorv1.Result{
-			Id:   []byte(res[i]),
-			Data: []byte(res[i+1]),
-		})
-	}
-
-	return ret, nil
+	return &rvectorv1.GetVectorsResponse{
+		Results: results,
+	}, nil
 }
 
 func (s *srvVector) SearchVectors(ctx context.Context,
@@ -354,70 +345,21 @@ func (s *srvVector) SearchVectors(ctx context.Context,
 		limit = maxVectorSearchLimit
 	}
 
-	keys := getVectorKeys(req.Collection, req.Partition)
-
-	res, err := vectorSearchScript.Run(ctx, s.redisC, keys, time.Now().UnixMilli()).StringSlice()
-	if err != nil {
-		return nil, rerr.InternalWithErr(err)
-	}
-
-	query := normalizeVector(req.Vector)
-
-	var matches []*rvectorv1.Result
-	for i := 0; i+1 < len(res); i += 2 {
-		vec := decodeVector(res[i+1])
-		if len(vec) != len(query) {
-			continue
-		}
-
-		similarity := getVectorSimilarity(query, vec)
-		if similarity < req.MinSimilarity {
-			continue
-		}
-
-		matches = append(matches, &rvectorv1.Result{
-			Id:         []byte(res[i]),
-			Similarity: similarity,
-		})
-	}
-
-	if len(matches) == 0 {
-		return &rvectorv1.SearchVectorsResponse{}, nil
-	}
-
-	sort.SliceStable(matches, func(i, j int) bool {
-		return matches[i].Similarity > matches[j].Similarity
+	results, err := s.backend.search(ctx, &vectorSearchOpts{
+		collection:    req.Collection,
+		partition:     req.Partition,
+		vector:        req.Vector,
+		minSimilarity: req.MinSimilarity,
+		limit:         limit,
+		now:           time.Now(),
 	})
-
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
-
-	fields := make([]string, 0, len(matches))
-	for _, match := range matches {
-		fields = append(fields, string(match.Id))
-	}
-
-	vals, err := s.redisC.HMGet(ctx, keys[2], fields...).Result()
 	if err != nil {
 		return nil, rerr.InternalWithErr(err)
 	}
 
-	ret := &rvectorv1.SearchVectorsResponse{}
-	for i, match := range matches {
-		if i >= len(vals) {
-			break
-		}
-		data, ok := vals[i].(string)
-		if !ok {
-			continue
-		}
-
-		match.Data = []byte(data)
-		ret.Results = append(ret.Results, match)
-	}
-
-	return ret, nil
+	return &rvectorv1.SearchVectorsResponse{
+		Results: results,
+	}, nil
 }
 
 func (s *srvVector) DeleteVectors(ctx context.Context,
@@ -435,17 +377,18 @@ func (s *srvVector) DeleteVectors(ctx context.Context,
 		return nil, grpcutils.InvalidArg("Too many ids: %d", len(req.Ids))
 	}
 
-	args := []any{time.Now().UnixMilli(), vectorKeyGrace.Milliseconds(),
-		int64(vectorNoExpiryScore)}
 	for _, id := range req.Ids {
 		if err := checkVectorID(id); err != nil {
 			return nil, err
 		}
-		args = append(args, id)
 	}
 
-	if err := vectorDeleteScript.Run(ctx, s.redisC,
-		getVectorKeys(req.Collection, req.Partition), args...).Err(); err != nil {
+	if err := s.backend.delete(ctx, &vectorDeleteOpts{
+		collection: req.Collection,
+		partition:  req.Partition,
+		ids:        req.Ids,
+		now:        time.Now(),
+	}); err != nil {
 		return nil, rerr.InternalWithErr(err)
 	}
 
@@ -459,24 +402,9 @@ func (s *srvVector) DeleteCollection(ctx context.Context,
 		return nil, err
 	}
 
-	match := getVectorCollectionMatch(req.Collection)
-	var cursor uint64
-
-	for {
-		keys, next, err := s.redisC.Scan(ctx, cursor, match, 256).Result()
-		if err != nil {
-			return nil, rerr.InternalWithErr(err)
-		}
-
-		if len(keys) > 0 {
-			if err := s.redisC.Del(ctx, keys...).Err(); err != nil {
-				return nil, rerr.InternalWithErr(err)
-			}
-		}
-
-		cursor = next
-		if cursor == 0 {
-			return &rvectorv1.DeleteCollectionResponse{}, nil
-		}
+	if err := s.backend.deleteCollection(ctx, req.Collection); err != nil {
+		return nil, rerr.InternalWithErr(err)
 	}
+
+	return &rvectorv1.DeleteCollectionResponse{}, nil
 }

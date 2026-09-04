@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	_ "github.com/lib/pq"
@@ -46,6 +45,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -217,9 +217,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	{
-		vectorSrv := &srvVector{
-			redisC: s.redisC,
-		}
+		vectorSrv := newSrvVector(ctx, s.redisC)
 		rvectorv1.RegisterMainServiceServer(s.grpcSrv, vectorSrv)
 	}
 

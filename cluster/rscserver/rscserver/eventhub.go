@@ -24,21 +24,22 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
 const (
 	watchQueueSize = 4096
 
-	streamReadCount    = 500
-	streamReadBlock    = 30 * time.Second
-	streamRetryBackoff = 500 * time.Millisecond
-	streamStopTimeout  = 10 * time.Second
+	streamReadCount      = 500
+	streamReadBlock      = 30 * time.Second
+	streamRetryBackoff   = 500 * time.Millisecond
+	streamStopTimeout    = 10 * time.Second
+	streamUnblockTimeout = 3 * time.Second
 
 	streamIDZero = "0-0"
 )
@@ -115,6 +116,11 @@ func (sub *eventSubscriber) enqueue(ev *rmetav1.WatchEvent) bool {
 	}
 }
 
+type streamReadResult struct {
+	res []redis.XStream
+	err error
+}
+
 type eventHub struct {
 	redisC *redis.Client
 
@@ -122,8 +128,9 @@ type eventHub struct {
 	subs    map[string]map[*eventSubscriber]struct{}
 	cursors map[string]string
 
-	readMu     sync.Mutex
-	readCancel context.CancelFunc
+	readMu       sync.Mutex
+	readCancel   context.CancelFunc
+	readClientID int64
 
 	readGeneration atomic.Uint64
 
@@ -222,10 +229,23 @@ func (h *eventHub) wakeReader() {
 
 	h.readMu.Lock()
 	cancel := h.readCancel
+	clientID := h.readClientID
 	h.readMu.Unlock()
 
 	if cancel != nil {
 		cancel()
+	}
+
+	if clientID == 0 {
+		return
+	}
+
+	ctx, ctxCancel := context.WithTimeout(context.Background(), streamUnblockTimeout)
+	defer ctxCancel()
+
+	if err := h.redisC.ClientUnblock(ctx, clientID).Err(); err != nil {
+		zap.L().Debug("Could not unblock the rsc stream reader",
+			zap.Int64("clientID", clientID), zap.Error(err))
 	}
 }
 
@@ -445,10 +465,19 @@ func (h *eventHub) doRead(ctx context.Context) error {
 		return nil
 	}
 
+	conn := h.redisC.Conn()
+
+	clientID, err := conn.ClientID(ctx).Result()
+	if err != nil {
+		zap.L().Debug("Could not get the client ID of the rsc stream reader", zap.Error(err))
+		clientID = 0
+	}
+
 	readCtx, readCancel := context.WithCancel(ctx)
 
 	h.readMu.Lock()
 	h.readCancel = readCancel
+	h.readClientID = clientID
 	h.readMu.Unlock()
 
 	defer func() {
@@ -456,19 +485,40 @@ func (h *eventHub) doRead(ctx context.Context) error {
 
 		h.readMu.Lock()
 		h.readCancel = nil
+		h.readClientID = 0
 		h.readMu.Unlock()
 	}()
 
 	if h.readGeneration.Load() != generation {
+		conn.Close()
 		return nil
 	}
 
-	res, err := h.redisC.XRead(readCtx, &redis.XReadArgs{
-		Streams: args,
-		Count:   streamReadCount,
-		Block:   streamReadBlock,
-	}).Result()
-	if err != nil {
+	resCh := make(chan *streamReadResult, 1)
+	go func() {
+		defer conn.Close()
+
+		res, err := conn.XRead(readCtx, &redis.XReadArgs{
+			Streams: args,
+			Count:   streamReadCount,
+			Block:   streamReadBlock,
+		}).Result()
+
+		resCh <- &streamReadResult{
+			res: res,
+			err: err,
+		}
+	}()
+
+	var out *streamReadResult
+
+	select {
+	case out = <-resCh:
+	case <-readCtx.Done():
+		return nil
+	}
+
+	if err := out.err; err != nil {
 		if err == redis.Nil {
 			return nil
 		}
@@ -482,7 +532,7 @@ func (h *eventHub) doRead(ctx context.Context) error {
 		return err
 	}
 
-	for _, stream := range res {
+	for _, stream := range out.res {
 		api, version, kind, err := parseRscStreamKey(stream.Stream)
 		if err != nil {
 			zap.L().Error("Could not parse the Watch stream key",
