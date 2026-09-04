@@ -32,6 +32,16 @@ func (c *Controller) doSetDNS() error {
 		zap.L().Debug("Could not save the current resolv.conf", zap.Error(err))
 	}
 
+	if c.isFullDNS() {
+		zap.L().Debug("Full DNS mode. Setting DNS via networksetup")
+		if err := c.doSetDNSNetworkSetup(); err != nil {
+			zap.L().Warn("Could not doSetDNSNetworkSetup", zap.Error(err))
+			return c.doSetDNSResolvConf()
+		}
+
+		return nil
+	}
+
 	if err := c.doSetDNSScutil(); err != nil {
 		zap.L().Warn("Could not doSetDNSScutil", zap.Error(err))
 		if err := c.doSetDNSNetworkSetup(); err != nil {

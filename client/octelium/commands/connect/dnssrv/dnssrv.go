@@ -41,6 +41,8 @@ type Opts struct {
 	HasV6         bool
 	DNSGetter     DNSGetter
 	ListenAddr    string
+	IsFullDNS     bool
+	LookupIPFn    func(ctx context.Context, host string) ([]net.IP, error)
 	// FallbackServers []string
 	// UseFallback     bool
 }
@@ -58,6 +60,9 @@ type Server struct {
 	cache       *cache
 	cacheCancel context.CancelFunc
 	listenAddr  string
+	isFullDNS   bool
+	lookupIPFn  func(ctx context.Context, host string) ([]net.IP, error)
+	bootstrap   *bootstrapCache
 	// useFallback         bool
 }
 
@@ -92,6 +97,14 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 	if listenAddr == "" {
 		return nil, errors.Errorf("Local DNS: invalid listen address: %s", opts.ListenAddr)
 	}
+
+	lookupIPFn := opts.LookupIPFn
+	if lookupIPFn == nil {
+		lookupIPFn = func(ctx context.Context, host string) ([]net.IP, error) {
+			return net.DefaultResolver.LookupIP(ctx, "ip", host)
+		}
+	}
+
 	return &Server{
 		domain:     opts.ClusterDomain,
 		hasV4:      opts.HasV4,
@@ -99,6 +112,9 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 		dnsGetter:  opts.DNSGetter,
 		cache:      newCache(),
 		listenAddr: listenAddr,
+		isFullDNS:  opts.IsFullDNS,
+		lookupIPFn: lookupIPFn,
+		bootstrap:  newBootstrapCache(),
 	}, nil
 }
 
@@ -153,6 +169,11 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	upstreamAddrs := s.getUpstreamAddrs()
 	if len(upstreamAddrs) == 0 {
+		if ret := s.getBootstrapAnswer(domain, q.Qtype); ret != nil {
+			writeUpstreamReply(w, r, ret)
+			return
+		}
+
 		zap.L().Debug("Local DNS: no Cluster DNS servers available")
 		writeRcode(w, r, dns.RcodeServerFailure)
 		return
@@ -208,11 +229,9 @@ func (s *Server) getExchangeAnswer(domain string, typ uint16,
 		return cached, nil
 	}
 
-	if len(srvAddrs) == 0 {
-		return nil, errors.Errorf("No Cluster DNS servers available")
-	}
-
+	var ret *dns.Msg
 	var retErr error
+
 	for _, srvAddr := range srvAddrs {
 		r, err := s.doExchange(domain, typ, srvAddr)
 		if err != nil {
@@ -224,7 +243,24 @@ func (s *Server) getExchangeAnswer(domain string, typ uint16,
 
 		s.cache.set(domain, typ, r)
 
-		return r, nil
+		ret = r
+		break
+	}
+
+	if ret == nil || ret.Rcode != dns.RcodeSuccess {
+		if bootstrapRet := s.getBootstrapAnswer(domain, typ); bootstrapRet != nil {
+			zap.L().Debug("Local DNS: Serving a bootstrap answer",
+				zap.String("domain", domain))
+			return bootstrapRet, nil
+		}
+	}
+
+	if ret != nil {
+		return ret, nil
+	}
+
+	if retErr == nil {
+		retErr = errors.Errorf("No Cluster DNS servers available")
 	}
 
 	return nil, retErr
@@ -266,8 +302,122 @@ func (s *Server) isClusterName(domain string) bool {
 	return len(strings.Split(strings.TrimSuffix(domain, "."), ".")) == 1
 }
 
+const (
+	bootstrapLookupTimeout = 2 * time.Second
+	bootstrapTTL           = 60
+)
+
+func getBootstrapDomains(clusterDomain string) []string {
+	clusterDomain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(clusterDomain), "."))
+	if clusterDomain == "" || !govalidator.IsDNSName(clusterDomain) {
+		return nil
+	}
+
+	return []string{
+		dns.Fqdn(clusterDomain),
+		dns.Fqdn(fmt.Sprintf("octelium-api.%s", clusterDomain)),
+	}
+}
+
+func (s *Server) setBootstrapAnswers(ctx context.Context) {
+	if !s.isFullDNS {
+		return
+	}
+
+	domains := getBootstrapDomains(s.domain)
+	if len(domains) == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, bootstrapLookupTimeout)
+	defer cancel()
+
+	for _, domain := range domains {
+		ips, err := s.lookupIPFn(ctx, strings.TrimSuffix(domain, "."))
+		if err != nil {
+			zap.L().Debug("Local DNS: Could not resolve the bootstrap domain",
+				zap.String("domain", domain), zap.Error(err))
+			continue
+		}
+
+		zap.L().Debug("Local DNS: Setting the bootstrap answers of the domain",
+			zap.String("domain", domain), zap.Any("addrs", ips))
+
+		s.bootstrap.set(domain, ips)
+	}
+}
+
+func (s *Server) getBootstrapAnswer(domain string, typ uint16) *dns.Msg {
+	if !s.isFullDNS {
+		return nil
+	}
+
+	return s.bootstrap.get(domain, typ)
+}
+
+type bootstrapCache struct {
+	sync.RWMutex
+	cMap map[string]*dns.Msg
+}
+
+func newBootstrapCache() *bootstrapCache {
+	return &bootstrapCache{
+		cMap: make(map[string]*dns.Msg),
+	}
+}
+
+func getBootstrapMsg(domain string, typ uint16, ips []net.IP) *dns.Msg {
+	ret := new(dns.Msg)
+
+	for _, ip := range ips {
+		hdr := dns.RR_Header{
+			Name: domain, Rrtype: typ, Class: dns.ClassINET, Ttl: bootstrapTTL,
+		}
+
+		switch typ {
+		case dns.TypeA:
+			if ip4 := ip.To4(); ip4 != nil {
+				ret.Answer = append(ret.Answer, &dns.A{Hdr: hdr, A: ip4})
+			}
+		case dns.TypeAAAA:
+			if ip.To4() == nil && ip.To16() != nil {
+				ret.Answer = append(ret.Answer, &dns.AAAA{Hdr: hdr, AAAA: ip.To16()})
+			}
+		}
+	}
+
+	return ret
+}
+
+func (c *bootstrapCache) set(domain string, ips []net.IP) {
+	if len(ips) == 0 {
+		return
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	for _, typ := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		c.cMap[getCacheKey(domain, typ)] = getBootstrapMsg(domain, typ, ips)
+	}
+}
+
+func (c *bootstrapCache) get(domain string, typ uint16) *dns.Msg {
+	c.RLock()
+	defer c.RUnlock()
+
+	ret, ok := c.cMap[getCacheKey(domain, typ)]
+	if !ok {
+		return nil
+	}
+
+	return ret.Copy()
+}
+
 func (s *Server) Run() error {
 	zap.L().Debug("Starting running local DNS server", zap.String("addr", s.listenAddr))
+
+	s.setBootstrapAnswers(context.Background())
 
 	s.mu.Lock()
 	if s.isClosed {

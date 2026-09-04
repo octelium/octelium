@@ -48,6 +48,7 @@ type args struct {
 
 	UseLocalDNS        bool
 	LocalDNSListenAddr string
+	UseFullDNS         bool
 
 	TunnelMode string
 }
@@ -138,6 +139,9 @@ You can also use multiple scopes in the same command as follows "--scope service
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseLocalDNS, "localdns", false, "Enable local DNS server")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.LocalDNSListenAddr, "localdns-addr", "",
 		`Local DNS server listen address.`)
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseFullDNS, "full-dns", false,
+		`Route all DNS queries to the Cluster DNS server instead of only the ones belonging to the Cluster domain.
+This mode implicitly enables the local DNS server.`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.TunnelMode, "tunnel-mode", "",
 		`
 	The tunneling mode for the  connection. The current available values are "wg", "wireguard" which use WireGuard (i.e. the default tunneling mode)
@@ -148,6 +152,10 @@ You can also use multiple scopes in the same command as follows "--scope service
 
 func isQUICV0() bool {
 	return cmdArgs.TunnelMode == "quicv0" || os.Getenv("OCTELIUM_QUIC") == "true"
+}
+
+func isFullDNS() bool {
+	return cmdArgs.UseFullDNS || os.Getenv("OCTELIUM_FULL_DNS") == "true"
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

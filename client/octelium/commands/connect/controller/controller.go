@@ -251,6 +251,7 @@ func (c *Controller) startLocalDNSServer() {
 		HasV6:         c.ipv6Supported,
 		DNSGetter:     c,
 		ListenAddr:    c.getLocalDNSServerAddr(),
+		IsFullDNS:     c.isFullDNS(),
 	})
 	if err != nil {
 		disable(err)

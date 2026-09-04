@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -377,4 +378,223 @@ func TestGetRequestUDPSizeDefaultsToMin(t *testing.T) {
 
 	req.SetEdns0(100, false)
 	assert.Equal(t, dns.MinMsgSize, getRequestUDPSize(req))
+}
+
+func TestGetBootstrapDomains(t *testing.T) {
+	assert.Equal(t, []string{"example.com.", "octelium-api.example.com."},
+		getBootstrapDomains("example.com"))
+
+	assert.Equal(t, []string{"example.com.", "octelium-api.example.com."},
+		getBootstrapDomains("Example.COM."))
+
+	assert.Nil(t, getBootstrapDomains(""))
+	assert.Nil(t, getBootstrapDomains("   "))
+	assert.Nil(t, getBootstrapDomains("example com"))
+}
+
+func TestBootstrapCache(t *testing.T) {
+	c := newBootstrapCache()
+
+	domain := "octelium-api.example.com."
+
+	assert.Nil(t, c.get(domain, dns.TypeA))
+
+	c.set(domain, []net.IP{net.ParseIP("1.2.3.4"), net.ParseIP("fd00::1")})
+
+	res := c.get(domain, dns.TypeA)
+	assert.NotNil(t, res)
+	assert.Equal(t, 1, len(res.Answer))
+	assert.Equal(t, "1.2.3.4", res.Answer[0].(*dns.A).A.String())
+	assert.Equal(t, uint32(bootstrapTTL), res.Answer[0].Header().Ttl)
+
+	res.Answer[0].Header().Ttl = 1
+	assert.Equal(t, uint32(bootstrapTTL), c.get(domain, dns.TypeA).Answer[0].Header().Ttl)
+
+	res = c.get(domain, dns.TypeAAAA)
+	assert.NotNil(t, res)
+	assert.Equal(t, 1, len(res.Answer))
+	assert.Equal(t, "fd00::1", res.Answer[0].(*dns.AAAA).AAAA.String())
+
+	assert.NotNil(t, c.get("OCTELIUM-API.Example.COM.", dns.TypeA))
+	assert.Nil(t, c.get("example.com.", dns.TypeA))
+	assert.Nil(t, c.get(domain, dns.TypeMX))
+}
+
+func TestBootstrapCacheWithoutAddrs(t *testing.T) {
+	c := newBootstrapCache()
+
+	domain := "octelium-api.example.com."
+
+	c.set(domain, nil)
+	assert.Nil(t, c.get(domain, dns.TypeA))
+
+	c.set(domain, []net.IP{net.ParseIP("1.2.3.4")})
+
+	res := c.get(domain, dns.TypeAAAA)
+	assert.NotNil(t, res)
+	assert.Equal(t, 0, len(res.Answer))
+	assert.Equal(t, dns.RcodeSuccess, res.Rcode)
+}
+
+func newTestFullDNSServer(t *testing.T, listenAddr string, getter DNSGetter) *Server {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    listenAddr,
+		HasV4:         true,
+		HasV6:         true,
+		DNSGetter:     getter,
+		IsFullDNS:     true,
+		LookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
+			switch host {
+			case "octelium-api.example.com":
+				return []net.IP{net.ParseIP("1.2.3.4")}, nil
+			case "example.com":
+				return []net.IP{net.ParseIP("5.6.7.8")}, nil
+			default:
+				return nil, errors.Errorf("Unknown host: %s", host)
+			}
+		},
+	})
+	assert.Nil(t, err)
+
+	return srv
+}
+
+func TestServerBootstrapAnswersWithoutClusterDNSServers(t *testing.T) {
+	addr := "127.0.0.100:18057"
+
+	srv := newTestFullDNSServer(t, addr, &tstEmptyDNSGetter{})
+	assert.Nil(t, srv.Run())
+
+	c := dns.Client{Timeout: 5 * time.Second}
+
+	{
+		m := dns.Msg{}
+		m.SetQuestion("octelium-api.example.com.", dns.TypeA)
+
+		r, _, err := c.Exchange(&m, addr)
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, 1, len(r.Answer))
+		assert.Equal(t, "1.2.3.4", r.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		m := dns.Msg{}
+		m.SetQuestion("EXAMPLE.com.", dns.TypeA)
+
+		r, _, err := c.Exchange(&m, addr)
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, 1, len(r.Answer))
+		assert.Equal(t, "5.6.7.8", r.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		m := dns.Msg{}
+		m.SetQuestion("octelium-api.example.com.", dns.TypeAAAA)
+
+		r, _, err := c.Exchange(&m, addr)
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, 0, len(r.Answer))
+	}
+
+	{
+		m := dns.Msg{}
+		m.SetQuestion("google.com.", dns.TypeA)
+
+		r, _, err := c.Exchange(&m, addr)
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeServerFailure, r.Rcode)
+	}
+
+	assert.Nil(t, srv.Close())
+}
+
+func TestServerBootstrapAnswersOnUpstreamFailure(t *testing.T) {
+	srv := newTestFullDNSServer(t, "127.0.0.100:18058", &tstDNSGetter{})
+	srv.setBootstrapAnswers(context.Background())
+
+	unreachable := []string{"127.0.0.1:1"}
+
+	{
+		ret, err := srv.getExchangeAnswer("octelium-api.example.com.", dns.TypeA, unreachable)
+		assert.Nil(t, err)
+		assert.NotNil(t, ret)
+		assert.Equal(t, "1.2.3.4", ret.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		ret, err := srv.getExchangeAnswer("google.com.", dns.TypeA, unreachable)
+		assert.NotNil(t, err)
+		assert.Nil(t, ret)
+	}
+
+	{
+		ret, err := srv.getExchangeAnswer("octelium-api.example.com.", dns.TypeA, nil)
+		assert.Nil(t, err)
+		assert.NotNil(t, ret)
+	}
+}
+
+func TestServerSkipsBootstrapAnswersInSplitDNSMode(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    "127.0.0.100:18059",
+		HasV4:         true,
+		DNSGetter:     &tstEmptyDNSGetter{},
+		LookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("1.2.3.4")}, nil
+		},
+	})
+	assert.Nil(t, err)
+
+	srv.setBootstrapAnswers(context.Background())
+
+	assert.Nil(t, srv.getBootstrapAnswer("octelium-api.example.com.", dns.TypeA))
+
+	ret, err := srv.getExchangeAnswer("octelium-api.example.com.", dns.TypeA, nil)
+	assert.NotNil(t, err)
+	assert.Nil(t, ret)
+}
+
+type tstFailingHandler struct {
+}
+
+func (h *tstFailingHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
+	msg := new(dns.Msg)
+	msg.SetRcode(r, dns.RcodeServerFailure)
+	w.WriteMsg(msg)
+}
+
+func TestServerBootstrapAnswersOnUnsuccessfulClusterReply(t *testing.T) {
+	addr := "127.0.0.100:18060"
+
+	startedCh := make(chan struct{})
+	upstream := &dns.Server{
+		Addr:              addr,
+		Net:               "udp",
+		Handler:           &tstFailingHandler{},
+		NotifyStartedFunc: func() { close(startedCh) },
+	}
+	go upstream.ListenAndServe()
+	<-startedCh
+	defer upstream.Shutdown()
+
+	srv := newTestFullDNSServer(t, "127.0.0.100:18061", &tstDNSGetter{})
+	srv.setBootstrapAnswers(context.Background())
+
+	{
+		ret, err := srv.getExchangeAnswer("octelium-api.example.com.", dns.TypeA, []string{addr})
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeSuccess, ret.Rcode)
+		assert.Equal(t, "1.2.3.4", ret.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		ret, err := srv.getExchangeAnswer("google.com.", dns.TypeA, []string{addr})
+		assert.Nil(t, err)
+		assert.Equal(t, dns.RcodeServerFailure, ret.Rcode)
+	}
 }

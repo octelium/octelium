@@ -264,35 +264,56 @@ func TestResolvConfCapsNameserversAndSearchDomains(t *testing.T) {
 
 func TestGetNRPTNamespaces(t *testing.T) {
 	assert.Equal(t, []string{".local.example.com"},
-		getNRPTNamespaces([]string{"local.example.com"}, "example.com"))
+		getNRPTNamespaces([]string{"local.example.com"}, "example.com", false))
 
 	assert.Equal(t, []string{".local.example.com"},
-		getNRPTNamespaces([]string{"LOCAL.Example.COM."}, "Example.com"))
+		getNRPTNamespaces([]string{"LOCAL.Example.COM."}, "Example.com", false))
 
 	assert.Equal(t, []string{".local.example.com"},
-		getNRPTNamespaces([]string{"local.example.com", "local.example.com."}, "example.com"))
+		getNRPTNamespaces([]string{"local.example.com", "local.example.com."}, "example.com", false))
 
 	assert.Equal(t, []string{".local.example.com", ".svc.example.com"},
-		getNRPTNamespaces([]string{"local.example.com", "svc.example.com"}, "example.com"))
+		getNRPTNamespaces([]string{"local.example.com", "svc.example.com"}, "example.com", false))
 }
 
 func TestGetNRPTNamespacesRefusesCapturingTheClusterDomain(t *testing.T) {
-	assert.Nil(t, getNRPTNamespaces([]string{"example.com"}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"com"}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"example.com."}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"corp.example.com"}, "eu.corp.example.com"))
+	assert.Nil(t, getNRPTNamespaces([]string{"example.com"}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"com"}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"example.com."}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"corp.example.com"}, "eu.corp.example.com", false))
 
 	assert.Equal(t, []string{".local.example.com"},
-		getNRPTNamespaces([]string{"example.com", "local.example.com"}, "example.com"))
+		getNRPTNamespaces([]string{"example.com", "local.example.com"}, "example.com", false))
 }
 
 func TestGetNRPTNamespacesWithInvalidDomains(t *testing.T) {
-	assert.Nil(t, getNRPTNamespaces(nil, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{""}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"   "}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"local example.com"}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"local.example.com\nevil"}, "example.com"))
-	assert.Nil(t, getNRPTNamespaces([]string{"100.64.0.53"}, "example.com"))
+	assert.Nil(t, getNRPTNamespaces(nil, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{""}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"   "}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"local example.com"}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"local.example.com\nevil"}, "example.com", false))
+	assert.Nil(t, getNRPTNamespaces([]string{"100.64.0.53"}, "example.com", false))
+}
+
+func TestIsFullDNS(t *testing.T) {
+	c, _ := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+
+	assert.False(t, c.isFullDNS())
+	assert.Equal(t, []string{"local.example.com"}, c.getDNSSearchDomains())
+
+	c.c.Preferences.FullDNS = true
+	assert.True(t, c.isFullDNS())
+	assert.Equal(t, []string{"local.example.com"}, c.getDNSSearchDomains())
+}
+
+func TestGetNRPTNamespacesInFullDNSMode(t *testing.T) {
+	assert.Equal(t, []string{"."},
+		getNRPTNamespaces([]string{"local.example.com"}, "example.com", true))
+
+	assert.Equal(t, []string{"."},
+		getNRPTNamespaces([]string{"example.com"}, "example.com", true))
+
+	assert.Equal(t, []string{"."}, getNRPTNamespaces(nil, "example.com", true))
 }
 
 func TestGetNRPTRuleKey(t *testing.T) {

@@ -308,8 +308,11 @@ func getConnectionConfig(ctx context.Context,
 				}(),
 			},
 
+			FullDNS: isFullDNS(),
+
 			LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{
-				IsEnabled: cmdArgs.UseLocalDNS || os.Getenv("OCTELIUM_LOCAL_DNS_SERVER") == "true" ||
+				IsEnabled: cmdArgs.UseLocalDNS || isFullDNS() ||
+					os.Getenv("OCTELIUM_LOCAL_DNS_SERVER") == "true" ||
 					os.Getenv("OCTELIUM_CONTAINER_MODE") == "true",
 				ListenAddress: func() string {
 					if cmdArgs.LocalDNSListenAddr != "" {

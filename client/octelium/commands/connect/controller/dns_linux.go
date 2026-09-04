@@ -75,13 +75,13 @@ func (c *Controller) doSetDNSResolvctl() error {
 		return errors.Errorf("Could not find any DNS server to set")
 	}
 
-	searchDomains := c.getDNSSearchDomains()
-	if len(searchDomains) == 0 {
+	domains := c.getResolvctlDomains()
+	if len(domains) == 0 {
 		return errors.Errorf("Could not find any DNS search domain to set")
 	}
 
 	cmdDNSArgs, cmdDomainArgs = getResolvctlArgs(isResolvectl,
-		c.c.Preferences.DeviceName, dnsServers, searchDomains)
+		c.c.Preferences.DeviceName, dnsServers, domains)
 
 	if b, err := runOSCmdOutput(cmdBin, cmdDNSArgs...); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
@@ -93,9 +93,32 @@ func (c *Controller) doSetDNSResolvctl() error {
 		return err
 	}
 
+	if c.isFullDNS() && isResolvectl {
+		cmdDefaultRouteArgs := getResolvctlDefaultRouteArgs(c.c.Preferences.DeviceName)
+		if b, err := runOSCmdOutput(cmdBin, cmdDefaultRouteArgs...); err != nil {
+			zap.L().Debug("Could not set the resolvectl default-route",
+				zap.String("cmd", string(b)), zap.Error(err))
+		}
+	}
+
 	c.c.Preferences.LinuxPrefs.DnsMode = cliconfigv1.Connection_Preferences_Linux_RESOLVECTL_BIN
 
 	return nil
+}
+
+func (c *Controller) getResolvctlDomains() []string {
+	ret := c.getDNSSearchDomains()
+	if c.isFullDNS() {
+		ret = append(ret, resolvctlRoutingDomainAll)
+	}
+
+	return ret
+}
+
+const resolvctlRoutingDomainAll = "~."
+
+func getResolvctlDefaultRouteArgs(devName string) []string {
+	return []string{"default-route", devName, "yes"}
 }
 
 func getResolvctlArgs(isResolvectl bool, devName string,

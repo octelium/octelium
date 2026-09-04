@@ -54,3 +54,39 @@ func TestGetResolvctlArgsWithMultipleSearchDomains(t *testing.T) {
 		"--set-domain", "svc.example.com",
 	}, domainArgs)
 }
+
+func TestGetResolvctlDomains(t *testing.T) {
+	c, _ := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+
+	assert.Equal(t, []string{"local.example.com"}, c.getResolvctlDomains())
+
+	c.c.Preferences.FullDNS = true
+	assert.Equal(t, []string{"local.example.com", "~."}, c.getResolvctlDomains())
+}
+
+func TestGetResolvctlArgsInFullDNSMode(t *testing.T) {
+	c, _ := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+	c.c.Preferences.FullDNS = true
+
+	dnsArgs, domainArgs := getResolvctlArgs(true, "octelium0",
+		[]string{"127.0.0.100"}, c.getResolvctlDomains())
+	assert.Equal(t, []string{"dns", "octelium0", "127.0.0.100"}, dnsArgs)
+	assert.Equal(t, []string{"domain", "octelium0", "local.example.com", "~."}, domainArgs)
+
+	dnsArgs, domainArgs = getResolvctlArgs(false, "octelium0",
+		[]string{"127.0.0.100"}, c.getResolvctlDomains())
+	assert.Equal(t, []string{
+		"--interface", "octelium0",
+		"--set-dns", "127.0.0.100",
+	}, dnsArgs)
+	assert.Equal(t, []string{
+		"--interface", "octelium0",
+		"--set-domain", "local.example.com",
+		"--set-domain", "~.",
+	}, domainArgs)
+}
+
+func TestGetResolvctlDefaultRouteArgs(t *testing.T) {
+	assert.Equal(t, []string{"default-route", "octelium0", "yes"},
+		getResolvctlDefaultRouteArgs("octelium0"))
+}

@@ -176,7 +176,17 @@ func (c *Controller) getDNSSearchDomains() []string {
 	}
 }
 
-func getNRPTNamespaces(searchDomains []string, clusterDomain string) []string {
+func (c *Controller) isFullDNS() bool {
+	return c.c.Preferences != nil && c.c.Preferences.FullDNS
+}
+
+const nrptNamespaceAll = "."
+
+func getNRPTNamespaces(searchDomains []string, clusterDomain string, isFullDNS bool) []string {
+	if isFullDNS {
+		return []string{nrptNamespaceAll}
+	}
+
 	normalize := func(arg string) string {
 		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(arg), "."))
 	}

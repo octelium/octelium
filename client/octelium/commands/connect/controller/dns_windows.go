@@ -220,7 +220,7 @@ func (c *Controller) setNRPT() error {
 		return errors.Errorf("The Connection does not have Cluster info")
 	}
 
-	namespaces := getNRPTNamespaces(c.getDNSSearchDomains(), c.c.Info.Cluster.Domain)
+	namespaces := getNRPTNamespaces(c.getDNSSearchDomains(), c.c.Info.Cluster.Domain, c.isFullDNS())
 	if len(namespaces) == 0 {
 		return errors.Errorf("Could not find any valid namespace for the NRPT rule")
 	}
