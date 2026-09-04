@@ -1,34 +1,19 @@
 kind: Service
 metadata:
-  name: llama
+  name: llm-aimock
 spec:
-  port: 8080
-  mode: HTTP
+  port: 4010
+  mode: LLM
   isPublic: true
   config:
     upstream:
       container:
-        port: 8080
-        image: ghcr.io/ggml-org/llama.cpp:server
-        args:
-        - "-hf"
-        - "Qwen/Qwen3-0.6B-GGUF:Q8_0"
-        - "--alias"
-        - "e2e"
-        - "--host"
-        - "0.0.0.0"
-        - "--port"
-        - "8080"
-        - "-c"
-        - "512"
-        - "-n"
-        - "32"
-        - "-np"
-        - "1"
-        - "-t"
-        - "2"
+        port: 4010
+        image: ghcr.io/copilotkit/aimock:1.39.0
         resourceLimit:
           cpu:
-            millicores: 2000
+            millicores: 500
           memory:
-            megabytes: 3000
+            megabytes: 512
+    llm:
+      protocol: OPENAI

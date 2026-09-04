@@ -17,6 +17,7 @@
 package suite
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/openai/openai-go/v3"
@@ -116,75 +119,141 @@ func applyMCP(t *testing.T, a *applyCtx) {
 }
 
 func applyLLM(t *testing.T, a *applyCtx) {
-	requireAMD64(t, "the llama.cpp Service")
-
 	h := a.h
+	h.Require(t, capHostPortIngress)
 
 	h.StartLogStream(t.Context(),
-		"-l octelium.com/svc=llama.default,octelium.com/component=svc-k8s-upstream")
+		"-l octelium.com/svc=llm-aimock.default,octelium.com/component=svc-k8s-upstream")
 
-	h.MustWaitServiceUpstream(t, "llama")
-	h.MustWaitService(t, "llama")
+	h.MustWaitServiceUpstream(t, "llm-aimock")
+	h.MustWaitService(t, "llm-aimock")
 
-	time.Sleep(5 * time.Second)
+	svc := h.GetService(t, "llm-aimock")
+	usr := h.CreateWorkloadUser(t, &corev1.User_Spec_Authorization{
+		InlinePolicies: harness.InlineAllowAny("allow-aimock-e2e"),
+	})
+	token := h.AccessToken(t, usr)
+
+	setProtocol := func(t *testing.T, protocol corev1.Service_Spec_Config_LLM_Protocol) {
+		t.Helper()
+		svc = h.GetService(t, "llm-aimock")
+		svc.Spec.Config.GetLlm().Protocol = protocol
+		svc = h.UpdateService(t, svc)
+	}
+
+	waitPost := func(t *testing.T, path string, body any) ([]byte, http.Header) {
+		t.Helper()
+
+		var ret []byte
+		var header http.Header
+		h.Eventually(t, fmt.Sprintf("the AI mock to serve POST %s", path),
+			harness.DecisionBudget, func(ctx context.Context) error {
+				res, err := h.ServiceClient(svc, token).R().SetContext(ctx).
+					SetHeader("Content-Type", "application/json").
+					SetBody(body).Post(path)
+				if err != nil {
+					return err
+				}
+				if !res.IsSuccess() {
+					return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+				}
+				ret = append(ret[:0], res.Body()...)
+				header = res.Header().Clone()
+				return nil
+			})
+		return ret, header
+	}
 
 	c := openai.NewClient(
-		option.WithBaseURL(a.url("llama")+"/v1"),
-		option.WithMaxRetries(20),
+		option.WithBaseURL(h.ServiceURL(svc)+"/v1"),
+		option.WithAPIKey(token),
+		option.WithMaxRetries(10),
 	)
 
-	t.Run("Completion", func(t *testing.T) {
+	t.Run("OpenAI", func(t *testing.T) {
+		setProtocol(t, corev1.Service_Spec_Config_LLM_OPENAI)
 		started := time.Now()
 
-		_, err := c.Chat.Completions.New(t.Context(), openai.ChatCompletionNewParams{
+		res, err := c.Chat.Completions.New(t.Context(), openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage("What is zero trust?"),
+				openai.UserMessage("hello"),
 			},
-			Model: "e2e",
+			Model: "e2e-model",
 		})
-		assert.Nil(t, err)
+		require.Nil(t, err)
+		assert.Contains(t, res.Choices[0].Message.Content, "Hello")
 
 		zap.L().Debug("Chat completion output",
 			zap.Duration("duration", time.Since(started)))
-	})
-
-	t.Run("Streaming", func(t *testing.T) {
-		started := time.Now()
 
 		stream := c.Chat.Completions.NewStreaming(t.Context(), openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage("What are the largest cities in the world?"),
+				openai.UserMessage("hello"),
 			},
-			Model: "e2e",
+			Model: "e2e-model",
 		})
 
 		acc := openai.ChatCompletionAccumulator{}
-
-		count := 0
-		totalLen := 0
 		for stream.Next() {
-			chunk := stream.Current()
-			acc.AddChunk(chunk)
-
-			if len(chunk.Choices) > 0 {
-				count++
-				totalLen += len(chunk.Choices[0].Delta.Content)
-			}
+			acc.AddChunk(stream.Current())
 		}
 
-		zap.L().Debug("Total openAI chat completion streaming chunks",
-			zap.Int("count", count), zap.Int("totalLen", totalLen),
-			zap.Duration("duration", time.Since(started)))
-
-		assert.Nil(t, stream.Err())
-		assert.True(t, count > 10)
-
-		if len(acc.Choices) > 0 {
-			zap.L().Debug("Complete answer", zap.String("val", acc.Choices[0].Message.Content))
-		}
+		require.Nil(t, stream.Err())
+		require.NotEmpty(t, acc.Choices)
+		assert.Contains(t, acc.Choices[0].Message.Content, "Hello")
 	})
 
-	h.MustRun(t, "octeliumctl del svc llama")
+	t.Run("Anthropic", func(t *testing.T) {
+		setProtocol(t, corev1.Service_Spec_Config_LLM_ANTHROPIC)
+
+		body := map[string]any{
+			"model": "e2e-model", "max_tokens": 64,
+			"messages": []any{map[string]any{"role": "user", "content": "hello"}},
+		}
+		res, _ := waitPost(t, "/v1/messages", body)
+		assert.Contains(t, string(res), "Hello")
+
+		body["stream"] = true
+		res, header := waitPost(t, "/v1/messages", body)
+		assert.Contains(t, header.Get("Content-Type"), "text/event-stream")
+		assert.Contains(t, string(res), "message_stop")
+	})
+
+	t.Run("Gemini", func(t *testing.T) {
+		setProtocol(t, corev1.Service_Spec_Config_LLM_GEMINI)
+
+		body := map[string]any{
+			"contents": []any{map[string]any{
+				"role": "user", "parts": []any{map[string]any{"text": "hello"}},
+			}},
+		}
+		res, _ := waitPost(t, "/v1beta/models/e2e-model:generateContent", body)
+		assert.Contains(t, string(res), "Hello")
+
+		res, header := waitPost(t,
+			"/v1beta/models/e2e-model:streamGenerateContent?alt=sse", body)
+		assert.Contains(t, header.Get("Content-Type"), "text/event-stream")
+		assert.Contains(t, string(res), "candidates")
+	})
+
+	t.Run("Bedrock", func(t *testing.T) {
+		setProtocol(t, corev1.Service_Spec_Config_LLM_BEDROCK)
+
+		body := map[string]any{
+			"messages": []any{map[string]any{
+				"role": "user", "content": []any{map[string]any{"text": "hello"}},
+			}},
+			"inferenceConfig": map[string]any{"maxTokens": 64},
+		}
+		res, _ := waitPost(t, "/model/e2e-model/converse", body)
+		assert.Contains(t, string(res), "Hello")
+
+		res, header := waitPost(t, "/model/e2e-model/converse-stream", body)
+		assert.Contains(t, header.Get("Content-Type"), "application/vnd.amazon.eventstream")
+		assert.NotEmpty(t, res)
+	})
+
+	h.MustRun(t, "octeliumctl del svc llm-aimock")
 }
 
 func drainBody(t *testing.T, r io.Reader) string {

@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,11 +37,16 @@ type LLMSrv struct {
 	lis net.Listener
 	srv *http.Server
 
-	mu        sync.Mutex
-	reqCount  int
-	lastPath  string
-	lastModel string
-	lastAuth  string
+	mu                 sync.Mutex
+	reqCount           int
+	requestCountByPath map[string]int
+	lastBodyByPath     map[string]map[string]any
+	lastPath           string
+	lastModel          string
+	lastAuth           string
+	lastHeader         http.Header
+	lastBody           map[string]any
+	completionContent  string
 }
 
 func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,15 +65,36 @@ func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.reqCount++
+	if s.requestCountByPath == nil {
+		s.requestCountByPath = map[string]int{}
+	}
+	if s.lastBodyByPath == nil {
+		s.lastBodyByPath = map[string]map[string]any{}
+	}
+	s.requestCountByPath[r.URL.Path]++
+	s.lastBodyByPath[r.URL.Path] = reqMap
 	s.lastPath = r.URL.Path
 	s.lastModel = model
 	s.lastAuth = r.Header.Get("Authorization")
+	s.lastHeader = r.Header.Clone()
+	s.lastBody = reqMap
+	content := s.completionContent
 	s.mu.Unlock()
+	if content == "" {
+		content = "octelium"
+	}
 
 	zap.L().Debug("New LLMSrv req", zap.String("path", r.URL.Path),
 		zap.String("model", model), zap.Bool("stream", isStream))
 
 	if r.Method == http.MethodGet {
+		if strings.Contains(r.URL.Path, "/models/") {
+			s.writeJSON(w, map[string]any{
+				"id": modelFromPath(r.URL.Path), "object": "model",
+				"created": 0, "owned_by": "octelium",
+			})
+			return
+		}
 		s.writeJSON(w, map[string]any{
 			"object": "list",
 			"data": []any{
@@ -79,8 +106,82 @@ func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/v1/embeddings" {
+		s.serveOpenAIEmbeddings(w, reqMap)
+		return
+	}
+
+	if strings.HasSuffix(r.URL.Path, ":embedContent") ||
+		strings.HasSuffix(r.URL.Path, ":batchEmbedContents") {
+		s.serveGeminiEmbeddings(w, r.URL.Path, reqMap)
+		return
+	}
+
+	if strings.HasSuffix(r.URL.Path, ":countTokens") ||
+		r.URL.Path == "/v1/messages/count_tokens" {
+		s.writeJSON(w, map[string]any{"input_tokens": 10, "totalTokens": 10})
+		return
+	}
+
 	if isStream {
 		s.serveStream(w, model)
+		return
+	}
+
+	if r.URL.Path == "/v1/messages" || strings.HasSuffix(r.URL.Path, "/invoke") {
+		s.writeJSON(w, map[string]any{
+			"id": "msg-e2e", "type": "message", "role": "assistant",
+			"model":       model,
+			"content":     []any{map[string]any{"type": "text", "text": content}},
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 10, "output_tokens": 5},
+		})
+		return
+	}
+
+	if strings.HasSuffix(r.URL.Path, ":generateContent") {
+		s.writeJSON(w, map[string]any{
+			"candidates": []any{map[string]any{
+				"content": map[string]any{"role": "model", "parts": []any{
+					map[string]any{"text": content},
+				}},
+				"finishReason": "STOP",
+			}},
+			"usageMetadata": map[string]any{
+				"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15,
+			},
+		})
+		return
+	}
+
+	if strings.HasSuffix(r.URL.Path, "/converse") {
+		s.writeJSON(w, map[string]any{
+			"output": map[string]any{"message": map[string]any{
+				"role": "assistant", "content": []any{map[string]any{"text": content}},
+			}},
+			"stopReason": "end_turn",
+			"usage":      map[string]any{"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+		})
+		return
+	}
+
+	if r.URL.Path == "/v1/responses" {
+		s.writeJSON(w, map[string]any{
+			"id": "resp-e2e", "object": "response", "status": "completed", "model": model,
+			"output": []any{map[string]any{
+				"type": "message", "role": "assistant", "status": "completed",
+				"content": []any{map[string]any{"type": "output_text", "text": content}},
+			}},
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+		})
+		return
+	}
+
+	if r.URL.Path == "/v1/moderations" {
+		s.writeJSON(w, map[string]any{
+			"id": "modr-e2e", "model": model,
+			"results": []any{map[string]any{"flagged": false}},
+		})
 		return
 	}
 
@@ -95,7 +196,7 @@ func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"finish_reason": "stop",
 				"message": map[string]any{
 					"role":    "assistant",
-					"content": "octelium",
+					"content": content,
 				},
 			},
 		},
@@ -105,6 +206,73 @@ func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"total_tokens":      15,
 		},
 	})
+}
+
+func modelFromPath(path string) string {
+	ret := path[strings.LastIndex(path, "/")+1:]
+	if idx := strings.IndexByte(ret, ':'); idx >= 0 {
+		ret = ret[:idx]
+	}
+	return ret
+}
+
+func embeddingFor(arg string) []float64 {
+	arg = strings.ToLower(arg)
+	switch {
+	case strings.Contains(arg, "invoice"), strings.Contains(arg, "billing"):
+		return []float64{1, 0, 0, 0}
+	case strings.Contains(arg, "deadlock"), strings.Contains(arg, "program"):
+		return []float64{0, 1, 0, 0}
+	case strings.Contains(arg, "octelium"), strings.Contains(arg, "zero trust"):
+		return []float64{0, 0, 1, 0}
+	default:
+		return []float64{0, 0, 0, 1}
+	}
+}
+
+func embeddingInputs(arg any) []string {
+	switch cur := arg.(type) {
+	case string:
+		return []string{cur}
+	case []any:
+		ret := make([]string, 0, len(cur))
+		for _, item := range cur {
+			if val, ok := item.(string); ok {
+				ret = append(ret, val)
+			}
+		}
+		return ret
+	default:
+		body, _ := json.Marshal(cur)
+		return []string{string(body)}
+	}
+}
+
+func (s *LLMSrv) serveOpenAIEmbeddings(w http.ResponseWriter, req map[string]any) {
+	inputs := embeddingInputs(req["input"])
+	data := make([]any, 0, len(inputs))
+	for i, input := range inputs {
+		data = append(data, map[string]any{
+			"object": "embedding", "index": i, "embedding": embeddingFor(input),
+		})
+	}
+	s.writeJSON(w, map[string]any{
+		"object": "list", "data": data, "model": req["model"],
+		"usage": map[string]any{"prompt_tokens": len(inputs), "total_tokens": len(inputs)},
+	})
+}
+
+func (s *LLMSrv) serveGeminiEmbeddings(w http.ResponseWriter,
+	path string, req map[string]any) {
+	body, _ := json.Marshal(req)
+	vec := embeddingFor(string(body))
+	if strings.HasSuffix(path, ":batchEmbedContents") {
+		s.writeJSON(w, map[string]any{
+			"embeddings": []any{map[string]any{"values": vec}},
+		})
+		return
+	}
+	s.writeJSON(w, map[string]any{"embedding": map[string]any{"values": vec}})
 }
 
 func (s *LLMSrv) writeJSON(w http.ResponseWriter, arg any) {
@@ -222,6 +390,44 @@ func (s *LLMSrv) ReqCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reqCount
+}
+
+func (s *LLMSrv) ReqCountPath(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requestCountByPath[path]
+}
+
+func (s *LLMSrv) LastHeader(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastHeader.Get(key)
+}
+
+func (s *LLMSrv) LastBody() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	body, _ := json.Marshal(s.lastBody)
+	ret := map[string]any{}
+	json.Unmarshal(body, &ret)
+	return ret
+}
+
+func (s *LLMSrv) BodyForPath(path string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	body, _ := json.Marshal(s.lastBodyByPath[path])
+	ret := map[string]any{}
+	json.Unmarshal(body, &ret)
+	return ret
+}
+
+func (s *LLMSrv) SetCompletionContent(content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completionContent = content
 }
 
 func (h *H) StartLLMUpstream(t *testing.T, srv *LLMSrv) *LLMSrv {

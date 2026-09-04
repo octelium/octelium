@@ -43,7 +43,7 @@ var applyServices = []string{
 	"mcp-echo",
 	"llm-echo",
 	"clickhouse",
-	"llama",
+	"llm-aimock",
 	"mongo",
 	"mysql8",
 	"mysql9",
