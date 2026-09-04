@@ -40,6 +40,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -57,14 +58,41 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	return reader
 }
 
-func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
+const (
+	metricsCollectAttempts = 100
+	metricsCollectInterval = 50 * time.Millisecond
+)
+
+func collectMetrics(t *testing.T, ctx context.Context, reader *sdkmetric.ManualReader,
+	isReady func(rm *metricdata.ResourceMetrics) bool) *metricdata.ResourceMetrics {
+
+	ret := &metricdata.ResourceMetrics{}
+
+	for range metricsCollectAttempts {
+		rm := &metricdata.ResourceMetrics{}
+		assert.Nil(t, reader.Collect(ctx, rm))
+
+		ret = rm
+		if isReady(rm) {
+			return ret
+		}
+
+		time.Sleep(metricsCollectInterval)
+	}
+
+	return ret
+}
+
+func findSumDataPointByState(rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name != name {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
-			assert.True(t, ok, name)
+			if !ok {
+				continue
+			}
 			for _, dp := range sum.DataPoints {
 				stateVal, ok := dp.Attributes.Value("state")
 				if ok && stateVal.AsString() == state {
@@ -76,14 +104,16 @@ func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name,
 	return metricdata.DataPoint[int64]{}, false
 }
 
-func findSumDataPointByRcodeClass(t *testing.T, rm *metricdata.ResourceMetrics, name, state, rcodeClass string) (metricdata.DataPoint[int64], bool) {
+func findSumDataPointByRcodeClass(rm *metricdata.ResourceMetrics, name, state, rcodeClass string) (metricdata.DataPoint[int64], bool) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name != name {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
-			assert.True(t, ok, name)
+			if !ok {
+				continue
+			}
 			for _, dp := range sum.DataPoints {
 				stateVal, ok := dp.Attributes.Value("state")
 				if !ok || stateVal.AsString() != state {
@@ -292,16 +322,18 @@ func TestServer(t *testing.T) {
 		m.SetQuestion("dns.google.", dns.TypeA)
 
 		r, _, err := c.Exchange(&m, net.JoinHostPort("localhost", fmt.Sprintf("%d", svc.Spec.Port)))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		assert.Equal(t, r.Rcode, dns.RcodeRefused)
 	}
 
 	{
-		var rm metricdata.ResourceMetrics
-		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+		rm := collectMetrics(t, ctx, metricsReader, func(rm *metricdata.ResourceMetrics) bool {
+			_, found := findSumDataPointByState(rm, "req.total", "DENIED")
+			return found
+		})
 
-		dp, found := findSumDataPointByState(t, &rm, "req.total", "DENIED")
+		dp, found := findSumDataPointByState(rm, "req.total", "DENIED")
 		assert.True(t, found)
 		assert.True(t, dp.Value > 0)
 
@@ -349,16 +381,19 @@ func TestServer(t *testing.T) {
 		m.SetQuestion("dns.google.", dns.TypeA)
 
 		r, _, err := c.Exchange(&m, net.JoinHostPort("localhost", fmt.Sprintf("%d", svc.Spec.Port)))
-		assert.Nil(t, err)
+		require.Nil(t, err)
+		require.NotEmpty(t, r.Answer)
 
 		assert.True(t, r.Answer[0].(*dns.A).A.String() == "8.8.8.8" || r.Answer[0].(*dns.A).A.String() == "8.8.4.4")
 	}
 
 	{
-		var rm metricdata.ResourceMetrics
-		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+		rm := collectMetrics(t, ctx, metricsReader, func(rm *metricdata.ResourceMetrics) bool {
+			_, found := findSumDataPointByState(rm, "req.total", "ALLOWED")
+			return found
+		})
 
-		dp, found := findSumDataPointByState(t, &rm, "req.total", "ALLOWED")
+		dp, found := findSumDataPointByState(rm, "req.total", "ALLOWED")
 		assert.True(t, found)
 		assert.Equal(t, int64(1), dp.Value)
 
@@ -377,16 +412,18 @@ func TestServer(t *testing.T) {
 		m.SetQuestion(fmt.Sprintf("%s.com.", utilrand.GetRandomStringCanonical(18)), dns.TypeA)
 
 		r, _, err := c.Exchange(&m, net.JoinHostPort("localhost", fmt.Sprintf("%d", svc.Spec.Port)))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		assert.Equal(t, r.Rcode, dns.RcodeNameError)
 	}
 
 	{
-		var rm metricdata.ResourceMetrics
-		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+		rm := collectMetrics(t, ctx, metricsReader, func(rm *metricdata.ResourceMetrics) bool {
+			_, found := findSumDataPointByRcodeClass(rm, "req.total", "ALLOWED", "NXDOMAIN")
+			return found
+		})
 
-		dp, found := findSumDataPointByRcodeClass(t, &rm, "req.total", "ALLOWED", "NXDOMAIN")
+		dp, found := findSumDataPointByRcodeClass(rm, "req.total", "ALLOWED", "NXDOMAIN")
 		assert.True(t, found)
 		assert.Equal(t, int64(1), dp.Value)
 	}
@@ -533,7 +570,8 @@ func TestServerTLS(t *testing.T) {
 		m.SetQuestion("dns.google.", dns.TypeA)
 
 		r, _, err := c.Exchange(&m, net.JoinHostPort("localhost", fmt.Sprintf("%d", svc.Spec.Port)))
-		assert.Nil(t, err)
+		require.Nil(t, err)
+		require.NotEmpty(t, r.Answer)
 
 		assert.True(t, r.Answer[0].(*dns.A).A.String() == "8.8.8.8" || r.Answer[0].(*dns.A).A.String() == "8.8.4.4")
 	}
@@ -548,7 +586,7 @@ func TestServerTLS(t *testing.T) {
 		m.SetQuestion(fmt.Sprintf("%s.com.", utilrand.GetRandomStringCanonical(18)), dns.TypeA)
 
 		r, _, err := c.Exchange(&m, net.JoinHostPort("localhost", fmt.Sprintf("%d", svc.Spec.Port)))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		assert.Equal(t, r.Rcode, dns.RcodeNameError)
 	}

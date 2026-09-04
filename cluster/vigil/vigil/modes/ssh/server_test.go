@@ -17,6 +17,7 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"fmt"
@@ -51,6 +52,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -70,14 +72,54 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	return reader
 }
 
-func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
+const (
+	metricsCollectAttempts = 100
+	metricsCollectInterval = 50 * time.Millisecond
+
+	sshCommandTimeout = 20 * time.Second
+)
+
+func collectMetrics(t *testing.T, ctx context.Context, reader *sdkmetric.ManualReader,
+	isReady func(rm *metricdata.ResourceMetrics) bool) *metricdata.ResourceMetrics {
+
+	ret := &metricdata.ResourceMetrics{}
+
+	for range metricsCollectAttempts {
+		rm := &metricdata.ResourceMetrics{}
+		assert.Nil(t, reader.Collect(ctx, rm))
+
+		ret = rm
+		if isReady(rm) {
+			return ret
+		}
+
+		time.Sleep(metricsCollectInterval)
+	}
+
+	return ret
+}
+
+func hasSumDataPoint(rm *metricdata.ResourceMetrics, name string) bool {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func findSumDataPointByState(rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name != name {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
-			assert.True(t, ok, name)
+			if !ok {
+				continue
+			}
 			for _, dp := range sum.DataPoints {
 				stateVal, ok := dp.Attributes.Value("state")
 				if ok && stateVal.AsString() == state {
@@ -625,10 +667,12 @@ func TestServer(t *testing.T) {
 	}
 
 	{
-		var rm metricdata.ResourceMetrics
-		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+		rm := collectMetrics(t, ctx, metricsReader, func(rm *metricdata.ResourceMetrics) bool {
+			_, found := findSumDataPointByState(rm, "req.total", "DENIED")
+			return found
+		})
 
-		dp, found := findSumDataPointByState(t, &rm, "req.total", "DENIED")
+		dp, found := findSumDataPointByState(rm, "req.total", "DENIED")
 		assert.True(t, found)
 		assert.True(t, dp.Value > 0)
 	}
@@ -660,37 +704,62 @@ func TestServer(t *testing.T) {
 
 	doConnect := func(srvAddr, sshUser string) {
 		c, err := net.Dial("tcp", srvAddr)
-		assert.Nil(t, err, "%+v", err)
+		require.Nil(t, err, "%+v", err)
 
 		clientConn, clientChans, clientReqs, err := ssh.NewClientConn(c, srvAddr, getClientConfig(t, fakeC.OcteliumC, sshUser))
-		assert.Nil(t, err, "Could not create ssh client %+v", err)
+		require.Nil(t, err, "Could not create ssh client %+v", err)
 		sshC := ssh.NewClient(clientConn, clientChans, clientReqs)
 
 		sess, err := sshC.NewSession()
-		assert.Nil(t, err, "%+v", err)
+		require.Nil(t, err, "%+v", err)
 		err = sess.RequestPty("xterm", 80, 24, ssh.TerminalModes{
 			ssh.ECHO:          0,
 			ssh.TTY_OP_ISPEED: 14400,
 			ssh.TTY_OP_OSPEED: 14400,
 		})
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		stdoutPipe, err := sess.StdoutPipe()
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		stdinPipe, err := sess.StdinPipe()
-		assert.Nil(t, err)
+		require.Nil(t, err)
 
 		err = sess.Shell()
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		time.Sleep(1 * time.Second)
 
-		_, err = stdinPipe.Write([]byte("ls -la \r\n"))
-		assert.Nil(t, err)
-		buf := make([]byte, 1024)
-		n, err := stdoutPipe.Read(buf)
-		assert.Nil(t, err)
-		assert.True(t, n > 0)
+		marker := utilrand.GetRandomStringCanonical(12)
+
+		_, err = stdinPipe.Write([]byte(fmt.Sprintf("echo %s\r\n", marker)))
+		require.Nil(t, err)
+
+		outCh := make(chan []byte, 1)
+		go func() {
+			var out []byte
+			buf := make([]byte, 4096)
+			for {
+				n, err := stdoutPipe.Read(buf)
+				if n > 0 {
+					out = append(out, buf[:n]...)
+					if bytes.Contains(out, []byte(marker)) {
+						outCh <- out
+						return
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+
+		select {
+		case out := <-outCh:
+			assert.True(t, len(out) > 0)
+		case <-time.After(sshCommandTimeout):
+			t.Errorf("Timed out while waiting for the ssh command output")
+		}
+
 		sshC.Close()
 		c.Close()
 	}
@@ -700,17 +769,22 @@ func TestServer(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	{
-		var rm metricdata.ResourceMetrics
-		assert.Nil(t, metricsReader.Collect(ctx, &rm))
+		rm := collectMetrics(t, ctx, metricsReader, func(rm *metricdata.ResourceMetrics) bool {
+			if _, found := findSumDataPointByState(rm, "req.total", "ALLOWED"); !found {
+				return false
+			}
+			return hasSumDataPoint(rm, "req.bytes_sent") &&
+				hasSumDataPoint(rm, "req.bytes_received")
+		})
 
-		dp, found := findSumDataPointByState(t, &rm, "req.total", "ALLOWED")
+		dp, found := findSumDataPointByState(rm, "req.total", "ALLOWED")
 		assert.True(t, found)
 		assert.Equal(t, int64(1), dp.Value)
 
-		sentDP := findSumDataPoint(t, &rm, "req.bytes_sent")
+		sentDP := findSumDataPoint(t, rm, "req.bytes_sent")
 		assert.True(t, sentDP.Value > 0)
 
-		receivedDP := findSumDataPoint(t, &rm, "req.bytes_received")
+		receivedDP := findSumDataPoint(t, rm, "req.bytes_received")
 		assert.True(t, receivedDP.Value > 0)
 	}
 
@@ -1030,6 +1104,9 @@ func TestServer(t *testing.T) {
 
 		err = tstSrv.run(addr)
 		assert.Nil(t, err)
+		t.Cleanup(func() {
+			tstSrv.close()
+		})
 
 		{
 			usrDownstream, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
