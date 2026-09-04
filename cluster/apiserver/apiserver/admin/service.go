@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime"
 	"net/url"
 	"regexp"
@@ -2055,6 +2056,13 @@ const (
 
 	maxLLMVisibilityHeaders = 128
 
+	maxLLMEmbeddingURLLen     = 1024
+	maxLLMEmbeddingDimensions = 4096
+	maxLLMSemanticRoutes      = 64
+	maxLLMSemanticExamples    = 64
+	maxLLMSemanticTextLen     = 4096
+	maxLLMSemanticCacheSize   = 1024 * 1024
+
 	maxPlugins = 256
 
 	maxPromptContentLen = 256 * 1024
@@ -2087,6 +2095,10 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 	}
 
 	if err := s.validateLLMLimits(llm.GetLimits()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMEmbedding(ctx, llm.GetEmbedding()); err != nil {
 		return err
 	}
 
@@ -2171,6 +2183,14 @@ func (s *Server) validateLLMPlugins(ctx context.Context, cfgName string,
 			}
 		case plugin.GetTokenRateLimit() != nil:
 			if err := s.validateLLMTokenRateLimit(ctx, plugin.GetTokenRateLimit()); err != nil {
+				return err
+			}
+		case plugin.GetSemanticCache() != nil:
+			if err := s.validateLLMSemanticCache(ctx, plugin.GetSemanticCache()); err != nil {
+				return err
+			}
+		case plugin.GetSemanticRouter() != nil:
+			if err := s.validateLLMSemanticRouter(ctx, plugin.GetSemanticRouter()); err != nil {
 				return err
 			}
 		default:
@@ -2681,6 +2701,232 @@ func (s *Server) validateLLMTokenRateLimit(ctx context.Context,
 
 		if !httpguts.ValidHeaderFieldValue(hdr.Value) {
 			return grpcutils.InvalidArg("invalid header value")
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMEmbedding(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Embedding) error {
+	if cfg == nil {
+		return nil
+	}
+
+	if cfg.GetModel() == "" {
+		return grpcutils.InvalidArg("The embedding model must be set")
+	}
+
+	if err := s.validateGenStr(cfg.GetModel(), true, "model"); err != nil {
+		return err
+	}
+
+	if len(cfg.GetModel()) > maxLLMModelLen {
+		return grpcutils.InvalidArg("The embedding model is too long")
+	}
+
+	if cfg.GetDimensions() > maxLLMEmbeddingDimensions {
+		return grpcutils.InvalidArg("The embedding dimensions value is too large")
+	}
+
+	switch cfg.GetSource().GetType().(type) {
+	case *corev1.Service_Spec_Config_LLM_Embedding_Source_CurrentUpstream:
+		return nil
+	case *corev1.Service_Spec_Config_LLM_Embedding_Source_Upstream_:
+	default:
+		return grpcutils.InvalidArg("The embedding source must be set")
+	}
+
+	upstream := cfg.GetSource().GetUpstream()
+
+	if len(upstream.GetUrl()) > maxLLMEmbeddingURLLen {
+		return grpcutils.InvalidArg("The embedding upstream URL is too long")
+	}
+
+	u, err := url.Parse(upstream.GetUrl())
+	if err != nil || u.Host == "" || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" {
+		return grpcutils.InvalidArg(
+			`The embedding upstream URL must be in the "scheme://host[:port][/path]" format: %s`,
+			upstream.GetUrl())
+	}
+
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return grpcutils.InvalidArg(
+			"The embedding upstream URL scheme must be either http or https: %s", u.Scheme)
+	}
+
+	if err := s.validateLLMEmbeddingProtocol(upstream.GetProtocol()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMEmbeddingAuth(upstream.GetAuth()); err != nil {
+		return err
+	}
+
+	return s.validateHTTPAuth(ctx, upstream.GetAuth())
+}
+
+func (s *Server) validateLLMEmbeddingProtocol(
+	protocol corev1.Service_Spec_Config_LLM_Protocol) error {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET,
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_GEMINI:
+		return nil
+	default:
+		return grpcutils.InvalidArg(
+			"This protocol serves no embedding operation: %s", protocol.String())
+	}
+}
+
+func (s *Server) validateLLMEmbeddingAuth(
+	cfg *corev1.Service_Spec_Config_HTTP_Auth) error {
+	if cfg == nil {
+		return nil
+	}
+
+	switch cfg.Type.(type) {
+	case *corev1.Service_Spec_Config_HTTP_Auth_Bearer_,
+		*corev1.Service_Spec_Config_HTTP_Auth_Basic_,
+		*corev1.Service_Spec_Config_HTTP_Auth_Custom_,
+		*corev1.Service_Spec_Config_HTTP_Auth_Oauth2ClientCredentials:
+		return nil
+	default:
+		return grpcutils.InvalidArg(
+			"This authentication type is unsupported by the embedding upstream")
+	}
+}
+
+func (s *Server) validateLLMSimilarity(arg float32, field string) error {
+	if math.IsNaN(float64(arg)) || math.IsInf(float64(arg), 0) {
+		return grpcutils.InvalidArg("%s must be finite", field)
+	}
+
+	if arg < 0 || arg > 1 {
+		return grpcutils.InvalidArg("%s must be between 0 and 1: %v", field, arg)
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMSemanticCache(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache) error {
+
+	if err := s.validateLLMEmbedding(ctx, cfg.GetEmbedding()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMSimilarity(cfg.GetMinSimilarity(), "minSimilarity"); err != nil {
+		return err
+	}
+
+	if cfg.GetTtl() != nil {
+		if err := apivalidation.ValidateDuration(cfg.GetTtl()); err != nil {
+			return err
+		}
+	}
+
+	if cfg.GetMaxSize() > maxLLMSemanticCacheSize {
+		return grpcutils.InvalidArg("maxSize is above the maximum allowed value")
+	}
+
+	switch cfg.GetScope().GetType().(type) {
+	case *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_Scope_Eval:
+		if err := checkCELExpressionString(ctx, cfg.GetScope().GetEval()); err != nil {
+			return grpcutils.InvalidArg("Invalid eval: %s", cfg.GetScope().GetEval())
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMSemanticRouter(ctx context.Context,
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter) error {
+
+	if err := s.validateLLMEmbedding(ctx, cfg.GetEmbedding()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMSimilarity(cfg.GetMinSimilarity(), "minSimilarity"); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMModelName(cfg.GetFallbackModel(), false); err != nil {
+		return err
+	}
+
+	routes := cfg.GetRoutes()
+	if len(routes) == 0 {
+		return grpcutils.InvalidArg("At least one Route must be set")
+	}
+
+	if len(routes) > maxLLMSemanticRoutes {
+		return grpcutils.InvalidArg("Too many Routes")
+	}
+
+	var names []string
+	for _, route := range routes {
+		if err := s.validateGenStr(route.GetName(), true, "name"); err != nil {
+			return err
+		}
+
+		if slices.Contains(names, route.GetName()) {
+			return grpcutils.InvalidArg("Duplicate Route name: %s", route.GetName())
+		}
+		names = append(names, route.GetName())
+
+		if err := s.validateLLMModelName(route.GetModel(), true); err != nil {
+			return err
+		}
+
+		if err := s.validateLLMSimilarity(
+			route.GetMinSimilarity(), "minSimilarity"); err != nil {
+			return err
+		}
+
+		if len(route.GetExamples()) > maxLLMSemanticExamples {
+			return grpcutils.InvalidArg("Too many Route examples")
+		}
+
+		texts := append([]string{route.GetDescription()}, route.GetExamples()...)
+		var hasText bool
+		for _, text := range texts {
+			if len(text) > maxLLMSemanticTextLen {
+				return grpcutils.InvalidArg("The Route text is too long")
+			}
+			if text != "" {
+				hasText = true
+			}
+		}
+
+		if !hasText {
+			return grpcutils.InvalidArg(
+				"The Route must set a description or at least one example: %s",
+				route.GetName())
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) validateLLMModelName(arg string, isRequired bool) error {
+	if arg == "" {
+		if isRequired {
+			return grpcutils.InvalidArg("The model must be set")
+		}
+		return nil
+	}
+
+	if len(arg) > maxLLMModelLen {
+		return grpcutils.InvalidArg("The model is too long")
+	}
+
+	for i := 0; i < len(arg); i++ {
+		if arg[i] < 0x20 || arg[i] == 0x7f {
+			return grpcutils.InvalidArg("The model contains an invalid control character")
 		}
 	}
 

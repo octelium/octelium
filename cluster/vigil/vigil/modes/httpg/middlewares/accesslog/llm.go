@@ -143,6 +143,7 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 	if !crw.isStreaming() {
 		obs.onFinalBody(crw.body.Bytes())
 		obs.setRequestContext(reqCtx, crw, logPhaseComplete)
+		reqCtx.RunOnResponse()
 
 		if reqCtx.DownstreamInfo == nil {
 			return
@@ -153,6 +154,7 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 	}
 
 	obs.setRequestContext(reqCtx, crw, logPhaseStreamClose)
+	reqCtx.RunOnResponse()
 
 	if reqCtx.DownstreamInfo == nil {
 		return
@@ -263,6 +265,7 @@ func getLLMSemanticCache(reqCtx *middlewares.RequestContext) *corev1.AccessLog_E
 		Result:     cur.Result,
 		Similarity: cur.Similarity,
 		IsStored:   cur.IsStored,
+		Plugin:     cur.Plugin,
 	}
 }
 
@@ -273,9 +276,11 @@ func getLLMSemanticRouter(reqCtx *middlewares.RequestContext) *corev1.AccessLog_
 	}
 
 	return &corev1.AccessLog_Entry_Info_LLM_SemanticRouter{
+		Result:     cur.Result,
 		Route:      cur.Route,
 		Similarity: cur.Similarity,
 		Model:      cur.Model,
+		Plugin:     cur.Plugin,
 	}
 }
 
@@ -284,13 +289,7 @@ func getLLMUsage(reqCtx *middlewares.RequestContext, crw *responseWriter,
 
 	if reqCtx.LLMSemanticCache.IsHit() {
 		return &corev1.AccessLog_Entry_Info_LLM_Usage{
-			Source:                   corev1.AccessLog_Entry_Info_LLM_Usage_CACHED,
-			InputTokens:              obs.usage.InputTokens,
-			OutputTokens:             obs.usage.OutputTokens,
-			TotalTokens:              obs.usage.TotalTokens,
-			CacheReadInputTokens:     obs.usage.CacheReadInputTokens,
-			CacheCreationInputTokens: obs.usage.CacheCreationInputTokens,
-			ReasoningTokens:          obs.usage.ReasoningTokens,
+			Source: corev1.AccessLog_Entry_Info_LLM_Usage_CACHED,
 		}
 	}
 

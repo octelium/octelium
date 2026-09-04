@@ -284,19 +284,15 @@ func TestTokenRateLimitDenyMessageAndHeaders(t *testing.T) {
 func TestTokenRateLimitScopeInput(t *testing.T) {
 	rateLimitC := newFakeRateLimit()
 
-	res := servePlugins(t, &pluginOpts{
+	servePlugins(t, &pluginOpts{
 		body: chatBodyWithMaxTokens,
 		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
 			newPlugin("tpm", newTokenRateLimit(100000,
 				corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_INPUT)),
 		},
-		rateLimitC: rateLimitC,
+		rateLimitC:  rateLimitC,
+		llmResponse: newProviderUsage(11, 22),
 	})
-
-	assert.Equal(t, int64(res.reqCtx.LLM.GetEstimatedInputTokens()), rateLimitC.sum())
-
-	res.reqCtx.LLMResponse = newProviderUsage(11, 22)
-	res.reqCtx.RunOnResponse()
 
 	assert.Equal(t, int64(11), rateLimitC.sum())
 }

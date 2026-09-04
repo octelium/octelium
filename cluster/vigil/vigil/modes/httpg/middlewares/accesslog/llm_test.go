@@ -594,9 +594,11 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 			Similarity: 0.97,
 		}
 		reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
+			Result:     corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
 			Route:      "code",
 			Similarity: 0.88,
 			Model:      "gpt-5",
+			Plugin:     "router",
 		}
 
 		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
@@ -606,12 +608,17 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 		assert.InDelta(t, 0.97, llmC.SemanticCache.Similarity, 0.0001)
 		assert.False(t, llmC.SemanticCache.IsStored)
 
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
+			llmC.SemanticRouter.Result)
 		assert.Equal(t, "code", llmC.SemanticRouter.Route)
 		assert.Equal(t, "gpt-5", llmC.SemanticRouter.Model)
+		assert.Equal(t, "router", llmC.SemanticRouter.Plugin)
 		assert.InDelta(t, 0.88, llmC.SemanticRouter.Similarity, 0.0001)
 
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_CACHED, llmC.Usage.Source)
-		assert.Equal(t, uint64(20), llmC.Usage.TotalTokens)
+		assert.Zero(t, llmC.Usage.TotalTokens)
+		assert.Zero(t, llmC.Usage.InputTokens)
+		assert.Zero(t, llmC.Usage.OutputTokens)
 	}
 
 	{

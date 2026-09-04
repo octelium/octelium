@@ -71,8 +71,10 @@ type pluginOpts struct {
 	llmResponse *middlewares.LLMResponseInfo
 	downstream  *corev1.RequestContext
 
-	vectorC   *fakeVector
-	embedding *fakeEmbeddings
+	vectorC      *fakeVector
+	embedding    *fakeEmbeddings
+	embeddingCfg *corev1.Service_Spec_Config_LLM_Embedding
+	configName   string
 }
 
 func newPlugin(name string,
@@ -193,7 +195,11 @@ func servePlugins(t *testing.T, o *pluginOpts) *pluginResult {
 	if o.embedding != nil {
 		cfg.Embedding = o.embedding.config()
 	}
+	if o.embeddingCfg != nil {
+		cfg.Embedding = o.embeddingCfg
+	}
 	svcCfg := &corev1.Service_Spec_Config{
+		Name: o.configName,
 		Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},
 	}
 

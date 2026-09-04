@@ -27,13 +27,19 @@ type cacheResponseWriter struct {
 
 	mu sync.Mutex
 
-	statusCode  int
-	contentType string
-	hdrWritten  bool
-	isStorable  bool
-	maxSize     int
+	res        storedResponse
+	hdrWritten bool
+	isStorable bool
+	maxSize    int
 
 	buf bytes.Buffer
+}
+
+type storedResponse struct {
+	statusCode      int
+	contentType     string
+	contentEncoding string
+	body            []byte
 }
 
 func (rw *cacheResponseWriter) Unwrap() http.ResponseWriter {
@@ -49,8 +55,9 @@ func (rw *cacheResponseWriter) WriteHeader(statusCode int) {
 	rw.mu.Lock()
 	if !rw.hdrWritten {
 		rw.hdrWritten = true
-		rw.statusCode = statusCode
-		rw.contentType = rw.Header().Get("Content-Type")
+		rw.res.statusCode = statusCode
+		rw.res.contentType = rw.Header().Get("Content-Type")
+		rw.res.contentEncoding = rw.Header().Get("Content-Encoding")
 		rw.isStorable = rw.isStorable && statusCode >= 200 && statusCode <= 299
 	}
 	rw.mu.Unlock()
@@ -93,13 +100,15 @@ func (rw *cacheResponseWriter) isHeaderWritten() bool {
 	return rw.hdrWritten
 }
 
-func (rw *cacheResponseWriter) stored() (int, string, []byte) {
+func (rw *cacheResponseWriter) stored() storedResponse {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 
 	if !rw.isStorable {
-		return 0, "", nil
+		return storedResponse{}
 	}
 
-	return rw.statusCode, rw.contentType, rw.buf.Bytes()
+	ret := rw.res
+	ret.body = rw.buf.Bytes()
+	return ret
 }

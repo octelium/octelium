@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -287,58 +288,60 @@ func upstreamCompletion(text string) http.HandlerFunc {
 	}
 }
 
+func newTestIdentity(t *testing.T, body string) *semanticIdentity {
+	d, err := newDoc(corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, []byte(body))
+	assert.Nil(t, err)
+
+	ret, err := d.getSemanticIdentity()
+	assert.Nil(t, err, "%+v", err)
+	return ret
+}
+
 func TestSemanticIdentity(t *testing.T) {
-	newIdentity := func(t *testing.T, body string) (string, []byte) {
-		d, err := newDoc(corev1.Service_Spec_Config_LLM_OPENAI,
-			corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, []byte(body))
-		assert.Nil(t, err)
-
-		subject, digest, err := d.semanticIdentity()
-		assert.Nil(t, err, "%+v", err)
-		return subject, digest
-	}
-
 	{
-		subject, digest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		identity := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"system","content":"Be terse"},`+
 			`{"role":"user","content":"What is Octelium?"}]}`)
-		assert.Equal(t, "What is Octelium?", subject)
+		assert.Equal(t, "What is Octelium?", identity.subject)
+		assert.False(t, identity.isOpaque)
+		assert.True(t, identity.isCacheable())
 
-		other, otherDigest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		other := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"system","content":"Be terse"},`+
 			`{"role":"user","content":"Tell me about Octelium"}]}`)
-		assert.Equal(t, "Tell me about Octelium", other)
-		assert.Equal(t, digest, otherDigest)
+		assert.Equal(t, "Tell me about Octelium", other.subject)
+		assert.Equal(t, identity.digest, other.digest)
 	}
 
 	{
-		_, digest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		identity := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"system","content":"Be terse"},`+
 			`{"role":"user","content":"Hi"}]}`)
-		_, otherDigest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		other := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"system","content":"Be verbose"},`+
 			`{"role":"user","content":"Hi"}]}`)
-		assert.NotEqual(t, digest, otherDigest)
+		assert.NotEqual(t, identity.digest, other.digest)
 	}
 
 	{
-		_, digest := newIdentity(t, `{"model":"gpt-4o","temperature":0.1,`+
+		identity := newTestIdentity(t, `{"model":"gpt-4o","temperature":0.1,`+
 			`"messages":[{"role":"user","content":"Hi"}]}`)
-		_, otherDigest := newIdentity(t, `{"model":"gpt-4o","temperature":0.9,`+
+		other := newTestIdentity(t, `{"model":"gpt-4o","temperature":0.9,`+
 			`"messages":[{"role":"user","content":"Hi"}]}`)
-		assert.NotEqual(t, digest, otherDigest)
+		assert.NotEqual(t, identity.digest, other.digest)
 	}
 
 	{
-		_, digest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		identity := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"user","content":"First"},`+
 			`{"role":"assistant","content":"Second"},`+
 			`{"role":"user","content":"Third"}]}`)
-		_, otherDigest := newIdentity(t, `{"model":"gpt-4o","messages":[`+
+		other := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
 			`{"role":"user","content":"First"},`+
 			`{"role":"assistant","content":"Other"},`+
 			`{"role":"user","content":"Third"}]}`)
-		assert.NotEqual(t, digest, otherDigest)
+		assert.NotEqual(t, identity.digest, other.digest)
 	}
 
 	{
@@ -347,8 +350,44 @@ func TestSemanticIdentity(t *testing.T) {
 			[]byte(`{"model":"gpt-4o","messages":[{"role":"assistant","content":"Hi"}]}`))
 		assert.Nil(t, err)
 
-		_, _, err = d.semanticIdentity()
+		_, err = d.getSemanticIdentity()
 		assert.NotNil(t, err)
+	}
+}
+
+func TestSemanticIdentityIsCacheable(t *testing.T) {
+	{
+		identity := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
+			`{"role":"user","content":[`+
+			`{"type":"text","text":"summarize this"},`+
+			`{"type":"tool_result","tool_use_id":"1","content":"DATA-A"}]}]}`)
+		assert.Equal(t, "summarize this", identity.subject)
+		assert.True(t, identity.isOpaque)
+		assert.False(t, identity.isCacheable())
+
+		other := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
+			`{"role":"user","content":[`+
+			`{"type":"text","text":"summarize this"},`+
+			`{"type":"tool_result","tool_use_id":"1","content":"DATA-B"}]}]}`)
+		assert.Equal(t, identity.digest, other.digest)
+		assert.True(t, other.isOpaque)
+	}
+
+	{
+		identity := newTestIdentity(t, `{"model":"gpt-4o","messages":[`+
+			`{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+		assert.False(t, identity.isOpaque)
+		assert.True(t, identity.isCacheable())
+	}
+
+	{
+		long := strings.Repeat("a", maxEmbeddingTextBytes+1)
+		identity := newTestIdentity(t, newChatBody(long))
+		assert.Equal(t, long, identity.subject)
+		assert.False(t, identity.isCacheable())
+
+		other := newTestIdentity(t, newChatBody(long+"b"))
+		assert.NotEqual(t, identity.subject, other.subject)
 	}
 }
 
@@ -407,8 +446,11 @@ func TestSemanticRouter(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, "gpt-5", res.upstream["model"])
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
+			res.reqCtx.LLMSemanticRouter.Result)
 		assert.Equal(t, "code", res.reqCtx.LLMSemanticRouter.Route)
 		assert.Equal(t, "gpt-5", res.reqCtx.LLMSemanticRouter.Model)
+		assert.Equal(t, "router", res.reqCtx.LLMSemanticRouter.Plugin)
 		assert.True(t, res.reqCtx.LLMSemanticRouter.Similarity > 0.9)
 	}
 
@@ -437,6 +479,8 @@ func TestSemanticRouter(t *testing.T) {
 		})
 
 		assert.Equal(t, "gpt-5-mini", res.upstream["model"])
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_NO_MATCH,
+			res.reqCtx.LLMSemanticRouter.Result)
 		assert.Empty(t, res.reqCtx.LLMSemanticRouter.Route)
 		assert.Equal(t, "gpt-5-mini", res.reqCtx.LLMSemanticRouter.Model)
 	}
@@ -521,6 +565,8 @@ func TestSemanticRouterEmbeddingError(t *testing.T) {
 
 	assert.True(t, res.isNext)
 	assert.Equal(t, "gpt-5-mini", res.upstream["model"])
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR,
+		res.reqCtx.LLMSemanticRouter.Result)
 }
 
 func TestSemanticRouterRouteTableIsCached(t *testing.T) {
@@ -604,7 +650,8 @@ func TestSemanticCacheExactHit(t *testing.T) {
 		assert.Equal(t,
 			corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
 			res.reqCtx.LLMSemanticCache.Result)
-		assert.Equal(t, float32(1), res.reqCtx.LLMSemanticCache.Similarity)
+		assert.Zero(t, res.reqCtx.LLMSemanticCache.Similarity)
+		assert.Equal(t, "cache", res.reqCtx.LLMSemanticCache.Plugin)
 		assert.Equal(t, "application/json", res.header.Get("Content-Type"))
 	}
 
@@ -927,9 +974,9 @@ func TestSemanticIdentityProtocols(t *testing.T) {
 		d, err := newDoc(protocol, operation, []byte(body))
 		assert.Nil(t, err)
 
-		subject, digest, err := d.semanticIdentity()
+		ret, err := d.getSemanticIdentity()
 		assert.Nil(t, err, "%+v", err)
-		return subject, digest
+		return ret.subject, ret.digest
 	}
 
 	{
@@ -976,4 +1023,240 @@ func TestSemanticIdentityProtocols(t *testing.T) {
 				`{"role":"user","content":[{"type":"text","text":"What is Octelium?"}]}]}`)
 		assert.Equal(t, "What is Octelium?", subject)
 	}
+}
+
+func TestSemanticCacheContentEncoding(t *testing.T) {
+	embedding := newFakeEmbeddings(nil)
+	vectorC := newFakeVector()
+
+	newOpts := func() *pluginOpts {
+		return &pluginOpts{
+			body:      newChatBody("What is Octelium?"),
+			embedding: embedding,
+			vectorC:   vectorC,
+			upstream: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Write([]byte("\x1f\x8b\x08\x00compressed"))
+			},
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSemanticCachePlugin(nil),
+			},
+			downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
+		}
+	}
+
+	servePlugins(t, newOpts())
+
+	res := servePlugins(t, newOpts())
+
+	assert.False(t, res.isNext)
+	assert.Equal(t, "gzip", res.header.Get("Content-Encoding"))
+	assert.Equal(t, "application/json", res.header.Get("Content-Type"))
+	assert.Equal(t, "\x1f\x8b\x08\x00compressed", res.body)
+}
+
+func TestSemanticCachePartialStream(t *testing.T) {
+	embedding := newFakeEmbeddings(nil)
+	vectorC := newFakeVector()
+
+	res := servePlugins(t, &pluginOpts{
+		body:      newChatBody("What is Octelium?"),
+		embedding: embedding,
+		vectorC:   vectorC,
+		upstream:  upstreamCompletion("a truncated answer"),
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newSemanticCachePlugin(nil),
+		},
+		downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
+		llmResponse: &middlewares.LLMResponseInfo{
+			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL,
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.False(t, res.reqCtx.LLMSemanticCache.IsStored)
+	assert.Zero(t, vectorC.count())
+}
+
+func TestSemanticCacheOpaqueContent(t *testing.T) {
+	embedding := newFakeEmbeddings(nil)
+	vectorC := newFakeVector()
+
+	newOpts := func(data string) *pluginOpts {
+		return &pluginOpts{
+			body: `{"model":"gpt-4o","messages":[{"role":"user","content":[` +
+				`{"type":"text","text":"summarize this"},` +
+				`{"type":"tool_result","tool_use_id":"1","content":"` + data + `"}]}]}`,
+			embedding: embedding,
+			vectorC:   vectorC,
+			upstream:  upstreamCompletion("a summary of " + data),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSemanticCachePlugin(nil),
+			},
+			downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
+		}
+	}
+
+	servePlugins(t, newOpts("DATA-A"))
+
+	res := servePlugins(t, newOpts("DATA-B"))
+
+	assert.True(t, res.isNext)
+	assert.Contains(t, res.body, "DATA-B")
+	assert.Equal(t,
+		corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+		res.reqCtx.LLMSemanticCache.Result)
+	assert.Zero(t, vectorC.count())
+}
+
+func TestSemanticCacheLongSubject(t *testing.T) {
+	embedding := newFakeEmbeddings(nil)
+	vectorC := newFakeVector()
+
+	prefix := strings.Repeat("a", maxEmbeddingTextBytes+1)
+
+	newOpts := func(suffix string) *pluginOpts {
+		return &pluginOpts{
+			body:      newChatBody(prefix + suffix),
+			embedding: embedding,
+			vectorC:   vectorC,
+			upstream:  upstreamCompletion("an answer for " + suffix),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSemanticCachePlugin(nil),
+			},
+			downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
+		}
+	}
+
+	servePlugins(t, newOpts("ONE"))
+
+	res := servePlugins(t, newOpts("TWO"))
+
+	assert.True(t, res.isNext)
+	assert.Contains(t, res.body, "TWO")
+	assert.Equal(t,
+		corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+		res.reqCtx.LLMSemanticCache.Result)
+	assert.Zero(t, vectorC.count())
+}
+
+func TestSemanticCacheKeyIsolation(t *testing.T) {
+	embedding := newFakeEmbeddings(nil)
+	vectorC := newFakeVector()
+
+	newOpts := func() *pluginOpts {
+		return &pluginOpts{
+			body:      newChatBody("What is Octelium?"),
+			embedding: embedding,
+			vectorC:   vectorC,
+			upstream:  upstreamCompletion("an answer"),
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newSemanticCachePlugin(nil),
+			},
+			downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
+		}
+	}
+
+	servePlugins(t, newOpts())
+
+	{
+		res := servePlugins(t, newOpts())
+		assert.False(t, res.isNext)
+	}
+
+	{
+		opts := newOpts()
+		opts.configName = "premium"
+
+		res := servePlugins(t, opts)
+		assert.True(t, res.isNext)
+		assert.Equal(t,
+			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			res.reqCtx.LLMSemanticCache.Result)
+	}
+
+	{
+		opts := newOpts()
+		opts.embeddingCfg = embedding.config()
+		opts.embeddingCfg.Model = "text-embedding-3-large"
+
+		res := servePlugins(t, opts)
+		assert.True(t, res.isNext)
+		assert.Equal(t,
+			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			res.reqCtx.LLMSemanticCache.Result)
+	}
+}
+
+func TestSemanticRouterTableSingleflight(t *testing.T) {
+	embedding := newFakeEmbeddings(map[string][]float32{
+		"Why does this Go program deadlock?": {1, 0, 0, 0},
+		"What is the capital of Egypt?":      {0, 1, 0, 0},
+	})
+
+	router, err := NewSemanticRouter(context.Background(),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		&SemanticOpts{Upstream: embedding.upstreamFn()})
+	assert.Nil(t, err)
+
+	cfg := newSemanticRouterPlugin(embedding)
+	plugin := newPlugin("router", cfg)
+
+	reqCtx := &middlewares.RequestContext{
+		ServiceConfig: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Llm{
+				Llm: &corev1.Service_Spec_Config_LLM{},
+			},
+		},
+	}
+
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			table, err := router.(*semanticRouter).getTable(context.Background(),
+				reqCtx, plugin, cfg, embedding.config())
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, 2, len(table))
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 1, embedding.requests())
+}
+
+func TestEmbeddingEndpoint(t *testing.T) {
+	newURL := func(t *testing.T, arg string) *url.URL {
+		ret, err := url.Parse(arg)
+		assert.Nil(t, err)
+		return ret
+	}
+
+	assert.Equal(t, "https://api.openai.com/v1/embeddings",
+		embeddingEndpoint(newURL(t, "https://api.openai.com/v1"), "/embeddings"))
+
+	assert.Equal(t, "https://api.openai.com/v1/embeddings",
+		embeddingEndpoint(newURL(t, "https://api.openai.com/v1/"), "/embeddings"))
+
+	assert.Equal(t, "https://example.com/api/v1/embeddings",
+		embeddingEndpoint(newURL(t, "https://example.com/api/v1"), "/embeddings"))
+
+	assert.Equal(t, "https://example.com/embeddings",
+		embeddingEndpoint(newURL(t, "https://example.com"), "/embeddings"))
+
+	assert.Equal(t,
+		"https://example.openai.azure.com/openai/deployments/emb/embeddings?api-version=2024-02-01",
+		embeddingEndpoint(newURL(t,
+			"https://example.openai.azure.com/openai/deployments/emb?api-version=2024-02-01"),
+			"/embeddings"))
+
+	assert.Equal(t,
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents",
+		embeddingEndpoint(newURL(t, "https://generativelanguage.googleapis.com/v1beta"),
+			"/models/gemini-embedding-001:batchEmbedContents"))
+
+	assert.Equal(t, "http://embeddings.octelium.svc:8080/v1/embeddings",
+		embeddingEndpoint(newURL(t, "http://embeddings.octelium.svc:8080/v1"), "/embeddings"))
 }

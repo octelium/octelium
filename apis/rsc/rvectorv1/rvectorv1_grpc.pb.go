@@ -55,12 +55,14 @@ const (
 // range from the Cluster's own Redis/Valkey store to the managed vector
 // databases.
 //
-// The similarity is always the cosine similarity, which is a value between 0
-// and 1 where 1 is an identical direction. The metric is fixed rather than
-// chosen by the caller since it is the metric of the text embeddings that
-// these vectors carry, and since a store whose callers each choose their own
-// metric is a store that cannot be moved between the backends that do not all
-// offer the same ones.
+// The similarity is always the cosine similarity, clamped to a value between 0
+// and 1 where 1 is an identical direction. The clamp is deliberate: a cosine
+// is defined between -1 and 1, but an opposite direction and an orthogonal one
+// are equally unrelated for the text embeddings that these vectors carry, so
+// both are reported as 0 rather than ordered against one another. The metric
+// itself is fixed rather than chosen by the caller for the same reason, and
+// because a store whose callers each choose their own metric is a store that
+// cannot be moved between the backends that do not all offer the same ones.
 //
 // Note that the search is approximate: an implementation is allowed to use an
 // approximate index, so a search can fail to return an entry that an exact
@@ -147,12 +149,14 @@ func (c *mainServiceClient) DeleteCollection(ctx context.Context, in *DeleteColl
 // range from the Cluster's own Redis/Valkey store to the managed vector
 // databases.
 //
-// The similarity is always the cosine similarity, which is a value between 0
-// and 1 where 1 is an identical direction. The metric is fixed rather than
-// chosen by the caller since it is the metric of the text embeddings that
-// these vectors carry, and since a store whose callers each choose their own
-// metric is a store that cannot be moved between the backends that do not all
-// offer the same ones.
+// The similarity is always the cosine similarity, clamped to a value between 0
+// and 1 where 1 is an identical direction. The clamp is deliberate: a cosine
+// is defined between -1 and 1, but an opposite direction and an orthogonal one
+// are equally unrelated for the text embeddings that these vectors carry, so
+// both are reported as 0 rather than ordered against one another. The metric
+// itself is fixed rather than chosen by the caller for the same reason, and
+// because a store whose callers each choose their own metric is a store that
+// cannot be moved between the backends that do not all offer the same ones.
 //
 // Note that the search is approximate: an implementation is allowed to use an
 // approximate index, so a search can fail to return an entry that an exact

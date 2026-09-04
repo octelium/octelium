@@ -503,3 +503,121 @@ func TestVectorUtils(t *testing.T) {
 			getVectorKeys([]byte("b"), []byte("a")))
 	}
 }
+
+func TestVectorDeleteRecomputesTTL(t *testing.T) {
+
+	srv := &srvVector{
+		redisC: redisutils.NewClient(),
+	}
+
+	ctx := context.Background()
+
+	collection := []byte(utilrand.GetRandomString(8))
+	partition := []byte(utilrand.GetRandomString(8))
+	keys := getVectorKeys(collection, partition)
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("expiring"),
+					Vector: []float32{1, 0},
+					Data:   []byte("data-1"),
+				},
+			},
+			Duration: &metav1.Duration{
+				Type: &metav1.Duration_Minutes{
+					Minutes: 10,
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	{
+		_, err := srv.UpsertVectors(ctx, &rvectorv1.UpsertVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Entries: []*rvectorv1.Entry{
+				{
+					Id:     []byte("permanent"),
+					Vector: []float32{0, 1},
+					Data:   []byte("data-2"),
+				},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		for _, key := range keys {
+			ttl, err := srv.redisC.TTL(ctx, key).Result()
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, ttl < 0, "%s: %s", key, ttl)
+		}
+	}
+
+	{
+		_, err := srv.DeleteVectors(ctx, &rvectorv1.DeleteVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Ids:        [][]byte{[]byte("permanent")},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		for _, key := range keys {
+			ttl, err := srv.redisC.TTL(ctx, key).Result()
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, ttl > 0, "%s: %s", key, ttl)
+		}
+	}
+
+	{
+		_, err := srv.DeleteVectors(ctx, &rvectorv1.DeleteVectorsRequest{
+			Collection: collection,
+			Partition:  partition,
+			Ids:        [][]byte{[]byte("expiring")},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		for _, key := range keys {
+			exists, err := srv.redisC.Exists(ctx, key).Result()
+			assert.Nil(t, err, "%+v", err)
+			assert.Zero(t, exists, "%s", key)
+		}
+	}
+}
+
+func TestVectorSearchInvalidMinSimilarity(t *testing.T) {
+
+	srv := &srvVector{
+		redisC: redisutils.NewClient(),
+	}
+
+	ctx := context.Background()
+	collection := []byte(utilrand.GetRandomString(8))
+
+	for _, minSimilarity := range []float32{
+		float32(math.NaN()),
+		float32(math.Inf(1)),
+		-0.5,
+		1.5,
+	} {
+		_, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection:    collection,
+			Vector:        []float32{1, 0},
+			MinSimilarity: minSimilarity,
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+			Collection:    collection,
+			Vector:        []float32{1, 0},
+			MinSimilarity: 1,
+		})
+		assert.Nil(t, err, "%+v", err)
+	}
+}

@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -2071,4 +2072,291 @@ func TestValidateLLMLimits(t *testing.T) {
 	assert.NotNil(t, s.validateLLMLimits(&corev1.Service_Spec_Config_LLM_Limits{
 		MaxStreamEventBytes: maxLLMStreamEventBytesLimit + 1,
 	}))
+}
+
+func newLLMEmbedding() *corev1.Service_Spec_Config_LLM_Embedding {
+	return &corev1.Service_Spec_Config_LLM_Embedding{
+		Model: "text-embedding-3-small",
+		Source: &corev1.Service_Spec_Config_LLM_Embedding_Source{
+			Type: &corev1.Service_Spec_Config_LLM_Embedding_Source_CurrentUpstream{
+				CurrentUpstream: true,
+			},
+		},
+	}
+}
+
+func newLLMEmbeddingUpstream() *corev1.Service_Spec_Config_LLM_Embedding {
+	return &corev1.Service_Spec_Config_LLM_Embedding{
+		Model: "text-embedding-3-small",
+		Source: &corev1.Service_Spec_Config_LLM_Embedding_Source{
+			Type: &corev1.Service_Spec_Config_LLM_Embedding_Source_Upstream_{
+				Upstream: &corev1.Service_Spec_Config_LLM_Embedding_Source_Upstream{
+					Url: "https://api.openai.com/v1",
+				},
+			},
+		},
+	}
+}
+
+func TestValidateLLMEmbedding(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMEmbedding(ctx, nil))
+	assert.Nil(t, s.validateLLMEmbedding(ctx, newLLMEmbedding()))
+	assert.Nil(t, s.validateLLMEmbedding(ctx, newLLMEmbeddingUpstream()))
+
+	{
+		cfg := newLLMEmbedding()
+		cfg.Dimensions = 512
+		assert.Nil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbedding()
+		cfg.Model = ""
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbedding()
+		cfg.Dimensions = maxLLMEmbeddingDimensions + 1
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbedding()
+		cfg.Source = nil
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Url = "ftp://example.com"
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Url = "/v1"
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Url = "https://api.openai.com/v1?api-version=1"
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	for _, protocol := range []corev1.Service_Spec_Config_LLM_Protocol{
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_GEMINI,
+	} {
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Protocol = protocol
+		assert.Nil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	for _, protocol := range []corev1.Service_Spec_Config_LLM_Protocol{
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		corev1.Service_Spec_Config_LLM_BEDROCK,
+	} {
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Protocol = protocol
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMEmbeddingUpstream()
+		cfg.GetSource().GetUpstream().Auth = &corev1.Service_Spec_Config_HTTP_Auth{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4_{
+				Sigv4: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4{
+					Region: "us-east-1",
+				},
+			},
+		}
+		assert.NotNil(t, s.validateLLMEmbedding(ctx, cfg))
+	}
+}
+
+func newLLMSemanticCache() *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache {
+	return &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache{
+		Embedding:     newLLMEmbedding(),
+		MinSimilarity: 0.95,
+	}
+}
+
+func TestValidateLLMSemanticCache(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMSemanticCache(ctx,
+		&corev1.Service_Spec_Config_LLM_Plugin_SemanticCache{}))
+	assert.Nil(t, s.validateLLMSemanticCache(ctx, newLLMSemanticCache()))
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.Ttl = &metav1.Duration{
+			Type: &metav1.Duration_Hours{Hours: 2},
+		}
+		cfg.MaxSize = 128 * 1024
+		cfg.UseXCacheHeader = true
+		cfg.Scope = &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_Scope{
+			Type: &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_Scope_Eval{
+				Eval: `ctx.user.metadata.uid`,
+			},
+		}
+		assert.Nil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.MinSimilarity = 1.5
+		assert.NotNil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.MinSimilarity = float32(math.NaN())
+		assert.NotNil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.MaxSize = maxLLMSemanticCacheSize + 1
+		assert.NotNil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.Scope = &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_Scope{
+			Type: &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_Scope_Eval{
+				Eval: `!!!`,
+			},
+		}
+		assert.NotNil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticCache()
+		cfg.Embedding.Model = ""
+		assert.NotNil(t, s.validateLLMSemanticCache(ctx, cfg))
+	}
+}
+
+func newLLMSemanticRouter() *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter {
+	return &corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter{
+		Embedding: newLLMEmbedding(),
+		Routes: []*corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter_Route{
+			{
+				Name:     "code",
+				Examples: []string{"Why does this Go program deadlock?"},
+				Model:    "gpt-5",
+			},
+		},
+		FallbackModel: "gpt-5-mini",
+	}
+}
+
+func TestValidateLLMSemanticRouter(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	assert.Nil(t, s.validateLLMSemanticRouter(ctx, newLLMSemanticRouter()))
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Description = "Software development and debugging"
+		cfg.Routes[0].Examples = nil
+		cfg.Routes[0].MinSimilarity = 0.8
+		assert.Nil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes = nil
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes = append(cfg.Routes,
+			&corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter_Route{
+				Name:     "code",
+				Examples: []string{"Another example"},
+				Model:    "o3",
+			})
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Model = ""
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Name = ""
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Examples = nil
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Examples = []string{strings.Repeat("a", maxLLMSemanticTextLen+1)}
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].MinSimilarity = -1
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.FallbackModel = strings.Repeat("a", maxLLMModelLen+1)
+		assert.NotNil(t, s.validateLLMSemanticRouter(ctx, cfg))
+	}
+}
+
+func TestValidateLLMSemanticPlugins(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{}
+
+	newPlugin := func(name string, typ any) *corev1.Service_Spec_Config_LLM_Plugin {
+		ret := &corev1.Service_Spec_Config_LLM_Plugin{
+			Name: name,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{MatchAny: true},
+			},
+		}
+		switch cur := typ.(type) {
+		case *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache:
+			ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_SemanticCache_{SemanticCache: cur}
+		case *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter:
+			ret.Type = &corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter_{SemanticRouter: cur}
+		}
+		return ret
+	}
+
+	assert.Nil(t, s.validateLLMPlugins(ctx, "", []*corev1.Service_Spec_Config_LLM_Plugin{
+		newPlugin("cache", newLLMSemanticCache()),
+		newPlugin("router", newLLMSemanticRouter()),
+	}))
+
+	{
+		cfg := newLLMSemanticRouter()
+		cfg.Routes[0].Model = ""
+		assert.NotNil(t, s.validateLLMPlugins(ctx, "",
+			[]*corev1.Service_Spec_Config_LLM_Plugin{
+				newPlugin("router", cfg),
+			}))
+	}
 }

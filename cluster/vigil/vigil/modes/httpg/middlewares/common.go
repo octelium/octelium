@@ -112,7 +112,8 @@ type RequestContext struct {
 
 	BodyDigest [sha256.Size]byte
 
-	OnResponse []func()
+	OnResponse    []func()
+	onResponseRan bool
 }
 
 type MCPResponseInfo struct {
@@ -137,6 +138,7 @@ type LLMSemanticCacheInfo struct {
 	Result     corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result
 	Similarity float32
 	IsStored   bool
+	Plugin     string
 }
 
 func (r *LLMSemanticCacheInfo) IsHit() bool {
@@ -153,9 +155,11 @@ func (r *LLMSemanticCacheInfo) IsHit() bool {
 }
 
 type LLMSemanticRouterInfo struct {
+	Result     corev1.AccessLog_Entry_Info_LLM_SemanticRouter_Result
 	Route      string
 	Similarity float32
 	Model      string
+	Plugin     string
 }
 
 func (r *LLMSemanticRouterInfo) GetModel() string {
@@ -170,6 +174,13 @@ func (r *LLMResponseInfo) GetModel() string {
 		return ""
 	}
 	return r.Model
+}
+
+func (r *LLMResponseInfo) GetUsageSource() corev1.AccessLog_Entry_Info_LLM_Usage_Source {
+	if r == nil {
+		return corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET
+	}
+	return r.UsageSource
 }
 
 func (r *LLMResponseInfo) GetFinishReason() string {
@@ -200,6 +211,11 @@ func (r *RequestContext) AddOnResponse(fn func()) {
 }
 
 func (r *RequestContext) RunOnResponse() {
+	if r.onResponseRan {
+		return
+	}
+	r.onResponseRan = true
+
 	for _, fn := range r.OnResponse {
 		fn()
 	}

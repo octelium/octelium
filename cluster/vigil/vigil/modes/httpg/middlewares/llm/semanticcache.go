@@ -43,8 +43,8 @@ const (
 	defaultSemanticCacheSize  = 256 << 10
 	maxSemanticCacheSize      = 1 << 20
 	semanticCacheSearchLimit  = 4
-	semanticCacheTimeout      = 5 * time.Second
-	semanticCacheStoreTimeout = 10 * time.Second
+	semanticCacheTimeout      = 3 * time.Second
+	semanticCacheStoreTimeout = 3 * time.Second
 )
 
 type semanticCache struct {
@@ -67,9 +67,10 @@ func NewSemanticCache(ctx context.Context, next http.Handler,
 }
 
 type cacheEntry struct {
-	Status      int    `json:"status"`
-	ContentType string `json:"contentType,omitempty"`
-	Body        []byte `json:"body"`
+	Status          int    `json:"status"`
+	ContentType     string `json:"contentType,omitempty"`
+	ContentEncoding string `json:"contentEncoding,omitempty"`
+	Body            []byte `json:"body"`
 }
 
 type cacheKey struct {
@@ -147,24 +148,24 @@ func (m *semanticCache) serve(w http.ResponseWriter, req *http.Request,
 
 	embeddingCfg := resolveEmbedding(reqCtx, cfg.GetEmbedding())
 	if !isSemanticRequest(reqCtx) || embeddingCfg == nil {
-		setSemanticCacheResult(reqCtx,
+		setSemanticCacheResult(reqCtx, plugin,
 			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS, 0)
 		m.next.ServeHTTP(w, req)
 		return
 	}
 
-	key, err := m.getKey(ctx, req, reqCtx, plugin, cfg)
+	key, err := m.getKey(ctx, req, reqCtx, plugin, cfg, embeddingCfg)
 	if err != nil {
 		zap.L().Debug("Could not build the LLM SemanticCache key",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
-		setSemanticCacheResult(reqCtx,
+		setSemanticCacheResult(reqCtx, plugin,
 			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS, 0)
 		m.next.ServeHTTP(w, req)
 		return
 	}
 
 	res := m.lookup(ctx, reqCtx, key, embeddingCfg, cfg)
-	setSemanticCacheResult(reqCtx, res.result, res.similarity)
+	setSemanticCacheResult(reqCtx, plugin, res.result, res.similarity)
 
 	if res.entry != nil {
 		m.writeEntry(w, cfg, res.entry)
@@ -177,7 +178,7 @@ func (m *semanticCache) serve(w http.ResponseWriter, req *http.Request,
 
 	crw := &cacheResponseWriter{
 		ResponseWriter: w,
-		statusCode:     http.StatusOK,
+		res:            storedResponse{statusCode: http.StatusOK},
 		maxSize:        getSemanticCacheMaxSize(cfg),
 		isStorable:     len(res.vector) > 0,
 	}
@@ -192,11 +193,18 @@ func (m *semanticCache) serve(w http.ResponseWriter, req *http.Request,
 func (m *semanticCache) getKey(ctx context.Context, req *http.Request,
 	reqCtx *middlewares.RequestContext,
 	plugin *corev1.Service_Spec_Config_LLM_Plugin,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache) (*cacheKey, error) {
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache,
+	embeddingCfg *corev1.Service_Spec_Config_LLM_Embedding) (*cacheKey, error) {
 
-	subject, digest, err := getSemanticSubject(reqCtx)
+	identity, err := getSemanticIdentity(reqCtx)
 	if err != nil {
 		return nil, err
+	}
+
+	if !identity.isCacheable() {
+		return nil, errors.Errorf(
+			"The request subject cannot be matched exactly: isOpaque=%t len=%d",
+			identity.isOpaque, len(identity.subject))
 	}
 
 	scope, err := m.getScope(ctx, reqCtx, cfg.GetScope())
@@ -206,12 +214,14 @@ func (m *semanticCache) getKey(ctx context.Context, req *http.Request,
 
 	return &cacheKey{
 		collection: []byte(fmt.Sprintf("llm:sc:%s:%s", m.svcUID, plugin.GetName())),
-		partition: vutils.Sha256Sum([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%s\x00%s\x00%s\x00%t\x00%x",
-			scope, reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(),
+		partition: vutils.Sha256Sum([]byte(fmt.Sprintf(
+			"%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s\x00%t\x00%x",
+			scope, reqCtx.ServiceConfig.GetName(), getEmbeddingFingerprint(embeddingCfg),
+			reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(),
 			req.Method, req.URL.Path, req.URL.RawQuery,
-			reqCtx.LLM.GetStream(), digest))),
-		id:      vutils.Sha256Sum([]byte(subject)),
-		subject: subject,
+			reqCtx.LLM.GetStream(), identity.digest))),
+		id:      vutils.Sha256Sum([]byte(identity.subject)),
+		subject: identity.subject,
 	}, nil
 }
 
@@ -292,7 +302,6 @@ func (m *semanticCache) lookup(ctx context.Context,
 		if entry := decodeCacheEntry(resp.Results[0].Data); entry != nil {
 			ret.entry = entry
 			ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT
-			ret.similarity = 1
 			return ret
 		}
 	}
@@ -343,20 +352,21 @@ func (m *semanticCache) store(ctx context.Context,
 	reqCtx *middlewares.RequestContext, key *cacheKey, vector []float32,
 	crw *cacheResponseWriter, cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache) {
 
-	if len(vector) == 0 || reqCtx.LLMResponseDenied {
+	if len(vector) == 0 || reqCtx.LLMResponseDenied || !isStorableResponse(reqCtx) {
 		return
 	}
 
-	statusCode, contentType, body := crw.stored()
-	if len(body) == 0 || hasToolCallResponse(body) ||
+	res := crw.stored()
+	if len(res.body) == 0 || hasToolCallResponse(res.body) ||
 		isToolCallFinishReason(reqCtx.LLMResponse.GetFinishReason()) {
 		return
 	}
 
 	data, err := json.Marshal(&cacheEntry{
-		Status:      statusCode,
-		ContentType: contentType,
-		Body:        body,
+		Status:          res.statusCode,
+		ContentType:     res.contentType,
+		ContentEncoding: res.contentEncoding,
+		Body:            res.body,
 	})
 	if err != nil {
 		return
@@ -397,6 +407,9 @@ func (m *semanticCache) writeEntry(w http.ResponseWriter,
 	if entry.ContentType != "" {
 		hdr.Set("Content-Type", entry.ContentType)
 	}
+	if entry.ContentEncoding != "" {
+		hdr.Set("Content-Encoding", entry.ContentEncoding)
+	}
 	hdr.Del("Content-Length")
 
 	if cfg.GetUseXCacheHeader() {
@@ -413,10 +426,22 @@ func (m *semanticCache) writeEntry(w http.ResponseWriter,
 }
 
 func setSemanticCacheResult(reqCtx *middlewares.RequestContext,
+	plugin *corev1.Service_Spec_Config_LLM_Plugin,
 	result corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result, similarity float32) {
 	reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
 		Result:     result,
 		Similarity: similarity,
+		Plugin:     plugin.GetName(),
+	}
+}
+
+func isStorableResponse(reqCtx *middlewares.RequestContext) bool {
+	switch reqCtx.LLMResponse.GetUsageSource() {
+	case corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL,
+		corev1.AccessLog_Entry_Info_LLM_Usage_CACHED:
+		return false
+	default:
+		return true
 	}
 }
 

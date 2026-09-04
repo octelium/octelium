@@ -53,6 +53,7 @@ type semanticRouter struct {
 
 	mu     sync.Mutex
 	tables map[string][]*routeEntry
+	builds map[string]chan struct{}
 }
 
 func NewSemanticRouter(ctx context.Context, next http.Handler,
@@ -62,6 +63,7 @@ func NewSemanticRouter(ctx context.Context, next http.Handler,
 		celEngine: o.CELEngine,
 		embedder:  newEmbedder(o.SecretMan, o.Upstream),
 		tables:    make(map[string][]*routeEntry),
+		builds:    make(map[string]chan struct{}),
 	}, nil
 }
 
@@ -106,56 +108,58 @@ func (m *semanticRouter) route(ctx context.Context,
 	plugin *corev1.Service_Spec_Config_LLM_Plugin,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter) {
 
-	entry, similarity := m.match(ctx, reqCtx, plugin, cfg)
+	ret := &middlewares.LLMSemanticRouterInfo{
+		Plugin: plugin.GetName(),
+	}
+	reqCtx.LLMSemanticRouter = ret
+
+	entry, similarity, result := m.match(ctx, reqCtx, plugin, cfg)
+	ret.Result = result
+
 	if entry == nil {
-		if model := cfg.GetFallbackModel(); model != "" {
-			reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
-				Model: model,
-			}
-		}
+		ret.Model = cfg.GetFallbackModel()
 		return
 	}
 
-	reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
-		Route:      entry.name,
-		Similarity: similarity,
-		Model:      entry.model,
-	}
+	ret.Route = entry.name
+	ret.Similarity = similarity
+	ret.Model = entry.model
 }
 
 func (m *semanticRouter) match(ctx context.Context,
 	reqCtx *middlewares.RequestContext,
 	plugin *corev1.Service_Spec_Config_LLM_Plugin,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter) (*routeEntry, float32) {
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter) (*routeEntry, float32,
+	corev1.AccessLog_Entry_Info_LLM_SemanticRouter_Result) {
 
 	if !isSemanticRequest(reqCtx) {
-		return nil, 0
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_BYPASS
 	}
 
 	embeddingCfg := resolveEmbedding(reqCtx, cfg.GetEmbedding())
 	if embeddingCfg == nil {
 		zap.L().Warn("The LLM SemanticRouter Plugin has no embedding configuration",
 			zap.String("plugin", plugin.GetName()))
-		return nil, 0
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
 	}
 
-	subject, _, err := getSemanticSubject(reqCtx)
+	identity, err := getSemanticIdentity(reqCtx)
 	if err != nil {
-		return nil, 0
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_BYPASS
 	}
 
 	table, err := m.getTable(ctx, reqCtx, plugin, cfg, embeddingCfg)
 	if err != nil {
 		zap.L().Warn("Could not embed the LLM SemanticRouter Routes",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
-		return nil, 0
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
 	}
 
-	vector, err := m.embedder.embedSubject(ctx, embeddingCfg, reqCtx, subject)
+	vector, err := m.embedder.embedSubject(ctx, embeddingCfg, reqCtx, identity.subject)
 	if err != nil {
 		zap.L().Warn("Could not embed the LLM request",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
-		return nil, 0
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
 	}
 
 	var ret *routeEntry
@@ -174,7 +178,11 @@ func (m *semanticRouter) match(ctx context.Context,
 		retSimilarity = similarity
 	}
 
-	return ret, retSimilarity
+	if ret == nil {
+		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_NO_MATCH
+	}
+
+	return ret, retSimilarity, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH
 }
 
 func (m *semanticRouter) getTable(ctx context.Context,
@@ -185,27 +193,42 @@ func (m *semanticRouter) getTable(ctx context.Context,
 
 	key := getRouteTableKey(plugin, cfg, embeddingCfg)
 
-	m.mu.Lock()
-	ret, ok := m.tables[key]
-	m.mu.Unlock()
+	for {
+		m.mu.Lock()
+		if ret, ok := m.tables[key]; ok {
+			m.mu.Unlock()
+			return ret, nil
+		}
 
-	if ok {
-		return ret, nil
+		build, ok := m.builds[key]
+		if !ok {
+			build = make(chan struct{})
+			m.builds[key] = build
+			m.mu.Unlock()
+
+			ret, err := m.buildTable(ctx, reqCtx, cfg, embeddingCfg)
+
+			m.mu.Lock()
+			delete(m.builds, key)
+			if err == nil {
+				if len(m.tables) >= maxSemanticRouteTables {
+					m.tables = make(map[string][]*routeEntry)
+				}
+				m.tables[key] = ret
+			}
+			m.mu.Unlock()
+
+			close(build)
+			return ret, err
+		}
+		m.mu.Unlock()
+
+		select {
+		case <-build:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-
-	ret, err := m.buildTable(ctx, reqCtx, cfg, embeddingCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	m.mu.Lock()
-	if len(m.tables) >= maxSemanticRouteTables {
-		m.tables = make(map[string][]*routeEntry)
-	}
-	m.tables[key] = ret
-	m.mu.Unlock()
-
-	return ret, nil
 }
 
 func (m *semanticRouter) buildTable(ctx context.Context,

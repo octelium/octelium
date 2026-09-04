@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
@@ -31,7 +32,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-const maxSemanticSubjectBytes = 16384
+const semanticEmbedTimeout = 4 * time.Second
 
 type SemanticOpts struct {
 	CELEngine *celengine.CELEngine
@@ -75,10 +76,20 @@ func resolveEmbedding(reqCtx *middlewares.RequestContext,
 	return ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetLLM().GetEmbedding()
 }
 
-func (d *doc) semanticIdentity() (string, []byte, error) {
+type semanticIdentity struct {
+	subject  string
+	digest   []byte
+	isOpaque bool
+}
+
+func (i *semanticIdentity) isCacheable() bool {
+	return !i.isOpaque && len(i.subject) <= maxEmbeddingTextBytes
+}
+
+func (d *doc) getSemanticIdentity() (*semanticIdentity, error) {
 	msgs, err := d.messages()
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 
 	idx := -1
@@ -93,12 +104,12 @@ func (d *doc) semanticIdentity() (string, []byte, error) {
 	}
 
 	if idx < 0 {
-		return "", nil, errors.Errorf("The request carries no user message")
+		return nil, errors.Errorf("The request carries no user message")
 	}
 
 	subject := contentText(msgs[idx].Content)
 	if subject == "" {
-		return "", nil, errors.Errorf("The last user message carries no text")
+		return nil, errors.Errorf("The last user message carries no text")
 	}
 
 	rest := make([]*message, 0, len(msgs))
@@ -115,7 +126,7 @@ func (d *doc) semanticIdentity() (string, []byte, error) {
 
 	raw, err := json.Marshal(rest)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 
 	root := make(map[string]json.RawMessage, len(d.root))
@@ -126,24 +137,68 @@ func (d *doc) semanticIdentity() (string, []byte, error) {
 
 	out, err := json.Marshal(root)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 
-	return truncateText(subject, maxSemanticSubjectBytes), vutils.Sha256Sum(out), nil
+	return &semanticIdentity{
+		subject:  subject,
+		digest:   vutils.Sha256Sum(out),
+		isOpaque: hasOpaqueContent(msgs[idx].Content),
+	}, nil
 }
 
-func getSemanticSubject(reqCtx *middlewares.RequestContext) (string, []byte, error) {
-	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
-	if err != nil {
-		return "", nil, err
+func hasOpaqueContent(content json.RawMessage) bool {
+	if len(content) == 0 {
+		return true
 	}
 
-	return d.semanticIdentity()
+	switch content[0] {
+	case '"':
+		return false
+	case '[':
+	default:
+		return true
+	}
+
+	var blocks []map[string]any
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return true
+	}
+
+	for _, block := range blocks {
+		var isText bool
+		for _, key := range []string{"text", "input_text", "output_text"} {
+			if _, ok := block[key].(string); ok {
+				isText = true
+				break
+			}
+		}
+		if !isText {
+			return true
+		}
+	}
+
+	return false
+}
+
+func getSemanticIdentity(reqCtx *middlewares.RequestContext) (*semanticIdentity, error) {
+	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.getSemanticIdentity()
+}
+
+func getEmbeddingFingerprint(cfg *corev1.Service_Spec_Config_LLM_Embedding) string {
+	return fmt.Sprintf("%d:%s:%d:%s",
+		cfg.GetSource().GetUpstream().GetProtocol(), cfg.GetModel(),
+		cfg.GetDimensions(), embeddingSourceKey(cfg))
 }
 
 func getEmbeddingKey(cfg *corev1.Service_Spec_Config_LLM_Embedding, subject string) string {
-	return vutils.Sha256SumHex([]byte(fmt.Sprintf("%s:%d:%s:%s",
-		cfg.GetModel(), cfg.GetDimensions(), embeddingSourceKey(cfg), subject)))
+	return vutils.Sha256SumHex([]byte(fmt.Sprintf("%s\x00%s",
+		getEmbeddingFingerprint(cfg), subject)))
 }
 
 func embeddingSourceKey(cfg *corev1.Service_Spec_Config_LLM_Embedding) string {
@@ -163,6 +218,9 @@ func (e *embedder) embedSubject(ctx context.Context,
 	if vec, ok := reqCtx.LLMEmbeddings[key]; ok {
 		return vec, nil
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, semanticEmbedTimeout)
+	defer cancel()
 
 	vecs, err := e.embed(ctx, cfg, reqCtx, []string{subject})
 	if err != nil {

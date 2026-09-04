@@ -58,7 +58,30 @@ for i = 1, #expired do
 end
 `
 
-var vectorUpsertScript = redis.NewScript(vectorPruneLua + `
+const vectorExpiryLua = `
+local top = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+if #top == 0 then
+	redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+else
+	local ttl = 0
+	if tonumber(top[2]) < noExpiry then
+		ttl = math.ceil(tonumber(top[2]) - now) + grace
+	end
+	for j = 1, 3 do
+		if ttl > 0 then
+			redis.call('PEXPIRE', KEYS[j], ttl)
+		else
+			redis.call('PERSIST', KEYS[j])
+		end
+	end
+end
+`
+
+var vectorUpsertScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local grace = tonumber(ARGV[3])
+local noExpiry = tonumber(ARGV[5])
+` + vectorPruneLua + `
 local i = 6
 while i + 2 <= #ARGV do
 	redis.call('ZADD', KEYS[1], ARGV[2], ARGV[i])
@@ -75,18 +98,7 @@ if excess > 0 then
 		redis.call('HDEL', KEYS[3], evicted[j])
 	end
 end
-local top = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
-local ttl = 0
-if #top == 2 and tonumber(top[2]) < tonumber(ARGV[5]) then
-	ttl = math.ceil(tonumber(top[2]) - tonumber(ARGV[1])) + tonumber(ARGV[3])
-end
-for j = 1, 3 do
-	if ttl > 0 then
-		redis.call('PEXPIRE', KEYS[j], ttl)
-	else
-		redis.call('PERSIST', KEYS[j])
-	end
-end
+` + vectorExpiryLua + `
 return 1
 `)
 
@@ -106,12 +118,17 @@ var vectorSearchScript = redis.NewScript(vectorPruneLua + `
 return redis.call('HGETALL', KEYS[2])
 `)
 
-var vectorDeleteScript = redis.NewScript(vectorPruneLua + `
-for i = 2, #ARGV do
+var vectorDeleteScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local grace = tonumber(ARGV[2])
+local noExpiry = tonumber(ARGV[3])
+` + vectorPruneLua + `
+for i = 4, #ARGV do
 	redis.call('ZREM', KEYS[1], ARGV[i])
 	redis.call('HDEL', KEYS[2], ARGV[i])
 	redis.call('HDEL', KEYS[3], ARGV[i])
 end
+` + vectorExpiryLua + `
 return 1
 `)
 
@@ -194,6 +211,16 @@ func checkVectorID(id []byte) error {
 	}
 	if len(id) > maxVectorIDBytes {
 		return grpcutils.InvalidArg("ID is too large: %d", len(id))
+	}
+	return nil
+}
+
+func checkVectorSimilarity(arg float32) error {
+	if math.IsNaN(float64(arg)) || math.IsInf(float64(arg), 0) {
+		return grpcutils.InvalidArg("The minimum similarity must be finite")
+	}
+	if arg < 0 || arg > 1 {
+		return grpcutils.InvalidArg("The minimum similarity must be between 0 and 1: %v", arg)
 	}
 	return nil
 }
@@ -315,6 +342,10 @@ func (s *srvVector) SearchVectors(ctx context.Context,
 		return nil, err
 	}
 
+	if err := checkVectorSimilarity(req.MinSimilarity); err != nil {
+		return nil, err
+	}
+
 	limit := int(req.Limit)
 	switch {
 	case limit <= 0:
@@ -404,7 +435,8 @@ func (s *srvVector) DeleteVectors(ctx context.Context,
 		return nil, grpcutils.InvalidArg("Too many ids: %d", len(req.Ids))
 	}
 
-	args := []any{time.Now().UnixMilli()}
+	args := []any{time.Now().UnixMilli(), vectorKeyGrace.Milliseconds(),
+		int64(vectorNoExpiryScore)}
 	for _, id := range req.Ids {
 		if err := checkVectorID(id); err != nil {
 			return nil, err

@@ -42,7 +42,7 @@ const (
 	maxEmbeddingTextBytes = 8192
 	maxEmbeddingDimension = 4096
 	maxEmbeddingBodyBytes = 16 << 20
-	embeddingTimeout      = 15 * time.Second
+	embeddingTimeout      = 10 * time.Second
 )
 
 type UpstreamFn func(ctx context.Context) (*url.URL, error)
@@ -57,6 +57,9 @@ func newEmbedder(secretMan *secretman.SecretManager, upstream UpstreamFn) *embed
 	return &embedder{
 		client: &http.Client{
 			Timeout: embeddingTimeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		secretMan: secretMan,
 		upstream:  upstream,
@@ -138,6 +141,12 @@ func (e *embedder) resolve(ctx context.Context,
 		if parsed.Host == "" {
 			return nil, errors.Errorf("The embedding upstream URL has no host")
 		}
+		switch parsed.Scheme {
+		case "http", "https":
+		default:
+			return nil, errors.Errorf("Invalid embedding upstream URL scheme: %s",
+				parsed.Scheme)
+		}
 
 		return &embeddingTarget{
 			url:      parsed,
@@ -170,7 +179,7 @@ func (e *embedder) embedOpenAI(ctx context.Context,
 
 	out := &openAIEmbeddingResponse{}
 	if err := e.do(ctx, target,
-		embeddingEndpoint(target.url, "/v1/embeddings"), body, out); err != nil {
+		embeddingEndpoint(target.url, "/embeddings"), body, out); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +231,7 @@ func (e *embedder) embedGemini(ctx context.Context,
 
 	out := &geminiEmbeddingResponse{}
 	if err := e.do(ctx, target, embeddingEndpoint(target.url,
-		fmt.Sprintf("/v1beta/models/%s:batchEmbedContents", model)),
+		fmt.Sprintf("/models/%s:batchEmbedContents", model)),
 		map[string]any{"requests": requests}, out); err != nil {
 		return nil, err
 	}
@@ -332,13 +341,16 @@ func embeddingEndpoint(base *url.URL, path string) string {
 
 	switch ret.Scheme {
 	case "http", "https":
+	case "ws":
+		ret.Scheme = "http"
+	case "wss":
+		ret.Scheme = "https"
 	default:
 		ret.Scheme = "https"
 	}
 
 	ret.Path = strings.TrimSuffix(base.Path, "/") + path
 	ret.RawPath = ""
-	ret.RawQuery = ""
 	ret.Fragment = ""
 
 	return ret.String()
