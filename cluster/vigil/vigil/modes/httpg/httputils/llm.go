@@ -36,8 +36,8 @@ const (
 )
 
 type LLMRequest struct {
-	Protocol  corev1.Service_Spec_Config_LLM_Protocol
-	Operation corev1.RequestContext_Request_LLM_Operation
+	Protocol corev1.Service_Spec_Config_LLM_Protocol
+	Route    corev1.RequestContext_Request_LLM_Route
 
 	IsKnownRoute bool
 	HasBody      bool
@@ -69,11 +69,47 @@ func (r *LLMRequest) GetProtocol() corev1.Service_Spec_Config_LLM_Protocol {
 	return r.Protocol
 }
 
-func (r *LLMRequest) GetOperation() corev1.RequestContext_Request_LLM_Operation {
+func (r *LLMRequest) GetRoute() corev1.RequestContext_Request_LLM_Route {
 	if r == nil {
-		return corev1.RequestContext_Request_LLM_OPERATION_UNSET
+		return corev1.RequestContext_Request_LLM_ROUTE_UNSET
 	}
-	return r.Operation
+	return r.Route
+}
+
+func (r *LLMRequest) GetOperation() corev1.Service_Spec_Config_LLM_Operation {
+	if r == nil {
+		return corev1.Service_Spec_Config_LLM_OPERATION_UNSET
+	}
+	return GetLLMOperation(r.Route)
+}
+
+func GetLLMOperation(
+	route corev1.RequestContext_Request_LLM_Route) corev1.Service_Spec_Config_LLM_Operation {
+
+	switch route {
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+		corev1.RequestContext_Request_LLM_CONVERSE:
+		return corev1.Service_Spec_Config_LLM_GENERATE
+	case corev1.RequestContext_Request_LLM_EMBEDDINGS,
+		corev1.RequestContext_Request_LLM_EMBED_CONTENT:
+		return corev1.Service_Spec_Config_LLM_EMBED
+	case corev1.RequestContext_Request_LLM_MODERATIONS:
+		return corev1.Service_Spec_Config_LLM_MODERATE
+	case corev1.RequestContext_Request_LLM_COUNT_TOKENS:
+		return corev1.Service_Spec_Config_LLM_COUNT_TOKENS
+	case corev1.RequestContext_Request_LLM_MODELS_LIST:
+		return corev1.Service_Spec_Config_LLM_LIST_MODELS
+	case corev1.RequestContext_Request_LLM_MODELS_GET:
+		return corev1.Service_Spec_Config_LLM_GET_MODEL
+	case corev1.RequestContext_Request_LLM_INVOKE_MODEL:
+		return corev1.Service_Spec_Config_LLM_RAW_INFERENCE
+	default:
+		return corev1.Service_Spec_Config_LLM_OPERATION_UNSET
+	}
 }
 
 func (r *LLMRequest) GetModel() string {
@@ -167,9 +203,9 @@ func GetLLMProtocol(cfg *corev1.Service_Spec_Config_LLM) corev1.Service_Spec_Con
 }
 
 type llmRoute struct {
-	method    string
-	path      string
-	operation corev1.RequestContext_Request_LLM_Operation
+	method string
+	path   string
+	route  corev1.RequestContext_Request_LLM_Route
 }
 
 var llmRoutesOpenAI = []llmRoute{
@@ -218,20 +254,20 @@ func getLLMRoutes(protocol corev1.Service_Spec_Config_LLM_Protocol) []llmRoute {
 }
 
 type llmRouteMatch struct {
-	operation corev1.RequestContext_Request_LLM_Operation
-	model     string
-	isStream  bool
+	route    corev1.RequestContext_Request_LLM_Route
+	model    string
+	isStream bool
 }
 
 func MatchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
-	method, path string) (corev1.RequestContext_Request_LLM_Operation, bool) {
+	method, path string) (corev1.RequestContext_Request_LLM_Route, bool) {
 
 	match, ok := matchLLMRoute(protocol, method, path)
 	if !ok {
-		return corev1.RequestContext_Request_LLM_OPERATION_UNSET, false
+		return corev1.RequestContext_Request_LLM_ROUTE_UNSET, false
 	}
 
-	return match.operation, true
+	return match.route, true
 }
 
 func matchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
@@ -251,7 +287,7 @@ func matchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
 		if route.method != method {
 			return nil, false
 		}
-		return &llmRouteMatch{operation: route.operation}, true
+		return &llmRouteMatch{route: route.route}, true
 	}
 
 	if strings.HasPrefix(path, llmModelsPrefix) {
@@ -263,8 +299,8 @@ func matchLLMRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
 			return nil, false
 		}
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_MODELS_GET,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_MODELS_GET,
+			model: model,
 		}, true
 	}
 
@@ -277,7 +313,7 @@ func matchLLMRouteGemini(method, path string) (*llmRouteMatch, bool) {
 			return nil, false
 		}
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_MODELS_LIST,
+			route: corev1.RequestContext_Request_LLM_MODELS_LIST,
 		}, true
 	}
 
@@ -300,8 +336,8 @@ func matchLLMRouteGemini(method, path string) (*llmRouteMatch, bool) {
 			return nil, false
 		}
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_MODELS_GET,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_MODELS_GET,
+			model: model,
 		}, true
 	}
 
@@ -312,24 +348,24 @@ func matchLLMRouteGemini(method, path string) (*llmRouteMatch, bool) {
 	switch verb {
 	case "generateContent":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+			model: model,
 		}, true
 	case "streamGenerateContent":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
-			model:     model,
-			isStream:  true,
+			route:    corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+			model:    model,
+			isStream: true,
 		}, true
 	case "countTokens":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_COUNT_TOKENS,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_COUNT_TOKENS,
+			model: model,
 		}, true
 	case "embedContent", "batchEmbedContents":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_EMBED_CONTENT,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_EMBED_CONTENT,
+			model: model,
 		}, true
 	default:
 		return nil, false
@@ -357,25 +393,25 @@ func matchLLMRouteBedrock(method, path string) (*llmRouteMatch, bool) {
 	switch verb {
 	case "converse":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_CONVERSE,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_CONVERSE,
+			model: model,
 		}, true
 	case "converse-stream":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_CONVERSE,
-			model:     model,
-			isStream:  true,
+			route:    corev1.RequestContext_Request_LLM_CONVERSE,
+			model:    model,
+			isStream: true,
 		}, true
 	case "invoke":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_INVOKE_MODEL,
-			model:     model,
+			route: corev1.RequestContext_Request_LLM_INVOKE_MODEL,
+			model: model,
 		}, true
 	case "invoke-with-response-stream":
 		return &llmRouteMatch{
-			operation: corev1.RequestContext_Request_LLM_INVOKE_MODEL,
-			model:     model,
-			isStream:  true,
+			route:    corev1.RequestContext_Request_LLM_INVOKE_MODEL,
+			model:    model,
+			isStream: true,
 		}, true
 	default:
 		return nil, false
@@ -463,8 +499,8 @@ func isLLMStreamInBody(protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
 	}
 }
 
-func IsLLMOperationBodyParsed(operation corev1.RequestContext_Request_LLM_Operation) bool {
-	switch operation {
+func IsLLMRouteBodyParsed(route corev1.RequestContext_Request_LLM_Route) bool {
+	switch route {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
 		corev1.RequestContext_Request_LLM_COMPLETIONS,
@@ -481,8 +517,8 @@ func IsLLMOperationBodyParsed(operation corev1.RequestContext_Request_LLM_Operat
 	}
 }
 
-func IsLLMOperationStreamable(operation corev1.RequestContext_Request_LLM_Operation) bool {
-	switch operation {
+func IsLLMRouteStreamable(route corev1.RequestContext_Request_LLM_Route) bool {
+	switch route {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
 		corev1.RequestContext_Request_LLM_COMPLETIONS,
@@ -679,11 +715,11 @@ func ParseLLMRequest(req *http.Request,
 		return ret
 	}
 
-	ret.Operation = match.operation
+	ret.Route = match.route
 	ret.Stream = match.isStream
 	ret.setModel(match.model)
 
-	if !IsLLMOperationBodyParsed(ret.Operation) {
+	if !IsLLMRouteBodyParsed(ret.Route) {
 		return ret
 	}
 

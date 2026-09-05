@@ -80,7 +80,7 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 		}
 	}
 
-	if !httputils.IsLLMOperationBodyParsed(llmReq.Operation) {
+	if !httputils.IsLLMRouteBodyParsed(llmReq.Route) {
 		return nil
 	}
 
@@ -97,13 +97,13 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 		}
 	}
 
-	if llmReq.Stream && !httputils.IsLLMOperationStreamable(llmReq.Operation) {
+	if llmReq.Stream && !httputils.IsLLMRouteStreamable(llmReq.Route) {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,
 			Type:       ErrTypeInvalidRequest,
 			Code:       ErrCodeInvalidRequest,
 			Message: fmt.Sprintf("Octelium: the operation cannot be streamed: %s",
-				llmReq.Operation.String()),
+				llmReq.Route.String()),
 		}
 	}
 

@@ -55,24 +55,24 @@ const (
 )
 
 type doc struct {
-	protocol  corev1.Service_Spec_Config_LLM_Protocol
-	operation corev1.RequestContext_Request_LLM_Operation
+	protocol corev1.Service_Spec_Config_LLM_Protocol
+	route    corev1.RequestContext_Request_LLM_Route
 
 	root    map[string]json.RawMessage
 	changed bool
 }
 
 func newDoc(protocol corev1.Service_Spec_Config_LLM_Protocol,
-	operation corev1.RequestContext_Request_LLM_Operation, body []byte) (*doc, error) {
+	route corev1.RequestContext_Request_LLM_Route, body []byte) (*doc, error) {
 	root := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, errors.Errorf("Could not parse the inference request body")
 	}
 
 	return &doc{
-		protocol:  protocol,
-		operation: operation,
-		root:      root,
+		protocol: protocol,
+		route:    route,
+		root:     root,
 	}, nil
 }
 
@@ -89,21 +89,21 @@ func (d *doc) instructionsKey() string {
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return "system"
 	case corev1.Service_Spec_Config_LLM_GEMINI:
-		switch d.operation {
+		switch d.route {
 		case corev1.RequestContext_Request_LLM_GENERATE_CONTENT:
 			return "systemInstruction"
 		default:
 			return ""
 		}
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
-		switch d.operation {
+		switch d.route {
 		case corev1.RequestContext_Request_LLM_CONVERSE:
 			return "system"
 		default:
 			return ""
 		}
 	default:
-		switch d.operation {
+		switch d.route {
 		case corev1.RequestContext_Request_LLM_RESPONSES:
 			return "instructions"
 		default:
@@ -115,7 +115,7 @@ func (d *doc) instructionsKey() string {
 func (d *doc) messagesKey() string {
 	switch d.protocol {
 	case corev1.Service_Spec_Config_LLM_GEMINI:
-		switch d.operation {
+		switch d.route {
 		case corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
 			corev1.RequestContext_Request_LLM_COUNT_TOKENS:
 			return "contents"
@@ -123,7 +123,7 @@ func (d *doc) messagesKey() string {
 			return ""
 		}
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
-		switch d.operation {
+		switch d.route {
 		case corev1.RequestContext_Request_LLM_CONVERSE:
 			return "messages"
 		default:
@@ -131,7 +131,7 @@ func (d *doc) messagesKey() string {
 		}
 	}
 
-	switch d.operation {
+	switch d.route {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_MESSAGES,
 		corev1.RequestContext_Request_LLM_COUNT_TOKENS:
@@ -166,7 +166,7 @@ func (d *doc) hasInstructionsCarrier() bool {
 	if d.instructionsKey() != "" {
 		return true
 	}
-	return d.operation == corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS
+	return d.route == corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS
 }
 
 func (d *doc) hasMessagesCarrier() bool {
@@ -184,12 +184,12 @@ func (d *doc) hasReasoningCarrier() bool {
 func (d *doc) hasInferenceCarrier() bool {
 	switch d.protocol {
 	case corev1.Service_Spec_Config_LLM_GEMINI:
-		return d.operation == corev1.RequestContext_Request_LLM_GENERATE_CONTENT
+		return d.route == corev1.RequestContext_Request_LLM_GENERATE_CONTENT
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
-		return d.operation == corev1.RequestContext_Request_LLM_CONVERSE
+		return d.route == corev1.RequestContext_Request_LLM_CONVERSE
 	}
 
-	switch d.operation {
+	switch d.route {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
 		corev1.RequestContext_Request_LLM_MESSAGES,
@@ -253,7 +253,7 @@ func (d *doc) setReasoningEffort(format reasoningFormat, effort string) error {
 		return err
 	}
 
-	switch d.operation {
+	switch d.route {
 	case corev1.RequestContext_Request_LLM_RESPONSES:
 		obj := make(map[string]json.RawMessage)
 		if cur, ok := d.root[reasoningKey]; ok {
@@ -339,7 +339,7 @@ func (d *doc) disableReasoning(format reasoningFormat) error {
 }
 
 func (d *doc) promptKey() string {
-	switch d.operation {
+	switch d.route {
 	case corev1.RequestContext_Request_LLM_COMPLETIONS:
 		return "prompt"
 	case corev1.RequestContext_Request_LLM_EMBEDDINGS,
@@ -351,7 +351,7 @@ func (d *doc) promptKey() string {
 }
 
 func (d *doc) hasInstructionMessages() bool {
-	switch d.operation {
+	switch d.route {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES:
 		return true
@@ -505,7 +505,7 @@ func (d *doc) textBlockType(role string) string {
 		return ""
 	}
 
-	if d.operation != corev1.RequestContext_Request_LLM_RESPONSES {
+	if d.route != corev1.RequestContext_Request_LLM_RESPONSES {
 		return "text"
 	}
 	if role == roleAssistant {
@@ -1172,8 +1172,8 @@ func (d *doc) setToolChoice(raw json.RawMessage) {
 	d.changed = true
 }
 
-func isBodyParsedOperation(operation corev1.RequestContext_Request_LLM_Operation) bool {
-	return httputils.IsLLMOperationBodyParsed(operation)
+func isBodyParsedRoute(route corev1.RequestContext_Request_LLM_Route) bool {
+	return httputils.IsLLMRouteBodyParsed(route)
 }
 
 type textPart struct {
@@ -1259,7 +1259,7 @@ const scopeNone = corev1.Service_Spec_Config_LLM_Plugin_Guardrail_SCOPE_UNSET
 
 func (d *doc) embedParts() []*textPart {
 	if d.protocol != corev1.Service_Spec_Config_LLM_GEMINI ||
-		d.operation != corev1.RequestContext_Request_LLM_EMBED_CONTENT {
+		d.route != corev1.RequestContext_Request_LLM_EMBED_CONTENT {
 		return nil
 	}
 

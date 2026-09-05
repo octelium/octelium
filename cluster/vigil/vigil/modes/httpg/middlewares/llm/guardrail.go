@@ -147,11 +147,11 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 	req *http.Request, reqCtx *middlewares.RequestContext, active *activeGuardrail) bool {
 
-	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
+	if !isBodyParsedRoute(reqCtx.LLM.GetRoute()) || !reqCtx.LLM.IsBodyValid {
 		return true
 	}
 
-	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetRoute(), reqCtx.Body)
 	if err != nil {
 		return m.onError(w, reqCtx, active, err)
 	}

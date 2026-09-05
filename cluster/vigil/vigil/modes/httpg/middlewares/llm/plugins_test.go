@@ -1943,3 +1943,83 @@ func TestGuardrailInfo(t *testing.T) {
 			res.reqCtx.LLMGuardrail.Result)
 	}
 }
+
+func TestPluginConditionOperation(t *testing.T) {
+
+	{
+		plugin := newPlugin("reasoning-1", newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_HIGH))
+		plugin.Condition = &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.llm.operation == "GENERATE"`,
+			},
+		}
+
+		res := servePlugins(t, &pluginOpts{
+			body:    chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "high", res.upstream["reasoning_effort"])
+	}
+
+	{
+		plugin := newPlugin("reasoning-1", newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_HIGH))
+		plugin.Condition = &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.llm.operation == "GENERATE"`,
+			},
+		}
+
+		res := servePlugins(t, &pluginOpts{
+			protocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			path:     "/v1/messages",
+			body:     messagesBody,
+			plugins:  []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+		})
+
+		assert.True(t, res.isNext)
+
+		thinking, ok := res.upstream["thinking"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, "enabled", thinking["type"])
+	}
+
+	{
+		plugin := newPlugin("reasoning-1", newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_HIGH))
+		plugin.Condition = &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.llm.route == "RESPONSES"`,
+			},
+		}
+
+		res := servePlugins(t, &pluginOpts{
+			body:    chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Nil(t, res.upstream["reasoning_effort"])
+	}
+
+	{
+		plugin := newPlugin("reasoning-1", newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_LOW))
+		plugin.Condition = &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.llm.route == "CHAT_COMPLETIONS"`,
+			},
+		}
+
+		res := servePlugins(t, &pluginOpts{
+			body:    chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "low", res.upstream["reasoning_effort"])
+	}
+}

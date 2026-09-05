@@ -120,7 +120,7 @@ func TestParseLLMRequestOpenAI(t *testing.T) {
 
 		assert.True(t, llmReq.IsKnownRoute)
 		assert.True(t, llmReq.IsBodyValid)
-		assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, llmReq.Route)
 		assert.Equal(t, "gpt-4o", llmReq.Model)
 		assert.False(t, llmReq.Stream)
 		assert.Equal(t, uint32(1), llmReq.InputItemCount)
@@ -145,7 +145,7 @@ func TestParseLLMRequestOpenAI(t *testing.T) {
 			http.MethodPost, "/v1/responses",
 			`{"model":"gpt-5","max_output_tokens":1024,"input":"Hello"}`)
 
-		assert.Equal(t, corev1.RequestContext_Request_LLM_RESPONSES, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_RESPONSES, llmReq.Route)
 		assert.Equal(t, uint64(1024), llmReq.MaxOutputTokens)
 	}
 
@@ -212,7 +212,7 @@ func TestParseLLMRequestAnthropic(t *testing.T) {
 			"tools":[{"name":"bash","input_schema":{"type":"object"}}]}`)
 
 		assert.True(t, llmReq.IsKnownRoute)
-		assert.Equal(t, corev1.RequestContext_Request_LLM_MESSAGES, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MESSAGES, llmReq.Route)
 		assert.Equal(t, corev1.Service_Spec_Config_LLM_ANTHROPIC, llmReq.Protocol)
 		assert.Equal(t, "claude-sonnet-4", llmReq.Model)
 		assert.Equal(t, uint64(2048), llmReq.MaxOutputTokens)
@@ -266,7 +266,7 @@ func TestLLMEstimate(t *testing.T) {
 			http.MethodPost, "/v1/embeddings",
 			`{"model":"text-embedding-3-small","input":["a","b","c"]}`)
 
-		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBEDDINGS, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBEDDINGS, llmReq.Route)
 		assert.Equal(t, uint32(3), llmReq.InputItemCount)
 	}
 }
@@ -416,7 +416,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
 		assert.True(t, llmReq.IsKnownRoute)
-		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Route)
 		assert.Equal(t, "gpt-4o", llmReq.Model)
 	}
 
@@ -426,7 +426,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_ANTHROPIC, nil)
 
-		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Route)
 		assert.Equal(t, "claude-sonnet-4-20250514", llmReq.Model)
 	}
 
@@ -436,7 +436,7 @@ func TestParseLLMRequestModelsGet(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
-		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_LIST, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_LIST, llmReq.Route)
 		assert.Empty(t, llmReq.Model)
 	}
 }
@@ -479,7 +479,7 @@ func TestParseLLMRequestBounds(t *testing.T) {
 
 		llmReq := ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, nil)
 
-		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Operation)
+		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Route)
 		assert.Empty(t, llmReq.Model)
 	}
 }
@@ -709,7 +709,7 @@ func TestParseLLMRequestGemini(t *testing.T) {
 	assert.True(t, llmReq.IsKnownRoute)
 	assert.True(t, llmReq.IsBodyValid)
 	assert.True(t, llmReq.Stream)
-	assert.Equal(t, corev1.RequestContext_Request_LLM_GENERATE_CONTENT, llmReq.Operation)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_GENERATE_CONTENT, llmReq.Route)
 	assert.Equal(t, "gemini-2.5-pro", llmReq.Model)
 	assert.Equal(t, uint64(512), llmReq.MaxOutputTokens)
 	assert.True(t, llmReq.HasTools)
@@ -735,7 +735,7 @@ func TestParseLLMRequestBedrock(t *testing.T) {
 	assert.True(t, llmReq.IsKnownRoute)
 	assert.True(t, llmReq.IsBodyValid)
 	assert.True(t, llmReq.Stream)
-	assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, llmReq.Operation)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_CONVERSE, llmReq.Route)
 	assert.Equal(t, "anthropic.claude-sonnet-4-5-v1:0", llmReq.Model)
 	assert.Equal(t, uint64(900), llmReq.MaxOutputTokens)
 	assert.True(t, llmReq.HasTools)
@@ -755,7 +755,7 @@ func TestParseLLMRequestInvokeModel(t *testing.T) {
 
 	assert.True(t, llmReq.IsKnownRoute)
 	assert.False(t, llmReq.IsBodyValid)
-	assert.Equal(t, corev1.RequestContext_Request_LLM_INVOKE_MODEL, llmReq.Operation)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_INVOKE_MODEL, llmReq.Route)
 	assert.Equal(t, "anthropic.claude-sonnet-4-5-v1:0", llmReq.Model)
 }
 
@@ -956,7 +956,7 @@ func TestParseLLMRequestGeminiEmbed(t *testing.T) {
 
 		assert.True(t, llmReq.IsKnownRoute)
 		assert.Equal(t, corev1.RequestContext_Request_LLM_EMBED_CONTENT,
-			llmReq.Operation)
+			llmReq.Route)
 		assert.Equal(t, "text-embedding-004", llmReq.Model)
 		assert.True(t, llmReq.EstimatedInputTokens >= 100)
 		assert.Equal(t, corev1.RequestContext_Request_LLM_COMPLETE,
@@ -1076,4 +1076,39 @@ func TestParseLLMResponseToolNames(t *testing.T) {
 		assert.NotNil(t, msg)
 		assert.Empty(t, msg.ToolNames)
 	}
+}
+
+func TestGetLLMOperation(t *testing.T) {
+	for _, route := range []corev1.RequestContext_Request_LLM_Route{
+		corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+		corev1.RequestContext_Request_LLM_CONVERSE,
+	} {
+		assert.Equal(t, corev1.Service_Spec_Config_LLM_GENERATE,
+			GetLLMOperation(route))
+	}
+
+	for _, route := range []corev1.RequestContext_Request_LLM_Route{
+		corev1.RequestContext_Request_LLM_EMBEDDINGS,
+		corev1.RequestContext_Request_LLM_EMBED_CONTENT,
+	} {
+		assert.Equal(t, corev1.Service_Spec_Config_LLM_EMBED,
+			GetLLMOperation(route))
+	}
+
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_MODERATE,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_MODERATIONS))
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_COUNT_TOKENS,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_COUNT_TOKENS))
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_LIST_MODELS,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_MODELS_LIST))
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_GET_MODEL,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_MODELS_GET))
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_RAW_INFERENCE,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_INVOKE_MODEL))
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPERATION_UNSET,
+		GetLLMOperation(corev1.RequestContext_Request_LLM_ROUTE_UNSET))
 }

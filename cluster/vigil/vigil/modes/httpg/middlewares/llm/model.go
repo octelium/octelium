@@ -144,7 +144,7 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 	protocol := reqCtx.LLM.GetProtocol()
 	isModelInPath := httputils.IsLLMModelInPath(protocol)
 
-	if !isModelInPath && (!httputils.IsLLMOperationBodyParsed(reqCtx.LLM.GetOperation()) ||
+	if !isModelInPath && (!httputils.IsLLMRouteBodyParsed(reqCtx.LLM.GetRoute()) ||
 		!reqCtx.LLM.IsBodyValid) {
 		return nil
 	}

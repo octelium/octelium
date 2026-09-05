@@ -974,7 +974,7 @@ func TestSemanticCacheKeyIsModelAware(t *testing.T) {
 
 func TestSemanticIdentityProtocols(t *testing.T) {
 	newIdentity := func(t *testing.T, protocol corev1.Service_Spec_Config_LLM_Protocol,
-		operation corev1.RequestContext_Request_LLM_Operation, body string) (string, []byte) {
+		operation corev1.RequestContext_Request_LLM_Route, body string) (string, []byte) {
 
 		d, err := newDoc(protocol, operation, []byte(body))
 		assert.Nil(t, err)

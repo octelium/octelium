@@ -41,7 +41,7 @@ type SemanticOpts struct {
 	Upstream  UpstreamFn
 }
 
-func isSemanticOperation(operation corev1.RequestContext_Request_LLM_Operation) bool {
+func isSemanticOperation(operation corev1.RequestContext_Request_LLM_Route) bool {
 	switch operation {
 	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		corev1.RequestContext_Request_LLM_RESPONSES,
@@ -60,7 +60,7 @@ func isSemanticRequest(reqCtx *middlewares.RequestContext) bool {
 		return false
 	}
 
-	if !isSemanticOperation(llmReq.GetOperation()) {
+	if !isSemanticOperation(llmReq.GetRoute()) {
 		return false
 	}
 
@@ -182,7 +182,7 @@ func hasOpaqueContent(content json.RawMessage) bool {
 }
 
 func getSemanticIdentity(reqCtx *middlewares.RequestContext) (*semanticIdentity, error) {
-	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetRoute(), reqCtx.Body)
 	if err != nil {
 		return nil, err
 	}

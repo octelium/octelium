@@ -117,11 +117,11 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 	reqCtx *middlewares.RequestContext,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_Tools) (bool, error) {
 
-	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
+	if !isBodyParsedRoute(reqCtx.LLM.GetRoute()) || !reqCtx.LLM.IsBodyValid {
 		return false, nil
 	}
 
-	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
+	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetRoute(), reqCtx.Body)
 	if err != nil {
 		return false, err
 	}

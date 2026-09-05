@@ -136,7 +136,7 @@ func TestLLMAccessLogComplete(t *testing.T) {
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_COMPLETE, llmC.Type)
 	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPENAI, llmC.Protocol)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_GENERATE, llmC.Operation)
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_GENERATE, llmC.Operation)
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
 	assert.Equal(t, "gpt-4o", llmC.Model.Requested)
 	assert.Equal(t, "gpt-4o", llmC.Model.Effective)

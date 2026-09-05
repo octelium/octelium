@@ -217,7 +217,7 @@ func (m *semanticCache) getKey(ctx context.Context, req *http.Request,
 		partition: vutils.Sha256Sum([]byte(fmt.Sprintf(
 			"%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s\x00%t\x00%x",
 			scope, reqCtx.ServiceConfig.GetName(), getEmbeddingFingerprint(embeddingCfg),
-			reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(),
+			reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetRoute(),
 			req.Method, req.URL.Path, req.URL.RawQuery,
 			reqCtx.LLM.GetStream(), identity.digest))),
 		id:      vutils.Sha256Sum([]byte(identity.subject)),

@@ -382,7 +382,7 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 	}
 
 	llmC.Protocol = llmI.Protocol
-	llmC.Operation = getLLMOperation(llmI.Operation)
+	llmC.Operation = llmI.Operation
 	llmC.Stream = llmI.Stream
 	llmC.EstimatedInputTokens = llmI.EstimatedInputTokens
 	llmC.EstimateQuality = llmI.EstimateQuality
@@ -424,34 +424,5 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 			Leg:    cur.Leg,
 			Plugin: cur.Plugin,
 		}
-	}
-}
-
-func getLLMOperation(
-	arg corev1.RequestContext_Request_LLM_Operation) corev1.AccessLog_Entry_Info_LLM_Operation {
-
-	switch arg {
-	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
-		corev1.RequestContext_Request_LLM_RESPONSES,
-		corev1.RequestContext_Request_LLM_COMPLETIONS,
-		corev1.RequestContext_Request_LLM_MESSAGES,
-		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
-		corev1.RequestContext_Request_LLM_CONVERSE:
-		return corev1.AccessLog_Entry_Info_LLM_GENERATE
-	case corev1.RequestContext_Request_LLM_EMBEDDINGS,
-		corev1.RequestContext_Request_LLM_EMBED_CONTENT:
-		return corev1.AccessLog_Entry_Info_LLM_EMBED
-	case corev1.RequestContext_Request_LLM_MODERATIONS:
-		return corev1.AccessLog_Entry_Info_LLM_MODERATE
-	case corev1.RequestContext_Request_LLM_COUNT_TOKENS:
-		return corev1.AccessLog_Entry_Info_LLM_COUNT_TOKENS
-	case corev1.RequestContext_Request_LLM_MODELS_LIST:
-		return corev1.AccessLog_Entry_Info_LLM_LIST_MODELS
-	case corev1.RequestContext_Request_LLM_MODELS_GET:
-		return corev1.AccessLog_Entry_Info_LLM_GET_MODEL
-	case corev1.RequestContext_Request_LLM_INVOKE_MODEL:
-		return corev1.AccessLog_Entry_Info_LLM_RAW_INFERENCE
-	default:
-		return corev1.AccessLog_Entry_Info_LLM_OPERATION_UNSET
 	}
 }
