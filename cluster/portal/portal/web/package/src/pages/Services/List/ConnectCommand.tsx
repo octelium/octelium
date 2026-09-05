@@ -32,7 +32,7 @@ const buildConnectCommand = (
     }))
     .with(Service_Spec_Type.WEB, () => ({
       tool: "curl",
-      commands: [`curl https://${host}${urlPort}`],
+      commands: [`curl ${tls ? "https" : "http"}://${host}${urlPort}`],
     }))
     .with(Service_Spec_Type.POSTGRES, () => ({
       tool: "psql",
