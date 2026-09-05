@@ -29,6 +29,7 @@ import (
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocsvc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -423,6 +424,68 @@ func TestMiddlewareTimeout(t *testing.T) {
 		assert.Equal(t, http.StatusBadGateway, rw.Code)
 		assert.Contains(t, rw.Body.String(), "external processor error")
 	}
+}
+
+func TestMiddlewareOpenStreamTimeout(t *testing.T) {
+	ctx, cancelFn := context.WithCancel(context.Background())
+	t.Cleanup(cancelFn)
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	nextCalled := false
+	mdlwr, err := New(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+	}), celEngine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	assert.Nil(t, err)
+
+	reqCtx, reqCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer reqCancel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/prefix/v1", nil)
+	req = req.WithContext(context.WithValue(reqCtx,
+		middlewares.CtxRequestContext,
+		&middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+							{
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{MatchAny: true},
+								},
+								Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+									ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+										Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{
+											Address: fmt.Sprintf("localhost:%d", tests.GetPort()),
+										},
+										MessageTimeout: &metav1.Duration{
+											Type: &metav1.Duration_Milliseconds{Milliseconds: 100},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}))
+
+	rw := httptest.NewRecorder()
+	startedAt := time.Now()
+	mdlwr.ServeHTTP(rw, req)
+
+	assert.False(t, nextCalled)
+	assert.Equal(t, http.StatusBadGateway, rw.Code)
+	assert.Contains(t, rw.Body.String(), "external processor error")
+	assert.Less(t, time.Since(startedAt), time.Second)
 }
 
 func TestResponseWriterMaxBodySize(t *testing.T) {

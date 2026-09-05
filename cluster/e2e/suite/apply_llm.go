@@ -501,7 +501,7 @@ func applyLLMLimits(t *testing.T, h *harness.H, svc *corev1.Service,
 					"role": "user", "content": strings.Repeat("input ", 80),
 				}},
 			},
-			status: http.StatusBadRequest,
+			status: http.StatusRequestEntityTooLarge,
 		},
 		{
 			name: "OutputTokens",
@@ -1579,10 +1579,8 @@ end
 			},
 			Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
 				{
-					Condition: &corev1.Condition{Type: &corev1.Condition_Match{
-						Match: `ctx.request.http.headers["x-e2e-channel"] == "beta"`,
-					}},
-					Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "beta"},
+					Condition: llmMatchAny(),
+					Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "beta"},
 				},
 			},
 		}
@@ -1593,7 +1591,6 @@ end
 				before := upstream.ReqCount()
 				res, err := h.ServiceClient(svc, token).R().SetContext(ctx).
 					SetHeader("Content-Type", "application/json").
-					SetHeader("X-E2E-Channel", "beta").
 					SetBody(chat("dynamic")).Post("/v1/chat/completions")
 				if err != nil {
 					return err

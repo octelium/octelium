@@ -106,7 +106,7 @@ func (s *LLMSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/v1/embeddings" {
+	if r.URL.Path == "/embeddings" || r.URL.Path == "/v1/embeddings" {
 		s.serveOpenAIEmbeddings(w, reqMap)
 		return
 	}

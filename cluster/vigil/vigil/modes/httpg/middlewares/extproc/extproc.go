@@ -131,19 +131,41 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			streamCtx, cancelFn := context.WithCancel(ctx)
-			client, err := c.Process(streamCtx)
-			if err != nil {
-				cancelFn()
-				m.handleError(rw, err)
-				return
-			}
-
 			duration := 800 * time.Millisecond
 
 			confDuration := umetav1.ToDuration(plugin.GetExtProc().MessageTimeout).ToGo()
 			if confDuration > 0 && confDuration < 6000*time.Millisecond {
 				duration = confDuration
+			}
+
+			streamCtx, cancelFn := context.WithCancel(ctx)
+			clientCh := make(chan *streamClientResult, 1)
+			go func() {
+				client, err := c.Process(streamCtx)
+				clientCh <- &streamClientResult{client: client, err: err}
+			}()
+
+			var client extprocsvc.ExternalProcessor_ProcessClient
+			timer := time.NewTimer(duration)
+			select {
+			case result := <-clientCh:
+				timer.Stop()
+				client = result.client
+				err = result.err
+			case <-ctx.Done():
+				timer.Stop()
+				cancelFn()
+				m.handleError(rw, ctx.Err())
+				return
+			case <-timer.C:
+				cancelFn()
+				m.handleError(rw, errors.Errorf("open stream timeout"))
+				return
+			}
+			if err != nil {
+				cancelFn()
+				m.handleError(rw, err)
+				return
 			}
 
 			clientInfos = append(clientInfos, &clientInfo{
@@ -477,6 +499,11 @@ func getGRPCConn(host string) (*grpc.ClientConn, error) {
 type readResp struct {
 	res *extprocsvc.ProcessingResponse
 	err error
+}
+
+type streamClientResult struct {
+	client extprocsvc.ExternalProcessor_ProcessClient
+	err    error
 }
 
 func (c *clientInfo) process(ctx context.Context, req *extprocsvc.ProcessingRequest) (*extprocsvc.ProcessingResponse, error) {
