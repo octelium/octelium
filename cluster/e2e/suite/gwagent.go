@@ -151,7 +151,7 @@ func testGatewayConnection(t *testing.T, h *harness.H) {
 					return p.ServiceRef != nil && p.ServiceRef.Name == svc.Metadata.Name
 				}), "the published Service is missing from the connection state")
 
-			h.GetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+			h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
 
 			require.Nil(t, conn.Disconnect())
 

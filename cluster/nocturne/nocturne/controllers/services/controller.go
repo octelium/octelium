@@ -21,13 +21,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -44,6 +47,13 @@ type Controller struct {
 	hasSPIFFE         bool
 	spiffeCSIDriver   string
 	spiffeTrustDomain string
+	serviceLocksMu    sync.Mutex
+	serviceLocks      map[string]*serviceLock
+}
+
+type serviceLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 const ns = vutils.K8sNS
@@ -55,7 +65,48 @@ func NewController(octeliumC octeliumc.ClientInterface, k8sC kubernetes.Interfac
 		hasSPIFFE:         os.Getenv("OCTELIUM_ENABLE_SPIFFE_CSI") == "true",
 		spiffeCSIDriver:   os.Getenv("OCTELIUM_SPIFFE_CSI_DRIVER"),
 		spiffeTrustDomain: os.Getenv("OCTELIUM_SPIFFE_TRUST_DOMAIN"),
+		serviceLocks:      make(map[string]*serviceLock),
 	}
+}
+
+func (c *Controller) lockService(svc *corev1.Service) func() {
+	key := svc.Metadata.Uid
+	if key == "" {
+		key = svc.Metadata.Name
+	}
+
+	c.serviceLocksMu.Lock()
+	lock := c.serviceLocks[key]
+	if lock == nil {
+		lock = &serviceLock{}
+		c.serviceLocks[key] = lock
+	}
+	lock.refs++
+	c.serviceLocksMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		c.serviceLocksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(c.serviceLocks, key)
+		}
+		c.serviceLocksMu.Unlock()
+	}
+}
+
+func (c *Controller) getCurrentService(ctx context.Context,
+	svc *corev1.Service) (*corev1.Service, error) {
+	ret, err := c.octeliumC.CoreC().GetService(ctx,
+		&rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	if grpcerr.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
 }
 
 func (c *Controller) getSPIFFEEnv() []k8scorev1.EnvVar {
@@ -110,6 +161,14 @@ func (c *Controller) deployK8sResources(ctx context.Context, svc *corev1.Service
 }
 
 func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
+	unlock := c.lockService(svc)
+	defer unlock()
+
+	var err error
+	svc, err = c.getCurrentService(ctx, svc)
+	if err != nil || svc == nil {
+		return err
+	}
 
 	if !ucorev1.ToService(svc).IsInMyRegion() {
 		zap.L().Debug("Service is not deployed to this Region. Nothing to be done.",
@@ -129,6 +188,14 @@ func (c *Controller) OnAdd(ctx context.Context, svc *corev1.Service) error {
 }
 
 func (c *Controller) OnUpdate(ctx context.Context, newSvc, oldSvc *corev1.Service) error {
+	unlock := c.lockService(newSvc)
+	defer unlock()
+
+	var err error
+	newSvc, err = c.getCurrentService(ctx, newSvc)
+	if err != nil || newSvc == nil {
+		return err
+	}
 
 	newSvcInMyRegion := ucorev1.ToService(newSvc).IsInMyRegion()
 	oldSvcInMyRegion := ucorev1.ToService(oldSvc).IsInMyRegion()
@@ -498,6 +565,9 @@ func (c *Controller) getPodLabels(svc *corev1.Service) map[string]string {
 }
 
 func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
+	unlock := c.lockService(svc)
+	defer unlock()
+
 	if !ucorev1.ToService(svc).IsInMyRegion() {
 		return nil
 	}

@@ -294,7 +294,7 @@ func setLLMConfig(t *testing.T, h *harness.H, name string,
 
 func llmRequest(ctx context.Context, h *harness.H, svc *corev1.Service,
 	token, method, path string, body any) (int, []byte, http.Header, error) {
-	req := h.ServiceClient(svc, token).R().SetContext(ctx)
+	req := h.ServiceClient(svc, token).SetRetryCount(0).R().SetContext(ctx)
 	if body != nil {
 		req.SetHeader("Content-Type", "application/json").SetBody(body)
 	}

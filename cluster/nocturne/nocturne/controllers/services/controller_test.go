@@ -20,13 +20,55 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestServiceLock(t *testing.T) {
+	c := &Controller{serviceLocks: make(map[string]*serviceLock)}
+	svc1 := &corev1.Service{Metadata: &metav1.Metadata{Uid: "svc-1"}}
+	svc2 := &corev1.Service{Metadata: &metav1.Metadata{Uid: "svc-2"}}
+
+	unlock := c.lockService(svc1)
+
+	acquiredSame := make(chan func(), 1)
+	go func() {
+		acquiredSame <- c.lockService(svc1)
+	}()
+
+	select {
+	case sameUnlock := <-acquiredSame:
+		sameUnlock()
+		assert.Fail(t, "the same Service lock was acquired concurrently")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	acquiredOther := make(chan func(), 1)
+	go func() {
+		acquiredOther <- c.lockService(svc2)
+	}()
+
+	select {
+	case otherUnlock := <-acquiredOther:
+		otherUnlock()
+	case <-time.After(time.Second):
+		assert.Fail(t, "a different Service lock was blocked")
+	}
+
+	unlock()
+	select {
+	case sameUnlock := <-acquiredSame:
+		sameUnlock()
+	case <-time.After(time.Second):
+		assert.Fail(t, "the same Service lock was not released")
+	}
+}
 
 func TestController(t *testing.T) {
 
