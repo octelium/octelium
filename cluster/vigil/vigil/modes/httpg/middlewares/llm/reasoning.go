@@ -18,12 +18,14 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/pkg/errors"
@@ -31,13 +33,28 @@ import (
 )
 
 const (
-	minReasoningBudget    = 1024
-	lowReasoningBudget    = 4096
-	mediumReasoningBudget = 16384
-	highReasoningBudget   = 32768
+	anthropicMinReasoningBudget = 1024
+	geminiMinReasoningBudget    = 128
+
+	minimalReasoningBudget = 1024
+	lowReasoningBudget     = 4096
+	mediumReasoningBudget  = 16384
+	highReasoningBudget    = 32768
 
 	maxReasoningValueLen = 64
 )
+
+const (
+	reasoningEffortNone    = "none"
+	reasoningEffortMinimal = "minimal"
+	reasoningEffortLow     = "low"
+	reasoningEffortMedium  = "medium"
+	reasoningEffortHigh    = "high"
+)
+
+const bedrockNovaModelPrefix = "amazon.nova"
+
+var bedrockModelRegionPrefixes = []string{"us.", "us-gov.", "eu.", "apac.", "global."}
 
 type reasoning struct {
 	next      http.Handler
@@ -66,7 +83,8 @@ func (m *reasoning) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := m.setReasoning(ctx, req, reqCtx, cfg); err != nil {
+	errOpts, err := m.setReasoning(ctx, req, reqCtx, cfg)
+	if err != nil {
 		zap.L().Warn("Could not set the LLM reasoning configuration", zap.Error(err))
 		WriteError(w, &WriteErrorOpts{
 			Protocol:   reqCtx.LLM.GetProtocol(),
@@ -75,6 +93,10 @@ func (m *reasoning) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Code:       ErrCodeReasoning,
 			Message:    "Octelium: could not set the reasoning configuration",
 		})
+		return
+	}
+	if errOpts != nil {
+		WriteError(w, errOpts)
 		return
 	}
 
@@ -115,99 +137,302 @@ func (m *reasoning) resolve(ctx context.Context, w http.ResponseWriter,
 
 func (m *reasoning) setReasoning(ctx context.Context, req *http.Request,
 	reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_LLM_Reasoning) error {
+	cfg *corev1.Service_Spec_Config_LLM_Reasoning) (*WriteErrorOpts, error) {
 
 	if cfg == nil || cfg.Type == nil {
-		return nil
+		return nil, nil
 	}
 
 	if !isBodyParsedOperation(reqCtx.LLM.GetOperation()) || !reqCtx.LLM.IsBodyValid {
-		return nil
+		return nil, nil
 	}
 
 	d, err := newDoc(reqCtx.LLM.GetProtocol(), reqCtx.LLM.GetOperation(), reqCtx.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !d.hasReasoningCarrier() {
-		return nil
+		return nil, nil
 	}
 
 	target, err := m.getTarget(ctx, reqCtx, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if target == nil {
-		return nil
+		return nil, nil
 	}
 
-	if err := target.apply(d); err != nil {
-		return err
+	caps := getReasoningCaps(reqCtx.LLM.GetProtocol(), getReasoningModel(req, reqCtx, d))
+
+	val, err := caps.resolve(target)
+	if err != nil {
+		zap.L().Debug("Could not resolve the LLM reasoning configuration",
+			zap.Error(err))
+		return &WriteErrorOpts{
+			Protocol:   reqCtx.LLM.GetProtocol(),
+			HTTPStatus: http.StatusBadRequest,
+			Type:       ErrTypeInvalidRequest,
+			Code:       ErrCodeReasoning,
+			Message:    fmt.Sprintf("Octelium: %s", err.Error()),
+		}, nil
+	}
+
+	if err := val.apply(d, caps.format); err != nil {
+		return nil, err
 	}
 
 	if !d.isChanged() {
-		return nil
+		return nil, nil
 	}
 
-	return writeDoc(req, reqCtx, d)
+	return nil, writeDoc(req, reqCtx, d)
 }
 
-type reasoningTarget struct {
-	level     corev1.Service_Spec_Config_LLM_Reasoning_Level
-	maxTokens uint64
-}
+func getReasoningModel(req *http.Request, reqCtx *middlewares.RequestContext,
+	d *doc) string {
 
-func (t *reasoningTarget) apply(d *doc) error {
-	if !d.isReasoningBudget() {
-		return d.setReasoningEffort(t.effort())
+	protocol := reqCtx.LLM.GetProtocol()
+
+	if httputils.IsLLMModelInPath(protocol) {
+		if ret := httputils.GetLLMModelPath(protocol, req.URL.Path); ret != "" {
+			return ret
+		}
+	} else if ret := d.model(); ret != "" {
+		return ret
 	}
 
-	if t.level == corev1.Service_Spec_Config_LLM_Reasoning_NONE {
-		return d.disableReasoning()
-	}
-
-	return d.setReasoningBudget(t.budget())
+	return reqCtx.LLM.GetModel()
 }
 
-func (t *reasoningTarget) effort() string {
-	if t.maxTokens == 0 {
-		return strings.ToLower(t.level.String())
+type reasoningFormat int
+
+const (
+	reasoningFormatEffort reasoningFormat = iota
+	reasoningFormatAnthropicBudget
+	reasoningFormatGeminiBudget
+	reasoningFormatBedrockBudget
+	reasoningFormatBedrockEffort
+)
+
+func (f reasoningFormat) isBudget() bool {
+	switch f {
+	case reasoningFormatAnthropicBudget,
+		reasoningFormatGeminiBudget,
+		reasoningFormatBedrockBudget:
+		return true
+	default:
+		return false
+	}
+}
+
+type reasoningStep struct {
+	level  corev1.Service_Spec_Config_LLM_Reasoning_Level
+	effort string
+	budget uint64
+}
+
+var effortReasoningSteps = []*reasoningStep{
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_MINIMAL,
+		effort: reasoningEffortMinimal,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_LOW,
+		effort: reasoningEffortLow,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM,
+		effort: reasoningEffortMedium,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_HIGH,
+		effort: reasoningEffortHigh,
+	},
+}
+
+var novaReasoningSteps = []*reasoningStep{
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_LOW,
+		effort: reasoningEffortLow,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM,
+		effort: reasoningEffortMedium,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_HIGH,
+		effort: reasoningEffortHigh,
+	},
+}
+
+var budgetReasoningSteps = []*reasoningStep{
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_MINIMAL,
+		budget: minimalReasoningBudget,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_LOW,
+		budget: lowReasoningBudget,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM,
+		budget: mediumReasoningBudget,
+	},
+	{
+		level:  corev1.Service_Spec_Config_LLM_Reasoning_HIGH,
+		budget: highReasoningBudget,
+	},
+}
+
+type reasoningCaps struct {
+	model      string
+	format     reasoningFormat
+	canDisable bool
+	minBudget  uint64
+	maxBudget  uint64
+	steps      []*reasoningStep
+}
+
+func getReasoningCaps(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	model string) *reasoningCaps {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return &reasoningCaps{
+			model:      model,
+			format:     reasoningFormatAnthropicBudget,
+			canDisable: true,
+			minBudget:  anthropicMinReasoningBudget,
+			steps:      budgetReasoningSteps,
+		}
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return &reasoningCaps{
+			model:      model,
+			format:     reasoningFormatGeminiBudget,
+			canDisable: true,
+			minBudget:  geminiMinReasoningBudget,
+			steps:      budgetReasoningSteps,
+		}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		if strings.HasPrefix(getBedrockModelName(model), bedrockNovaModelPrefix) {
+			return &reasoningCaps{
+				model:      model,
+				format:     reasoningFormatBedrockEffort,
+				canDisable: true,
+				steps:      novaReasoningSteps,
+			}
+		}
+		return &reasoningCaps{
+			model:      model,
+			format:     reasoningFormatBedrockBudget,
+			canDisable: true,
+			minBudget:  anthropicMinReasoningBudget,
+			steps:      budgetReasoningSteps,
+		}
+	default:
+		return &reasoningCaps{
+			model:      model,
+			format:     reasoningFormatEffort,
+			canDisable: true,
+			steps:      effortReasoningSteps,
+		}
+	}
+}
+
+func getBedrockModelName(model string) string {
+	ret := strings.ToLower(model)
+	for _, prefix := range bedrockModelRegionPrefixes {
+		if rest, ok := strings.CutPrefix(ret, prefix); ok {
+			return rest
+		}
+	}
+	return ret
+}
+
+func (c *reasoningCaps) resolve(t *reasoningTarget) (*reasoningValue, error) {
+	switch {
+	case t.effort != "":
+		if c.format.isBudget() {
+			return nil, errors.Errorf(
+				"the model does not accept a reasoning effort: %s", c.model)
+		}
+		return &reasoningValue{effort: t.effort}, nil
+	case t.tokenBudget > 0:
+		return c.resolveTokenBudget(t.tokenBudget)
+	default:
+		return c.resolveLevel(t.level)
+	}
+}
+
+func (c *reasoningCaps) resolveTokenBudget(tokenBudget uint64) (*reasoningValue, error) {
+	if !c.format.isBudget() {
+		return nil, errors.Errorf(
+			"the model does not accept a reasoning token budget: %s", c.model)
 	}
 
 	switch {
-	case t.maxTokens >= highReasoningBudget:
-		return strings.ToLower(
-			corev1.Service_Spec_Config_LLM_Reasoning_HIGH.String())
-	case t.maxTokens >= mediumReasoningBudget:
-		return strings.ToLower(
-			corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM.String())
-	case t.maxTokens >= lowReasoningBudget:
-		return strings.ToLower(
-			corev1.Service_Spec_Config_LLM_Reasoning_LOW.String())
+	case c.maxBudget > 0 && tokenBudget > c.maxBudget:
+		return &reasoningValue{budget: c.maxBudget}, nil
+	case tokenBudget < c.minBudget:
+		return c.resolveDisabled()
 	default:
-		return strings.ToLower(
-			corev1.Service_Spec_Config_LLM_Reasoning_MINIMAL.String())
+		return &reasoningValue{budget: tokenBudget}, nil
 	}
 }
 
-func (t *reasoningTarget) budget() uint64 {
-	if t.maxTokens > 0 {
-		if t.maxTokens < minReasoningBudget {
-			return minReasoningBudget
+func (c *reasoningCaps) resolveLevel(
+	level corev1.Service_Spec_Config_LLM_Reasoning_Level) (*reasoningValue, error) {
+
+	var step *reasoningStep
+	if level != corev1.Service_Spec_Config_LLM_Reasoning_NONE {
+		for _, cur := range c.steps {
+			if cur.level <= level {
+				step = cur
+			}
 		}
-		return t.maxTokens
 	}
 
-	switch t.level {
-	case corev1.Service_Spec_Config_LLM_Reasoning_MINIMAL:
-		return minReasoningBudget
-	case corev1.Service_Spec_Config_LLM_Reasoning_LOW:
-		return lowReasoningBudget
-	case corev1.Service_Spec_Config_LLM_Reasoning_MEDIUM:
-		return mediumReasoningBudget
+	if step == nil {
+		return c.resolveDisabled()
+	}
+
+	if c.format.isBudget() {
+		return &reasoningValue{budget: step.budget}, nil
+	}
+
+	return &reasoningValue{effort: step.effort}, nil
+}
+
+func (c *reasoningCaps) resolveDisabled() (*reasoningValue, error) {
+	if !c.canDisable {
+		return nil, errors.Errorf("the model cannot disable reasoning: %s", c.model)
+	}
+
+	return &reasoningValue{isDisabled: true}, nil
+}
+
+type reasoningTarget struct {
+	level       corev1.Service_Spec_Config_LLM_Reasoning_Level
+	tokenBudget uint64
+	effort      string
+}
+
+type reasoningValue struct {
+	isDisabled bool
+	effort     string
+	budget     uint64
+}
+
+func (v *reasoningValue) apply(d *doc, format reasoningFormat) error {
+	switch {
+	case v.isDisabled:
+		return d.disableReasoning(format)
+	case format.isBudget():
+		return d.setReasoningBudget(format, v.budget)
 	default:
-		return highReasoningBudget
+		return d.setReasoningEffort(format, v.effort)
 	}
 }
 
@@ -218,8 +443,10 @@ func (m *reasoning) getTarget(ctx context.Context,
 	switch cfg.Type.(type) {
 	case *corev1.Service_Spec_Config_LLM_Reasoning_Level_:
 		return newReasoningLevel(cfg.GetLevel()), nil
-	case *corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens:
-		return newReasoningMaxTokens(cfg.GetMaxTokens()), nil
+	case *corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget:
+		return newReasoningTokenBudget(cfg.GetTokenBudget()), nil
+	case *corev1.Service_Spec_Config_LLM_Reasoning_Effort:
+		return newReasoningEffort(cfg.GetEffort())
 	case *corev1.Service_Spec_Config_LLM_Reasoning_Eval:
 		ret, err := m.render(ctx, reqCtx, func(inputMap map[string]any) (string, error) {
 			return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), inputMap)
@@ -261,11 +488,30 @@ func newReasoningLevel(
 	return &reasoningTarget{level: level}
 }
 
-func newReasoningMaxTokens(maxTokens uint64) *reasoningTarget {
-	if maxTokens == 0 {
+func newReasoningTokenBudget(tokenBudget uint64) *reasoningTarget {
+	if tokenBudget == 0 {
 		return nil
 	}
-	return &reasoningTarget{maxTokens: maxTokens}
+	return &reasoningTarget{tokenBudget: tokenBudget}
+}
+
+func newReasoningEffort(effort string) (*reasoningTarget, error) {
+	if effort == "" {
+		return nil, nil
+	}
+
+	if len(effort) > maxReasoningValueLen {
+		return nil, errors.Errorf("The reasoning effort is too long: %d", len(effort))
+	}
+
+	for i := 0; i < len(effort); i++ {
+		if effort[i] < 0x20 || effort[i] == 0x7f {
+			return nil, errors.Errorf(
+				"The reasoning effort contains an invalid control character")
+		}
+	}
+
+	return &reasoningTarget{effort: effort}, nil
 }
 
 func parseReasoningTarget(arg string) (*reasoningTarget, error) {
@@ -283,10 +529,9 @@ func parseReasoningTarget(arg string) (*reasoningTarget, error) {
 			corev1.Service_Spec_Config_LLM_Reasoning_Level(level)), nil
 	}
 
-	maxTokens, err := strconv.ParseUint(arg, 10, 64)
-	if err != nil {
-		return nil, errors.Errorf("Invalid rendered reasoning value")
+	if tokenBudget, err := strconv.ParseUint(arg, 10, 64); err == nil {
+		return newReasoningTokenBudget(tokenBudget), nil
 	}
 
-	return newReasoningMaxTokens(maxTokens), nil
+	return newReasoningEffort(arg)
 }

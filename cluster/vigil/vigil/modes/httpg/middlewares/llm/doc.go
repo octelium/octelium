@@ -45,6 +45,7 @@ const (
 
 	additionalModelRequestFieldsKey = "additionalModelRequestFields"
 	reasoningConfigKey              = "reasoning_config"
+	bedrockReasoningConfigKey       = "reasoningConfig"
 
 	partsKey      = "parts"
 	toolConfigKey = "toolConfig"
@@ -199,15 +200,18 @@ func (d *doc) hasInferenceCarrier() bool {
 	}
 }
 
-func (d *doc) isReasoningBudget() bool {
-	switch d.protocol {
-	case corev1.Service_Spec_Config_LLM_ANTHROPIC,
-		corev1.Service_Spec_Config_LLM_GEMINI,
-		corev1.Service_Spec_Config_LLM_BEDROCK:
-		return true
-	default:
-		return false
+func (d *doc) model() string {
+	raw, ok := d.root["model"]
+	if !ok {
+		return ""
 	}
+
+	var ret string
+	if err := json.Unmarshal(raw, &ret); err != nil {
+		return ""
+	}
+
+	return ret
 }
 
 func (d *doc) setNested(outer, inner string, val map[string]any) error {
@@ -235,7 +239,15 @@ func (d *doc) setNested(outer, inner string, val map[string]any) error {
 	return nil
 }
 
-func (d *doc) setReasoningEffort(effort string) error {
+func (d *doc) setReasoningEffort(format reasoningFormat, effort string) error {
+	if format == reasoningFormatBedrockEffort {
+		return d.setNested(additionalModelRequestFieldsKey, bedrockReasoningConfigKey,
+			map[string]any{
+				"type":               "enabled",
+				"maxReasoningEffort": effort,
+			})
+	}
+
 	raw, err := json.Marshal(effort)
 	if err != nil {
 		return err
@@ -265,13 +277,13 @@ func (d *doc) setReasoningEffort(effort string) error {
 	return nil
 }
 
-func (d *doc) setReasoningBudget(budget uint64) error {
-	switch d.protocol {
-	case corev1.Service_Spec_Config_LLM_GEMINI:
+func (d *doc) setReasoningBudget(format reasoningFormat, budget uint64) error {
+	switch format {
+	case reasoningFormatGeminiBudget:
 		return d.setNested(generationConfigKey, thinkingConfigKey, map[string]any{
 			"thinkingBudget": budget,
 		})
-	case corev1.Service_Spec_Config_LLM_BEDROCK:
+	case reasoningFormatBedrockBudget:
 		return d.setNested(additionalModelRequestFieldsKey, reasoningConfigKey,
 			map[string]any{
 				"type":          "enabled",
@@ -293,14 +305,21 @@ func (d *doc) setReasoningBudget(budget uint64) error {
 	return nil
 }
 
-func (d *doc) disableReasoning() error {
-	switch d.protocol {
-	case corev1.Service_Spec_Config_LLM_GEMINI:
+func (d *doc) disableReasoning(format reasoningFormat) error {
+	switch format {
+	case reasoningFormatEffort:
+		return d.setReasoningEffort(format, reasoningEffortNone)
+	case reasoningFormatGeminiBudget:
 		return d.setNested(generationConfigKey, thinkingConfigKey, map[string]any{
 			"thinkingBudget": 0,
 		})
-	case corev1.Service_Spec_Config_LLM_BEDROCK:
+	case reasoningFormatBedrockBudget:
 		return d.setNested(additionalModelRequestFieldsKey, reasoningConfigKey,
+			map[string]any{
+				"type": "disabled",
+			})
+	case reasoningFormatBedrockEffort:
+		return d.setNested(additionalModelRequestFieldsKey, bedrockReasoningConfigKey,
 			map[string]any{
 				"type": "disabled",
 			})

@@ -668,11 +668,12 @@ result := sprintf("%s-opa", [input.ctx.request.llm.model])
 
 	t.Run("ProtocolReasoning", func(t *testing.T) {
 		tests := []struct {
-			name     string
-			protocol corev1.Service_Spec_Config_LLM_Protocol
-			path     string
-			body     any
-			check    func(map[string]any) error
+			name      string
+			protocol  corev1.Service_Spec_Config_LLM_Protocol
+			path      string
+			body      any
+			reasoning *corev1.Service_Spec_Config_LLM_Reasoning
+			check     func(map[string]any) error
 		}{
 			{
 				name:     "Anthropic",
@@ -726,18 +727,63 @@ result := sprintf("%s-opa", [input.ctx.request.llm.model])
 					return nil
 				},
 			},
+			{
+				name:     "BedrockNova",
+				protocol: corev1.Service_Spec_Config_LLM_BEDROCK,
+				path:     "/model/amazon.nova-pro-v1:0/converse",
+				body: map[string]any{
+					"messages": []any{map[string]any{
+						"role": "user", "content": []any{map[string]any{"text": "hello"}},
+					}},
+				},
+				reasoning: &corev1.Service_Spec_Config_LLM_Reasoning{
+					Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+						Level: corev1.Service_Spec_Config_LLM_Reasoning_MAX,
+					},
+				},
+				check: func(body map[string]any) error {
+					fields, _ := body["additionalModelRequestFields"].(map[string]any)
+					reasoning, _ := fields["reasoningConfig"].(map[string]any)
+					if reasoning["maxReasoningEffort"] != "high" {
+						return errors.Errorf("got Bedrock Nova reasoning %#v", reasoning)
+					}
+					return nil
+				},
+			},
+			{
+				name:     "OpenAIEffort",
+				protocol: corev1.Service_Spec_Config_LLM_OPENAI,
+				path:     "/v1/chat/completions",
+				body:     chat("requested"),
+				reasoning: &corev1.Service_Spec_Config_LLM_Reasoning{
+					Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{
+						Effort: "xhigh",
+					},
+				},
+				check: func(body map[string]any) error {
+					if body["reasoning_effort"] != "xhigh" {
+						return errors.Errorf("got OpenAI reasoning %#v", body)
+					}
+					return nil
+				},
+			},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
+				reasoning := tt.reasoning
+				if reasoning == nil {
+					reasoning = &corev1.Service_Spec_Config_LLM_Reasoning{
+						Type: &corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget{
+							TokenBudget: 2048,
+						},
+					}
+				}
+
 				svc = setLLMConfig(t, h, svc.Metadata.Name,
 					&corev1.Service_Spec_Config_LLM{
-						Protocol: tt.protocol,
-						Reasoning: &corev1.Service_Spec_Config_LLM_Reasoning{
-							Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
-								MaxTokens: 2048,
-							},
-						},
+						Protocol:  tt.protocol,
+						Reasoning: reasoning,
 					})
 				waitLLMForwarded(t, h, svc, token, http.MethodPost,
 					tt.path, tt.body, upstream, tt.check)

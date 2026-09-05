@@ -2049,6 +2049,8 @@ const (
 
 	maxLLMReasoningTokens = 1024 * 1024
 
+	maxLLMReasoningEffortLen = 64
+
 	maxLLMTokenRateLimitTokens = 1024 * 1024 * 1024
 
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
@@ -2628,13 +2630,26 @@ func (s *Server) validateLLMReasoning(ctx context.Context,
 			reasoning.GetLevel())]; !ok {
 			return grpcutils.InvalidArg("Invalid LLM reasoning level")
 		}
-	case *corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens:
-		if reasoning.GetMaxTokens() == 0 {
+	case *corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget:
+		if reasoning.GetTokenBudget() == 0 {
 			return grpcutils.InvalidArg(
-				"The LLM reasoning maxTokens cannot be zero. Use the NONE level instead")
+				"The LLM reasoning tokenBudget cannot be zero. Use the NONE level instead")
 		}
-		if reasoning.GetMaxTokens() > maxLLMReasoningTokens {
-			return grpcutils.InvalidArg("The LLM reasoning maxTokens is too large")
+		if reasoning.GetTokenBudget() > maxLLMReasoningTokens {
+			return grpcutils.InvalidArg("The LLM reasoning tokenBudget is too large")
+		}
+	case *corev1.Service_Spec_Config_LLM_Reasoning_Effort:
+		if reasoning.GetEffort() == "" {
+			return grpcutils.InvalidArg("The LLM reasoning effort cannot be empty")
+		}
+		if len(reasoning.GetEffort()) > maxLLMReasoningEffortLen {
+			return grpcutils.InvalidArg("The LLM reasoning effort is too long")
+		}
+		for i := 0; i < len(reasoning.GetEffort()); i++ {
+			if reasoning.GetEffort()[i] < 0x20 || reasoning.GetEffort()[i] == 0x7f {
+				return grpcutils.InvalidArg(
+					"The LLM reasoning effort contains an invalid control character")
+			}
 		}
 	case *corev1.Service_Spec_Config_LLM_Reasoning_Eval:
 		if err := checkCELExpressionString(ctx, reasoning.GetEval()); err != nil {

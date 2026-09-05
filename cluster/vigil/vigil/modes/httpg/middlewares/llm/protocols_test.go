@@ -370,7 +370,7 @@ func TestReasoningGeminiPreservesGenerationConfig(t *testing.T) {
 		`"generationConfig":{"temperature":0.5,"maxOutputTokens":128}}`
 
 	o := newGeminiOpts(body)
-	o.reasoning = newReasoningMaxTokensCfg(2048)
+	o.reasoning = newReasoningTokenBudgetCfg(2048)
 
 	res := servePlugins(t, o)
 

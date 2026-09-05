@@ -392,6 +392,35 @@ func IsLLMModelInPath(protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
 	}
 }
 
+func GetLLMModelPath(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	path string) string {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		rest, ok := strings.CutPrefix(path, llmGeminiModelsPath+"/")
+		if !ok {
+			return ""
+		}
+		model, _, hasVerb := strings.Cut(rest, ":")
+		if !hasVerb {
+			return ""
+		}
+		return model
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		rest, ok := strings.CutPrefix(path, llmBedrockModelPrefix)
+		if !ok {
+			return ""
+		}
+		idx := strings.LastIndex(rest, "/")
+		if idx <= 0 {
+			return ""
+		}
+		return rest[:idx]
+	default:
+		return ""
+	}
+}
+
 func SetLLMModelPath(protocol corev1.Service_Spec_Config_LLM_Protocol,
 	path, model string) (string, string) {
 

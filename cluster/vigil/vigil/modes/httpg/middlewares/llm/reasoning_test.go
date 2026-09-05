@@ -34,10 +34,19 @@ func newReasoningLevelCfg(
 	}
 }
 
-func newReasoningMaxTokensCfg(
-	maxTokens uint64) *corev1.Service_Spec_Config_LLM_Reasoning {
+func newReasoningTokenBudgetCfg(
+	tokenBudget uint64) *corev1.Service_Spec_Config_LLM_Reasoning {
 	return &corev1.Service_Spec_Config_LLM_Reasoning{
-		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{MaxTokens: maxTokens},
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget{
+			TokenBudget: tokenBudget,
+		},
+	}
+}
+
+func newReasoningEffortCfg(
+	effort string) *corev1.Service_Spec_Config_LLM_Reasoning {
+	return &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{Effort: effort},
 	}
 }
 
@@ -142,14 +151,14 @@ func TestReasoningLevelAnthropic(t *testing.T) {
 	}
 }
 
-func TestReasoningMaxTokens(t *testing.T) {
+func TestReasoningTokenBudget(t *testing.T) {
 
 	{
 		res := servePlugins(t, &pluginOpts{
 			protocol:  corev1.Service_Spec_Config_LLM_ANTHROPIC,
 			path:      "/v1/messages",
 			body:      messagesBody,
-			reasoning: newReasoningMaxTokensCfg(8192),
+			reasoning: newReasoningTokenBudgetCfg(8192),
 		})
 
 		assert.True(t, res.isNext)
@@ -164,46 +173,214 @@ func TestReasoningMaxTokens(t *testing.T) {
 			protocol:  corev1.Service_Spec_Config_LLM_ANTHROPIC,
 			path:      "/v1/messages",
 			body:      messagesBody,
-			reasoning: newReasoningMaxTokensCfg(16),
+			reasoning: newReasoningTokenBudgetCfg(16),
 		})
 
 		assert.True(t, res.isNext)
 
 		thinking, ok := res.upstream["thinking"].(map[string]any)
 		assert.True(t, ok)
-		assert.Equal(t, float64(minReasoningBudget), thinking["budget_tokens"])
+		assert.Equal(t, "disabled", thinking["type"])
+		assert.Nil(t, thinking["budget_tokens"])
 	}
 
 	{
 		res := servePlugins(t, &pluginOpts{
 			body:      chatBody,
-			reasoning: newReasoningMaxTokensCfg(mediumReasoningBudget + 1),
+			reasoning: newReasoningTokenBudgetCfg(mediumReasoningBudget + 1),
 		})
 
-		assert.True(t, res.isNext)
-		assert.Equal(t, "medium", res.upstream["reasoning_effort"])
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
 	}
 
 	{
 		res := servePlugins(t, &pluginOpts{
 			body:      chatBody,
-			reasoning: newReasoningMaxTokensCfg(64),
-		})
-
-		assert.True(t, res.isNext)
-		assert.Equal(t, "minimal", res.upstream["reasoning_effort"])
-	}
-
-	{
-		res := servePlugins(t, &pluginOpts{
-			body:      chatBody,
-			reasoning: newReasoningMaxTokensCfg(0),
+			reasoning: newReasoningTokenBudgetCfg(0),
 		})
 
 		assert.True(t, res.isNext)
 		assert.Nil(t, res.upstream["reasoning_effort"])
 		assert.Equal(t, chatBody, string(res.reqCtx.Body))
 	}
+}
+
+func TestReasoningLevelDowngrade(t *testing.T) {
+
+	for _, level := range []corev1.Service_Spec_Config_LLM_Reasoning_Level{
+		corev1.Service_Spec_Config_LLM_Reasoning_XHIGH,
+		corev1.Service_Spec_Config_LLM_Reasoning_MAX,
+	} {
+		res := servePlugins(t, &pluginOpts{
+			body:      chatBody,
+			reasoning: newReasoningLevelCfg(level),
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "high", res.upstream["reasoning_effort"])
+	}
+}
+
+func TestReasoningEffort(t *testing.T) {
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body:      chatBody,
+			reasoning: newReasoningEffortCfg("xhigh"),
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "xhigh", res.upstream["reasoning_effort"])
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			path: "/v1/responses",
+			body: `{"model":"gpt-5","input":"Hello",` +
+				`"reasoning":{"summary":"auto"}}`,
+			reasoning: newReasoningEffortCfg("xhigh"),
+		})
+
+		assert.True(t, res.isNext)
+
+		reasoning, ok := res.upstream["reasoning"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, "xhigh", reasoning["effort"])
+		assert.Equal(t, "auto", reasoning["summary"])
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			protocol:  corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			path:      "/v1/messages",
+			body:      messagesBody,
+			reasoning: newReasoningEffortCfg("xhigh"),
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+	}
+}
+
+func TestReasoningGeminiTokenBudget(t *testing.T) {
+
+	{
+		o := newGeminiOpts(geminiBody)
+		o.reasoning = newReasoningTokenBudgetCfg(2048)
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+
+		generation, ok := res.upstream["generationConfig"].(map[string]any)
+		assert.True(t, ok)
+		thinking, ok := generation["thinkingConfig"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, float64(2048), thinking["thinkingBudget"])
+	}
+
+	{
+		o := newGeminiOpts(geminiBody)
+		o.reasoning = newReasoningTokenBudgetCfg(64)
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+
+		generation, ok := res.upstream["generationConfig"].(map[string]any)
+		assert.True(t, ok)
+		thinking, ok := generation["thinkingConfig"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, float64(0), thinking["thinkingBudget"])
+	}
+}
+
+func TestReasoningBedrockNova(t *testing.T) {
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.reasoning = newReasoningTokenBudgetCfg(2048)
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+
+		fields, ok := res.upstream["additionalModelRequestFields"].(map[string]any)
+		assert.True(t, ok)
+		reasoning, ok := fields["reasoning_config"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, float64(2048), reasoning["budget_tokens"])
+	}
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.path = "/model/us.amazon.nova-pro-v1:0/converse"
+		o.reasoning = newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_MAX)
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+
+		fields, ok := res.upstream["additionalModelRequestFields"].(map[string]any)
+		assert.True(t, ok)
+		reasoning, ok := fields["reasoningConfig"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, "enabled", reasoning["type"])
+		assert.Equal(t, "high", reasoning["maxReasoningEffort"])
+	}
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.path = "/model/amazon.nova-pro-v1:0/converse"
+		o.reasoning = newReasoningLevelCfg(
+			corev1.Service_Spec_Config_LLM_Reasoning_MINIMAL)
+
+		res := servePlugins(t, o)
+
+		assert.True(t, res.isNext)
+
+		fields, ok := res.upstream["additionalModelRequestFields"].(map[string]any)
+		assert.True(t, ok)
+		reasoning, ok := fields["reasoningConfig"].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, "disabled", reasoning["type"])
+	}
+
+	{
+		o := newBedrockOpts(bedrockBody)
+		o.path = "/model/amazon.nova-pro-v1:0/converse"
+		o.reasoning = newReasoningTokenBudgetCfg(2048)
+
+		res := servePlugins(t, o)
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+	}
+}
+
+func TestReasoningReadsTheRewrittenModel(t *testing.T) {
+	o := newBedrockOpts(bedrockBody)
+	o.reasoning = newReasoningLevelCfg(
+		corev1.Service_Spec_Config_LLM_Reasoning_HIGH)
+	o.model = &corev1.Service_Spec_Config_LLM_Model{
+		Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+			Value: "amazon.nova-pro-v1:0",
+		},
+	}
+
+	res := servePlugins(t, o)
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, "/model/amazon.nova-pro-v1:0/converse", res.upstreamPath)
+
+	fields, ok := res.upstream["additionalModelRequestFields"].(map[string]any)
+	assert.True(t, ok)
+	reasoning, ok := fields["reasoningConfig"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "high", reasoning["maxReasoningEffort"])
+	assert.Nil(t, fields["reasoning_config"])
 }
 
 func TestReasoningEval(t *testing.T) {
@@ -261,7 +438,21 @@ func TestReasoningEval(t *testing.T) {
 			body: chatBody,
 			reasoning: &corev1.Service_Spec_Config_LLM_Reasoning{
 				Type: &corev1.Service_Spec_Config_LLM_Reasoning_Eval{
-					Eval: `"not-a-level"`,
+					Eval: `"ultra"`,
+				},
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "ultra", res.upstream["reasoning_effort"])
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			reasoning: &corev1.Service_Spec_Config_LLM_Reasoning{
+				Type: &corev1.Service_Spec_Config_LLM_Reasoning_Eval{
+					Eval: `"high\u0000"`,
 				},
 			},
 		})

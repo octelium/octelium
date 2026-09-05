@@ -1776,8 +1776,8 @@ func TestValidateLLMReasoning(t *testing.T) {
 	}))
 
 	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
-		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
-			MaxTokens: 4096,
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget{
+			TokenBudget: 4096,
 		},
 	}))
 
@@ -1803,14 +1803,44 @@ func TestValidateLLMReasoning(t *testing.T) {
 	}))
 
 	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
-		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
-			MaxTokens: 0,
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget{
+			TokenBudget: 0,
 		},
 	}))
 
 	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
-		Type: &corev1.Service_Spec_Config_LLM_Reasoning_MaxTokens{
-			MaxTokens: maxLLMReasoningTokens + 1,
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_TokenBudget{
+			TokenBudget: maxLLMReasoningTokens + 1,
+		},
+	}))
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+			Level: corev1.Service_Spec_Config_LLM_Reasoning_MAX,
+		},
+	}))
+
+	assert.Nil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{
+			Effort: "xhigh",
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{
+			Effort: "",
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{
+			Effort: utilrand.GetRandomStringCanonical(maxLLMReasoningEffortLen + 1),
+		},
+	}))
+
+	assert.NotNil(t, s.validateLLMReasoning(ctx, &corev1.Service_Spec_Config_LLM_Reasoning{
+		Type: &corev1.Service_Spec_Config_LLM_Reasoning_Effort{
+			Effort: "high\x00",
 		},
 	}))
 
