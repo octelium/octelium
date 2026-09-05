@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -32,6 +33,8 @@ import (
 )
 
 const maxToolDefinitionBytes = 1024 * 1024
+
+const maxLoggedToolNames = 64
 
 type tools struct {
 	next      http.Handler
@@ -135,6 +138,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 	kept := make([]json.RawMessage, 0, len(entries))
 	keptNames := make([]string, 0, len(entries))
 	var isFiltered bool
+	var removedCount uint32
 
 	for i, t := range declared {
 		decision, filter := matchToolFilter(cfg.GetFilters(), t)
@@ -154,6 +158,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 
 		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE:
 			isFiltered = true
+			removedCount++
 
 		default:
 			kept = append(kept, entries[i])
@@ -199,11 +204,34 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 
 	m.applyChoice(d, cfg, keptNames)
 
+	setToolsInfo(reqCtx, keptNames, removedCount)
+
 	if !d.isChanged() {
 		return false, nil
 	}
 
 	return false, writeDoc(req, reqCtx, d)
+}
+
+func setToolsInfo(reqCtx *middlewares.RequestContext, names []string,
+	removedCount uint32) {
+
+	ret := &middlewares.LLMToolsInfo{
+		Count:        uint32(len(names)),
+		RemovedCount: removedCount,
+	}
+	if reqCtx.LLMTools != nil {
+		ret.RemovedCount += reqCtx.LLMTools.RemovedCount
+	}
+
+	ret.Names = slices.Clone(names)
+	slices.Sort(ret.Names)
+	ret.Names = slices.Compact(ret.Names)
+	if len(ret.Names) > maxLoggedToolNames {
+		ret.Names = ret.Names[:maxLoggedToolNames]
+	}
+
+	reqCtx.LLMTools = ret
 }
 
 func matchToolFilter(filters []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter,

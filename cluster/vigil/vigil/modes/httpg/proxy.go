@@ -290,6 +290,10 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		FlushInterval: time.Duration(100 * time.Millisecond),
 		ModifyResponse: func(r *http.Response) error {
 			r.Header.Set("Server", "octelium")
+			if reqCtx := middlewares.GetCtxRequestContext(
+				r.Request.Context()); reqCtx != nil {
+				reqCtx.IsUpstreamResponse = true
+			}
 			return nil
 		},
 

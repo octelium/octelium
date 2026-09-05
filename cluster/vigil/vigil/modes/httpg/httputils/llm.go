@@ -1075,6 +1075,8 @@ type LLMResponse struct {
 
 	Usage LLMUsage
 
+	ToolNames []string
+
 	HasContentDelta bool
 }
 
@@ -1222,6 +1224,7 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 
 	ret := &LLMResponse{}
 	ret.setFromEnvelope(env)
+	ret.ToolNames = parseLLMToolCallNames(body)
 
 	for _, raw := range []json.RawMessage{env.Response, env.Message, env.Output} {
 		if len(raw) == 0 {
@@ -1236,6 +1239,92 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 
 	return ret
 }
+
+type llmToolCallWalker struct {
+	names map[string]struct{}
+	nodes int
+}
+
+func parseLLMToolCallNames(body []byte) []string {
+	var val any
+	if err := json.Unmarshal(body, &val); err != nil {
+		return nil
+	}
+
+	w := &llmToolCallWalker{names: make(map[string]struct{})}
+	w.walk(val, 0)
+
+	if len(w.names) == 0 {
+		return nil
+	}
+
+	ret := make([]string, 0, len(w.names))
+	for name := range w.names {
+		ret = append(ret, name)
+	}
+	sort.Strings(ret)
+
+	if len(ret) > maxLLMToolNames {
+		ret = ret[:maxLLMToolNames]
+	}
+
+	return ret
+}
+
+func (w *llmToolCallWalker) walk(val any, depth int) {
+	if depth > maxLLMWalkDepth {
+		return
+	}
+
+	w.nodes++
+	if w.nodes > maxLLMWalkNodes {
+		return
+	}
+
+	switch v := val.(type) {
+	case map[string]any:
+		w.walkObject(v, depth)
+	case []any:
+		for _, cur := range v {
+			w.walk(cur, depth+1)
+		}
+	}
+}
+
+func (w *llmToolCallWalker) walkObject(obj map[string]any, depth int) {
+	if typ, ok := obj["type"].(string); ok {
+		switch typ {
+		case "tool_use", "function_call", "tool_call":
+			w.addName(obj["name"])
+		}
+	}
+
+	for _, key := range llmToolCallKeys {
+		nested, ok := obj[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		w.addName(nested["name"])
+	}
+
+	for _, cur := range obj {
+		w.walk(cur, depth+1)
+	}
+}
+
+func (w *llmToolCallWalker) addName(val any) {
+	name, ok := val.(string)
+	if !ok || name == "" || len(name) > maxLLMStringLen {
+		return
+	}
+	if len(w.names) >= maxLLMToolNames {
+		return
+	}
+
+	w.names[name] = struct{}{}
+}
+
+var llmToolCallKeys = []string{"function", "toolUse", "functionCall"}
 
 func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
 	for _, raw := range []json.RawMessage{env.ID, env.ResponseID} {

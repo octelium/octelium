@@ -100,7 +100,8 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			zap.L().Warn("Could not build the LLM Guardrail patterns",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
-			m.writeDenied(w, reqCtx, cfg)
+			m.writeDenied(w, reqCtx, cfg, plugin.GetName(),
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
 			return
 		}
 
@@ -112,6 +113,11 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		if cfg.GetLeg() != corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE {
+			reqCtx.SetLLMGuardrail(
+				corev1.AccessLog_Entry_Info_LLM_Guardrail_PASS,
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				plugin.GetName())
+
 			if !m.applyRequest(ctx, w, req, reqCtx, active) {
 				return
 			}
@@ -120,6 +126,10 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		switch cfg.GetLeg() {
 		case corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
 			corev1.Service_Spec_Config_LLM_Plugin_Guardrail_BOTH:
+			reqCtx.SetLLMGuardrail(
+				corev1.AccessLog_Entry_Info_LLM_Guardrail_PASS,
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+				plugin.GetName())
 			responseLeg = append(responseLeg, active)
 		}
 	}
@@ -163,7 +173,8 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 		}
 
 		if commonguardrail.DeniedFinding(findings) != nil {
-			m.writeDenied(w, reqCtx, active.cfg)
+			m.writeDenied(w, reqCtx, active.cfg, active.name(),
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
 			return false
 		}
 
@@ -180,7 +191,8 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 		}
 
 		if part.set == nil {
-			m.writeDenied(w, reqCtx, active.cfg)
+			m.writeDenied(w, reqCtx, active.cfg, active.name(),
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
 			return false
 		}
 
@@ -194,6 +206,11 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 	if !isChanged {
 		return true
 	}
+
+	reqCtx.SetLLMGuardrail(
+		corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		active.name())
 
 	if err := writeDoc(req, reqCtx, d); err != nil {
 		return m.onError(w, reqCtx, active, err)
@@ -269,13 +286,19 @@ func (m *guardrail) onError(w http.ResponseWriter, reqCtx *middlewares.RequestCo
 	zap.L().Warn("The LLM Guardrail could not reach a verdict",
 		zap.String("plugin", active.name()), zap.Error(err))
 
-	m.writeDenied(w, reqCtx, active.cfg)
+	m.writeDenied(w, reqCtx, active.cfg, active.name(),
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
 	return false
 }
 
 func (m *guardrail) writeDenied(w http.ResponseWriter,
 	reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail) {
+	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail, plugin string,
+	leg corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg) {
+
+	reqCtx.SetLLMGuardrail(
+		corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED, leg, plugin)
+
 	WriteError(w, &WriteErrorOpts{
 		Protocol:   reqCtx.LLM.GetProtocol(),
 		HTTPStatus: http.StatusForbidden,

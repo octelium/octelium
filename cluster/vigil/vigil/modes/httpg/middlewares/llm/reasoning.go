@@ -183,6 +183,12 @@ func (m *reasoning) setReasoning(ctx context.Context, req *http.Request,
 		return nil, err
 	}
 
+	reqCtx.LLMReasoning = &middlewares.LLMReasoningInfo{
+		IsDisabled:  val.isDisabled,
+		Effort:      val.effort,
+		TokenBudget: val.budget,
+	}
+
 	if !d.isChanged() {
 		return nil, nil
 	}

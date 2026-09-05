@@ -84,11 +84,12 @@ type RequestContext struct {
 	// Conn      net.Conn
 	CreatedAt time.Time
 
-	IsAuthorized      bool
-	IsAuthenticated   bool
-	DownstreamInfo    *corev1.RequestContext
-	DownstreamRequest *coctovigilv1.DownstreamRequest
-	ServiceConfig     *corev1.Service_Spec_Config
+	IsAuthorized       bool
+	IsAuthenticated    bool
+	IsUpstreamResponse bool
+	DownstreamInfo     *corev1.RequestContext
+	DownstreamRequest  *coctovigilv1.DownstreamRequest
+	ServiceConfig      *corev1.Service_Spec_Config
 
 	DecisionReason *corev1.AccessLog_Entry_Common_Reason
 	AuthResponse   *coctovigilv1.AuthenticateAndAuthorizeResponse
@@ -109,6 +110,11 @@ type RequestContext struct {
 	LLMSemanticCache  *LLMSemanticCacheInfo
 	LLMSemanticRouter *LLMSemanticRouterInfo
 	LLMResponseDenied bool
+
+	LLMModel     *LLMModelInfo
+	LLMReasoning *LLMReasoningInfo
+	LLMTools     *LLMToolsInfo
+	LLMGuardrail *LLMGuardrailInfo
 
 	BodyDigest [sha256.Size]byte
 
@@ -134,8 +140,29 @@ type LLMResponseInfo struct {
 	TimeToFirstToken time.Duration
 }
 
+type LLMSemanticCacheResult int
+
+const (
+	LLMSemanticCacheUnset LLMSemanticCacheResult = iota
+	LLMSemanticCacheExactHit
+	LLMSemanticCacheSemanticHit
+	LLMSemanticCacheMiss
+	LLMSemanticCacheBypass
+	LLMSemanticCacheError
+)
+
+type LLMSemanticRouterResult int
+
+const (
+	LLMSemanticRouterUnset LLMSemanticRouterResult = iota
+	LLMSemanticRouterMatch
+	LLMSemanticRouterNoMatch
+	LLMSemanticRouterBypass
+	LLMSemanticRouterError
+)
+
 type LLMSemanticCacheInfo struct {
-	Result     corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result
+	Result     LLMSemanticCacheResult
 	Similarity float32
 	IsStored   bool
 	Plugin     string
@@ -146,8 +173,7 @@ func (r *LLMSemanticCacheInfo) IsHit() bool {
 		return false
 	}
 	switch r.Result {
-	case corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
-		corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT:
+	case LLMSemanticCacheExactHit, LLMSemanticCacheSemanticHit:
 		return true
 	default:
 		return false
@@ -155,11 +181,35 @@ func (r *LLMSemanticCacheInfo) IsHit() bool {
 }
 
 type LLMSemanticRouterInfo struct {
-	Result     corev1.AccessLog_Entry_Info_LLM_SemanticRouter_Result
+	Result     LLMSemanticRouterResult
 	Route      string
 	Similarity float32
 	Model      string
 	Plugin     string
+}
+
+type LLMModelInfo struct {
+	Effective string
+	Source    corev1.AccessLog_Entry_Info_LLM_Model_Source
+	Plugin    string
+}
+
+type LLMReasoningInfo struct {
+	IsDisabled  bool
+	Effort      string
+	TokenBudget uint64
+}
+
+type LLMToolsInfo struct {
+	Count        uint32
+	Names        []string
+	RemovedCount uint32
+}
+
+type LLMGuardrailInfo struct {
+	Result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result
+	Leg    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg
+	Plugin string
 }
 
 func (r *LLMSemanticRouterInfo) GetModel() string {
@@ -188,6 +238,21 @@ func (r *LLMResponseInfo) GetFinishReason() string {
 		return ""
 	}
 	return r.FinishReason
+}
+
+func (r *RequestContext) SetLLMGuardrail(
+	result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result,
+	leg corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg, plugin string) {
+
+	if r.LLMGuardrail != nil && r.LLMGuardrail.Result >= result {
+		return
+	}
+
+	r.LLMGuardrail = &LLMGuardrailInfo{
+		Result: result,
+		Leg:    leg,
+		Plugin: plugin,
+	}
 }
 
 func (r *RequestContext) SetReqCtxMap() {

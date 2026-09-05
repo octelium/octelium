@@ -130,36 +130,36 @@ func (m *semanticRouter) match(ctx context.Context,
 	reqCtx *middlewares.RequestContext,
 	plugin *corev1.Service_Spec_Config_LLM_Plugin,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticRouter) (*routeEntry, float32,
-	corev1.AccessLog_Entry_Info_LLM_SemanticRouter_Result) {
+	middlewares.LLMSemanticRouterResult) {
 
 	if !isSemanticRequest(reqCtx) {
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_BYPASS
+		return nil, 0, middlewares.LLMSemanticRouterBypass
 	}
 
 	embeddingCfg := resolveEmbedding(reqCtx, cfg.GetEmbedding())
 	if embeddingCfg == nil {
 		zap.L().Warn("The LLM SemanticRouter Plugin has no embedding configuration",
 			zap.String("plugin", plugin.GetName()))
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
+		return nil, 0, middlewares.LLMSemanticRouterError
 	}
 
 	identity, err := getSemanticIdentity(reqCtx)
 	if err != nil {
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_BYPASS
+		return nil, 0, middlewares.LLMSemanticRouterBypass
 	}
 
 	table, err := m.getTable(ctx, reqCtx, plugin, cfg, embeddingCfg)
 	if err != nil {
 		zap.L().Warn("Could not embed the LLM SemanticRouter Routes",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
+		return nil, 0, middlewares.LLMSemanticRouterError
 	}
 
 	vector, err := m.embedder.embedSubject(ctx, embeddingCfg, reqCtx, identity.subject)
 	if err != nil {
 		zap.L().Warn("Could not embed the LLM request",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
+		return nil, 0, middlewares.LLMSemanticRouterError
 	}
 
 	var ret *routeEntry
@@ -179,10 +179,10 @@ func (m *semanticRouter) match(ctx context.Context,
 	}
 
 	if ret == nil {
-		return nil, 0, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_NO_MATCH
+		return nil, 0, middlewares.LLMSemanticRouterNoMatch
 	}
 
-	return ret, retSimilarity, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH
+	return ret, retSimilarity, middlewares.LLMSemanticRouterMatch
 }
 
 func (m *semanticRouter) getTable(ctx context.Context,

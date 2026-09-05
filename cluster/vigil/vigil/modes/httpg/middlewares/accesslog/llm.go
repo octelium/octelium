@@ -19,6 +19,7 @@ package accesslog
 import (
 	"math"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,6 +37,8 @@ const maxLLMStreamEventBytes = 4 * 1024 * 1024
 
 const maxLLMResponseBodyBytes = 1024 * 1024
 
+const maxLLMCalledToolNames = 64
+
 type llmObserver struct {
 	mu sync.Mutex
 
@@ -44,6 +47,8 @@ type llmObserver struct {
 	responseID   string
 	model        string
 	finishReason string
+
+	toolNames map[string]struct{}
 
 	usage        httputils.LLMUsage
 	firstTokenAt time.Time
@@ -114,7 +119,31 @@ func (o *llmObserver) setResponse(msg *httputils.LLMResponse) {
 		o.finishReason = msg.FinishReason
 	}
 
+	for _, name := range msg.ToolNames {
+		if len(o.toolNames) >= maxLLMCalledToolNames {
+			break
+		}
+		if o.toolNames == nil {
+			o.toolNames = make(map[string]struct{})
+		}
+		o.toolNames[name] = struct{}{}
+	}
+
 	o.usage.Merge(msg.Usage)
+}
+
+func (o *llmObserver) calledToolNames() []string {
+	if len(o.toolNames) == 0 {
+		return nil
+	}
+
+	ret := make([]string, 0, len(o.toolNames))
+	for name := range o.toolNames {
+		ret = append(ret, name)
+	}
+	slices.Sort(ret)
+
+	return ret
 }
 
 func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
@@ -235,11 +264,21 @@ func (m *middleware) getLLMAccessLog(
 
 	llmC.EventCount = obs.eventCount
 	llmC.ResponseID = obs.responseID
-	llmC.Model = obs.model
 	llmC.FinishReason = obs.finishReason
 	llmC.Usage = getLLMUsage(reqCtx, crw, obs, phase)
-	llmC.SemanticCache = getLLMSemanticCache(reqCtx)
-	llmC.SemanticRouter = getLLMSemanticRouter(reqCtx)
+	llmC.Source = getLLMSource(reqCtx, crw)
+
+	if llmC.Model == nil {
+		llmC.Model = &corev1.AccessLog_Entry_Info_LLM_Model{}
+	}
+	llmC.Model.Reported = obs.model
+
+	if names := obs.calledToolNames(); len(names) > 0 {
+		if llmC.Tools == nil {
+			llmC.Tools = &corev1.AccessLog_Entry_Info_LLM_Tools{}
+		}
+		llmC.Tools.CalledNames = names
+	}
 
 	if !obs.firstTokenAt.IsZero() {
 		if ms := obs.firstTokenAt.Sub(reqCtx.CreatedAt).Milliseconds(); ms >= 0 &&
@@ -255,32 +294,20 @@ func (m *middleware) getLLMAccessLog(
 	return logE
 }
 
-func getLLMSemanticCache(reqCtx *middlewares.RequestContext) *corev1.AccessLog_Entry_Info_LLM_SemanticCache {
-	cur := reqCtx.LLMSemanticCache
-	if cur == nil {
-		return nil
-	}
+func getLLMSource(reqCtx *middlewares.RequestContext,
+	crw *responseWriter) corev1.AccessLog_Entry_Info_LLM_Source {
 
-	return &corev1.AccessLog_Entry_Info_LLM_SemanticCache{
-		Result:     cur.Result,
-		Similarity: cur.Similarity,
-		IsStored:   cur.IsStored,
-		Plugin:     cur.Plugin,
-	}
-}
-
-func getLLMSemanticRouter(reqCtx *middlewares.RequestContext) *corev1.AccessLog_Entry_Info_LLM_SemanticRouter {
-	cur := reqCtx.LLMSemanticRouter
-	if cur == nil {
-		return nil
-	}
-
-	return &corev1.AccessLog_Entry_Info_LLM_SemanticRouter{
-		Result:     cur.Result,
-		Route:      cur.Route,
-		Similarity: cur.Similarity,
-		Model:      cur.Model,
-		Plugin:     cur.Plugin,
+	switch {
+	case reqCtx.LLMSemanticCache.IsHit():
+		return corev1.AccessLog_Entry_Info_LLM_SEMANTIC_CACHE
+	case reqCtx.LLMResponseDenied:
+		return corev1.AccessLog_Entry_Info_LLM_OCTELIUM
+	case reqCtx.IsUpstreamResponse:
+		return corev1.AccessLog_Entry_Info_LLM_UPSTREAM
+	case crw.statusCode != 0:
+		return corev1.AccessLog_Entry_Info_LLM_OCTELIUM
+	default:
+		return corev1.AccessLog_Entry_Info_LLM_SOURCE_UNSET
 	}
 }
 
@@ -355,8 +382,76 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 	}
 
 	llmC.Protocol = llmI.Protocol
-	llmC.Operation = corev1.AccessLog_Entry_Info_LLM_Operation(llmI.Operation)
-	llmC.RequestedModel = llmI.Model
+	llmC.Operation = getLLMOperation(llmI.Operation)
 	llmC.Stream = llmI.Stream
 	llmC.EstimatedInputTokens = llmI.EstimatedInputTokens
+	llmC.EstimateQuality = llmI.EstimateQuality
+
+	llmC.Model = &corev1.AccessLog_Entry_Info_LLM_Model{
+		Requested: llmI.Model,
+		Effective: llmI.Model,
+	}
+	if cur := reqCtx.LLMModel; cur != nil {
+		llmC.Model.Effective = cur.Effective
+		llmC.Model.Source = cur.Source
+		llmC.Model.Plugin = cur.Plugin
+	}
+
+	if cur := reqCtx.LLMTools; cur != nil {
+		llmC.Tools = &corev1.AccessLog_Entry_Info_LLM_Tools{
+			Count:        cur.Count,
+			Names:        cur.Names,
+			RemovedCount: cur.RemovedCount,
+		}
+	} else if llmI.ToolCount > 0 {
+		llmC.Tools = &corev1.AccessLog_Entry_Info_LLM_Tools{
+			Count: llmI.ToolCount,
+			Names: llmI.ToolNames,
+		}
+	}
+
+	if cur := reqCtx.LLMReasoning; cur != nil {
+		llmC.Reasoning = &corev1.AccessLog_Entry_Info_LLM_Reasoning{
+			IsDisabled:  cur.IsDisabled,
+			Effort:      cur.Effort,
+			TokenBudget: cur.TokenBudget,
+		}
+	}
+
+	if cur := reqCtx.LLMGuardrail; cur != nil {
+		llmC.Guardrail = &corev1.AccessLog_Entry_Info_LLM_Guardrail{
+			Result: cur.Result,
+			Leg:    cur.Leg,
+			Plugin: cur.Plugin,
+		}
+	}
+}
+
+func getLLMOperation(
+	arg corev1.RequestContext_Request_LLM_Operation) corev1.AccessLog_Entry_Info_LLM_Operation {
+
+	switch arg {
+	case corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_RESPONSES,
+		corev1.RequestContext_Request_LLM_COMPLETIONS,
+		corev1.RequestContext_Request_LLM_MESSAGES,
+		corev1.RequestContext_Request_LLM_GENERATE_CONTENT,
+		corev1.RequestContext_Request_LLM_CONVERSE:
+		return corev1.AccessLog_Entry_Info_LLM_GENERATE
+	case corev1.RequestContext_Request_LLM_EMBEDDINGS,
+		corev1.RequestContext_Request_LLM_EMBED_CONTENT:
+		return corev1.AccessLog_Entry_Info_LLM_EMBED
+	case corev1.RequestContext_Request_LLM_MODERATIONS:
+		return corev1.AccessLog_Entry_Info_LLM_MODERATE
+	case corev1.RequestContext_Request_LLM_COUNT_TOKENS:
+		return corev1.AccessLog_Entry_Info_LLM_COUNT_TOKENS
+	case corev1.RequestContext_Request_LLM_MODELS_LIST:
+		return corev1.AccessLog_Entry_Info_LLM_LIST_MODELS
+	case corev1.RequestContext_Request_LLM_MODELS_GET:
+		return corev1.AccessLog_Entry_Info_LLM_GET_MODEL
+	case corev1.RequestContext_Request_LLM_INVOKE_MODEL:
+		return corev1.AccessLog_Entry_Info_LLM_RAW_INFERENCE
+	default:
+		return corev1.AccessLog_Entry_Info_LLM_OPERATION_UNSET
+	}
 }

@@ -222,9 +222,15 @@ func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
 	rw.reqCtx.LLMResponseDenied = true
 
 	var cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail
+	var plugin string
 	if active != nil {
 		cfg = active.cfg
+		plugin = active.name()
 	}
+
+	rw.reqCtx.SetLLMGuardrail(
+		corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED,
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE, plugin)
 
 	hdr := rw.Header()
 	hdr.Del("Content-Length")

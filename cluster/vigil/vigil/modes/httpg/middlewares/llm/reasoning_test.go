@@ -71,6 +71,9 @@ func TestReasoningLevelOpenAI(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, "high", res.upstream["reasoning_effort"])
+		assert.Equal(t, "high", res.reqCtx.LLMReasoning.Effort)
+		assert.False(t, res.reqCtx.LLMReasoning.IsDisabled)
+		assert.Zero(t, res.reqCtx.LLMReasoning.TokenBudget)
 	}
 
 	{
@@ -82,6 +85,7 @@ func TestReasoningLevelOpenAI(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, "none", res.upstream["reasoning_effort"])
+		assert.True(t, res.reqCtx.LLMReasoning.IsDisabled)
 	}
 
 	{
@@ -166,6 +170,8 @@ func TestReasoningTokenBudget(t *testing.T) {
 		thinking, ok := res.upstream["thinking"].(map[string]any)
 		assert.True(t, ok)
 		assert.Equal(t, float64(8192), thinking["budget_tokens"])
+		assert.Equal(t, uint64(8192), res.reqCtx.LLMReasoning.TokenBudget)
+		assert.Empty(t, res.reqCtx.LLMReasoning.Effort)
 	}
 
 	{
@@ -203,6 +209,7 @@ func TestReasoningTokenBudget(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Nil(t, res.upstream["reasoning_effort"])
 		assert.Equal(t, chatBody, string(res.reqCtx.Body))
+		assert.Nil(t, res.reqCtx.LLMReasoning)
 	}
 }
 

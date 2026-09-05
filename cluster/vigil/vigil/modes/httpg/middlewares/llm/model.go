@@ -57,12 +57,12 @@ func (m *model) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	cfg, ok := m.resolve(ctx, w, reqCtx)
+	target, ok := m.resolve(ctx, w, reqCtx)
 	if !ok {
 		return
 	}
 
-	if err := m.setModel(req, reqCtx, cfg); err != nil {
+	if err := m.setModel(req, reqCtx, target); err != nil {
 		zap.L().Warn("Could not set the LLM upstream model", zap.Error(err))
 		WriteError(w, &WriteErrorOpts{
 			Protocol:   reqCtx.LLM.GetProtocol(),
@@ -77,17 +77,31 @@ func (m *model) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(w, req)
 }
 
+type modelTarget struct {
+	cfg    *corev1.Service_Spec_Config_LLM_Model
+	source corev1.AccessLog_Entry_Info_LLM_Model_Source
+	plugin string
+}
+
 func (m *model) resolve(ctx context.Context, w http.ResponseWriter,
-	reqCtx *middlewares.RequestContext) (*corev1.Service_Spec_Config_LLM_Model, bool) {
+	reqCtx *middlewares.RequestContext) (*modelTarget, bool) {
 
 	svcCfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig)
-	ret := svcCfg.GetLLM().GetModel()
+
+	ret := &modelTarget{
+		cfg:    svcCfg.GetLLM().GetModel(),
+		source: corev1.AccessLog_Entry_Info_LLM_Model_CONFIG,
+	}
 
 	if val := reqCtx.LLMSemanticRouter.GetModel(); val != "" {
-		ret = &corev1.Service_Spec_Config_LLM_Model{
-			Type: &corev1.Service_Spec_Config_LLM_Model_Value{
-				Value: val,
+		ret = &modelTarget{
+			cfg: &corev1.Service_Spec_Config_LLM_Model{
+				Type: &corev1.Service_Spec_Config_LLM_Model_Value{
+					Value: val,
+				},
 			},
+			source: corev1.AccessLog_Entry_Info_LLM_Model_SEMANTIC_ROUTER,
+			plugin: reqCtx.LLMSemanticRouter.Plugin,
 		}
 	}
 
@@ -111,15 +125,19 @@ func (m *model) resolve(ctx context.Context, w http.ResponseWriter,
 			continue
 		}
 
-		ret = cfg
+		ret = &modelTarget{
+			cfg:    cfg,
+			source: corev1.AccessLog_Entry_Info_LLM_Model_PLUGIN,
+			plugin: plugin.GetName(),
+		}
 	}
 
 	return ret, true
 }
 
 func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
-	cfg *corev1.Service_Spec_Config_LLM_Model) error {
-	if cfg == nil || cfg.Type == nil {
+	target *modelTarget) error {
+	if target.cfg == nil || target.cfg.Type == nil {
 		return nil
 	}
 
@@ -131,21 +149,27 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 		return nil
 	}
 
-	target, err := m.getModel(req.Context(), cfg, reqCtx)
+	name, err := m.getModel(req.Context(), target.cfg, reqCtx)
 	if err != nil {
 		return err
 	}
 
-	if target == "" || target == reqCtx.LLM.GetModel() {
+	if name == "" || name == reqCtx.LLM.GetModel() {
 		return nil
 	}
 
-	if err := checkModelName(protocol, target); err != nil {
+	if err := checkModelName(protocol, name); err != nil {
 		return err
 	}
 
+	reqCtx.LLMModel = &middlewares.LLMModelInfo{
+		Effective: name,
+		Source:    target.source,
+		Plugin:    target.plugin,
+	}
+
 	if isModelInPath {
-		setModelPath(req, protocol, target)
+		setModelPath(req, protocol, name)
 		return nil
 	}
 
@@ -154,11 +178,11 @@ func (m *model) setModel(req *http.Request, reqCtx *middlewares.RequestContext,
 		return err
 	}
 
-	targetRaw, err := json.Marshal(target)
+	nameRaw, err := json.Marshal(name)
 	if err != nil {
 		return err
 	}
-	bodyMap["model"] = targetRaw
+	bodyMap["model"] = nameRaw
 
 	body, err := json.Marshal(bodyMap)
 	if err != nil {

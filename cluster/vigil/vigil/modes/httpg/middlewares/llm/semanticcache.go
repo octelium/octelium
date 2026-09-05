@@ -82,7 +82,7 @@ type cacheKey struct {
 
 type cacheLookup struct {
 	entry      *cacheEntry
-	result     corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result
+	result     middlewares.LLMSemanticCacheResult
 	similarity float32
 	vector     []float32
 }
@@ -149,7 +149,7 @@ func (m *semanticCache) serve(w http.ResponseWriter, req *http.Request,
 	embeddingCfg := resolveEmbedding(reqCtx, cfg.GetEmbedding())
 	if !isSemanticRequest(reqCtx) || embeddingCfg == nil {
 		setSemanticCacheResult(reqCtx, plugin,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS, 0)
+			middlewares.LLMSemanticCacheBypass, 0)
 		m.next.ServeHTTP(w, req)
 		return
 	}
@@ -159,7 +159,7 @@ func (m *semanticCache) serve(w http.ResponseWriter, req *http.Request,
 		zap.L().Debug("Could not build the LLM SemanticCache key",
 			zap.String("plugin", plugin.GetName()), zap.Error(err))
 		setSemanticCacheResult(reqCtx, plugin,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS, 0)
+			middlewares.LLMSemanticCacheBypass, 0)
 		m.next.ServeHTTP(w, req)
 		return
 	}
@@ -279,7 +279,7 @@ func (m *semanticCache) lookup(ctx context.Context,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_SemanticCache) *cacheLookup {
 
 	ret := &cacheLookup{
-		result: corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+		result: middlewares.LLMSemanticCacheMiss,
 	}
 
 	getCtx, cancel := context.WithTimeout(ctx, semanticCacheTimeout)
@@ -294,14 +294,14 @@ func (m *semanticCache) lookup(ctx context.Context,
 		if grpcerr.IsInternal(err) {
 			zap.L().Warn("GetVectors error", zap.Error(err))
 		}
-		ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR
+		ret.result = middlewares.LLMSemanticCacheError
 		return ret
 	}
 
 	if len(resp.Results) > 0 {
 		if entry := decodeCacheEntry(resp.Results[0].Data); entry != nil {
 			ret.entry = entry
-			ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT
+			ret.result = middlewares.LLMSemanticCacheExactHit
 			return ret
 		}
 	}
@@ -309,7 +309,7 @@ func (m *semanticCache) lookup(ctx context.Context,
 	vector, err := m.embedder.embedSubject(ctx, embeddingCfg, reqCtx, key.subject)
 	if err != nil {
 		zap.L().Warn("Could not embed the LLM request", zap.Error(err))
-		ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR
+		ret.result = middlewares.LLMSemanticCacheError
 		return ret
 	}
 	ret.vector = vector
@@ -329,7 +329,7 @@ func (m *semanticCache) lookup(ctx context.Context,
 		if grpcerr.IsInternal(err) {
 			zap.L().Warn("SearchVectors error", zap.Error(err))
 		}
-		ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR
+		ret.result = middlewares.LLMSemanticCacheError
 		return ret
 	}
 
@@ -340,7 +340,7 @@ func (m *semanticCache) lookup(ctx context.Context,
 		}
 
 		ret.entry = entry
-		ret.result = corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT
+		ret.result = middlewares.LLMSemanticCacheSemanticHit
 		ret.similarity = result.Similarity
 		return ret
 	}
@@ -427,7 +427,7 @@ func (m *semanticCache) writeEntry(w http.ResponseWriter,
 
 func setSemanticCacheResult(reqCtx *middlewares.RequestContext,
 	plugin *corev1.Service_Spec_Config_LLM_Plugin,
-	result corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result, similarity float32) {
+	result middlewares.LLMSemanticCacheResult, similarity float32) {
 	reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
 		Result:     result,
 		Similarity: similarity,

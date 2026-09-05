@@ -1847,3 +1847,99 @@ func TestGuardrailSecretsExcludeRules(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, res.code)
 	}
 }
+
+func TestToolsInfo(t *testing.T) {
+	res := servePlugins(t, &pluginOpts{
+		body: newToolsBody(),
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newPlugin("tools", &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+				Filters: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter{
+					{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name{
+							Name: "delete_*",
+						},
+						Decision: corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE,
+					},
+				},
+			}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, uint32(1), res.reqCtx.LLMTools.Count)
+	assert.Equal(t, []string{"read_file"}, res.reqCtx.LLMTools.Names)
+	assert.Equal(t, uint32(2), res.reqCtx.LLMTools.RemovedCount)
+}
+
+func TestGuardrailInfo(t *testing.T) {
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+			`"mail me at a@b.com please"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("pii",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+			res.reqCtx.LLMGuardrail.Result)
+		assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+			res.reqCtx.LLMGuardrail.Leg)
+		assert.Equal(t, "pii", res.reqCtx.LLMGuardrail.Plugin)
+	}
+
+	{
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+			`"my card is 4111 1111 1111 1111"}]}`
+
+		res := servePlugins(t, &pluginOpts{
+			body: body,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("cards",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_CREDIT_CARD,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+					}),
+			},
+		})
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED,
+			res.reqCtx.LLMGuardrail.Result)
+		assert.Equal(t, "cards", res.reqCtx.LLMGuardrail.Plugin)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("pii",
+					corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+							Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
+						},
+						Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+					}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_PASS,
+			res.reqCtx.LLMGuardrail.Result)
+	}
+}

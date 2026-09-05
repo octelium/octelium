@@ -322,3 +322,50 @@ func TestModelEvalBounds(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, res.code, eval)
 	}
 }
+
+func TestModelInfo(t *testing.T) {
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			model: &corev1.Service_Spec_Config_LLM_Model{
+				Type: &corev1.Service_Spec_Config_LLM_Model_Value{Value: "gpt-5"},
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "gpt-5", res.reqCtx.LLMModel.Effective)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_CONFIG,
+			res.reqCtx.LLMModel.Source)
+		assert.Empty(t, res.reqCtx.LLMModel.Plugin)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+				newPlugin("model-1", &corev1.Service_Spec_Config_LLM_Model{
+					Type: &corev1.Service_Spec_Config_LLM_Model_Value{Value: "o3"},
+				}),
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Equal(t, "o3", res.reqCtx.LLMModel.Effective)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_PLUGIN,
+			res.reqCtx.LLMModel.Source)
+		assert.Equal(t, "model-1", res.reqCtx.LLMModel.Plugin)
+	}
+
+	{
+		res := servePlugins(t, &pluginOpts{
+			body: chatBody,
+			model: &corev1.Service_Spec_Config_LLM_Model{
+				Type: &corev1.Service_Spec_Config_LLM_Model_Value{Value: "gpt-4o"},
+			},
+		})
+
+		assert.True(t, res.isNext)
+		assert.Nil(t, res.reqCtx.LLMModel)
+	}
+}

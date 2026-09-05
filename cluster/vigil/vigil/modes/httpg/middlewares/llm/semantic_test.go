@@ -446,12 +446,17 @@ func TestSemanticRouter(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, "gpt-5", res.upstream["model"])
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
+		assert.Equal(t, middlewares.LLMSemanticRouterMatch,
 			res.reqCtx.LLMSemanticRouter.Result)
 		assert.Equal(t, "code", res.reqCtx.LLMSemanticRouter.Route)
 		assert.Equal(t, "gpt-5", res.reqCtx.LLMSemanticRouter.Model)
 		assert.Equal(t, "router", res.reqCtx.LLMSemanticRouter.Plugin)
 		assert.True(t, res.reqCtx.LLMSemanticRouter.Similarity > 0.9)
+
+		assert.Equal(t, "gpt-5", res.reqCtx.LLMModel.Effective)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_SEMANTIC_ROUTER,
+			res.reqCtx.LLMModel.Source)
+		assert.Equal(t, "router", res.reqCtx.LLMModel.Plugin)
 	}
 
 	{
@@ -479,7 +484,7 @@ func TestSemanticRouter(t *testing.T) {
 		})
 
 		assert.Equal(t, "gpt-5-mini", res.upstream["model"])
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_NO_MATCH,
+		assert.Equal(t, middlewares.LLMSemanticRouterNoMatch,
 			res.reqCtx.LLMSemanticRouter.Result)
 		assert.Empty(t, res.reqCtx.LLMSemanticRouter.Route)
 		assert.Equal(t, "gpt-5-mini", res.reqCtx.LLMSemanticRouter.Model)
@@ -565,7 +570,7 @@ func TestSemanticRouterEmbeddingError(t *testing.T) {
 
 	assert.True(t, res.isNext)
 	assert.Equal(t, "gpt-5-mini", res.upstream["model"])
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR,
+	assert.Equal(t, middlewares.LLMSemanticRouterError,
 		res.reqCtx.LLMSemanticRouter.Result)
 }
 
@@ -634,7 +639,7 @@ func TestSemanticCacheExactHit(t *testing.T) {
 		assert.Equal(t, "MISS", res.header.Get("X-Cache"))
 		assert.Contains(t, res.body, "zero trust platform")
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 		assert.True(t, res.reqCtx.LLMSemanticCache.IsStored)
 		assert.Equal(t, 1, vectorC.count())
@@ -648,7 +653,7 @@ func TestSemanticCacheExactHit(t *testing.T) {
 		assert.Equal(t, http.StatusOK, res.code)
 		assert.Contains(t, res.body, "zero trust platform")
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
+			middlewares.LLMSemanticCacheExactHit,
 			res.reqCtx.LLMSemanticCache.Result)
 		assert.Zero(t, res.reqCtx.LLMSemanticCache.Similarity)
 		assert.Equal(t, "cache", res.reqCtx.LLMSemanticCache.Plugin)
@@ -688,7 +693,7 @@ func TestSemanticCacheSemanticHit(t *testing.T) {
 		assert.False(t, res.isNext)
 		assert.Contains(t, res.body, "zero trust platform")
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT,
+			middlewares.LLMSemanticCacheSemanticHit,
 			res.reqCtx.LLMSemanticCache.Result)
 		assert.True(t, res.reqCtx.LLMSemanticCache.Similarity > 0.95)
 	}
@@ -698,7 +703,7 @@ func TestSemanticCacheSemanticHit(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 }
@@ -730,7 +735,7 @@ func TestSemanticCacheScope(t *testing.T) {
 		res := servePlugins(t, newOpts("8f1a9b7c-0000-0000-0000-000000000002", nil))
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 
@@ -746,7 +751,7 @@ func TestSemanticCacheScope(t *testing.T) {
 		res := servePlugins(t, newOpts("8f1a9b7c-0000-0000-0000-000000000004", shared))
 		assert.False(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
+			middlewares.LLMSemanticCacheExactHit,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 }
@@ -769,7 +774,7 @@ func TestSemanticCacheBypass(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+			middlewares.LLMSemanticCacheBypass,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 
@@ -786,7 +791,7 @@ func TestSemanticCacheBypass(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+			middlewares.LLMSemanticCacheBypass,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 
@@ -895,7 +900,7 @@ func TestSemanticCacheFailOpen(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusOK, res.code)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR,
+			middlewares.LLMSemanticCacheError,
 			res.reqCtx.LLMSemanticCache.Result)
 		assert.False(t, res.reqCtx.LLMSemanticCache.IsStored)
 	}
@@ -919,7 +924,7 @@ func TestSemanticCacheFailOpen(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusOK, res.code)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR,
+			middlewares.LLMSemanticCacheError,
 			res.reqCtx.LLMSemanticCache.Result)
 		assert.Zero(t, vectorC.count())
 	}
@@ -954,7 +959,7 @@ func TestSemanticCacheKeyIsModelAware(t *testing.T) {
 		res := servePlugins(t, newOpts("gpt-5"))
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 
@@ -962,7 +967,7 @@ func TestSemanticCacheKeyIsModelAware(t *testing.T) {
 		res := servePlugins(t, newOpts("gpt-5"))
 		assert.False(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT,
+			middlewares.LLMSemanticCacheExactHit,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 }
@@ -1105,7 +1110,7 @@ func TestSemanticCacheOpaqueContent(t *testing.T) {
 	assert.True(t, res.isNext)
 	assert.Contains(t, res.body, "DATA-B")
 	assert.Equal(t,
-		corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+		middlewares.LLMSemanticCacheBypass,
 		res.reqCtx.LLMSemanticCache.Result)
 	assert.Zero(t, vectorC.count())
 }
@@ -1136,7 +1141,7 @@ func TestSemanticCacheLongSubject(t *testing.T) {
 	assert.True(t, res.isNext)
 	assert.Contains(t, res.body, "TWO")
 	assert.Equal(t,
-		corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS,
+		middlewares.LLMSemanticCacheBypass,
 		res.reqCtx.LLMSemanticCache.Result)
 	assert.Zero(t, vectorC.count())
 }
@@ -1172,7 +1177,7 @@ func TestSemanticCacheKeyIsolation(t *testing.T) {
 		res := servePlugins(t, opts)
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 
@@ -1184,7 +1189,7 @@ func TestSemanticCacheKeyIsolation(t *testing.T) {
 		res := servePlugins(t, opts)
 		assert.True(t, res.isNext)
 		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			middlewares.LLMSemanticCacheMiss,
 			res.reqCtx.LLMSemanticCache.Result)
 	}
 }

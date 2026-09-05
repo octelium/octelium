@@ -61,8 +61,9 @@ func newLLMReqCtx(t *testing.T,
 	llmReq := httputils.ParseLLMRequest(req, cfg.GetProtocol(), []byte(llmReqBody))
 
 	return &middlewares.RequestContext{
-		CreatedAt: time.Now(),
-		Service:   svc,
+		CreatedAt:          time.Now(),
+		Service:            svc,
+		IsUpstreamResponse: true,
 		ServiceConfig: &corev1.Service_Spec_Config{
 			Type: &corev1.Service_Spec_Config_Llm{Llm: cfg},
 		},
@@ -135,9 +136,11 @@ func TestLLMAccessLogComplete(t *testing.T) {
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_COMPLETE, llmC.Type)
 	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPENAI, llmC.Protocol)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_CHAT_COMPLETIONS, llmC.Operation)
-	assert.Equal(t, "gpt-4o", llmC.RequestedModel)
-	assert.Equal(t, "gpt-4o-2024-11-20", llmC.Model)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_GENERATE, llmC.Operation)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
+	assert.Equal(t, "gpt-4o", llmC.Model.Requested)
+	assert.Equal(t, "gpt-4o", llmC.Model.Effective)
+	assert.Equal(t, "gpt-4o-2024-11-20", llmC.Model.Reported)
 	assert.Equal(t, "chatcmpl-1", llmC.ResponseID)
 	assert.Equal(t, "stop", llmC.FinishReason)
 	assert.False(t, llmC.Stream)
@@ -263,7 +266,7 @@ func TestLLMAccessLogLargeBody(t *testing.T) {
 	llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, body, false)
 
 	assert.Equal(t, "chatcmpl-5", llmC.ResponseID)
-	assert.Equal(t, "gpt-4o", llmC.Model)
+	assert.Equal(t, "gpt-4o", llmC.Model.Reported)
 	assert.Equal(t, "stop", llmC.FinishReason)
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
@@ -292,7 +295,7 @@ func TestLLMAccessLogAnthropicStream(t *testing.T) {
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STREAM_END, llmC.Type)
 	assert.Equal(t, "msg_1", llmC.ResponseID)
-	assert.Equal(t, "claude-sonnet-4", llmC.Model)
+	assert.Equal(t, "claude-sonnet-4", llmC.Model.Reported)
 	assert.Equal(t, "end_turn", llmC.FinishReason)
 
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
@@ -590,30 +593,22 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 	{
 		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
 		reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
-			Result:     corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT,
+			Result:     middlewares.LLMSemanticCacheSemanticHit,
 			Similarity: 0.97,
 		}
-		reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
-			Result:     corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
-			Route:      "code",
-			Similarity: 0.88,
-			Model:      "gpt-5",
-			Plugin:     "router",
+		reqCtx.LLMModel = &middlewares.LLMModelInfo{
+			Effective: "gpt-5",
+			Source:    corev1.AccessLog_Entry_Info_LLM_Model_SEMANTIC_ROUTER,
+			Plugin:    "router",
 		}
 
 		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
 
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT,
-			llmC.SemanticCache.Result)
-		assert.InDelta(t, 0.97, llmC.SemanticCache.Similarity, 0.0001)
-		assert.False(t, llmC.SemanticCache.IsStored)
-
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
-			llmC.SemanticRouter.Result)
-		assert.Equal(t, "code", llmC.SemanticRouter.Route)
-		assert.Equal(t, "gpt-5", llmC.SemanticRouter.Model)
-		assert.Equal(t, "router", llmC.SemanticRouter.Plugin)
-		assert.InDelta(t, 0.88, llmC.SemanticRouter.Similarity, 0.0001)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SEMANTIC_CACHE, llmC.Source)
+		assert.Equal(t, "gpt-5", llmC.Model.Effective)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_SEMANTIC_ROUTER,
+			llmC.Model.Source)
+		assert.Equal(t, "router", llmC.Model.Plugin)
 
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_CACHED, llmC.Usage.Source)
 		assert.Zero(t, llmC.Usage.TotalTokens)
@@ -624,22 +619,67 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 	{
 		reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
 		reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
-			Result:   corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
+			Result:   middlewares.LLMSemanticCacheMiss,
 			IsStored: true,
 		}
 
 		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
 
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS,
-			llmC.SemanticCache.Result)
-		assert.True(t, llmC.SemanticCache.IsStored)
-		assert.Nil(t, llmC.SemanticRouter)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
 	}
 
 	{
 		llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, llmRespBody, false)
-		assert.Nil(t, llmC.SemanticCache)
-		assert.Nil(t, llmC.SemanticRouter)
+
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_SOURCE_UNSET,
+			llmC.Model.Source)
+		assert.Empty(t, llmC.Model.Plugin)
 	}
+}
+
+func TestLLMAccessLogRequestInfo(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+	reqCtx.LLMReasoning = &middlewares.LLMReasoningInfo{
+		Effort: "high",
+	}
+	reqCtx.LLMTools = &middlewares.LLMToolsInfo{
+		Count:        2,
+		Names:        []string{"get_time", "get_weather"},
+		RemovedCount: 1,
+	}
+	reqCtx.LLMGuardrail = &middlewares.LLMGuardrailInfo{
+		Result: corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+		Leg:    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		Plugin: "pii",
+	}
+
+	llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
+
+	assert.False(t, llmC.Reasoning.IsDisabled)
+	assert.Equal(t, "high", llmC.Reasoning.Effort)
+	assert.Zero(t, llmC.Reasoning.TokenBudget)
+
+	assert.Equal(t, uint32(2), llmC.Tools.Count)
+	assert.Equal(t, []string{"get_time", "get_weather"}, llmC.Tools.Names)
+	assert.Equal(t, uint32(1), llmC.Tools.RemovedCount)
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+		llmC.Guardrail.Result)
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		llmC.Guardrail.Leg)
+	assert.Equal(t, "pii", llmC.Guardrail.Plugin)
+}
+
+func TestLLMAccessLogCalledTools(t *testing.T) {
+	body := `{"id":"chatcmpl-2","model":"gpt-4o","choices":[{"finish_reason":` +
+		`"tool_calls","message":{"tool_calls":[{"type":"function","function":` +
+		`{"name":"get_weather","arguments":"{}"}}]}}],` +
+		`"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}`
+
+	llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, body, false)
+
+	assert.Equal(t, "tool_calls", llmC.FinishReason)
+	assert.Equal(t, []string{"get_weather"}, llmC.Tools.CalledNames)
 }

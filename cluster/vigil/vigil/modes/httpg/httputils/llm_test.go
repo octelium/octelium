@@ -1019,3 +1019,61 @@ func TestParseLLMRequestBedrockDocument(t *testing.T) {
 	assert.False(t, llmReq.HasImageInput)
 	assert.Equal(t, corev1.RequestContext_Request_LLM_PARTIAL, llmReq.EstimateQuality)
 }
+
+func TestParseLLMResponseToolNames(t *testing.T) {
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","choices":[{"finish_reason":"tool_calls","message":
+			{"tool_calls":[{"type":"function","function":{"name":"get_weather"}},
+			{"type":"function","function":{"name":"get_time"}}]}}]}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"get_time", "get_weather"}, msg.ToolNames)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"type":"content_block_start","index":0,"content_block":
+			{"type":"tool_use","id":"tu_1","name":"read_file"}}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"read_file"}, msg.ToolNames)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"candidates":[{"content":{"parts":[{"functionCall":
+			{"name":"lookup","args":{}}}]}}]}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"lookup"}, msg.ToolNames)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"output":{"message":{"content":[{"toolUse":
+			{"toolUseId":"tu_1","name":"search"}}]}}}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"search"}, msg.ToolNames)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"type":"response.output_item.added","item":
+			{"type":"function_call","name":"run_query","call_id":"c1"}}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"run_query"}, msg.ToolNames)
+	}
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","choices":[{"finish_reason":"stop",
+			"message":{"content":"hi"}}]}`))
+
+		assert.NotNil(t, msg)
+		assert.Empty(t, msg.ToolNames)
+	}
+}
