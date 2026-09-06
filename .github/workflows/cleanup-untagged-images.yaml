@@ -1,93 +1,431 @@
 name: cleanup-untagged-images
 
+run-name: >-
+  Cleanup untagged GHCR images
+  (retention=${{ inputs.retention_days }}${{ inputs.retention_days == 'custom' && format('/{0}', inputs.custom_days) || '' }}d,
+  dry-run=${{ inputs.dry_run }})
+
 on:
   workflow_dispatch:
     inputs:
-      days_old:
-        description: 'Delete images older than (days)'
+      retention_days:
+        description: "Delete untagged images older than this many days"
         required: true
-        default: '90'
+        default: "30"
+        type: choice
+        options:
+          - "7"
+          - "14"
+          - "30"
+          - "45"
+          - "60"
+          - "90"
+          - "180"
+          - "365"
+          - "custom"
+      custom_days:
+        description: "Custom retention in days (used only when retention_days=custom)"
+        required: false
+        default: "30"
         type: string
+      package_regex:
+        description: "ERE matching GHCR package names to clean"
+        required: true
+        default: "^(octelium|octeliumctl|octops|octelium-.+)$"
+        type: string
+      max_deletions:
+        description: "Maximum versions to process/delete in one run"
+        required: true
+        default: "100"
+        type: choice
+        options:
+          - "25"
+          - "50"
+          - "100"
+          - "250"
+          - "500"
+      delete_delay_seconds:
+        description: "Pause between successful DELETE requests"
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "5"
       dry_run:
-        description: 'Dry run'
+        description: "List matching versions without deleting them"
         required: true
         default: true
         type: boolean
 
+permissions: {}
+
+concurrency:
+  group: cleanup-untagged-images-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   cleanup:
-    runs-on: ubuntu-latest
+    name: Cleanup untagged GHCR images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    # GitHub's package API additionally requires this repository/workflow to
+    # have admin access to each GHCR package that it deletes.
     permissions:
       packages: write
 
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      API_VERSION: "2026-03-10"
+      OWNER: ${{ github.repository_owner }}
+
     steps:
-      - name: Clean Images
+      - name: Resolve cleanup configuration
+        id: config
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DAYS: ${{ inputs.days_old }}
-          DRY_RUN: ${{ inputs.dry_run }}
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
+          RETENTION_DAYS: ${{ inputs.retention_days }}
+          CUSTOM_DAYS: ${{ inputs.custom_days }}
+        shell: bash
         run: |
-          echo "| Package | Image ID | Created At | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          set -Eeuo pipefail
 
-          CUTOFF_DATE=$(date -d "$DAYS days ago" +%Y-%m-%d)
-          CUTOFF_TS=$(date -d "$CUTOFF_DATE" +%s)
-          echo "Targeting images older than: $CUTOFF_DATE"
+          if [[ "$RETENTION_DAYS" == "custom" ]]; then
+            DAYS="$CUSTOM_DAYS"
+          else
+            DAYS="$RETENTION_DAYS"
+          fi
 
-          echo "Fetching packages list for repo: $REPO..."
+          if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Retention must be a positive integer number of days."
+            exit 1
+          fi
 
-          PACKAGES=$(gh api graphql -F owner=$OWNER -F repo=$REPO -f query='
-            query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) {
-                packages(first: 100, packageType: CONTAINER) {
-                  nodes {
-                    name
-                  }
-                }
-              }
-            }
-          ' --jq '.data.repository.packages.nodes[].name')
+          if (( DAYS > 3650 )); then
+            echo "::error::Retention cannot exceed 3650 days."
+            exit 1
+          fi
 
-          if [ -z "$PACKAGES" ]; then
-            echo "No packages found or accessible."
+          CUTOFF_EPOCH="$(date -u -d "$DAYS days ago" +%s)"
+          CUTOFF_ISO="$(date -u -d "@$CUTOFF_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
+
+          {
+            echo "days=$DAYS"
+            echo "cutoff_epoch=$CUTOFF_EPOCH"
+            echo "cutoff_iso=$CUTOFF_ISO"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## GHCR cleanup configuration"
+            echo
+            echo "| Setting | Value |"
+            echo "| :--- | :--- |"
+            echo "| Owner | \`$OWNER\` |"
+            echo "| Retention | $DAYS days |"
+            echo "| Cutoff | \`$CUTOFF_ISO\` |"
+            echo "| Package regex | \`${{ inputs.package_regex }}\` |"
+            echo "| Max versions this run | ${{ inputs.max_deletions }} |"
+            echo "| Delete delay | ${{ inputs.delete_delay_seconds }} seconds |"
+            echo "| Dry run | \`${{ inputs.dry_run }}\` |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Discover packages and untagged versions
+        id: plan
+        env:
+          CUTOFF_EPOCH: ${{ steps.config.outputs.cutoff_epoch }}
+          PACKAGE_REGEX: ${{ inputs.package_regex }}
+          MAX_DELETIONS: ${{ inputs.max_deletions }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ALL_PACKAGES="$RUNNER_TEMP/all-container-packages.txt"
+          PACKAGES="$RUNNER_TEMP/matching-container-packages.txt"
+          VERSIONS="$RUNNER_TEMP/package-versions.tsv"
+          CANDIDATES="$RUNNER_TEMP/cleanup-candidates.tsv"
+          SELECTED="$RUNNER_TEMP/cleanup-selected.tsv"
+
+          : > "$ALL_PACKAGES"
+          : > "$PACKAGES"
+          : > "$CANDIDATES"
+          : > "$SELECTED"
+
+          set +e
+          printf '' | grep -E "$PACKAGE_REGEX" >/dev/null 2>&1
+          REGEX_STATUS=$?
+          set -e
+          if (( REGEX_STATUS == 2 )); then
+            echo "::error::Invalid package_regex: $PACKAGE_REGEX"
+            exit 1
+          fi
+
+          echo "Listing GHCR packages owned by $OWNER..."
+
+          gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: $API_VERSION" \
+            "/orgs/$OWNER/packages?package_type=container&per_page=100" \
+            --jq '.[].name' \
+            > "$ALL_PACKAGES"
+
+          grep -E "$PACKAGE_REGEX" "$ALL_PACKAGES" | sort -u > "$PACKAGES" || true
+
+          PACKAGE_COUNT="$(wc -l < "$PACKAGES" | tr -d ' ')"
+          echo "Matched $PACKAGE_COUNT package(s)."
+
+          if (( PACKAGE_COUNT == 0 )); then
+            {
+              echo "### Result"
+              echo
+              echo "No container packages matched the configured package regex."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "candidate_count=0" >> "$GITHUB_OUTPUT"
+            echo "selected_count=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          for PKG in $PACKAGES; do
-            echo "Checking package: $PKG"
-            
-            versions=$(gh api \
+          while IFS= read -r PACKAGE; do
+            [[ -z "$PACKAGE" ]] && continue
+
+            echo "Scanning package: $PACKAGE"
+            ENCODED_PACKAGE="$(jq -rn --arg value "$PACKAGE" '$value | @uri')"
+            : > "$VERSIONS"
+
+            gh api --paginate \
               -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/orgs/$OWNER/packages/container/$PKG/versions?per_page=100")
+              -H "X-GitHub-Api-Version: $API_VERSION" \
+              "/orgs/$OWNER/packages/container/$ENCODED_PACKAGE/versions?per_page=100" \
+              --jq '.[] |
+                select((.metadata.container.tags // [] | length) == 0) |
+                [.id, .created_at, .name] |
+                @tsv' \
+              > "$VERSIONS"
 
-            echo "$versions" | jq -r --argjson cutoff "$CUTOFF_TS" '.[] | select((.metadata.container.tags | length) == 0) | select((.created_at | fromdateiso8601) < $cutoff) | "\(.id) \(.created_at)"' | \
-            while read -r version_id created_at; do
-              
-              if [ "$DRY_RUN" = "true" ]; then
-                echo "DRY RUN: Would delete $PKG : $version_id"
-                echo "| $PKG | $version_id | $created_at | Dry Run |" >> $GITHUB_STEP_SUMMARY
-              else
-                echo "DELETING: $PKG : $version_id"
-                
-                set +e
-                gh api \
-                  --method DELETE \
+            while IFS=$'\t' read -r VERSION_ID CREATED_AT VERSION_NAME; do
+              [[ -z "$VERSION_ID" ]] && continue
+
+              CREATED_EPOCH="$(date -u -d "$CREATED_AT" +%s)"
+              if (( CREATED_EPOCH < CUTOFF_EPOCH )); then
+                printf '%s\t%s\t%s\t%s\n' \
+                  "$PACKAGE" "$VERSION_ID" "$CREATED_AT" "$VERSION_NAME" \
+                  >> "$CANDIDATES"
+              fi
+            done < "$VERSIONS"
+          done < "$PACKAGES"
+
+          if [[ -s "$CANDIDATES" ]]; then
+            sort -t $'\t' -k3,3 "$CANDIDATES" -o "$CANDIDATES"
+          fi
+
+          CANDIDATE_COUNT="$(wc -l < "$CANDIDATES" | tr -d ' ')"
+          head -n "$MAX_DELETIONS" "$CANDIDATES" > "$SELECTED"
+          SELECTED_COUNT="$(wc -l < "$SELECTED" | tr -d ' ')"
+
+          {
+            echo "candidate_count=$CANDIDATE_COUNT"
+            echo "selected_count=$SELECTED_COUNT"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Cleanup plan"
+            echo
+            echo "- Matched packages: **$PACKAGE_COUNT**"
+            echo "- Untagged versions older than the cutoff: **$CANDIDATE_COUNT**"
+            echo "- Versions selected for this run: **$SELECTED_COUNT**"
+            if (( CANDIDATE_COUNT > SELECTED_COUNT )); then
+              echo "- Remaining candidates after this run: **$((CANDIDATE_COUNT - SELECTED_COUNT))**"
+            fi
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if (( SELECTED_COUNT == 0 )); then
+            echo "No matching versions need cleanup."
+            exit 0
+          fi
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            {
+              echo "### Dry-run candidates"
+              echo
+              echo "| Package | Version ID | Digest/name | Created at | Status |"
+              echo "| :--- | ---: | :--- | :--- | :--- |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            while IFS=$'\t' read -r PACKAGE VERSION_ID CREATED_AT VERSION_NAME; do
+              printf '| `%s` | %s | `%s` | %s | Would delete |\n' \
+                "$PACKAGE" "$VERSION_ID" "$VERSION_NAME" "$CREATED_AT" \
+                >> "$GITHUB_STEP_SUMMARY"
+            done < "$SELECTED"
+          fi
+
+      - name: Delete selected package versions
+        if: ${{ !inputs.dry_run && steps.plan.outputs.selected_count != '0' }}
+        env:
+          DELETE_DELAY_SECONDS: ${{ inputs.delete_delay_seconds }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SELECTED="$RUNNER_TEMP/cleanup-selected.tsv"
+          FAILURES=0
+          DELETED=0
+          SKIPPED=0
+
+          {
+            echo "### Deletion results"
+            echo
+            echo "| Package | Version ID | Digest/name | Created at | Status |"
+            echo "| :--- | ---: | :--- | :--- | :--- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          header_value() {
+            local HEADER_FILE="$1"
+            local HEADER_NAME="$2"
+
+            awk -F': *' -v wanted="$HEADER_NAME" '
+              BEGIN { IGNORECASE=1 }
+              $1 == wanted {
+                gsub(/\r$/, "", $2)
+                value=$2
+              }
+              END { print value }
+            ' "$HEADER_FILE"
+          }
+
+          delete_version() {
+            local PACKAGE="$1"
+            local VERSION_ID="$2"
+            local ENCODED_PACKAGE URL
+            local ATTEMPT=1
+            local MAX_ATTEMPTS=5
+
+            ENCODED_PACKAGE="$(jq -rn --arg value "$PACKAGE" '$value | @uri')"
+            URL="${GITHUB_API_URL}/orgs/${OWNER}/packages/container/${ENCODED_PACKAGE}/versions/${VERSION_ID}"
+
+            while (( ATTEMPT <= MAX_ATTEMPTS )); do
+              local HEADER_FILE BODY_FILE STATUS MESSAGE RETRY_AFTER REMAINING RESET WAIT_SECONDS NOW
+              HEADER_FILE="$(mktemp)"
+              BODY_FILE="$(mktemp)"
+
+              set +e
+              STATUS="$(
+                curl --silent --show-error --location \
+                  --request DELETE \
+                  --dump-header "$HEADER_FILE" \
+                  --output "$BODY_FILE" \
+                  --write-out '%{http_code}' \
                   -H "Accept: application/vnd.github+json" \
-                  -H "X-GitHub-Api-Version: 2022-11-28" \
-                  "/orgs/$OWNER/packages/container/$PKG/versions/$version_id"
-                
-                exit_code=$?
-                set -e 
+                  -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "X-GitHub-Api-Version: $API_VERSION" \
+                  "$URL"
+              )"
+              CURL_STATUS=$?
+              set -e
 
-                if [ $exit_code -eq 0 ]; then
-                  echo "| $PKG | $version_id | $created_at | Deleted |" >> $GITHUB_STEP_SUMMARY
-                else
-                  echo "Error deleting. Token might lack scope for this specific package."
-                  echo "| $PKG | $version_id | $created_at | Forbidden (403) |" >> $GITHUB_STEP_SUMMARY
+              if (( CURL_STATUS != 0 )); then
+                STATUS="000"
+              fi
+
+              if [[ "$STATUS" == "204" ]]; then
+                rm -f "$HEADER_FILE" "$BODY_FILE"
+                return 0
+              fi
+
+              MESSAGE="$(jq -r '.message // empty' "$BODY_FILE" 2>/dev/null || true)"
+
+              if [[ "$STATUS" == "404" ]]; then
+                echo "::warning::Version $PACKAGE:$VERSION_ID no longer exists or is no longer accessible."
+                rm -f "$HEADER_FILE" "$BODY_FILE"
+                return 3
+              fi
+
+              if [[ "$STATUS" == "403" || "$STATUS" == "429" ]]; then
+                RETRY_AFTER="$(header_value "$HEADER_FILE" "retry-after")"
+                REMAINING="$(header_value "$HEADER_FILE" "x-ratelimit-remaining")"
+                RESET="$(header_value "$HEADER_FILE" "x-ratelimit-reset")"
+
+                WAIT_SECONDS=""
+
+                if [[ "$RETRY_AFTER" =~ ^[0-9]+$ ]]; then
+                  WAIT_SECONDS="$RETRY_AFTER"
+                elif [[ "$REMAINING" == "0" && "$RESET" =~ ^[0-9]+$ ]]; then
+                  NOW="$(date +%s)"
+                  WAIT_SECONDS=$(( RESET - NOW + 1 ))
+                  (( WAIT_SECONDS < 1 )) && WAIT_SECONDS=1
+                elif [[ "$MESSAGE" == *"rate limit"* || "$MESSAGE" == *"abuse"* ]]; then
+                  WAIT_SECONDS=$(( 60 * ATTEMPT ))
+                fi
+
+                if [[ -n "$WAIT_SECONDS" && "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]]; then
+                  echo "::warning::GitHub API rate limit while deleting $PACKAGE:$VERSION_ID; retrying in ${WAIT_SECONDS}s (attempt $ATTEMPT/$MAX_ATTEMPTS)."
+                  rm -f "$HEADER_FILE" "$BODY_FILE"
+                  sleep "$WAIT_SECONDS"
+                  ATTEMPT=$(( ATTEMPT + 1 ))
+                  continue
                 fi
               fi
+
+              if [[ "$STATUS" =~ ^5[0-9][0-9]$ && "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]]; then
+                WAIT_SECONDS=$(( 2 ** ATTEMPT ))
+                echo "::warning::GitHub API returned HTTP $STATUS; retrying in ${WAIT_SECONDS}s."
+                rm -f "$HEADER_FILE" "$BODY_FILE"
+                sleep "$WAIT_SECONDS"
+                ATTEMPT=$(( ATTEMPT + 1 ))
+                continue
+              fi
+
+              echo "::error::Failed to delete $PACKAGE:$VERSION_ID (HTTP $STATUS): ${MESSAGE:-unknown error}"
+              if [[ "$STATUS" == "403" ]]; then
+                echo "::error::The repository must have admin access to this GHCR package (Package settings -> Manage Actions access)."
+              fi
+              rm -f "$HEADER_FILE" "$BODY_FILE"
+              return 1
             done
-          done
+
+            return 1
+          }
+
+          while IFS=$'\t' read -r PACKAGE VERSION_ID CREATED_AT VERSION_NAME; do
+            [[ -z "$VERSION_ID" ]] && continue
+
+            echo "Deleting $PACKAGE:$VERSION_ID ($VERSION_NAME)..."
+
+            set +e
+            delete_version "$PACKAGE" "$VERSION_ID"
+            RESULT=$?
+            set -e
+
+            case "$RESULT" in
+              0)
+                DELETED=$(( DELETED + 1 ))
+                STATUS_TEXT="Deleted"
+                sleep "$DELETE_DELAY_SECONDS"
+                ;;
+              3)
+                SKIPPED=$(( SKIPPED + 1 ))
+                STATUS_TEXT="Already absent"
+                ;;
+              *)
+                FAILURES=$(( FAILURES + 1 ))
+                STATUS_TEXT="Failed"
+                ;;
+            esac
+
+            printf '| `%s` | %s | `%s` | %s | %s |\n' \
+              "$PACKAGE" "$VERSION_ID" "$VERSION_NAME" "$CREATED_AT" "$STATUS_TEXT" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done < "$SELECTED"
+
+          {
+            echo
+            echo "**Deleted:** $DELETED  "
+            echo "**Skipped:** $SKIPPED  "
+            echo "**Failed:** $FAILURES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if (( FAILURES > 0 )); then
+            exit 1
+          fi
