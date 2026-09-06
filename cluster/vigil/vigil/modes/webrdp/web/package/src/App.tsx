@@ -12,6 +12,8 @@ import {
 import { notifications } from "@mantine/notifications";
 import {
   AlertCircle,
+  ClipboardCopy,
+  ClipboardPaste,
   Keyboard,
   KeyboardOff,
   Maximize2,
@@ -178,6 +180,11 @@ export function App() {
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [remoteClipboardAvailable, setRemoteClipboardAvailable] =
+    useState(false);
+  const [clipboardAction, setClipboardAction] = useState<
+    "copy" | "paste" | null
+  >(null);
 
   const isTouch = useMemo(() => isTouchDevice(), []);
 
@@ -285,6 +292,7 @@ export function App() {
     remoteElementRef.current = el;
     userInteractionRef.current = null;
     setInteractionReady(false);
+    setRemoteClipboardAvailable(false);
 
     if (!el) {
       return;
@@ -298,6 +306,13 @@ export function App() {
       }
 
       userInteractionRef.current = ui;
+      ui.setEnableClipboard(true);
+      ui.setEnableAutoClipboard(false);
+      ui.onClipboardRemoteUpdateCallback(() => {
+        if (userInteractionRef.current === ui) {
+          setRemoteClipboardAvailable(true);
+        }
+      });
 
       if (isTouch) {
         detachTouchRef.current = attachTouchInput(el);
@@ -376,6 +391,7 @@ export function App() {
       }
 
       setSessionVisible(false);
+      setRemoteClipboardAvailable(false);
       setConnectionState("disconnected");
       setStatus("Disconnected");
       console.debug("RDP session terminated", termInfo);
@@ -385,6 +401,7 @@ export function App() {
       }
 
       setSessionVisible(false);
+      setRemoteClipboardAvailable(false);
       setStatus("Connection failed");
       showError(FRIENDLY_CONNECTION_ERROR, getErrorMessage(err));
     }
@@ -430,6 +447,7 @@ export function App() {
       userInteractionRef.current?.shutdown();
     } finally {
       setSessionVisible(false);
+      setRemoteClipboardAvailable(false);
       setConnectionState("disconnected");
       setStatus("Disconnected");
     }
@@ -523,6 +541,53 @@ export function App() {
 
   const sendMetaKey = () => {
     userInteractionRef.current?.metaKey();
+  };
+
+  const copyRemoteClipboard = async () => {
+    const ui = userInteractionRef.current;
+    if (!ui || clipboardAction) {
+      return;
+    }
+
+    setClipboardAction("copy");
+    try {
+      await ui.saveRemoteClipboardData();
+      setRemoteClipboardAvailable(false);
+      notifications.show({
+        color: "teal",
+        title: "Clipboard copied",
+        message: "Remote clipboard content is now available on this device.",
+      });
+    } catch (err) {
+      notifications.show({
+        color: "yellow",
+        title: "Clipboard unavailable",
+        message: getErrorMessage(err),
+      });
+    } finally {
+      setClipboardAction(null);
+    }
+  };
+
+  const pasteLocalClipboard = async () => {
+    const ui = userInteractionRef.current;
+    if (!ui || clipboardAction) {
+      return;
+    }
+
+    setClipboardAction("paste");
+    try {
+      await ui.sendClipboardData();
+      ui.ctrlV();
+    } catch (err) {
+      notifications.show({
+        color: "yellow",
+        title: "Clipboard unavailable",
+        message: getErrorMessage(err),
+      });
+    } finally {
+      setClipboardAction(null);
+    }
   };
 
   const setScale = (scale: "fit" | "real" | "full") => {
@@ -675,6 +740,44 @@ export function App() {
                 aria-label="Send Windows key"
               >
                 <span className="ow-control-label">Meta</span>
+              </Button>
+            </Tooltip>
+
+            <Tooltip
+              label={
+                remoteClipboardAvailable
+                  ? "Copy remote clipboard to this device"
+                  : "Copy something in the remote session first"
+              }
+            >
+              <Button
+                size="xs"
+                variant={remoteClipboardAvailable ? "light" : "subtle"}
+                color={remoteClipboardAvailable ? "teal" : "gray"}
+                leftSection={<ClipboardCopy size={14} />}
+                loading={clipboardAction === "copy"}
+                disabled={
+                  !remoteClipboardAvailable || clipboardAction !== null
+                }
+                onClick={() => void copyRemoteClipboard()}
+                aria-label="Copy remote clipboard to this device"
+              >
+                <span className="ow-control-label">Copy</span>
+              </Button>
+            </Tooltip>
+
+            <Tooltip label="Paste this device's clipboard into the remote session">
+              <Button
+                size="xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<ClipboardPaste size={14} />}
+                loading={clipboardAction === "paste"}
+                disabled={clipboardAction !== null}
+                onClick={() => void pasteLocalClipboard()}
+                aria-label="Paste this device's clipboard into the remote session"
+              >
+                <span className="ow-control-label">Paste</span>
               </Button>
             </Tooltip>
 
