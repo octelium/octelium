@@ -131,7 +131,7 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 		return
 	}
 
-	receivedBytes, sentBytes := Relay(ctx, downstreamTLS, handshake.TLSConn, true)
+	receivedBytes, sentBytes := Relay(ctx, downstreamTLS, handshake.TLSConn, handshake.RelayOptions)
 	p.bytesFromDownstream += int64(receivedBytes) + int64(len(p.dctx.clientX224))
 	p.bytesToDownstream += int64(sentBytes)
 }
@@ -157,7 +157,7 @@ func (p *proxy) servePassthrough(ctx context.Context, upstream *loadbalancer.Ups
 		return
 	}
 
-	receivedBytes, sentBytes := Relay(ctx, p.dctx.conn, upstreamConn, false)
+	receivedBytes, sentBytes := Relay(ctx, p.dctx.conn, upstreamConn, nil)
 	p.bytesFromDownstream += int64(receivedBytes)
 	p.bytesToDownstream += int64(sentBytes)
 }

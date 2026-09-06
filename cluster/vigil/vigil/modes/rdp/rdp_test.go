@@ -25,6 +25,8 @@ import (
 	"io"
 	"net"
 	"testing"
+	"testing/iotest"
+	"unicode/utf16"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/stretchr/testify/assert"
@@ -119,6 +121,151 @@ func TestRewriteMCSSelectedProtocolNoCoreData(t *testing.T) {
 	rewriteMCSSelectedProtocol(buf, protocolHybrid)
 
 	assert.Equal(t, original, buf)
+}
+
+func TestSecretlessRelayOptions(t *testing.T) {
+	credential := &Credential{
+		Domain:   "domain",
+		Username: "user",
+		Password: "password",
+	}
+
+	hybrid, err := newSecretlessRelayOptions(protocolHybrid, credential)
+	assert.Nil(t, err)
+	assert.True(t, hybrid.rewriteSelectedProtocol)
+	assert.Nil(t, hybrid.credential)
+
+	ssl, err := newSecretlessRelayOptions(protocolSSL, credential)
+	assert.Nil(t, err)
+	assert.False(t, ssl.rewriteSelectedProtocol)
+	assert.Same(t, credential, ssl.credential)
+
+	unsupported, err := newSecretlessRelayOptions(protocolRDP, credential)
+	assert.NotNil(t, err)
+	assert.Nil(t, unsupported)
+}
+
+func TestRewriteClientInfoCredential(t *testing.T) {
+	extraInfo := bytes.Repeat([]byte{0x5a}, 160)
+	packet := buildClientInfoPacket(t, []string{
+		"browser-domain",
+		"browser-user",
+		"browser-password",
+		"shell",
+		"working-dir",
+	}, 0x00040010, extraInfo)
+	original := append([]byte(nil), packet...)
+
+	rewritten, matched, err := rewriteClientInfoCredential(packet, &Credential{
+		Domain:   "",
+		Username: "root",
+		Password: "päss",
+	})
+	assert.Nil(t, err)
+	assert.True(t, matched)
+	assert.Equal(t, original, packet)
+	assert.Equal(t, len(rewritten), int(binary.BigEndian.Uint16(rewritten[2:4])))
+
+	userDataLen, lengthLen, err := readPERLength(rewritten[13:])
+	assert.Nil(t, err)
+	assert.Equal(t, 2, lengthLen)
+	assert.Equal(t, len(rewritten)-(13+lengthLen), userDataLen)
+
+	userData := rewritten[13+lengthLen:]
+	assert.Equal(t, []byte{0x40, 0x00, 0x00, 0x00}, userData[:4])
+	clientInfo := userData[4:]
+	assert.Equal(t, uint32(0x00000018), binary.LittleEndian.Uint32(clientInfo[4:8]))
+
+	fields, tail := decodeClientInfoFields(t, clientInfo)
+	assert.Equal(t, []string{"", "root", "päss", "shell", "working-dir"}, fields)
+	assert.Equal(t, extraInfo, tail)
+}
+
+func TestClientInfoCredentialInjector(t *testing.T) {
+	first := []byte{0x03, 0x00, 0x00, 0x07, 0x02, 0xf0, 0x80}
+	packet := buildClientInfoPacket(t, []string{"", "", "", "", ""}, 0x00000010, nil)
+	trailing := []byte{0x00, 0x06, 0x03, 0xeb, 0x70, 0x01}
+	credential := &Credential{Username: "root", Password: "password"}
+
+	expected, matched, err := rewriteClientInfoCredential(packet, credential)
+	assert.Nil(t, err)
+	assert.True(t, matched)
+
+	stream := append(append(append([]byte(nil), first...), packet...), trailing...)
+	injector := &clientInfoCredentialInjector{
+		src:        iotest.OneByteReader(bytes.NewReader(stream)),
+		credential: credential,
+	}
+
+	got, err := io.ReadAll(injector)
+	assert.Nil(t, err)
+	assert.Equal(t, append(append(append([]byte(nil), first...), expected...), trailing...), got)
+	assert.True(t, injector.injected)
+	assert.Nil(t, injector.credential)
+}
+
+func TestRewriteClientInfoCredentialIgnoresOtherPacket(t *testing.T) {
+	packet := []byte{0x03, 0x00, 0x00, 0x07, 0x02, 0xf0, 0x80}
+
+	got, matched, err := rewriteClientInfoCredential(packet, &Credential{Username: "root"})
+	assert.Nil(t, err)
+	assert.False(t, matched)
+	assert.Equal(t, packet, got)
+}
+
+func buildClientInfoPacket(t *testing.T, values []string, flags uint32, tail []byte) []byte {
+	assert.Len(t, values, 5)
+
+	fields := make([][]byte, len(values))
+	clientInfo := binary.LittleEndian.AppendUint32(nil, 0x00000409)
+	clientInfo = binary.LittleEndian.AppendUint32(clientInfo, flags)
+	for i, val := range values {
+		field, err := encodeClientInfoText(val, 512)
+		assert.Nil(t, err)
+		fields[i] = field
+		clientInfo = binary.LittleEndian.AppendUint16(clientInfo, uint16(len(field)-2))
+	}
+	for _, field := range fields {
+		clientInfo = append(clientInfo, field...)
+	}
+	clientInfo = append(clientInfo, tail...)
+
+	userData := append([]byte{0x40, 0x00, 0x00, 0x00}, clientInfo...)
+	packet := []byte{
+		0x03, 0x00, 0x00, 0x00,
+		0x02, 0xf0, 0x80,
+		0x64, 0x00, 0x01, 0x03, 0xeb, 0x70,
+	}
+	packet = appendPERLength(packet, len(userData))
+	packet = append(packet, userData...)
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+
+	return packet
+}
+
+func decodeClientInfoFields(t *testing.T, clientInfo []byte) ([]string, []byte) {
+	assert.GreaterOrEqual(t, len(clientInfo), 18)
+
+	lengths := make([]uint16, 5)
+	for i := range lengths {
+		lengths[i] = binary.LittleEndian.Uint16(clientInfo[8+i*2 : 10+i*2])
+	}
+
+	fields := make([]string, len(lengths))
+	at := 18
+	for i, length := range lengths {
+		assert.Equal(t, uint16(0), length%2)
+		assert.LessOrEqual(t, at+int(length)+2, len(clientInfo))
+
+		units := make([]uint16, int(length)/2)
+		for j := range units {
+			units[j] = binary.LittleEndian.Uint16(clientInfo[at+j*2 : at+j*2+2])
+		}
+		fields[i] = string(utf16.Decode(units))
+		at += int(length) + 2
+	}
+
+	return fields, clientInfo[at:]
 }
 
 func TestSafeUint64(t *testing.T) {

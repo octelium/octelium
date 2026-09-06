@@ -204,7 +204,7 @@ func TestRelay(t *testing.T) {
 
 	resCh := make(chan [2]uint64, 1)
 	go func() {
-		recv, sent := rdp.Relay(ctx, downstream, upstreamConn, false)
+		recv, sent := rdp.Relay(ctx, downstream, upstreamConn, nil)
 		resCh <- [2]uint64{recv, sent}
 	}()
 

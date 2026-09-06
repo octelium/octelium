@@ -568,7 +568,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("upstream", upstream.HostPort),
 		zap.Bool("secretless", cred != nil))
 
-	recvBytes, sentBytes := rdp.Relay(ctx, wsConn, handshake.TLSConn, cred != nil)
+	recvBytes, sentBytes := rdp.Relay(ctx, wsConn, handshake.TLSConn, handshake.RelayOptions)
 
 	zap.L().Debug("webrdp session ended",
 		zap.String("remoteAddr", r.RemoteAddr),

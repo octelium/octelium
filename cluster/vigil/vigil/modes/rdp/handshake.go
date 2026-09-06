@@ -47,11 +47,12 @@ type HandshakeParams struct {
 }
 
 type HandshakeResult struct {
-	TLSConn     *tls.Conn
-	X224PDU     []byte
-	CertChain   [][]byte
-	ServerAddr  string
-	Negotiation bool
+	TLSConn      *tls.Conn
+	X224PDU      []byte
+	CertChain    [][]byte
+	ServerAddr   string
+	RelayOptions *RelayOptions
+	Negotiation  bool
 }
 
 func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult, error) {
@@ -147,9 +148,11 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 		zap.Bool("secretless", secretless),
 		zap.Int("selectedProtocol", int(selected)))
 
+	var relayOptions *RelayOptions
 	if secretless {
-		if selected&protocolHybrid == 0 {
-			return nil, errors.Errorf("upstream did not select CredSSP/HYBRID for secretless access")
+		relayOptions, err = newSecretlessRelayOptions(selected, p.Credential)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		if selected == protocolRDP {
@@ -172,7 +175,7 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 
 	x224ForDownstream := x224Response
 
-	if secretless {
+	if relayOptions != nil && relayOptions.rewriteSelectedProtocol {
 		serverPublicKey, err := getPeerLeafCredSSPPublicKey(tlsConn)
 		if err != nil {
 			return nil, err
@@ -206,12 +209,25 @@ func PerformHandshake(ctx context.Context, p *HandshakeParams) (*HandshakeResult
 	connClosed = false
 
 	return &HandshakeResult{
-		TLSConn:     tlsConn,
-		X224PDU:     x224ForDownstream,
-		CertChain:   getPeerCertChain(tlsConn),
-		ServerAddr:  p.Upstream.HostPort,
-		Negotiation: true,
+		TLSConn:      tlsConn,
+		X224PDU:      x224ForDownstream,
+		CertChain:    getPeerCertChain(tlsConn),
+		ServerAddr:   p.Upstream.HostPort,
+		RelayOptions: relayOptions,
+		Negotiation:  true,
 	}, nil
+}
+
+func newSecretlessRelayOptions(selected uint32, credential *Credential) (*RelayOptions, error) {
+	if selected&protocolHybrid != 0 {
+		return &RelayOptions{rewriteSelectedProtocol: true}, nil
+	}
+
+	if selected == protocolSSL {
+		return &RelayOptions{credential: credential}, nil
+	}
+
+	return nil, errors.Errorf("upstream selected an unsupported protocol for secretless access: %d", selected)
 }
 
 func DialPassthrough(ctx context.Context, upstream *loadbalancer.Upstream,
