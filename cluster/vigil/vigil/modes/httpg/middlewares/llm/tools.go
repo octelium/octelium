@@ -139,6 +139,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 	keptNames := make([]string, 0, len(entries))
 	var isFiltered bool
 	var removedCount uint32
+	var removedNames []string
 
 	for i, t := range declared {
 		decision, filter := matchToolFilter(cfg.GetFilters(), t)
@@ -159,6 +160,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 		case corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REMOVE:
 			isFiltered = true
 			removedCount++
+			removedNames = append(removedNames, t.label())
 
 		default:
 			kept = append(kept, entries[i])
@@ -204,7 +206,7 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 
 	m.applyChoice(d, cfg, keptNames)
 
-	setToolsInfo(reqCtx, keptNames, removedCount)
+	setToolsInfo(reqCtx, keptNames, removedCount, removedNames)
 
 	if !d.isChanged() {
 		return false, nil
@@ -214,24 +216,37 @@ func (m *tools) apply(ctx context.Context, req *http.Request,
 }
 
 func setToolsInfo(reqCtx *middlewares.RequestContext, names []string,
-	removedCount uint32) {
+	removedCount uint32, removedNames []string) {
 
 	ret := &middlewares.LLMToolsInfo{
 		Count:        uint32(len(names)),
 		RemovedCount: removedCount,
+		RemovedNames: removedNames,
 	}
-	if reqCtx.LLMTools != nil {
-		ret.RemovedCount += reqCtx.LLMTools.RemovedCount
+	if cur := reqCtx.LLMTools; cur != nil {
+		ret.RemovedCount += cur.RemovedCount
+		ret.RemovedNames = append(slices.Clone(cur.RemovedNames), removedNames...)
 	}
 
-	ret.Names = slices.Clone(names)
-	slices.Sort(ret.Names)
-	ret.Names = slices.Compact(ret.Names)
-	if len(ret.Names) > maxLoggedToolNames {
-		ret.Names = ret.Names[:maxLoggedToolNames]
-	}
+	ret.Names = boundedToolNames(names)
+	ret.RemovedNames = boundedToolNames(ret.RemovedNames)
 
 	reqCtx.LLMTools = ret
+}
+
+func boundedToolNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+
+	ret := slices.Clone(names)
+	slices.Sort(ret)
+	ret = slices.Compact(ret)
+	if len(ret) > maxLoggedToolNames {
+		ret = ret[:maxLoggedToolNames]
+	}
+
+	return ret
 }
 
 func matchToolFilter(filters []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter,

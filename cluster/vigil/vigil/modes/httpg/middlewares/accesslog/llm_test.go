@@ -142,11 +142,12 @@ func TestLLMAccessLogComplete(t *testing.T) {
 	assert.Equal(t, "gpt-4o", llmC.Model.Effective)
 	assert.Equal(t, "gpt-4o-2024-11-20", llmC.Model.Reported)
 	assert.Equal(t, "chatcmpl-1", llmC.ResponseID)
-	assert.Equal(t, "stop", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "stop", llmC.RawFinishReason)
 	assert.False(t, llmC.Stream)
 	assert.True(t, llmC.EstimatedInputTokens > 0)
 
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 	assert.Equal(t, uint64(12), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(8), llmC.Usage.OutputTokens)
 	assert.Equal(t, uint64(20), llmC.Usage.TotalTokens)
@@ -171,10 +172,11 @@ func TestLLMAccessLogStream(t *testing.T) {
 
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STREAM_END, llmC.Type)
 		assert.Equal(t, "chatcmpl-2", llmC.ResponseID)
-		assert.Equal(t, "stop", llmC.FinishReason)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+		assert.Equal(t, "stop", llmC.RawFinishReason)
 		assert.Equal(t, uint64(4), llmC.EventCount)
 
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 		assert.Equal(t, uint64(5), llmC.Usage.InputTokens)
 		assert.Equal(t, uint64(3), llmC.Usage.OutputTokens)
 
@@ -189,8 +191,8 @@ func TestLLMAccessLogStream(t *testing.T) {
 
 		llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, stream, true)
 
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
-		assert.Empty(t, llmC.FinishReason)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.State)
+		assert.Empty(t, llmC.RawFinishReason)
 	}
 }
 
@@ -199,9 +201,9 @@ func TestLLMAccessLogUsageFallback(t *testing.T) {
 		`{"id":"chatcmpl-4","model":"local-model","choices":[{"finish_reason":"stop"}]}`,
 		false)
 
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_ESTIMATED, llmC.Usage.Source)
-	assert.Equal(t, llmC.EstimatedInputTokens, llmC.Usage.InputTokens)
-	assert.Equal(t, uint64(0), llmC.Usage.OutputTokens)
+	assert.Nil(t, llmC.Usage)
+	assert.True(t, llmC.EstimatedInputTokens > 0)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_COMPLETE, llmC.EstimateQuality)
 }
 
 func TestLLMVisibility(t *testing.T) {
@@ -267,9 +269,10 @@ func TestLLMAccessLogLargeBody(t *testing.T) {
 
 	assert.Equal(t, "chatcmpl-5", llmC.ResponseID)
 	assert.Equal(t, "gpt-4o", llmC.Model.Reported)
-	assert.Equal(t, "stop", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "stop", llmC.RawFinishReason)
 
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 	assert.Equal(t, uint64(11), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(9000), llmC.Usage.OutputTokens)
 
@@ -296,14 +299,15 @@ func TestLLMAccessLogAnthropicStream(t *testing.T) {
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STREAM_END, llmC.Type)
 	assert.Equal(t, "msg_1", llmC.ResponseID)
 	assert.Equal(t, "claude-sonnet-4", llmC.Model.Reported)
-	assert.Equal(t, "end_turn", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "end_turn", llmC.RawFinishReason)
 
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 	assert.Equal(t, uint64(100), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(50), llmC.Usage.OutputTokens)
 	assert.Equal(t, uint64(215), llmC.Usage.TotalTokens)
 	assert.Equal(t, uint64(40), llmC.Usage.CacheReadInputTokens)
-	assert.Equal(t, uint64(25), llmC.Usage.CacheCreationInputTokens)
+	assert.Equal(t, uint64(25), llmC.Usage.CacheWriteInputTokens)
 }
 
 func TestLLMAccessLogUsageUnset(t *testing.T) {
@@ -329,9 +333,7 @@ func TestLLMAccessLogUsageUnset(t *testing.T) {
 			logPhaseComplete, "", 0)
 
 		llmC := logE.Entry.Info.GetLlm()
-		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET, llmC.Usage.Source)
-		assert.Equal(t, uint64(0), llmC.Usage.TotalTokens)
+		assert.Nil(t, llmC.Usage)
 	}
 
 	{
@@ -353,8 +355,7 @@ func TestLLMAccessLogUsageUnset(t *testing.T) {
 			logPhaseComplete, "", 0)
 
 		llmC := logE.Entry.Info.GetLlm()
-		assert.Equal(t,
-			corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET, llmC.Usage.Source)
+		assert.Nil(t, llmC.Usage)
 	}
 }
 
@@ -392,9 +393,10 @@ func TestLLMAccessLogOversizedStreamEvent(t *testing.T) {
 
 	assert.Equal(t, uint64(5), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(3), llmC.Usage.OutputTokens)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.State)
 	assert.Equal(t, uint64(1), llmC.EventCount)
-	assert.Equal(t, "stop", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "stop", llmC.RawFinishReason)
 }
 
 func TestLLMAccessLogOversizedStreamEventSingleWrite(t *testing.T) {
@@ -428,9 +430,10 @@ func TestLLMAccessLogOversizedStreamEventSingleWrite(t *testing.T) {
 
 	assert.Equal(t, uint64(5), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(3), llmC.Usage.OutputTokens)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL, llmC.Usage.State)
 	assert.Equal(t, uint64(1), llmC.EventCount)
-	assert.Equal(t, "stop", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "stop", llmC.RawFinishReason)
 }
 
 func newEventStreamMessage(payload []byte) []byte {
@@ -485,8 +488,9 @@ func TestLLMAccessLogEventStream(t *testing.T) {
 
 	llmC := logE.Entry.Info.GetLlm()
 	assert.Equal(t, uint64(4), llmC.EventCount)
-	assert.Equal(t, "end_turn", llmC.FinishReason)
-	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "end_turn", llmC.RawFinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 	assert.Equal(t, uint64(11), llmC.Usage.InputTokens)
 	assert.Equal(t, uint64(22), llmC.Usage.OutputTokens)
 	assert.Equal(t, uint64(33), llmC.Usage.TotalTokens)
@@ -610,10 +614,7 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 			llmC.Model.Source)
 		assert.Equal(t, "router", llmC.Model.Plugin)
 
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_CACHED, llmC.Usage.Source)
-		assert.Zero(t, llmC.Usage.TotalTokens)
-		assert.Zero(t, llmC.Usage.InputTokens)
-		assert.Zero(t, llmC.Usage.OutputTokens)
+		assert.Nil(t, llmC.Usage)
 	}
 
 	{
@@ -626,7 +627,7 @@ func TestLLMAccessLogSemantic(t *testing.T) {
 		llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
 
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
-		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER, llmC.Usage.Source)
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE, llmC.Usage.State)
 	}
 
 	{
@@ -648,11 +649,24 @@ func TestLLMAccessLogRequestInfo(t *testing.T) {
 		Count:        2,
 		Names:        []string{"get_time", "get_weather"},
 		RemovedCount: 1,
+		RemovedNames: []string{"delete_file"},
 	}
-	reqCtx.LLMGuardrail = &middlewares.LLMGuardrailInfo{
-		Result: corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
-		Leg:    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-		Plugin: "pii",
+	reqCtx.LLMGuardrails = []*middlewares.LLMGuardrailInfo{
+		{
+			Result: corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+			Leg:    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+			Plugin: "pii",
+		},
+		{
+			Result: corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR,
+			Leg:    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+			Plugin: "injection",
+		},
+	}
+	reqCtx.LLMTokenRateLimit = &middlewares.LLMTokenRateLimitInfo{
+		Result: corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_DENIED,
+		Plugin: "per-user",
+		Scope:  corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL,
 	}
 
 	llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
@@ -664,12 +678,23 @@ func TestLLMAccessLogRequestInfo(t *testing.T) {
 	assert.Equal(t, uint32(2), llmC.Tools.Count)
 	assert.Equal(t, []string{"get_time", "get_weather"}, llmC.Tools.Names)
 	assert.Equal(t, uint32(1), llmC.Tools.RemovedCount)
+	assert.Equal(t, []string{"delete_file"}, llmC.Tools.RemovedNames)
 
+	assert.Equal(t, 2, len(llmC.Guardrails))
 	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
-		llmC.Guardrail.Result)
+		llmC.Guardrails[0].Result)
 	assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-		llmC.Guardrail.Leg)
-	assert.Equal(t, "pii", llmC.Guardrail.Plugin)
+		llmC.Guardrails[0].Leg)
+	assert.Equal(t, "pii", llmC.Guardrails[0].Plugin)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR,
+		llmC.Guardrails[1].Result)
+	assert.Equal(t, "injection", llmC.Guardrails[1].Plugin)
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_DENIED,
+		llmC.TokenRateLimit.Result)
+	assert.Equal(t, "per-user", llmC.TokenRateLimit.Plugin)
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL,
+		llmC.TokenRateLimit.Scope)
 }
 
 func TestLLMAccessLogCalledTools(t *testing.T) {
@@ -680,6 +705,57 @@ func TestLLMAccessLogCalledTools(t *testing.T) {
 
 	llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, body, false)
 
-	assert.Equal(t, "tool_calls", llmC.FinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_TOOL_CALL, llmC.FinishReason)
+	assert.Equal(t, "tool_calls", llmC.RawFinishReason)
 	assert.Equal(t, []string{"get_weather"}, llmC.Tools.CalledNames)
+	assert.Equal(t, uint32(1), llmC.Tools.CallCount)
+	assert.False(t, llmC.Tools.IsCalledNamesTruncated)
+}
+
+func TestLLMAccessLogSemanticDetails(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{})
+	reqCtx.LLMSemanticCache = &middlewares.LLMSemanticCacheInfo{
+		Result:   middlewares.LLMSemanticCacheError,
+		IsStored: false,
+		Plugin:   "cache",
+	}
+	reqCtx.LLMSemanticRouter = &middlewares.LLMSemanticRouterInfo{
+		Result:     middlewares.LLMSemanticRouterMatch,
+		Route:      "code",
+		Similarity: 0.88,
+		Model:      "gpt-5",
+		Plugin:     "router",
+	}
+	reqCtx.LLMModel = &middlewares.LLMModelInfo{
+		Effective: "o3",
+		Source:    corev1.AccessLog_Entry_Info_LLM_Model_PLUGIN,
+		Plugin:    "override",
+	}
+
+	llmC := serveLLMLogCtx(t, reqCtx, llmRespBody, false)
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR,
+		llmC.SemanticCache.Result)
+	assert.Equal(t, "cache", llmC.SemanticCache.Plugin)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_UPSTREAM, llmC.Source)
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH,
+		llmC.SemanticRouter.Result)
+	assert.Equal(t, "code", llmC.SemanticRouter.Route)
+	assert.Equal(t, "gpt-5", llmC.SemanticRouter.Model)
+	assert.Equal(t, "router", llmC.SemanticRouter.Plugin)
+	assert.InDelta(t, 0.88, llmC.SemanticRouter.Similarity, 0.0001)
+
+	assert.Equal(t, "o3", llmC.Model.Effective)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Model_PLUGIN, llmC.Model.Source)
+}
+
+func TestLLMAccessLogRequestShape(t *testing.T) {
+	llmC := serveLLMLog(t, &corev1.Service_Spec_Config_LLM{}, llmRespBody, false)
+
+	assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, llmC.Route)
+	assert.True(t, llmC.IsUpstreamInvoked)
+	assert.Equal(t, uint32(1), llmC.InputItemCount)
+	assert.False(t, llmC.HasImageInput)
+	assert.False(t, llmC.HasAudioInput)
 }

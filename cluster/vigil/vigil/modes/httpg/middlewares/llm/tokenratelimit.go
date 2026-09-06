@@ -121,10 +121,21 @@ func (m *tokenRateLimit) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		res, isAllowed := m.reserve(ctx, reqCtx, key, cfg)
 		if !isAllowed {
 			m.release(ctx, reservations)
+			reqCtx.LLMTokenRateLimit = &middlewares.LLMTokenRateLimitInfo{
+				Result: corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_DENIED,
+				Plugin: plugin.GetName(),
+				Scope:  cfg.GetScope(),
+			}
 			m.writeDenied(w, reqCtx, cfg)
 			return
 		}
 		reservations = append(reservations, res)
+	}
+
+	if len(reservations) > 0 {
+		reqCtx.LLMTokenRateLimit = &middlewares.LLMTokenRateLimitInfo{
+			Result: corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_ALLOWED,
+		}
 	}
 
 	if len(reservations) > 0 {
@@ -290,11 +301,11 @@ func getReconciledTokens(reqCtx *middlewares.RequestContext,
 	}
 
 	switch reqCtx.LLMResponse.UsageSource {
-	case corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER:
+	case middlewares.LLMUsageSourceProvider:
 		return getUsageTokens(reqCtx.LLMResponse, res.cfg), true
-	case corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL:
+	case middlewares.LLMUsageSourcePartial:
 		return max(res.amount, getUsageTokens(reqCtx.LLMResponse, res.cfg)), true
-	case corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET:
+	case middlewares.LLMUsageSourceUnset:
 		return 0, true
 	default:
 		return 0, false

@@ -101,7 +101,8 @@ func (m *guardrail) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			zap.L().Warn("Could not build the LLM Guardrail patterns",
 				zap.String("plugin", plugin.GetName()), zap.Error(err))
 			m.writeDenied(w, reqCtx, cfg, plugin.GetName(),
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR)
 			return
 		}
 
@@ -174,7 +175,8 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 
 		if commonguardrail.DeniedFinding(findings) != nil {
 			m.writeDenied(w, reqCtx, active.cfg, active.name(),
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED)
 			return false
 		}
 
@@ -192,7 +194,8 @@ func (m *guardrail) applyRequest(ctx context.Context, w http.ResponseWriter,
 
 		if part.set == nil {
 			m.writeDenied(w, reqCtx, active.cfg, active.name(),
-				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED)
 			return false
 		}
 
@@ -287,17 +290,18 @@ func (m *guardrail) onError(w http.ResponseWriter, reqCtx *middlewares.RequestCo
 		zap.String("plugin", active.name()), zap.Error(err))
 
 	m.writeDenied(w, reqCtx, active.cfg, active.name(),
-		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST)
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR)
 	return false
 }
 
 func (m *guardrail) writeDenied(w http.ResponseWriter,
 	reqCtx *middlewares.RequestContext,
 	cfg *corev1.Service_Spec_Config_LLM_Plugin_Guardrail, plugin string,
-	leg corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg) {
+	leg corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg,
+	result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result) {
 
-	reqCtx.SetLLMGuardrail(
-		corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED, leg, plugin)
+	reqCtx.SetLLMGuardrail(result, leg, plugin)
 
 	WriteError(w, &WriteErrorOpts{
 		Protocol:   reqCtx.LLM.GetProtocol(),

@@ -159,7 +159,8 @@ func (rw *guardResponseWriter) finish() {
 
 	if rw.isOverflowed {
 		zap.L().Warn("The LLM response is too large to be inspected by a Guardrail")
-		rw.writeBlocked(rw.actives[0])
+		rw.writeBlocked(rw.actives[0],
+			corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR)
 		return
 	}
 
@@ -168,12 +169,13 @@ func (rw *guardResponseWriter) finish() {
 	text, isValid := rw.responseText(body)
 	if !isValid {
 		zap.L().Warn("The LLM response could not be decoded by a Guardrail")
-		rw.writeBlocked(rw.actives[0])
+		rw.writeBlocked(rw.actives[0],
+			corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR)
 		return
 	}
 
-	if active := rw.inspectText(text); active != nil {
-		rw.writeBlocked(active)
+	if active, result := rw.inspectText(text); active != nil {
+		rw.writeBlocked(active, result)
 		return
 	}
 
@@ -195,24 +197,27 @@ func (rw *guardResponseWriter) responseText(body []byte) (string, bool) {
 	}
 }
 
-func (rw *guardResponseWriter) inspectText(text string) *activeGuardrail {
+func (rw *guardResponseWriter) inspectText(text string) (*activeGuardrail,
+	corev1.AccessLog_Entry_Info_LLM_Guardrail_Result) {
+
 	for _, active := range rw.actives {
 		findings, err := active.set.Inspect(text)
 		if err != nil {
 			zap.L().Warn("The LLM Guardrail could not inspect the response",
 				zap.String("plugin", active.name()), zap.Error(err))
-			return active
+			return active, corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR
 		}
 
 		if commonguardrail.DeniedFinding(findings) != nil {
-			return active
+			return active, corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED
 		}
 	}
 
-	return nil
+	return nil, corev1.AccessLog_Entry_Info_LLM_Guardrail_RESULT_UNSET
 }
 
-func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
+func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail,
+	result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result) {
 	if rw.hdrWritten {
 		zap.L().Warn("An LLM Guardrail matched a response that was already committed")
 		return
@@ -228,8 +233,7 @@ func (rw *guardResponseWriter) writeBlocked(active *activeGuardrail) {
 		plugin = active.name()
 	}
 
-	rw.reqCtx.SetLLMGuardrail(
-		corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED,
+	rw.reqCtx.SetLLMGuardrail(result,
 		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE, plugin)
 
 	hdr := rw.Header()

@@ -163,7 +163,7 @@ func newTokenRateLimit(limit int64,
 
 func newProviderUsage(inputTokens, outputTokens uint64) *middlewares.LLMResponseInfo {
 	return &middlewares.LLMResponseInfo{
-		UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER,
+		UsageSource: middlewares.LLMUsageSourceProvider,
 		Usage: httputils.LLMUsage{
 			InputTokens:  inputTokens,
 			OutputTokens: outputTokens,
@@ -204,6 +204,10 @@ func TestTokenRateLimitReserveAndReconcile(t *testing.T) {
 	assert.Equal(t, 1, rateLimitC.reserveCount)
 	assert.Equal(t, 1, rateLimitC.reconcileCount)
 	assert.Equal(t, int64(33), rateLimitC.sum())
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_ALLOWED,
+		res.reqCtx.LLMTokenRateLimit.Result)
+	assert.Empty(t, res.reqCtx.LLMTokenRateLimit.Plugin)
 }
 
 func TestTokenRateLimitReservesEstimateAndMaxOutput(t *testing.T) {
@@ -256,6 +260,12 @@ func TestTokenRateLimitDenied(t *testing.T) {
 	assert.Contains(t, res.body, ErrCodeTokenRateLimit)
 	assert.Equal(t, int64(0), rateLimitC.sum())
 	assert.Equal(t, 0, rateLimitC.reconcileCount)
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_DENIED,
+		res.reqCtx.LLMTokenRateLimit.Result)
+	assert.Equal(t, "tpm", res.reqCtx.LLMTokenRateLimit.Plugin)
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_TOTAL,
+		res.reqCtx.LLMTokenRateLimit.Scope)
 }
 
 func TestTokenRateLimitDenyMessageAndHeaders(t *testing.T) {
@@ -361,7 +371,7 @@ func TestTokenRateLimitReleasesUnusedUpstream(t *testing.T) {
 		},
 		rateLimitC: rateLimitC,
 		llmResponse: &middlewares.LLMResponseInfo{
-			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET,
+			UsageSource: middlewares.LLMUsageSourceUnset,
 		},
 	})
 
@@ -380,7 +390,7 @@ func TestTokenRateLimitKeepsUnmeasuredUsage(t *testing.T) {
 		},
 		rateLimitC: rateLimitC,
 		llmResponse: &middlewares.LLMResponseInfo{
-			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_ESTIMATED,
+			UsageSource: middlewares.LLMUsageSourceEstimated,
 		},
 	})
 
@@ -401,7 +411,7 @@ func TestTokenRateLimitPartialUsage(t *testing.T) {
 			},
 			rateLimitC: rateLimitC,
 			llmResponse: &middlewares.LLMResponseInfo{
-				UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL,
+				UsageSource: middlewares.LLMUsageSourcePartial,
 				Usage: httputils.LLMUsage{
 					InputTokens:  11,
 					OutputTokens: 22,
@@ -591,7 +601,7 @@ func TestTokenRateLimitInconsistentProviderUsage(t *testing.T) {
 		},
 		rateLimitC: rateLimitC,
 		llmResponse: &middlewares.LLMResponseInfo{
-			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER,
+			UsageSource: middlewares.LLMUsageSourceProvider,
 			Usage: httputils.LLMUsage{
 				InputTokens:  11,
 				OutputTokens: 22,

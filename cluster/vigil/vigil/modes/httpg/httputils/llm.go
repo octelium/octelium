@@ -1111,9 +1111,33 @@ type LLMResponse struct {
 
 	Usage LLMUsage
 
-	ToolNames []string
+	ToolNames            []string
+	ToolCallCount        uint32
+	IsToolNamesTruncated bool
 
 	HasContentDelta bool
+}
+
+func GetLLMFinishReason(
+	arg string) corev1.AccessLog_Entry_Info_LLM_FinishReason {
+
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "":
+		return corev1.AccessLog_Entry_Info_LLM_FINISH_REASON_UNSET
+	case "stop", "end_turn", "stop_sequence", "completed", "finished":
+		return corev1.AccessLog_Entry_Info_LLM_STOP
+	case "length", "max_tokens", "model_length", "incomplete":
+		return corev1.AccessLog_Entry_Info_LLM_LENGTH
+	case "tool_calls", "tool_use", "function_call", "malformed_function_call":
+		return corev1.AccessLog_Entry_Info_LLM_TOOL_CALL
+	case "content_filter", "content_filtered", "safety", "recitation",
+		"refusal", "guardrail_intervened", "blocklist", "prohibited_content":
+		return corev1.AccessLog_Entry_Info_LLM_CONTENT_FILTER
+	case "error", "failed", "unexpected_tool_call":
+		return corev1.AccessLog_Entry_Info_LLM_ERROR
+	default:
+		return corev1.AccessLog_Entry_Info_LLM_OTHER
+	}
 }
 
 type llmResponseEnvelope struct {
@@ -1260,7 +1284,7 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 
 	ret := &LLMResponse{}
 	ret.setFromEnvelope(env)
-	ret.ToolNames = parseLLMToolCallNames(body)
+	ret.ToolNames, ret.ToolCallCount, ret.IsToolNamesTruncated = parseLLMToolCalls(body)
 
 	for _, raw := range []json.RawMessage{env.Response, env.Message, env.Output} {
 		if len(raw) == 0 {
@@ -1277,21 +1301,23 @@ func ParseLLMResponse(body []byte) *LLMResponse {
 }
 
 type llmToolCallWalker struct {
-	names map[string]struct{}
-	nodes int
+	names       map[string]struct{}
+	callCount   uint32
+	isTruncated bool
+	nodes       int
 }
 
-func parseLLMToolCallNames(body []byte) []string {
+func parseLLMToolCalls(body []byte) ([]string, uint32, bool) {
 	var val any
 	if err := json.Unmarshal(body, &val); err != nil {
-		return nil
+		return nil, 0, false
 	}
 
 	w := &llmToolCallWalker{names: make(map[string]struct{})}
 	w.walk(val, 0)
 
 	if len(w.names) == 0 {
-		return nil
+		return nil, w.callCount, w.isTruncated
 	}
 
 	ret := make([]string, 0, len(w.names))
@@ -1300,11 +1326,7 @@ func parseLLMToolCallNames(body []byte) []string {
 	}
 	sort.Strings(ret)
 
-	if len(ret) > maxLLMToolNames {
-		ret = ret[:maxLLMToolNames]
-	}
-
-	return ret
+	return ret, w.callCount, w.isTruncated
 }
 
 func (w *llmToolCallWalker) walk(val any, depth int) {
@@ -1353,7 +1375,14 @@ func (w *llmToolCallWalker) addName(val any) {
 	if !ok || name == "" || len(name) > maxLLMStringLen {
 		return
 	}
+
+	w.callCount++
+
+	if _, ok := w.names[name]; ok {
+		return
+	}
 	if len(w.names) >= maxLLMToolNames {
+		w.isTruncated = true
 		return
 	}
 

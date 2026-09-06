@@ -1075,7 +1075,7 @@ func TestSemanticCachePartialStream(t *testing.T) {
 		},
 		downstream: newDownstream("8f1a9b7c-0000-0000-0000-000000000001"),
 		llmResponse: &middlewares.LLMResponseInfo{
-			UsageSource: corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL,
+			UsageSource: middlewares.LLMUsageSourcePartial,
 		},
 	})
 

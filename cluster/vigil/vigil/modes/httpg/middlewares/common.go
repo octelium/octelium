@@ -111,10 +111,11 @@ type RequestContext struct {
 	LLMSemanticRouter *LLMSemanticRouterInfo
 	LLMResponseDenied bool
 
-	LLMModel     *LLMModelInfo
-	LLMReasoning *LLMReasoningInfo
-	LLMTools     *LLMToolsInfo
-	LLMGuardrail *LLMGuardrailInfo
+	LLMModel          *LLMModelInfo
+	LLMReasoning      *LLMReasoningInfo
+	LLMTools          *LLMToolsInfo
+	LLMGuardrails     []*LLMGuardrailInfo
+	LLMTokenRateLimit *LLMTokenRateLimitInfo
 
 	BodyDigest [sha256.Size]byte
 
@@ -134,10 +135,35 @@ type LLMResponseInfo struct {
 	FinishReason string
 
 	Usage       httputils.LLMUsage
-	UsageSource corev1.AccessLog_Entry_Info_LLM_Usage_Source
+	UsageSource LLMUsageSource
 
 	EventCount       uint64
 	TimeToFirstToken time.Duration
+}
+
+type LLMUsageSource int
+
+const (
+	LLMUsageSourceUnset LLMUsageSource = iota
+	LLMUsageSourceProvider
+	LLMUsageSourcePartial
+	LLMUsageSourceEstimated
+	LLMUsageSourceCached
+)
+
+func (s LLMUsageSource) String() string {
+	switch s {
+	case LLMUsageSourceProvider:
+		return "PROVIDER"
+	case LLMUsageSourcePartial:
+		return "PARTIAL"
+	case LLMUsageSourceEstimated:
+		return "ESTIMATED"
+	case LLMUsageSourceCached:
+		return "CACHED"
+	default:
+		return "UNSET"
+	}
 }
 
 type LLMSemanticCacheResult int
@@ -204,12 +230,19 @@ type LLMToolsInfo struct {
 	Count        uint32
 	Names        []string
 	RemovedCount uint32
+	RemovedNames []string
 }
 
 type LLMGuardrailInfo struct {
 	Result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result
 	Leg    corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg
 	Plugin string
+}
+
+type LLMTokenRateLimitInfo struct {
+	Result corev1.AccessLog_Entry_Info_LLM_TokenRateLimit_Result
+	Plugin string
+	Scope  corev1.Service_Spec_Config_LLM_Plugin_TokenRateLimit_Scope
 }
 
 func (r *LLMSemanticRouterInfo) GetModel() string {
@@ -226,9 +259,9 @@ func (r *LLMResponseInfo) GetModel() string {
 	return r.Model
 }
 
-func (r *LLMResponseInfo) GetUsageSource() corev1.AccessLog_Entry_Info_LLM_Usage_Source {
+func (r *LLMResponseInfo) GetUsageSource() LLMUsageSource {
 	if r == nil {
-		return corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET
+		return LLMUsageSourceUnset
 	}
 	return r.UsageSource
 }
@@ -244,15 +277,21 @@ func (r *RequestContext) SetLLMGuardrail(
 	result corev1.AccessLog_Entry_Info_LLM_Guardrail_Result,
 	leg corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Leg, plugin string) {
 
-	if r.LLMGuardrail != nil && r.LLMGuardrail.Result >= result {
+	for _, cur := range r.LLMGuardrails {
+		if cur.Plugin != plugin || cur.Leg != leg {
+			continue
+		}
+		if cur.Result < result {
+			cur.Result = result
+		}
 		return
 	}
 
-	r.LLMGuardrail = &LLMGuardrailInfo{
+	r.LLMGuardrails = append(r.LLMGuardrails, &LLMGuardrailInfo{
 		Result: result,
 		Leg:    leg,
 		Plugin: plugin,
-	}
+	})
 }
 
 func (r *RequestContext) SetReqCtxMap() {

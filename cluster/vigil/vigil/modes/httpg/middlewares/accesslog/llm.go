@@ -48,7 +48,9 @@ type llmObserver struct {
 	model        string
 	finishReason string
 
-	toolNames map[string]struct{}
+	toolNames            map[string]struct{}
+	toolCallCount        uint32
+	isToolNamesTruncated bool
 
 	usage        httputils.LLMUsage
 	firstTokenAt time.Time
@@ -119,12 +121,21 @@ func (o *llmObserver) setResponse(msg *httputils.LLMResponse) {
 		o.finishReason = msg.FinishReason
 	}
 
+	o.toolCallCount += msg.ToolCallCount
+	if msg.IsToolNamesTruncated {
+		o.isToolNamesTruncated = true
+	}
+
 	for _, name := range msg.ToolNames {
-		if len(o.toolNames) >= maxLLMCalledToolNames {
-			break
-		}
 		if o.toolNames == nil {
 			o.toolNames = make(map[string]struct{})
+		}
+		if _, ok := o.toolNames[name]; ok {
+			continue
+		}
+		if len(o.toolNames) >= maxLLMCalledToolNames {
+			o.isToolNamesTruncated = true
+			break
 		}
 		o.toolNames[name] = struct{}{}
 	}
@@ -199,21 +210,12 @@ func (o *llmObserver) setRequestContext(reqCtx *middlewares.RequestContext,
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	usage := getLLMUsage(reqCtx, crw, o, phase)
-
 	ret := &middlewares.LLMResponseInfo{
 		Model:        o.model,
 		FinishReason: o.finishReason,
 		EventCount:   o.eventCount,
-		UsageSource:  usage.GetSource(),
-		Usage: httputils.LLMUsage{
-			InputTokens:              usage.GetInputTokens(),
-			OutputTokens:             usage.GetOutputTokens(),
-			TotalTokens:              usage.GetTotalTokens(),
-			CacheReadInputTokens:     usage.GetCacheReadInputTokens(),
-			CacheCreationInputTokens: usage.GetCacheCreationInputTokens(),
-			ReasoningTokens:          usage.GetReasoningTokens(),
-		},
+		UsageSource:  getLLMUsageSource(reqCtx, crw, o, phase),
+		Usage:        o.usage,
 	}
 
 	if !o.firstTokenAt.IsZero() {
@@ -264,20 +266,25 @@ func (m *middleware) getLLMAccessLog(
 
 	llmC.EventCount = obs.eventCount
 	llmC.ResponseID = obs.responseID
-	llmC.FinishReason = obs.finishReason
-	llmC.Usage = getLLMUsage(reqCtx, crw, obs, phase)
+	llmC.RawFinishReason = obs.finishReason
+	llmC.FinishReason = httputils.GetLLMFinishReason(obs.finishReason)
+	llmC.Usage = getLLMUsage(obs, getLLMUsageSource(reqCtx, crw, obs, phase))
 	llmC.Source = getLLMSource(reqCtx, crw)
+	llmC.IsUpstreamInvoked = reqCtx.IsUpstreamResponse
 
 	if llmC.Model == nil {
 		llmC.Model = &corev1.AccessLog_Entry_Info_LLM_Model{}
 	}
 	llmC.Model.Reported = obs.model
 
-	if names := obs.calledToolNames(); len(names) > 0 {
+	names := obs.calledToolNames()
+	if len(names) > 0 || obs.toolCallCount > 0 {
 		if llmC.Tools == nil {
 			llmC.Tools = &corev1.AccessLog_Entry_Info_LLM_Tools{}
 		}
 		llmC.Tools.CalledNames = names
+		llmC.Tools.CallCount = obs.toolCallCount
+		llmC.Tools.IsCalledNamesTruncated = obs.isToolNamesTruncated
 	}
 
 	if !obs.firstTokenAt.IsZero() {
@@ -311,44 +318,48 @@ func getLLMSource(reqCtx *middlewares.RequestContext,
 	}
 }
 
-func getLLMUsage(reqCtx *middlewares.RequestContext, crw *responseWriter,
-	obs *llmObserver, phase logPhase) *corev1.AccessLog_Entry_Info_LLM_Usage {
+func getLLMUsageSource(reqCtx *middlewares.RequestContext, crw *responseWriter,
+	obs *llmObserver, phase logPhase) middlewares.LLMUsageSource {
 
-	if reqCtx.LLMSemanticCache.IsHit() {
-		return &corev1.AccessLog_Entry_Info_LLM_Usage{
-			Source: corev1.AccessLog_Entry_Info_LLM_Usage_CACHED,
-		}
-	}
-
-	if !obs.usage.IsSet {
+	switch {
+	case reqCtx.LLMSemanticCache.IsHit():
+		return middlewares.LLMUsageSourceCached
+	case !obs.usage.IsSet:
 		if crw.statusCode >= http.StatusBadRequest ||
 			reqCtx.LLM.GetEstimateQuality() ==
 				corev1.RequestContext_Request_LLM_UNAVAILABLE {
-			return &corev1.AccessLog_Entry_Info_LLM_Usage{
-				Source: corev1.AccessLog_Entry_Info_LLM_Usage_SOURCE_UNSET,
-			}
+			return middlewares.LLMUsageSourceUnset
 		}
-
-		return &corev1.AccessLog_Entry_Info_LLM_Usage{
-			Source:      corev1.AccessLog_Entry_Info_LLM_Usage_ESTIMATED,
-			InputTokens: reqCtx.LLM.GetEstimatedInputTokens(),
-			TotalTokens: reqCtx.LLM.GetEstimatedInputTokens(),
-		}
+		return middlewares.LLMUsageSourceEstimated
+	case phase == logPhaseStreamClose &&
+		(obs.finishReason == "" || crw.sseTruncated):
+		return middlewares.LLMUsageSourcePartial
+	default:
+		return middlewares.LLMUsageSourceProvider
 	}
+}
 
-	source := corev1.AccessLog_Entry_Info_LLM_Usage_PROVIDER
-	if phase == logPhaseStreamClose && (obs.finishReason == "" || crw.sseTruncated) {
-		source = corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL
+func getLLMUsage(obs *llmObserver,
+	source middlewares.LLMUsageSource) *corev1.AccessLog_Entry_Info_LLM_Usage {
+
+	var state corev1.AccessLog_Entry_Info_LLM_Usage_State
+	switch source {
+	case middlewares.LLMUsageSourceProvider:
+		state = corev1.AccessLog_Entry_Info_LLM_Usage_COMPLETE
+	case middlewares.LLMUsageSourcePartial:
+		state = corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL
+	default:
+		return nil
 	}
 
 	return &corev1.AccessLog_Entry_Info_LLM_Usage{
-		Source:                   source,
-		InputTokens:              obs.usage.InputTokens,
-		OutputTokens:             obs.usage.OutputTokens,
-		TotalTokens:              obs.usage.TotalTokens,
-		CacheReadInputTokens:     obs.usage.CacheReadInputTokens,
-		CacheCreationInputTokens: obs.usage.CacheCreationInputTokens,
-		ReasoningTokens:          obs.usage.ReasoningTokens,
+		State:                 state,
+		InputTokens:           obs.usage.InputTokens,
+		OutputTokens:          obs.usage.OutputTokens,
+		TotalTokens:           obs.usage.TotalTokens,
+		CacheReadInputTokens:  obs.usage.CacheReadInputTokens,
+		CacheWriteInputTokens: obs.usage.CacheCreationInputTokens,
+		ReasoningOutputTokens: obs.usage.ReasoningTokens,
 	}
 }
 
@@ -387,6 +398,12 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 	llmC.EstimatedInputTokens = llmI.EstimatedInputTokens
 	llmC.EstimateQuality = llmI.EstimateQuality
 
+	llmC.Route = llmI.Route
+	llmC.MaxOutputTokens = llmI.MaxOutputTokens
+	llmC.InputItemCount = llmI.InputItemCount
+	llmC.HasImageInput = llmI.HasImageInput
+	llmC.HasAudioInput = llmI.HasAudioInput
+
 	llmC.Model = &corev1.AccessLog_Entry_Info_LLM_Model{
 		Requested: llmI.Model,
 		Effective: llmI.Model,
@@ -402,6 +419,7 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 			Count:        cur.Count,
 			Names:        cur.Names,
 			RemovedCount: cur.RemovedCount,
+			RemovedNames: cur.RemovedNames,
 		}
 	} else if llmI.ToolCount > 0 {
 		llmC.Tools = &corev1.AccessLog_Entry_Info_LLM_Tools{
@@ -418,11 +436,75 @@ func setLLMAccessLogInfo(logE *corev1.AccessLog,
 		}
 	}
 
-	if cur := reqCtx.LLMGuardrail; cur != nil {
-		llmC.Guardrail = &corev1.AccessLog_Entry_Info_LLM_Guardrail{
+	for _, cur := range reqCtx.LLMGuardrails {
+		llmC.Guardrails = append(llmC.Guardrails,
+			&corev1.AccessLog_Entry_Info_LLM_Guardrail{
+				Result: cur.Result,
+				Leg:    cur.Leg,
+				Plugin: cur.Plugin,
+			})
+	}
+
+	if cur := reqCtx.LLMTokenRateLimit; cur != nil {
+		llmC.TokenRateLimit = &corev1.AccessLog_Entry_Info_LLM_TokenRateLimit{
 			Result: cur.Result,
-			Leg:    cur.Leg,
 			Plugin: cur.Plugin,
+			Scope:  cur.Scope,
 		}
+	}
+
+	if cur := reqCtx.LLMSemanticCache; cur != nil {
+		llmC.SemanticCache = &corev1.AccessLog_Entry_Info_LLM_SemanticCache{
+			Result:     getLLMSemanticCacheResult(cur.Result),
+			Similarity: cur.Similarity,
+			IsStored:   cur.IsStored,
+			Plugin:     cur.Plugin,
+		}
+	}
+
+	if cur := reqCtx.LLMSemanticRouter; cur != nil {
+		llmC.SemanticRouter = &corev1.AccessLog_Entry_Info_LLM_SemanticRouter{
+			Result:     getLLMSemanticRouterResult(cur.Result),
+			Route:      cur.Route,
+			Similarity: cur.Similarity,
+			Model:      cur.Model,
+			Plugin:     cur.Plugin,
+		}
+	}
+}
+
+func getLLMSemanticCacheResult(
+	arg middlewares.LLMSemanticCacheResult) corev1.AccessLog_Entry_Info_LLM_SemanticCache_Result {
+
+	switch arg {
+	case middlewares.LLMSemanticCacheExactHit:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_EXACT_HIT
+	case middlewares.LLMSemanticCacheSemanticHit:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_SEMANTIC_HIT
+	case middlewares.LLMSemanticCacheMiss:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_MISS
+	case middlewares.LLMSemanticCacheBypass:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_BYPASS
+	case middlewares.LLMSemanticCacheError:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_ERROR
+	default:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticCache_RESULT_UNSET
+	}
+}
+
+func getLLMSemanticRouterResult(
+	arg middlewares.LLMSemanticRouterResult) corev1.AccessLog_Entry_Info_LLM_SemanticRouter_Result {
+
+	switch arg {
+	case middlewares.LLMSemanticRouterMatch:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticRouter_MATCH
+	case middlewares.LLMSemanticRouterNoMatch:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticRouter_NO_MATCH
+	case middlewares.LLMSemanticRouterBypass:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticRouter_BYPASS
+	case middlewares.LLMSemanticRouterError:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticRouter_ERROR
+	default:
+		return corev1.AccessLog_Entry_Info_LLM_SemanticRouter_RESULT_UNSET
 	}
 }

@@ -437,8 +437,7 @@ func setSemanticCacheResult(reqCtx *middlewares.RequestContext,
 
 func isStorableResponse(reqCtx *middlewares.RequestContext) bool {
 	switch reqCtx.LLMResponse.GetUsageSource() {
-	case corev1.AccessLog_Entry_Info_LLM_Usage_PARTIAL,
-		corev1.AccessLog_Entry_Info_LLM_Usage_CACHED:
+	case middlewares.LLMUsageSourcePartial, middlewares.LLMUsageSourceCached:
 		return false
 	default:
 		return true

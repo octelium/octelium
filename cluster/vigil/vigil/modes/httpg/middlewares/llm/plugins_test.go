@@ -1869,6 +1869,68 @@ func TestToolsInfo(t *testing.T) {
 	assert.Equal(t, uint32(1), res.reqCtx.LLMTools.Count)
 	assert.Equal(t, []string{"read_file"}, res.reqCtx.LLMTools.Names)
 	assert.Equal(t, uint32(2), res.reqCtx.LLMTools.RemovedCount)
+	assert.Equal(t, []string{"delete_file", "web_search_preview"},
+		res.reqCtx.LLMTools.RemovedNames)
+}
+
+func TestGuardrailInfoPerPluginAndLeg(t *testing.T) {
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":` +
+		`"mail me at a@b.com please"}]}`
+
+	res := servePlugins(t, &pluginOpts{
+		body: body,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			newGuardrailPlugin("pii",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_EMAIL,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_REDACT,
+				}),
+			newGuardrailPlugin("cards",
+				corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+				&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+					Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+						Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_CREDIT_CARD,
+					},
+					Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+				}),
+		},
+	})
+
+	assert.True(t, res.isNext)
+	assert.Equal(t, 2, len(res.reqCtx.LLMGuardrails))
+
+	assert.Equal(t, "pii", res.reqCtx.LLMGuardrails[0].Plugin)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
+		res.reqCtx.LLMGuardrails[0].Result)
+
+	assert.Equal(t, "cards", res.reqCtx.LLMGuardrails[1].Plugin)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_PASS,
+		res.reqCtx.LLMGuardrails[1].Result)
+}
+
+func TestGuardrailInfoError(t *testing.T) {
+	plugin := newGuardrailPlugin("bad",
+		corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+		&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+			Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Regex{
+				Regex: `(`,
+			},
+			Action: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_DENY,
+		})
+
+	res := servePlugins(t, &pluginOpts{
+		body:    chatBody,
+		plugins: []*corev1.Service_Spec_Config_LLM_Plugin{plugin},
+	})
+
+	assert.False(t, res.isNext)
+	assert.Equal(t, http.StatusForbidden, res.code)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR,
+		res.reqCtx.LLMGuardrails[0].Result)
+	assert.Equal(t, "bad", res.reqCtx.LLMGuardrails[0].Plugin)
 }
 
 func TestGuardrailInfo(t *testing.T) {
@@ -1892,11 +1954,12 @@ func TestGuardrailInfo(t *testing.T) {
 		})
 
 		assert.True(t, res.isNext)
+		assert.Equal(t, 1, len(res.reqCtx.LLMGuardrails))
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_MODIFIED,
-			res.reqCtx.LLMGuardrail.Result)
+			res.reqCtx.LLMGuardrails[0].Result)
 		assert.Equal(t, corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
-			res.reqCtx.LLMGuardrail.Leg)
-		assert.Equal(t, "pii", res.reqCtx.LLMGuardrail.Plugin)
+			res.reqCtx.LLMGuardrails[0].Leg)
+		assert.Equal(t, "pii", res.reqCtx.LLMGuardrails[0].Plugin)
 	}
 
 	{
@@ -1919,8 +1982,8 @@ func TestGuardrailInfo(t *testing.T) {
 
 		assert.False(t, res.isNext)
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED,
-			res.reqCtx.LLMGuardrail.Result)
-		assert.Equal(t, "cards", res.reqCtx.LLMGuardrail.Plugin)
+			res.reqCtx.LLMGuardrails[0].Result)
+		assert.Equal(t, "cards", res.reqCtx.LLMGuardrails[0].Plugin)
 	}
 
 	{
@@ -1940,7 +2003,7 @@ func TestGuardrailInfo(t *testing.T) {
 
 		assert.True(t, res.isNext)
 		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_Guardrail_PASS,
-			res.reqCtx.LLMGuardrail.Result)
+			res.reqCtx.LLMGuardrails[0].Result)
 	}
 }
 

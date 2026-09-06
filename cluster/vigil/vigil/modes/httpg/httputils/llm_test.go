@@ -1112,3 +1112,64 @@ func TestGetLLMOperation(t *testing.T) {
 	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPERATION_UNSET,
 		GetLLMOperation(corev1.RequestContext_Request_LLM_ROUTE_UNSET))
 }
+
+func TestGetLLMFinishReason(t *testing.T) {
+	for _, arg := range []string{"stop", "end_turn", "STOP", "stop_sequence"} {
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP,
+			GetLLMFinishReason(arg))
+	}
+
+	for _, arg := range []string{"length", "max_tokens", "MAX_TOKENS"} {
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_LENGTH,
+			GetLLMFinishReason(arg))
+	}
+
+	for _, arg := range []string{"tool_calls", "tool_use", "function_call"} {
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_TOOL_CALL,
+			GetLLMFinishReason(arg))
+	}
+
+	for _, arg := range []string{"content_filter", "SAFETY", "guardrail_intervened"} {
+		assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_CONTENT_FILTER,
+			GetLLMFinishReason(arg))
+	}
+
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_ERROR,
+		GetLLMFinishReason("error"))
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_FINISH_REASON_UNSET,
+		GetLLMFinishReason(""))
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_OTHER,
+		GetLLMFinishReason("something-new"))
+}
+
+func TestParseLLMResponseToolCallCount(t *testing.T) {
+
+	{
+		msg := ParseLLMResponse([]byte(
+			`{"id":"chatcmpl-1","choices":[{"message":{"tool_calls":[
+			{"type":"function","function":{"name":"send_email"}},
+			{"type":"function","function":{"name":"send_email"}},
+			{"type":"function","function":{"name":"get_time"}}]}}]}`))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, []string{"get_time", "send_email"}, msg.ToolNames)
+		assert.Equal(t, uint32(3), msg.ToolCallCount)
+		assert.False(t, msg.IsToolNamesTruncated)
+	}
+
+	{
+		var calls []string
+		for i := range maxLLMToolNames + 4 {
+			calls = append(calls, fmt.Sprintf(
+				`{"type":"function","function":{"name":"tool_%d"}}`, i))
+		}
+		msg := ParseLLMResponse([]byte(fmt.Sprintf(
+			`{"id":"chatcmpl-1","choices":[{"message":{"tool_calls":[%s]}}]}`,
+			strings.Join(calls, ","))))
+
+		assert.NotNil(t, msg)
+		assert.Equal(t, maxLLMToolNames, len(msg.ToolNames))
+		assert.Equal(t, uint32(maxLLMToolNames+4), msg.ToolCallCount)
+		assert.True(t, msg.IsToolNamesTruncated)
+	}
+}
