@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
@@ -122,18 +123,36 @@ func doCheckClient(ctx context.Context) error {
 	return nil
 }
 
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+}
+
 func getLatestVersion(ctx context.Context) (*version.Version, error) {
-	resp, err := resty.New().SetDebug(ldflags.IsDev()).
+	resp, err := resty.New().
 		R().
 		SetContext(ctx).
-		Get("https://raw.githubusercontent.com/octelium/octelium/refs/heads/main/unsorted/latest_release")
+		SetHeader("Accept", "application/vnd.github+json").
+		SetHeader("X-GitHub-Api-Version", "2026-03-10").
+		Get("https://api.github.com/repos/octelium/octelium/releases/latest")
 	if err != nil {
 		return nil, err
 	}
 
 	if !resp.IsSuccess() {
-		return nil, errors.Errorf("Could not get latest Octelium version release")
+		return nil, errors.Errorf(
+			"Could not get latest Octelium version release: GitHub API returned %s",
+			resp.Status(),
+		)
 	}
 
-	return version.NewSemver(string(resp.Body()))
+	var release githubRelease
+	if err := json.Unmarshal(resp.Body(), &release); err != nil {
+		return nil, err
+	}
+
+	return version.NewSemver(normalizeVersionTag(release.TagName))
+}
+
+func normalizeVersionTag(tag string) string {
+	return strings.TrimPrefix(strings.TrimSpace(tag), "v")
 }
