@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
@@ -88,7 +89,12 @@ func (d *virtualFIDO) assertion(t *testing.T, req string) string {
 	opts, err := virtualwebauthn.ParseAssertionOptions(req)
 	assert.Nil(t, err, "%+v", err)
 
-	return virtualwebauthn.CreateAssertionResponse(d.rp, d.auth, d.cred, *opts)
+	auth := d.auth
+	auth.Options.ClientExtensionResults = maps.Clone(d.auth.Options.ClientExtensionResults)
+
+	delete(auth.Options.ClientExtensionResults, "credProps")
+
+	return virtualwebauthn.CreateAssertionResponse(d.rp, auth, d.cred, *opts)
 }
 
 func fidoChallengeResponse(resp string) *authv1.ChallengeResponse {
