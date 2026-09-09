@@ -2,10 +2,8 @@ module github.com/octelium/octelium/octelium-go
 
 go 1.26.6
 
-replace github.com/octelium/octelium/apis => ../apis
-
 require (
-	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/apis v0.42.0
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/grpc v1.83.2

@@ -17,7 +17,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.95
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/nats-io/nats.go v1.46.1
-	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
+	github.com/octelium/octelium/apis v0.42.0
 	github.com/octelium/octelium/client/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/octelium-go v0.0.0-00010101000000-000000000000
@@ -147,8 +147,6 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/octelium/octelium/apis => ../../apis
-
 replace github.com/octelium/octelium/pkg => ../../pkg
 
 replace github.com/octelium/octelium/octelium-go => ../../octelium-go
@@ -164,3 +162,5 @@ replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
 replace github.com/octelium/octelium/cluster/octovigil => ../octovigil
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576
+
+replace github.com/octelium/octelium/apis => ../../apis
