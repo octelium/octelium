@@ -75,7 +75,9 @@ func TestParseAssertion(t *testing.T) {
 
 func TestWebAuthenticatorLoginURL(t *testing.T) {
 
-	s, err := newWebAuthenticator("example.com", nil)
+	s, err := NewWebAuthenticator(&WebAuthenticatorOpts{
+		Domain: "example.com",
+	})
 	assert.Nil(t, err)
 
 	assert.Equal(t, opkce.VerifierLen, len(s.codeVerifier))
@@ -87,7 +89,7 @@ func TestWebAuthenticatorLoginURL(t *testing.T) {
 
 	s.port = 12345
 
-	u, err := url.Parse(s.getLoginURL())
+	u, err := url.Parse(s.GetLoginURL())
 	assert.Nil(t, err)
 	assert.Equal(t, "example.com", u.Host)
 	assert.Equal(t, "/login", u.Path)
@@ -111,7 +113,9 @@ func TestWebAuthenticatorLoginURL(t *testing.T) {
 
 func TestWebAuthenticatorListen(t *testing.T) {
 
-	s, err := newWebAuthenticator("example.com", nil)
+	s, err := NewWebAuthenticator(&WebAuthenticatorOpts{
+		Domain: "example.com",
+	})
 	assert.Nil(t, err)
 
 	assert.Nil(t, s.listen())
@@ -133,7 +137,9 @@ func TestWebAuthenticatorListen(t *testing.T) {
 
 func TestWebAuthenticatorGetLoginResponse(t *testing.T) {
 
-	s, err := newWebAuthenticator("example.com", nil)
+	s, err := NewWebAuthenticator(&WebAuthenticatorOpts{
+		Domain: "example.com",
+	})
 	assert.Nil(t, err)
 
 	newReq := func(arg string) *http.Request {
@@ -176,7 +182,9 @@ func TestWebAuthenticatorGetLoginResponse(t *testing.T) {
 
 func TestWebAuthenticatorServeHTTP(t *testing.T) {
 
-	s, err := newWebAuthenticator("example.com", nil)
+	s, err := NewWebAuthenticator(&WebAuthenticatorOpts{
+		Domain: "example.com",
+	})
 	assert.Nil(t, err)
 
 	isClosed := func() bool {

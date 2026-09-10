@@ -162,7 +162,7 @@ func unaryClientInterceptor(domain string, opts ...grpc.CallOption) grpc.UnaryCl
 
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 
-		st, err := cliutils.GetDB().GetSessionToken(domain)
+		st, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(domain)
 		if err != nil {
 			return err
 		}

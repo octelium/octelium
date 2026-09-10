@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/pkg/errors"
 )
@@ -34,7 +35,10 @@ func OpenDefault() (*DB, error) {
 
 type db interface {
 	get(ctx context.Context, domain string) (*cliconfigv1.State_Domain, error)
+	list(ctx context.Context) (map[string]*cliconfigv1.State_Domain, error)
 	set(ctx context.Context, domain string, sessToken *authv1.SessionToken) error
+	setSettings(ctx context.Context, domain string, settings *daemonv1.DomainSettings) error
+	deleteSessionToken(ctx context.Context, domain string) error
 	delete(ctx context.Context, domain string) error
 	close(ctx context.Context) error
 	migrate(ctx context.Context) error
@@ -94,6 +98,30 @@ func (d *DB) GetSessionToken(clusterDomain string) (*authv1.SessionToken, error)
 
 func (d *DB) Get(clusterDomain string) (*cliconfigv1.State_Domain, error) {
 	return d.db.get(context.Background(), clusterDomain)
+}
+
+func (d *DB) List() (map[string]*cliconfigv1.State_Domain, error) {
+	return d.db.list(context.Background())
+}
+
+func (d *DB) SetDomainSettings(clusterDomain string, settings *daemonv1.DomainSettings) error {
+	return d.db.setSettings(context.Background(), clusterDomain, settings)
+}
+
+func (d *DB) GetDomainSettings(clusterDomain string) (*daemonv1.DomainSettings, error) {
+	ret, err := d.db.get(context.Background(), clusterDomain)
+	if err != nil {
+		return nil, err
+	}
+	if ret.GetSettings() == nil {
+		return nil, ErrNotFound
+	}
+
+	return ret.Settings, nil
+}
+
+func (d *DB) DeleteSessionToken(clusterDomain string) error {
+	return d.db.deleteSessionToken(context.Background(), clusterDomain)
 }
 
 func (d *DB) Delete(clusterDomain string) error {

@@ -48,16 +48,16 @@ const (
 	defaultESOCKS5Port = 1080
 )
 
-func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
+func (c *Connector) sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 	publishedServices []*cliconfigv1.Connection_Preferences_PublishedService) error {
 
-	l3Mode, err := l3mode.GetL3Mode(cmdArgs.L3Mode)
+	l3Mode, err := l3mode.GetL3Mode(c.opts.L3Mode)
 	if err != nil {
 		return err
 	}
 
 	var servedServices []*userv1.ConnectRequest_Initialize_ServiceOptions_Service
-	for _, svcStr := range cmdArgs.ServeServices {
+	for _, svcStr := range c.opts.ServeServices {
 		_, err := cliutils.ParseServiceNamespace(svcStr)
 		if err != nil {
 			return err
@@ -72,7 +72,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 		Type: &userv1.ConnectRequest_Initialize_{
 			Initialize: &userv1.ConnectRequest_Initialize{
 				ConnectionType: func() userv1.ConnectRequest_Initialize_ConnectionType {
-					if isQUICV0() {
+					if c.isQUICV0() {
 						return userv1.ConnectRequest_Initialize_QUICV0
 					}
 					return userv1.ConnectRequest_Initialize_UNSET
@@ -90,17 +90,17 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 					return ret
 				}(),
 
-				IgnoreDNS: cmdArgs.IgnoreDNS,
+				IgnoreDNS: c.opts.IgnoreDNS,
 
 				ServiceOptions: func() *userv1.ConnectRequest_Initialize_ServiceOptions {
-					if cmdArgs.ServeAll {
+					if c.opts.ServeAll {
 						return &userv1.ConnectRequest_Initialize_ServiceOptions{
 							ServeAll:  true,
 							PortStart: int32(utilrand.GetRandomRangeMath(20000, 24000)),
 						}
 					}
 
-					if len(cmdArgs.ServeServices) > 0 {
+					if len(c.opts.ServeServices) > 0 {
 						return &userv1.ConnectRequest_Initialize_ServiceOptions{
 							Services:  servedServices,
 							PortStart: int32(utilrand.GetRandomRangeMath(20000, 24000)),
@@ -109,7 +109,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 
 					return nil
 				}(),
-				ESSHEnable: cmdArgs.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
+				ESSHEnable: c.opts.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
 				ESSHPort: func() int32 {
 					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESSH_PORT"), 10, 32); err == nil {
 						return int32(port)
@@ -117,7 +117,7 @@ func sendInitializeRequest(streamC userv1.MainService_ConnectClient,
 
 					return defaultESSHPort
 				}(),
-				ESOCKS5Enable: cmdArgs.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
+				ESOCKS5Enable: c.opts.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
 				ESOCKS5Port: func() int32 {
 					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESOCKS5_PORT"), 10, 32); err == nil {
 						return int32(port)
@@ -172,11 +172,9 @@ func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) 
 	}
 }
 
-func getConnectionConfig(ctx context.Context,
-	c userv1.MainServiceClient,
+func (c *Connector) getConnectionConfig(ctx context.Context,
 	streamC userv1.MainService_ConnectClient,
-	publishedSevices []*cliconfigv1.Connection_Preferences_PublishedService,
-	domain string) (*cliconfigv1.Connection, *timestamppb.Timestamp, error) {
+	publishedSevices []*cliconfigv1.Connection_Preferences_PublishedService) (*cliconfigv1.Connection, *timestamppb.Timestamp, error) {
 
 	resp, initAt, err := getStateMsg(ctx, streamC)
 	if err != nil {
@@ -188,7 +186,7 @@ func getConnectionConfig(ctx context.Context,
 		CreatedAt:  pbutils.Now(),
 		Info: &cliconfigv1.Connection_Info{
 			Cluster: &cliconfigv1.Connection_Info_Cluster{
-				Domain: domain,
+				Domain: c.domain,
 			},
 		},
 
@@ -197,13 +195,13 @@ func getConnectionConfig(ctx context.Context,
 			DeviceName:  fmt.Sprintf("octelium-%s", utilrand.GetRandomStringLowercase(6)),
 
 			ConnectionType: func() cliconfigv1.Connection_Preferences_ConnectionType {
-				if isQUICV0() {
+				if c.isQUICV0() {
 					return cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0
 				}
 				return cliconfigv1.Connection_Preferences_CONNECTION_TYPE_UNSET
 			}(),
 
-			IgnoreDNS:         cmdArgs.IgnoreDNS,
+			IgnoreDNS:         c.opts.IgnoreDNS,
 			PublishedServices: publishedSevices,
 			KeepAliveSeconds: func() int32 {
 				ka, err := strconv.ParseInt(os.Getenv("OCTELIUM_KEEPALIVE"), 10, 32)
@@ -216,6 +214,9 @@ func getConnectionConfig(ctx context.Context,
 				return int32(ka)
 			}(),
 			Mtu: func() int32 {
+				if c.opts.MTU > 0 && c.opts.MTU <= 1500 {
+					return c.opts.MTU
+				}
 				mtu, err := strconv.ParseInt(os.Getenv("OCTELIUM_MTU"), 10, 32)
 				if err != nil {
 					return 0
@@ -239,7 +240,7 @@ func getConnectionConfig(ctx context.Context,
 
 			ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{
 				IsEnabled: func() bool {
-					if cmdArgs.ServeAll || len(cmdArgs.ServeServices) > 0 {
+					if c.opts.ServeAll || len(c.opts.ServeServices) > 0 {
 						return true
 					}
 					return false
@@ -247,10 +248,10 @@ func getConnectionConfig(ctx context.Context,
 				ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
 			},
 			ESSH: &cliconfigv1.Connection_Preferences_ESSH{
-				IsEnabled: cmdArgs.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
+				IsEnabled: c.opts.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
 				User: func() string {
-					if cmdArgs.ESSHUser != "" {
-						return cmdArgs.ESSHUser
+					if c.opts.ESSHUser != "" {
+						return c.opts.ESSHUser
 					}
 					if val := os.Getenv("OCTELIUM_ESSH_USER"); val != "" {
 						return val
@@ -283,7 +284,7 @@ func getConnectionConfig(ctx context.Context,
 			},
 
 			ESOCKS5: &cliconfigv1.Connection_Preferences_ESOCKS5{
-				IsEnabled: cmdArgs.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
+				IsEnabled: c.opts.UseESOCKS5 || os.Getenv("OCTELIUM_ESOCKS5") == "true",
 				Port: func() int32 {
 					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESOCKS5_PORT"), 10, 32); err == nil {
 						return int32(port)
@@ -308,19 +309,19 @@ func getConnectionConfig(ctx context.Context,
 				}(),
 			},
 
-			FullDNS: isFullDNS(),
+			FullDNS: c.isFullDNS(),
 
 			LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{
-				IsEnabled: cmdArgs.UseLocalDNS || isFullDNS() ||
+				IsEnabled: c.opts.UseLocalDNS || c.isFullDNS() ||
 					os.Getenv("OCTELIUM_LOCAL_DNS_SERVER") == "true" ||
 					os.Getenv("OCTELIUM_CONTAINER_MODE") == "true",
 				ListenAddress: func() string {
-					if cmdArgs.LocalDNSListenAddr != "" {
-						if _, _, err := net.SplitHostPort(cmdArgs.LocalDNSListenAddr); err == nil {
-							return cmdArgs.LocalDNSListenAddr
+					if c.opts.LocalDNSListenAddr != "" {
+						if _, _, err := net.SplitHostPort(c.opts.LocalDNSListenAddr); err == nil {
+							return c.opts.LocalDNSListenAddr
 						}
-						if govalidator.IsIP(cmdArgs.LocalDNSListenAddr) {
-							return net.JoinHostPort(cmdArgs.LocalDNSListenAddr, "53")
+						if govalidator.IsIP(c.opts.LocalDNSListenAddr) {
+							return net.JoinHostPort(c.opts.LocalDNSListenAddr, "53")
 						}
 						return ""
 					}
@@ -338,7 +339,7 @@ func getConnectionConfig(ctx context.Context,
 	case cliutils.IsLinux():
 		connCfg.Preferences.LinuxPrefs = &cliconfigv1.Connection_Preferences_Linux{
 			ImplementationMode: func() cliconfigv1.Connection_Preferences_Linux_ImplementationMode {
-				switch cmdArgs.ImplementationMode {
+				switch c.opts.ImplementationMode {
 				case "kernel":
 					return cliconfigv1.Connection_Preferences_Linux_WG_KERNEL
 				case "tun":
@@ -349,7 +350,7 @@ func getConnectionConfig(ctx context.Context,
 					return cliconfigv1.Connection_Preferences_Linux_WG_KERNEL
 				}
 			}(),
-			EnforceImplementationMode: cmdArgs.ImplementationMode != "",
+			EnforceImplementationMode: c.opts.ImplementationMode != "",
 		}
 	case cliutils.IsWindows():
 		connCfg.Preferences.WindowsPrefs = &cliconfigv1.Connection_Preferences_Windows{}
@@ -371,14 +372,15 @@ func getConnectionConfig(ctx context.Context,
 	return connCfg, initAt, nil
 }
 
-func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+func (c *Connector) getPublishedServices(ctx context.Context,
+	cl userv1.MainServiceClient) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
-	for _, svc := range cmdArgs.PublishServices {
-		publishedService, err := doGetPublishedService(ctx, c, svc, domain)
+	for _, svc := range c.opts.PublishServices {
+		publishedService, err := c.doGetPublishedService(ctx, cl, svc)
 		if err != nil {
 			if grpcerr.IsUnimplemented(err) {
-				return getPublishedServicesWithList(ctx, c, domain)
+				return c.getPublishedServicesWithList(ctx, cl)
 			}
 			return nil, err
 		}
@@ -390,28 +392,28 @@ func getPublishedServices(ctx context.Context, c userv1.MainServiceClient, domai
 	return ret, nil
 }
 
-func doGetPublishedService(ctx context.Context,
-	c userv1.MainServiceClient, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
+func (c *Connector) doGetPublishedService(ctx context.Context,
+	cl userv1.MainServiceClient, arg *PublishedService) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
 
-	res, err := parsePublishedService(arg)
-	if err != nil {
-		return nil, err
-	}
-
-	svc, err := c.GetService(ctx, &metav1.GetOptions{
-		Name: cliutils.GetServiceFullNameFromName(res.svc),
+	svc, err := cl.GetService(ctx, &metav1.GetOptions{
+		Name: cliutils.GetServiceFullNameFromName(arg.Name),
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	return c.getPublishedServiceFromService(svc, arg), nil
+}
+
+func (c *Connector) getPublishedServiceFromService(svc *userv1.Service,
+	arg *PublishedService) *cliconfigv1.Connection_Preferences_PublishedService {
 	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
+		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, c.domain),
 		Name:        svc.Metadata.Name,
 		Namespace:   svc.Status.Namespace,
 		Port:        int32(svc.Spec.Port),
-		HostPort:    int32(res.port),
-		HostAddress: res.addr,
+		HostPort:    int32(arg.Port),
+		HostAddress: arg.Address,
 		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
 			switch svc.Spec.Type {
 			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
@@ -420,7 +422,7 @@ func doGetPublishedService(ctx context.Context,
 				return cliconfigv1.Connection_Preferences_PublishedService_TCP
 			}
 		}(),
-	}, nil
+	}
 }
 
 const shutdownTimeout = 20 * time.Second
@@ -525,7 +527,7 @@ func (c *ctl) close() error {
 	return nil
 }
 
-func connect(ctx context.Context, domain string) error {
+func (c *Connector) Run(ctx context.Context) error {
 	if ldflags.IsDev() || os.Getenv("OCTELIUM_PPROF") == "true" {
 		srv := pprofsrv.New()
 		if err := srv.Run(ctx); err != nil {
@@ -535,11 +537,15 @@ func connect(ctx context.Context, domain string) error {
 		defer srv.Close()
 	}
 
+	c.setEvent(&Event{
+		Type: EventTypeConnecting,
+	})
+
 	for {
 		ret := make(chan tryConnectRet, 1)
 		doneCh := make(chan struct{})
 		go func() {
-			ret <- tryConnect(ctx, domain, doneCh)
+			ret <- c.tryConnect(ctx, doneCh)
 		}()
 
 		select {
@@ -552,12 +558,28 @@ func connect(ctx context.Context, domain string) error {
 			case <-doneCh:
 				zap.L().Debug("tryConnect done...")
 			}
+
+			c.setEvent(&Event{
+				Type: EventTypeDisconnected,
+			})
+
 			return nil
 		case ret := <-ret:
 			if !ret.needsReconnect {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
+
+				c.setEvent(&Event{
+					Type: EventTypeDisconnected,
+					Err:  ret.err,
+				})
+
 				return ret.err
 			}
+
+			c.setEvent(&Event{
+				Type: EventTypeReconnecting,
+				Err:  ret.err,
+			})
 
 			time.Sleep(2 * time.Second)
 			if ret.err != nil {
@@ -565,6 +587,10 @@ func connect(ctx context.Context, domain string) error {
 
 				switch {
 				case grpcerr.IsInvalidArg(err):
+					c.setEvent(&Event{
+						Type: EventTypeDisconnected,
+						Err:  err,
+					})
 					return err
 				}
 				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err.Error())
@@ -578,7 +604,7 @@ type tryConnectRet struct {
 	needsReconnect bool
 }
 
-func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryConnectRet {
+func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryConnectRet {
 
 	defer close(doneCh)
 
@@ -591,7 +617,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 
 		return true
 	}
-	conn, err := client.GetGRPCClientConn(ctx, domain)
+	conn, err := client.GetGRPCClientConn(ctx, c.domain)
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
@@ -600,12 +626,12 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	}
 	defer conn.Close()
 
-	c := userv1.NewMainServiceClient(conn)
+	cl := userv1.NewMainServiceClient(conn)
 
 	var publishedServices []*cliconfigv1.Connection_Preferences_PublishedService
 
-	if len(cmdArgs.PublishServices) > 0 {
-		publishedServices, err = getPublishedServices(ctx, c, domain)
+	if len(c.opts.PublishServices) > 0 {
+		publishedServices, err = c.getPublishedServices(ctx, cl)
 		if err != nil {
 			return tryConnectRet{
 				err:            err,
@@ -615,7 +641,7 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	}
 
 	zap.L().Debug("Connecting to API Server...")
-	streamC, err := c.Connect(ctx)
+	streamC, err := cl.Connect(ctx)
 	if err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not connect to API Server: %s", err),
@@ -623,14 +649,14 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 		}
 	}
 
-	if err := sendInitializeRequest(streamC, publishedServices); err != nil {
+	if err := c.sendInitializeRequest(streamC, publishedServices); err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not send init request to API Server: %s", err),
 			needsReconnect: doNeedReconnect(err),
 		}
 	}
 
-	connCfg, initAt, err := getConnectionConfig(ctx, c, streamC, publishedServices, domain)
+	connCfg, initAt, err := c.getConnectionConfig(ctx, streamC, publishedServices)
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
@@ -657,6 +683,12 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	needsReconnect := false
 	var retErr error
 	cliutils.LineNotify("Connected successfully...\n")
+
+	c.setEvent(&Event{
+		Type:       EventTypeConnected,
+		Connection: connCfg,
+	})
+
 	select {
 	case <-ctx.Done():
 		cliutils.LineInfo("Received shutdown signal\n")
@@ -675,17 +707,18 @@ func tryConnect(ctx context.Context, domain string, doneCh chan<- struct{}) tryC
 	}
 }
 
-func getPublishedServicesWithList(ctx context.Context, c userv1.MainServiceClient, domain string) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+func (c *Connector) getPublishedServicesWithList(ctx context.Context,
+	cl userv1.MainServiceClient) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
 	zap.L().Debug("Listing available Services to publish ports")
-	svcList, err := c.ListService(ctx, &userv1.ListServiceOptions{})
+	svcList, err := cl.ListService(ctx, &userv1.ListServiceOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	for _, svc := range cmdArgs.PublishServices {
-		publishedService, err := doGetPublishedServiceWithList(svcList, svc, domain)
+	for _, svc := range c.opts.PublishServices {
+		publishedService, err := c.doGetPublishedServiceWithList(svcList, svc)
 		if err != nil {
 			return nil, err
 		}
@@ -696,7 +729,8 @@ func getPublishedServicesWithList(ctx context.Context, c userv1.MainServiceClien
 	return ret, nil
 }
 
-func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain string) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
+func (c *Connector) doGetPublishedServiceWithList(svcList *userv1.ServiceList,
+	arg *PublishedService) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
 
 	getService := func(svcList *userv1.ServiceList, name string) *userv1.Service {
 		for _, itm := range svcList.Items {
@@ -707,32 +741,12 @@ func doGetPublishedServiceWithList(svcList *userv1.ServiceList, arg, domain stri
 		return nil
 	}
 
-	res, err := parsePublishedService(arg)
-	if err != nil {
-		return nil, err
-	}
-
-	svc := getService(svcList, res.svc)
+	svc := getService(svcList, arg.Name)
 	if svc == nil {
-		return nil, errors.Errorf("The Service %s does not exist", res.svc)
+		return nil, errors.Errorf("The Service %s does not exist", arg.Name)
 	}
 
-	return &cliconfigv1.Connection_Preferences_PublishedService{
-		Fqdn:        fmt.Sprintf("%s.local.%s", svc.Metadata.Name, domain),
-		Name:        svc.Metadata.Name,
-		Namespace:   svc.Status.Namespace,
-		Port:        int32(svc.Spec.Port),
-		HostPort:    int32(res.port),
-		HostAddress: res.addr,
-		L4Type: func() cliconfigv1.Connection_Preferences_PublishedService_L4Type {
-			switch svc.Spec.Type {
-			case userv1.Service_Spec_UDP, userv1.Service_Spec_DNS:
-				return cliconfigv1.Connection_Preferences_PublishedService_UDP
-			default:
-				return cliconfigv1.Connection_Preferences_PublishedService_TCP
-			}
-		}(),
-	}, nil
+	return c.getPublishedServiceFromService(svc, arg), nil
 }
 
 type parsePublishedServiceResult struct {

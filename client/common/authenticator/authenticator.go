@@ -48,6 +48,20 @@ type AuthenticateOpts struct {
 
 type AuthenticateOptsAssertion struct {
 	Arg string
+
+	Assertion           string
+	IdentityProviderRef *metav1.ObjectReference
+}
+
+type nonInteractiveCtxKey struct{}
+
+func WithNonInteractive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nonInteractiveCtxKey{}, true)
+}
+
+func IsNonInteractive(ctx context.Context) bool {
+	ret, ok := ctx.Value(nonInteractiveCtxKey{}).(bool)
+	return ok && ret
 }
 
 func isAuthProxyMode() bool {
@@ -187,15 +201,15 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 		}
 	}
 
-	if at, err := cliutils.GetDB().Get(ret.domain); err == nil {
+	if at, err := cliutils.GetDBFromCtx(ctx).Get(ret.domain); err == nil {
 		ret.at = at
-	} else if !cliutils.GetDB().ErrorIsNotFound(err) {
+	} else if !cliutils.GetDBFromCtx(ctx).ErrorIsNotFound(err) {
 		return nil, errors.Errorf("Could not fetch access token from DB: %+v", err)
 	}
 
 	if ret.at == nil {
 		ret.isAuthentication = true
-	} else if hasValidRefreshToken(ret.at) {
+	} else if HasValidRefreshToken(ret.at) {
 		ret.isRefresh = true
 	} else {
 		ret.isAuthentication = true
@@ -235,7 +249,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 			if resp.MainAuthenticator != nil {
 				if err := authn.DoAuthenticate(ctx,
 					a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
-					sessTkn, err := cliutils.GetDB().GetSessionToken(a.domain)
+					sessTkn, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(a.domain)
 					if err != nil {
 						return "", err
 					}
@@ -269,12 +283,17 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 
 			return "", err
 		}
-		if err := cliutils.GetDB().SetSessionToken(a.domain, sessTkn); err != nil {
+		if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(a.domain, sessTkn); err != nil {
 			return "", err
 		}
 
 		return sessTkn.AccessToken, nil
 	case a.isAuthentication:
+		if a.opts.IsWeb && IsNonInteractive(ctx) {
+			return "", errors.Errorf(
+				"Interactive authentication is not available in this mode. Please authenticate yourself first")
+		}
+
 		switch {
 		case a.opts.IsWeb:
 			return a.doWebAuthentication(ctx)
@@ -288,7 +307,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if err := cliutils.GetDB().SetSessionToken(a.domain, sessTkn); err != nil {
+			if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(a.domain, sessTkn); err != nil {
 				return "", err
 			}
 
@@ -310,12 +329,17 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if err := cliutils.GetDB().SetSessionToken(a.domain, sessTkn); err != nil {
+			if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(a.domain, sessTkn); err != nil {
 				return "", err
 			}
 
 			return sessTkn.AccessToken, nil
 		default:
+			if IsNonInteractive(ctx) {
+				return "", errors.Errorf(
+					"Interactive authentication is not available in this mode. Please authenticate yourself first")
+			}
+
 			if !cliutils.IsSuggestedWorkloadHost() {
 				return a.doWebAuthentication(ctx)
 			} else {
@@ -339,15 +363,39 @@ func (a *authenticator) doWebAuthentication(ctx context.Context) (string, error)
 		}
 		return nil
 	}()
-	webAuthC, err := newWebAuthenticator(a.domain, scopes)
+	webAuthC, err := NewWebAuthenticator(&WebAuthenticatorOpts{
+		Domain: a.domain,
+		Scopes: scopes,
+	})
 	if err != nil {
 		return "", err
 	}
-	if err := webAuthC.run(ctx); err != nil {
+	defer webAuthC.Close()
+
+	if err := webAuthC.Start(ctx); err != nil {
 		return "", err
 	}
 
-	at, err := cliutils.GetDB().GetSessionToken(a.domain)
+	cmd, err := cliutils.OpenFileByDefaultAppCmd(webAuthC.GetLoginURL())
+	if err != nil {
+		return "", err
+	}
+
+	go func() {
+		zap.L().Debug("running the browser to authenticate user")
+		if err := cmd.Run(); err != nil {
+			zap.L().Warn("Could not run browser command", zap.Error(err))
+		}
+	}()
+
+	cliutils.LineNotify("Please authenticate yourself using Octelium web Portal\n")
+	cliutils.LineInfo("Waiting for you to approve the login in your browser. Press Ctrl-C to cancel.\n")
+
+	if err := webAuthC.Wait(ctx); err != nil {
+		return "", err
+	}
+
+	at, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(a.domain)
 	if err != nil {
 		return "", err
 	}
@@ -370,17 +418,31 @@ func needsNewAccessToken(at *cliconfigv1.State_Domain) bool {
 	return time.Now().After(expiresAt)
 }
 
-func hasValidRefreshToken(at *cliconfigv1.State_Domain) bool {
-	if at == nil || at.SessionToken == nil || !at.SessionTokenSetAt.IsValid() {
-		return false
+func GetAccessTokenExpiresAt(at *cliconfigv1.State_Domain) time.Time {
+	if at == nil || at.SessionToken == nil || !at.SessionTokenSetAt.IsValid() ||
+		at.SessionToken.ExpiresIn == 0 {
+		return time.Time{}
 	}
 
-	if at.SessionToken.RefreshTokenExpiresIn == 0 {
-		return false
+	return at.SessionTokenSetAt.AsTime().
+		Add(time.Second * time.Duration(at.SessionToken.ExpiresIn))
+}
+
+func GetRefreshTokenExpiresAt(at *cliconfigv1.State_Domain) time.Time {
+	if at == nil || at.SessionToken == nil || !at.SessionTokenSetAt.IsValid() ||
+		at.SessionToken.RefreshTokenExpiresIn == 0 {
+		return time.Time{}
 	}
 
-	expiresAt := at.SessionTokenSetAt.AsTime().
+	return at.SessionTokenSetAt.AsTime().
 		Add(time.Second * time.Duration(at.SessionToken.RefreshTokenExpiresIn))
+}
+
+func HasValidRefreshToken(at *cliconfigv1.State_Domain) bool {
+	expiresAt := GetRefreshTokenExpiresAt(at)
+	if expiresAt.IsZero() {
+		return false
+	}
 
 	return time.Now().Before(expiresAt)
 }
@@ -399,7 +461,18 @@ type assertionArgs struct {
 
 func (a *authenticator) getAssertion(ctx context.Context) (*assertionArgs, error) {
 	var err error
-	if a.opts.Assertion == nil || a.opts.Assertion.Arg == "" {
+	if a.opts.Assertion == nil {
+		return nil, errors.Errorf("No assertion argument found")
+	}
+
+	if a.opts.Assertion.Assertion != "" {
+		return &assertionArgs{
+			assertion:           a.opts.Assertion.Assertion,
+			identityProviderRef: a.opts.Assertion.IdentityProviderRef,
+		}, nil
+	}
+
+	if a.opts.Assertion.Arg == "" {
 		return nil, errors.Errorf("No assertion argument found")
 	}
 

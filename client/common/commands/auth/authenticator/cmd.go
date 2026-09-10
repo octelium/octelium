@@ -108,7 +108,7 @@ func DoAuthenticate(ctx context.Context, domain string, c *authc.Client, authnRe
 		return err
 	}
 
-	if err := cliutils.GetDB().SetSessionToken(domain, sessToken); err != nil {
+	if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(domain, sessToken); err != nil {
 		return err
 	}
 

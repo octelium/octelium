@@ -74,3 +74,7 @@ func IsResourceExhausted(err error) bool {
 func IsUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }
+
+func IsFailedPrecondition(err error) bool {
+	return status.Code(err) == codes.FailedPrecondition
+}

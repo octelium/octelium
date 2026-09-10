@@ -67,8 +67,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	defer c.Close()
 
 	defer func() {
-		if err := cliutils.GetDB().Delete(i.Domain); err != nil {
-			if !cliutils.GetDB().ErrorIsNotFound(err) {
+		if err := cliutils.GetDBFromCtx(ctx).Delete(i.Domain); err != nil {
+			if !cliutils.GetDBFromCtx(ctx).ErrorIsNotFound(err) {
 				zap.L().Debug("Could not delete db state", zap.Error(err))
 			}
 		}

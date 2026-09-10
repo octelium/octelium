@@ -1,6 +1,3 @@
-//go:build !windows
-// +build !windows
-
 // Copyright Octelium Labs, LLC. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,33 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package connect
+package ipc
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
+	"net"
 
-	"go.uber.org/zap"
+	"github.com/pkg/errors"
 )
 
-func doConnect(ctx context.Context, c *Connector) error {
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
+const defaultPipeName = `\\.\pipe\octelium-daemon`
 
-	ctx, cancelFn := context.WithCancel(ctx)
-	defer cancelFn()
+func GetDefaultAddress() string {
+	return defaultPipeName
+}
 
-	go func() {
-		select {
-		case <-signalCh:
-			zap.L().Debug("Received shutdown signal")
-			cancelFn()
-		case <-ctx.Done():
-		}
-	}()
+func Listen(addr string) (net.Listener, error) {
+	return nil, errors.Errorf("The Octelium daemon is not supported on Windows yet")
+}
 
-	return c.Run(ctx)
+func Dial(ctx context.Context, addr string) (net.Conn, error) {
+	return nil, errors.Errorf("The Octelium daemon is not supported on Windows yet")
+}
+
+func getPeerPrincipal(conn net.Conn) (*Principal, error) {
+	return nil, errors.Errorf("The Octelium daemon is not supported on Windows yet")
 }

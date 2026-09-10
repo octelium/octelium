@@ -150,12 +150,36 @@ This mode implicitly enables the local DNS server.`)
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESOCKS5, "esocks5", false, "Run embedded SOCKS5 server")
 }
 
-func isQUICV0() bool {
-	return cmdArgs.TunnelMode == "quicv0" || os.Getenv("OCTELIUM_QUIC") == "true"
-}
+func (a *args) toOpts() (*Opts, error) {
+	ret := &Opts{
+		L3Mode:             a.L3Mode,
+		IgnoreDNS:          a.IgnoreDNS,
+		ServeServices:      a.ServeServices,
+		ServeAll:           a.ServeAll,
+		ImplementationMode: a.ImplementationMode,
+		UseESSH:            a.UseESSH,
+		ESSHUser:           a.ESSHUser,
+		UseESOCKS5:         a.UseESOCKS5,
+		UseLocalDNS:        a.UseLocalDNS,
+		LocalDNSListenAddr: a.LocalDNSListenAddr,
+		UseFullDNS:         a.UseFullDNS,
+		TunnelMode:         a.TunnelMode,
+	}
 
-func isFullDNS() bool {
-	return cmdArgs.UseFullDNS || os.Getenv("OCTELIUM_FULL_DNS") == "true"
+	for _, arg := range a.PublishServices {
+		res, err := parsePublishedService(arg)
+		if err != nil {
+			return nil, err
+		}
+
+		ret.PublishServices = append(ret.PublishServices, &PublishedService{
+			Name:    res.svc,
+			Address: res.addr,
+			Port:    res.port,
+		})
+	}
+
+	return ret, nil
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -197,7 +221,17 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	authenticator.StartGetAccessToken(ctx, domain)
 
-	if err := doConnect(ctx, domain); err != nil {
+	opts, err := cmdArgs.toOpts()
+	if err != nil {
+		return err
+	}
+
+	c, err := NewConnector(domain, opts)
+	if err != nil {
+		return err
+	}
+
+	if err := doConnect(ctx, c); err != nil {
 		return err
 	}
 

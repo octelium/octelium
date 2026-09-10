@@ -29,7 +29,7 @@ import (
 	"golang.zx2c4.com/wireguard/windows/ringlogger"
 )
 
-func doConnect(ctx context.Context, domain string) error {
+func doConnect(ctx context.Context, c *Connector) error {
 
 	/*
 		{
@@ -55,9 +55,9 @@ func doConnect(ctx context.Context, domain string) error {
 	isWindowsService, _ := svc.IsWindowsService()
 	if isWindowsService {
 		svcController := &serviceController{
-			domain: domain,
+			c: c,
 		}
-		return svc.Run(getWindowSvcName(domain), svcController)
+		return svc.Run(getWindowSvcName(c.domain), svcController)
 	}
 
 	signalCh := make(chan os.Signal, 1)
@@ -70,12 +70,12 @@ func doConnect(ctx context.Context, domain string) error {
 		cancelFn()
 	}()
 
-	return connect(ctx, domain)
+	return c.Run(ctx)
 
 }
 
 type serviceController struct {
-	domain string
+	c *Connector
 }
 
 func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
@@ -136,7 +136,7 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 		}
 	}()
 
-	if err := connect(ctx, c.domain); err != nil {
+	if err := c.c.Run(ctx); err != nil {
 		zap.L().Error("connect exited with error", zap.Error(err))
 		return false, 1
 	}

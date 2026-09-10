@@ -1,6 +1,3 @@
-//go:build !windows
-// +build !windows
-
 // Copyright Octelium Labs, LLC. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,33 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package connect
+package ipc
 
 import (
-	"context"
-	"os"
-	"os/signal"
-	"syscall"
-
-	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 )
 
-func doConnect(ctx context.Context, c *Connector) error {
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
+func getPeerCred(fd uintptr) (*peerCred, error) {
+	ucred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+	if err != nil {
+		return nil, err
+	}
 
-	ctx, cancelFn := context.WithCancel(ctx)
-	defer cancelFn()
-
-	go func() {
-		select {
-		case <-signalCh:
-			zap.L().Debug("Received shutdown signal")
-			cancelFn()
-		case <-ctx.Done():
-		}
-	}()
-
-	return c.Run(ctx)
+	return &peerCred{
+		uid: ucred.Uid,
+		gid: ucred.Gid,
+		pid: ucred.Pid,
+	}, nil
 }

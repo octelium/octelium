@@ -139,7 +139,7 @@ func GetSecretPrompt() ([]byte, error) {
 }
 
 func GetRefreshToken(ctx context.Context, domain string) (string, error) {
-	at, err := GetDB().GetSessionToken(domain)
+	at, err := GetDBFromCtx(ctx).GetSessionToken(domain)
 	if err != nil {
 		return "", err
 	}

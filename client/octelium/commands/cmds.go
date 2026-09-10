@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/client/common/commands/version"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/client/octelium/commands/cp"
+	"github.com/octelium/octelium/client/octelium/commands/daemon"
 	"github.com/octelium/octelium/client/octelium/commands/disconnect"
 	"github.com/octelium/octelium/client/octelium/commands/get"
 	"github.com/octelium/octelium/client/octelium/commands/serviceconfig"
@@ -45,6 +46,7 @@ var Cmd = &cobra.Command{
 
 func InitCmds() {
 	Cmd.AddCommand(connect.Cmd)
+	Cmd.AddCommand(daemon.Cmd)
 	Cmd.AddCommand(disconnect.Cmd)
 	Cmd.AddCommand(get.Cmd)
 	Cmd.AddCommand(cp.Cmd)

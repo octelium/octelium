@@ -14,7 +14,11 @@
 
 package cliutils
 
-import "github.com/octelium/octelium/client/common/db"
+import (
+	"context"
+
+	"github.com/octelium/octelium/client/common/db"
+)
 
 var dbC *db.DB
 
@@ -42,4 +46,18 @@ func GetDB() *db.DB {
 
 func CloseDB() error {
 	return dbC.Close()
+}
+
+type dbCtxKey struct{}
+
+func WithDB(ctx context.Context, dbC *db.DB) context.Context {
+	return context.WithValue(ctx, dbCtxKey{}, dbC)
+}
+
+func GetDBFromCtx(ctx context.Context) *db.DB {
+	if ret, ok := ctx.Value(dbCtxKey{}).(*db.DB); ok && ret != nil {
+		return ret
+	}
+
+	return dbC
 }

@@ -24,6 +24,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -199,6 +200,18 @@ func (d *fsDB) get(_ context.Context, clusterDomain string) (*cliconfigv1.State_
 	return d.getDomain(clusterDomain)
 }
 
+func (d *fsDB) list(_ context.Context) (map[string]*cliconfigv1.State_Domain, error) {
+	state, err := d.readState()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]*cliconfigv1.State_Domain), nil
+		}
+		return nil, err
+	}
+
+	return state.DomainMap, nil
+}
+
 func (d *fsDB) set(_ context.Context, clusterDomain string, resp *authv1.SessionToken) error {
 
 	unlock, err := d.lock()
@@ -215,7 +228,54 @@ func (d *fsDB) set(_ context.Context, clusterDomain string, resp *authv1.Session
 	state.DomainMap[clusterDomain] = &cliconfigv1.State_Domain{
 		SessionToken:      resp,
 		SessionTokenSetAt: pbutils.Now(),
+		Settings:          state.DomainMap[clusterDomain].GetSettings(),
 	}
+
+	return d.writeStateLocked(state)
+}
+
+func (d *fsDB) setSettings(_ context.Context, clusterDomain string, settings *daemonv1.DomainSettings) error {
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
+	if err != nil {
+		return err
+	}
+
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		domain = &cliconfigv1.State_Domain{}
+		state.DomainMap[clusterDomain] = domain
+	}
+	domain.Settings = settings
+
+	return d.writeStateLocked(state)
+}
+
+func (d *fsDB) deleteSessionToken(_ context.Context, clusterDomain string) error {
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
+	if err != nil {
+		return err
+	}
+
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		return nil
+	}
+	domain.SessionToken = nil
+	domain.SessionTokenSetAt = nil
 
 	return d.writeStateLocked(state)
 }

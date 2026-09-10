@@ -411,7 +411,7 @@ func (c *quicGW) connect(ctx context.Context) error {
 
 	defer initStream.Close()
 
-	sessToken, err := cliutils.GetDB().GetSessionToken(c.engine.ctl.c.Info.Cluster.Domain)
+	sessToken, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(c.engine.ctl.c.Info.Cluster.Domain)
 	if err != nil {
 		return err
 	}
