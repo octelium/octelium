@@ -16,6 +16,7 @@ package connect
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -119,4 +120,23 @@ func TestParsePublishService(t *testing.T) {
 		assert.Equal(t, "localhost", res.addr)
 		assert.Equal(t, 9090, res.port)
 	}
+}
+
+func TestGetReconnectBackoff(t *testing.T) {
+	var prev time.Duration
+
+	for attempt := 1; attempt < 20; attempt++ {
+		ret := getReconnectBackoff(attempt)
+
+		assert.GreaterOrEqual(t, ret, reconnectBackoffMin)
+		assert.LessOrEqual(t, ret, reconnectBackoffMax+reconnectBackoffMax/2)
+
+		if attempt > 1 {
+			assert.GreaterOrEqual(t, ret+ret/2, prev)
+		}
+
+		prev = ret
+	}
+
+	assert.GreaterOrEqual(t, getReconnectBackoff(20), reconnectBackoffMax)
 }

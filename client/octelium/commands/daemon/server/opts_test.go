@@ -26,7 +26,15 @@ import (
 )
 
 func TestGetConnectOpts(t *testing.T) {
-	const user = "1000"
+	user := &principal{
+		id:      "1000",
+		name:    "usr1000",
+		homeDir: "/home/usr1000",
+	}
+	root := &principal{
+		id:   rootPrincipalID,
+		name: "root",
+	}
 
 	{
 		opts, err := getConnectOpts(nil, user)
@@ -117,7 +125,8 @@ func TestGetConnectOpts(t *testing.T) {
 		assert.True(t, opts.UseESSH)
 		assert.True(t, opts.UseESOCKS5)
 
-		assert.Equal(t, "", opts.ESSHUser)
+		assert.Equal(t, "usr1000", opts.ESSHUser)
+		assert.Equal(t, "/home/usr1000", opts.UserHome)
 	}
 
 	{
@@ -208,9 +217,62 @@ func TestGetConnectOpts(t *testing.T) {
 					},
 				},
 			},
-		}, rootPrincipalID)
+		}, root)
 		assert.Nil(t, err)
 		assert.Equal(t, 80, opts.PublishServices[0].Port)
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			Mtu: 128,
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			Mtu: 9000,
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			L3Mode: daemonv1.ConnectionOptions_L3Mode(100),
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			TunnelMode: daemonv1.ConnectionOptions_TunnelMode(100),
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			ImplementationMode: daemonv1.ConnectionOptions_ImplementationMode(100),
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			Dns: &daemonv1.ConnectionOptions_DNS{
+				Mode: daemonv1.ConnectionOptions_DNS_Mode(100),
+			},
+		}, user)
+		assert.True(t, grpcerr.IsInvalidArg(err))
+	}
+
+	{
+		_, err := getConnectOpts(&daemonv1.ConnectionOptions{
+			ServiceOptions: &daemonv1.ConnectionOptions_ServiceOptions{
+				EnableEmbeddedSSH: true,
+			},
+		}, &principal{id: "1001"})
+		assert.True(t, grpcerr.IsFailedPrecondition(err))
 	}
 }
 

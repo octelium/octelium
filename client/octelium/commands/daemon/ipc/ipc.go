@@ -26,9 +26,10 @@ import (
 const AuthType = "octelium-local"
 
 type Principal struct {
-	ID   string
-	Name string
-	PID  int32
+	ID      string
+	Name    string
+	HomeDir string
+	PID     int32
 }
 
 type AuthInfo struct {

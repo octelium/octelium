@@ -38,3 +38,7 @@ func Dial(ctx context.Context, addr string) (net.Conn, error) {
 func getPeerPrincipal(conn net.Conn) (*Principal, error) {
 	return nil, errors.Errorf("The Octelium daemon is not supported on Windows yet")
 }
+
+func LookupPrincipal(id string) (*Principal, error) {
+	return nil, errors.Errorf("The Octelium daemon is not supported on Windows yet")
+}

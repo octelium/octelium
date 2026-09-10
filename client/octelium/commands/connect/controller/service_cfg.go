@@ -72,7 +72,7 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 		return nil
 	}
 
-	sshDir, err := getSSHDir()
+	sshDir, err := c.getSSHDir()
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 		return nil
 	}
 
-	sshDir, err := getSSHDir()
+	sshDir, err := c.getSSHDir()
 	if err != nil {
 		return err
 	}
@@ -143,8 +143,8 @@ func (c *Controller) unsetServiceConfigSSH() error {
 	return nil
 }
 
-func getSSHDir() (string, error) {
-	homeDir, err := vhome.GetOcteliumUserHome()
+func (c *Controller) getSSHDir() (string, error) {
+	homeDir, err := c.getUserHome()
 	if err != nil {
 		return "", err
 	}
@@ -165,6 +165,14 @@ func getSSHDir() (string, error) {
 	}
 
 	return sshDir, nil
+}
+
+func (c *Controller) getUserHome() (string, error) {
+	if ret := c.c.GetPreferences().GetUserHome(); ret != "" {
+		return ret, nil
+	}
+
+	return vhome.GetOcteliumUserHome()
 }
 
 func isManagedLine(line, marker string) bool {

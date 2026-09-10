@@ -16,10 +16,11 @@ package server
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/net/idna"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,9 +40,12 @@ const (
 	apiMinorVersion = 0
 )
 
+const gracefulStopTimeout = 5 * time.Second
+
 type Opts struct {
 	ListenAddress string
 	StateDir      string
+	OwnerID       string
 }
 
 type Server struct {
@@ -49,14 +54,14 @@ type Server struct {
 	stateDir   string
 
 	grpcSrv *grpc.Server
-	lis     net.Listener
+	srvErrC chan error
 
 	ctx      context.Context
 	cancelFn context.CancelFunc
 
-	mu         sync.Mutex
-	principals map[string]*principal
-	isClosed   bool
+	mu        sync.Mutex
+	principal *principal
+	isClosed  bool
 }
 
 func New(o *Opts) (*Server, error) {
@@ -67,8 +72,8 @@ func New(o *Opts) (*Server, error) {
 	ret := &Server{
 		opts:       o,
 		instanceID: uuid.NewString(),
-		principals: make(map[string]*principal),
 		stateDir:   o.StateDir,
+		srvErrC:    make(chan error, 1),
 	}
 
 	if ret.opts.ListenAddress == "" {
@@ -114,7 +119,13 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.lis = lis
+
+	if s.opts.OwnerID != "" {
+		if err := s.bindOwner(); err != nil {
+			lis.Close()
+			return err
+		}
+	}
 
 	s.grpcSrv = grpc.NewServer(
 		grpc.Creds(ipc.NewTransportCredentials()),
@@ -127,14 +138,37 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		zap.L().Debug("Running the daemon gRPC server",
 			zap.String("addr", s.opts.ListenAddress))
-		if err := s.grpcSrv.Serve(lis); err != nil {
-			zap.L().Debug("The daemon gRPC server is closed", zap.Error(err))
-		}
+		err := s.grpcSrv.Serve(lis)
+		zap.L().Debug("The daemon gRPC server is closed", zap.Error(err))
+		s.srvErrC <- err
 	}()
 
-	s.doAutoConnect()
+	return nil
+}
+
+func (s *Server) bindOwner() error {
+	pr, err := ipc.LookupPrincipal(s.opts.OwnerID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.bindPrincipal(pr); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func (s *Server) Wait() error {
+	select {
+	case <-s.ctx.Done():
+		return nil
+	case err := <-s.srvErrC:
+		if err == nil || errors.Is(err, grpc.ErrServerStopped) {
+			return nil
+		}
+		return err
+	}
 }
 
 func (s *Server) Close() error {
@@ -144,10 +178,7 @@ func (s *Server) Close() error {
 		return nil
 	}
 	s.isClosed = true
-	principals := make([]*principal, 0, len(s.principals))
-	for _, p := range s.principals {
-		principals = append(principals, p)
-	}
+	p := s.principal
 	s.mu.Unlock()
 
 	if s.cancelFn != nil {
@@ -155,73 +186,91 @@ func (s *Server) Close() error {
 	}
 
 	if s.grpcSrv != nil {
-		s.grpcSrv.Stop()
+		stoppedCh := make(chan struct{})
+		go func() {
+			s.grpcSrv.GracefulStop()
+			close(stoppedCh)
+		}()
+
+		select {
+		case <-stoppedCh:
+		case <-time.After(gracefulStopTimeout):
+			zap.L().Debug("Timed out gracefully stopping the daemon gRPC server")
+			s.grpcSrv.Stop()
+		}
 	}
 
-	for _, p := range principals {
+	if p != nil {
 		p.close()
 	}
 
 	return nil
 }
 
-func (s *Server) getPrincipal(pr *ipc.Principal) (*principal, error) {
+func (s *Server) bindPrincipal(pr *ipc.Principal) (*principal, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.isClosed {
+		s.mu.Unlock()
 		return nil, status.Error(codes.Unavailable, "The daemon is shutting down")
 	}
 
-	if ret, ok := s.principals[pr.ID]; ok {
+	if s.principal != nil {
+		ret := s.principal
+		s.mu.Unlock()
+
+		if ret.id != pr.ID {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"This Octelium daemon is owned by the OS user %s", ret.displayName())
+		}
+
 		return ret, nil
+	}
+
+	if s.opts.OwnerID != "" && s.opts.OwnerID != pr.ID {
+		s.mu.Unlock()
+		return nil, status.Errorf(codes.PermissionDenied,
+			"This Octelium daemon is owned by the OS user %s", s.opts.OwnerID)
 	}
 
 	ret, err := newPrincipal(s, pr)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
 
-	s.principals[pr.ID] = ret
+	s.principal = ret
+	s.mu.Unlock()
+
+	zap.L().Debug("Bound the daemon to its owner",
+		zap.String("principal", ret.displayName()))
+
+	ret.doAutoConnect()
 
 	return ret, nil
 }
 
-func (s *Server) doAutoConnect() {
-	entries, err := os.ReadDir(filepath.Join(s.stateDir, "users"))
-	if err != nil {
-		if !os.IsNotExist(err) {
-			zap.L().Warn("Could not read the daemon state directory", zap.Error(err))
-		}
-		return
-	}
+func canonicalizeDomain(domain string) (string, error) {
+	invalidErr := status.Errorf(codes.InvalidArgument, "Invalid Cluster domain: %s", domain)
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		p, err := s.getPrincipal(&ipc.Principal{
-			ID: entry.Name(),
-		})
-		if err != nil {
-			zap.L().Warn("Could not load the state of the OS principal",
-				zap.String("principal", entry.Name()), zap.Error(err))
-			continue
-		}
-
-		p.doAutoConnect()
-	}
-}
-
-func validateDomain(domain string) error {
+	domain = strings.TrimSpace(domain)
 	if domain == "" {
-		return status.Error(codes.InvalidArgument, "The Cluster domain is not set")
+		return "", status.Error(codes.InvalidArgument, "The Cluster domain is not set")
 	}
 
-	if len(domain) > 255 || !govalidator.IsDNSName(domain) {
-		return status.Errorf(codes.InvalidArgument, "Invalid Cluster domain: %s", domain)
+	domain = strings.TrimSuffix(domain, ".")
+
+	ret, err := idna.Lookup.ToASCII(domain)
+	if err != nil {
+		return "", invalidErr
 	}
 
-	return nil
+	ret = strings.ToLower(ret)
+
+	if len(ret) > 253 || !strings.Contains(ret, ".") ||
+		govalidator.IsIP(ret) || !govalidator.IsDNSName(ret) {
+		return "", invalidErr
+	}
+
+	return ret, nil
 }

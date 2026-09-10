@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
+	"github.com/octelium/octelium/client/common/authenticator"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
@@ -64,5 +66,49 @@ func TestGetError(t *testing.T) {
 		err := getError(errors.Errorf("unknown"), daemonv1.Error_INTERNAL)
 		assert.Equal(t, daemonv1.Error_INTERNAL, err.Code)
 		assert.False(t, err.Retryable)
+	}
+	{
+		err := getError(authenticator.ErrWebAuthenticationTimedOut,
+			daemonv1.Error_AUTHENTICATION_FAILED)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_TIMED_OUT, err.Code)
+		assert.False(t, err.Retryable)
+	}
+	{
+		err := getError(errors.Wrap(authenticator.ErrWebAuthenticationTimedOut, "waiting"),
+			daemonv1.Error_AUTHENTICATION_FAILED)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_TIMED_OUT, err.Code)
+	}
+}
+
+func TestCanonicalizeDomain(t *testing.T) {
+	for _, itm := range []struct {
+		arg string
+		ret string
+	}{
+		{arg: "example.com", ret: "example.com"},
+		{arg: "EXAMPLE.COM", ret: "example.com"},
+		{arg: "example.com.", ret: "example.com"},
+		{arg: "  Example.Com.  ", ret: "example.com"},
+		{arg: "sub.example.com", ret: "sub.example.com"},
+		{arg: "bücher.example", ret: "xn--bcher-kva.example"},
+	} {
+		ret, err := canonicalizeDomain(itm.arg)
+		assert.Nil(t, err, "arg=%s", itm.arg)
+		assert.Equal(t, itm.ret, ret)
+	}
+
+	for _, arg := range []string{
+		"",
+		"   ",
+		"example",
+		"not a domain",
+		"example.com/path",
+		"1.2.3.4",
+		"::1",
+		"example..com",
+		"-example.com",
+	} {
+		_, err := canonicalizeDomain(arg)
+		assert.True(t, grpcerr.IsInvalidArg(err), "arg=%s", arg)
 	}
 }

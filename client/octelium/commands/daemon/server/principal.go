@@ -36,9 +36,10 @@ import (
 const operationRetention = 10 * time.Minute
 
 type principal struct {
-	srv  *Server
-	id   string
-	name string
+	srv     *Server
+	id      string
+	name    string
+	homeDir string
 
 	dbC *db.DB
 
@@ -67,6 +68,7 @@ func newPrincipal(srv *Server, pr *ipc.Principal) (*principal, error) {
 		srv:      srv,
 		id:       pr.ID,
 		name:     pr.Name,
+		homeDir:  pr.HomeDir,
 		dbC:      dbC,
 		domains:  make(map[string]*domainCtl),
 		ops:      make(map[string]*operation),
@@ -83,6 +85,14 @@ func newPrincipal(srv *Server, pr *ipc.Principal) (*principal, error) {
 	return ret, nil
 }
 
+func (p *principal) displayName() string {
+	if p.name != "" {
+		return p.name
+	}
+
+	return p.id
+}
+
 func (p *principal) loadDomains() error {
 	domainMap, err := p.dbC.List()
 	if err != nil {
@@ -90,16 +100,22 @@ func (p *principal) loadDomains() error {
 	}
 
 	for domain, itm := range domainMap {
-		if err := validateDomain(domain); err != nil {
+		canonical, err := canonicalizeDomain(domain)
+		if err != nil {
 			zap.L().Warn("Skipping an invalid stored domain", zap.String("domain", domain))
 			continue
 		}
 
-		d := p.newDomainCtl(domain)
+		if _, ok := p.domains[canonical]; ok {
+			zap.L().Warn("Skipping a duplicate stored domain", zap.String("domain", domain))
+			continue
+		}
+
+		d := p.newDomainCtl(canonical)
 		d.settings = itm.GetSettings()
 		d.setAuthenticationFromState(itm)
 
-		p.domains[domain] = d
+		p.domains[canonical] = d
 	}
 
 	return nil
@@ -120,6 +136,15 @@ func (p *principal) update(fn func()) {
 	fn()
 
 	p.notify()
+}
+
+func (p *principal) updateIf(fn func() bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if fn() {
+		p.notify()
+	}
 }
 
 func (p *principal) notify() {
@@ -155,6 +180,8 @@ func (p *principal) getStatus() *daemonv1.GetStatusResponse {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.pruneOperations()
+
 	ret := &daemonv1.GetStatusResponse{
 		InstanceID: p.srv.instanceID,
 		Revision:   p.revision,
@@ -173,14 +200,14 @@ func (p *principal) getStatus() *daemonv1.GetStatusResponse {
 }
 
 func (p *principal) getDomain(domain string) (*domainCtl, error) {
-	if err := validateDomain(domain); err != nil {
-		return nil, err
-	}
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if ret, ok := p.domains[domain]; ok {
+		if ret.isDeleting {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"The domain %s is being deleted", domain)
+		}
 		return ret, nil
 	}
 
@@ -207,6 +234,11 @@ func (p *principal) findDomain(domain string) (*domainCtl, error) {
 		return nil, status.Errorf(codes.NotFound, "Unknown Cluster domain: %s", domain)
 	}
 
+	if ret.isDeleting {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"The domain %s is being deleted", domain)
+	}
+
 	return ret, nil
 }
 
@@ -214,12 +246,48 @@ func (p *principal) getOperation(id string) (*daemonv1.Operation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.pruneOperations()
+
 	op, ok := p.ops[id]
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "Unknown Operation: %s", id)
 	}
 
 	return op.toPB(), nil
+}
+
+func (p *principal) cancelOperation(id string) (*daemonv1.Operation, error) {
+	p.mu.Lock()
+
+	op, ok := p.ops[id]
+	if !ok {
+		p.mu.Unlock()
+		return nil, status.Errorf(codes.NotFound, "Unknown Operation: %s", id)
+	}
+
+	if op.isDone() {
+		ret := op.toPB()
+		p.mu.Unlock()
+		return ret, nil
+	}
+
+	if !op.isCancellable() {
+		typ := op.typ
+		p.mu.Unlock()
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"The %s Operation cannot be canceled", typ.String())
+	}
+
+	cancelFn := op.cancelFn
+	op.setCanceled("The Operation was canceled")
+	p.notify()
+	ret := op.toPB()
+
+	p.mu.Unlock()
+
+	cancelFn()
+
+	return ret, nil
 }
 
 func (p *principal) pruneOperations() {
@@ -238,7 +306,7 @@ func (p *principal) doAutoConnect() {
 	p.mu.Lock()
 	var domains []*domainCtl
 	for _, d := range p.domains {
-		if d.settings.GetAutoConnect() &&
+		if !d.isDeleting && d.settings.GetAutoConnect() &&
 			d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED {
 			domains = append(domains, d)
 		}

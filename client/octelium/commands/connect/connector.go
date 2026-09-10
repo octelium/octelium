@@ -37,6 +37,8 @@ type Opts struct {
 	LocalDNSListenAddr string
 	UseFullDNS         bool
 
+	UserHome string
+
 	TunnelMode string
 
 	MTU int32

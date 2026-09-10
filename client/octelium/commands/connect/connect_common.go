@@ -309,6 +309,8 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 				}(),
 			},
 
+			UserHome: c.opts.UserHome,
+
 			FullDNS: c.isFullDNS(),
 
 			LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{
@@ -427,6 +429,11 @@ func (c *Connector) getPublishedServiceFromService(svc *userv1.Service,
 
 const shutdownTimeout = 20 * time.Second
 
+const (
+	reconnectBackoffMin = 2 * time.Second
+	reconnectBackoffMax = 30 * time.Second
+)
+
 type ctl struct {
 	devCtl          *controller.Controller
 	proxyCtl        *proxy.Controller
@@ -541,6 +548,9 @@ func (c *Connector) Run(ctx context.Context) error {
 		Type: EventTypeConnecting,
 	})
 
+	var isConnected bool
+	var attempt int
+
 	for {
 		ret := make(chan tryConnectRet, 1)
 		doneCh := make(chan struct{})
@@ -576,12 +586,21 @@ func (c *Connector) Run(ctx context.Context) error {
 				return ret.err
 			}
 
+			if ret.isConnected {
+				isConnected = true
+				attempt = 0
+			}
+
 			c.setEvent(&Event{
-				Type: EventTypeReconnecting,
-				Err:  ret.err,
+				Type: func() EventType {
+					if isConnected {
+						return EventTypeReconnecting
+					}
+					return EventTypeConnecting
+				}(),
+				Err: ret.err,
 			})
 
-			time.Sleep(2 * time.Second)
 			if ret.err != nil {
 				err := ret.err
 
@@ -595,13 +614,31 @@ func (c *Connector) Run(ctx context.Context) error {
 				}
 				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err.Error())
 			}
+
+			attempt++
+
+			select {
+			case <-ctx.Done():
+			case <-time.After(getReconnectBackoff(attempt)):
+			}
 		}
 	}
+}
+
+func getReconnectBackoff(attempt int) time.Duration {
+	ret := reconnectBackoffMin << min(attempt-1, 6)
+	if ret > reconnectBackoffMax {
+		ret = reconnectBackoffMax
+	}
+
+	return ret + time.Duration(utilrand.GetRandomRangeMath(0,
+		int(ret/2/time.Millisecond)))*time.Millisecond
 }
 
 type tryConnectRet struct {
 	err            error
 	needsReconnect bool
+	isConnected    bool
 }
 
 func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryConnectRet {
@@ -683,6 +720,7 @@ func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryC
 	needsReconnect := false
 	var retErr error
 	cliutils.LineNotify("Connected successfully...\n")
+	isConnected := true
 
 	c.setEvent(&Event{
 		Type:       EventTypeConnected,
@@ -704,6 +742,7 @@ func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryC
 	return tryConnectRet{
 		err:            retErr,
 		needsReconnect: needsReconnect,
+		isConnected:    isConnected,
 	}
 }
 

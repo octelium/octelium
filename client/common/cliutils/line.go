@@ -14,20 +14,42 @@
 
 package cliutils
 
-import "github.com/fatih/color"
+import (
+	"sync/atomic"
+
+	"github.com/fatih/color"
+)
+
+var isQuiet atomic.Bool
+
+func SetQuiet(arg bool) {
+	isQuiet.Store(arg)
+}
 
 func LineInfo(format string, a ...interface{}) {
+	if isQuiet.Load() {
+		return
+	}
 	color.New(color.Bold).Printf(format, a...)
 }
 
 func LineNotify(format string, a ...interface{}) {
+	if isQuiet.Load() {
+		return
+	}
 	color.New(color.FgCyan, color.Bold).Printf(format, a...)
 }
 
 func LineError(format string, a ...interface{}) {
+	if isQuiet.Load() {
+		return
+	}
 	color.New(color.FgRed, color.Bold).Printf(format, a...)
 }
 
 func LineWarn(format string, a ...interface{}) {
+	if isQuiet.Load() {
+		return
+	}
 	color.New(color.FgYellow, color.Bold).Printf(format, a...)
 }

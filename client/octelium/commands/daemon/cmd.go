@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/server"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -28,6 +29,7 @@ import (
 type args struct {
 	ListenAddress string
 	StateDir      string
+	Owner         string
 }
 
 var cmdArgs args
@@ -39,15 +41,21 @@ octelium daemon
 
 # Run the daemon at a specific local API address and state directory
 octelium daemon --listen /var/run/octelium/daemon.sock --state-dir /var/lib/octelium
+
+# Run the daemon for a specific OS user
+octelium daemon --owner 1000
 `
 
 var Cmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Run the Octelium client daemon",
 	Long: `Run the privileged Octelium client daemon which owns the authentication
-credentials, the Connections and the host networking configuration of all the
-local OS principals and which serves the local client API to the local frontends
-such as the Octelium CLI itself and the Octelium desktop application.`,
+credentials, the Connections and the host networking configuration of its owner
+and which serves the local client API to the local frontends such as the
+Octelium CLI itself and the Octelium desktop application.
+
+The daemon is owned by a single OS user. The owner is either set via the --owner
+flag or it is the OS user of the first local API caller.`,
 	Example: example,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -62,18 +70,25 @@ Linux and macOS and the name of the named pipe on Windows. By default the daemon
 uses the standard address of the platform.`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.StateDir, "state-dir", "",
 		`The root directory of the daemon-owned state. The credentials and the settings
-of every OS principal are stored in a separate sub-directory of it that is only
-accessible by the daemon itself. By default the daemon uses the standard
-directory of the platform.`)
+of the owner are stored in a sub-directory of it that is only accessible by the
+daemon itself. By default the daemon uses the standard directory of the
+platform.`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Owner, "owner", "",
+		`The ID of the OS user that owns this daemon. This is the UID on Linux and macOS
+and the SID on Windows. The local API calls of every other OS user are rejected.
+By default the daemon is owned by the OS user of the first local API caller.`)
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	ctx, cancelFn := context.WithCancel(cmd.Context())
 	defer cancelFn()
 
+	cliutils.SetQuiet(true)
+
 	srv, err := server.New(&server.Opts{
 		ListenAddress: cmdArgs.ListenAddress,
 		StateDir:      cmdArgs.StateDir,
+		OwnerID:       cmdArgs.Owner,
 	})
 	if err != nil {
 		return err
@@ -87,11 +102,23 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
 
+	srvErrCh := make(chan error, 1)
+	go func() {
+		srvErrCh <- srv.Wait()
+	}()
+
+	var retErr error
+
 	select {
 	case <-signalCh:
 		zap.L().Debug("Received shutdown signal")
+	case retErr = <-srvErrCh:
 	case <-ctx.Done():
 	}
 
-	return srv.Close()
+	if err := srv.Close(); err != nil {
+		return err
+	}
+
+	return retErr
 }

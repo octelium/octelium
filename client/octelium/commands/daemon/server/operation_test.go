@@ -75,4 +75,30 @@ func TestOperation(t *testing.T) {
 		})
 		assert.Equal(t, daemonv1.Operation_CANCELED, op.state)
 	}
+
+	{
+		var isCanceled bool
+		op := newOperation("example.com", daemonv1.Operation_CONNECT, func() {
+			isCanceled = true
+		})
+		assert.True(t, op.isCancellable())
+		assert.True(t, op.toPB().Cancellable)
+
+		op.setState(daemonv1.Operation_RUNNING)
+		assert.True(t, op.isCancellable())
+
+		op.setCanceled("superseded")
+		assert.Equal(t, daemonv1.Operation_CANCELED, op.state)
+		assert.Equal(t, "superseded", op.toPB().Error.Message)
+		assert.False(t, op.isCancellable())
+		assert.False(t, op.toPB().Cancellable)
+		assert.Nil(t, op.cancelFn)
+		assert.False(t, isCanceled)
+	}
+
+	{
+		op := newOperation("example.com", daemonv1.Operation_DISCONNECT, nil)
+		op.setState(daemonv1.Operation_RUNNING)
+		assert.False(t, op.isCancellable())
+	}
 }

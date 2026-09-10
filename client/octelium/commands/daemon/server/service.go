@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
-	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc/codes"
@@ -37,7 +36,7 @@ func (svc *service) getPrincipal(ctx context.Context) (*principal, error) {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 
-	return svc.s.getPrincipal(pr)
+	return svc.s.bindPrincipal(pr)
 }
 
 func (svc *service) findDomain(ctx context.Context, domain string) (*domainCtl, error) {
@@ -46,18 +45,19 @@ func (svc *service) findDomain(ctx context.Context, domain string) (*domainCtl, 
 		return nil, err
 	}
 
-	if err := validateDomain(domain); err != nil {
+	canonical, err := canonicalizeDomain(domain)
+	if err != nil {
 		return nil, err
 	}
 
-	return p.findDomain(domain)
+	return p.findDomain(canonical)
 }
 
 func (svc *service) GetInfo(ctx context.Context,
 	req *daemonv1.GetInfoRequest) (*daemonv1.GetInfoResponse, error) {
-	pr, err := ipc.GetPrincipal(ctx)
+	p, err := svc.getPrincipal(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, err.Error())
+		return nil, err
 	}
 
 	return &daemonv1.GetInfoResponse{
@@ -66,8 +66,8 @@ func (svc *service) GetInfo(ctx context.Context,
 		ApiMinorVersion: apiMinorVersion,
 		InstanceID:      svc.s.instanceID,
 		Principal: &daemonv1.Principal{
-			Id:   pr.ID,
-			Name: pr.Name,
+			Id:   p.id,
+			Name: p.name,
 		},
 	}, nil
 }
@@ -116,7 +116,8 @@ func (svc *service) Authenticate(ctx context.Context,
 		return nil, err
 	}
 
-	if err := validateDomain(req.Domain); err != nil {
+	domain, err := canonicalizeDomain(req.Domain)
+	if err != nil {
 		return nil, err
 	}
 
@@ -124,7 +125,7 @@ func (svc *service) Authenticate(ctx context.Context,
 		return nil, err
 	}
 
-	d, err := p.getDomain(req.Domain)
+	d, err := p.getDomain(domain)
 	if err != nil {
 		return nil, err
 	}
@@ -182,17 +183,13 @@ func (svc *service) Logout(ctx context.Context,
 }
 
 func (svc *service) DeleteDomain(ctx context.Context,
-	req *daemonv1.DeleteDomainRequest) (*metav1.OperationResult, error) {
+	req *daemonv1.DeleteDomainRequest) (*daemonv1.Operation, error) {
 	d, err := svc.findDomain(ctx, req.Domain)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := d.delete(); err != nil {
-		return nil, err
-	}
-
-	return &metav1.OperationResult{}, nil
+	return d.startDelete()
 }
 
 func (svc *service) GetOperation(ctx context.Context,
@@ -220,22 +217,7 @@ func (svc *service) CancelOperation(ctx context.Context,
 		return nil, status.Error(codes.InvalidArgument, "The Operation ID is not set")
 	}
 
-	p.mu.Lock()
-	op, ok := p.ops[req.Id]
-	p.mu.Unlock()
-
-	if !ok {
-		return nil, status.Errorf(codes.NotFound, "Unknown Operation: %s", req.Id)
-	}
-
-	d, err := p.findDomain(op.domain)
-	if err != nil {
-		return nil, err
-	}
-
-	d.cancelOperation(op)
-
-	return p.getOperation(req.Id)
+	return p.cancelOperation(req.Id)
 }
 
 func (svc *service) GetAPICredential(ctx context.Context,
@@ -259,15 +241,16 @@ func (svc *service) UpdateDomainSettings(ctx context.Context,
 		return nil, err
 	}
 
-	if err := validateDomain(req.Settings.Domain); err != nil {
+	domain, err := canonicalizeDomain(req.Domain)
+	if err != nil {
 		return nil, err
 	}
 
-	if _, err := getConnectOpts(req.Settings.GetConnectionOptions(), p.id); err != nil {
+	if _, err := getConnectOpts(req.Settings.GetConnectionOptions(), p); err != nil {
 		return nil, err
 	}
 
-	d, err := p.getDomain(req.Settings.Domain)
+	d, err := p.getDomain(domain)
 	if err != nil {
 		return nil, err
 	}

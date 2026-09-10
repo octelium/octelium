@@ -108,18 +108,6 @@ func (d *DB) SetDomainSettings(clusterDomain string, settings *daemonv1.DomainSe
 	return d.db.setSettings(context.Background(), clusterDomain, settings)
 }
 
-func (d *DB) GetDomainSettings(clusterDomain string) (*daemonv1.DomainSettings, error) {
-	ret, err := d.db.get(context.Background(), clusterDomain)
-	if err != nil {
-		return nil, err
-	}
-	if ret.GetSettings() == nil {
-		return nil, ErrNotFound
-	}
-
-	return ret.Settings, nil
-}
-
 func (d *DB) DeleteSessionToken(clusterDomain string) error {
 	return d.db.deleteSessionToken(context.Background(), clusterDomain)
 }

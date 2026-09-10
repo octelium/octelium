@@ -35,7 +35,10 @@ import (
 
 const callbackSuffixLen = 8
 
-const webAuthenticationTimeout = 5 * time.Minute
+const WebAuthenticationTimeout = 5 * time.Minute
+
+var ErrWebAuthenticationTimedOut = errors.Errorf(
+	"You have not authenticated yourself after 5 minutes. Please authenticate yourself again.")
 
 type WebAuthenticatorOpts struct {
 	Domain string
@@ -61,6 +64,9 @@ type WebAuthenticator struct {
 }
 
 func NewWebAuthenticator(opts *WebAuthenticatorOpts) (*WebAuthenticator, error) {
+	if opts == nil || opts.Domain == "" {
+		return nil, errors.Errorf("The Cluster domain is not set")
+	}
 
 	suffix := utilrand.GetRandomString(callbackSuffixLen)
 
@@ -244,9 +250,8 @@ func (s *WebAuthenticator) Wait(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(webAuthenticationTimeout):
-		return errors.Errorf(
-			"You have not authenticated yourself after 5 minutes. Please authenticate yourself again.")
+	case <-time.After(WebAuthenticationTimeout):
+		return ErrWebAuthenticationTimedOut
 	case <-s.ch:
 		return s.err
 	}

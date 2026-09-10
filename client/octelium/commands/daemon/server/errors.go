@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
+	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/pkg/grpcerr"
 )
 
@@ -29,6 +30,8 @@ func getError(err error, code daemonv1.Error_Code) *daemonv1.Error {
 	}
 
 	switch {
+	case errors.Is(err, authenticator.ErrWebAuthenticationTimedOut):
+		ret.Code = daemonv1.Error_AUTHENTICATION_TIMED_OUT
 	case errors.Is(err, context.Canceled):
 		ret.Code = daemonv1.Error_OPERATION_CANCELED
 	case errors.Is(err, context.DeadlineExceeded):

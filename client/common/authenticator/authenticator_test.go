@@ -75,6 +75,15 @@ func TestParseAssertion(t *testing.T) {
 
 func TestWebAuthenticatorLoginURL(t *testing.T) {
 
+	{
+		_, err := NewWebAuthenticator(nil)
+		assert.NotNil(t, err)
+	}
+	{
+		_, err := NewWebAuthenticator(&WebAuthenticatorOpts{})
+		assert.NotNil(t, err)
+	}
+
 	s, err := NewWebAuthenticator(&WebAuthenticatorOpts{
 		Domain: "example.com",
 	})

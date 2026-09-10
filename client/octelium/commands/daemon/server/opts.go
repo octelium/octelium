@@ -33,11 +33,17 @@ const (
 	rootPrincipalID    = "0"
 	privilegedPortEdge = 1024
 	defaultDNSPort     = 53
+	minMTU             = 576
+	maxMTU             = 1500
 )
 
-func getConnectOpts(o *daemonv1.ConnectionOptions, principalID string) (*connect.Opts, error) {
+func getConnectOpts(o *daemonv1.ConnectionOptions, p *principal) (*connect.Opts, error) {
 	if o == nil {
 		o = &daemonv1.ConnectionOptions{}
+	}
+
+	if err := validateConnectionOptions(o); err != nil {
+		return nil, err
 	}
 
 	svcOpts := o.GetServiceOptions()
@@ -50,10 +56,17 @@ func getConnectOpts(o *daemonv1.ConnectionOptions, principalID string) (*connect
 	ret := &connect.Opts{
 		ServeAll:           svcOpts.GetServeAll(),
 		UseESSH:            svcOpts.GetEnableEmbeddedSSH(),
+		ESSHUser:           p.name,
 		UseESOCKS5:         svcOpts.GetEnableEmbeddedSOCKS5(),
 		UseLocalDNS:        o.GetDns().GetEnableLocalServer(),
 		LocalDNSListenAddr: o.GetDns().GetLocalServerListenAddress(),
+		UserHome:           p.homeDir,
 		MTU:                o.GetMtu(),
+	}
+
+	if ret.UseESSH && ret.ESSHUser == "" {
+		return nil, status.Error(codes.FailedPrecondition,
+			"The OS user of the owner of the daemon could not be resolved")
 	}
 
 	switch o.L3Mode {
@@ -89,7 +102,7 @@ func getConnectOpts(o *daemonv1.ConnectionOptions, principalID string) (*connect
 	}
 
 	if ret.LocalDNSListenAddr != "" {
-		addr, err := getLocalDNSListenAddr(ret.LocalDNSListenAddr, principalID)
+		addr, err := getLocalDNSListenAddr(ret.LocalDNSListenAddr, p.id)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +128,7 @@ func getConnectOpts(o *daemonv1.ConnectionOptions, principalID string) (*connect
 				"Invalid published Service port: %d", svc.Port)
 		}
 
-		if svc.Port < privilegedPortEdge && principalID != rootPrincipalID {
+		if svc.Port < privilegedPortEdge && p.id != rootPrincipalID {
 			return nil, status.Errorf(codes.PermissionDenied,
 				"You are not allowed to publish a Service at the privileged port %d", svc.Port)
 		}
@@ -139,6 +152,35 @@ func getConnectOpts(o *daemonv1.ConnectionOptions, principalID string) (*connect
 	}
 
 	return ret, nil
+}
+
+func validateConnectionOptions(o *daemonv1.ConnectionOptions) error {
+	if _, ok := daemonv1.ConnectionOptions_L3Mode_name[int32(o.L3Mode)]; !ok {
+		return status.Errorf(codes.InvalidArgument, "Unsupported l3Mode: %d", o.L3Mode)
+	}
+
+	if _, ok := daemonv1.ConnectionOptions_TunnelMode_name[int32(o.TunnelMode)]; !ok {
+		return status.Errorf(codes.InvalidArgument, "Unsupported tunnelMode: %d", o.TunnelMode)
+	}
+
+	if _, ok := daemonv1.ConnectionOptions_ImplementationMode_name[int32(o.ImplementationMode)]; !ok {
+		return status.Errorf(codes.InvalidArgument,
+			"Unsupported implementationMode: %d", o.ImplementationMode)
+	}
+
+	if o.GetDns() != nil {
+		if _, ok := daemonv1.ConnectionOptions_DNS_Mode_name[int32(o.GetDns().GetMode())]; !ok {
+			return status.Errorf(codes.InvalidArgument,
+				"Unsupported DNS mode: %d", o.GetDns().GetMode())
+		}
+	}
+
+	if o.Mtu != 0 && (o.Mtu < minMTU || o.Mtu > maxMTU) {
+		return status.Errorf(codes.InvalidArgument,
+			"The MTU must be between %d and %d", minMTU, maxMTU)
+	}
+
+	return nil
 }
 
 func getServiceName(svc *daemonv1.ConnectionOptions_ServiceReference) (string, error) {

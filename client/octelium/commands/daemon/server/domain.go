@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -54,16 +55,18 @@ type domainCtl struct {
 	connCfg     *cliconfigv1.Connection
 	connOpts    *daemonv1.ConnectionOptions
 
-	settings *daemonv1.DomainSettings
-	op       *operation
-	lastErr  *daemonv1.Error
+	settings   *daemonv1.DomainSettings
+	op         *operation
+	lastErr    *daemonv1.Error
+	isDeleting bool
 
+	connGen      uint64
 	connCancelFn context.CancelFunc
 	connDoneCh   chan struct{}
 
 	refreshCancelFn context.CancelFunc
 
-	tokenMu sync.Mutex
+	credMu sync.Mutex
 }
 
 func (p *principal) newDomainCtl(domain string) *domainCtl {
@@ -75,22 +78,33 @@ func (p *principal) newDomainCtl(domain string) *domainCtl {
 	}
 }
 
-func (d *domainCtl) setAuthenticationFromState(itm *cliconfigv1.State_Domain) {
+func (d *domainCtl) setAuthenticationFromState(itm *cliconfigv1.State_Domain) bool {
+	authState := daemonv1.AuthenticationStatus_AUTHENTICATED
+	var authenticatedAt, authExpiresAt *timestamppb.Timestamp
+
 	if !authenticator.HasValidRefreshToken(itm) {
-		d.authState = daemonv1.AuthenticationStatus_LOGGED_OUT
-		d.authenticatedAt = nil
-		d.authExpiresAt = nil
-		return
+		authState = daemonv1.AuthenticationStatus_LOGGED_OUT
+	} else {
+		authenticatedAt = itm.GetSessionTokenSetAt()
+		if expiresAt := authenticator.GetRefreshTokenExpiresAt(itm); !expiresAt.IsZero() {
+			authExpiresAt = pbutils.Timestamp(expiresAt)
+		}
 	}
 
-	d.authState = daemonv1.AuthenticationStatus_AUTHENTICATED
-	d.authenticatedAt = itm.GetSessionTokenSetAt()
-	if expiresAt := authenticator.GetRefreshTokenExpiresAt(itm); !expiresAt.IsZero() {
-		d.authExpiresAt = pbutils.Timestamp(expiresAt)
+	if d.authState == authState &&
+		pbutils.IsEqual(d.authenticatedAt, authenticatedAt) &&
+		pbutils.IsEqual(d.authExpiresAt, authExpiresAt) {
+		return false
 	}
+
+	d.authState = authState
+	d.authenticatedAt = authenticatedAt
+	d.authExpiresAt = authExpiresAt
+
+	return true
 }
 
-func (d *domainCtl) reloadAuthentication() {
+func (d *domainCtl) reloadAuthentication() bool {
 	itm, err := d.p.dbC.Get(d.domain)
 	if err != nil {
 		zap.L().Debug("Could not read the stored credentials",
@@ -98,7 +112,7 @@ func (d *domainCtl) reloadAuthentication() {
 		itm = nil
 	}
 
-	d.setAuthenticationFromState(itm)
+	return d.setAuthenticationFromState(itm)
 }
 
 func (d *domainCtl) toPB() *daemonv1.DomainState {
@@ -139,14 +153,37 @@ func (d *domainCtl) getSettings() *daemonv1.DomainSettings {
 
 func (d *domainCtl) beginOperation(typ daemonv1.Operation_Type,
 	cancelFn context.CancelFunc) (*operation, error) {
+	return d.doBeginOperation(typ, cancelFn, false)
+}
+
+func (d *domainCtl) beginSupersedingOperation(typ daemonv1.Operation_Type,
+	cancelFn context.CancelFunc) (*operation, error) {
+	return d.doBeginOperation(typ, cancelFn, true)
+}
+
+func (d *domainCtl) doBeginOperation(typ daemonv1.Operation_Type,
+	cancelFn context.CancelFunc, canSupersede bool) (*operation, error) {
 	p := d.p
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
+
+	if d.isDeleting && typ != daemonv1.Operation_DELETE {
+		p.mu.Unlock()
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"The domain %s is being deleted", d.domain)
+	}
+
+	var cancelActiveFn context.CancelFunc
 
 	if d.op != nil && !d.op.isDone() {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"There is already an active Operation for the domain %s", d.domain)
+		if !canSupersede || !d.op.isCancellable() {
+			p.mu.Unlock()
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"There is already an active Operation for the domain %s", d.domain)
+		}
+
+		cancelActiveFn = d.op.cancelFn
+		d.op.setCanceled("The Operation was superseded")
 	}
 
 	p.pruneOperations()
@@ -158,6 +195,12 @@ func (d *domainCtl) beginOperation(typ daemonv1.Operation_Type,
 	p.ops[ret.id] = ret
 
 	p.notify()
+
+	p.mu.Unlock()
+
+	if cancelActiveFn != nil {
+		cancelActiveFn()
+	}
 
 	return ret, nil
 }
@@ -226,6 +269,7 @@ func (d *domainCtl) startAuthenticateBrowser(req *daemonv1.AuthenticateRequest) 
 					Url: webC.GetLoginURL(),
 				},
 			},
+			ExpiresAt: pbutils.Timestamp(time.Now().Add(authenticator.WebAuthenticationTimeout)),
 		}
 		op.setState(daemonv1.Operation_WAITING_FOR_USER)
 		d.authState = daemonv1.AuthenticationStatus_AUTHENTICATING
@@ -275,6 +319,11 @@ func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 		d.reloadAuthentication()
 
 		autoConnect = d.getSettings().GetAutoConnect()
+		isAuthenticated = d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED
+
+		if err == nil && !isAuthenticated {
+			err = errors.Errorf("The Cluster did not provide usable credentials")
+		}
 
 		if err != nil {
 			authErr := getError(err, daemonv1.Error_AUTHENTICATION_FAILED)
@@ -285,8 +334,8 @@ func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 			return
 		}
 
+		d.lastErr = nil
 		op.setState(daemonv1.Operation_SUCCEEDED)
-		isAuthenticated = d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED
 	})
 
 	if err != nil {
@@ -296,10 +345,6 @@ func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 	}
 
 	zap.L().Debug("Successfully authenticated", zap.String("domain", d.domain))
-
-	if !isAuthenticated {
-		return
-	}
 
 	if autoConnect {
 		if _, err := d.startConnect(nil); err != nil {
@@ -333,7 +378,7 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 			"The domain %s is already connected", d.domain)
 	}
 
-	connOpts, err := getConnectOpts(opts, d.p.id)
+	connOpts, err := getConnectOpts(opts, d.p)
 	if err != nil {
 		return nil, err
 	}
@@ -351,17 +396,21 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 		return nil, err
 	}
 
-	connOpts.OnEvent = d.getConnectEventHandler(op)
-
 	doneCh := make(chan struct{})
 
+	var gen uint64
+
 	d.p.update(func() {
+		d.connGen++
+		gen = d.connGen
 		d.connState = daemonv1.ConnectionStatus_CONNECTING
 		d.connOpts = normalizeConnectionOptions(opts)
 		d.connCancelFn = cancelFn
 		d.connDoneCh = doneCh
 		d.lastErr = nil
 	})
+
+	connOpts.OnEvent = d.getConnectEventHandler(op, gen)
 
 	go func() {
 		defer cancelFn()
@@ -371,22 +420,24 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 		d.stopRefreshLoop()
 
 		d.p.update(func() {
-			d.connState = daemonv1.ConnectionStatus_DISCONNECTED
-			d.connectedAt = nil
-			d.connCfg = nil
-			d.connOpts = nil
-			d.connCancelFn = nil
-			d.connDoneCh = nil
+			if d.connGen == gen {
+				d.connState = daemonv1.ConnectionStatus_DISCONNECTED
+				d.connectedAt = nil
+				d.connCfg = nil
+				d.connOpts = nil
+				d.connCancelFn = nil
+				d.connDoneCh = nil
 
-			if err != nil {
-				d.lastErr = getError(err, daemonv1.Error_CONNECTION_FAILED)
+				if err != nil {
+					d.lastErr = getError(err, daemonv1.Error_CONNECTION_FAILED)
+				}
 			}
 
 			if !op.isDone() {
 				if err != nil {
-					op.setFailed(d.lastErr)
+					op.setFailed(getError(err, daemonv1.Error_CONNECTION_FAILED))
 				} else {
-					op.setState(daemonv1.Operation_CANCELED)
+					op.setCanceled("The Connection was closed")
 				}
 			}
 		})
@@ -397,26 +448,27 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 	return d.getOperationPB(op), nil
 }
 
-func (d *domainCtl) getConnectEventHandler(op *operation) func(ev *connect.Event) {
+func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64) func(ev *connect.Event) {
 	return func(ev *connect.Event) {
-		defer func() {
-			if ev.Type == connect.EventTypeConnected {
-				d.startRefreshLoop()
-			}
-		}()
+		var startRefresh bool
 
 		d.p.update(func() {
+			if d.connGen != gen {
+				return
+			}
+
 			switch ev.Type {
 			case connect.EventTypeConnecting:
 				d.connState = daemonv1.ConnectionStatus_CONNECTING
 			case connect.EventTypeConnected:
 				d.connState = daemonv1.ConnectionStatus_CONNECTED
-				d.connCfg = ev.Connection
+				d.connCfg = pbutils.Clone(ev.Connection).(*cliconfigv1.Connection)
 				if d.connectedAt == nil {
 					d.connectedAt = pbutils.Now()
 				}
 				d.lastErr = nil
 				op.setState(daemonv1.Operation_SUCCEEDED)
+				startRefresh = true
 			case connect.EventTypeReconnecting:
 				d.connState = daemonv1.ConnectionStatus_RECONNECTING
 				d.connCfg = nil
@@ -425,11 +477,15 @@ func (d *domainCtl) getConnectEventHandler(op *operation) func(ev *connect.Event
 				}
 			}
 		})
+
+		if startRefresh {
+			d.startRefreshLoop()
+		}
 	}
 }
 
 func (d *domainCtl) startDisconnect() (*daemonv1.Operation, error) {
-	op, err := d.beginOperation(daemonv1.Operation_DISCONNECT, nil)
+	op, err := d.beginSupersedingOperation(daemonv1.Operation_DISCONNECT, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -445,15 +501,23 @@ func (d *domainCtl) startDisconnect() (*daemonv1.Operation, error) {
 
 	if cancelFn == nil {
 		d.p.update(func() {
+			d.lastErr = nil
 			op.setState(daemonv1.Operation_SUCCEEDED)
 		})
 		return d.getOperationPB(op), nil
 	}
 
 	go func() {
-		d.doDisconnect(cancelFn, doneCh)
+		err := d.doDisconnect(cancelFn, doneCh)
 
 		d.p.update(func() {
+			if err != nil {
+				d.lastErr = getError(err, daemonv1.Error_INTERNAL)
+				op.setFailed(d.lastErr)
+				return
+			}
+
+			d.lastErr = nil
 			op.setState(daemonv1.Operation_SUCCEEDED)
 		})
 	}()
@@ -461,8 +525,10 @@ func (d *domainCtl) startDisconnect() (*daemonv1.Operation, error) {
 	return d.getOperationPB(op), nil
 }
 
-func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct{}) {
+func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct{}) error {
 	cancelFn()
+
+	var retErr error
 
 	if doneCh != nil {
 		select {
@@ -470,11 +536,13 @@ func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct
 		case <-time.After(disconnectTimeout):
 			zap.L().Warn("Timed out waiting for the Connection to be closed",
 				zap.String("domain", d.domain))
+			retErr = errors.Errorf(
+				"Timed out waiting for the Connection of the domain %s to be closed", d.domain)
 		}
 	}
 
 	if !d.hasCredentials() {
-		return
+		return retErr
 	}
 
 	ctx, cancel := context.WithTimeout(d.p.ctx(context.Background()), clusterCallTimeout)
@@ -484,7 +552,7 @@ func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct
 	if err != nil {
 		zap.L().Debug("Could not connect to the Cluster API to disconnect",
 			zap.String("domain", d.domain), zap.Error(err))
-		return
+		return retErr
 	}
 	defer conn.Close()
 
@@ -493,10 +561,12 @@ func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct
 		zap.L().Debug("Could not disconnect at the Cluster",
 			zap.String("domain", d.domain), zap.Error(err))
 	}
+
+	return retErr
 }
 
 func (d *domainCtl) startLogout() (*daemonv1.Operation, error) {
-	op, err := d.beginOperation(daemonv1.Operation_LOGOUT, nil)
+	op, err := d.beginSupersedingOperation(daemonv1.Operation_LOGOUT, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -512,11 +582,7 @@ func (d *domainCtl) startLogout() (*daemonv1.Operation, error) {
 	d.p.mu.Unlock()
 
 	go func() {
-		if cancelFn != nil {
-			d.doDisconnect(cancelFn, doneCh)
-		}
-
-		err := d.doLogout()
+		err := d.doDisconnectAndLogout(cancelFn, doneCh)
 
 		d.p.update(func() {
 			d.reloadAuthentication()
@@ -534,8 +600,25 @@ func (d *domainCtl) startLogout() (*daemonv1.Operation, error) {
 	return d.getOperationPB(op), nil
 }
 
+func (d *domainCtl) doDisconnectAndLogout(cancelFn context.CancelFunc, doneCh chan struct{}) error {
+	var retErr error
+
+	if cancelFn != nil {
+		retErr = d.doDisconnect(cancelFn, doneCh)
+	}
+
+	if err := d.doLogout(); err != nil {
+		return err
+	}
+
+	return retErr
+}
+
 func (d *domainCtl) doLogout() error {
 	d.stopRefreshLoop()
+
+	d.credMu.Lock()
+	defer d.credMu.Unlock()
 
 	if !d.hasCredentials() {
 		return nil
@@ -569,33 +652,50 @@ func (d *domainCtl) hasCredentials() bool {
 	return err == nil
 }
 
-func (d *domainCtl) delete() error {
-	d.p.mu.Lock()
-	if d.op != nil && !d.op.isDone() {
-		d.p.mu.Unlock()
-		return status.Errorf(codes.FailedPrecondition,
-			"There is already an active Operation for the domain %s", d.domain)
+func (d *domainCtl) startDelete() (*daemonv1.Operation, error) {
+	op, err := d.beginSupersedingOperation(daemonv1.Operation_DELETE, nil)
+	if err != nil {
+		return nil, err
 	}
+
+	d.p.mu.Lock()
+	d.isDeleting = true
 	cancelFn := d.connCancelFn
 	doneCh := d.connDoneCh
+	if cancelFn != nil {
+		d.connState = daemonv1.ConnectionStatus_DISCONNECTING
+	}
+	d.p.notify()
 	d.p.mu.Unlock()
 
-	if cancelFn != nil {
-		d.doDisconnect(cancelFn, doneCh)
-	}
+	go func() {
+		err := d.doDelete(cancelFn, doneCh)
 
-	if err := d.doLogout(); err != nil {
-		zap.L().Debug("Could not log out while deleting the domain",
-			zap.String("domain", d.domain), zap.Error(err))
+		d.p.update(func() {
+			if err != nil {
+				d.isDeleting = false
+				d.reloadAuthentication()
+				d.lastErr = getError(err, daemonv1.Error_INTERNAL)
+				op.setFailed(d.lastErr)
+				return
+			}
+
+			delete(d.p.domains, d.domain)
+			op.setState(daemonv1.Operation_SUCCEEDED)
+		})
+	}()
+
+	return d.getOperationPB(op), nil
+}
+
+func (d *domainCtl) doDelete(cancelFn context.CancelFunc, doneCh chan struct{}) error {
+	if err := d.doDisconnectAndLogout(cancelFn, doneCh); err != nil {
+		return err
 	}
 
 	if err := d.p.dbC.Delete(d.domain); err != nil && !d.p.dbC.ErrorIsNotFound(err) {
-		return status.Errorf(codes.Internal, "Could not delete the local state: %s", err.Error())
+		return errors.Errorf("Could not delete the local state: %+v", err)
 	}
-
-	d.p.update(func() {
-		delete(d.p.domains, d.domain)
-	})
 
 	return nil
 }
@@ -611,9 +711,23 @@ func (d *domainCtl) updateSettings(settings *daemonv1.DomainSettings) (*daemonv1
 		return nil, status.Errorf(codes.Internal, "Could not store the settings: %s", err.Error())
 	}
 
+	var needsConnect bool
+
 	d.p.update(func() {
 		d.settings = ret
+
+		needsConnect = ret.GetAutoConnect() &&
+			d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED &&
+			d.connState == daemonv1.ConnectionStatus_DISCONNECTED &&
+			(d.op == nil || d.op.isDone())
 	})
+
+	if needsConnect {
+		if _, err := d.startConnect(nil); err != nil {
+			zap.L().Debug("Could not auto-connect after the settings update",
+				zap.String("domain", d.domain), zap.Error(err))
+		}
+	}
 
 	return ret, nil
 }
@@ -630,9 +744,9 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 			"You are not authenticated to the domain %s", d.domain)
 	}
 
-	d.tokenMu.Lock()
+	d.credMu.Lock()
 	accessToken, err := authenticator.GetAccessToken(d.p.ctx(ctx), d.domain)
-	d.tokenMu.Unlock()
+	d.credMu.Unlock()
 
 	if err != nil {
 		d.p.update(func() {
@@ -663,8 +777,14 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 			ret.ExpiresAt = pbutils.Timestamp(expiresAt)
 		}
 
-		d.p.update(func() {
-			d.setAuthenticationFromState(itm)
+		d.p.updateIf(func() bool {
+			isChanged := d.setAuthenticationFromState(itm)
+			if d.lastErr != nil {
+				d.lastErr = nil
+				isChanged = true
+			}
+
+			return isChanged
 		})
 	}
 
@@ -710,31 +830,6 @@ func (d *domainCtl) stopRefreshLoop() {
 	if cancelFn != nil {
 		cancelFn()
 	}
-}
-
-func (d *domainCtl) cancelOperation(op *operation) {
-	d.p.mu.Lock()
-	cancelFn := op.cancelFn
-	connCancelFn := d.connCancelFn
-	isConnect := op.typ == daemonv1.Operation_CONNECT
-	d.p.mu.Unlock()
-
-	if cancelFn != nil {
-		cancelFn()
-	}
-
-	if isConnect && connCancelFn != nil {
-		connCancelFn()
-	}
-
-	d.p.update(func() {
-		if !op.isDone() && op.typ != daemonv1.Operation_CONNECT {
-			op.setFailed(&daemonv1.Error{
-				Code:    daemonv1.Error_OPERATION_CANCELED,
-				Message: "The Operation was canceled",
-			})
-		}
-	})
 }
 
 func (d *domainCtl) close() {

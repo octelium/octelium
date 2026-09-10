@@ -62,6 +62,10 @@ func (o *operation) isDone() bool {
 	}
 }
 
+func (o *operation) isCancellable() bool {
+	return o.cancelFn != nil && !o.isDone()
+}
+
 func (o *operation) setState(state daemonv1.Operation_State) {
 	if o.isDone() {
 		return
@@ -73,6 +77,7 @@ func (o *operation) setState(state daemonv1.Operation_State) {
 	if o.isDone() {
 		o.completedAt = o.updatedAt
 		o.action = nil
+		o.cancelFn = nil
 	}
 }
 
@@ -90,6 +95,13 @@ func (o *operation) setFailed(err *daemonv1.Error) {
 	o.setState(daemonv1.Operation_FAILED)
 }
 
+func (o *operation) setCanceled(msg string) {
+	o.setFailed(&daemonv1.Error{
+		Code:    daemonv1.Error_OPERATION_CANCELED,
+		Message: msg,
+	})
+}
+
 func (o *operation) toPB() *daemonv1.Operation {
 	return &daemonv1.Operation{
 		Id:          o.id,
@@ -101,5 +113,6 @@ func (o *operation) toPB() *daemonv1.Operation {
 		CompletedAt: o.completedAt,
 		Action:      o.action,
 		Error:       o.err,
+		Cancellable: o.isCancellable(),
 	}
 }

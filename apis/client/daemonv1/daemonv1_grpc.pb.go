@@ -22,7 +22,6 @@ package daemonv1
 
 import (
 	context "context"
-	metav1 "github.com/octelium/octelium/apis/main/metav1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -69,18 +68,31 @@ const (
 // The transport is local-only. Unix domain sockets are used on Linux and macOS
 // while named pipes are used on Windows. The daemon derives the identity of
 // the calling OS principal from the IPC transport itself. Caller identity is
-// never read from protobuf fields or from gRPC metadata. All the state that is
-// visible via this Service is scoped to the calling OS principal.
+// never read from protobuf fields or from gRPC metadata.
+//
+// The daemon is owned by exactly one OS principal. The first RPC of a daemon
+// process binds the daemon to the OS principal of its caller for the entire
+// lifetime of the daemon process. Every subsequent RPC of another OS principal
+// returns PERMISSION_DENIED. The daemon additionally uses the identity of its
+// owner wherever the host effects of a Connection belong to a specific OS user
+// (e.g. the host identity of the embedded SSH sessions, the home directory of
+// the SSH Service configuration) instead of using its own privileged identity.
 //
 // A Cluster domain becomes known to the daemon either via Authenticate or via
 // UpdateDomainSettings. The methods that operate on a domain return NOT_FOUND
-// for an unknown domain.
+// for an unknown domain. Cluster domains are canonicalized by the daemon.
+// Therefore the domain of a response can differ from the domain of the
+// request.
 type MainServiceClient interface {
 	// GetInfo retrieves information about the running Octelium daemon and about
 	// the version of this API it implements.
+	//
+	// GetInfo is the RPC that a frontend is supposed to call on its launch. It
+	// binds the daemon to the calling OS principal whenever the daemon is not
+	// already bound to one.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
-	// GetStatus retrieves a complete snapshot of the local Octelium state that
-	// belongs to the calling OS principal.
+	// GetStatus retrieves a complete snapshot of the local Octelium state of the
+	// owner of the daemon.
 	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
 	// WatchStatus watches the local Octelium state.
 	//
@@ -103,8 +115,8 @@ type MainServiceClient interface {
 	// redeems the authentication token, carries out the post-authentication
 	// steps (e.g. Device registration) and stores the resulting credentials.
 	//
-	// At most one lifecycle Operation can be active for the same domain and OS
-	// principal at a time. Otherwise, the RPC returns FAILED_PRECONDITION.
+	// At most one lifecycle Operation can be active per domain at a time.
+	// Otherwise, the RPC returns FAILED_PRECONDITION.
 	Authenticate(ctx context.Context, in *AuthenticateRequest, opts ...grpc.CallOption) (*Operation, error)
 	// Connect starts connecting the host to a Cluster.
 	//
@@ -123,9 +135,9 @@ type MainServiceClient interface {
 	// already disconnected domain succeeds while disconnecting an unknown domain
 	// returns NOT_FOUND.
 	//
-	// While a Connect Operation has not established the Connection yet, the
-	// Connection is aborted via CancelOperation as opposed to Disconnect since
-	// there can only be one active Operation per domain.
+	// Disconnect always expresses the desired state of the domain. An
+	// Authenticate or a Connect Operation that is still in progress is canceled
+	// by the daemon itself and the returned Disconnect Operation supersedes it.
 	Disconnect(ctx context.Context, in *DisconnectRequest, opts ...grpc.CallOption) (*Operation, error)
 	// Logout logs the calling OS principal out of a Cluster.
 	//
@@ -133,6 +145,9 @@ type MainServiceClient interface {
 	// whenever possible and removes the locally stored credentials. The
 	// persisted DomainSettings of the domain are not removed. Use DeleteDomain
 	// in order to remove the domain entirely.
+	//
+	// Like Disconnect, Logout supersedes an Authenticate or a Connect Operation
+	// that is still in progress.
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*Operation, error)
 	// GetOperation retrieves an Operation by its ID.
 	//
@@ -143,6 +158,10 @@ type MainServiceClient interface {
 	// CancelOperation requests the cancellation of an Operation. Cancellation is
 	// cooperative. A successful RPC does not mean that the Operation has already
 	// reached the CANCELED state by the time the response is returned.
+	//
+	// Canceling an Operation that already reached a terminal state is a no-op
+	// that returns the Operation as it is. Canceling an Operation whose
+	// cancellable is false returns FAILED_PRECONDITION.
 	CancelOperation(ctx context.Context, in *CancelOperationRequest, opts ...grpc.CallOption) (*Operation, error)
 	// GetAPICredential retrieves the current short-lived Cluster API access
 	// credential of a domain so that a local frontend can natively access the
@@ -161,12 +180,19 @@ type MainServiceClient interface {
 	// UpdateDomainSettings replaces the persisted local settings of a domain.
 	//
 	// Updating the settings does not reconfigure an already active Connection.
-	// The new settings are used by the subsequent Connect Operations.
+	// The new settings are used by the subsequent Connect Operations. However,
+	// enabling autoConnect for an authenticated domain that is currently
+	// disconnected does start a Connect Operation.
 	UpdateDomainSettings(ctx context.Context, in *UpdateDomainSettingsRequest, opts ...grpc.CallOption) (*DomainSettings, error)
 	// DeleteDomain removes a domain entirely. The domain is disconnected and
 	// logged out if needed and both its credentials and its persisted
 	// DomainSettings are removed.
-	DeleteDomain(ctx context.Context, in *DeleteDomainRequest, opts ...grpc.CallOption) (*metav1.OperationResult, error)
+	//
+	// Like Disconnect, DeleteDomain supersedes an Authenticate or a Connect
+	// Operation that is still in progress. The domain disappears from the status
+	// once the Operation succeeds. Until then it is still visible and it rejects
+	// the other lifecycle Operations.
+	DeleteDomain(ctx context.Context, in *DeleteDomainRequest, opts ...grpc.CallOption) (*Operation, error)
 }
 
 type mainServiceClient struct {
@@ -296,9 +322,9 @@ func (c *mainServiceClient) UpdateDomainSettings(ctx context.Context, in *Update
 	return out, nil
 }
 
-func (c *mainServiceClient) DeleteDomain(ctx context.Context, in *DeleteDomainRequest, opts ...grpc.CallOption) (*metav1.OperationResult, error) {
+func (c *mainServiceClient) DeleteDomain(ctx context.Context, in *DeleteDomainRequest, opts ...grpc.CallOption) (*Operation, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(metav1.OperationResult)
+	out := new(Operation)
 	err := c.cc.Invoke(ctx, MainService_DeleteDomain_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -327,18 +353,31 @@ func (c *mainServiceClient) DeleteDomain(ctx context.Context, in *DeleteDomainRe
 // The transport is local-only. Unix domain sockets are used on Linux and macOS
 // while named pipes are used on Windows. The daemon derives the identity of
 // the calling OS principal from the IPC transport itself. Caller identity is
-// never read from protobuf fields or from gRPC metadata. All the state that is
-// visible via this Service is scoped to the calling OS principal.
+// never read from protobuf fields or from gRPC metadata.
+//
+// The daemon is owned by exactly one OS principal. The first RPC of a daemon
+// process binds the daemon to the OS principal of its caller for the entire
+// lifetime of the daemon process. Every subsequent RPC of another OS principal
+// returns PERMISSION_DENIED. The daemon additionally uses the identity of its
+// owner wherever the host effects of a Connection belong to a specific OS user
+// (e.g. the host identity of the embedded SSH sessions, the home directory of
+// the SSH Service configuration) instead of using its own privileged identity.
 //
 // A Cluster domain becomes known to the daemon either via Authenticate or via
 // UpdateDomainSettings. The methods that operate on a domain return NOT_FOUND
-// for an unknown domain.
+// for an unknown domain. Cluster domains are canonicalized by the daemon.
+// Therefore the domain of a response can differ from the domain of the
+// request.
 type MainServiceServer interface {
 	// GetInfo retrieves information about the running Octelium daemon and about
 	// the version of this API it implements.
+	//
+	// GetInfo is the RPC that a frontend is supposed to call on its launch. It
+	// binds the daemon to the calling OS principal whenever the daemon is not
+	// already bound to one.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
-	// GetStatus retrieves a complete snapshot of the local Octelium state that
-	// belongs to the calling OS principal.
+	// GetStatus retrieves a complete snapshot of the local Octelium state of the
+	// owner of the daemon.
 	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
 	// WatchStatus watches the local Octelium state.
 	//
@@ -361,8 +400,8 @@ type MainServiceServer interface {
 	// redeems the authentication token, carries out the post-authentication
 	// steps (e.g. Device registration) and stores the resulting credentials.
 	//
-	// At most one lifecycle Operation can be active for the same domain and OS
-	// principal at a time. Otherwise, the RPC returns FAILED_PRECONDITION.
+	// At most one lifecycle Operation can be active per domain at a time.
+	// Otherwise, the RPC returns FAILED_PRECONDITION.
 	Authenticate(context.Context, *AuthenticateRequest) (*Operation, error)
 	// Connect starts connecting the host to a Cluster.
 	//
@@ -381,9 +420,9 @@ type MainServiceServer interface {
 	// already disconnected domain succeeds while disconnecting an unknown domain
 	// returns NOT_FOUND.
 	//
-	// While a Connect Operation has not established the Connection yet, the
-	// Connection is aborted via CancelOperation as opposed to Disconnect since
-	// there can only be one active Operation per domain.
+	// Disconnect always expresses the desired state of the domain. An
+	// Authenticate or a Connect Operation that is still in progress is canceled
+	// by the daemon itself and the returned Disconnect Operation supersedes it.
 	Disconnect(context.Context, *DisconnectRequest) (*Operation, error)
 	// Logout logs the calling OS principal out of a Cluster.
 	//
@@ -391,6 +430,9 @@ type MainServiceServer interface {
 	// whenever possible and removes the locally stored credentials. The
 	// persisted DomainSettings of the domain are not removed. Use DeleteDomain
 	// in order to remove the domain entirely.
+	//
+	// Like Disconnect, Logout supersedes an Authenticate or a Connect Operation
+	// that is still in progress.
 	Logout(context.Context, *LogoutRequest) (*Operation, error)
 	// GetOperation retrieves an Operation by its ID.
 	//
@@ -401,6 +443,10 @@ type MainServiceServer interface {
 	// CancelOperation requests the cancellation of an Operation. Cancellation is
 	// cooperative. A successful RPC does not mean that the Operation has already
 	// reached the CANCELED state by the time the response is returned.
+	//
+	// Canceling an Operation that already reached a terminal state is a no-op
+	// that returns the Operation as it is. Canceling an Operation whose
+	// cancellable is false returns FAILED_PRECONDITION.
 	CancelOperation(context.Context, *CancelOperationRequest) (*Operation, error)
 	// GetAPICredential retrieves the current short-lived Cluster API access
 	// credential of a domain so that a local frontend can natively access the
@@ -419,12 +465,19 @@ type MainServiceServer interface {
 	// UpdateDomainSettings replaces the persisted local settings of a domain.
 	//
 	// Updating the settings does not reconfigure an already active Connection.
-	// The new settings are used by the subsequent Connect Operations.
+	// The new settings are used by the subsequent Connect Operations. However,
+	// enabling autoConnect for an authenticated domain that is currently
+	// disconnected does start a Connect Operation.
 	UpdateDomainSettings(context.Context, *UpdateDomainSettingsRequest) (*DomainSettings, error)
 	// DeleteDomain removes a domain entirely. The domain is disconnected and
 	// logged out if needed and both its credentials and its persisted
 	// DomainSettings are removed.
-	DeleteDomain(context.Context, *DeleteDomainRequest) (*metav1.OperationResult, error)
+	//
+	// Like Disconnect, DeleteDomain supersedes an Authenticate or a Connect
+	// Operation that is still in progress. The domain disappears from the status
+	// once the Operation succeeds. Until then it is still visible and it rejects
+	// the other lifecycle Operations.
+	DeleteDomain(context.Context, *DeleteDomainRequest) (*Operation, error)
 	mustEmbedUnimplementedMainServiceServer()
 }
 
@@ -468,7 +521,7 @@ func (UnimplementedMainServiceServer) GetAPICredential(context.Context, *GetAPIC
 func (UnimplementedMainServiceServer) UpdateDomainSettings(context.Context, *UpdateDomainSettingsRequest) (*DomainSettings, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateDomainSettings not implemented")
 }
-func (UnimplementedMainServiceServer) DeleteDomain(context.Context, *DeleteDomainRequest) (*metav1.OperationResult, error) {
+func (UnimplementedMainServiceServer) DeleteDomain(context.Context, *DeleteDomainRequest) (*Operation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteDomain not implemented")
 }
 func (UnimplementedMainServiceServer) mustEmbedUnimplementedMainServiceServer() {}

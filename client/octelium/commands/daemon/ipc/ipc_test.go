@@ -132,3 +132,46 @@ func TestGetPeerPrincipalNonLocal(t *testing.T) {
 
 	assert.NotNil(t, <-errCh)
 }
+
+func TestListenSingleton(t *testing.T) {
+	addr := path.Join(t.TempDir(), "daemon.sock")
+
+	lis, err := Listen(addr)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		lis.Close()
+	})
+
+	{
+		_, err := Listen(addr)
+		assert.NotNil(t, err)
+	}
+
+	assert.Nil(t, lis.Close())
+
+	lis2, err := Listen(addr)
+	assert.Nil(t, err)
+	assert.Nil(t, lis2.Close())
+}
+
+func TestListenNonSocket(t *testing.T) {
+	addr := path.Join(t.TempDir(), "daemon.sock")
+
+	assert.Nil(t, os.WriteFile(addr, []byte("not-a-socket"), 0600))
+
+	_, err := Listen(addr)
+	assert.NotNil(t, err)
+
+	_, err = os.Stat(addr)
+	assert.Nil(t, err)
+}
+
+func TestLookupPrincipal(t *testing.T) {
+	pr, err := LookupPrincipal(fmt.Sprintf("%d", os.Getuid()))
+	assert.Nil(t, err)
+	assert.Equal(t, fmt.Sprintf("%d", os.Getuid()), pr.ID)
+	assert.NotEmpty(t, pr.Name)
+
+	_, err = LookupPrincipal("4294967290")
+	assert.NotNil(t, err)
+}
