@@ -104,6 +104,20 @@ func (d *domainCtl) setAuthenticationFromState(itm *cliconfigv1.State_Domain) bo
 	return true
 }
 
+func (d *domainCtl) canReconcile() bool {
+	if d.isDeleting {
+		return false
+	}
+
+	switch d.authState {
+	case daemonv1.AuthenticationStatus_AUTHENTICATING,
+		daemonv1.AuthenticationStatus_LOGGING_OUT:
+		return false
+	default:
+		return true
+	}
+}
+
 func (d *domainCtl) reloadAuthentication() bool {
 	itm, err := d.p.dbC.Get(d.domain)
 	if err != nil {

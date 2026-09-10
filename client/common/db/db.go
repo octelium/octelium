@@ -17,6 +17,7 @@ package db
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -33,6 +34,16 @@ func OpenDefault() (*DB, error) {
 	return Open("")
 }
 
+type Opts struct {
+	Path  string
+	Owner *Owner
+}
+
+type Owner struct {
+	UID int
+	GID int
+}
+
 type db interface {
 	get(ctx context.Context, domain string) (*cliconfigv1.State_Domain, error)
 	list(ctx context.Context) (map[string]*cliconfigv1.State_Domain, error)
@@ -45,18 +56,27 @@ type db interface {
 }
 
 func Open(overridePath string) (*DB, error) {
+	return OpenWithOpts(&Opts{
+		Path: overridePath,
+	})
+}
+
+func OpenWithOpts(o *Opts) (*DB, error) {
+	if o == nil {
+		o = &Opts{}
+	}
 
 	ret := &DB{}
 	var err error
 
-	switch strings.ToLower(overridePath) {
+	switch strings.ToLower(o.Path) {
 	case "mem", "memory":
 		ret.db, err = newMemDB()
 		if err != nil {
 			return nil, err
 		}
 	default:
-		ret.db, err = newFSDB(overridePath)
+		ret.db, err = newFSDB(o)
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +141,7 @@ func (d *DB) ErrorIsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
 }
 
-func createHomeDirIfNotExists(dirPath string) error {
+func (o *Owner) createHomeDirIfNotExists(dirPath string) error {
 	_, err := os.Stat(dirPath)
 	if err == nil {
 		return nil
@@ -130,5 +150,62 @@ func createHomeDirIfNotExists(dirPath string) error {
 		return err
 	}
 
-	return os.MkdirAll(dirPath, 0700)
+	missingDirs, err := getMissingDirs(dirPath)
+	if err != nil {
+		return err
+	}
+
+	if parent := filepath.Dir(dirPath); parent != dirPath {
+		if err := os.MkdirAll(parent, 0755); err != nil {
+			return err
+		}
+	}
+
+	if err := os.Mkdir(dirPath, 0700); err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	for _, dir := range missingDirs {
+		if err := o.setOwner(dir); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getMissingDirs(dirPath string) ([]string, error) {
+	var ret []string
+
+	for dir := dirPath; ; {
+		_, err := os.Stat(dir)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		ret = append(ret, dir)
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return ret, nil
+}
+
+func (o *Owner) setOwner(filePath string) error {
+	if o == nil {
+		return nil
+	}
+
+	if err := os.Chown(filePath, o.UID, o.GID); err != nil {
+		return errors.Errorf("OcteliumDB: Could not set the owner of %s: %+v", filePath, err)
+	}
+
+	return nil
 }

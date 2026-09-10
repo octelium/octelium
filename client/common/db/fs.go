@@ -42,31 +42,51 @@ type fsDB struct {
 	mu     sync.Mutex
 	flock  *flock.Flock
 	dbPath string
+	owner  *Owner
 }
 
-func newFSDB(dbPath string) (*fsDB, error) {
-	ret := &fsDB{}
+func newFSDB(o *Opts) (*fsDB, error) {
+	ret := &fsDB{
+		owner: o.Owner,
+	}
 
-	if dbPath != "" {
-		if err := createHomeDirIfNotExists((dbPath)); err != nil {
-			return nil, err
-		}
-		dbPath = path.Join(dbPath, "octelium.db")
-	} else {
+	dbDir := o.Path
+	if dbDir == "" {
 		vHome, err := vhome.GetOcteliumHome()
 		if err != nil {
 			return nil, err
 		}
-		if err := createHomeDirIfNotExists(vHome); err != nil {
-			return nil, err
-		}
-		dbPath = path.Join(vHome, "octelium.db")
+		dbDir = vHome
 	}
 
-	ret.dbPath = dbPath
-	ret.flock = flock.New(fmt.Sprintf("%s.lock", dbPath))
+	if err := ret.owner.createHomeDirIfNotExists(dbDir); err != nil {
+		return nil, err
+	}
+
+	ret.dbPath = path.Join(dbDir, "octelium.db")
+
+	lockPath := fmt.Sprintf("%s.lock", ret.dbPath)
+	if err := ret.createLockFile(lockPath); err != nil {
+		return nil, err
+	}
+
+	ret.flock = flock.New(lockPath)
 
 	return ret, nil
+}
+
+func (d *fsDB) createLockFile(lockPath string) error {
+	if d.owner == nil {
+		return nil
+	}
+
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	f.Close()
+
+	return d.owner.setOwner(lockPath)
 }
 
 func (d *fsDB) lock() (func(), error) {
@@ -110,7 +130,11 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 		return err
 	}
 
-	return os.WriteFile(d.dbPath, stateBytes, 0600)
+	if err := os.WriteFile(d.dbPath, stateBytes, 0600); err != nil {
+		return err
+	}
+
+	return d.owner.setOwner(d.dbPath)
 }
 
 func (d *fsDB) readState() (*cliconfigv1.State, error) {

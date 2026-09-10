@@ -78,11 +78,17 @@ const (
 // (e.g. the host identity of the embedded SSH sessions, the home directory of
 // the SSH Service configuration) instead of using its own privileged identity.
 //
+// The daemon stores the credentials and the settings in the Octelium home
+// directory of its owner which is the very same local state used by the
+// Octelium CLI. In other words, authenticating via this API also authenticates
+// the CLI of the owner and vice versa. The daemon periodically reconciles its
+// state with that of the local state.
+//
 // A Cluster domain becomes known to the daemon either via Authenticate or via
-// UpdateDomainSettings. The methods that operate on a domain return NOT_FOUND
-// for an unknown domain. Cluster domains are canonicalized by the daemon.
-// Therefore the domain of a response can differ from the domain of the
-// request.
+// UpdateDomainSettings or via the local state of the owner. The methods that
+// operate on a domain return NOT_FOUND for an unknown domain. Cluster domains
+// are canonicalized by the daemon. Therefore the domain of a response can
+// differ from the domain of the request.
 type MainServiceClient interface {
 	// GetInfo retrieves information about the running Octelium daemon and about
 	// the version of this API it implements.
@@ -169,7 +175,10 @@ type MainServiceClient interface {
 	//
 	// Refresh tokens and any other persistent credentials are never exposed via
 	// this API. The accessToken is meant to be kept in the memory of the calling
-	// process and it must never be persisted by the caller.
+	// process and it must never be persisted by the caller. This RPC spares the
+	// frontends the renewal of the credentials as opposed to being a privilege
+	// boundary since the credentials are stored in the Octelium home directory of
+	// the owner itself which is readable by the owner.
 	//
 	// The daemon transparently renews the access token as long as renewing it
 	// does not require the interaction of the user. If no usable credential can
@@ -363,11 +372,17 @@ func (c *mainServiceClient) DeleteDomain(ctx context.Context, in *DeleteDomainRe
 // (e.g. the host identity of the embedded SSH sessions, the home directory of
 // the SSH Service configuration) instead of using its own privileged identity.
 //
+// The daemon stores the credentials and the settings in the Octelium home
+// directory of its owner which is the very same local state used by the
+// Octelium CLI. In other words, authenticating via this API also authenticates
+// the CLI of the owner and vice versa. The daemon periodically reconciles its
+// state with that of the local state.
+//
 // A Cluster domain becomes known to the daemon either via Authenticate or via
-// UpdateDomainSettings. The methods that operate on a domain return NOT_FOUND
-// for an unknown domain. Cluster domains are canonicalized by the daemon.
-// Therefore the domain of a response can differ from the domain of the
-// request.
+// UpdateDomainSettings or via the local state of the owner. The methods that
+// operate on a domain return NOT_FOUND for an unknown domain. Cluster domains
+// are canonicalized by the daemon. Therefore the domain of a response can
+// differ from the domain of the request.
 type MainServiceServer interface {
 	// GetInfo retrieves information about the running Octelium daemon and about
 	// the version of this API it implements.
@@ -454,7 +469,10 @@ type MainServiceServer interface {
 	//
 	// Refresh tokens and any other persistent credentials are never exposed via
 	// this API. The accessToken is meant to be kept in the memory of the calling
-	// process and it must never be persisted by the caller.
+	// process and it must never be persisted by the caller. This RPC spares the
+	// frontends the renewal of the credentials as opposed to being a privilege
+	// boundary since the credentials are stored in the Octelium home directory of
+	// the owner itself which is readable by the owner.
 	//
 	// The daemon transparently renews the access token as long as renewing it
 	// does not require the interaction of the user. If no usable credential can

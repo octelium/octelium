@@ -181,6 +181,7 @@ func setPrincipalUser(pr *Principal) {
 		return
 	}
 
+	pr.GID = usr.Gid
 	pr.Name = usr.Username
 	pr.HomeDir = usr.HomeDir
 }
@@ -193,6 +194,7 @@ func LookupPrincipal(id string) (*Principal, error) {
 
 	return &Principal{
 		ID:      usr.Uid,
+		GID:     usr.Gid,
 		Name:    usr.Username,
 		HomeDir: usr.HomeDir,
 	}, nil

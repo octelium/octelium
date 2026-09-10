@@ -27,6 +27,9 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
+	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/client/common/cliutils/vhome"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/stretchr/testify/assert"
@@ -783,4 +786,127 @@ func TestDeleteDomainWhileAuthenticating(t *testing.T) {
 	resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
 	assert.Nil(t, err)
 	assert.Equal(t, 0, len(resp.Domains))
+}
+
+func TestGetPrincipalDBDir(t *testing.T) {
+	{
+		srv, err := New(&Opts{
+			StateDir: "/var/lib/octelium",
+		})
+		assert.Nil(t, err)
+
+		ret, err := srv.getPrincipalDBDir(&ipc.Principal{
+			ID:      "1000",
+			HomeDir: "/home/usr1",
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, "/var/lib/octelium/users/1000", ret)
+	}
+
+	{
+		t.Setenv("OCTELIUM_DAEMON_STATE_DIR", "")
+
+		srv, err := New(&Opts{})
+		assert.Nil(t, err)
+
+		ret, err := srv.getPrincipalDBDir(&ipc.Principal{
+			ID:      "1000",
+			HomeDir: "/home/usr1",
+		})
+		assert.Nil(t, err)
+
+		octeliumHome, err := vhome.GetOcteliumHomeFromUserHome("/home/usr1")
+		assert.Nil(t, err)
+		assert.Equal(t, octeliumHome, ret)
+
+		_, err = srv.getPrincipalDBDir(&ipc.Principal{
+			ID: "1000",
+		})
+		assert.NotNil(t, err)
+	}
+}
+
+func TestReconcile(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	domain := "example.com"
+
+	dbDir := path.Join(srv.dir, "state", "users", fmt.Sprintf("%d", os.Getuid()))
+
+	setSessionToken := func() {
+		dbC, err := db.Open(dbDir)
+		assert.Nil(t, err)
+		assert.Nil(t, dbC.SetSessionToken(domain, &authv1.SessionToken{
+			AccessToken:           "at",
+			RefreshToken:          "rt",
+			ExpiresIn:             3600,
+			RefreshTokenExpiresIn: 7200,
+		}))
+		assert.Nil(t, dbC.Close())
+	}
+
+	deleteDomain := func() {
+		dbC, err := db.Open(dbDir)
+		assert.Nil(t, err)
+		assert.Nil(t, dbC.Delete(domain))
+		assert.Nil(t, dbC.Close())
+	}
+
+	setSessionToken()
+
+	{
+		resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+		assert.Equal(t, 0, len(resp.Domains))
+	}
+
+	srv.srv.principal.reconcile()
+
+	{
+		resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(resp.Domains))
+		assert.Equal(t, domain, resp.Domains[0].Domain)
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED,
+			resp.Domains[0].Authentication.State)
+	}
+
+	deleteDomain()
+	srv.srv.principal.reconcile()
+
+	{
+		resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(resp.Domains))
+		assert.Equal(t, daemonv1.AuthenticationStatus_LOGGED_OUT,
+			resp.Domains[0].Authentication.State)
+	}
+
+	setSessionToken()
+
+	authOp, err := srv.c.Authenticate(ctx, &daemonv1.AuthenticateRequest{
+		Domain: domain,
+		Type: &daemonv1.AuthenticateRequest_Browser_{
+			Browser: &daemonv1.AuthenticateRequest_Browser{},
+		},
+	})
+	assert.Nil(t, err)
+
+	srv.srv.principal.reconcile()
+
+	{
+		resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATING,
+			resp.Domains[0].Authentication.State)
+	}
+
+	_, err = srv.c.CancelOperation(ctx, &daemonv1.CancelOperationRequest{
+		Id: authOp.Id,
+	})
+	assert.Nil(t, err)
 }

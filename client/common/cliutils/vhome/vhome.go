@@ -44,6 +44,21 @@ func GetOcteliumHome() (string, error) {
 	return path.Join(homeDir, suffix), nil
 }
 
+func GetOcteliumHomeFromUserHome(userHome string) (string, error) {
+	if userHome == "" {
+		return "", errors.Errorf("The User home directory is not set")
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		return path.Join(userHome, "AppData", "Roaming", "Octelium"), nil
+	case "darwin":
+		return path.Join(userHome, "Library", "Application Support", "octelium"), nil
+	default:
+		return path.Join(userHome, ".config", "octelium"), nil
+	}
+}
+
 func GetOcteliumUserHome() (string, error) {
 	if ret := os.Getenv("OCTELIUM_USER_HOME"); ret != "" {
 		return ret, nil

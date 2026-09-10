@@ -19,9 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -36,7 +38,7 @@ func TestFSDB(t *testing.T) {
 	{
 		tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 		assert.Nil(t, err)
-		db, err := newFSDB(tmpDir)
+		db, err := newFSDB(&Opts{Path: tmpDir})
 		assert.Nil(t, err)
 
 		err = db.migrate(context.Background())
@@ -74,7 +76,7 @@ func TestFSDB(t *testing.T) {
 		// No migration
 		tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 		assert.Nil(t, err)
-		db, err := newFSDB(tmpDir)
+		db, err := newFSDB(&Opts{Path: tmpDir})
 		assert.Nil(t, err)
 
 		domain := "example.com"
@@ -107,7 +109,7 @@ func TestFSDBConcurrentSameHandle(t *testing.T) {
 
 	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 	assert.Nil(t, err)
-	db, err := newFSDB(tmpDir)
+	db, err := newFSDB(&Opts{Path: tmpDir})
 	assert.Nil(t, err)
 
 	err = db.migrate(context.Background())
@@ -142,7 +144,7 @@ func TestFSDBConcurrentSeparateHandles(t *testing.T) {
 
 	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 	assert.Nil(t, err)
-	initDB, err := newFSDB(tmpDir)
+	initDB, err := newFSDB(&Opts{Path: tmpDir})
 	assert.Nil(t, err)
 
 	err = initDB.migrate(context.Background())
@@ -156,7 +158,7 @@ func TestFSDBConcurrentSeparateHandles(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 
-			db, err := newFSDB(tmpDir)
+			db, err := newFSDB(&Opts{Path: tmpDir})
 			assert.Nil(t, err)
 
 			sessTkn := &authv1.SessionToken{
@@ -181,7 +183,7 @@ func TestFSDBPreservesFileIdentity(t *testing.T) {
 
 	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 	assert.Nil(t, err)
-	db, err := newFSDB(tmpDir)
+	db, err := newFSDB(&Opts{Path: tmpDir})
 	assert.Nil(t, err)
 
 	err = db.migrate(context.Background())
@@ -218,7 +220,7 @@ func TestFSDBReadNeverSeesPartialWrite(t *testing.T) {
 
 	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
 	assert.Nil(t, err)
-	db, err := newFSDB(tmpDir)
+	db, err := newFSDB(&Opts{Path: tmpDir})
 	assert.Nil(t, err)
 
 	err = db.migrate(context.Background())
@@ -284,7 +286,7 @@ func TestFSDBSymlinkedDBFile(t *testing.T) {
 	err = os.Symlink(realPath, filepath.Join(linkDir, "octelium.db"))
 	assert.Nil(t, err)
 
-	db, err := newFSDB(linkDir)
+	db, err := newFSDB(&Opts{Path: linkDir})
 	assert.Nil(t, err)
 
 	domain := "example.com"
@@ -307,4 +309,106 @@ func TestFSDBSymlinkedDBFile(t *testing.T) {
 	assert.True(t, len(realBytes) > 0)
 
 	os.RemoveAll(tmpDir)
+}
+
+func TestFSDBOwner(t *testing.T) {
+	dbDir := filepath.Join(t.TempDir(), "home", ".config", "octelium")
+
+	db, err := newFSDB(&Opts{
+		Path: dbDir,
+		Owner: &Owner{
+			UID: os.Getuid(),
+			GID: os.Getgid(),
+		},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, db.migrate(context.Background()))
+
+	info, err := os.Stat(dbDir)
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0700), info.Mode().Perm())
+
+	info, err = os.Stat(filepath.Dir(dbDir))
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0755), info.Mode().Perm())
+
+	_, err = os.Stat(filepath.Join(dbDir, "octelium.db.lock"))
+	assert.Nil(t, err)
+
+	domain := "example.com"
+	assert.Nil(t, db.set(context.Background(), domain, &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(8),
+	}))
+
+	info, err = os.Stat(filepath.Join(dbDir, "octelium.db"))
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+
+	itm, err := db.get(context.Background(), domain)
+	assert.Nil(t, err)
+	assert.NotNil(t, itm.SessionToken)
+}
+
+func TestFSDBOwnerAsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("This test needs to run as root")
+	}
+
+	const uid = 1000
+	const gid = 1000
+
+	if _, err := user.LookupId(fmt.Sprintf("%d", uid)); err != nil {
+		t.Skip("This test needs an unprivileged OS user")
+	}
+
+	usrHome := filepath.Join(t.TempDir(), "home")
+	assert.Nil(t, os.Mkdir(usrHome, 0700))
+	assert.Nil(t, os.Chown(usrHome, uid, gid))
+
+	dbDir := filepath.Join(usrHome, ".config", "octelium")
+
+	db, err := newFSDB(&Opts{
+		Path: dbDir,
+		Owner: &Owner{
+			UID: uid,
+			GID: gid,
+		},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, db.migrate(context.Background()))
+	assert.Nil(t, db.set(context.Background(), "example.com", &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(8),
+	}))
+
+	for _, filePath := range []string{
+		filepath.Join(usrHome, ".config"),
+		dbDir,
+		filepath.Join(dbDir, "octelium.db"),
+		filepath.Join(dbDir, "octelium.db.lock"),
+	} {
+		info, err := os.Stat(filePath)
+		assert.Nil(t, err)
+		assert.Equal(t, uint32(uid), info.Sys().(*syscall.Stat_t).Uid, "path=%s", filePath)
+		assert.Equal(t, uint32(gid), info.Sys().(*syscall.Stat_t).Gid, "path=%s", filePath)
+	}
+}
+
+func TestGetMissingDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	{
+		ret, err := getMissingDirs(dir)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, len(ret))
+	}
+
+	{
+		ret, err := getMissingDirs(filepath.Join(dir, "a", "b", "c"))
+		assert.Nil(t, err)
+		assert.Equal(t, []string{
+			filepath.Join(dir, "a", "b", "c"),
+			filepath.Join(dir, "a", "b"),
+			filepath.Join(dir, "a"),
+		}, ret)
+	}
 }

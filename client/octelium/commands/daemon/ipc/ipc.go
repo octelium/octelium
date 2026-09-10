@@ -27,6 +27,7 @@ const AuthType = "octelium-local"
 
 type Principal struct {
 	ID      string
+	GID     string
 	Name    string
 	HomeDir string
 	PID     int32

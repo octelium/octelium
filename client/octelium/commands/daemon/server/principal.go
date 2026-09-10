@@ -16,12 +16,14 @@ package server
 
 import (
 	"context"
-	"path/filepath"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -33,7 +35,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const operationRetention = 10 * time.Minute
+const (
+	operationRetention     = 10 * time.Minute
+	stateReconcileInterval = 5 * time.Second
+)
 
 type principal struct {
 	srv     *Server
@@ -55,7 +60,15 @@ type watcher struct {
 }
 
 func newPrincipal(srv *Server, pr *ipc.Principal) (*principal, error) {
-	dbC, err := db.Open(filepath.Join(srv.stateDir, "users", pr.ID))
+	dbDir, err := srv.getPrincipalDBDir(pr)
+	if err != nil {
+		return nil, err
+	}
+
+	dbC, err := db.OpenWithOpts(&db.Opts{
+		Path:  dbDir,
+		Owner: getDBOwner(pr),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -80,9 +93,104 @@ func newPrincipal(srv *Server, pr *ipc.Principal) (*principal, error) {
 	}
 
 	zap.L().Debug("Loaded the state of the OS principal",
-		zap.String("principal", ret.id), zap.Int("domains", len(ret.domains)))
+		zap.String("principal", ret.id), zap.String("dbDir", dbDir),
+		zap.Int("domains", len(ret.domains)))
 
 	return ret, nil
+}
+
+func getDBOwner(pr *ipc.Principal) *db.Owner {
+	if os.Geteuid() == 0 {
+		uid, err := strconv.Atoi(pr.ID)
+		if err != nil {
+			return nil
+		}
+
+		gid, err := strconv.Atoi(pr.GID)
+		if err != nil {
+			return nil
+		}
+
+		return &db.Owner{
+			UID: uid,
+			GID: gid,
+		}
+	}
+
+	return nil
+}
+
+func (p *principal) startReconcileLoop() {
+	go func() {
+		tickerCh := time.NewTicker(stateReconcileInterval)
+		defer tickerCh.Stop()
+
+		for {
+			select {
+			case <-p.srv.ctx.Done():
+				return
+			case <-tickerCh.C:
+				p.reconcile()
+			}
+		}
+	}()
+}
+
+func (p *principal) reconcile() {
+	domainMap, err := p.dbC.List()
+	if err != nil {
+		zap.L().Debug("Could not read the local state to reconcile it", zap.Error(err))
+		return
+	}
+
+	canonicalMap := make(map[string]*cliconfigv1.State_Domain)
+	for domain, itm := range domainMap {
+		canonical, err := canonicalizeDomain(domain)
+		if err != nil {
+			continue
+		}
+		canonicalMap[canonical] = itm
+	}
+
+	p.updateIf(func() bool {
+		var isChanged bool
+
+		for domain, itm := range canonicalMap {
+			d, ok := p.domains[domain]
+			if !ok {
+				d = p.newDomainCtl(domain)
+				d.settings = itm.GetSettings()
+				d.setAuthenticationFromState(itm)
+				p.domains[domain] = d
+				isChanged = true
+				continue
+			}
+
+			if !d.canReconcile() {
+				continue
+			}
+
+			if d.setAuthenticationFromState(itm) {
+				isChanged = true
+			}
+		}
+
+		for domain, d := range p.domains {
+			if _, ok := canonicalMap[domain]; ok {
+				continue
+			}
+
+			if !d.canReconcile() {
+				continue
+			}
+
+			if d.setAuthenticationFromState(nil) {
+				isChanged = true
+			}
+		}
+
+		return isChanged
+	})
 }
 
 func (p *principal) displayName() string {

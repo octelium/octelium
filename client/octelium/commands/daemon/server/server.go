@@ -25,7 +25,7 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/client/daemonv1"
-	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -81,38 +81,27 @@ func New(o *Opts) (*Server, error) {
 	}
 
 	if ret.stateDir == "" {
-		stateDir, err := getDefaultStateDir()
-		if err != nil {
-			return nil, err
-		}
-		ret.stateDir = stateDir
+		ret.stateDir = os.Getenv("OCTELIUM_DAEMON_STATE_DIR")
 	}
 
 	return ret, nil
 }
 
-func getDefaultStateDir() (string, error) {
-	if ret := os.Getenv("OCTELIUM_DAEMON_STATE_DIR"); ret != "" {
-		return ret, nil
+func (s *Server) getPrincipalDBDir(pr *ipc.Principal) (string, error) {
+	if s.stateDir != "" {
+		return filepath.Join(s.stateDir, "users", pr.ID), nil
 	}
 
-	switch {
-	case cliutils.IsLinux():
-		return "/var/lib/octelium", nil
-	case cliutils.IsDarwin():
-		return "/Library/Application Support/Octelium", nil
-	case cliutils.IsWindows():
-		return filepath.Join(os.Getenv("ProgramData"), "Octelium"), nil
-	default:
-		return "", errors.Errorf("This OS is not supported currently")
-	}
+	return vhome.GetOcteliumHomeFromUserHome(pr.HomeDir)
 }
 
 func (s *Server) Run(ctx context.Context) error {
 	s.ctx, s.cancelFn = context.WithCancel(ctx)
 
-	if err := os.MkdirAll(s.stateDir, 0700); err != nil {
-		return err
+	if s.stateDir != "" {
+		if err := os.MkdirAll(s.stateDir, 0700); err != nil {
+			return err
+		}
 	}
 
 	lis, err := ipc.Listen(s.opts.ListenAddress)
@@ -244,6 +233,8 @@ func (s *Server) bindPrincipal(pr *ipc.Principal) (*principal, error) {
 
 	zap.L().Debug("Bound the daemon to its owner",
 		zap.String("principal", ret.displayName()))
+
+	ret.startReconcileLoop()
 
 	ret.doAutoConnect()
 

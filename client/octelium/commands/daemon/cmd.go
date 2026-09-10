@@ -69,10 +69,11 @@ func init() {
 Linux and macOS and the name of the named pipe on Windows. By default the daemon
 uses the standard address of the platform.`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.StateDir, "state-dir", "",
-		`The root directory of the daemon-owned state. The credentials and the settings
-of the owner are stored in a sub-directory of it that is only accessible by the
-daemon itself. By default the daemon uses the standard directory of the
-platform.`)
+		`The root directory of the daemon state. By default the daemon stores the
+credentials and the settings of its owner in the standard Octelium home
+directory of the owner which is the very same local state used by the Octelium
+CLI. Setting this flag stores them in a sub-directory of it instead which makes
+the daemon and the CLI of the owner use separate Cluster Sessions.`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Owner, "owner", "",
 		`The ID of the OS user that owns this daemon. This is the UID on Linux and macOS
 and the SID on Windows. The local API calls of every other OS user are rejected.
