@@ -1,10 +1,70 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-mantine-color-scheme="dark"], [data-mantine-color-scheme="dark"] *));
+
+@theme inline {
+  --color-canvas: var(--portal-canvas);
+  --color-surface: var(--portal-surface);
+  --color-surface-muted: var(--portal-surface-muted);
+  --color-surface-strong: var(--portal-surface-strong);
+  --color-surface-active: var(--portal-surface-active);
+  --color-line: var(--portal-line);
+  --color-line-soft: var(--portal-line-soft);
+  --color-line-strong: var(--portal-line-strong);
+  --color-fg: var(--portal-fg);
+  --color-fg-muted: var(--portal-fg-muted);
+  --color-fg-subtle: var(--portal-fg-subtle);
+  --color-fg-faint: var(--portal-fg-faint);
+  --color-fg-ghost: var(--portal-fg-ghost);
+  --color-accent: var(--portal-accent);
+  --color-accent-hover: var(--portal-accent-hover);
+  --color-accent-fg: var(--portal-accent-fg);
+  --color-accent-ring: var(--portal-accent-ring);
+}
+
 :root {
-  color: #0f172a;
-  background: #f1f5f9;
+  --portal-canvas: #f1f5f9;
+  --portal-surface: #ffffff;
+  --portal-surface-muted: #f8fafc;
+  --portal-surface-strong: #f1f5f9;
+  --portal-surface-active: #e2e8f0;
+  --portal-line: #e2e8f0;
+  --portal-line-soft: #f1f5f9;
+  --portal-line-strong: #cbd5e1;
+  --portal-fg: #0f172a;
+  --portal-fg-muted: #334155;
+  --portal-fg-subtle: #64748b;
+  --portal-fg-faint: #94a3b8;
+  --portal-fg-ghost: #cbd5e1;
+  --portal-accent: #18181b;
+  --portal-accent-hover: #000000;
+  --portal-accent-fg: #ffffff;
+  --portal-accent-ring: rgb(63 63 70 / 0.8);
+
+  color: var(--portal-fg);
+  background: var(--portal-canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  --portal-canvas: #020617;
+  --portal-surface: #0f172a;
+  --portal-surface-muted: #172033;
+  --portal-surface-strong: #1e293b;
+  --portal-surface-active: #243349;
+  --portal-line: #1e293b;
+  --portal-line-soft: #172033;
+  --portal-line-strong: #334155;
+  --portal-fg: #e2e8f0;
+  --portal-fg-muted: #cbd5e1;
+  --portal-fg-subtle: #94a3b8;
+  --portal-fg-faint: #64748b;
+  --portal-fg-ghost: #475569;
+  --portal-accent: #e2e8f0;
+  --portal-accent-hover: #f8fafc;
+  --portal-accent-fg: #0f172a;
+  --portal-accent-ring: rgb(226 232 240 / 0.35);
 }
 
 html,

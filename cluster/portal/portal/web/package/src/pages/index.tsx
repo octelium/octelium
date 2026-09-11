@@ -40,7 +40,7 @@ const Root = () => {
   return (
     <div className="min-h-screen">
       <title>Octelium Portal</title>
-      <div className="min-h-screen bg-slate-100 antialiased">
+      <div className="min-h-screen bg-canvas antialiased">
         <AppShell
           className="!bg-transparent"
           header={{ height: 64, collapsed: !pinned, offset: true }}
@@ -51,7 +51,7 @@ const Root = () => {
           }}
           padding="md"
         >
-          <AppShell.Header className="border-slate-200 !bg-slate-100">
+          <AppShell.Header className="border-line !bg-canvas">
             <div className="flex h-full items-center">
               <Burger
                 opened={opened}
@@ -64,7 +64,7 @@ const Root = () => {
             </div>
           </AppShell.Header>
 
-          <AppShell.Navbar className="border-slate-200 !bg-slate-100" p="md">
+          <AppShell.Navbar className="border-line !bg-canvas" p="md">
             <Sidebar onNavigate={close} />
           </AppShell.Navbar>
 

@@ -93,7 +93,7 @@ const SearchField = (props: {
           <button
             type="button"
             aria-label="Clear search"
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800"
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-fg-faint transition-colors hover:bg-surface-strong hover:text-fg"
             onClick={clear}
           >
             <X size={15} aria-hidden />
@@ -101,7 +101,7 @@ const SearchField = (props: {
         ) : (
           <kbd
             aria-hidden
-            className="hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-px text-[11px] font-bold text-slate-400 sm:block"
+            className="hidden rounded border border-line bg-surface-muted px-1.5 py-px text-[11px] font-bold text-fg-faint sm:block"
           >
             /
           </kbd>

@@ -49,43 +49,43 @@ const NamespaceCard = (props: {
       to={`/services?namespace=${encodeURIComponent(name)}`}
       title={`Show every Service in the ${name} Namespace`}
       className={twMerge(
-        "group/item flex h-full flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4",
+        "group/item flex h-full flex-col gap-3 rounded-xl border border-line bg-surface p-4",
         "shadow-xs transition-all duration-500",
-        "hover:border-slate-300 hover:bg-slate-50/70 hover:shadow-md hover:shadow-slate-900/5",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900",
+        "hover:border-line-strong hover:bg-surface-muted/70 hover:shadow-md hover:shadow-slate-900/5",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
       )}
     >
       <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-zinc-900 text-white shadow-sm ring-1 ring-slate-900/10 transition-transform duration-200 group-hover/item:scale-[1.04]">
+        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-zinc-900 text-white shadow-sm ring-1 ring-slate-900/10 transition-transform duration-200 group-hover/item:scale-[1.04] dark:from-slate-200 dark:to-slate-400 dark:text-slate-900 dark:ring-slate-100/20">
           <Boxes size={21} aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-[15px] font-bold tracking-tight text-slate-900 sm:text-base">
+          <h2 className="truncate text-[15px] font-bold tracking-tight text-fg sm:text-base">
             <HighlightText text={name} tokens={tokens} />
           </h2>
           {metadata?.displayName && (
-            <p className="mt-0.5 truncate text-sm font-medium text-slate-500">
+            <p className="mt-0.5 truncate text-sm font-medium text-fg-subtle">
               <HighlightText text={metadata.displayName} tokens={tokens} />
             </p>
           )}
         </div>
         <ArrowRight
           size={16}
-          className="mt-1 flex-none text-slate-300 transition-all duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-slate-900"
+          className="mt-1 flex-none text-fg-ghost transition-all duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-fg"
           aria-hidden
         />
       </div>
 
       {metadata?.description && (
-        <p className="line-clamp-2 text-sm font-medium text-slate-500">
+        <p className="line-clamp-2 text-sm font-medium text-fg-subtle">
           {metadata.description}
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-3">
         {serviceCount === undefined ? (
           <span
-            className="block h-[22px] w-24 animate-pulse rounded-md bg-slate-100"
+            className="block h-[22px] w-24 animate-pulse rounded-md bg-surface-strong"
             aria-hidden
           />
         ) : (
@@ -94,7 +94,7 @@ const NamespaceCard = (props: {
             {serviceCount} {serviceCount === 1 ? "Service" : "Services"}
           </Label>
         )}
-        <span className="text-xs font-bold text-slate-400 transition-colors group-hover/item:text-slate-900">
+        <span className="text-xs font-bold text-fg-faint transition-colors group-hover/item:text-fg">
           Browse
         </span>
       </div>
@@ -194,7 +194,7 @@ const Page = () => {
         actions={<PageSizeSelect />}
       />
 
-      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-xs sm:p-4">
+      <div className="mb-4 rounded-xl border border-line bg-surface p-3 shadow-xs sm:p-4">
         <SearchField
           label="Search Namespaces"
           placeholder="Search by name or description…"
@@ -218,7 +218,7 @@ const Page = () => {
           )}
         >
           <div className="mb-3 px-0.5">
-            <p className="text-xs font-bold text-slate-500">
+            <p className="text-xs font-bold text-fg-subtle">
               {isSearching
                 ? `${visibleItems.length} of ${totalCount} ${
                     totalCount === 1 ? "Namespace" : "Namespaces"

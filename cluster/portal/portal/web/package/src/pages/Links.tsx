@@ -7,7 +7,7 @@ const LinkItem = (props: { link: string; children?: React.ReactNode }) => {
       <a
         href={props.link}
         target="_blank"
-        className="mb-2 w-full transition-all duration-300 text-zinc-200 hover:text-white inline-flex items-center text-sm leading-none"
+        className="mb-2 w-full transition-all duration-300 text-zinc-200 hover:text-white dark:text-fg-muted dark:hover:text-fg inline-flex items-center text-sm leading-none"
       >
         {props.children}
       </a>
@@ -17,7 +17,7 @@ const LinkItem = (props: { link: string; children?: React.ReactNode }) => {
 
 const Links = () => {
   return (
-    <div className="flex flex-col my-4 font-bold bg-zinc-800 border-none rounded-lg p-3 shadow-lg m-2">
+    <div className="flex flex-col my-4 font-bold bg-zinc-800 dark:bg-surface dark:ring-1 dark:ring-line border-none rounded-lg p-3 shadow-lg dark:shadow-none m-2">
       <LinkItem link="https://github.com/octelium/octelium">
         <BsGithub />
         <span className="ml-2">GitHub Repository</span>

@@ -56,9 +56,9 @@ export const ReleaseBox = () => {
 
   if (isLoading) {
     return (
-      <div className="w-full rounded-xl border border-slate-200 p-3">
-        <div className="h-3 w-20 rounded bg-slate-200 animate-pulse" />
-        <div className="mt-2 h-4 w-16 rounded bg-slate-200 animate-pulse" />
+      <div className="w-full rounded-xl border border-line p-3">
+        <div className="h-3 w-20 rounded bg-surface-active animate-pulse" />
+        <div className="mt-2 h-4 w-16 rounded bg-surface-active animate-pulse" />
       </div>
     );
   }
@@ -73,18 +73,18 @@ export const ReleaseBox = () => {
     <a
       href={data.html_url}
       target="_blank"
-      className="block w-full rounded-xl border border-slate-200 p-3 transition-colors duration-500 hover:border-slate-300 hover:bg-slate-50"
+      className="block w-full rounded-xl border border-line p-3 transition-colors duration-500 hover:border-line-strong hover:bg-surface-muted"
     >
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span className="text-xs font-semibold uppercase tracking-wide text-fg-subtle">
           Latest release
         </span>
-        <BsGithub className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+        <BsGithub className="h-4 w-4 shrink-0 text-fg-subtle" aria-hidden />
       </div>
-      <div className="mt-1 text-sm font-bold text-slate-800">
+      <div className="mt-1 text-sm font-bold text-fg">
         {data.tag_name}
       </div>
-      {date && <div className="text-xs text-slate-500">Released {date}</div>}
+      {date && <div className="text-xs text-fg-subtle">Released {date}</div>}
     </a>
   );
 };

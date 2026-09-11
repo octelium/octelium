@@ -132,7 +132,7 @@ const ConnectCommand = (props: { service: Service; domain: string }) => {
       initial={reduced ? false : { opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
-      className="mt-3 overflow-hidden rounded-xl bg-slate-900 shadow-lg shadow-slate-900/10 ring-1 ring-white/10"
+      className="mt-3 overflow-hidden rounded-xl bg-slate-900 shadow-lg shadow-slate-900/10 ring-1 ring-white/10 dark:bg-slate-950"
     >
       <div className="flex items-center justify-between border-b border-white/5 px-3 py-2">
         <div className="flex items-center gap-1.5">

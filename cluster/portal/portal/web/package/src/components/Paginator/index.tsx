@@ -1,8 +1,10 @@
-import { Pagination } from "@mantine/core";
+import { PAGINATION_COLOR } from "@/utils/theme";
+import { Pagination, useComputedColorScheme } from "@mantine/core";
 import type { ListResponseMeta } from "@octelium/apis/main/metav1";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 const Paginator = (props: { meta?: ListResponseMeta }) => {
+  const colorScheme = useComputedColorScheme("light");
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -33,7 +35,7 @@ const Paginator = (props: { meta?: ListResponseMeta }) => {
         size="sm"
         radius="xl"
         withEdges
-        color="#111"
+        color={PAGINATION_COLOR[colorScheme]}
       />
     </div>
   );

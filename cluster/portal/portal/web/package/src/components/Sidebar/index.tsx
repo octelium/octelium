@@ -45,10 +45,10 @@ export default function Sidebar(props: { onNavigate?: () => void }) {
               to={url}
               onClick={props.onNavigate}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
+                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                   isActive
-                    ? "bg-zinc-900 text-white shadow-md"
-                    : "text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                    ? "bg-accent text-accent-fg shadow-md"
+                    : "text-fg-muted hover:bg-surface-active hover:text-fg"
                 }`
               }
             >
@@ -63,7 +63,7 @@ export default function Sidebar(props: { onNavigate?: () => void }) {
           <ReleaseBox />
         </div>
 
-        <div className="mt-auto flex flex-col border-t border-slate-200 pt-4">
+        <div className="mt-auto flex flex-col border-t border-line pt-4">
           <Button
             className="mb-3 transition-all duration-500"
             fullWidth
@@ -88,7 +88,7 @@ export default function Sidebar(props: { onNavigate?: () => void }) {
       </div>
 
       <Modal opened={opened} onClose={close} centered title="Sign out">
-        <p className="text-sm font-medium text-slate-600">
+        <p className="text-sm font-medium text-fg-subtle">
           Are you sure you want to sign out of this portal?
         </p>
 

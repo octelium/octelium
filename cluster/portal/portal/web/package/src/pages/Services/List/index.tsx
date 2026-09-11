@@ -87,7 +87,7 @@ const ServiceTypeTile = (props: { info: ServiceTypeInfo }) => (
     aria-label={`${props.info.label} service`}
     title={props.info.label}
   >
-    <props.info.icon size={22} className="text-white" aria-hidden />
+    <props.info.icon size={22} className="text-accent-fg" aria-hidden />
   </div>
 );
 
@@ -97,9 +97,9 @@ const ItemDetails = (props: { item: Service; domain: string }) => {
   const addresses = item.status?.addresses ?? [];
 
   return (
-    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+    <div className="mt-4 rounded-xl border border-line bg-surface-muted/80 p-4">
       {metadata?.description && (
-        <p className="mb-4 text-sm font-medium text-slate-600">
+        <p className="mb-4 text-sm font-medium text-fg-muted">
           {metadata.description}
         </p>
       )}
@@ -168,7 +168,7 @@ const ServiceItem = (props: {
   return (
     <ResourceListItem
       className={
-        expanded ? "border-slate-300 shadow-md shadow-slate-900/5" : undefined
+        expanded ? "border-line-strong shadow-md shadow-slate-900/5" : undefined
       }
     >
       <div
@@ -185,7 +185,7 @@ const ServiceItem = (props: {
             highlight={tokens}
           />
           {subtitle && (
-            <p className="mt-0.5 truncate text-sm font-medium text-slate-500">
+            <p className="mt-0.5 truncate text-sm font-medium text-fg-subtle">
               <HighlightText text={subtitle} tokens={tokens} />
             </p>
           )}
@@ -236,7 +236,7 @@ const ServiceItem = (props: {
           className="hidden max-w-[24rem] min-w-0 flex-none items-center xl:flex"
           title={`Private FQDN: ${privateFQDN}`}
         >
-          <span className="truncate rounded-lg bg-slate-50 px-2.5 py-1.5 font-mono text-xs text-slate-500 ring-1 ring-slate-200/70 transition-colors group-hover/item:bg-white group-hover/item:text-slate-600">
+          <span className="truncate rounded-lg bg-surface-muted px-2.5 py-1.5 font-mono text-xs text-fg-subtle ring-1 ring-line/70 transition-colors group-hover/item:bg-surface group-hover/item:text-fg-muted">
             {privateFQDN}
           </span>
         </div>
@@ -244,7 +244,7 @@ const ServiceItem = (props: {
         <div className="flex flex-none items-center justify-end gap-2 xl:min-w-[7.75rem]">
           {canVisit && (
             <a
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-zinc-900 px-3 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 text-[13px] font-bold text-accent-fg shadow-sm transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               href={`https://${getServicePublicFQDN(item, domain)}`}
               target="_blank"
               title="Open this Service in a new tab"
@@ -255,7 +255,7 @@ const ServiceItem = (props: {
           )}
           <button
             type="button"
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface text-fg-subtle transition-colors hover:border-line-strong hover:bg-surface-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             aria-controls={detailsId}
             aria-expanded={expanded}
             aria-label={
@@ -293,13 +293,13 @@ const FilterChip = (props: {
   value: string;
   onClear: () => void;
 }) => (
-  <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 py-1 pr-1 pl-2 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-    <span className="font-medium text-slate-400">{props.label}</span>
+  <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-strong py-1 pr-1 pl-2 text-xs font-semibold text-fg-muted ring-1 ring-line">
+    <span className="font-medium text-fg-faint">{props.label}</span>
     <span className="max-w-[14rem] truncate">{props.value}</span>
     <button
       type="button"
       aria-label={`Clear the ${props.label} filter`}
-      className="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-300/60 hover:text-slate-900"
+      className="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-fg-faint transition-colors hover:bg-line-strong/60 hover:text-fg"
       onClick={props.onClear}
     >
       <X size={12} aria-hidden />
@@ -431,7 +431,7 @@ const Page = () => {
         actions={<PageSizeSelect />}
       />
 
-      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-xs sm:p-4">
+      <div className="mb-4 rounded-xl border border-line bg-surface p-3 shadow-xs sm:p-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-end">
           <SearchField
             className="min-w-0 flex-1"
@@ -462,7 +462,7 @@ const Page = () => {
         </div>
 
         {hasFilters && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line-soft pt-3">
             {isSearching && (
               <FilterChip
                 label="search"
@@ -486,7 +486,7 @@ const Page = () => {
             )}
             <button
               type="button"
-              className="ml-auto cursor-pointer text-xs font-bold text-slate-500 underline-offset-4 transition-colors hover:text-slate-900 hover:underline"
+              className="ml-auto cursor-pointer text-xs font-bold text-fg-subtle underline-offset-4 transition-colors hover:text-fg hover:underline"
               onClick={() =>
                 setParams({ q: null, namespace: null, type: null })
               }
@@ -512,7 +512,7 @@ const Page = () => {
           )}
         >
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-0.5">
-            <p className="text-xs font-bold text-slate-500">
+            <p className="text-xs font-bold text-fg-subtle">
               {isSearching
                 ? `${visibleItems.length} of ${totalCount} ${
                     totalCount === 1 ? "Service" : "Services"
@@ -520,7 +520,7 @@ const Page = () => {
                 : `${totalCount} ${totalCount === 1 ? "Service" : "Services"}`}
             </p>
             {isTruncatedSearch && (
-              <p className="text-xs font-semibold text-amber-600">
+              <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">
                 Only the first {SEARCH_FETCH_LIMIT} Services are searched
               </p>
             )}

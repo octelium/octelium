@@ -4,11 +4,11 @@ import type { ReactNode } from "react";
 
 export const LoadingState = (props: { label?: string }) => (
   <div
-    className="flex min-h-[280px] flex-col items-center justify-center gap-3 text-slate-500"
+    className="flex min-h-[280px] flex-col items-center justify-center gap-3 text-fg-subtle"
     role="status"
     aria-live="polite"
   >
-    <Loader color="dark" size="md" />
+    <Loader color="accent" size="md" />
     <span className="text-sm font-semibold">{props.label ?? "Loading…"}</span>
   </div>
 );
@@ -21,7 +21,7 @@ export const ResourceListSkeleton = (props: { count?: number }) => (
   >
     {Array.from({ length: props.count ?? 5 }, (_, index) => (
       <div
-        className="w-full rounded-xl border border-slate-200 bg-white p-4 shadow-xs"
+        className="w-full rounded-xl border border-line bg-surface p-4 shadow-xs"
         key={index}
       >
         <div className="flex items-start gap-3">
@@ -77,13 +77,13 @@ export const EmptyState = (props: {
   icon?: ReactNode;
   action?: ReactNode;
 }) => (
-  <div className="flex min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-6 py-10 text-center">
-    <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 ring-1 ring-slate-200">
+  <div className="flex min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-line-strong bg-surface/70 px-6 py-10 text-center">
+    <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface-strong text-fg-faint ring-1 ring-line">
       {props.icon ?? <Inbox size={22} aria-hidden />}
     </div>
-    <h2 className="text-base font-bold text-slate-800">{props.title}</h2>
+    <h2 className="text-base font-bold text-fg">{props.title}</h2>
     {props.message && (
-      <p className="mt-1 max-w-md text-sm font-medium text-slate-500">
+      <p className="mt-1 max-w-md text-sm font-medium text-fg-subtle">
         {props.message}
       </p>
     )}

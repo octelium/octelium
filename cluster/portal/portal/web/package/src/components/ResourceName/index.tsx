@@ -17,12 +17,12 @@ const ResourceName = (props: {
   return (
     <>
       <div className="flex min-w-0 items-center gap-1">
-        <h2 className="min-w-0 truncate text-[15px] font-bold tracking-tight text-slate-900 sm:text-base">
+        <h2 className="min-w-0 truncate text-[15px] font-bold tracking-tight text-fg sm:text-base">
           <HighlightText text={resourceName} tokens={props.highlight} />
           {namespaceName && (
             <>
-              <span className="font-semibold text-slate-300">.</span>
-              <span className="font-semibold text-slate-500">
+              <span className="font-semibold text-fg-ghost">.</span>
+              <span className="font-semibold text-fg-subtle">
                 <HighlightText
                   text={namespaceName}
                   tokens={props.highlight}
@@ -31,12 +31,12 @@ const ResourceName = (props: {
             </>
           )}
         </h2>
-        <span className="flex-none text-slate-400 transition-opacity duration-200 focus-within:opacity-100 md:opacity-0 md:group-hover/item:opacity-100">
+        <span className="flex-none text-fg-faint transition-opacity duration-200 focus-within:opacity-100 md:opacity-0 md:group-hover/item:opacity-100">
           <CopyText value={props.copyValue ?? props.name} hide />
         </span>
       </div>
       {props.displayName && (
-        <p className="mt-0.5 truncate text-sm font-medium text-slate-500">
+        <p className="mt-0.5 truncate text-sm font-medium text-fg-subtle">
           <HighlightText text={props.displayName} tokens={props.highlight} />
         </p>
       )}

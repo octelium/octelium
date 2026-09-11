@@ -22,7 +22,7 @@ const HighlightText = (props: { text: string; tokens?: string[] }) => {
         index % 2 === 1 ? (
           <mark
             key={index}
-            className="rounded-[3px] bg-amber-200/70 px-px text-inherit"
+            className="rounded-[3px] bg-amber-200/70 px-px text-inherit dark:bg-amber-400/25"
           >
             {part}
           </mark>

@@ -13,13 +13,21 @@ import store from "@/store";
 
 import router from "@/router";
 import { queryClient } from "@/utils";
-import theme from "@/utils/theme";
+import theme, {
+  colorSchemeManager,
+  cssVariablesResolver,
+} from "@/utils/theme";
 import { MantineProvider } from "@mantine/core";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <MantineProvider theme={theme}>
+    <MantineProvider
+      theme={theme}
+      defaultColorScheme="light"
+      colorSchemeManager={colorSchemeManager}
+      cssVariablesResolver={cssVariablesResolver}
+    >
       <Provider store={store}>
         <QueryClientProvider client={queryClient}>
           <RouterProvider router={router()} />

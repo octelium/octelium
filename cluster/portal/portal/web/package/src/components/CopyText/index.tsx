@@ -32,7 +32,7 @@ const CopyText = (props: {
       )}
       <button
         type="button"
-        className="hover:text-black p-0 rounded-full text-slate-700 transition-all duration-500 font-extrabold cursor-pointer"
+        className="hover:text-fg p-0 rounded-full text-fg-muted transition-all duration-500 font-extrabold cursor-pointer"
         aria-label={copied ? "Copied" : "Copy to clipboard"}
         onClick={async (e) => {
           e.stopPropagation();

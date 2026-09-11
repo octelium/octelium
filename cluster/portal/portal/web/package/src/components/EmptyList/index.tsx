@@ -7,7 +7,7 @@ const EmptyList = (props: { title: string; children?: React.ReactNode }) => {
       <div
         className={twJoin(
           "flex text-center items-center justify-center",
-          "font-bold text-4xl text-gray-600",
+          "font-bold text-4xl text-fg-subtle",
           "my-16",
         )}
       >

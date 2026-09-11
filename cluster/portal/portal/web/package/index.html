@@ -1,10 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mantine-color-scheme="light">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./src/assets/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Octelium Portal</title>
+    <script>
+      (function () {
+        try {
+          if (
+            window.localStorage.getItem("octelium-portal-color-scheme") ===
+            "dark"
+          ) {
+            document.documentElement.setAttribute(
+              "data-mantine-color-scheme",
+              "dark",
+            );
+          }
+        } catch (e) {
+          void e;
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
