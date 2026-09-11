@@ -22,10 +22,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type args struct {
-	Name string
-}
-
 var Cmd = &cobra.Command{
 	Use:   "identityprovider",
 	Short: "Delete an IdentityProvider",
@@ -34,17 +30,11 @@ octeliumctl delete identityprovider my-idp
 octeliumctl del idp oidc
 	`,
 
-	Aliases: []string{"idp"},
+	Aliases: []string{"idp", "idps", "identityproviders"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},
-}
-
-var cmdArgs args
-
-func init() {
-
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {

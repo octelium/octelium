@@ -64,6 +64,12 @@ func UnmarshalJSON(in []byte, out proto.Message) error {
 	return unmarshaler.Unmarshal(in, out)
 }
 
+func UnmarshalJSONStrict(in []byte, out proto.Message) error {
+	unmarshaler := protojson.UnmarshalOptions{}
+
+	return unmarshaler.Unmarshal(in, out)
+}
+
 func MarshalJSON(in proto.Message, indent bool) ([]byte, error) {
 
 	m := protojson.MarshalOptions{}
@@ -127,6 +133,14 @@ func UnmarshalFromMap(in map[string]any, out proto.Message) error {
 		return err
 	}
 	return UnmarshalJSON(jsonBytes, out)
+}
+
+func UnmarshalFromMapStrict(in map[string]any, out proto.Message) error {
+	jsonBytes, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	return UnmarshalJSONStrict(jsonBytes, out)
 }
 
 func MessageToStruct(in proto.Message) (*structpb.Struct, error) {

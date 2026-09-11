@@ -51,12 +51,16 @@ var cmdArgs args
 
 func init() {
 
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -75,11 +79,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Group{res}, nil)
+
 		return nil
 	}
 
@@ -90,7 +101,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No Groups found\n")
 		return nil
 	}
@@ -104,13 +115,19 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "Age")
-
-	for _, u := range itmList.Items {
-
-		p.AppendRow(u.Metadata.Name, cliutils.GetResourceAge(u))
-	}
-	p.Render()
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
 
 	return nil
+}
+
+func printList(itmList []*corev1.Group, listMeta *metav1.ListResponseMeta) {
+	p := printer.NewPrinter("Name", "Age")
+
+	for _, itm := range itmList {
+		p.AppendRow(itm.GetMetadata().GetName(), cliutils.GetResourceAge(itm))
+	}
+
+	p.Render()
+
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

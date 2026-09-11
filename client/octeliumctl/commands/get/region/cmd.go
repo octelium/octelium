@@ -39,7 +39,7 @@ octeliumctl get rgn -o yaml
 var Cmd = &cobra.Command{
 	Use:     "region",
 	Short:   "List/get Regions",
-	Aliases: []string{"rgn"},
+	Aliases: []string{"rgn", "regions"},
 	Example: example,
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,12 +50,16 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -74,11 +78,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Region{res}, nil)
+
 		return nil
 	}
 
@@ -89,7 +100,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No Regions found\n")
 		return nil
 	}
@@ -103,14 +114,22 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
+
+	return nil
+}
+
+func printList(itmList []*corev1.Region, listMeta *metav1.ListResponseMeta) {
 	p := printer.NewPrinter("Name", "Ingress Addresses", "Age")
 
-	for _, itm := range itmList.Items {
+	for _, itm := range itmList {
 
-		p.AppendRow(itm.Metadata.Name, strings.Join(itm.Status.IngressAddresses, ", "), cliutils.GetResourceAge(itm))
+		p.AppendRow(itm.GetMetadata().GetName(),
+			strings.Join(itm.GetStatus().GetIngressAddresses(), ", "),
+			cliutils.GetResourceAge(itm))
 	}
 
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

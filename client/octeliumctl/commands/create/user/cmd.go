@@ -19,13 +19,12 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
 type args struct {
-	Name        string
-	Type        string
-	ClusterAddr string
+	Type string
 }
 
 var Cmd = &cobra.Command{
@@ -46,9 +45,8 @@ octeliumctl create user --domain octelium.example.com --type WORKLOAD container1
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Name, "name", "n", "", "User name")
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Type, "type", "t", "HUMAN", `The type of the User.
-The current values are available: "HUMAN" for humans and "WORKLOAD" for workloads`)
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Type, "type", "t", "HUMAN",
+		`The type of the User (Can take the values: "HUMAN" for humans or "WORKLOAD" for workloads)`)
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -57,10 +55,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	typ, err := getType()
 	if err != nil {
 		return err
 	}
+
+	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
 	if err != nil {
 		return err
 	}
@@ -73,16 +73,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			Name: i.FirstArg(),
 		},
 		Spec: &corev1.User_Spec{
-			Type: func() corev1.User_Spec_Type {
-				switch cmdArgs.Type {
-				case "HUMAN":
-					return corev1.User_Spec_HUMAN
-				case "WORKLOAD":
-					return corev1.User_Spec_WORKLOAD
-				default:
-					return corev1.User_Spec_TYPE_UNKNOWN
-				}
-			}(),
+			Type: typ,
 		},
 	}
 
@@ -93,4 +84,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	cliutils.LineInfo("User `%s` successfully created\n", usr.Metadata.Name)
 
 	return nil
+}
+
+func getType() (corev1.User_Spec_Type, error) {
+	switch cmdArgs.Type {
+	case "HUMAN":
+		return corev1.User_Spec_HUMAN, nil
+	case "WORKLOAD":
+		return corev1.User_Spec_WORKLOAD, nil
+	default:
+		return corev1.User_Spec_TYPE_UNKNOWN, errors.Errorf(
+			"Invalid User type: %s. It must be either `HUMAN` or `WORKLOAD`", cmdArgs.Type)
+	}
 }

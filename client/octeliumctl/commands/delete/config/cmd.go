@@ -31,7 +31,7 @@ octeliumctl del cfg cfg-2
 	`,
 
 	Args:    cobra.ExactArgs(1),
-	Aliases: []string{"cfg", "conf"},
+	Aliases: []string{"cfg", "conf", "configs"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

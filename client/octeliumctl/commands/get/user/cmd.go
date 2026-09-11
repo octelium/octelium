@@ -16,6 +16,7 @@ package user
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -30,10 +31,10 @@ type args struct {
 }
 
 const example = `
-octeliumctl get user example.com
-octeliumctl get usr example.com
-octeliumctl get users octelium.example.com -o json
-octeliumctl get users sub.octelium.example.com -o yaml
+octeliumctl get user
+octeliumctl get usr alice
+octeliumctl get users -o json
+octeliumctl get users alice -o yaml
 `
 
 var Cmd = &cobra.Command{
@@ -50,12 +51,16 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -74,11 +79,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.User{res}, nil)
+
 		return nil
 	}
 
@@ -89,7 +101,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(usrList.Items) == 0 {
+	if len(usrList.GetItems()) == 0 {
 		cliutils.LineInfo("No Users found\n")
 		return nil
 	}
@@ -103,21 +115,23 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printList(usrList.GetItems(), usrList.GetListResponseMeta())
+
+	return nil
+}
+
+func printList(itmList []*corev1.User, listMeta *metav1.ListResponseMeta) {
 	p := printer.NewPrinter("Name", "Groups", "Type", "Age", "Email", "Disabled")
 
-	for _, u := range usrList.Items {
-		groups := ""
-		if len(u.Spec.Groups) > 0 {
-			groups = u.Spec.Groups[0]
-			for _, g := range u.Spec.Groups[1:] {
-				groups = fmt.Sprintf("%s, %s", groups, g)
-			}
-		}
-
-		p.AppendRow(u.Metadata.Name, groups, u.Spec.Type.String(),
-			cliutils.GetResourceAge(u), u.Spec.Email, cliutils.PrintBoolean(u.Spec.IsDisabled))
+	for _, itm := range itmList {
+		p.AppendRow(itm.GetMetadata().GetName(),
+			strings.Join(itm.GetSpec().GetGroups(), ", "),
+			itm.GetSpec().GetType().String(),
+			cliutils.GetResourceAge(itm),
+			itm.GetSpec().GetEmail(),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsDisabled()))
 	}
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

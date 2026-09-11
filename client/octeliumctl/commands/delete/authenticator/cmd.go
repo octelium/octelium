@@ -29,7 +29,7 @@ var Cmd = &cobra.Command{
 octeliumctl delete authn fido-123456
 	`,
 	Args:    cobra.ExactArgs(1),
-	Aliases: []string{"authn", "authen"},
+	Aliases: []string{"authn", "authenticators", "authen"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

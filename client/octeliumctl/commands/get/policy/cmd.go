@@ -30,9 +30,10 @@ type args struct {
 }
 
 const example = `
-octeliumctl get policy example.com
-octeliumctl get pol example.com
-octeliumctl get policies octelium.example.com -o json
+octeliumctl get policy
+octeliumctl get pol my-policy
+octeliumctl get policies -o json
+octeliumctl get pol my-policy -o yaml
 `
 
 var Cmd = &cobra.Command{
@@ -49,12 +50,16 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -73,11 +78,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Policy{res}, nil)
+
 		return nil
 	}
 
@@ -88,7 +100,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No Policies found\n")
 		return nil
 	}
@@ -102,20 +114,28 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
+
+	return nil
+}
+
+func printList(itmList []*corev1.Policy, listMeta *metav1.ListResponseMeta) {
 	p := printer.NewPrinter("Name", "Rules", "Age", "Disabled")
 
-	for _, u := range itmList.Items {
+	for _, itm := range itmList {
 
 		rules := func() string {
-			if len(u.Spec.Rules) > 0 {
-				return fmt.Sprintf("%d", len(u.Spec.Rules))
+			if len(itm.GetSpec().GetRules()) > 0 {
+				return fmt.Sprintf("%d", len(itm.GetSpec().GetRules()))
 			}
 			return ""
 		}()
 
-		p.AppendRow(u.Metadata.Name, rules, cliutils.GetResourceAge(u), cliutils.PrintBoolean(u.Spec.IsDisabled))
+		p.AppendRow(itm.GetMetadata().GetName(), rules,
+			cliutils.GetResourceAge(itm),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsDisabled()))
 	}
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

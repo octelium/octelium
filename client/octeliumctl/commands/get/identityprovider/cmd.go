@@ -37,7 +37,7 @@ octeliumctl get identityprovider -o yaml
 
 var Cmd = &cobra.Command{
 	Use:     "identityprovider",
-	Aliases: []string{"idp", "identityproviders"},
+	Aliases: []string{"idp", "idps", "identityproviders"},
 	Short:   "List/get IdentityProviders",
 	Example: example,
 	Args:    cobra.MaximumNArgs(1),
@@ -49,12 +49,16 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -73,11 +77,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.IdentityProvider{res}, nil)
+
 		return nil
 	}
 
@@ -88,7 +99,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No IdentityProviders found\n")
 		return nil
 	}
@@ -102,14 +113,22 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
+
+	return nil
+}
+
+func printList(itmList []*corev1.IdentityProvider, listMeta *metav1.ListResponseMeta) {
 	p := printer.NewPrinter("Name", "Type", "Age", "Disabled")
 
-	for _, itm := range itmList.Items {
-		p.AppendRow(itm.Metadata.Name, itm.Status.Type.String(),
-			cliutils.GetResourceAge(itm), cliutils.PrintBoolean(itm.Spec.IsDisabled))
+	for _, itm := range itmList {
+		p.AppendRow(itm.GetMetadata().GetName(),
+			itm.GetStatus().GetType().String(),
+			cliutils.GetResourceAge(itm),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsDisabled()))
 	}
 
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

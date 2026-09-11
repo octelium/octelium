@@ -15,7 +15,6 @@
 package secret
 
 import (
-	"io"
 	"os"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -31,6 +30,7 @@ type args struct {
 	Value string
 
 	FromFile    string
+	FromEnv     string
 	Type        string
 	CertPath    string
 	CertKeyPath string
@@ -39,15 +39,16 @@ type args struct {
 var example = `
 octeliumctl update secret my-api-token
 octeliumctl update secret -f /path/to/secret/file secret1
-octeliumctl update secret --file ~/.ssh/id_ed25519
+octeliumctl update secret --file ~/.ssh/id_ed25519 ssh-key
 octeliumctl update secret --value TOP_SECRET secret2
+octeliumctl update secret my-secret --from-env MY_SECRET
 echo $MY_SECRET | octeliumctl update secret my-secret --file -
 octeliumctl update secret mtls-k8s-01 --cert /PATH/TO/CERTIFICATE_CHAIN.PEM --cert-key /PATH/TO/CERTIFICATE_PRIVATE_KEY.PEM
 `
 
 var Cmd = &cobra.Command{
 	Use:     "secret",
-	Short:   "Update Secret",
+	Short:   "Update a Secret",
 	Args:    cobra.ExactArgs(1),
 	Aliases: []string{"sec", "secrets"},
 	Example: example,
@@ -61,14 +62,20 @@ var cmdArgs args
 
 func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Value, "value", "", "Secret value")
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.FromFile, "file", "f", "", "Get Secret value from file path")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "value", `Secret type. By default it is set to "value". It can also set to "cert" for TLS certificate`)
-	Cmd.PersistentFlags().StringVar(&cmdArgs.CertPath, "cert", "", `Certificate file path. Needs --type to be set to "cert"`)
-	Cmd.PersistentFlags().StringVar(&cmdArgs.CertKeyPath, "cert-key", "", `Certificate private key file path. Needs --type to be set to "cert"`)
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.FromFile, "file", "f", "", "Get Secret value from file path. Set it to `-` to read from stdin")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.FromEnv, "from-env", "", "Get Secret value from an environment variable")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "value", `Secret type (Can take the values: "value" or "cert"). By default it is set to "value"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.CertPath, "cert", "", `Certificate file path. This automatically sets --type to "cert"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.CertKeyPath, "cert-key", "", `Certificate private key file path. This automatically sets --type to "cert"`)
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
+	if err != nil {
+		return err
+	}
+
+	typ, err := getType()
 	if err != nil {
 		return err
 	}
@@ -83,8 +90,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := corev1.NewMainServiceClient(conn)
 
-	var value []byte
-
 	req, err := c.GetSecret(ctx, &metav1.GetOptions{
 		Name: i.FirstArg(),
 	})
@@ -92,24 +97,16 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if cmdArgs.Type == "cert" {
-		if cmdArgs.CertPath == "" || cmdArgs.CertKeyPath == "" {
-			return errors.Errorf("Both certificate file path and its private key file path must be set")
-		}
-
-		crt, err := os.ReadFile(cmdArgs.CertPath)
-		if err != nil {
-			return err
-		}
-		key, err := os.ReadFile(cmdArgs.CertKeyPath)
+	if typ == "cert" {
+		crt, key, err := getCertificate()
 		if err != nil {
 			return err
 		}
 
-		ucorev1.ToSecret(req).SetCertificate(string(crt), string(key))
+		ucorev1.ToSecret(req).SetCertificate(crt, key)
 
 	} else {
-		value, err = getValue()
+		value, err := getValue()
 		if err != nil {
 			return err
 		}
@@ -121,7 +118,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if _, err := c.UpdateSecret(cmd.Context(), req); err != nil {
+	if _, err := c.UpdateSecret(ctx, req); err != nil {
 		return err
 	}
 
@@ -130,19 +127,50 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func getType() (string, error) {
+	switch cmdArgs.Type {
+	case "value", "cert":
+	default:
+		return "", errors.Errorf(
+			"Invalid Secret type: %s. It must be either `value` or `cert`", cmdArgs.Type)
+	}
+
+	if cmdArgs.Type != "cert" && cmdArgs.CertPath == "" && cmdArgs.CertKeyPath == "" {
+		return cmdArgs.Type, nil
+	}
+
+	if cmdArgs.Value != "" || cmdArgs.FromFile != "" || cmdArgs.FromEnv != "" {
+		return "", errors.Errorf(
+			"The --cert and --cert-key flags cannot be used together with --value, --file or --from-env")
+	}
+
+	if cmdArgs.CertPath == "" || cmdArgs.CertKeyPath == "" {
+		return "", errors.Errorf(
+			"Both the certificate file path and its private key file path must be set")
+	}
+
+	return "cert", nil
+}
+
+func getCertificate() (string, string, error) {
+	crt, err := os.ReadFile(cmdArgs.CertPath)
+	if err != nil {
+		return "", "", err
+	}
+
+	key, err := os.ReadFile(cmdArgs.CertKeyPath)
+	if err != nil {
+		return "", "", err
+	}
+
+	return string(crt), string(key), nil
+}
+
 func getValue() ([]byte, error) {
-	if cmdArgs.FromFile != "" {
-		if cmdArgs.FromFile == "-" {
-			return io.ReadAll(os.Stdin)
-
-		} else {
-			return os.ReadFile(cmdArgs.FromFile)
-		}
-	}
-
-	if cmdArgs.Value != "" {
-		return []byte(cmdArgs.Value), nil
-	}
-
-	return cliutils.GetSecretPrompt()
+	return cliutils.GetDataValue(&cliutils.GetDataValueOpts{
+		Value:    cmdArgs.Value,
+		FromFile: cmdArgs.FromFile,
+		FromEnv:  cmdArgs.FromEnv,
+		Prompt:   "Enter the Secret value",
+	})
 }

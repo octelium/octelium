@@ -19,6 +19,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +32,7 @@ var Cmd = &cobra.Command{
 	Use:     "authenticator",
 	Short:   "Update an Authenticator",
 	Example: example,
-	Aliases: []string{"authn"},
+	Aliases: []string{"authn", "authenticators", "authen"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -48,6 +49,8 @@ var cmdArgs args
 func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Approve, "approve", false, "Approve the Authenticator")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Reject, "reject", false, "Reject the Authenticator")
+
+	Cmd.MarkFlagsMutuallyExclusive("approve", "reject")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -57,7 +60,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	if !cmdArgs.Approve && !cmdArgs.Reject {
+		return errors.Errorf("You must set either the --approve or the --reject flag")
+	}
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -77,8 +84,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		authn.Spec.State = corev1.Authenticator_Spec_ACTIVE
 	case cmdArgs.Reject:
 		authn.Spec.State = corev1.Authenticator_Spec_REJECTED
-	default:
-		return nil
 	}
 
 	_, err = c.UpdateAuthenticator(ctx, authn)

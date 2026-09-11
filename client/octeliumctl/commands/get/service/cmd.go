@@ -54,13 +54,17 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Namespace, "namespace", "", "Filter the list by a Namespace")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -79,11 +83,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Service{res}, nil)
+
 		return nil
 	}
 
@@ -102,7 +113,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(svcList.Items) == 0 {
+	if len(svcList.GetItems()) == 0 {
 		cliutils.LineInfo("No Services found\n")
 		return nil
 	}
@@ -116,23 +127,34 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses", "TLS")
-	for _, svc := range svcList.Items {
-
-		p.AppendRow(svc.Status.PrimaryHostname, svc.Status.NamespaceRef.Name, svc.Spec.Mode.String(),
-			fmt.Sprintf("%d", ucorev1.ToService(svc).RealPort()), cliutils.GetResourceAge(svc),
-			cliutils.PrintBoolean(svc.Spec.IsPublic), cliutils.PrintBoolean(svc.Spec.IsAnonymous),
-			getServiceAddrs(svc), cliutils.PrintBoolean(svc.Spec.IsTLS))
-	}
-
-	p.Render()
+	printList(svcList.GetItems(), svcList.GetListResponseMeta())
 
 	return nil
 }
 
+func printList(itmList []*corev1.Service, listMeta *metav1.ListResponseMeta) {
+	p := printer.NewPrinter("Name", "Namespace", "Mode", "Port", "Age", "Public", "Anonymous", "Addresses", "TLS")
+
+	for _, itm := range itmList {
+		p.AppendRow(itm.GetStatus().GetPrimaryHostname(),
+			itm.GetStatus().GetNamespaceRef().GetName(),
+			itm.GetSpec().GetMode().String(),
+			fmt.Sprintf("%d", ucorev1.ToService(itm).RealPort()),
+			cliutils.GetResourceAge(itm),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsPublic()),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsAnonymous()),
+			getServiceAddrs(itm),
+			cliutils.PrintBoolean(itm.GetSpec().GetIsTLS()))
+	}
+
+	p.Render()
+
+	cliutils.PrintListMeta(len(itmList), listMeta)
+}
+
 func getServiceAddrs(svc *corev1.Service) string {
 
-	addrs := svc.Status.Addresses
+	addrs := svc.GetStatus().GetAddresses()
 
 	if len(addrs) == 0 {
 		return ""
@@ -141,12 +163,12 @@ func getServiceAddrs(svc *corev1.Service) string {
 	addrStrs := []string{}
 
 	for _, addr := range addrs {
-		if addr.DualStackIP.Ipv4 != "" {
-			addrStrs = append(addrStrs, addr.DualStackIP.Ipv4)
+		if addr.GetDualStackIP().GetIpv4() != "" {
+			addrStrs = append(addrStrs, addr.GetDualStackIP().GetIpv4())
 		}
 
-		if addr.DualStackIP.Ipv6 != "" {
-			addrStrs = append(addrStrs, addr.DualStackIP.Ipv6)
+		if addr.GetDualStackIP().GetIpv6() != "" {
+			addrStrs = append(addrStrs, addr.GetDualStackIP().GetIpv6())
 		}
 	}
 

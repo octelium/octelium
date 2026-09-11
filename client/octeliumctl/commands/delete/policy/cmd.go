@@ -30,7 +30,7 @@ octeliumctl delete policy my-policy
 octeliumctl del pol my-policy
 	`,
 
-	Aliases: []string{"pol"},
+	Aliases: []string{"pol", "policies"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)

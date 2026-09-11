@@ -15,8 +15,6 @@
 package service
 
 import (
-	"fmt"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
@@ -59,16 +57,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fqdn := svcNs.Service
-	if svcNs.Namespace != "" {
-		fqdn = fmt.Sprintf("%s.%s", svcNs.Service, svcNs.Namespace)
-	}
+	fqdn := svcNs.String()
 
 	if _, err := c.DeleteService(ctx, &metav1.DeleteOptions{Name: fqdn}); err != nil {
 		return err
 	}
 
-	cliutils.LineInfo("Service %s successfully deleted\n", fqdn)
+	cliutils.LineInfo("Service `%s` successfully deleted\n", fqdn)
 
 	return nil
 }

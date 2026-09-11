@@ -53,13 +53,17 @@ var cmdArgs args
 
 func init() {
 
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -78,11 +82,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Device{res}, nil)
+
 		return nil
 	}
 
@@ -101,7 +112,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No Devices found\n")
 		return nil
 	}
@@ -115,15 +126,24 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := printer.NewPrinter("Name", "User", "State", "Age", "OS Type", "State")
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
 
-	for _, itm := range itmList.Items {
-		p.AppendRow(itm.Metadata.Name, itm.Status.UserRef.Name, itm.Spec.State.String(),
+	return nil
+}
+
+func printList(itmList []*corev1.Device, listMeta *metav1.ListResponseMeta) {
+	p := printer.NewPrinter("Name", "User", "Hostname", "State", "Age", "OS Type")
+
+	for _, itm := range itmList {
+		p.AppendRow(itm.GetMetadata().GetName(),
+			itm.GetStatus().GetUserRef().GetName(),
+			itm.GetStatus().GetHostname(),
+			itm.GetSpec().GetState().String(),
 			cliutils.GetResourceAge(itm),
-			itm.Status.OsType.String(), itm.Spec.State.String())
+			itm.GetStatus().GetOsType().String())
 	}
 
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

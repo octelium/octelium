@@ -37,7 +37,7 @@ type args struct {
 }
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "yaml", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "yaml", "Output format (json|yaml)")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.CheckMode, "check", false,
 		"Check whether there is a more recent latest release for Octelium CLIs")
 }
@@ -65,6 +65,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		OcteliumCommonVersion: *cliutils.GetOcteliumCommonVersion(),
 	}
 
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
+		return err
+	}
+
 	switch cmdArgs.Out {
 	case "json":
 		out, err := json.MarshalIndent(i, "", "    ")
@@ -73,15 +77,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("%s", out)
-	case "yaml":
+	default:
 		out, err := yaml.Marshal(i)
 		if err != nil {
 			return err
 		}
 
 		fmt.Printf("%s", out)
-	default:
-		return errors.Errorf("Invalid format `%s`. It must be either yaml or json", cmdArgs.Out)
 	}
 
 	return nil

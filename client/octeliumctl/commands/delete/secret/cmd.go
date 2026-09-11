@@ -31,7 +31,7 @@ octeliumctl del sec top-secret
 	`,
 
 	Args:    cobra.ExactArgs(1),
-	Aliases: []string{"sec"},
+	Aliases: []string{"sec", "secrets"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
 	},

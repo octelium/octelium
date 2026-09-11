@@ -15,20 +15,17 @@
 package config
 
 import (
-	"io"
-	"os"
-
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
 type args struct {
 	Value    string
 	FromFile string
+	FromEnv  string
 }
 
 var example = `
@@ -36,14 +33,15 @@ octeliumctl create config my-config
 octeliumctl create config --file /path/to/config/file my-cfg-1
 octeliumctl create config -f /path/to/config/file my-cfg-1
 octeliumctl create config --value SOME_VALUE cfg-02
+octeliumctl create config my-config --from-env MY_VALUE
 echo $MY_VALUE | octeliumctl create config my-config --file -
 `
 
 var Cmd = &cobra.Command{
 	Use:     "config",
-	Short:   "Create Config",
+	Short:   "Create a Config",
 	Args:    cobra.ExactArgs(1),
-	Aliases: []string{"cfg", "conf"},
+	Aliases: []string{"cfg", "conf", "configs"},
 	Example: example,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -54,7 +52,8 @@ var cmdArgs args
 
 func init() {
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Value, "value", "", "Config value")
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.FromFile, "file", "f", "", "Get Config value from file path")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.FromFile, "file", "f", "", "Get Config value from file path. Set it to `-` to read from stdin")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.FromEnv, "from-env", "", "Get Config value from an environment variable")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -71,8 +70,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	c := corev1.NewMainServiceClient(conn)
 
-	var value []byte
-
 	req := &corev1.Config{
 		Metadata: &metav1.Metadata{
 			Name: i.FirstArg(),
@@ -81,7 +78,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		Data: &corev1.Config_Data{},
 	}
 
-	value, err = getValue()
+	value, err := getValue()
 	if err != nil {
 		return err
 	}
@@ -102,18 +99,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 }
 
 func getValue() ([]byte, error) {
-	if cmdArgs.FromFile != "" {
-		if cmdArgs.FromFile == "-" {
-			return io.ReadAll(os.Stdin)
-
-		} else {
-			return os.ReadFile(cmdArgs.FromFile)
-		}
-	}
-
-	if cmdArgs.Value != "" {
-		return []byte(cmdArgs.Value), nil
-	}
-
-	return nil, errors.Errorf("Either --file or --value must be provided")
+	return cliutils.GetDataValue(&cliutils.GetDataValueOpts{
+		Value:    cmdArgs.Value,
+		FromFile: cmdArgs.FromFile,
+		FromEnv:  cmdArgs.FromEnv,
+		Prompt:   "Enter the Config value",
+	})
 }

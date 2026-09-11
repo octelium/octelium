@@ -17,8 +17,10 @@ package update
 import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/update/authenticator"
 	"github.com/octelium/octelium/client/octeliumctl/commands/update/config"
+	"github.com/octelium/octelium/client/octeliumctl/commands/update/credential"
 	"github.com/octelium/octelium/client/octeliumctl/commands/update/device"
 	"github.com/octelium/octelium/client/octeliumctl/commands/update/secret"
+	"github.com/octelium/octelium/client/octeliumctl/commands/update/session"
 	"github.com/spf13/cobra"
 )
 
@@ -32,4 +34,6 @@ func AddSubcommands() {
 	Cmd.AddCommand(device.Cmd)
 	Cmd.AddCommand(authenticator.Cmd)
 	Cmd.AddCommand(config.Cmd)
+	Cmd.AddCommand(session.Cmd)
+	Cmd.AddCommand(credential.Cmd)
 }

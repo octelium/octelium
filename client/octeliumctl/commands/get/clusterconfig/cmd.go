@@ -30,7 +30,7 @@ type args struct {
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "yaml", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "yaml", "Output format (json|yaml)")
 }
 
 var Cmd = &cobra.Command{
@@ -53,6 +53,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 

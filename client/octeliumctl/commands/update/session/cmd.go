@@ -23,20 +23,21 @@ import (
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
 const example = `
-  octeliumctl update session --expire-in 3month usr1-linux-uvc4
-  octeliumctl update sess --approve usr1-linux-uvc4
-  octeliumctl update sess --reject usr1-linux-uvc4
+  octeliumctl update session --expire-in 3months usr1-0vgiqs75psre
+  octeliumctl update sess --approve usr1-0vgiqs75psre
+  octeliumctl update sess --reject usr1-0vgiqs75psre
   `
 
 var Cmd = &cobra.Command{
 	Use:     "session",
 	Short:   "Update a Session",
 	Example: example,
-	Aliases: []string{"sess"},
+	Aliases: []string{"sess", "sessions"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)
@@ -55,6 +56,8 @@ func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Approve, "approve", false, "Approve the Session")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.Reject, "reject", false, "Reject the Session")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.ExpiresIn, "expire-in", "", "Set the duration after which the Session expires (e.g. `2hours`, `30days`, `6hours`, `1week`)")
+
+	Cmd.MarkFlagsMutuallyExclusive("approve", "reject")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -64,7 +67,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	if !cmdArgs.Approve && !cmdArgs.Reject && cmdArgs.ExpiresIn == "" {
+		return errors.Errorf(
+			"You must set at least one of the --approve, --reject or --expire-in flags")
+	}
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}

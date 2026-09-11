@@ -17,6 +17,7 @@ package cliutils
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -44,6 +45,10 @@ func (i *CLIInfo) FirstArg() string {
 		return i.args[0]
 	}
 	return ""
+}
+
+func (i *CLIInfo) Args() []string {
+	return i.args
 }
 
 func GetCLIInfo(cmd *cobra.Command, args []string) (*CLIInfo, error) {
@@ -122,10 +127,10 @@ func GetGenesisImageWithPackage(pkg, version string) string {
 	return ldflags.GetImage(fmt.Sprintf("%s-genesis", pkg), version)
 }
 
-func GetSecretPrompt() ([]byte, error) {
+func GetValuePrompt(label string) ([]byte, error) {
 
 	prompt := promptui.Prompt{
-		Label:       "Enter the Secret value",
+		Label:       label,
 		HideEntered: true,
 		Mask:        '*',
 	}
@@ -136,6 +141,78 @@ func GetSecretPrompt() ([]byte, error) {
 	}
 
 	return []byte(res), nil
+}
+
+type GetDataValueOpts struct {
+	Value    string
+	FromFile string
+	FromEnv  string
+	Prompt   string
+}
+
+func GetDataValue(o *GetDataValueOpts) ([]byte, error) {
+
+	var setFlags []string
+	for _, itm := range []struct {
+		name string
+		arg  string
+	}{
+		{"--value", o.Value},
+		{"--file", o.FromFile},
+		{"--from-env", o.FromEnv},
+	} {
+		if itm.arg != "" {
+			setFlags = append(setFlags, itm.name)
+		}
+	}
+
+	if len(setFlags) > 1 {
+		return nil, errors.Errorf("Only one of %s can be set at a time",
+			strings.Join(setFlags, ", "))
+	}
+
+	switch {
+	case o.FromFile == "-":
+		return io.ReadAll(os.Stdin)
+	case o.FromFile != "":
+		return os.ReadFile(o.FromFile)
+	case o.Value != "":
+		return []byte(o.Value), nil
+	case o.FromEnv != "":
+		ret, ok := os.LookupEnv(o.FromEnv)
+		if !ok {
+			return nil, errors.Errorf("The environment variable %s is not set", o.FromEnv)
+		}
+		return []byte(ret), nil
+	}
+
+	if IsNonInteractive() {
+		return nil, errors.Errorf(
+			"The value must be set via one of the flags: --value, --file or --from-env")
+	}
+
+	return GetValuePrompt(o.Prompt)
+}
+
+func PrintListMeta(shown int, meta *metav1.ListResponseMeta) {
+	if meta == nil {
+		return
+	}
+
+	totalCount := meta.GetTotalCount()
+	if totalCount == 0 || uint32(shown) >= totalCount {
+		return
+	}
+
+	page := meta.GetPage() + 1
+
+	if !meta.GetHasMore() {
+		LineInfo("Showing %d out of %d (page %d)\n", shown, totalCount, page)
+		return
+	}
+
+	LineInfo("Showing %d out of %d (page %d). Use --page %d to see the next page\n",
+		shown, totalCount, page, page+1)
 }
 
 func GetRefreshToken(ctx context.Context, domain string) (string, error) {

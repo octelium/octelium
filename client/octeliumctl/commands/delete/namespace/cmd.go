@@ -30,7 +30,7 @@ octeliumctl delete namespace ns1
 octeliumctl del ns ns2
 	`,
 
-	Aliases: []string{"ns"},
+	Aliases: []string{"ns", "namespaces"},
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return doCmd(cmd, args)

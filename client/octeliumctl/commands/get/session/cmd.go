@@ -32,10 +32,10 @@ type args struct {
 
 const example = `
 octeliumctl get session
-octeliumctl get sess root-cavzne
+octeliumctl get sess usr1-0vgiqs75psre
 octeliumctl get sessions -o json
 octeliumctl get sessions -o yaml
-octelium get sess --user alice
+octeliumctl get sess --user alice
 `
 
 var Cmd = &cobra.Command{
@@ -52,7 +52,7 @@ var Cmd = &cobra.Command{
 var cmdArgs args
 
 func init() {
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.User, "user", "", "Filter the list by a User")
 }
 
@@ -60,6 +60,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
+		return err
+	}
+
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
 		return err
 	}
 
@@ -80,11 +84,18 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
-		if err != nil {
-			return err
+
+		if cmdArgs.Out != "" {
+			out, err := cliutils.OutFormatPrint(cmdArgs.Out, res)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", string(out))
+			return nil
 		}
-		fmt.Printf("%s\n", string(out))
+
+		printList([]*corev1.Session{res}, nil)
+
 		return nil
 	}
 
@@ -103,7 +114,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(itmList.Items) == 0 {
+	if len(itmList.GetItems()) == 0 {
 		cliutils.LineInfo("No Sessions found\n")
 		return nil
 	}
@@ -117,29 +128,36 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printList(itmList.GetItems(), itmList.GetListResponseMeta())
+
+	return nil
+}
+
+func printList(itmList []*corev1.Session, listMeta *metav1.ListResponseMeta) {
 	p := printer.NewPrinter("Name", "User", "Type", "Expires In", "Age", "State", "Connected")
 
-	for _, itm := range itmList.Items {
+	for _, itm := range itmList {
 
-		p.AppendRow(itm.Metadata.Name,
-			itm.Status.UserRef.Name,
+		p.AppendRow(itm.GetMetadata().GetName(),
+			itm.GetStatus().GetUserRef().GetName(),
 			func() string {
-				ret := itm.Status.Type.String()
-				switch itm.Status.Type {
+				ret := itm.GetStatus().GetType().String()
+				switch itm.GetStatus().GetType() {
 				case corev1.Session_Status_CLIENTLESS:
-					if itm.Status.IsBrowser {
+					if itm.GetStatus().GetIsBrowser() {
 						ret = fmt.Sprintf("%s (Browser)", ret)
 					}
 				}
 
 				return ret
 			}(),
-			cliutils.PrintExpiresAt(itm.Spec.ExpiresAt),
-			cliutils.GetResourceAge(itm), itm.Spec.State.String(),
-			cliutils.PrintBoolean(itm.Status.IsConnected))
+			cliutils.PrintExpiresAt(itm.GetSpec().GetExpiresAt()),
+			cliutils.GetResourceAge(itm),
+			itm.GetSpec().GetState().String(),
+			cliutils.PrintBoolean(itm.GetStatus().GetIsConnected()))
 	}
 
 	p.Render()
 
-	return nil
+	cliutils.PrintListMeta(len(itmList), listMeta)
 }

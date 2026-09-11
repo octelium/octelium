@@ -54,6 +54,10 @@ octeliumctl create credential --user usr1 my-cred
 octeliumctl create cred --user usr1 --expire-in 3months my-cred
 octeliumctl create credential --user usr2 --expire-in 15minutes --one-time
 octeliumctl create cred --user usr3 --expire-in 30days
+octeliumctl create cred --user usr4 --type access-token --policy my-policy
+octeliumctl create cred --user usr5 --type oauth2 --session-type clientless
+octeliumctl create cred --user usr6 -o json
+octeliumctl create cred --rotate my-cred
 	`,
 
 	Aliases: []string{"cred", "creds", "credentials"},
@@ -73,12 +77,12 @@ func init() {
 
 	Cmd.PersistentFlags().Uint32Var(&cmdArgs.MaxAuthentications, "max-authn", 0, "Maximum number of authentications. Overrides one-time if set")
 
-	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Credential type (Can take the values: "auth-token", "oauth2" or "access-token"). By default it is an Authentication Token`)
-	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless")`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", `Credential type (Can take the values: "auth-token", "access-token" or "oauth2"). By default it is set to "auth-token"`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.SessionType, "session-type", "", `Session type (Can take the values: "client" or "clientless"). By default it is set to "client"`)
 
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Policies, "policy", nil,
 		`Policy attached to Sessions created by this Credential. Use the flag multiple times to add more Policies.`)
-	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format (json|yaml)")
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -89,7 +93,25 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	conn, err := client.GetGRPCClientConn(cmd.Context(), i.Domain)
+	if err := cliutils.ValidateOutFormat(cmdArgs.Out); err != nil {
+		return err
+	}
+
+	typ, err := getType()
+	if err != nil {
+		return err
+	}
+
+	sessType, err := getSessionType()
+	if err != nil {
+		return err
+	}
+
+	if !cmdArgs.Rotate && cmdArgs.User == "" {
+		return errors.Errorf("The User must be set via the --user flag")
+	}
+
+	conn, err := client.GetGRPCClientConn(ctx, i.Domain)
 	if err != nil {
 		return err
 	}
@@ -177,18 +199,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 				}
 			}(),
 			ExpiresAt: expiresAt,
-			Type: func() corev1.Credential_Spec_Type {
-				switch cmdArgs.Type {
-				case "oauth2":
-					return corev1.Credential_Spec_OAUTH2
-				case "access", "access-token":
-					return corev1.Credential_Spec_ACCESS_TOKEN
-				case "auth-token":
-					return corev1.Credential_Spec_AUTH_TOKEN
-				default:
-					return corev1.Credential_Spec_AUTH_TOKEN
-				}
-			}(),
+			Type:      typ,
 		},
 	}
 
@@ -214,16 +225,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	switch req.Spec.Type {
 	case corev1.Credential_Spec_AUTH_TOKEN, corev1.Credential_Spec_ACCESS_TOKEN:
-		req.Spec.SessionType = func() corev1.Session_Status_Type {
-			switch cmdArgs.SessionType {
-			case "client":
-				return corev1.Session_Status_CLIENT
-			case "clientless":
-				return corev1.Session_Status_CLIENTLESS
-			default:
-				return corev1.Session_Status_CLIENT
-			}
-		}()
+		req.Spec.SessionType = sessType
 	default:
 		req.Spec.SessionType = corev1.Session_Status_CLIENTLESS
 	}
@@ -237,4 +239,32 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	return doGenerateToken(umetav1.GetObjectReference(cred))
+}
+
+func getType() (corev1.Credential_Spec_Type, error) {
+	switch cmdArgs.Type {
+	case "auth-token", "":
+		return corev1.Credential_Spec_AUTH_TOKEN, nil
+	case "access", "access-token":
+		return corev1.Credential_Spec_ACCESS_TOKEN, nil
+	case "oauth2":
+		return corev1.Credential_Spec_OAUTH2, nil
+	default:
+		return corev1.Credential_Spec_TYPE_UNKNOWN, errors.Errorf(
+			"Invalid Credential type: %s. It must be one of: `auth-token`, `access-token` or `oauth2`",
+			cmdArgs.Type)
+	}
+}
+
+func getSessionType() (corev1.Session_Status_Type, error) {
+	switch cmdArgs.SessionType {
+	case "client", "":
+		return corev1.Session_Status_CLIENT, nil
+	case "clientless":
+		return corev1.Session_Status_CLIENTLESS, nil
+	default:
+		return corev1.Session_Status_TYPE_UNKNOWN, errors.Errorf(
+			"Invalid Session type: %s. It must be either `client` or `clientless`",
+			cmdArgs.SessionType)
+	}
 }

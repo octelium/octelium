@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -43,16 +44,17 @@ func (c *diffCtl) getCmpMetadata(itm umetav1.ResourceObjectI) *metav1.Metadata {
 	md := itm.GetMetadata()
 	return &metav1.Metadata{
 		Name:        c.getFullName(itm),
-		DisplayName: md.DisplayName,
-		Labels:      md.Labels,
-		Description: md.Description,
-		Annotations: md.Annotations,
-		PicURL:      md.PicURL,
+		DisplayName: md.GetDisplayName(),
+		Labels:      md.GetLabels(),
+		Description: md.GetDescription(),
+		Annotations: md.GetAnnotations(),
+		Tags:        md.GetTags(),
+		PicURL:      md.GetPicURL(),
 	}
 }
 
 func (c *diffCtl) getFullName(itm umetav1.ResourceObjectI) string {
-	name := itm.GetMetadata().Name
+	name := itm.GetMetadata().GetName()
 	switch c.api {
 	case ucorev1.API:
 		switch itm.GetKind() {
@@ -63,22 +65,47 @@ func (c *diffCtl) getFullName(itm umetav1.ResourceObjectI) string {
 		}
 
 	}
-	return itm.GetMetadata().Name
+	return name
 }
 
-func DiffCoreResource(ctx context.Context,
-	kind string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete bool) (*DiffCtlResponse, error) {
-	ctl, err := NewDiffCtl("core", kind, corev1.NewMainServiceClient(conn),
-		func() (umetav1.ResourceObjectI, error) {
-			return ucorev1.NewObject(kind)
-		}, func() (protoreflect.ProtoMessage, error) {
-			return ucorev1.NewObjectListOptions(kind)
-		}, desiredItems, doDelete)
-	if err != nil {
-		return nil, err
+func DiffCoreResources(ctx context.Context,
+	kinds []string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete bool) (*DiffCtlResponse, error) {
+
+	ret := &DiffCtlResponse{}
+
+	var ctls []*diffCtl
+
+	for _, kind := range kinds {
+		ctl, err := NewDiffCtl(ucorev1.API, kind, corev1.NewMainServiceClient(conn),
+			func() (umetav1.ResourceObjectI, error) {
+				return ucorev1.NewObject(kind)
+			}, func() (protoreflect.ProtoMessage, error) {
+				return ucorev1.NewObjectListOptions(kind)
+			}, desiredItems, doDelete)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := ctl.Load(ctx); err != nil {
+			return nil, err
+		}
+
+		ctls = append(ctls, ctl)
 	}
 
-	return ctl.Run(ctx)
+	for _, ctl := range ctls {
+		if err := ctl.Apply(ctx, ret); err != nil {
+			return nil, err
+		}
+	}
+
+	for i := len(ctls) - 1; i >= 0; i-- {
+		if err := ctls[i].Prune(ctx, ret); err != nil {
+			return nil, err
+		}
+	}
+
+	return ret, nil
 }
 
 type diffCtl struct {
@@ -127,56 +154,92 @@ type DiffCtlResponse struct {
 	CountDeleted int
 }
 
-func (c *diffCtl) Run(ctx context.Context) (*DiffCtlResponse, error) {
+func (c *diffCtl) Load(ctx context.Context) error {
 
-	ret := &DiffCtlResponse{}
+	if err := c.checkDuplicateItems(); err != nil {
+		return err
+	}
+
 	if err := c.setCurrentItems(ctx); err != nil {
-		return nil, err
+		return err
 	}
 
 	c.setDiff()
+
+	return nil
+}
+
+func (c *diffCtl) Apply(ctx context.Context, ret *DiffCtlResponse) error {
 
 	for _, itm := range c.createItems {
 		if err := c.doCreateItem(ctx, itm); err != nil {
 			if isUserError(err) {
 				cliutils.LineWarn("Could not create %s %s. %s\n",
-					c.kind, itm.GetMetadata().Name, cliutils.GrpcErr(err))
+					c.kind, c.getFullName(itm), cliutils.GrpcErr(err))
 				continue
 			}
 
-			return nil, err
+			return err
 		}
 		ret.CountCreated += 1
-		cliutils.LineNotify("%s: %s Created\n", c.kind, itm.GetMetadata().Name)
+		cliutils.LineNotify("%s: %s Created\n", c.kind, c.getFullName(itm))
 	}
 
 	for _, itm := range c.updateItems {
 		if err := c.doUpdateItem(ctx, itm); err != nil {
 			if isUserError(err) {
 				cliutils.LineWarn("Could not update %s %s. %s\n",
-					c.kind, itm.GetMetadata().Name, cliutils.GrpcErr(err))
+					c.kind, c.getFullName(itm), cliutils.GrpcErr(err))
 				continue
 			}
-			return nil, err
+			return err
 		}
 		ret.CountUpdated += 1
-		cliutils.LineNotify("%s: %s Updated\n", c.kind, itm.GetMetadata().Name)
+		cliutils.LineNotify("%s: %s Updated\n", c.kind, c.getFullName(itm))
 	}
 
-	if c.doDelete {
-		for _, itm := range c.deleteItems {
-			if err := c.doDeleteItem(ctx, itm); err != nil {
-				if grpcerr.IsNotFound(err) {
-					continue
-				}
-				return nil, err
+	return nil
+}
+
+func (c *diffCtl) Prune(ctx context.Context, ret *DiffCtlResponse) error {
+
+	if !c.doDelete {
+		return nil
+	}
+
+	for _, itm := range c.deleteItems {
+		if err := c.doDeleteItem(ctx, itm); err != nil {
+			if grpcerr.IsNotFound(err) {
+				continue
 			}
-			ret.CountDeleted += 1
-			cliutils.LineNotify("%s: %s Deleted\n", c.kind, itm.GetMetadata().Name)
+			if isUserError(err) {
+				cliutils.LineWarn("Could not delete %s %s. %s\n",
+					c.kind, c.getFullName(itm), cliutils.GrpcErr(err))
+				continue
+			}
+			return err
 		}
+		ret.CountDeleted += 1
+		cliutils.LineNotify("%s: %s Deleted\n", c.kind, c.getFullName(itm))
 	}
 
-	return ret, nil
+	return nil
+}
+
+func (c *diffCtl) checkDuplicateItems() error {
+
+	var names []string
+
+	for _, itm := range c.desiredItems {
+		name := c.getFullName(itm)
+		if slices.Contains(names, name) {
+			return errors.Errorf("The %s `%s` is defined more than once", c.kind, name)
+		}
+
+		names = append(names, name)
+	}
+
+	return nil
 }
 
 func isUserError(err error) bool {
@@ -185,16 +248,18 @@ func isUserError(err error) bool {
 }
 
 func getFieldSpec(item umetav1.ResourceObjectI) proto.Message {
-	var spec protoreflect.Value
+	msg := item.ProtoReflect()
 
-	item.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		if fd.Name() == "spec" {
-			spec = v
-		}
-		return true
-	})
+	fd := msg.Descriptor().Fields().ByName("spec")
+	if fd == nil || fd.Message() == nil {
+		return nil
+	}
 
-	return spec.Message().Interface()
+	if !msg.Has(fd) {
+		return msg.Get(fd).Message().New().Interface()
+	}
+
+	return msg.Get(fd).Message().Interface()
 }
 
 func hasFieldData(item umetav1.ResourceObjectI) bool {
@@ -279,7 +344,7 @@ func (c *diffCtl) setCurrentItems(ctx context.Context) error {
 		}
 
 		if retMap["items"] == nil {
-			return nil
+			continue
 		}
 
 		retItemsMap := retMap["items"].([]any)

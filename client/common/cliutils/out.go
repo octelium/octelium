@@ -29,6 +29,19 @@ func OutFormatPrint(outType string, dat proto.Message) ([]byte, error) {
 	case "yaml", "yml", "":
 		return pbutils.MarshalYAML(dat)
 	default:
-		return nil, errors.Errorf("invalid output format: %s", outType)
+		return nil, getInvalidOutFormatErr(outType)
 	}
+}
+
+func ValidateOutFormat(outType string) error {
+	switch outType {
+	case "json", "yaml", "yml", "":
+		return nil
+	default:
+		return getInvalidOutFormatErr(outType)
+	}
+}
+
+func getInvalidOutFormatErr(outType string) error {
+	return errors.Errorf("Invalid output format: %s. It must be either `json` or `yaml`", outType)
 }
