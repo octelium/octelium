@@ -56,7 +56,7 @@ const NamespaceCard = (props: {
       )}
     >
       <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-zinc-900 text-white shadow-sm ring-1 ring-slate-900/10 transition-transform duration-200 group-hover/item:scale-[1.04] dark:from-slate-200 dark:to-slate-400 dark:text-slate-900 dark:ring-slate-100/20">
+        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-zinc-900 text-white shadow-sm ring-1 ring-slate-900/10 transition-transform duration-200 group-hover/item:scale-[1.04] dark:from-neutral-200 dark:to-neutral-400 dark:text-neutral-900 dark:ring-neutral-100/20">
           <Boxes size={21} aria-hidden />
         </div>
         <div className="min-w-0 flex-1">

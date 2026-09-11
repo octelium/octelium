@@ -71,7 +71,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     icon: Terminal,
     tile: SERVICE_TYPE_TILE,
     chip:
-      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700",
   },
   {
     key: "KUBERNETES",
@@ -172,7 +172,7 @@ export const UNKNOWN_SERVICE_TYPE: ServiceTypeInfo = {
   icon: Server,
   tile: SERVICE_TYPE_TILE,
   chip:
-    "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+    "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700",
 };
 
 const byType = new Map<Service_Spec_Type, ServiceTypeInfo>(

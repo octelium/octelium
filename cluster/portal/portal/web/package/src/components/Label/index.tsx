@@ -4,9 +4,9 @@ export type LabelTone = "neutral" | "emerald" | "sky" | "amber" | "slate";
 
 const TONES: Record<LabelTone, string> = {
   neutral:
-    "bg-slate-50 text-slate-700 ring-slate-200 dark:bg-slate-800/50 dark:text-slate-200 dark:ring-slate-700",
+    "bg-slate-50 text-slate-700 ring-slate-200 dark:bg-neutral-800/60 dark:text-neutral-200 dark:ring-neutral-700",
   slate:
-    "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+    "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700",
   emerald:
     "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25",
   sky: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/25",

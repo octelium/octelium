@@ -42,7 +42,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     "--mantine-color-accent-filled": "var(--portal-accent)",
     "--mantine-color-accent-filled-hover": "var(--portal-accent-hover)",
     "--mantine-color-accent-outline": "var(--portal-accent)",
-    "--mantine-color-accent-outline-hover": "rgb(226 232 240 / 0.05)",
+    "--mantine-color-accent-outline-hover": "rgb(237 237 237 / 0.05)",
     "--mantine-color-accent-contrast": "var(--portal-accent-fg)",
   },
 });

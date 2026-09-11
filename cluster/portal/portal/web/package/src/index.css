@@ -48,23 +48,23 @@
 }
 
 :root[data-mantine-color-scheme="dark"] {
-  --portal-canvas: #020617;
-  --portal-surface: #0f172a;
-  --portal-surface-muted: #172033;
-  --portal-surface-strong: #1e293b;
-  --portal-surface-active: #243349;
-  --portal-line: #1e293b;
-  --portal-line-soft: #172033;
-  --portal-line-strong: #334155;
-  --portal-fg: #e2e8f0;
-  --portal-fg-muted: #cbd5e1;
-  --portal-fg-subtle: #94a3b8;
-  --portal-fg-faint: #64748b;
-  --portal-fg-ghost: #475569;
-  --portal-accent: #e2e8f0;
-  --portal-accent-hover: #f8fafc;
-  --portal-accent-fg: #0f172a;
-  --portal-accent-ring: rgb(226 232 240 / 0.35);
+  --portal-canvas: #0f0f0f;
+  --portal-surface: #1c1c1c;
+  --portal-surface-muted: #232323;
+  --portal-surface-strong: #2a2a2a;
+  --portal-surface-active: #333333;
+  --portal-line: #2b2b2b;
+  --portal-line-soft: #242424;
+  --portal-line-strong: #3d3d3d;
+  --portal-fg: #ededed;
+  --portal-fg-muted: #d0d0d0;
+  --portal-fg-subtle: #a3a3a3;
+  --portal-fg-faint: #7a7a7a;
+  --portal-fg-ghost: #545454;
+  --portal-accent: #ededed;
+  --portal-accent-hover: #fafafa;
+  --portal-accent-fg: #141414;
+  --portal-accent-ring: rgb(237 237 237 / 0.35);
 }
 
 html,
