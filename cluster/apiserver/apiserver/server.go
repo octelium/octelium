@@ -20,7 +20,6 @@ import (
 	"context"
 	"net"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
@@ -93,10 +92,8 @@ func Run(ctx context.Context) error {
 
 	s := grpc.NewServer(
 		grpc.ReadBufferSize(32*1024),
-		grpc.StreamInterceptor(
-			grpc_middleware.ChainStreamServer(mdlwr.StreamServerInterceptor())),
-		grpc.UnaryInterceptor(
-			grpc_middleware.ChainUnaryServer(mdlwr.UnaryServerInterceptor())),
+		grpc.ChainStreamInterceptor(mdlwr.StreamServerInterceptor()),
+		grpc.ChainUnaryInterceptor(mdlwr.UnaryServerInterceptor()),
 	)
 	corev1.RegisterMainServiceServer(s, srv)
 	userv1.RegisterMainServiceServer(s, usrSrv)

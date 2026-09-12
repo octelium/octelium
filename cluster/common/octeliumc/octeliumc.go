@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
@@ -55,8 +54,8 @@ func DefaultAddr() string {
 
 func DefaultDialOpts(ctx context.Context) ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
-		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(middlewares.GetUnaryInterceptors()...)),
-		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(middlewares.GetStreamInterceptors()...)),
+		grpc.WithChainUnaryInterceptor(middlewares.GetUnaryInterceptors()...),
+		grpc.WithChainStreamInterceptor(middlewares.GetStreamInterceptors()...),
 		/*
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:                45 * time.Second,

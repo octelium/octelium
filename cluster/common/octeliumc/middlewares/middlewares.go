@@ -21,7 +21,7 @@ import (
 	"math"
 	"time"
 
-	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"

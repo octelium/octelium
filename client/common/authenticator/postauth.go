@@ -20,8 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/authc"
@@ -102,8 +101,8 @@ func (a *authenticator) doPostAuth(ctx context.Context) error {
 			Timeout: 15 * time.Second,
 		}),
 
-		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
-		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
+		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
+		grpc.WithChainStreamInterceptor(streamMiddlewares...),
 		grpc.WithUserAgent(fmt.Sprintf("octelium-cli/%s", ldflags.SemVer)),
 	}
 

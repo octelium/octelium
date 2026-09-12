@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/doug-martin/goqu/v9 v9.19.0
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4
 	github.com/lib/pq v1.12.3
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/common v0.0.0-00010101000000-000000000000
@@ -62,5 +62,3 @@ replace github.com/octelium/octelium/cluster/common => ../common
 replace github.com/octelium/octelium/cluster/rscserver => ../rscserver
 
 replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576

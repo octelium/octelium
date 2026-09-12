@@ -39,6 +39,7 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.28.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7 // indirect
@@ -88,7 +89,6 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	// indirect
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
@@ -112,5 +112,3 @@ replace github.com/octelium/octelium/cluster/common => ../common
 replace github.com/octelium/octelium/cluster/rscserver => ../rscserver
 
 replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576

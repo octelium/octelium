@@ -10,7 +10,7 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-attestation v0.6.4
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4
 	github.com/hashicorp/go-version v1.8.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000

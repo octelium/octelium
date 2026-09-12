@@ -21,8 +21,7 @@ import (
 	"net"
 	"time"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -120,8 +119,8 @@ func (c *Client) doGetGRPCClientConn(ctx context.Context, domain string) (*grpc.
 			Timeout: 15 * time.Second,
 		}),
 
-		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
-		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
+		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
+		grpc.WithChainStreamInterceptor(streamMiddlewares...),
 	}
 
 	opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))

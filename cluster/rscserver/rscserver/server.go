@@ -25,8 +25,7 @@ import (
 	"strconv"
 	"time"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	_ "github.com/lib/pq"
 	"github.com/octelium/octelium/apis/cluster/csecretmanv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -187,10 +186,8 @@ func (s *Server) Run(ctx context.Context) error {
 		cred,
 		grpc.ReadBufferSize(32*1024),
 		grpc.MaxConcurrentStreams(1000000),
-		grpc.StreamInterceptor(
-			grpc_middleware.ChainStreamServer(s.handleStreamRequest)),
-		grpc.UnaryInterceptor(
-			grpc_middleware.ChainUnaryServer(s.handleUnaryRequest)),
+		grpc.ChainStreamInterceptor(s.handleStreamRequest),
+		grpc.ChainUnaryInterceptor(s.handleUnaryRequest),
 	)
 
 	// grpc_health_v1.RegisterHealthServer(s.grpcSrv, healthcheck.NewServer())
@@ -330,7 +327,7 @@ func (s *Server) setSecretManager(ctx context.Context) error {
 	zap.L().Info("Using secretManager", zap.String("address", addr))
 
 	opts := []grpc.DialOption{
-		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
+		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
 	}
 
 	cred, err := spiffec.GetGRPCClientCred(ctx, nil)

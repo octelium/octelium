@@ -7,7 +7,7 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/uuid v1.6.0
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/kaptinlin/jsonschema v0.6.5
 	github.com/lib/pq v1.12.3
@@ -119,7 +119,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f // indirect
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
@@ -149,5 +149,3 @@ replace github.com/octelium/octelium/cluster/common => ../common
 replace github.com/octelium/octelium/cluster/rscserver => ../rscserver
 
 replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576

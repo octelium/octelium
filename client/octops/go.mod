@@ -55,7 +55,7 @@ require (
 	github.com/google/go-attestation v0.6.4 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -127,5 +127,3 @@ replace github.com/octelium/octelium/cluster/common => ../../cluster/common
 replace github.com/octelium/octelium/cluster/rscserver => ../../cluster/rscserver
 
 replace github.com/octelium/octelium/octelium-go => ../../octelium-go
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576

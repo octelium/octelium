@@ -81,7 +81,7 @@ require (
 	github.com/google/go-attestation v0.6.4 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -160,7 +160,5 @@ replace github.com/octelium/octelium/cluster/rscserver => ../rscserver
 replace github.com/octelium/octelium/cluster/apiserver => ../apiserver
 
 replace github.com/octelium/octelium/cluster/octovigil => ../octovigil
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576
 
 replace github.com/octelium/octelium/apis => ../../apis

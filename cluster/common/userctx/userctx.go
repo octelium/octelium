@@ -19,7 +19,7 @@ package userctx
 import (
 	"context"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware/v2"
 	"github.com/pkg/errors"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"

@@ -22,8 +22,7 @@ import (
 	"math"
 	"time"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -73,8 +72,8 @@ func NewClient(ctx context.Context) (*Client, error) {
 			grpc.MaxCallRecvMsgSize(16*1024*1024),
 			grpc.MaxCallSendMsgSize(16*1024*1024),
 		),
-		grpc.WithUnaryInterceptor(grpc_middleware.ChainUnaryClient(unaryMiddlewares...)),
-		grpc.WithStreamInterceptor(grpc_middleware.ChainStreamClient(streamMiddlewares...)),
+		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
+		grpc.WithChainStreamInterceptor(streamMiddlewares...),
 	}
 
 	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
