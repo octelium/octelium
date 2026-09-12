@@ -79,17 +79,17 @@ func init() {
 	Cmd.MarkFlagRequired("bootstrap")
 }
 
-func BuildConfigFromFlags(context, kubeconfigPath string) (*rest.Config, error) {
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: mustGetKubeConfigFilePath(kubeconfigPath)},
-		&clientcmd.ConfigOverrides{
-			CurrentContext: context,
-		}).ClientConfig()
-}
+func BuildConfigFromFlags(kubeContext, kubeconfigPath string) (*rest.Config, error) {
+	kubeConfigFilePath, err := getKubeConfigFilePath(kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
 
-func mustGetKubeConfigFilePath(kubeConfigPath string) string {
-	ret, _ := getKubeConfigFilePath(kubeConfigPath)
-	return ret
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeConfigFilePath},
+		&clientcmd.ConfigOverrides{
+			CurrentContext: kubeContext,
+		}).ClientConfig()
 }
 
 func getKubeConfigFilePath(kubeConfigPath string) (string, error) {
@@ -101,6 +101,7 @@ func getKubeConfigFilePath(kubeConfigPath string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", errors.Errorf("The kubeconfig path `%s` does not exist", kubeConfigPath)
 		}
+		return "", errors.Errorf("Could not read the kubeconfig path `%s`: %+v", kubeConfigPath, err)
 	}
 	if val := os.Getenv("KUBECONFIG"); val != "" {
 		return val, nil
@@ -128,7 +129,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	zap.S().Debugf("Chosen cluster domain: %s", clusterDomain)
 
-	cfg, err := BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
+	cfg, err := BuildConfigFromFlags(cmdArgs.KubeContext, cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}

@@ -83,7 +83,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return doCheck(ctx, clusterDomain)
 	}
 
-	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
+	cfg, err := initcmd.BuildConfigFromFlags(cmdArgs.KubeContext, cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}
@@ -135,8 +135,8 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			}
 			time.Sleep(1 * time.Second)
 		}
-		cliutils.LineWarn("Could not check of the Cluster upgrade\n")
 		s.Stop()
+		return errors.Errorf("Timed out waiting for the Cluster upgrade to finish")
 	}
 
 	return nil

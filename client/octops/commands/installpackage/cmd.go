@@ -67,7 +67,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
+	cfg, err := initcmd.BuildConfigFromFlags(cmdArgs.KubeContext, cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}

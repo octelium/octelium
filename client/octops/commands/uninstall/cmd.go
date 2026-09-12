@@ -27,7 +27,6 @@ import (
 type args struct {
 	KubeConfigFilePath string
 	KubeContext        string
-	Version            string
 }
 
 var examples = `
@@ -59,7 +58,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	clusterDomain := args[0]
 
-	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
+	cfg, err := initcmd.BuildConfigFromFlags(cmdArgs.KubeContext, cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}

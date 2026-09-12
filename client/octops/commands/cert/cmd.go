@@ -69,7 +69,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	cfg, err := initcmd.BuildConfigFromFlags("", cmdArgs.KubeConfigFilePath)
+	cfg, err := initcmd.BuildConfigFromFlags(cmdArgs.KubeContext, cmdArgs.KubeConfigFilePath)
 	if err != nil {
 		return err
 	}
@@ -132,6 +132,9 @@ func createOrUpdate(ctx context.Context, c kubernetes.Interface, itm *k8scorev1.
 		return nil, err
 	}
 
+	if oldItem.Labels == nil {
+		oldItem.Labels = make(map[string]string)
+	}
 	for k, v := range itm.Labels {
 		oldItem.Labels[k] = v
 	}
