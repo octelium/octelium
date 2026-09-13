@@ -98,7 +98,7 @@ func servicePodAddresses(ctx context.Context, h *harness.H,
 
 	ret := map[string]*metav1.DualStackIP{}
 	for _, pod := range pods {
-		if pod.DeletionTimestamp != nil {
+		if !isPodAddressable(&pod) {
 			continue
 		}
 		ip := podOcteliumIP(&pod)
@@ -109,6 +109,25 @@ func servicePodAddresses(ctx context.Context, h *harness.H,
 	}
 
 	return ret, nil
+}
+
+func isPodAddressable(pod *k8scorev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
+
+	switch pod.Status.Phase {
+	case k8scorev1.PodSucceeded, k8scorev1.PodFailed:
+		return false
+	}
+
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == k8scorev1.PodReadyToStartContainers {
+			return cond.Status == k8scorev1.ConditionTrue
+		}
+	}
+
+	return true
 }
 
 func matchServiceAddresses(ctx context.Context, h *harness.H, name string) error {

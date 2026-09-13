@@ -876,6 +876,54 @@ func (l *Service) RealPort() int {
 	return int(l.Status.Port)
 }
 
+func (l *Service) Addresses() []*corev1.Service_Status_Address {
+	if l == nil || l.Service == nil || l.Status == nil {
+		return nil
+	}
+
+	var ret []*corev1.Service_Status_Address
+
+	for _, addr := range l.Status.Addresses {
+		if addr == nil || addr.DualStackIP == nil {
+			continue
+		}
+		if addr.DualStackIP.Ipv4 == "" && addr.DualStackIP.Ipv6 == "" {
+			continue
+		}
+		ret = append(ret, addr)
+	}
+
+	return ret
+}
+
+func (l *Service) AddressesV4() []string {
+	var ret []string
+
+	for _, addr := range l.Addresses() {
+		if addr.DualStackIP.Ipv4 != "" {
+			ret = append(ret, addr.DualStackIP.Ipv4)
+		}
+	}
+
+	return ret
+}
+
+func (l *Service) AddressesV6() []string {
+	var ret []string
+
+	for _, addr := range l.Addresses() {
+		if addr.DualStackIP.Ipv6 != "" {
+			ret = append(ret, addr.DualStackIP.Ipv6)
+		}
+	}
+
+	return ret
+}
+
+func (l *Service) HasAddresses() bool {
+	return len(l.Addresses()) > 0
+}
+
 func (l *Service) UpstreamRealPort() int {
 	eps := l.GetAllUpstreamEndpoints()
 	if len(eps) == 0 {

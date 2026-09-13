@@ -341,4 +341,212 @@ func TestAddressesEqualMap(t *testing.T) {
 		}
 		assert.False(t, addressesEqualMap(current, desired))
 	}
+
+	{
+		assert.True(t, addressesEqualMap(nil, map[string]*corev1.Service_Status_Address{}))
+		assert.True(t, addressesEqualMap([]*corev1.Service_Status_Address{}, nil))
+		assert.False(t, addressesEqualMap([]*corev1.Service_Status_Address{
+			addr("a", "1.1.1.1", ""),
+		}, nil))
+	}
+
+}
+
+func TestIsPodAddressable(t *testing.T) {
+
+	newPod := func(phase k8scorev1.PodPhase) *k8scorev1.Pod {
+		return &k8scorev1.Pod{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name:      "svc-essh1-default-65c5bbc7d-tqlxw",
+				Namespace: vutils.K8sNS,
+			},
+			Status: k8scorev1.PodStatus{
+				Phase: phase,
+			},
+		}
+	}
+
+	withCondition := func(pod *k8scorev1.Pod,
+		typ k8scorev1.PodConditionType, status k8scorev1.ConditionStatus) *k8scorev1.Pod {
+		pod.Status.Conditions = append(pod.Status.Conditions, k8scorev1.PodCondition{
+			Type:   typ,
+			Status: status,
+		})
+		return pod
+	}
+
+	{
+		assert.True(t, isPodAddressable(newPod(k8scorev1.PodRunning)))
+		assert.True(t, isPodAddressable(newPod(k8scorev1.PodPending)))
+	}
+
+	{
+		assert.False(t, isPodAddressable(newPod(k8scorev1.PodFailed)))
+		assert.False(t, isPodAddressable(newPod(k8scorev1.PodSucceeded)))
+	}
+
+	{
+		pod := newPod(k8scorev1.PodRunning)
+		now := k8smetav1.Now()
+		pod.DeletionTimestamp = &now
+		assert.False(t, isPodAddressable(pod))
+	}
+
+	{
+		assert.True(t, isPodAddressable(withCondition(newPod(k8scorev1.PodRunning),
+			k8scorev1.PodReadyToStartContainers, k8scorev1.ConditionTrue)))
+
+		assert.False(t, isPodAddressable(withCondition(newPod(k8scorev1.PodRunning),
+			k8scorev1.PodReadyToStartContainers, k8scorev1.ConditionFalse)))
+	}
+
+	{
+		pod := withCondition(newPod(k8scorev1.PodRunning),
+			k8scorev1.PodReady, k8scorev1.ConditionFalse)
+		assert.True(t, isPodAddressable(pod))
+	}
+
+	{
+		pod := newPod(k8scorev1.PodFailed)
+		pod.Status.Reason = "Evicted"
+		pod.Status.Message = "The node was low on resource: ephemeral-storage."
+		pod.Annotations = map[string]string{
+			"k8s.v1.cni.cncf.io/network-status": `[{"name":"octelium/octelium","interface":"net1","ips":["100.64.0.59","fdee:e61::12a"]}]`,
+		}
+
+		withCondition(pod, k8scorev1.DisruptionTarget, k8scorev1.ConditionTrue)
+		withCondition(pod, k8scorev1.PodReadyToStartContainers, k8scorev1.ConditionFalse)
+		withCondition(pod, k8scorev1.PodInitialized, k8scorev1.ConditionTrue)
+		withCondition(pod, k8scorev1.PodReady, k8scorev1.ConditionFalse)
+		withCondition(pod, k8scorev1.PodScheduled, k8scorev1.ConditionTrue)
+
+		assert.False(t, isPodAddressable(pod))
+	}
+}
+
+func TestReconcileEvictedPod(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	netw, err := adminSrv.CreateNamespace(ctx, tests.GenNamespace())
+	assert.Nil(t, err)
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(netw.Metadata.Name))
+	assert.Nil(t, err)
+
+	kubeInformerFactory := informers.NewSharedInformerFactory(fakeC.K8sC, 0)
+	podInformer := kubeInformerFactory.Core().V1().Pods()
+
+	ctrl := NewController(podInformer, fakeC.OcteliumC, svc.Status.RegionRef)
+
+	kubeInformerFactory.Start(ctx.Done())
+	kubeInformerFactory.WaitForCacheSync(ctx.Done())
+
+	go ctrl.Run(ctx, 1)
+
+	genPod := func(name string, addrs []string) *k8scorev1.Pod {
+		netStatusesBytes, _ := json.Marshal([]networkStatus{
+			{
+				Name: "octelium/octelium",
+				IPs:  addrs,
+			},
+		})
+
+		return &k8scorev1.Pod{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name:            name,
+				Namespace:       vutils.K8sNS,
+				UID:             types.UID(vutils.UUIDv4()),
+				ResourceVersion: "1",
+				Labels: map[string]string{
+					"octelium.com/namespace": netw.Metadata.Name,
+					"octelium.com/svc":       svc.Metadata.Name,
+				},
+				Annotations: map[string]string{
+					"k8s.v1.cni.cncf.io/network-status": string(netStatusesBytes),
+				},
+			},
+			Spec: k8scorev1.PodSpec{},
+			Status: k8scorev1.PodStatus{
+				Phase: k8scorev1.PodRunning,
+				Conditions: []k8scorev1.PodCondition{
+					{
+						Type:   k8scorev1.PodReadyToStartContainers,
+						Status: k8scorev1.ConditionTrue,
+					},
+				},
+			},
+		}
+	}
+
+	getAddresses := func() []*corev1.Service_Status_Address {
+		svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Name: svc.Metadata.Name})
+		if err != nil || svcV.Status == nil {
+			return nil
+		}
+		return svcV.Status.Addresses
+	}
+
+	pod1 := genPod(utilrand.GetRandomStringLowercase(8), []string{"100.64.0.59", "fdee:e61::12a"})
+	pod2 := genPod(utilrand.GetRandomStringLowercase(8), []string{"100.64.0.29", "fdee:e61::1d"})
+
+	pod1, err = fakeC.K8sC.CoreV1().Pods(vutils.K8sNS).Create(ctx, pod1, k8smetav1.CreateOptions{})
+	assert.Nil(t, err)
+	pod2, err = fakeC.K8sC.CoreV1().Pods(vutils.K8sNS).Create(ctx, pod2, k8smetav1.CreateOptions{})
+	assert.Nil(t, err)
+
+	assert.Eventually(t, func() bool {
+		return len(getAddresses()) == 2
+	}, 10*time.Second, 100*time.Millisecond)
+
+	pod1.Status.Phase = k8scorev1.PodFailed
+	pod1.Status.Reason = "Evicted"
+	pod1.Status.Message = "The node was low on resource: ephemeral-storage."
+	pod1.Status.Conditions = []k8scorev1.PodCondition{
+		{
+			Type:   k8scorev1.DisruptionTarget,
+			Status: k8scorev1.ConditionTrue,
+			Reason: "TerminationByKubelet",
+		},
+		{
+			Type:   k8scorev1.PodReadyToStartContainers,
+			Status: k8scorev1.ConditionFalse,
+		},
+	}
+	pod1.ResourceVersion = "2"
+
+	_, err = fakeC.K8sC.CoreV1().Pods(vutils.K8sNS).Update(ctx, pod1, k8smetav1.UpdateOptions{})
+	assert.Nil(t, err)
+
+	assert.Eventually(t, func() bool {
+		addrs := getAddresses()
+		return len(addrs) == 1 && addrs[0].PodRef.Uid == string(pod2.UID) &&
+			addrs[0].DualStackIP.Ipv4 == "100.64.0.29"
+	}, 10*time.Second, 100*time.Millisecond)
+
+	curPod, err := fakeC.K8sC.CoreV1().Pods(vutils.K8sNS).Get(ctx, pod1.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, k8scorev1.PodFailed, curPod.Status.Phase)
+	assert.NotEmpty(t, curPod.Annotations["k8s.v1.cni.cncf.io/network-status"])
+
+	pod2.Status.Phase = k8scorev1.PodFailed
+	pod2.ResourceVersion = "2"
+	_, err = fakeC.K8sC.CoreV1().Pods(vutils.K8sNS).Update(ctx, pod2, k8smetav1.UpdateOptions{})
+	assert.Nil(t, err)
+
+	assert.Eventually(t, func() bool {
+		return len(getAddresses()) == 0
+	}, 10*time.Second, 100*time.Millisecond)
 }

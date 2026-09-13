@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime"
 	"testing"
 
@@ -193,5 +194,64 @@ func TestController(t *testing.T) {
 
 		err = c.Close()
 		assert.Nil(t, err)
+	}
+}
+
+func TestUpdateDNS(t *testing.T) {
+
+	newCtl := func(servers []string) *Controller {
+		return &Controller{
+			ipv4Supported: true,
+			ipv6Supported: true,
+			c: &cliconfigv1.Connection{
+				Connection: &userv1.ConnectionState{
+					Dns: &userv1.DNS{
+						Servers: servers,
+					},
+				},
+				Info: &cliconfigv1.Connection_Info{
+					Cluster: &cliconfigv1.Connection_Info_Cluster{
+						Domain: "example.com",
+					},
+				},
+				Preferences: &cliconfigv1.Connection_Preferences{
+					IgnoreDNS: true,
+				},
+			},
+		}
+	}
+
+	{
+		c := newCtl([]string{"100.64.0.53"})
+		c.isClosed = true
+		assert.NotNil(t, c.UpdateDNS(&userv1.DNS{
+			Servers: []string{"100.64.0.54"},
+		}))
+	}
+
+	{
+		c := newCtl([]string{"100.64.0.53"})
+
+		assert.Nil(t, c.UpdateDNS(nil))
+		assert.Equal(t, []string{"100.64.0.53"}, c.c.Connection.Dns.Servers)
+
+		assert.Nil(t, c.UpdateDNS(&userv1.DNS{}))
+		assert.Equal(t, []string{"100.64.0.53"}, c.c.Connection.Dns.Servers)
+
+		assert.Nil(t, c.UpdateDNS(&userv1.DNS{
+			Servers: []string{},
+		}))
+		assert.Equal(t, []string{"100.64.0.53"}, c.c.Connection.Dns.Servers)
+	}
+
+	{
+		c := newCtl([]string{"100.64.0.53"})
+
+		assert.Nil(t, c.UpdateDNS(&userv1.DNS{
+			Servers: []string{"100.64.0.54", "fdee:e61::53"},
+		}))
+		assert.Equal(t, []string{"100.64.0.54", "fdee:e61::53"}, c.c.Connection.Dns.Servers)
+		assert.Equal(t, []string{"100.64.0.54", "fdee:e61::53"}, c.GetClusterDNSServers())
+		assert.True(t, c.getCurrentDNS().Equal(net.ParseIP("100.64.0.54")))
 	}
 }

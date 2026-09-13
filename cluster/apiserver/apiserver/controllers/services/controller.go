@@ -19,18 +19,15 @@ package svccontroller
 import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"go.uber.org/zap"
 )
 
 func (c *Controller) setDNSState(dnsSvc *corev1.Service) error {
 
-	zap.L().Debug("Sending new DNS servers")
 	dnsServers := []string{}
-	if len(dnsSvc.Status.Addresses) == 0 {
-		return nil
-	}
 
-	for _, addr := range dnsSvc.Status.Addresses {
+	for _, addr := range ucorev1.ToService(dnsSvc).Addresses() {
 		if addr.DualStackIP.Ipv4 != "" {
 			dnsServers = append(dnsServers, addr.DualStackIP.Ipv4)
 		}
@@ -39,6 +36,13 @@ func (c *Controller) setDNSState(dnsSvc *corev1.Service) error {
 			dnsServers = append(dnsServers, addr.DualStackIP.Ipv6)
 		}
 	}
+
+	if len(dnsServers) == 0 {
+		zap.L().Warn("The DNS Service has no usable addresses. Not broadcasting the new DNS servers")
+		return nil
+	}
+
+	zap.L().Debug("Sending new DNS servers", zap.Strings("servers", dnsServers))
 
 	return c.ctlI.BroadcastMessage(&userv1.ConnectResponse{
 		Event: &userv1.ConnectResponse_UpdateDNS_{

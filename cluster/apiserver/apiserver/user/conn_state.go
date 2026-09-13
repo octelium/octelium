@@ -58,13 +58,18 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 
 	var dnsIPs []string
 
-	for _, addr := range dnsSvc.Status.Addresses {
+	for _, addr := range ucorev1.ToService(dnsSvc).Addresses() {
 		if ucorev1.ToSession(sess).HasV4() && addr.DualStackIP.Ipv4 != "" {
 			dnsIPs = append(dnsIPs, addr.DualStackIP.Ipv4)
 		}
 		if ucorev1.ToSession(sess).HasV6() && addr.DualStackIP.Ipv6 != "" {
 			dnsIPs = append(dnsIPs, addr.DualStackIP.Ipv6)
 		}
+	}
+
+	if len(dnsIPs) == 0 {
+		zap.L().Warn("The DNS Service has no usable addresses for the Session",
+			zap.String("sess", sess.Metadata.Name))
 	}
 
 	ret := &userv1.ConnectionState{

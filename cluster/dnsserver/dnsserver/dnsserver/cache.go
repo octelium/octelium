@@ -22,6 +22,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 )
 
@@ -46,7 +47,7 @@ func (c *cache) set(svc *corev1.Service) {
 		svc: svc,
 	}
 
-	if len(svc.Status.Addresses) == 0 {
+	if !ucorev1.ToService(svc).HasAddresses() {
 		c.delete(svc)
 		return
 	}
@@ -91,22 +92,21 @@ func (c *cache) get(arg string, typ uint16) net.IP {
 		return nil
 	}
 
-	isIPv6 := false
+	var addrs []string
 	switch typ {
 	case dns.TypeA:
+		addrs = ucorev1.ToService(res.svc).AddressesV4()
 	case dns.TypeAAAA:
-		isIPv6 = true
+		addrs = ucorev1.ToService(res.svc).AddressesV6()
 	default:
 		return nil
 	}
 
-	addr := res.svc.Status.Addresses[utilrand.GetRandomRangeMath(0, len(res.svc.Status.Addresses)-1)]
-
-	if isIPv6 {
-		return net.ParseIP(addr.DualStackIP.Ipv6)
-	} else {
-		return net.ParseIP(addr.DualStackIP.Ipv4)
+	if len(addrs) == 0 {
+		return nil
 	}
+
+	return net.ParseIP(addrs[utilrand.GetRandomRangeMath(0, len(addrs)-1)])
 }
 
 func (c *cache) has(arg string) bool {

@@ -337,6 +337,11 @@ func (c *Controller) UpdateDNS(dns *userv1.DNS) error {
 		return errors.Errorf("The controller is already closed")
 	}
 
+	if len(dns.GetServers()) == 0 {
+		zap.L().Debug("Empty DNS servers. Keeping the current ones")
+		return nil
+	}
+
 	c.c.Connection.Dns = dns
 
 	return c.setDNS()

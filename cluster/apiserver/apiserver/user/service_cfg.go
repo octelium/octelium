@@ -199,14 +199,14 @@ func getServiceConfigHostPort(svc *corev1.Service, sess *corev1.Session, cc *cor
 		return vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort()
 	}
 
-	if len(svc.Status.Addresses) == 0 {
-		return vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort()
-	}
-
 	if ucorev1.ToSession(sess).HasV6() {
-		return svc.Status.Addresses[0].DualStackIP.Ipv6, ucorev1.ToService(svc).RealPort()
+		if addrs := ucorev1.ToService(svc).AddressesV6(); len(addrs) > 0 {
+			return addrs[0], ucorev1.ToService(svc).RealPort()
+		}
 	} else if ucorev1.ToSession(sess).HasV4() {
-		return svc.Status.Addresses[0].DualStackIP.Ipv4, ucorev1.ToService(svc).RealPort()
+		if addrs := ucorev1.ToService(svc).AddressesV4(); len(addrs) > 0 {
+			return addrs[0], ucorev1.ToService(svc).RealPort()
+		}
 	}
 
 	return vutils.GetServicePrivateFQDN(svc, cc.Status.Domain), ucorev1.ToService(svc).RealPort()

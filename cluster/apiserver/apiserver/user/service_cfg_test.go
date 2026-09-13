@@ -105,3 +105,124 @@ func TestSetServiceConfigs(t *testing.T) {
 	})
 	assert.Nil(t, err)
 }
+
+func TestGetServiceConfigHostPort(t *testing.T) {
+
+	cc := &corev1.ClusterConfig{
+		Status: &corev1.ClusterConfig_Status{
+			Domain: "example.com",
+		},
+	}
+
+	newSvc := func(addrs []*corev1.Service_Status_Address) *corev1.Service {
+		return &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: "svc1.default",
+			},
+			Spec: &corev1.Service_Spec{},
+			Status: &corev1.Service_Status{
+				PrimaryHostname: "svc1",
+				Port:            8080,
+				NamespaceRef: &metav1.ObjectReference{
+					Name: "default",
+				},
+				Addresses: addrs,
+			},
+		}
+	}
+
+	newSess := func(l3Mode corev1.Session_Status_Connection_L3Mode) *corev1.Session {
+		return &corev1.Session{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Session_Spec{},
+			Status: &corev1.Session_Status{
+				Connection: &corev1.Session_Status_Connection{
+					IgnoreDNS: true,
+					L3Mode:    l3Mode,
+				},
+			},
+		}
+	}
+
+	dualStack := []*corev1.Service_Status_Address{
+		{
+			DualStackIP: &metav1.DualStackIP{
+				Ipv4: "1.2.3.4",
+				Ipv6: "::1",
+			},
+		},
+	}
+
+	{
+		host, port := getServiceConfigHostPort(newSvc(dualStack),
+			newSess(corev1.Session_Status_Connection_BOTH), cc)
+		assert.Equal(t, "::1", host)
+		assert.Equal(t, 8080, port)
+	}
+
+	{
+		host, port := getServiceConfigHostPort(newSvc(dualStack),
+			newSess(corev1.Session_Status_Connection_V4), cc)
+		assert.Equal(t, "1.2.3.4", host)
+		assert.Equal(t, 8080, port)
+	}
+
+	{
+		host, port := getServiceConfigHostPort(newSvc(nil),
+			newSess(corev1.Session_Status_Connection_BOTH), cc)
+		assert.Equal(t, "svc1.local.example.com", host)
+		assert.Equal(t, 8080, port)
+	}
+
+	{
+		host, _ := getServiceConfigHostPort(newSvc([]*corev1.Service_Status_Address{}),
+			newSess(corev1.Session_Status_Connection_V4), cc)
+		assert.Equal(t, "svc1.local.example.com", host)
+	}
+
+	{
+		host, _ := getServiceConfigHostPort(newSvc([]*corev1.Service_Status_Address{
+			nil,
+			{},
+			{
+				DualStackIP: &metav1.DualStackIP{},
+			},
+		}), newSess(corev1.Session_Status_Connection_BOTH), cc)
+		assert.Equal(t, "svc1.local.example.com", host)
+	}
+
+	{
+		host, _ := getServiceConfigHostPort(newSvc([]*corev1.Service_Status_Address{
+			{
+				DualStackIP: &metav1.DualStackIP{
+					Ipv4: "1.2.3.4",
+				},
+			},
+		}), newSess(corev1.Session_Status_Connection_V6), cc)
+		assert.Equal(t, "svc1.local.example.com", host)
+	}
+
+	{
+		host, _ := getServiceConfigHostPort(newSvc([]*corev1.Service_Status_Address{
+			{
+				DualStackIP: nil,
+			},
+			{
+				DualStackIP: &metav1.DualStackIP{
+					Ipv6: "::2",
+				},
+			},
+		}), newSess(corev1.Session_Status_Connection_V6), cc)
+		assert.Equal(t, "::2", host)
+	}
+
+	{
+		sess := newSess(corev1.Session_Status_Connection_BOTH)
+		sess.Status.Connection.IgnoreDNS = false
+
+		host, _ := getServiceConfigHostPort(newSvc(dualStack), sess, cc)
+		assert.Equal(t, "svc1.local.example.com", host)
+	}
+}

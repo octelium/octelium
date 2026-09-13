@@ -44,7 +44,7 @@ func ServiceTo(p *corev1.Service) *userv1.Service {
 			Addresses: func() []string {
 				ret := []string{}
 
-				for _, svcIP := range p.Status.Addresses {
+				for _, svcIP := range ucorev1.ToService(p).Addresses() {
 					if svcIP.DualStackIP.Ipv4 != "" {
 						ret = append(ret, svcIP.DualStackIP.Ipv4)
 					}

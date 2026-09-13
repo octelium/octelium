@@ -302,7 +302,7 @@ func (c *Controller) reconcile(ctx context.Context, svcName string) error {
 	desired := make(map[string]*corev1.Service_Status_Address, len(pods))
 
 	for _, pod := range pods {
-		if pod.DeletionTimestamp != nil {
+		if !isPodAddressable(pod) {
 			continue
 		}
 
@@ -361,6 +361,25 @@ func (c *Controller) reconcile(ctx context.Context, svcName string) error {
 		zap.Int("addresses", len(newAddresses)), zap.Any("svc", svc))
 
 	return nil
+}
+
+func isPodAddressable(pod *k8scorev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
+
+	switch pod.Status.Phase {
+	case k8scorev1.PodSucceeded, k8scorev1.PodFailed:
+		return false
+	}
+
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == k8scorev1.PodReadyToStartContainers {
+			return cond.Status == k8scorev1.ConditionTrue
+		}
+	}
+
+	return true
 }
 
 func addressesEqualMap(
