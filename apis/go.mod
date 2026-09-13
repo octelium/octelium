@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/apis
 
-go 1.26.6
+go 1.26.8
 
 require (
 	google.golang.org/grpc v1.83.2

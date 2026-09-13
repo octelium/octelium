@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/genesis
 
-go 1.26.6
+go 1.26.8
 
 require (
 	github.com/cilium/cilium v1.20.1

@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/common
 
-go 1.26.6
+go 1.26.8
 
 require (
 	cel.dev/cel-go v0.32.0
