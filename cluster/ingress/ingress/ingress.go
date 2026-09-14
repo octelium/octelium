@@ -48,7 +48,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	envoyServer, err := envoy.NewServer(cc.Status.Domain, octeliumC, &envoy.Opts{
+	envoyServer, err := envoy.NewServer(ctx, cc.Status.Domain, octeliumC, &envoy.Opts{
 		HasFrontProxy: os.Getenv("OCTELIUM_FRONT_PROXY_MODE") == "true",
 	})
 	if err != nil {

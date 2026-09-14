@@ -28,6 +28,7 @@ import (
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/spiffec"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/ingress/ingress/envoy/resources"
@@ -94,7 +95,7 @@ type Opts struct {
 	HasFrontProxy bool
 }
 
-func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Server, error) {
+func NewServer(ctx context.Context, domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Server, error) {
 
 	if o == nil {
 		o = &Opts{}
@@ -105,6 +106,11 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Se
 		octeliumC:     octeliumC,
 		hasFrontProxy: o.HasFrontProxy,
 		triggerCh:     make(chan struct{}, 1),
+	}
+
+	cred, err := spiffec.GetGRPCServerCred(ctx, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	l, err := net.Listen("tcp", ":8080")
@@ -118,7 +124,7 @@ func NewServer(domain string, octeliumC octeliumc.ClientInterface, o *Opts) (*Se
 	server.xdsServer = xds.NewServer(context.Background(), server.snapshotCache, xdscb.NewCallback())
 
 	var grpcOptions []grpc.ServerOption
-	grpcOptions = append(grpcOptions, grpc.MaxConcurrentStreams(1000000))
+	grpcOptions = append(grpcOptions, cred, grpc.MaxConcurrentStreams(1000000))
 	server.grpcServer = grpc.NewServer(grpcOptions...)
 
 	discoverygrpc.RegisterAggregatedDiscoveryServiceServer(server.grpcServer, server.xdsServer)

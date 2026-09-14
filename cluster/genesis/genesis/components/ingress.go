@@ -81,7 +81,107 @@ static_resources:
 
 `
 
-func getEnvoyIngressDataPlaneConfigMap() *k8scorev1.ConfigMap {
+const envoyGatewayConfigTemplateSPIFFE = `
+admin:
+    address:
+        socket_address:
+            address: 127.0.0.1
+            port_value: 11011
+dynamic_resources:
+    lds_config:
+        resource_api_version: V3
+        api_config_source:
+            api_type: GRPC
+            transport_api_version: V3
+            grpc_services:
+                - envoy_grpc:
+                      cluster_name: xds_cluster
+    cds_config:
+        resource_api_version: V3
+        api_config_source:
+            api_type: GRPC
+            transport_api_version: V3
+            grpc_services:
+                - envoy_grpc:
+                      cluster_name: xds_cluster
+node:
+    cluster: octelium
+    id: octelium-ingress
+static_resources:
+    clusters:
+        - name: spire_agent
+          type: STATIC
+          connect_timeout: 3s
+          typed_extension_protocol_options:
+              envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                  "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                  explicit_http_config:
+                      http2_protocol_options: {}
+          load_assignment:
+              cluster_name: spire_agent
+              endpoints:
+                  - lb_endpoints:
+                        - endpoint:
+                              address:
+                                  pipe:
+                                      path: /run/spire/sockets/spire-agent.sock
+        - name: xds_cluster
+          type: STRICT_DNS
+          connect_timeout: 3s
+          lb_policy: round_robin
+          typed_extension_protocol_options:
+              envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                  "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                  explicit_http_config:
+                      http2_protocol_options: {}
+          transport_socket:
+              name: envoy.transport_sockets.tls
+              typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+                  common_tls_context:
+                      alpn_protocols:
+                          - h2
+                      tls_certificate_sds_secret_configs:
+                          - name: default
+                            sds_config:
+                                resource_api_version: V3
+                                api_config_source:
+                                    api_type: GRPC
+                                    transport_api_version: V3
+                                    grpc_services:
+                                        - envoy_grpc:
+                                              cluster_name: spire_agent
+                      validation_context_sds_secret_config:
+                          name: ROOTCA
+                          sds_config:
+                              resource_api_version: V3
+                              api_config_source:
+                                  api_type: GRPC
+                                  transport_api_version: V3
+                                  grpc_services:
+                                      - envoy_grpc:
+                                            cluster_name: spire_agent
+          load_assignment:
+              cluster_name: xds_cluster
+              endpoints:
+                  - lb_endpoints:
+                        - endpoint:
+                              address:
+                                  socket_address:
+                                      address: octelium-ingress.octelium.svc
+                                      port_value: 8080
+
+`
+
+func getEnvoyIngressDataPlaneConfig(o *CommonOpts) string {
+	if IsSPIFFEEnabled(o) {
+		return envoyGatewayConfigTemplateSPIFFE
+	}
+
+	return envoyGatewayConfigTemplate
+}
+
+func getEnvoyIngressDataPlaneConfigMap(o *CommonOpts) *k8scorev1.ConfigMap {
 
 	return &k8scorev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -89,7 +189,7 @@ func getEnvoyIngressDataPlaneConfigMap() *k8scorev1.ConfigMap {
 			Namespace: ns,
 		},
 		Data: map[string]string{
-			"config": envoyGatewayConfigTemplate,
+			"config": getEnvoyIngressDataPlaneConfig(o),
 		},
 	}
 }
@@ -223,7 +323,9 @@ func getIngressDeployment(o *CommonOpts) *appsv1.Deployment {
 	return deployment
 }
 
-func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
+func getIngressDataPlaneDeployment(o *CommonOpts) *appsv1.Deployment {
+
+	c := o.ClusterConfig
 
 	annotation := getAnnotations()
 	if annotation == nil {
@@ -231,7 +333,7 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 	}
 
 	annotation["octelium.com/envoy-config-hash"] = vutils.Sha256SumHex(
-		[]byte(getEnvoyIngressDataPlaneConfigMap().Data["config"]))
+		[]byte(getEnvoyIngressDataPlaneConfig(o)))
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -254,18 +356,26 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 				Spec: k8scorev1.PodSpec{
 					AutomountServiceAccountToken: new(false),
 					NodeSelector:                 getNodeSelectorDataPlane(c),
-					Volumes: []k8scorev1.Volume{
-						{
-							Name: "envoy-config",
-							VolumeSource: k8scorev1.VolumeSource{
-								ConfigMap: &k8scorev1.ConfigMapVolumeSource{
-									LocalObjectReference: k8scorev1.LocalObjectReference{
-										Name: "ingress-dataplane-envoy-config",
+					Volumes: func() []k8scorev1.Volume {
+						ret := []k8scorev1.Volume{
+							{
+								Name: "envoy-config",
+								VolumeSource: k8scorev1.VolumeSource{
+									ConfigMap: &k8scorev1.ConfigMapVolumeSource{
+										LocalObjectReference: k8scorev1.LocalObjectReference{
+											Name: "ingress-dataplane-envoy-config",
+										},
 									},
 								},
 							},
-						},
-					},
+						}
+
+						if IsSPIFFEEnabled(o) {
+							ret = append(ret, k8sutils.GetSPIFFEVolume(GetSPIFFECSIDriver(o)))
+						}
+
+						return ret
+					}(),
 
 					Containers: []k8scorev1.Container{
 
@@ -284,12 +394,20 @@ func getIngressDataPlaneDeployment(c *corev1.ClusterConfig) *appsv1.Deployment {
 
 								return ret
 							}(),
-							VolumeMounts: []k8scorev1.VolumeMount{{
-								Name:      "envoy-config",
-								ReadOnly:  true,
-								MountPath: "/etc/envoy/envoy.yaml",
-								SubPath:   "config",
-							}},
+							VolumeMounts: func() []k8scorev1.VolumeMount {
+								ret := []k8scorev1.VolumeMount{{
+									Name:      "envoy-config",
+									ReadOnly:  true,
+									MountPath: "/etc/envoy/envoy.yaml",
+									SubPath:   "config",
+								}}
+
+								if IsSPIFFEEnabled(o) {
+									ret = append(ret, k8sutils.GetSPIFFEVolumeMount())
+								}
+
+								return ret
+							}(),
 
 							LivenessProbe: &k8scorev1.Probe{
 								InitialDelaySeconds: 60,
@@ -377,11 +495,11 @@ func getIngressNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPolic
 
 func CreateIngress(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateConfigMap(ctx, o.K8sC, getEnvoyIngressDataPlaneConfigMap()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateConfigMap(ctx, o.K8sC, getEnvoyIngressDataPlaneConfigMap(o)); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getIngressDataPlaneDeployment(o.ClusterConfig)); err != nil {
+	if _, err := k8sutils.CreateOrUpdateDeployment(ctx, o.K8sC, getIngressDataPlaneDeployment(o)); err != nil {
 		return err
 	}
 
