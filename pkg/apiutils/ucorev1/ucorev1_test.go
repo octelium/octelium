@@ -155,3 +155,71 @@ func TestServiceAddresses(t *testing.T) {
 		assert.Nil(t, svc.AddressesV6())
 	}
 }
+
+func TestSecretValues(t *testing.T) {
+
+	{
+		sec := ToSecret(nil)
+
+		assert.Equal(t, "", sec.GetSpecValueStr())
+		assert.Equal(t, "", sec.GetValueStr())
+		assert.Empty(t, sec.GetSpecValueBytes())
+		assert.Empty(t, sec.GetValueBytes())
+
+		_, _, err := sec.GetCertificateChainAndKey()
+		assert.NotNil(t, err)
+	}
+
+	{
+		sec := ToSecret(&corev1.Secret{})
+
+		assert.Equal(t, "", sec.GetSpecValueStr())
+		assert.Equal(t, "", sec.GetValueStr())
+
+		_, _, err := sec.GetCertificateChainAndKey()
+		assert.NotNil(t, err)
+	}
+
+	{
+		sec := ToSecret(&corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: "crt-ns-default",
+			},
+			Spec: &corev1.Secret_Spec{},
+		})
+
+		assert.Equal(t, "", sec.GetSpecValueStr())
+		assert.Equal(t, "", sec.GetValueStr())
+
+		_, _, err := sec.GetCertificateChainAndKey()
+		assert.NotNil(t, err)
+	}
+
+	{
+		sec := ToSecret(&corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: "sec1",
+			},
+			Spec: &corev1.Secret_Spec{
+				Data: &corev1.Secret_Spec_Data{
+					Type: &corev1.Secret_Spec_Data_Value{
+						Value: "spec-value",
+					},
+				},
+			},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_ValueBytes{
+					ValueBytes: []byte("data-value"),
+				},
+			},
+		})
+
+		assert.Equal(t, "spec-value", sec.GetSpecValueStr())
+		assert.Equal(t, "data-value", sec.GetValueStr())
+
+		chain, key, err := sec.GetCertificateChainAndKey()
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, []byte("spec-value"), chain)
+		assert.Equal(t, []byte("data-value"), key)
+	}
+}

@@ -419,6 +419,11 @@ func (s *QUICController) getTLSConfig(ctx context.Context) (*tls.Config, error) 
 		return nil, err
 	}
 
+	if crt == nil {
+		zap.L().Warn(
+			"The Cluster certificate is not set yet. QUICv0 handshakes will be rejected until it is set")
+	}
+
 	s.crtMan.mu.Lock()
 	s.crtMan.crt = crt
 	s.crtMan.mu.Unlock()

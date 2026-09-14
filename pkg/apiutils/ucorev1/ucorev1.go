@@ -473,28 +473,30 @@ func (s *Service) Namespace() string {
 }
 
 func (s *Secret) GetSpecValueStr() string {
-	if s.Spec.Data == nil {
+	data := s.GetSpec().GetData()
+	if data == nil {
 		return ""
 	}
-	switch s.Spec.Data.Type.(type) {
+	switch data.Type.(type) {
 	case *corev1.Secret_Spec_Data_Value:
-		return s.Spec.Data.GetValue()
+		return data.GetValue()
 	case *corev1.Secret_Spec_Data_ValueBytes:
-		return string(s.Spec.Data.GetValueBytes())
+		return string(data.GetValueBytes())
 	default:
 		return ""
 	}
 }
 
 func (s *Secret) GetValueStr() string {
-	if s.Data == nil {
+	data := s.GetData()
+	if data == nil {
 		return ""
 	}
-	switch s.Data.Type.(type) {
+	switch data.Type.(type) {
 	case *corev1.Secret_Data_Value:
-		return s.Data.GetValue()
+		return data.GetValue()
 	case *corev1.Secret_Data_ValueBytes:
-		return string(s.Data.GetValueBytes())
+		return string(data.GetValueBytes())
 	default:
 		return ""
 	}
