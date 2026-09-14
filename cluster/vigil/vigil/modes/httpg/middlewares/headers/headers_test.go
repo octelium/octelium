@@ -968,6 +968,10 @@ func TestRemoveOcteliumCookie(t *testing.T) {
 			in:   "octelium_auth=a; octelium_rt=b",
 		},
 		{
+			name: "loginStateAndDomainRemoved",
+			in:   "octelium_login_state=st; octelium_domain=example.com",
+		},
+		{
 			name:    "quotedValuePreserved",
 			in:      `sess="quoted value"; octelium_auth=a`,
 			out:     `sess="quoted value"`,
@@ -992,9 +996,19 @@ func TestRemoveOcteliumCookie(t *testing.T) {
 			present: true,
 		},
 		{
-			name:    "prefixNotMatched",
-			in:      "octelium_auth_x=1; octelium_authy=2; octelium_auth=3",
-			out:     "octelium_auth_x=1; octelium_authy=2",
+			name: "wholeOcteliumPrefixRemoved",
+			in:   "octelium_auth_x=1; octelium_authy=2; octelium_auth=3",
+		},
+		{
+			name:    "prefixMatchIsCaseInsensitive",
+			in:      "a=1; Octelium_Auth=x; OCTELIUM_RT=y",
+			out:     "a=1",
+			present: true,
+		},
+		{
+			name:    "nonOcteliumCookiesKept",
+			in:      "octeliumfoo=1; foo_octelium_auth=2; octeliu_auth=3",
+			out:     "octeliumfoo=1; foo_octelium_auth=2; octeliu_auth=3",
 			present: true,
 		},
 		{

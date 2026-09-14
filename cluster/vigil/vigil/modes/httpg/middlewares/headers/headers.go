@@ -365,6 +365,8 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 
 const octeliumHeaderPrefix = "x-octelium-"
 
+const octeliumCookiePrefix = "octelium_"
+
 var managedServiceAllowedHeaders = map[string]struct{}{
 	"X-Octelium-Auth":          {},
 	"X-Octelium-Refresh-Token": {},
@@ -395,6 +397,11 @@ func scrubOcteliumRequestHeaders(req *http.Request, isManagedSvc bool) {
 func isOcteliumHeader(name string) bool {
 	return len(name) >= len(octeliumHeaderPrefix) &&
 		strings.EqualFold(name[:len(octeliumHeaderPrefix)], octeliumHeaderPrefix)
+}
+
+func isOcteliumCookie(name string) bool {
+	return len(name) >= len(octeliumCookiePrefix) &&
+		strings.EqualFold(name[:len(octeliumCookiePrefix)], octeliumCookiePrefix)
 }
 
 func removeOcteliumCookie(req *http.Request) {
@@ -432,8 +439,7 @@ func filterOcteliumCookies(value string) string {
 			name = pair[:idx]
 		}
 
-		switch strings.TrimSpace(name) {
-		case "octelium_auth", "octelium_rt":
+		if isOcteliumCookie(strings.TrimSpace(name)) {
 			continue
 		}
 
