@@ -598,3 +598,296 @@ func TestServerBootstrapAnswersOnUnsuccessfulClusterReply(t *testing.T) {
 		assert.Equal(t, dns.RcodeServerFailure, ret.Rcode)
 	}
 }
+
+type tstUpstreamHandler struct {
+	answers map[string]string
+}
+
+func (h *tstUpstreamHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
+	msg := new(dns.Msg)
+	msg.SetReply(r)
+
+	addr, ok := h.answers[strings.ToLower(r.Question[0].Name)]
+	if !ok || r.Question[0].Qtype != dns.TypeA {
+		msg.SetRcode(r, dns.RcodeNameError)
+		w.WriteMsg(msg)
+		return
+	}
+
+	msg.Answer = append(msg.Answer, &dns.A{
+		Hdr: dns.RR_Header{
+			Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60,
+		},
+		A: net.ParseIP(addr),
+	})
+
+	w.WriteMsg(msg)
+}
+
+func newTestUpstream(t *testing.T, addr string, answers map[string]string) {
+	startedCh := make(chan struct{})
+	srv := &dns.Server{
+		Addr:              addr,
+		Net:               "udp",
+		Handler:           &tstUpstreamHandler{answers: answers},
+		NotifyStartedFunc: func() { close(startedCh) },
+	}
+
+	go srv.ListenAndServe()
+	<-startedCh
+
+	t.Cleanup(func() {
+		srv.Shutdown()
+	})
+}
+
+type tstAddrDNSGetter struct {
+	servers []string
+}
+
+func (s *tstAddrDNSGetter) GetClusterDNSServers() []string {
+	return s.servers
+}
+
+func TestGetFallbackServerAddrs(t *testing.T) {
+	assert.Nil(t, getFallbackServerAddrs(nil, "127.0.0.100:53"))
+
+	assert.Equal(t, []string{"10.96.0.10:53"},
+		getFallbackServerAddrs([]string{" 10.96.0.10 "}, "127.0.0.100:53"))
+
+	assert.Equal(t, []string{"10.96.0.10:5353"},
+		getFallbackServerAddrs([]string{"10.96.0.10:5353"}, "127.0.0.100:53"))
+
+	assert.Equal(t, []string{"[::1]:53"},
+		getFallbackServerAddrs([]string{"::1"}, "127.0.0.100:53"))
+
+	assert.Nil(t, getFallbackServerAddrs([]string{"127.0.0.100"}, "127.0.0.100:53"))
+
+	assert.Nil(t, getFallbackServerAddrs([]string{"", "not an addr"}, "127.0.0.100:53"))
+
+	assert.Equal(t, []string{"1.1.1.1:53"},
+		getFallbackServerAddrs([]string{"1.1.1.1", "1.1.1.1"}, "127.0.0.100:53"))
+}
+
+func TestGetFallbackDomains(t *testing.T) {
+	assert.Nil(t, getFallbackDomains(nil))
+
+	assert.Equal(t, []string{"cluster.local."},
+		getFallbackDomains([]string{" Cluster.Local. "}))
+
+	assert.Equal(t, []string{"cluster.local."},
+		getFallbackDomains([]string{"cluster.local", "cluster.local."}))
+
+	assert.Nil(t, getFallbackDomains([]string{"", "not a domain"}))
+}
+
+func TestIsFallbackName(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      "127.0.0.100:18062",
+		HasV4:           true,
+		DNSGetter:       &tstDNSGetter{},
+		FallbackServers: []string{"10.96.0.10"},
+		FallbackDomains: []string{"cluster.local"},
+	})
+	assert.Nil(t, err)
+
+	assert.True(t, srv.isFallbackName("cluster.local."))
+	assert.True(t, srv.isFallbackName("nginx.default.svc.cluster.local."))
+	assert.True(t, srv.isFallbackName("NGINX.default.svc.Cluster.Local."))
+	assert.True(t, srv.isFallbackName("nginx.default.svc.cluster.local"))
+
+	assert.False(t, srv.isFallbackName("svc1.local.example.com."))
+	assert.False(t, srv.isFallbackName("svc1."))
+	assert.False(t, srv.isFallbackName("notcluster.local."))
+	assert.False(t, srv.isFallbackName("google.com."))
+}
+
+func TestGetQueryRouteWithoutFallback(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    "127.0.0.100:18063",
+		HasV4:         true,
+		DNSGetter:     &tstDNSGetter{},
+	})
+	assert.Nil(t, err)
+
+	for _, domain := range []string{
+		"svc1.", "svc1.local.example.com.", "nginx.default.svc.cluster.local.", "google.com.",
+	} {
+		assert.Equal(t, queryRouteCluster, srv.getQueryRoute(domain))
+	}
+}
+
+func TestGetQueryRoute(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      "127.0.0.100:18064",
+		HasV4:           true,
+		DNSGetter:       &tstDNSGetter{},
+		FallbackServers: []string{"10.96.0.10"},
+		FallbackDomains: []string{"cluster.local"},
+	})
+	assert.Nil(t, err)
+
+	for _, domain := range []string{
+		"svc1.local.example.com.", "svc1.ns1.local.example.com.",
+		"svc1.local.", "svc1.example.com.local.",
+	} {
+		assert.Equal(t, queryRouteCluster, srv.getQueryRoute(domain))
+	}
+
+	for _, domain := range []string{
+		"nginx.default.svc.cluster.local.", "cluster.local.",
+		"kubernetes.default.svc.cluster.local.",
+		"google.com.", "example.com.", "octelium-api.example.com.",
+	} {
+		assert.Equal(t, queryRouteFallback, srv.getQueryRoute(domain))
+	}
+
+	assert.Equal(t, queryRouteClusterThenFallback, srv.getQueryRoute("svc1."))
+	assert.Equal(t, queryRouteClusterThenFallback, srv.getQueryRoute("db."))
+}
+
+func TestGetQueryRouteFullDNS(t *testing.T) {
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      "127.0.0.100:18065",
+		HasV4:           true,
+		DNSGetter:       &tstDNSGetter{},
+		IsFullDNS:       true,
+		FallbackServers: []string{"10.96.0.10"},
+		FallbackDomains: []string{"cluster.local"},
+	})
+	assert.Nil(t, err)
+
+	for _, domain := range []string{"svc1.", "svc1.local.example.com.", "google.com."} {
+		assert.Equal(t, queryRouteCluster, srv.getQueryRoute(domain))
+	}
+
+	assert.Equal(t, queryRouteFallback, srv.getQueryRoute("nginx.default.svc.cluster.local."))
+}
+
+func TestServerSplitDNSInContainerMode(t *testing.T) {
+	fallbackAddr := "127.0.0.100:18067"
+	listenAddr := "127.0.0.100:18068"
+
+	newTestUpstream(t, fallbackAddr, map[string]string{
+		"nginx.default.svc.cluster.local.": "10.96.0.20",
+		"google.com.":                      "1.2.3.4",
+		"db.":                              "172.18.0.3",
+		"svc1.local.example.com.":          "1.1.1.1",
+	})
+
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      listenAddr,
+		HasV4:           true,
+		DNSGetter:       &tstAddrDNSGetter{servers: []string{"127.0.0.253"}},
+		FallbackServers: []string{fallbackAddr},
+		FallbackDomains: []string{"cluster.local"},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, []string{fallbackAddr}, srv.fallbackServerAddrs)
+
+	assert.Nil(t, srv.Run())
+	defer srv.Close()
+
+	c := dns.Client{Timeout: 10 * time.Second}
+
+	exchange := func(domain string) *dns.Msg {
+		m := dns.Msg{}
+		m.SetQuestion(domain, dns.TypeA)
+
+		r, _, err := c.Exchange(&m, listenAddr)
+		assert.Nil(t, err)
+
+		return r
+	}
+
+	{
+		r := exchange("nginx.default.svc.cluster.local.")
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, "10.96.0.20", r.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		r := exchange("google.com.")
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, "1.2.3.4", r.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		r := exchange("svc1.local.example.com.")
+		assert.Equal(t, dns.RcodeServerFailure, r.Rcode)
+	}
+
+	{
+		r := exchange("db.")
+		assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+		assert.Equal(t, "172.18.0.3", r.Answer[0].(*dns.A).A.String())
+	}
+
+	{
+		r := exchange("unknown.default.svc.cluster.local.")
+		assert.Equal(t, dns.RcodeNameError, r.Rcode)
+	}
+}
+
+func TestServerSingleLabelFallsBackOnClusterFailure(t *testing.T) {
+	fallbackAddr := "127.0.0.100:18069"
+	listenAddr := "127.0.0.100:18070"
+
+	newTestUpstream(t, fallbackAddr, map[string]string{
+		"db.": "172.18.0.3",
+	})
+
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      listenAddr,
+		HasV4:           true,
+		DNSGetter:       &tstAddrDNSGetter{servers: []string{"127.0.0.253"}},
+		FallbackServers: []string{fallbackAddr},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, srv.Run())
+	defer srv.Close()
+
+	c := dns.Client{Timeout: 10 * time.Second}
+	m := dns.Msg{}
+	m.SetQuestion("db.", dns.TypeA)
+
+	r, _, err := c.Exchange(&m, listenAddr)
+	assert.Nil(t, err)
+	assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+	assert.Equal(t, "172.18.0.3", r.Answer[0].(*dns.A).A.String())
+}
+
+func TestServerSingleLabelUsesFallbackOnUnsupportedQtype(t *testing.T) {
+	fallbackAddr := "127.0.0.100:18071"
+	listenAddr := "127.0.0.100:18072"
+
+	newTestUpstream(t, fallbackAddr, map[string]string{
+		"db.": "172.18.0.3",
+	})
+
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain:   "example.com",
+		ListenAddr:      listenAddr,
+		HasV6:           true,
+		DNSGetter:       &tstAddrDNSGetter{servers: []string{"::1"}},
+		FallbackServers: []string{fallbackAddr},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, srv.Run())
+	defer srv.Close()
+
+	c := dns.Client{Timeout: 10 * time.Second}
+	m := dns.Msg{}
+	m.SetQuestion("db.", dns.TypeA)
+
+	r, _, err := c.Exchange(&m, listenAddr)
+	assert.Nil(t, err)
+	assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+	assert.Equal(t, "172.18.0.3", r.Answer[0].(*dns.A).A.String())
+}

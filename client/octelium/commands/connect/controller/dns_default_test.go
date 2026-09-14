@@ -460,3 +460,198 @@ func TestGetClusterDNSServersFiltersByFamily(t *testing.T) {
 	c.ipv4Supported, c.ipv6Supported = false, false
 	assert.Nil(t, c.getClusterDNSServers())
 }
+
+func newTestContainerCtl(t *testing.T, listenAddr string) (*Controller, string) {
+	c, filePath := newTestResolvConfCtl(t, []string{"100.64.0.53"})
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+	c.c.Preferences.LocalDNS = &cliconfigv1.Connection_Preferences_LocalDNS{
+		IsEnabled:     true,
+		ListenAddress: listenAddr,
+	}
+
+	return c, filePath
+}
+
+func TestGetContainerFallbackDomains(t *testing.T) {
+	assert.Nil(t, getContainerFallbackDomains(nil, "example.com", false))
+
+	assert.Equal(t, []string{"cluster.local"},
+		getContainerFallbackDomains([]string{
+			"default.svc.cluster.local", "svc.cluster.local", "cluster.local",
+		}, "example.com", true))
+
+	assert.Equal(t, []string{"k8s.local"},
+		getContainerFallbackDomains([]string{"ns1.svc.k8s.local", "svc.k8s.local"},
+			"example.com", true))
+
+	assert.Equal(t, []string{"cluster.local"},
+		getContainerFallbackDomains([]string{"default.svc.cluster.local"}, "example.com", true))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{"mysvc.corp.lan"}, "example.com", false))
+
+	assert.Equal(t, []string{"cluster.local"},
+		getContainerFallbackDomains([]string{" Default.SVC.Cluster.Local. "}, "example.com", true))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{"corp.lan"}, "example.com", false))
+
+	assert.Equal(t, []string{"cluster.local"},
+		getContainerFallbackDomains([]string{"corp.lan"}, "example.com", true))
+
+	assert.Equal(t, []string{"corp.local"},
+		getContainerFallbackDomains([]string{"corp.local"}, "example.com", false))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{"local"}, "example.com", false))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{
+		"local.example.com", "example.com", "ns1.example.com.local",
+	}, "example.com", false))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{"svc.local.example.com"},
+		"example.com", false))
+
+	assert.Nil(t, getContainerFallbackDomains([]string{"", "not a domain"},
+		"example.com", false))
+}
+
+func TestGetFallbackDNSServersFromResolvConf(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	assert.Nil(t, os.WriteFile(filePath,
+		[]byte("nameserver 10.96.0.10\nnameserver 10.96.0.11\nnameserver 10.96.0.10\n"), 0644))
+
+	assert.Equal(t, []string{"10.96.0.10", "10.96.0.11"}, c.getFallbackDNSServers())
+}
+
+func TestGetFallbackDNSServersSkipsLocalDNSServer(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 127.0.0.100\n"), 0644))
+
+	assert.Nil(t, c.getFallbackDNSServers())
+}
+
+func TestGetFallbackDNSServersFromEnv(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
+
+	t.Setenv(envLocalDNSFallback, " 10.96.0.53 , 127.0.0.100 , invalid ")
+
+	assert.Equal(t, []string{"10.96.0.53"}, c.getFallbackDNSServers())
+}
+
+func TestGetFallbackDNSServersOutsideContainerMode(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_MACHINE
+
+	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
+
+	assert.Nil(t, c.getFallbackDNSServers())
+	assert.Nil(t, c.getFallbackDNSDomains())
+	assert.False(t, c.resolvConf.saved)
+}
+
+func TestGetFallbackDNSDomains(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	assert.Nil(t, os.WriteFile(filePath,
+		[]byte("nameserver 10.96.0.10\nsearch default.svc.cluster.local svc.cluster.local cluster.local\noptions ndots:5\n"),
+		0644))
+
+	assert.Equal(t, []string{"cluster.local"}, c.getFallbackDNSDomains())
+}
+
+func TestIsResolvConfAlreadySet(t *testing.T) {
+	{
+		c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+		assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 127.0.0.100\n"), 0644))
+		assert.True(t, c.isResolvConfAlreadySet())
+	}
+
+	{
+		c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+		assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
+		assert.False(t, c.isResolvConfAlreadySet())
+	}
+
+	{
+		c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+		assert.Nil(t, os.WriteFile(filePath,
+			[]byte("nameserver 127.0.0.100\nnameserver 10.96.0.10\n"), 0644))
+		assert.False(t, c.isResolvConfAlreadySet())
+	}
+
+	{
+		c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+		c.c.Preferences.LocalDNS.IsEnabled = false
+		assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 127.0.0.100\n"), 0644))
+		assert.False(t, c.isResolvConfAlreadySet())
+	}
+}
+
+func TestSetDNSContainerModeSkipsAlreadySetResolvConf(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	original := "nameserver 127.0.0.100\nsearch local.example.com default.svc.cluster.local\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0644))
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+	assert.False(t, c.resolvConf.written)
+
+	assert.Nil(t, c.UnsetDNS())
+
+	b, err = os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestSetDNSContainerModeWithLocalDNSServer(t *testing.T) {
+	c, filePath := newTestContainerCtl(t, "127.0.0.100:53")
+
+	original := "nameserver 10.96.0.10\nsearch default.svc.cluster.local svc.cluster.local cluster.local\noptions ndots:5\n"
+	assert.Nil(t, os.WriteFile(filePath, []byte(original), 0644))
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.True(t, strings.Contains(string(b), "nameserver 127.0.0.100"))
+	assert.False(t, strings.Contains(string(b), "nameserver 10.96.0.10"))
+	assert.True(t, strings.Contains(string(b), "search local.example.com default.svc.cluster.local"))
+
+	assert.Equal(t, []string{"10.96.0.10"}, c.getFallbackDNSServers())
+	assert.Equal(t, []string{"cluster.local"}, c.getFallbackDNSDomains())
+
+	assert.Nil(t, c.UnsetDNS())
+
+	b, err = os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, original, string(b))
+}
+
+func TestStartLocalDNSServerBindFailureInContainerMode(t *testing.T) {
+	listenAddr := "127.0.0.100:18073"
+
+	blocker, err := net.ListenPacket("udp", listenAddr)
+	assert.Nil(t, err)
+	defer blocker.Close()
+
+	c, filePath := newTestContainerCtl(t, listenAddr)
+	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
+
+	c.startLocalDNSServer()
+
+	assert.False(t, c.c.Preferences.LocalDNS.IsEnabled)
+	assert.True(t, c.c.Preferences.IgnoreDNS)
+	assert.Nil(t, c.localDNSSrv)
+
+	assert.Nil(t, c.SetDNS())
+
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, "nameserver 10.96.0.10\n", string(b))
+}

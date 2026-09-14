@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,8 +44,9 @@ type Opts struct {
 	ListenAddr    string
 	IsFullDNS     bool
 	LookupIPFn    func(ctx context.Context, host string) ([]net.IP, error)
-	// FallbackServers []string
-	// UseFallback     bool
+
+	FallbackServers []string
+	FallbackDomains []string
 }
 
 type Server struct {
@@ -53,17 +55,18 @@ type Server struct {
 	hasV6     bool
 	dnsGetter DNSGetter
 
-	srv      *dns.Server
-	mu       sync.Mutex
-	isClosed bool
-	// fallbackServerAddrs []string
+	srv         *dns.Server
+	mu          sync.Mutex
+	isClosed    bool
 	cache       *cache
 	cacheCancel context.CancelFunc
 	listenAddr  string
 	isFullDNS   bool
 	lookupIPFn  func(ctx context.Context, host string) ([]net.IP, error)
 	bootstrap   *bootstrapCache
-	// useFallback         bool
+
+	fallbackServerAddrs []string
+	fallbackDomains     []string
 }
 
 type DNSGetter interface {
@@ -115,7 +118,53 @@ func NewDNSServer(opts *Opts) (*Server, error) {
 		isFullDNS:  opts.IsFullDNS,
 		lookupIPFn: lookupIPFn,
 		bootstrap:  newBootstrapCache(),
+
+		fallbackServerAddrs: getFallbackServerAddrs(opts.FallbackServers, listenAddr),
+		fallbackDomains:     getFallbackDomains(opts.FallbackDomains),
 	}, nil
+}
+
+func getFallbackServerAddrs(servers []string, listenAddr string) []string {
+	var ret []string
+
+	for _, server := range servers {
+		addr := func() string {
+			server = strings.TrimSpace(server)
+			if govalidator.IsIP(server) {
+				return net.JoinHostPort(server, "53")
+			}
+			if _, _, err := net.SplitHostPort(server); err == nil {
+				return server
+			}
+
+			return ""
+		}()
+
+		if addr == "" || addr == listenAddr || slices.Contains(ret, addr) {
+			continue
+		}
+
+		ret = append(ret, addr)
+	}
+
+	return ret
+}
+
+func getFallbackDomains(domains []string) []string {
+	var ret []string
+
+	for _, domain := range domains {
+		domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+		if domain == "" || !govalidator.IsDNSName(domain) {
+			continue
+		}
+
+		if fqdn := dns.Fqdn(domain); !slices.Contains(ret, fqdn) {
+			ret = append(ret, fqdn)
+		}
+	}
+
+	return ret
 }
 
 func getRequestUDPSize(r *dns.Msg) int {
@@ -167,7 +216,14 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	q := r.Question[0]
 	domain := q.Name
 
-	upstreamAddrs := s.getUpstreamAddrs()
+	route := s.getQueryRoute(domain)
+
+	upstreamAddrs := s.getRouteUpstreamAddrs(route)
+	if len(upstreamAddrs) == 0 && route == queryRouteClusterThenFallback {
+		route = queryRouteFallback
+		upstreamAddrs = s.getRouteUpstreamAddrs(route)
+	}
+
 	if len(upstreamAddrs) == 0 {
 		if ret := s.getBootstrapAnswer(domain, q.Qtype); ret != nil {
 			writeUpstreamReply(w, r, ret)
@@ -179,31 +235,134 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	switch q.Qtype {
-	case dns.TypeA, dns.TypeAAAA:
-		if s.isClusterName(domain) {
-			switch {
-			case q.Qtype == dns.TypeA && !s.hasV4,
-				q.Qtype == dns.TypeAAAA && !s.hasV6:
-				msg := new(dns.Msg)
-				msg.SetReply(r)
-				msg.RecursionAvailable = true
-				if err := w.WriteMsg(msg); err != nil {
-					zap.L().Debug("Local DNS: Could not write the response", zap.Error(err))
-				}
-				return
+	if route != queryRouteFallback && s.isUnsupportedClusterQtype(domain, q.Qtype) {
+		if route != queryRouteClusterThenFallback {
+			msg := new(dns.Msg)
+			msg.SetReply(r)
+			msg.RecursionAvailable = true
+			if err := w.WriteMsg(msg); err != nil {
+				zap.L().Debug("Local DNS: Could not write the response", zap.Error(err))
 			}
+			return
 		}
+
+		route = queryRouteFallback
+		upstreamAddrs = s.getRouteUpstreamAddrs(route)
 	}
 
 	ret, err := s.getExchangeAnswer(domain, q.Qtype, upstreamAddrs)
 	if err != nil {
+		if route == queryRouteClusterThenFallback {
+			if fallbackRet := s.getFallbackAnswer(domain, q.Qtype); fallbackRet != nil {
+				writeUpstreamReply(w, r, fallbackRet)
+				return
+			}
+		}
+
 		zap.L().Debug("Local DNS: Could not exchange answer with the Cluster DNS", zap.Error(err))
 		writeRcode(w, r, dns.RcodeServerFailure)
 		return
 	}
 
+	if route == queryRouteClusterThenFallback && !hasAnswer(ret) {
+		if fallbackRet := s.getFallbackAnswer(domain, q.Qtype); fallbackRet != nil {
+			writeUpstreamReply(w, r, fallbackRet)
+			return
+		}
+	}
+
 	writeUpstreamReply(w, r, ret)
+}
+
+type queryRoute int
+
+const (
+	queryRouteCluster queryRoute = iota
+	queryRouteFallback
+	queryRouteClusterThenFallback
+)
+
+func (s *Server) getQueryRoute(domain string) queryRoute {
+	if len(s.fallbackServerAddrs) == 0 {
+		return queryRouteCluster
+	}
+
+	if s.isFallbackName(domain) {
+		return queryRouteFallback
+	}
+
+	if s.isFullDNS {
+		return queryRouteCluster
+	}
+
+	if isSingleLabelName(domain) {
+		return queryRouteClusterThenFallback
+	}
+
+	if s.isClusterName(domain) {
+		return queryRouteCluster
+	}
+
+	return queryRouteFallback
+}
+
+func (s *Server) isFallbackName(domain string) bool {
+	if len(s.fallbackDomains) == 0 {
+		return false
+	}
+
+	domain = dns.Fqdn(strings.ToLower(domain))
+
+	for _, fallbackDomain := range s.fallbackDomains {
+		if domain == fallbackDomain ||
+			strings.HasSuffix(domain, fmt.Sprintf(".%s", fallbackDomain)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *Server) isUnsupportedClusterQtype(domain string, typ uint16) bool {
+	switch typ {
+	case dns.TypeA:
+		return !s.hasV4 && s.isClusterName(domain)
+	case dns.TypeAAAA:
+		return !s.hasV6 && s.isClusterName(domain)
+	default:
+		return false
+	}
+}
+
+func hasAnswer(r *dns.Msg) bool {
+	return r != nil && r.Rcode == dns.RcodeSuccess && len(r.Answer) > 0
+}
+
+func (s *Server) getFallbackAnswer(domain string, typ uint16) *dns.Msg {
+	if len(s.fallbackServerAddrs) == 0 {
+		return nil
+	}
+
+	ret, err := s.getExchangeAnswer(domain, typ, s.fallbackServerAddrs)
+	if err != nil {
+		zap.L().Debug("Local DNS: Could not exchange answer with the fallback DNS",
+			zap.String("domain", domain), zap.Error(err))
+		return nil
+	}
+
+	if !hasAnswer(ret) {
+		return nil
+	}
+
+	return ret
+}
+
+func (s *Server) getRouteUpstreamAddrs(route queryRoute) []string {
+	if route == queryRouteFallback {
+		return s.fallbackServerAddrs
+	}
+
+	return s.getUpstreamAddrs()
 }
 
 func (s *Server) getUpstreamAddrs() []string {
@@ -299,6 +458,10 @@ func (s *Server) isClusterName(domain string) bool {
 		}
 	}
 
+	return isSingleLabelName(domain)
+}
+
+func isSingleLabelName(domain string) bool {
 	return len(strings.Split(strings.TrimSuffix(domain, "."), ".")) == 1
 }
 

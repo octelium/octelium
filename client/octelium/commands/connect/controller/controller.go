@@ -239,19 +239,29 @@ func (c *Controller) startLocalDNSServer() {
 	}
 
 	disable := func(err error) {
-		zap.L().Warn("Could not start the local DNS server. Falling back to the Cluster DNS servers",
-			zap.Error(err))
 		c.c.Preferences.LocalDNS.IsEnabled = false
 		c.localDNSSrv = nil
+
+		if c.isContainerMode() {
+			zap.L().Warn("Could not start the local DNS server. Skipping setting the DNS",
+				zap.Error(err))
+			c.c.Preferences.IgnoreDNS = true
+			return
+		}
+
+		zap.L().Warn("Could not start the local DNS server. Falling back to the Cluster DNS servers",
+			zap.Error(err))
 	}
 
 	localDNSServer, err := dnssrv.NewDNSServer(&dnssrv.Opts{
-		ClusterDomain: c.c.Info.Cluster.Domain,
-		HasV4:         c.ipv4Supported,
-		HasV6:         c.ipv6Supported,
-		DNSGetter:     c,
-		ListenAddr:    c.getLocalDNSServerAddr(),
-		IsFullDNS:     c.isFullDNS(),
+		ClusterDomain:   c.c.Info.Cluster.Domain,
+		HasV4:           c.ipv4Supported,
+		HasV6:           c.ipv6Supported,
+		DNSGetter:       c,
+		ListenAddr:      c.getLocalDNSServerAddr(),
+		IsFullDNS:       c.isFullDNS(),
+		FallbackServers: c.getFallbackDNSServers(),
+		FallbackDomains: c.getFallbackDNSDomains(),
 	})
 	if err != nil {
 		disable(err)

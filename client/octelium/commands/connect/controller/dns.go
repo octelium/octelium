@@ -79,9 +79,15 @@ func (c *Controller) setDNS() error {
 
 	zap.L().Debug("Setting DNS servers", zap.Strings("servers", dnsServers))
 
-	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
+	if c.isContainerMode() {
+		if c.isResolvConfAlreadySet() {
+			zap.L().Debug("Container mode. resolv.conf is already set. Nothing to be done")
+			return nil
+		}
+
 		zap.L().Debug("Container mode. Setting resolv.conf directly")
 		if err := c.setResolvConf(); err != nil {
+			cliutils.LineWarn("Could not set %s: %+v\n", c.resolvConf.getPath(), err)
 			zap.L().Warn("Could not set resolv.conf", zap.Error(err))
 		}
 
@@ -108,7 +114,7 @@ func (c *Controller) unsetDNS() error {
 		return nil
 	}
 
-	if c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER {
+	if c.isContainerMode() {
 		zap.L().Debug("Container mode. Restoring resolv.conf")
 		if err := c.unsetResolvConf(); err != nil {
 			zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
@@ -127,19 +133,165 @@ func (c *Controller) unsetDNS() error {
 func (c *Controller) getDNSServers() []string {
 	if c.c.Preferences.LocalDNS != nil && c.c.Preferences.LocalDNS.IsEnabled {
 		if addr := c.getLocalDNSServerAddr(); addr != "" {
-			if govalidator.IsIP(addr) {
-				return []string{
-					addr,
-				}
-			}
-			host, _, _ := net.SplitHostPort(addr)
 			return []string{
-				host,
+				c.getLocalDNSServerHost(),
 			}
 		}
 	}
 
 	return c.getClusterDNSServers()
+}
+
+func (c *Controller) getLocalDNSServerHost() string {
+	addr := c.getLocalDNSServerAddr()
+	if addr == "" {
+		return ""
+	}
+
+	if govalidator.IsIP(addr) {
+		return addr
+	}
+
+	host, _, _ := net.SplitHostPort(addr)
+
+	return host
+}
+
+func (c *Controller) isContainerMode() bool {
+	return c.c.Preferences != nil &&
+		c.c.Preferences.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER
+}
+
+func (c *Controller) getSavedResolvConf() *resolvConfOpts {
+	if err := c.saveResolvConf(); err != nil {
+		zap.L().Debug("Could not save the current resolv.conf", zap.Error(err))
+		return nil
+	}
+
+	ret, err := parseResolvConf(c.resolvConf.content)
+	if err != nil {
+		zap.L().Debug("Could not parse the current resolv.conf", zap.Error(err))
+		return nil
+	}
+
+	return ret
+}
+
+const envLocalDNSFallback = "OCTELIUM_LOCAL_DNS_FALLBACK"
+
+func (c *Controller) getFallbackDNSServers() []string {
+	if !c.isContainerMode() {
+		return nil
+	}
+
+	localHost := c.getLocalDNSServerHost()
+
+	filter := func(servers []string) []string {
+		var ret []string
+		for _, server := range servers {
+			server = strings.TrimSpace(server)
+			if !govalidator.IsIP(server) || server == localHost || slices.Contains(ret, server) {
+				continue
+			}
+			ret = append(ret, server)
+		}
+
+		return ret
+	}
+
+	if ret := filter(strings.Split(os.Getenv(envLocalDNSFallback), ",")); len(ret) > 0 {
+		return ret
+	}
+
+	prev := c.getSavedResolvConf()
+	if prev == nil {
+		return nil
+	}
+
+	return filter(prev.Nameservers)
+}
+
+const defaultKubernetesClusterDomain = "cluster.local"
+
+func (c *Controller) getFallbackDNSDomains() []string {
+	if !c.isContainerMode() {
+		return nil
+	}
+
+	prev := c.getSavedResolvConf()
+	if prev == nil {
+		return nil
+	}
+
+	return getContainerFallbackDomains(prev.SearchDomains,
+		c.c.Info.Cluster.Domain, cliutils.IsKubernetes())
+}
+
+func getContainerFallbackDomains(searchDomains []string,
+	clusterDomain string, isKubernetes bool) []string {
+
+	normalize := func(arg string) string {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(arg), "."))
+	}
+
+	clusterDomain = normalize(clusterDomain)
+
+	var ret []string
+
+	add := func(domain string) {
+		if domain == "" || domain == "local" || !govalidator.IsDNSName(domain) {
+			return
+		}
+		if clusterDomain != "" && (domain == clusterDomain ||
+			strings.HasSuffix(domain, fmt.Sprintf(".%s", clusterDomain)) ||
+			domain == fmt.Sprintf("%s.local", clusterDomain) ||
+			strings.HasSuffix(domain, fmt.Sprintf(".%s.local", clusterDomain))) {
+			return
+		}
+		if slices.ContainsFunc(ret, func(cur string) bool {
+			return domain == cur || strings.HasSuffix(domain, fmt.Sprintf(".%s", cur))
+		}) {
+			return
+		}
+		ret = append(ret, domain)
+	}
+
+	for _, domain := range searchDomains {
+		domain = normalize(domain)
+		if after, ok := strings.CutPrefix(domain, "svc."); ok {
+			add(after)
+			continue
+		}
+		if _, after, ok := strings.Cut(domain, ".svc."); ok {
+			add(after)
+		}
+	}
+
+	for _, domain := range searchDomains {
+		domain = normalize(domain)
+		if strings.HasSuffix(domain, ".local") {
+			add(domain)
+		}
+	}
+
+	if len(ret) == 0 && isKubernetes {
+		add(defaultKubernetesClusterDomain)
+	}
+
+	return ret
+}
+
+func (c *Controller) isResolvConfAlreadySet() bool {
+	if c.c.Preferences.LocalDNS == nil || !c.c.Preferences.LocalDNS.IsEnabled {
+		return false
+	}
+
+	prev := c.getSavedResolvConf()
+	if prev == nil || len(prev.Nameservers) == 0 {
+		return false
+	}
+
+	return slices.Equal(prev.Nameservers, c.getDNSServers())
 }
 
 func (c *Controller) getClusterDNSServers() []string {

@@ -316,7 +316,7 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 			LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{
 				IsEnabled: c.opts.UseLocalDNS || c.isFullDNS() ||
 					os.Getenv("OCTELIUM_LOCAL_DNS_SERVER") == "true" ||
-					os.Getenv("OCTELIUM_CONTAINER_MODE") == "true",
+					cliutils.IsContainerRuntime(),
 				ListenAddress: func() string {
 					if c.opts.LocalDNSListenAddr != "" {
 						if _, _, err := net.SplitHostPort(c.opts.LocalDNSListenAddr); err == nil {
@@ -362,7 +362,7 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 		connCfg.Preferences.DeviceName = "utun"
 	}
 
-	if cliutils.IsLinux() && os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
+	if cliutils.IsLinux() && cliutils.IsContainerRuntime() {
 		connCfg.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
 	}
 

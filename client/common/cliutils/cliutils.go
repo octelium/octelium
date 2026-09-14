@@ -321,6 +321,44 @@ func IsDarwin() bool {
 	return runtime.GOOS == "darwin"
 }
 
+func IsKubernetes() bool {
+	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
+}
+
+func IsContainerRuntime() bool {
+	if os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
+		return true
+	}
+
+	if !IsLinux() {
+		return false
+	}
+
+	if IsKubernetes() {
+		return true
+	}
+
+	if isContainerFile() {
+		return true
+	}
+
+	if os.Getenv("container") == "podman" {
+		return true
+	}
+
+	return false
+}
+
+func isContainerFile() bool {
+	for _, path := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 func IsSuggestedWorkloadHost() bool {
 	if os.Getenv("OCTELIUM_CONTAINER_MODE") == "true" {
 		return true
