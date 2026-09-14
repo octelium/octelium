@@ -21,24 +21,42 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/octelium/octelium/cluster/common/httputils"
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
+	"github.com/open-policy-agent/opa/v1/topdown"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
+const opaEvalTimeout = 10 * time.Second
+
+var opaRoundTripper topdown.CustomizeRoundTripper = httputils.RestrictTransport
+
 type opaEngine struct {
-	c    *cache.Cache
-	caps *ast.Capabilities
+	c           *cache.Cache
+	caps        *ast.Capabilities
+	evalTimeout time.Duration
 }
 
 type opaOpts struct {
+	EvalTimeout time.Duration
 }
 
-func newOPAEngine(_ context.Context, _ *opaOpts) (*opaEngine, error) {
+func newOPAEngine(_ context.Context, o *opaOpts) (*opaEngine, error) {
+	if o == nil {
+		o = &opaOpts{}
+	}
+
+	evalTimeout := o.EvalTimeout
+	if evalTimeout <= 0 {
+		evalTimeout = opaEvalTimeout
+	}
+
 	return &opaEngine{
-		c:    cache.New(24*time.Hour, 10*time.Minute),
-		caps: getOPACapabilities(),
+		c:           cache.New(24*time.Hour, 10*time.Minute),
+		caps:        getOPACapabilities(),
+		evalTimeout: evalTimeout,
 	}, nil
 }
 
@@ -101,12 +119,17 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context,
 		return nil, errors.Errorf("Rego script is empty")
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, e.evalTimeout)
+	defer cancel()
+
 	pq, err := e.getOrSetPQ(ctx, script, mod, qry)
 	if err != nil {
 		return nil, err
 	}
 
-	rs, err := pq.Eval(ctx, rego.EvalInput(input))
+	rs, err := pq.Eval(ctx,
+		rego.EvalInput(input),
+		rego.EvalHTTPRoundTripper(opaRoundTripper))
 	if err != nil {
 		return nil, err
 	}
