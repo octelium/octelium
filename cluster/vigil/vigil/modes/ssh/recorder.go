@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"go.uber.org/zap"
 )
 
@@ -71,6 +72,7 @@ func (t *recorder) run(ctx context.Context) {
 }
 
 func (t *recorder) doRun(ctx context.Context) {
+	defer modes.Recover()
 
 	defer func() {
 		zap.L().Debug("Exiting recorder loop", zap.String("id", t.dctx.id))

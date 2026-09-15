@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -49,6 +50,8 @@ func parseDirectTCPIPReq(data []byte) (*reqDirectTCPIP, error) {
 }
 
 func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
+	defer modes.Recover()
+
 	svcCfg := c.svcConfig
 
 	if svcCfg == nil || svcCfg.GetSsh() == nil || !svcCfg.GetSsh().EnableLocalPortForwarding {
@@ -122,15 +125,27 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 	errCh := make(chan error, 2)
 
 	go func() {
-		n, err := io.Copy(ch, conn)
+		var err error
+		defer modes.Recover()
+		defer func() {
+			errCh <- err
+		}()
+
+		var n int64
+		n, err = io.Copy(ch, conn)
 		c.commonMetrics.AddBytesTransferred(n, 0)
-		errCh <- err
 	}()
 
 	go func() {
-		n, err := io.Copy(conn, ch)
+		var err error
+		defer modes.Recover()
+		defer func() {
+			errCh <- err
+		}()
+
+		var n int64
+		n, err = io.Copy(conn, ch)
 		c.commonMetrics.AddBytesTransferred(0, n)
-		errCh <- err
 	}()
 
 	zap.L().Debug("Waiting for port forwarding to close", zap.String("id", c.id))

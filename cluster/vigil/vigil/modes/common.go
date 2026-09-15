@@ -18,6 +18,7 @@ package modes
 
 import (
 	"context"
+	"runtime/debug"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -26,7 +27,19 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"go.uber.org/zap"
 )
+
+func Recover(fns ...func(any)) {
+	if err := recover(); err != nil {
+		zap.L().Error("Recovered from Vigil connection panic",
+			zap.Any("error", err),
+			zap.ByteString("stack", debug.Stack()))
+		for _, fn := range fns {
+			fn(err)
+		}
+	}
+}
 
 type Server interface {
 	Run(ctx context.Context) error

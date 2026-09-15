@@ -199,6 +199,9 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
+	defer modes.Recover()
+	defer c.Close()
+
 	startTime := time.Now()
 
 	svc := s.vCache.GetService()

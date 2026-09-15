@@ -26,6 +26,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/mtls"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"go.uber.org/zap"
@@ -99,6 +100,7 @@ func (p *proxy) doServe(clientConn, backendConn net.Conn) {
 
 func (p *proxy) connCopy(dst, src net.Conn, isToDownstream bool) {
 	defer p.wg.Done()
+	defer modes.Recover()
 
 	n, _ := io.Copy(dst, src)
 	if isToDownstream {

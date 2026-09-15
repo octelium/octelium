@@ -233,6 +233,9 @@ func (s *Server) serve(ctx context.Context) {
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
+	defer modes.Recover()
+	defer c.Close()
+
 	zap.L().Debug("Started handling a new SOCKS5 conn",
 		zap.String("addr", c.RemoteAddr().String()))
 
@@ -268,6 +271,8 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	connDone := make(chan struct{})
 	go func() {
+		defer modes.Recover()
+
 		select {
 		case <-ctx.Done():
 			c.Close()

@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -51,6 +52,11 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	downCopyDone := make(chan struct{}, 1)
 
 	go func() {
+		defer modes.Recover()
+		defer func() {
+			upCopyDone <- struct{}{}
+		}()
+
 		mult := io.MultiWriter(downstreamCh, stdoutWriter)
 		n, err := io.Copy(mult, upstreamCh)
 		c.commonMetrics.AddBytesTransferred(n, 0)
@@ -61,11 +67,15 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 				zap.L().Debug("Sent downstream EOF msg", zap.String("id", c.id))
 			}
 		}
-		upCopyDone <- struct{}{}
 		zap.L().Debug("Upstream goroutine ended", zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
 	}()
 
 	go func() {
+		defer modes.Recover()
+		defer func() {
+			downCopyDone <- struct{}{}
+		}()
+
 		mult := io.MultiWriter(upstreamCh, stdinWriter)
 		n, err := io.Copy(mult, downstreamCh)
 		c.commonMetrics.AddBytesTransferred(0, n)
@@ -76,7 +86,6 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 				zap.L().Debug("Sent upstream EOF msg", zap.String("id", c.id))
 			}
 		}
-		downCopyDone <- struct{}{}
 		zap.L().Debug("Downstream goroutine ended", zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
 	}()
 
@@ -244,6 +253,8 @@ func (c *dctx) handleSessionUpstreamReq(req *ssh.Request, ch ssh.Channel) error 
 }
 
 func (c *dctx) handleSessionRequests(ctx context.Context, newChannel ssh.NewChannel) {
+	defer modes.Recover()
+
 	zap.L().Debug("Starting handleSessionRequests", zap.String("id", c.id))
 
 	sesschan, reqs, err := newChannel.Accept()

@@ -170,6 +170,8 @@ func (s *Server) closeDctx(dctx *dctx) {
 }
 
 func (s *Server) replyLoop(dctx *dctx) {
+	defer modes.Recover()
+
 	s.metricsStore.AtRequestStart()
 	s.metricsStore.AtSessionStart()
 	defer s.closeDctx(dctx)
@@ -225,6 +227,8 @@ func (s *Server) doRun(ctx context.Context) {
 			}
 
 			go func(buf []byte, length int, source *net.UDPAddr) {
+				defer modes.Recover()
+
 				if err := s.handlePacket(ctx, buf, length, source); err != nil {
 					zap.L().Warn("Could not handle packet", zap.Error(err))
 				}

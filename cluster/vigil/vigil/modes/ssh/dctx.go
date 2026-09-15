@@ -343,6 +343,8 @@ func (c *dctx) getClientConfig(ctx context.Context,
 }
 
 func (c *dctx) startKeepAliveUpstreamLoop(ctx context.Context) {
+	defer modes.Recover()
+
 	tickerCh := time.NewTicker(30 * time.Second)
 	defer tickerCh.Stop()
 
@@ -380,6 +382,8 @@ func (c *dctx) startKeepAliveUpstreamLoop(ctx context.Context) {
 func (c *dctx) sendKeepAliveUpstream() error {
 	errCh := make(chan error, 1)
 	go func() {
+		defer modes.Recover()
+
 		_, _, err := c.remoteConn.sshClient.SendRequest("keepalive@openssh.com", true, nil)
 		errCh <- err
 	}()
@@ -392,6 +396,8 @@ func (c *dctx) sendKeepAliveUpstream() error {
 }
 
 func (c *dctx) handleGlobalReq(req *ssh.Request) {
+	defer modes.Recover()
+
 	if req == nil {
 		zap.L().Debug("Nil req. No need to handleGlobalReq")
 		return
@@ -409,6 +415,8 @@ func (c *dctx) handleGlobalReq(req *ssh.Request) {
 }
 
 func (c *dctx) handleNewChannel(ctx context.Context, nch ssh.NewChannel) {
+	defer modes.Recover()
+
 	if nch == nil {
 		zap.L().Debug("Nil nch. No need to handleNewChannel")
 		return

@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -211,6 +212,9 @@ func (c *dctx) serve(ctx context.Context) error {
 }
 
 func (c *dctx) startDownstreamLoop(ctx context.Context) {
+	defer modes.Recover(func(err any) {
+		c.downstreamCh <- errors.Errorf("downstream loop panic: %v", err)
+	})
 
 	zap.L().Debug("Starting downstreamLoop")
 	defer zap.L().Debug("downstreamLoop exited...")
@@ -271,6 +275,10 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 }
 
 func (c *dctx) startUpstreamLoop(ctx context.Context) {
+	defer modes.Recover(func(err any) {
+		c.upstreamCh <- errors.Errorf("upstream loop panic: %v", err)
+	})
+
 	defer zap.L().Debug("upstreamLoop exited...")
 	zap.L().Debug("Starting upstreamLoop")
 

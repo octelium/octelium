@@ -27,6 +27,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/coder/websocket"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -393,7 +394,15 @@ func Relay(ctx context.Context, downstream net.Conn, upstream net.Conn,
 }
 
 func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.Reader) {
-	_, err := io.Copy(dst, src)
+	ret := copyResult{direction: direction}
+	defer func() {
+		resCh <- ret
+	}()
+	defer modes.Recover(func(err any) {
+		ret.err = errors.Errorf("%s copy panic: %v", direction, err)
+	})
+
+	_, ret.err = io.Copy(dst, src)
 
 	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 		if closeErr := cw.CloseWrite(); closeErr != nil && !isExpectedNetErr(closeErr) {
@@ -401,11 +410,6 @@ func copyConn(resCh chan<- copyResult, direction string, dst io.Writer, src io.R
 				zap.String("direction", direction),
 				zap.Error(closeErr))
 		}
-	}
-
-	resCh <- copyResult{
-		direction: direction,
-		err:       err,
 	}
 }
 

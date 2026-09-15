@@ -30,6 +30,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -205,6 +206,7 @@ func (p *proxy) doServe(clientWriter io.Writer, clientReader io.Reader, upstream
 
 func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool) {
 	defer p.wg.Done()
+	defer modes.Recover()
 
 	n, err := io.Copy(dst, src)
 	if err != nil && !isExpectedNetErr(err) {

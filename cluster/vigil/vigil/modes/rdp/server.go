@@ -146,6 +146,9 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
+	defer modes.Recover()
+	defer c.Close()
+
 	zap.L().Debug("Started handling a new RDP conn", zap.String("addr", c.RemoteAddr().String()))
 
 	startTime := time.Now()
