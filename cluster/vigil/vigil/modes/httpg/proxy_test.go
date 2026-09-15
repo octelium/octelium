@@ -282,3 +282,29 @@ func TestGetUpstreamPathOtherModes(t *testing.T) {
 		assert.Equal(t, "/foo", getUpstreamPath(svc, "/api", "/foo"), mode.String())
 	}
 }
+
+func TestRemoveOcteliumResponseCookies(t *testing.T) {
+	header := http.Header{}
+	header.Add("Set-Cookie", "session=abc; Path=/; Secure; HttpOnly")
+	header.Add("Set-Cookie", "octelium_auth=access; Domain=example.com; Path=/; Secure; HttpOnly")
+	header.Add("Set-Cookie", "OCTELIUM_RT=refresh; Domain=example.com; Path=/; Secure; HttpOnly")
+	header.Add("Set-Cookie", "octelium_login_state=state; Domain=example.com; Path=/; Secure; HttpOnly")
+	header.Add("Set-Cookie", "other_octelium_auth=value; Path=/")
+
+	removeOcteliumResponseCookies(header)
+
+	assert.Equal(t, []string{
+		"session=abc; Path=/; Secure; HttpOnly",
+		"other_octelium_auth=value; Path=/",
+	}, header.Values("Set-Cookie"))
+}
+
+func TestRemoveOcteliumResponseCookiesRemovesHeader(t *testing.T) {
+	header := http.Header{
+		"set-cookie": {" octelium_auth=value; Domain=example.com; Path=/"},
+	}
+
+	removeOcteliumResponseCookies(header)
+
+	assert.Empty(t, header)
+}

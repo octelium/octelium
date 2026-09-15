@@ -290,6 +290,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		FlushInterval: time.Duration(100 * time.Millisecond),
 		ModifyResponse: func(r *http.Response) error {
 			r.Header.Set("Server", "octelium")
+			if !isManagedSvc {
+				removeOcteliumResponseCookies(r.Header)
+			}
 			if reqCtx := middlewares.GetCtxRequestContext(
 				r.Request.Context()); reqCtx != nil {
 				reqCtx.IsUpstreamResponse = true
@@ -322,6 +325,35 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		},
 	}
 	return ret, nil
+}
+
+func removeOcteliumResponseCookies(header http.Header) {
+	for name, values := range header {
+		if !strings.EqualFold(name, "Set-Cookie") {
+			continue
+		}
+
+		filtered := values[:0]
+		for _, value := range values {
+			cookieName := value
+			if idx := strings.IndexByte(cookieName, '='); idx >= 0 {
+				cookieName = cookieName[:idx]
+			}
+
+			cookieName = strings.TrimSpace(cookieName)
+			if len(cookieName) >= len("octelium_") &&
+				strings.EqualFold(cookieName[:len("octelium_")], "octelium_") {
+				continue
+			}
+			filtered = append(filtered, value)
+		}
+
+		if len(filtered) == 0 {
+			delete(header, name)
+		} else {
+			header[name] = filtered
+		}
+	}
 }
 
 func isWebSocketUpgrade(req *http.Request) bool {
