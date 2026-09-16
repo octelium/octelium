@@ -123,20 +123,19 @@ func TestParsePublishService(t *testing.T) {
 }
 
 func TestGetReconnectBackoff(t *testing.T) {
-	var prev time.Duration
+	for range 100 {
+		var prev time.Duration
 
-	for attempt := 1; attempt < 20; attempt++ {
-		ret := getReconnectBackoff(attempt)
+		for attempt := 1; attempt < 20; attempt++ {
+			ret := getReconnectBackoff(attempt)
 
-		assert.GreaterOrEqual(t, ret, reconnectBackoffMin)
-		assert.LessOrEqual(t, ret, reconnectBackoffMax+reconnectBackoffMax/2)
+			assert.GreaterOrEqual(t, ret, reconnectBackoffMin)
+			assert.LessOrEqual(t, ret, reconnectBackoffMax)
+			assert.GreaterOrEqual(t, ret, prev)
 
-		if attempt > 1 {
-			assert.GreaterOrEqual(t, ret+ret/2, prev)
+			prev = ret
 		}
-
-		prev = ret
 	}
 
-	assert.GreaterOrEqual(t, getReconnectBackoff(20), reconnectBackoffMax)
+	assert.Equal(t, reconnectBackoffMax, getReconnectBackoff(20))
 }

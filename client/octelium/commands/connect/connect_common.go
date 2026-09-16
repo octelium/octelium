@@ -432,7 +432,7 @@ const shutdownWaitHint = 30 * time.Second
 
 const (
 	reconnectBackoffMin = 2 * time.Second
-	reconnectBackoffMax = 30 * time.Second
+	reconnectBackoffMax = 10 * time.Second
 )
 
 type ctl struct {
@@ -647,8 +647,9 @@ func getReconnectBackoff(attempt int) time.Duration {
 		ret = reconnectBackoffMax
 	}
 
+	jitterMax := min(ret/2, reconnectBackoffMax-ret)
 	return ret + time.Duration(utilrand.GetRandomRangeMath(0,
-		int(ret/2/time.Millisecond)))*time.Millisecond
+		int(jitterMax/time.Millisecond)))*time.Millisecond
 }
 
 type tryConnectRet struct {
