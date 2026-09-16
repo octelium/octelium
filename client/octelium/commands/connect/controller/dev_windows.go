@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	stderrors "errors"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -218,16 +219,20 @@ func (c *Controller) doDeleteDev() error {
 		return nil
 	}
 
+	var retErr error
 	if err := c.destroyIface(); err != nil {
 		zap.L().Debug("Could not destroy the interface", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	if c.opts.adapter != nil {
-		c.opts.adapter.Close()
+		if err := c.opts.adapter.Close(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
 		c.opts.adapter = nil
 	}
 
-	return nil
+	return retErr
 }
 
 func (c *Controller) doSetDevAddrs() error {
@@ -457,14 +462,21 @@ func (c *Controller) destroyIface() error {
 	iw.storedEvents = nil
 	iw.mu.Unlock()
 
+	var retErr error
 	if interfaceChangeCallback != nil {
-		interfaceChangeCallback.Unregister()
+		if err := interfaceChangeCallback.Unregister(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
 	}
 	for _, cb := range changeCallbacks4 {
-		cb.Unregister()
+		if err := cb.Unregister(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
 	}
 	for _, cb := range changeCallbacks6 {
-		cb.Unregister()
+		if err := cb.Unregister(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
 	}
 
 	iw.mu.Lock()
@@ -483,20 +495,20 @@ func (c *Controller) destroyIface() error {
 	// firewall.DisableFirewall()
 
 	if c.ipv4Supported {
-		luid.FlushRoutes(windows.AF_INET)
-		luid.FlushIPAddresses(windows.AF_INET)
-		luid.FlushDNS(windows.AF_INET)
+		retErr = stderrors.Join(retErr, luid.FlushRoutes(windows.AF_INET))
+		retErr = stderrors.Join(retErr, luid.FlushIPAddresses(windows.AF_INET))
+		retErr = stderrors.Join(retErr, luid.FlushDNS(windows.AF_INET))
 	}
 
 	if c.ipv6Supported {
-		luid.FlushRoutes(windows.AF_INET6)
-		luid.FlushIPAddresses(windows.AF_INET6)
-		luid.FlushDNS(windows.AF_INET6)
+		retErr = stderrors.Join(retErr, luid.FlushRoutes(windows.AF_INET6))
+		retErr = stderrors.Join(retErr, luid.FlushIPAddresses(windows.AF_INET6))
+		retErr = stderrors.Join(retErr, luid.FlushDNS(windows.AF_INET6))
 	}
 
 	iw.mu.Unlock()
 
-	return nil
+	return retErr
 }
 
 func (c *Controller) unwindPartialDev() {

@@ -90,6 +90,9 @@ func (c *Controller) doSetDNSResolvctl() error {
 
 	if b, err := runOSCmdOutput(cmdBin, cmdDomainArgs...); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))
+		if revertErr := c.doUnsetDNSResolvctl(); revertErr != nil {
+			zap.L().Debug("Could not revert the partial systemd-resolved config", zap.Error(revertErr))
+		}
 		return err
 	}
 
@@ -119,6 +122,14 @@ const resolvctlRoutingDomainAll = "~."
 
 func getResolvctlDefaultRouteArgs(devName string) []string {
 	return []string{"default-route", devName, "yes"}
+}
+
+func getResolvctlRevertArgs(isResolvectl bool, devName string) []string {
+	if isResolvectl {
+		return []string{"revert", devName}
+	}
+
+	return []string{"--interface", devName, "--revert"}
 }
 
 func getResolvctlArgs(isResolvectl bool, devName string,
@@ -151,8 +162,30 @@ func (c *Controller) doUnsetDNS() error {
 		if err := c.unsetResolvConf(); err != nil {
 			return err
 		}
-
+	case cliconfigv1.Connection_Preferences_Linux_RESOLVECTL_BIN:
+		return c.doUnsetDNSResolvctl()
 	default:
 	}
+	return nil
+}
+
+func (c *Controller) doUnsetDNSResolvctl() error {
+	var isResolvectl bool
+	var cmdBin string
+
+	if _, err := exec.LookPath("resolvectl"); err == nil {
+		isResolvectl = true
+		cmdBin = "resolvectl"
+	} else if _, err := exec.LookPath("systemd-resolve"); err == nil {
+		cmdBin = "systemd-resolve"
+	} else {
+		return errors.Errorf("Could not find resolvectl or systemd-resolve")
+	}
+
+	args := getResolvctlRevertArgs(isResolvectl, c.c.Preferences.DeviceName)
+	if b, err := runOSCmdOutput(cmdBin, args...); err != nil {
+		return errors.Errorf("Could not revert the systemd-resolved config: %+v. %s", err, string(b))
+	}
+
 	return nil
 }

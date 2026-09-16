@@ -15,7 +15,10 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -29,7 +32,10 @@ func init() {
 }
 
 func main() {
-	if err := commands.Cmd.Execute(); err != nil {
+	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelFn()
+
+	if err := commands.Cmd.ExecuteContext(ctx); err != nil {
 		color.New(color.FgRed, color.Bold).Printf("%s\n", cliutils.GrpcErr(err))
 		os.Exit(1)
 	}

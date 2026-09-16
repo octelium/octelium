@@ -15,7 +15,6 @@
 package connect
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -190,7 +189,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	domain := i.Domain
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	authOpts := &authenticator.AuthenticateOpts{
 		Domain:    domain,

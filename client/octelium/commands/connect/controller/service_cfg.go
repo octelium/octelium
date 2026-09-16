@@ -17,6 +17,7 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,6 +131,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 
 	zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
 
+	var retErr error
 	for _, filePath := range []string{
 		filepath.Join(sshDir, "known_hosts"),
 		filepath.Join(sshDir, "authorized_keys"),
@@ -137,10 +139,11 @@ func (c *Controller) unsetServiceConfigSSH() error {
 		if err := removeManagedLines(filePath, marker); err != nil {
 			zap.L().Debug("Could not remove the Cluster CA",
 				zap.String("filePath", filePath), zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
-	return nil
+	return retErr
 }
 
 func (c *Controller) getSSHDir() (string, error) {

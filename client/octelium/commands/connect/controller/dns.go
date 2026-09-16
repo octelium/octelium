@@ -118,6 +118,7 @@ func (c *Controller) unsetDNS() error {
 		zap.L().Debug("Container mode. Restoring resolv.conf")
 		if err := c.unsetResolvConf(); err != nil {
 			zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
+			return err
 		}
 
 		return nil
@@ -125,6 +126,7 @@ func (c *Controller) unsetDNS() error {
 
 	if err := c.doUnsetDNS(); err != nil {
 		zap.L().Warn("Could not unset DNS", zap.Error(err))
+		return err
 	}
 
 	return nil
@@ -551,20 +553,32 @@ func (c *Controller) doSetResolvConf() error {
 	zap.L().Debug("Setting resolv.conf", zap.String("content", content))
 
 	if err := c.writeResolvConf([]byte(content)); err != nil {
+		if c.resolvConf.written {
+			if restoreErr := c.doUnsetResolvConf(c.resolvConf.getPath()); restoreErr != nil {
+				return errors.Errorf("Could not set resolv.conf: %+v. Could not restore resolv.conf: %+v",
+					err, restoreErr)
+			}
+			c.resolvConf.written = false
+		}
 		return err
 	}
-
-	c.resolvConf.written = true
 
 	return nil
 }
 
 func (c *Controller) writeResolvConf(content []byte) error {
 	if c.resolvConf.isSymlink {
-		return replaceResolvConf(c.resolvConf.getPath(), content, c.resolvConf.mode)
+		if err := replaceResolvConf(c.resolvConf.getPath(), content, c.resolvConf.mode); err != nil {
+			return err
+		}
+		c.resolvConf.written = true
+		return nil
 	}
 
-	return writeResolvConfInPlace(c.resolvConf.getPath(), content, c.resolvConf.mode)
+	return writeResolvConfInPlaceWithCallback(c.resolvConf.getPath(), content,
+		c.resolvConf.mode, func() {
+			c.resolvConf.written = true
+		})
 }
 
 func (c *Controller) unsetResolvConf() error {
@@ -597,16 +611,18 @@ func (c *Controller) doUnsetResolvConf(path string) error {
 	}
 
 	if c.resolvConf.isSymlink {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return os.Symlink(c.resolvConf.linkTarget, path)
+		return replaceResolvConfSymlink(path, c.resolvConf.linkTarget)
 	}
 
 	return writeResolvConfInPlace(path, c.resolvConf.content, c.resolvConf.mode)
 }
 
 func writeResolvConfInPlace(path string, content []byte, mode os.FileMode) error {
+	return writeResolvConfInPlaceWithCallback(path, content, mode, nil)
+}
+
+func writeResolvConfInPlaceWithCallback(path string, content []byte,
+	mode os.FileMode, onOpen func()) error {
 	if mode == 0 {
 		mode = resolvConfDefaultMode
 	}
@@ -615,8 +631,15 @@ func writeResolvConfInPlace(path string, content []byte, mode os.FileMode) error
 	if err != nil {
 		return errors.Errorf("Could not open %s: %+v", path, err)
 	}
+	if onOpen != nil {
+		onOpen()
+	}
 
 	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return errors.Errorf("Could not write to %s: %+v", path, err)
+	}
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return errors.Errorf("Could not write to %s: %+v", path, err)
 	}
@@ -645,6 +668,11 @@ func replaceResolvConf(path string, content []byte, mode os.FileMode) error {
 		os.Remove(tmpPath)
 		return errors.Errorf("Could not write to %s: %+v", tmpPath, err)
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return errors.Errorf("Could not write to %s: %+v", tmpPath, err)
+	}
 
 	if err := f.Close(); err != nil {
 		os.Remove(tmpPath)
@@ -659,6 +687,31 @@ func replaceResolvConf(path string, content []byte, mode os.FileMode) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return errors.Errorf("Could not replace %s: %+v", path, err)
+	}
+
+	return nil
+}
+
+func replaceResolvConfSymlink(path, target string) error {
+	f, err := os.CreateTemp(filepath.Dir(path),
+		fmt.Sprintf("%s.octelium-link-*", filepath.Base(path)))
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return err
+	}
+	if err := os.Symlink(target, tmpPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
 	}
 
 	return nil

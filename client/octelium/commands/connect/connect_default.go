@@ -28,7 +28,7 @@ import (
 
 func doConnect(ctx context.Context, c *Connector) error {
 	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(signalCh)
 
 	ctx, cancelFn := context.WithCancel(ctx)

@@ -16,6 +16,7 @@ package connect
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"os"
@@ -440,6 +441,7 @@ type ctl struct {
 	stateController *stateController
 	mu              sync.Mutex
 	isClosed        bool
+	closeErr        error
 	cancelFn        context.CancelFunc
 }
 
@@ -484,8 +486,9 @@ func (c *ctl) start(ctx context.Context) (err error) {
 			return
 		}
 		zap.L().Debug("Closing the controller after a startup error", zap.Error(err))
-		if err := c.close(); err != nil {
-			zap.L().Debug("Could not close the controller after a startup error", zap.Error(err))
+		if closeErr := c.close(); closeErr != nil {
+			zap.L().Debug("Could not close the controller after a startup error", zap.Error(closeErr))
+			err = stderrors.Join(err, closeErr)
 		}
 	}()
 
@@ -517,7 +520,7 @@ func (c *ctl) close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isClosed {
-		return nil
+		return c.closeErr
 	}
 	c.isClosed = true
 
@@ -525,13 +528,20 @@ func (c *ctl) close() error {
 		c.cancelFn()
 	}
 
+	var retErr error
+
 	if c.proxyCtl != nil {
-		c.proxyCtl.Close()
+		if err := c.proxyCtl.Close(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
 	}
 
-	c.devCtl.Close()
+	if err := c.devCtl.Close(); err != nil {
+		retErr = stderrors.Join(retErr, err)
+	}
 
-	return nil
+	c.closeErr = retErr
+	return retErr
 }
 
 func (c *Connector) Run(ctx context.Context) error {
@@ -553,27 +563,28 @@ func (c *Connector) Run(ctx context.Context) error {
 
 	for {
 		ret := make(chan tryConnectRet, 1)
-		doneCh := make(chan struct{})
 		go func() {
-			ret <- c.tryConnect(ctx, doneCh)
+			ret <- c.tryConnect(ctx)
 		}()
 
 		select {
 		case <-ctx.Done():
 			zap.L().Debug("Waiting for tryConnect to exit...")
+			var cleanupErr error
 			select {
 			case <-time.After(shutdownTimeout):
 				zap.L().Warn("Timed out waiting for the connection to be cleanly closed",
 					zap.Duration("timeout", shutdownTimeout))
-			case <-doneCh:
+			case ret := <-ret:
 				zap.L().Debug("tryConnect done...")
+				cleanupErr = ret.cleanupErr
 			}
 
 			c.setEvent(&Event{
 				Type: EventTypeDisconnected,
 			})
 
-			return nil
+			return cleanupErr
 		case ret := <-ret:
 			if !ret.needsReconnect {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
@@ -637,13 +648,12 @@ func getReconnectBackoff(attempt int) time.Duration {
 
 type tryConnectRet struct {
 	err            error
+	cleanupErr     error
 	needsReconnect bool
 	isConnected    bool
 }
 
-func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryConnectRet {
-
-	defer close(doneCh)
+func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 
 	doNeedReconnect := func(err error) bool {
 		if grpcerr.IsInvalidArg(err) ||
@@ -716,6 +726,16 @@ func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryC
 			needsReconnect: ctx.Err() == nil,
 		}
 	}
+	defer func() {
+		if err := ctl.close(); err != nil {
+			zap.L().Warn("Could not cleanly close the controller", zap.Error(err))
+			ret.cleanupErr = err
+			ret.needsReconnect = false
+			if ret.err == nil {
+				ret.err = errors.Errorf("Could not cleanly close the controller: %+v", err)
+			}
+		}
+	}()
 
 	needsReconnect := false
 	var retErr error
@@ -737,13 +757,12 @@ func (c *Connector) tryConnect(ctx context.Context, doneCh chan<- struct{}) tryC
 		cliutils.LineInfo("Disconnected by API Server\n")
 	}
 
-	ctl.close()
-
-	return tryConnectRet{
+	ret = tryConnectRet{
 		err:            retErr,
 		needsReconnect: needsReconnect,
 		isConnected:    isConnected,
 	}
+	return
 }
 
 func (c *Connector) getPublishedServicesWithList(ctx context.Context,

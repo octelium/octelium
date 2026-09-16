@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
@@ -96,16 +97,17 @@ func (c *Controller) doDisconnect() error {
 
 	if err := c.unsetRoutes(); err != nil {
 		zap.L().Debug("Could not unset routes", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	if err := c.unsetDNS(); err != nil {
 		zap.L().Warn("Could not unset DNS", zap.Error(err))
-		retErr = err
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	if err := c.DeleteDev(); err != nil {
 		zap.L().Warn("Could not delete dev", zap.Error(err))
-		retErr = err
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	return retErr

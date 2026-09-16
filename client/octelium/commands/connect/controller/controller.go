@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"net"
 	"strconv"
 	"strings"
@@ -70,6 +71,7 @@ type Controller struct {
 	svcProxy       *serviceProxy
 
 	isClosed bool
+	closeErr error
 
 	quicEngine   *quicEngine
 	eSSHHMainSrv *esshmain.ESSHMain
@@ -122,19 +124,22 @@ func (c *Controller) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isClosed {
-		return nil
+		return c.closeErr
 	}
 	zap.L().Debug("Closing dev controller")
 
 	c.isClosed = true
+	var retErr error
 	if c.svcProxy != nil {
 		if err := c.svcProxy.Close(); err != nil {
 			zap.L().Debug("Could not close svcProxy", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if err := c.doDisconnect(); err != nil {
 		zap.L().Debug("Could not doDisconnect", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	c.doClose()
@@ -142,33 +147,39 @@ func (c *Controller) Close() error {
 	if c.nsTun != nil {
 		if err := c.nsTun.Close(); err != nil {
 			zap.L().Debug("Could not close the netstack TUN", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if c.eSSHHMainSrv != nil {
 		if err := c.eSSHHMainSrv.Close(); err != nil {
 			zap.L().Warn("Could not close main eSSH server", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if c.esocks5Srv != nil {
 		if err := c.esocks5Srv.Close(); err != nil {
 			zap.L().Warn("Could not close embedded SOCKS5 server", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if c.localDNSSrv != nil {
 		if err := c.localDNSSrv.Close(); err != nil {
 			zap.L().Warn("Could not close local DNS server", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if err := c.unsetServiceConfigs(); err != nil {
 		zap.L().Debug("Could not unset Service configs", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	zap.L().Debug("Closed dev controller")
-	return nil
+	c.closeErr = retErr
+	return retErr
 }
 
 func (c *Controller) Start(ctx context.Context) error {

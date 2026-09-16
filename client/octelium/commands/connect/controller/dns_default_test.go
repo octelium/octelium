@@ -435,6 +435,9 @@ func TestUnsetResolvConfIsRetryableAfterFailure(t *testing.T) {
 	c.resolvConf.linkTarget = ""
 	assert.NotNil(t, c.unsetResolvConf())
 	assert.True(t, c.resolvConf.written)
+	b, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.True(t, strings.Contains(string(b), "nameserver 100.64.0.53"))
 
 	c.resolvConf.linkTarget = target
 	assert.Nil(t, c.unsetResolvConf())

@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
@@ -62,12 +63,17 @@ func doConnect(ctx context.Context, c *Connector) error {
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
 
 	ctx, cancelFn := context.WithCancel(ctx)
+	defer cancelFn()
 	go func() {
-		<-signalCh
-		zap.L().Debug("Received shutdown signal")
-		cancelFn()
+		select {
+		case <-signalCh:
+			zap.L().Debug("Received shutdown signal")
+			cancelFn()
+		case <-ctx.Done():
+		}
 	}()
 
 	return c.Run(ctx)
@@ -80,10 +86,6 @@ type serviceController struct {
 
 func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
 	changes <- svc.Status{State: svc.StartPending}
-
-	defer func() {
-		changes <- svc.Status{State: svc.StopPending}
-	}()
 
 	ctx := context.Background()
 	if err := copyConfigOwnerToIPCSecurityDescriptor(); err != nil {
@@ -110,9 +112,11 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 		m.Disconnect()
 	}
 
-	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	changes <- svc.Status{State: svc.Running,
+		Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown}
 
 	ctx, cancelFn := context.WithCancel(ctx)
+	defer cancelFn()
 
 	go func() {
 		for {
@@ -124,8 +128,12 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 					return
 				}
 				switch cr.Cmd {
-				case svc.Stop, svc.Shutdown:
+				case svc.Stop, svc.Shutdown, svc.PreShutdown:
 					zap.L().Debug("Received shutdown signal")
+					changes <- svc.Status{
+						State:    svc.StopPending,
+						WaitHint: uint32((shutdownTimeout + 10*time.Second) / time.Millisecond),
+					}
 					cancelFn()
 					return
 				case svc.Interrogate:
