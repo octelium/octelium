@@ -58,3 +58,11 @@ func (c *Controller) InitDev(ctx context.Context) error {
 
 	return nil
 }
+
+func (c *Controller) setDevAddrsAndRoutes() error {
+	if err := c.SetDevAddrs(); err != nil {
+		return err
+	}
+
+	return c.setRoutes()
+}

@@ -410,13 +410,8 @@ func (c *Controller) doConfigureIface() error {
 
 	zap.L().Debug("Configuring the interface.....")
 
-	if err := c.doSetDevAddrs(); err != nil {
-		zap.L().Warn("Could not set addresses at cb", zap.Error(err))
-		return err
-	}
-
-	if err := c.doSetRoutes(); err != nil {
-		zap.L().Warn("Could not set routes at cb: %+v", zap.Error(err))
+	if err := c.setDevAddrsAndRoutes(); err != nil {
+		zap.L().Warn("Could not set routes and addresses at cb", zap.Error(err))
 		return err
 	}
 

@@ -115,3 +115,11 @@ type platformOpts struct {
 	ifaceWatcher *interfaceWatcher
 	adapter      *driver.Adapter
 }
+
+func (c *Controller) setDevAddrsAndRoutes() error {
+	if err := c.setRoutes(); err != nil {
+		return err
+	}
+
+	return c.SetDevAddrs()
+}

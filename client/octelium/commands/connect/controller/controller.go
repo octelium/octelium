@@ -295,11 +295,7 @@ func (c *Controller) reconfigure() error {
 		return err
 	}
 
-	if err := c.SetDevAddrs(); err != nil {
-		return err
-	}
-
-	if err := c.setRoutes(); err != nil {
+	if err := c.setDevAddrsAndRoutes(); err != nil {
 		return err
 	}
 
