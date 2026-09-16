@@ -21,9 +21,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func (c *Controller) doClose() {
+func (c *Controller) doClose() error {
+	var retErr error
 	if c.wgC != nil {
-		c.wgC.Close()
+		retErr = errors.Join(retErr, c.wgC.Close())
 	}
 
 	if c.dev != nil {
@@ -31,15 +32,18 @@ func (c *Controller) doClose() {
 	}
 
 	if c.uapi != nil {
-		c.uapi.Close()
+		retErr = errors.Join(retErr, c.uapi.Close())
 	}
 
 	if c.tundev != nil {
 		if err := c.tundev.Close(); err != nil {
 			zap.L().Debug("Could not close the TUN device", zap.Error(err))
+			retErr = errors.Join(retErr, err)
 		}
 		c.tundev = nil
 	}
+
+	return retErr
 }
 
 func (c *Controller) doStart(ctx context.Context) error {

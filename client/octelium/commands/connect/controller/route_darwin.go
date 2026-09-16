@@ -15,6 +15,8 @@
 package controller
 
 import (
+	stderrors "errors"
+
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -63,7 +65,7 @@ func (c *Controller) doUnsetRoutes() error {
 		if err := runOSCmd("route", "-q", "-n", "delete",
 			"-inet", cidr.V4, "-iface", c.c.Preferences.DeviceName); err != nil {
 			zap.L().Debug("Could not delete the v4 route", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
@@ -71,7 +73,7 @@ func (c *Controller) doUnsetRoutes() error {
 		if err := runOSCmd("route", "-q", "-n", "delete",
 			"-inet6", cidr.V6, "-iface", c.c.Preferences.DeviceName); err != nil {
 			zap.L().Debug("Could not delete the v6 route", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 

@@ -26,9 +26,10 @@ import (
 	"golang.zx2c4.com/wireguard/windows/elevate"
 )
 
-func (c *Controller) doClose() {
+func (c *Controller) doClose() error {
+	var retErr error
 	if c.wgC != nil {
-		c.wgC.Close()
+		retErr = stderrors.Join(retErr, c.wgC.Close())
 	}
 
 	if c.dev != nil {
@@ -36,15 +37,18 @@ func (c *Controller) doClose() {
 	}
 
 	if c.uapi != nil {
-		c.uapi.Close()
+		retErr = stderrors.Join(retErr, c.uapi.Close())
 	}
 
 	if c.tundev != nil {
 		if err := c.tundev.Close(); err != nil {
 			zap.L().Debug("Could not close the TUN device", zap.Error(err))
+			retErr = stderrors.Join(retErr, err)
 		}
 		c.tundev = nil
 	}
+
+	return retErr
 }
 
 func (c *Controller) pre() error {

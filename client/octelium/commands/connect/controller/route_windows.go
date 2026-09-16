@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 
@@ -128,18 +129,19 @@ func (c *Controller) doUnsetRoutes() error {
 		return nil
 	}
 
+	var retErr error
 	if c.ipv4Supported {
 		if err := luid.FlushRoutes(windows.AF_INET); err != nil {
-			return err
+			retErr = errors.Join(retErr, err)
 		}
 	}
 
 	if c.ipv6Supported {
 		if err := luid.FlushRoutes(windows.AF_INET6); err != nil {
-			return err
+			retErr = errors.Join(retErr, err)
 		}
 	}
 
-	return nil
+	return retErr
 
 }

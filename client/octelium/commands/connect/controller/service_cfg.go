@@ -110,7 +110,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 	marker, err := c.getManagedMarker()
 	if err != nil {
 		zap.L().Debug("Could not unset the SSH service configs", zap.Error(err))
-		return nil
+		return err
 	}
 
 	sshDir, err := c.getSSHDir()
@@ -125,7 +125,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 	if err != nil {
 		zap.L().Debug("Could not acquire the SSH config lock. Skipping the SSH config cleanup",
 			zap.Error(err))
-		return nil
+		return err
 	}
 	defer releaseFileLock(lock)
 

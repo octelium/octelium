@@ -15,6 +15,7 @@
 package controller
 
 import (
+	stderrors "errors"
 	"net"
 
 	"github.com/pkg/errors"
@@ -113,14 +114,14 @@ func (c *Controller) doUnsetRoutes() error {
 	if c.ipv4Supported && cidr.V4 != "" {
 		if err := doDeleteRoute(cidr.V4); err != nil {
 			zap.L().Debug("Could not delete the v4 route", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
 	if c.ipv6Supported && cidr.V6 != "" {
 		if err := doDeleteRoute(cidr.V6); err != nil {
 			zap.L().Debug("Could not delete the v6 route", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 

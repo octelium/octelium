@@ -15,6 +15,7 @@
 package controller
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -143,7 +144,7 @@ func (c *Controller) doUnsetDNS() error {
 
 	if err := c.unsetNRPT(); err != nil {
 		zap.L().Warn("Could not unset the NRPT rule", zap.Error(err))
-		retErr = err
+		retErr = stderrors.Join(retErr, err)
 	} else if err := flushDNSResolverCache(); err != nil {
 		zap.L().Debug("Could not flush the DNS resolver cache", zap.Error(err))
 	}
@@ -155,9 +156,11 @@ func (c *Controller) doUnsetDNS() error {
 
 	if err := luid.FlushDNS(windows.AF_INET); err != nil {
 		zap.L().Debug("Could not flush the v4 DNS of the adapter", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 	if err := luid.FlushDNS(windows.AF_INET6); err != nil {
 		zap.L().Debug("Could not flush the v6 DNS of the adapter", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
 	}
 	/*
 		if c.ipv4Supported {
@@ -215,7 +218,7 @@ func (c *Controller) getNRPTRulePath() (string, error) {
 	return fmt.Sprintf(`%s\%s`, nrptLocalBase, ruleKey), nil
 }
 
-func (c *Controller) setNRPT() error {
+func (c *Controller) setNRPT() (retErr error) {
 	if c.c.Info == nil || c.c.Info.Cluster == nil {
 		return errors.Errorf("The Connection does not have Cluster info")
 	}
@@ -248,11 +251,21 @@ func (c *Controller) setNRPT() error {
 	zap.L().Debug("Setting the NRPT rule", zap.String("path", rulePath),
 		zap.Strings("namespaces", namespaces), zap.Strings("servers", servers))
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, rulePath, registry.SET_VALUE)
+	key, openedExisting, err := registry.CreateKey(registry.LOCAL_MACHINE, rulePath, registry.SET_VALUE)
 	if err != nil {
 		return errors.Errorf("Could not create the NRPT rule key: %+v", err)
 	}
-	defer key.Close()
+	defer func() {
+		if err := key.Close(); err != nil {
+			retErr = stderrors.Join(retErr, err)
+		}
+		if retErr != nil && !openedExisting {
+			if err := registry.DeleteKey(registry.LOCAL_MACHINE, rulePath); err != nil &&
+				!errors.Is(err, registry.ErrNotExist) {
+				retErr = stderrors.Join(retErr, err)
+			}
+		}
+	}()
 
 	if err := key.SetStringValue("Comment", marker); err != nil {
 		return err

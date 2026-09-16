@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -29,10 +30,11 @@ func (c *Controller) setDevUp() error {
 }
 
 func (c *Controller) DeleteDev() error {
+	var retErr error
 	if c.isQUIC && c.quicEngine != nil {
-		c.quicEngine.close()
+		retErr = errors.Join(retErr, c.quicEngine.close())
 	}
-	return c.doDeleteDev()
+	return errors.Join(retErr, c.doDeleteDev())
 }
 
 func (c *Controller) SetDevAddrs() error {

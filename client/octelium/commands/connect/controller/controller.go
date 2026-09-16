@@ -142,7 +142,10 @@ func (c *Controller) Close() error {
 		retErr = stderrors.Join(retErr, err)
 	}
 
-	c.doClose()
+	if err := c.doClose(); err != nil {
+		zap.L().Debug("Could not close the device resources", zap.Error(err))
+		retErr = stderrors.Join(retErr, err)
+	}
 
 	if c.nsTun != nil {
 		if err := c.nsTun.Close(); err != nil {

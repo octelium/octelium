@@ -428,7 +428,7 @@ func (c *Connector) getPublishedServiceFromService(svc *userv1.Service,
 	}
 }
 
-const shutdownTimeout = 20 * time.Second
+const shutdownWaitHint = 30 * time.Second
 
 const (
 	reconnectBackoffMin = 2 * time.Second
@@ -570,22 +570,23 @@ func (c *Connector) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			zap.L().Debug("Waiting for tryConnect to exit...")
-			var cleanupErr error
-			select {
-			case <-time.After(shutdownTimeout):
-				zap.L().Warn("Timed out waiting for the connection to be cleanly closed",
-					zap.Duration("timeout", shutdownTimeout))
-			case ret := <-ret:
-				zap.L().Debug("tryConnect done...")
-				cleanupErr = ret.cleanupErr
-			}
+			ret := <-ret
+			zap.L().Debug("tryConnect done...")
 
 			c.setEvent(&Event{
 				Type: EventTypeDisconnected,
+				Err:  ret.cleanupErr,
 			})
 
-			return cleanupErr
+			return ret.cleanupErr
 		case ret := <-ret:
+			if ctx.Err() != nil {
+				c.setEvent(&Event{
+					Type: EventTypeDisconnected,
+					Err:  ret.cleanupErr,
+				})
+				return ret.cleanupErr
+			}
 			if !ret.needsReconnect {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
 
@@ -630,6 +631,10 @@ func (c *Connector) Run(ctx context.Context) error {
 
 			select {
 			case <-ctx.Done():
+				c.setEvent(&Event{
+					Type: EventTypeDisconnected,
+				})
+				return nil
 			case <-time.After(getReconnectBackoff(attempt)):
 			}
 		}

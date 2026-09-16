@@ -132,7 +132,7 @@ func (c *serviceController) Execute(args []string, r <-chan svc.ChangeRequest, c
 					zap.L().Debug("Received shutdown signal")
 					changes <- svc.Status{
 						State:    svc.StopPending,
-						WaitHint: uint32((shutdownTimeout + 10*time.Second) / time.Millisecond),
+						WaitHint: uint32(shutdownWaitHint / time.Millisecond),
 					}
 					cancelFn()
 					return

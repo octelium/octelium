@@ -16,6 +16,7 @@ package controller
 
 import (
 	"bytes"
+	stderrors "errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -89,7 +90,7 @@ func (c *Controller) doSetDNSSearchDomains() error {
 		if err := setNetworkSetupSearchDomains(svc, domains); err != nil {
 			zap.L().Warn("Could not set the search domains of a network service",
 				zap.String("svc", svc), zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	}
 
@@ -267,18 +268,18 @@ func (c *Controller) doUnsetDNS() error {
 	case pbconfig.Connection_Preferences_MacOS_SCUTIL:
 		if err := c.doUnsetDNSScutil(); err != nil {
 			zap.L().Warn("Could not unset the DNS via scutil", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	case pbconfig.Connection_Preferences_MacOS_RESOLVCONF:
 		if err := c.unsetResolvConf(); err != nil {
 			zap.L().Warn("Could not restore resolv.conf", zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
 	default:
 	}
 
 	if err := c.doUnSetDNSNetworkSetup(); err != nil {
-		retErr = err
+		retErr = stderrors.Join(retErr, err)
 	}
 
 	return retErr
@@ -334,6 +335,10 @@ func setNetworkSetupSearchDomains(svc string, networkDomains []string) error {
 }
 
 func (c *Controller) doUnSetDNSNetworkSetup() error {
+	if !c.dnsConfigSaved {
+		return nil
+	}
+
 	cfg := c.c.Preferences.MacosPrefs.NetworkSetupConfig
 	if cfg == nil || len(cfg.Services) == 0 {
 		return nil
@@ -346,8 +351,11 @@ func (c *Controller) doUnSetDNSNetworkSetup() error {
 		if err := setNetworkSetupDNSServers(svc.Name, svc.DnsServers, svc.DnsDomains); err != nil {
 			zap.L().Warn("Could not restore the DNS config of a network service",
 				zap.String("svc", svc.Name), zap.Error(err))
-			retErr = err
+			retErr = stderrors.Join(retErr, err)
 		}
+	}
+	if retErr == nil {
+		c.dnsConfigSaved = false
 	}
 
 	return retErr
