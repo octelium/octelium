@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	al.essio.dev/pkg/shellescape v1.6.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/creack/pty v1.1.24
 	github.com/fatih/color v1.18.0

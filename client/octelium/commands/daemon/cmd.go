@@ -16,14 +16,10 @@ package daemon
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/server"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 type args struct {
@@ -81,16 +77,17 @@ By default the daemon is owned by the OS user of the first local API caller.`)
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
-	ctx, cancelFn := context.WithCancel(cmd.Context())
-	defer cancelFn()
-
 	cliutils.SetQuiet(true)
 
-	srv, err := server.New(&server.Opts{
+	return runDaemon(cmd.Context(), &server.Opts{
 		ListenAddress: cmdArgs.ListenAddress,
 		StateDir:      cmdArgs.StateDir,
 		OwnerID:       cmdArgs.Owner,
 	})
+}
+
+func runServer(ctx context.Context, opts *server.Opts) error {
+	srv, err := server.New(opts)
 	if err != nil {
 		return err
 	}
@@ -99,20 +96,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
-
 	srvErrCh := make(chan error, 1)
 	go func() {
 		srvErrCh <- srv.Wait()
 	}()
 
 	var retErr error
-
 	select {
-	case <-signalCh:
-		zap.L().Debug("Received shutdown signal")
 	case retErr = <-srvErrCh:
 	case <-ctx.Done():
 	}
