@@ -295,7 +295,6 @@ func TestBufferedBodyIsReusedAndReplayed(t *testing.T) {
 
 	reqCtx := newRetryReqCtx(nil)
 	reqCtx.Body = []byte("buffered-body")
-	reqCtx.IsBodyBuffered = true
 
 	var bodies []string
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

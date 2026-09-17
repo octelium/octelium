@@ -20,11 +20,46 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	lua "github.com/yuin/gopher-lua"
 )
+
+const octeliumHeaderPrefix = "x-octelium-"
+
+var reservedHeaders = []string{
+	"Connection",
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"Proxy-Connection",
+	"Te",
+	"Trailer",
+	"Transfer-Encoding",
+	"Upgrade",
+	"Host",
+	"Content-Length",
+}
+
+func isReservedHeader(name string) bool {
+	if len(name) >= len(octeliumHeaderPrefix) &&
+		strings.EqualFold(name[:len(octeliumHeaderPrefix)], octeliumHeaderPrefix) {
+		return true
+	}
+
+	canonical := http.CanonicalHeaderKey(name)
+	for _, hdr := range reservedHeaders {
+		if canonical == hdr {
+			return true
+		}
+	}
+
+	return false
+}
 
 func (c *luaCtx) setRequestHeader(L *lua.LState) int {
 	name := L.Get(1)
@@ -37,6 +72,11 @@ func (c *luaCtx) setRequestHeader(L *lua.LState) int {
 
 	if value.Type() != lua.LTString {
 		L.Push(lua.LString("Header value is not a string"))
+		return 1
+	}
+
+	if isReservedHeader(name.String()) {
+		L.Push(lua.LString("Header key is reserved"))
 		return 1
 	}
 
@@ -131,16 +171,32 @@ func (c *luaCtx) setResponseBody(L *lua.LState) int {
 }
 
 func (c *luaCtx) getRequestBody(L *lua.LState) int {
-	bodyBytes, err := io.ReadAll(c.req.Body)
+	reqCtx := middlewares.GetCtxRequestContext(c.req.Context())
+
+	if reqCtx != nil && len(reqCtx.Body) > 0 {
+		L.Push(lua.LString(string(reqCtx.Body)))
+		return 1
+	}
+
+	maxBodySize := httputils.GetMaxRequestBodySize(reqCtx.GetServiceConfig())
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(c.req.Body, maxBodySize+1))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
 
-	body := string(bodyBytes)
-	c.req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	L.Push(lua.LString(body))
+	if int64(len(bodyBytes)) > maxBodySize {
+		c.req.Body = io.NopCloser(
+			io.MultiReader(bytes.NewReader(bodyBytes), c.req.Body))
+		L.Push(lua.LNil)
+		L.Push(lua.LString("The request body is too large"))
+		return 2
+	}
+
+	c.req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	L.Push(lua.LString(string(bodyBytes)))
 
 	return 1
 }
@@ -233,7 +289,14 @@ func (c *luaCtx) setPath(L *lua.LState) int {
 		return 1
 	}
 
-	c.req.URL.Path = val.String()
+	path, err := httputils.CleanPath(val.String())
+	if err != nil {
+		L.Push(lua.LString(err.Error()))
+		return 1
+	}
+
+	c.req.URL.Path = path
+	c.req.URL.RawPath = ""
 	c.req.RequestURI = c.req.URL.RequestURI()
 
 	return 0

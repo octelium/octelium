@@ -236,7 +236,7 @@ func TestRemoveDotSegments(t *testing.T) {
 	}
 
 	for _, e := range entries {
-		ret, changed := removeDotSegments(e.arg)
+		ret, changed := httputils.RemoveDotSegments(e.arg)
 		assert.Equal(t, e.expected, ret, "%s", e.arg)
 		assert.Equal(t, e.changed, changed, "%s", e.arg)
 	}
@@ -253,9 +253,9 @@ func TestRemoveDotSegmentsIsIdempotent(t *testing.T) {
 	}
 
 	for _, arg := range args {
-		once, _ := removeDotSegments(arg)
+		once, _ := httputils.RemoveDotSegments(arg)
 
-		twice, changed := removeDotSegments(once)
+		twice, changed := httputils.RemoveDotSegments(once)
 		assert.Equal(t, once, twice, "%s", arg)
 		assert.False(t, changed, "%s", arg)
 	}
@@ -300,7 +300,7 @@ func TestHasDotSegmentCandidate(t *testing.T) {
 	}
 
 	for _, arg := range positives {
-		assert.True(t, hasDotSegmentCandidate(arg), "%s", arg)
+		assert.True(t, httputils.HasDotSegmentCandidate(arg), "%s", arg)
 	}
 
 	negatives := []string{
@@ -313,7 +313,7 @@ func TestHasDotSegmentCandidate(t *testing.T) {
 	}
 
 	for _, arg := range negatives {
-		assert.False(t, hasDotSegmentCandidate(arg), "%s", arg)
+		assert.False(t, httputils.HasDotSegmentCandidate(arg), "%s", arg)
 	}
 }
 
@@ -327,7 +327,7 @@ func TestHasBackslashDotSegment(t *testing.T) {
 	}
 
 	for _, arg := range positives {
-		assert.True(t, hasBackslashDotSegment(arg), "%s", arg)
+		assert.True(t, httputils.HasBackslashDotSegment(arg), "%s", arg)
 	}
 
 	negatives := []string{
@@ -339,16 +339,16 @@ func TestHasBackslashDotSegment(t *testing.T) {
 	}
 
 	for _, arg := range negatives {
-		assert.False(t, hasBackslashDotSegment(arg), "%s", arg)
+		assert.False(t, httputils.HasBackslashDotSegment(arg), "%s", arg)
 	}
 }
 
 func TestCheckPathChars(t *testing.T) {
-	assert.Nil(t, checkPathChars("/public/ok.html"))
-	assert.Nil(t, checkPathChars("/a b/c"))
+	assert.Nil(t, httputils.CheckPathChars("/public/ok.html"))
+	assert.Nil(t, httputils.CheckPathChars("/a b/c"))
 
 	for _, c := range []string{"\x00", "\x1f", "\x7f"} {
-		assert.NotNil(t, checkPathChars("/public/"+c+"secret"), "%q", c)
+		assert.NotNil(t, httputils.CheckPathChars("/public/"+c+"secret"), "%q", c)
 	}
 }
 

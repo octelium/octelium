@@ -94,9 +94,8 @@ type RequestContext struct {
 	DecisionReason *corev1.AccessLog_Entry_Common_Reason
 	AuthResponse   *coctovigilv1.AuthenticateAndAuthorizeResponse
 
-	Body           []byte
-	BodyJSONMap    map[string]any
-	IsBodyBuffered bool
+	Body        []byte
+	BodyJSONMap map[string]any
 
 	ReqCtxMap map[string]any
 
@@ -301,6 +300,14 @@ func (r *RequestContext) SetReqCtxMap() {
 		return
 	}
 	r.ReqCtxMap = pbutils.MustConvertToMap(r.DownstreamInfo)
+}
+
+func (r *RequestContext) GetServiceConfig() *corev1.Service_Spec_Config {
+	if r == nil {
+		return nil
+	}
+
+	return r.ServiceConfig
 }
 
 func SetRequestContextBody(httpC *corev1.RequestContext_Request_HTTP,

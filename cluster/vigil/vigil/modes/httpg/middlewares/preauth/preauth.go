@@ -155,7 +155,6 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		additional.Body = body
 		reqCtx.Body = additional.Body
-		reqCtx.IsBodyBuffered = true
 
 		if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Body != nil {
 			buffer := cfg.GetHttp().Body
@@ -402,8 +401,6 @@ func getDownstreamSource(r *http.Request) *coctovigilv1.DownstreamRequest_Source
 }
 
 const (
-	defaultMaxBodySize = 32 * 1024 * 1024
-
 	defaultMaxMCPBodySize = 1024 * 1024
 	maxMCPBodySize        = 16 * 1024 * 1024
 
@@ -434,16 +431,7 @@ func getMaxMCPBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
 }
 
 func getMaxBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
-	if svcCfg != nil && svcCfg.GetHttp() != nil &&
-		svcCfg.GetHttp().Body != nil &&
-		svcCfg.GetHttp().Body.MaxRequestSize > 0 {
-		configured := svcCfg.GetHttp().Body.MaxRequestSize
-		if configured > 64*1024*1024 {
-			return 64 * 1024 * 1024
-		}
-		return int64(configured)
-	}
-	return defaultMaxBodySize
+	return httputils.GetMaxRequestBodySize(svcCfg)
 }
 
 func cleanRequest(req *http.Request) error {
@@ -470,15 +458,15 @@ func cleanRequest(req *http.Request) error {
 		return errors.Errorf("The request path is not absolute")
 	}
 
-	if err := checkPathChars(req.URL.Path); err != nil {
+	if err := httputils.CheckPathChars(req.URL.Path); err != nil {
 		return err
 	}
 
-	if !hasDotSegmentCandidate(req.URL.Path) {
+	if !httputils.HasDotSegmentCandidate(req.URL.Path) {
 		return nil
 	}
 
-	if hasBackslashDotSegment(req.URL.Path) {
+	if httputils.HasBackslashDotSegment(req.URL.Path) {
 		return errors.Errorf("The request path contains an ambiguous backslash dot-segment")
 	}
 
@@ -487,7 +475,7 @@ func cleanRequest(req *http.Request) error {
 		return errors.Errorf("The escaped request path is not absolute")
 	}
 
-	cleanedPath, pathChanged := removeDotSegments(req.URL.Path)
+	cleanedPath, pathChanged := httputils.RemoveDotSegments(req.URL.Path)
 
 	cleanedEscapedPath, escapedPathChanged, err := removeEscapedDotSegments(escapedPath)
 	if err != nil {
@@ -523,79 +511,6 @@ func cleanRequest(req *http.Request) error {
 	req.RequestURI = req.URL.RequestURI()
 
 	return nil
-}
-
-func checkPathChars(path string) error {
-	for i := range len(path) {
-		c := path[i]
-		if c < 0x20 || c == 0x7f {
-			return errors.Errorf("The request path contains an invalid control character")
-		}
-	}
-
-	return nil
-}
-
-func hasDotSegmentCandidate(path string) bool {
-	return strings.Contains(path, "/.") || strings.Contains(path, "\\.")
-}
-
-func hasBackslashDotSegment(path string) bool {
-	start := 0
-
-	for i := 0; i <= len(path); i++ {
-		if i != len(path) && path[i] != '/' && path[i] != '\\' {
-			continue
-		}
-
-		segment := path[start:i]
-		if segment == "." || segment == ".." {
-			leftBackslash := start > 0 && path[start-1] == '\\'
-			rightBackslash := i < len(path) && path[i] == '\\'
-
-			if leftBackslash || rightBackslash {
-				return true
-			}
-		}
-
-		start = i + 1
-	}
-
-	return false
-}
-
-func removeDotSegments(path string) (string, bool) {
-	segments := strings.Split(path, "/")
-	out := make([]string, 1, len(segments))
-	changed := false
-
-	for i, segment := range segments[1:] {
-		isLast := i == len(segments)-2
-
-		switch segment {
-		case ".":
-			changed = true
-			if isLast {
-				out = append(out, "")
-			}
-		case "..":
-			changed = true
-			if len(out) > 1 {
-				out = out[:len(out)-1]
-			}
-			if isLast {
-				out = append(out, "")
-			}
-		default:
-			out = append(out, segment)
-		}
-	}
-
-	if !changed {
-		return path, false
-	}
-
-	return strings.Join(out, "/"), true
 }
 
 func removeEscapedDotSegments(escapedPath string) (string, bool, error) {

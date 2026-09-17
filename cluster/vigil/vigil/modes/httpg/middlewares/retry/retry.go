@@ -70,7 +70,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var bodyBytes []byte
 
-	if reqCtx.IsBodyBuffered {
+	if len(reqCtx.Body) > 0 {
 		bodyBytes = reqCtx.Body
 	} else {
 		if req.ContentLength < 0 || req.ContentLength > getMaxBodySize(svcCfg) {
