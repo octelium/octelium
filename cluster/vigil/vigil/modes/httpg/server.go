@@ -70,6 +70,8 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
+const maxHeaderBytes = 32 * 1024
+
 type Server struct {
 	octovigilC *octovigilc.Client
 	vCache     *vcache.Cache
@@ -480,6 +482,7 @@ func (s *Server) serve(ctx context.Context) error {
 		Addr:              fmt.Sprintf(":%d", ucorev1.ToService(svc).RealPort()),
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
 	if svc.Spec.IsTLS {

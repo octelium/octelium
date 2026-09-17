@@ -3473,3 +3473,109 @@ func TestAnonymousAuthorization(t *testing.T) {
 		assert.True(t, resp.IsSuccess())
 	}
 }
+
+func TestMaxHeaderBytes(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamSrv := newSrvHTTP(t, tests.GetPort(), false, nil)
+	upstreamSrv.run(t)
+	t.Cleanup(func() {
+		upstreamSrv.close()
+	})
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Port:        uint32(tests.GetPort()),
+			Mode:        corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("http://localhost:%d", upstreamSrv.port),
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	time.Sleep(1 * time.Second)
+
+	url := fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort())
+
+	{
+		resp, err := resty.New().R().
+			SetHeader("X-Octelium-Tst", utilrand.GetRandomString(4*1024)).
+			Get(url)
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+	}
+
+	{
+		resp, err := resty.New().R().
+			SetHeader("X-Octelium-Tst", utilrand.GetRandomString(2*maxHeaderBytes)).
+			Get(url)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, http.StatusRequestHeaderFieldsTooLarge, resp.StatusCode())
+	}
+
+	{
+		req := resty.New().R()
+		for i := range 64 {
+			req = req.SetHeader(fmt.Sprintf("X-Octelium-Tst-%d", i),
+				utilrand.GetRandomString(1024))
+		}
+
+		resp, err := req.Get(url)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, http.StatusRequestHeaderFieldsTooLarge, resp.StatusCode())
+	}
+}
