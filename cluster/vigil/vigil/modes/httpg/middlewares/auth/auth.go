@@ -95,10 +95,15 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Request: reqCtx.DownstreamRequest,
 	})
 	if err != nil {
-		if grpcerr.IsCanceled(err) ||
-			grpcerr.IsDeadlineExceeded(err) ||
+		if ctx.Err() != nil || grpcerr.IsCanceled(err) ||
 			grpcerr.IsResourceChanged(err) {
 			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		if grpcerr.IsDeadlineExceeded(err) || grpcerr.IsUnavailable(err) {
+			zap.L().Warn("Could not reach Octovigil to do AuthenticateAndAuthorize", zap.Error(err))
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 

@@ -36,7 +36,7 @@ type Client struct {
 
 func NewClient(ctx context.Context) (*Client, error) {
 
-	unaryTries := uint(32)
+	unaryTries := uint(3)
 
 	host := fmt.Sprintf("octelium-octovigil.octelium.svc:%d", GetPort())
 	if ldflags.IsTest() {
@@ -45,18 +45,12 @@ func NewClient(ctx context.Context) (*Client, error) {
 
 	retryCodes := []codes.Code{
 		codes.Unavailable,
-		codes.ResourceExhausted,
-		codes.Unknown,
-		codes.Aborted,
-		codes.DataLoss,
-		codes.Internal,
-		codes.DeadlineExceeded,
 	}
 
 	unaryMiddlewares := []grpc.UnaryClientInterceptor{
 		grpc_retry.UnaryClientInterceptor(
 			grpc_retry.WithMax(unaryTries),
-			grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
+			grpc_retry.WithBackoff(grpc_retry.BackoffLinearWithJitter(100*time.Millisecond, 0.2)),
 			grpc_retry.WithCodes(retryCodes...)),
 	}
 

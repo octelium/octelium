@@ -18,6 +18,7 @@ package octovigilc
 
 import (
 	"context"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -30,6 +31,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+const requestTimeout = 5 * time.Second
 
 type Client struct {
 	embeddedSrv *octovigil.Server
@@ -96,6 +99,9 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 		})
 	} else {
 		// zap.L().Debug("Starting a remote AuthenticateAndAuthorize")
+		ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+
 		return c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
 			ServiceUID: c.svcUID,
 			Request:    req.Request,
@@ -124,6 +130,9 @@ func (c *Client) Authorize(ctx context.Context, req *coctovigilv1.AuthorizeReque
 		return c.embeddedSrv.DoAuthorize(ctx, reqCtx, nil)
 	} else {
 		// zap.L().Debug("Starting a remote Authorize")
+		ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+
 		return c.remoteC.InternalC().Authorize(ctx, &coctovigilv1.AuthorizeRequest{
 			ServiceUID: c.svcUID,
 			SessionUID: req.SessionUID,
