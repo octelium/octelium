@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
@@ -95,6 +96,13 @@ func (c *Controller) doSetTunDev() error {
 	}
 
 	name := c.getDevName("octelium-quicv0")
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Device = &cliconfigv1.ConnectionCleanup_Device{
+			Type: cliconfigv1.ConnectionCleanup_Device_WINDOWS_WINTUN,
+			Name: name,
+			Guid: guid.String(),
+		}
+	})
 
 	zap.L().Debug("Creating the Wintun device",
 		zap.String("name", name), zap.Int("mtu", c.getMTU()))
@@ -156,6 +164,14 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 	if err != nil {
 		return err
 	}
+	name := strings.ReplaceAll(fmt.Sprintf("octelium-%s", c.c.Info.Cluster.Domain), ".", "-")
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Device = &cliconfigv1.ConnectionCleanup_Device{
+			Type: cliconfigv1.ConnectionCleanup_Device_WINDOWS_WIREGUARD,
+			Name: name,
+			Guid: guid.String(),
+		}
+	})
 
 	zap.L().Debug("Creating network adapter")
 	for i := 0; i < 15; i++ {
@@ -165,7 +181,7 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 				zap.Duration("sinceBoot", windows.DurationSinceBoot()), zap.Error(err))
 		}
 		c.opts.adapter, err = driver.CreateAdapter(
-			strings.ReplaceAll(fmt.Sprintf("octelium-%s", c.c.Info.Cluster.Domain), ".", "-"),
+			name,
 			"WireGuard", guid)
 		if err == nil || !services.StartedAtBoot() {
 			break

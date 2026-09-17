@@ -551,6 +551,7 @@ func (c *Controller) doSetResolvConf() error {
 	}
 
 	zap.L().Debug("Setting resolv.conf", zap.String("content", content))
+	c.setCleanupResolvConf([]byte(content))
 
 	if err := c.writeResolvConf([]byte(content)); err != nil {
 		if c.resolvConf.written {

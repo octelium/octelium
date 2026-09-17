@@ -453,7 +453,7 @@ func newCtl(ctx context.Context,
 	ret := &ctl{}
 
 	zap.L().Debug("Creating dev controller")
-	ret.devCtl, err = controller.NewController(connCfg)
+	ret.devCtl, err = controller.NewControllerWithDB(connCfg, cliutils.GetDBFromCtx(ctx))
 	if err != nil {
 		return nil, err
 	}

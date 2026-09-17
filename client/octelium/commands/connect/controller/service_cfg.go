@@ -92,12 +92,13 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 	zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
 
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
+	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
+	c.setCleanupSSH(marker, []string{knownHostsPath, authorizedKeysPath})
 	if err := addManagedLines(knownHostsPath, sshDir, marker, svcCfg.KnownHosts); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the known_hosts file",
 			zap.String("filePath", knownHostsPath), zap.Error(err))
 	}
 
-	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
 	if err := addManagedLines(authorizedKeysPath, sshDir, marker, svcCfg.AuthorizedKeys); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the authorized keys file",
 			zap.String("filePath", authorizedKeysPath), zap.Error(err))

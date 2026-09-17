@@ -73,6 +73,7 @@ func (c *Controller) doSetDNSSearchDomains() error {
 	if err != nil {
 		return err
 	}
+	c.setCleanupMacOSNetworkSetup(networkSetupConfig, nil, c.getDNSSearchDomains(), true)
 
 	c.dnsConfigSaved = true
 
@@ -139,6 +140,8 @@ func (c *Controller) doSetDNSNetworkSetup() error {
 	if err != nil {
 		return err
 	}
+	c.setCleanupMacOSNetworkSetup(networkSetupConfig, c.getDNSServers(),
+		c.getDNSSearchDomains(), false)
 
 	zap.L().Debug("Stored networksetup config", zap.Any("cfg", networkSetupConfig))
 
@@ -378,6 +381,17 @@ func (c *Controller) getScutilServiceKey() string {
 }
 
 func (c *Controller) doSetDNSScutil() error {
+	scutilKey := c.getScutilServiceKey()
+	c.updateCleanup(func(cleanup *pbconfig.ConnectionCleanup) {
+		cfg := cleanup.GetDns().GetMacos()
+		if cfg == nil {
+			cfg = &pbconfig.ConnectionCleanup_DNS_MacOS{}
+		}
+		cfg.ScutilKey = scutilKey
+		cleanup.Dns = &pbconfig.ConnectionCleanup_DNS{
+			Config: &pbconfig.ConnectionCleanup_DNS_Macos{Macos: cfg},
+		}
+	})
 	arg := fmt.Sprintf(`
 open
 d.init
@@ -391,7 +405,7 @@ quit
 		strings.Join(c.getDNSSearchDomains(), " "),
 		strings.Join(c.getDNSSearchDomains(), " "),
 		c.c.Preferences.DeviceName,
-		c.getScutilServiceKey())
+		scutilKey)
 
 	if err := c.doRunScutil(arg); err != nil {
 		return err
@@ -399,6 +413,41 @@ quit
 
 	c.c.Preferences.MacosPrefs.DnsMode = pbconfig.Connection_Preferences_MacOS_SCUTIL
 	return nil
+}
+
+func (c *Controller) setCleanupMacOSNetworkSetup(
+	cfg *pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig,
+	installedServers, installedDomains []string, onlyDomains bool) {
+	c.updateCleanup(func(cleanup *pbconfig.ConnectionCleanup) {
+		macos := cleanup.GetDns().GetMacos()
+		if macos == nil {
+			macos = &pbconfig.ConnectionCleanup_DNS_MacOS{}
+		}
+		macos.Services = nil
+		for _, svc := range cfg.Services {
+			servers := installedServers
+			if onlyDomains {
+				servers = svc.DnsServers
+			}
+			domains := installedDomains
+			if onlyDomains {
+				domains = getNetworkSetupSearchDomains(installedDomains, svc)
+			} else if len(domains) == 0 {
+				domains = svc.DnsDomains
+			}
+			macos.Services = append(macos.Services,
+				&pbconfig.ConnectionCleanup_DNS_MacOS_Service{
+					Name:                svc.Name,
+					DnsServers:          svc.DnsServers,
+					DnsDomains:          svc.DnsDomains,
+					InstalledDNSServers: servers,
+					InstalledDNSDomains: domains,
+				})
+		}
+		cleanup.Dns = &pbconfig.ConnectionCleanup_DNS{
+			Config: &pbconfig.ConnectionCleanup_DNS_Macos{Macos: macos},
+		}
+	})
 }
 
 func (c *Controller) doUnsetDNSScutil() error {

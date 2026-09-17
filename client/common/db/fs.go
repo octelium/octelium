@@ -249,10 +249,60 @@ func (d *fsDB) set(_ context.Context, clusterDomain string, resp *authv1.Session
 		return err
 	}
 
-	state.DomainMap[clusterDomain] = &cliconfigv1.State_Domain{
-		SessionToken:      resp,
-		SessionTokenSetAt: pbutils.Now(),
-		Settings:          state.DomainMap[clusterDomain].GetSettings(),
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		domain = &cliconfigv1.State_Domain{}
+		state.DomainMap[clusterDomain] = domain
+	}
+	domain.SessionToken = resp
+	domain.SessionTokenSetAt = pbutils.Now()
+
+	return d.writeStateLocked(state)
+}
+
+func (d *fsDB) setConnectionCleanup(_ context.Context, clusterDomain string,
+	cleanup *cliconfigv1.ConnectionCleanup) error {
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
+	if err != nil {
+		return err
+	}
+
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		domain = &cliconfigv1.State_Domain{}
+		state.DomainMap[clusterDomain] = domain
+	}
+	domain.ConnectionCleanup = cleanup
+
+	return d.writeStateLocked(state)
+}
+
+func (d *fsDB) deleteConnectionCleanup(_ context.Context, clusterDomain string) error {
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
+	if err != nil {
+		return err
+	}
+
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		return nil
+	}
+	domain.ConnectionCleanup = nil
+	if domain.SessionToken == nil && domain.SessionTokenSetAt == nil && domain.Settings == nil {
+		delete(state.DomainMap, clusterDomain)
 	}
 
 	return d.writeStateLocked(state)
@@ -317,7 +367,18 @@ func (d *fsDB) delete(_ context.Context, clusterDomain string) error {
 		return err
 	}
 
-	delete(state.DomainMap, clusterDomain)
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil {
+		return nil
+	}
+	cleanup := domain.ConnectionCleanup
+	if cleanup == nil {
+		delete(state.DomainMap, clusterDomain)
+	} else {
+		state.DomainMap[clusterDomain] = &cliconfigv1.State_Domain{
+			ConnectionCleanup: cleanup,
+		}
+	}
 
 	return d.writeStateLocked(state)
 }

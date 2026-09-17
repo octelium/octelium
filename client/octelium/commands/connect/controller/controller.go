@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller/esshmain"
 	"github.com/octelium/octelium/client/octelium/commands/connect/dnssrv"
 	"github.com/octelium/octelium/client/octelium/commands/connect/esocks5"
@@ -77,9 +78,15 @@ type Controller struct {
 	eSSHHMainSrv *esshmain.ESSHMain
 	esocks5Srv   *esocks5.Server
 	localDNSSrv  *dnssrv.Server
+	dbC          *db.DB
+	cleanup      *cliconfigv1.ConnectionCleanup
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {
+	return NewControllerWithDB(c, nil)
+}
+
+func NewControllerWithDB(c *cliconfigv1.Connection, dbC *db.DB) (*Controller, error) {
 
 	ipv4Supported := c.Connection.L3Mode == userv1.ConnectionState_V4 ||
 		c.Connection.L3Mode == userv1.ConnectionState_BOTH
@@ -91,6 +98,7 @@ func NewController(c *cliconfigv1.Connection) (*Controller, error) {
 		ipv4Supported: ipv4Supported,
 		ipv6Supported: ipv6Supported,
 		isQUIC:        c.Preferences.ConnectionType == cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0,
+		dbC:           dbC,
 	}
 
 	switch {
@@ -129,6 +137,7 @@ func (c *Controller) Close() error {
 	zap.L().Debug("Closing dev controller")
 
 	c.isClosed = true
+	c.setCleanupPhase(cliconfigv1.ConnectionCleanup_CLEANING)
 	var retErr error
 	if c.svcProxy != nil {
 		if err := c.svcProxy.Close(); err != nil {
@@ -181,6 +190,9 @@ func (c *Controller) Close() error {
 	}
 
 	zap.L().Debug("Closed dev controller")
+	if retErr == nil {
+		c.deleteCleanup()
+	}
 	c.closeErr = retErr
 	return retErr
 }
@@ -194,6 +206,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Starting controller...")
+	c.prepareCleanup()
 
 	if err := c.setServiceConfigs(); err != nil {
 		return err
@@ -243,6 +256,8 @@ func (c *Controller) Start(ctx context.Context) error {
 			}
 		}
 	}
+
+	c.setCleanupPhase(cliconfigv1.ConnectionCleanup_ACTIVE)
 
 	return nil
 }

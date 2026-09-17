@@ -110,6 +110,12 @@ func (c *Controller) prepareTUN() error {
 }
 
 func (c *Controller) doInitDevKernel() error {
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Device = &cliconfigv1.ConnectionCleanup_Device{
+			Type: cliconfigv1.ConnectionCleanup_Device_LINUX_WIREGUARD,
+			Name: c.c.Preferences.DeviceName,
+		}
+	})
 
 	link := newWgLink(c.c.Preferences.DeviceName, c.getMTU())
 
@@ -359,6 +365,12 @@ func (c *Controller) doSetTunDev() error {
 	zap.L().Debug("Creating TUN device",
 		zap.String("name", c.c.Preferences.DeviceName),
 		zap.Int("mtu", c.getMTU()))
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Device = &cliconfigv1.ConnectionCleanup_Device{
+			Type: cliconfigv1.ConnectionCleanup_Device_TUN,
+			Name: c.c.Preferences.DeviceName,
+		}
+	})
 
 	if !c.isQUIC {
 		tundev, err := tun.CreateTUN(c.c.Preferences.DeviceName, c.getMTU())

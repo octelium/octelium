@@ -21,6 +21,7 @@ import (
 	"os/exec"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/conn"
@@ -224,6 +225,12 @@ func (c *Controller) doSetTunDev() error {
 	zap.L().Debug("Creating TUN device",
 		zap.String("name", c.c.Preferences.DeviceName),
 		zap.Int("mtu", c.getMTU()))
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Device = &cliconfigv1.ConnectionCleanup_Device{
+			Type: cliconfigv1.ConnectionCleanup_Device_TUN,
+			Name: c.c.Preferences.DeviceName,
+		}
+	})
 
 	tundev, err := tun.CreateTUN(c.c.Preferences.DeviceName, c.getMTU())
 	if err != nil {

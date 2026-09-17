@@ -15,10 +15,24 @@
 package cliutils
 
 import (
+	"context"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestPreRunPreservesContext(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("homedir", t.TempDir(), "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd.SetContext(ctx)
+
+	assert.NoError(t, PreRun(cmd, nil))
+	assert.Equal(t, ctx, cmd.Context())
+	assert.NoError(t, CloseDB())
+}
 
 func TestIsKubernetes(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")

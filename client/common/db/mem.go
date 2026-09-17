@@ -60,12 +60,14 @@ func (d *memDB) list(ctx context.Context) (map[string]*cliconfigv1.State_Domain,
 
 func (d *memDB) set(ctx context.Context, domain string, sessToken *authv1.SessionToken) error {
 	d.Lock()
-	d.state.DomainMap[domain] = &cliconfigv1.State_Domain{
-		SessionToken:      sessToken,
-		SessionTokenSetAt: pbutils.Now(),
-		Settings:          d.state.DomainMap[domain].GetSettings(),
+	defer d.Unlock()
+	itm := d.state.DomainMap[domain]
+	if itm == nil {
+		itm = &cliconfigv1.State_Domain{}
+		d.state.DomainMap[domain] = itm
 	}
-	d.Unlock()
+	itm.SessionToken = sessToken
+	itm.SessionTokenSetAt = pbutils.Now()
 	return nil
 }
 
@@ -80,6 +82,35 @@ func (d *memDB) setSettings(ctx context.Context, domain string, settings *daemon
 	}
 	itm.Settings = settings
 
+	return nil
+}
+
+func (d *memDB) setConnectionCleanup(ctx context.Context, domain string,
+	cleanup *cliconfigv1.ConnectionCleanup) error {
+	d.Lock()
+	defer d.Unlock()
+
+	itm := d.state.DomainMap[domain]
+	if itm == nil {
+		itm = &cliconfigv1.State_Domain{}
+		d.state.DomainMap[domain] = itm
+	}
+	itm.ConnectionCleanup = pbutils.Clone(cleanup).(*cliconfigv1.ConnectionCleanup)
+
+	return nil
+}
+
+func (d *memDB) deleteConnectionCleanup(ctx context.Context, domain string) error {
+	d.Lock()
+	defer d.Unlock()
+
+	itm := d.state.DomainMap[domain]
+	if itm != nil {
+		itm.ConnectionCleanup = nil
+		if itm.SessionToken == nil && itm.SessionTokenSetAt == nil && itm.Settings == nil {
+			delete(d.state.DomainMap, domain)
+		}
+	}
 	return nil
 }
 
@@ -98,8 +129,19 @@ func (d *memDB) deleteSessionToken(ctx context.Context, domain string) error {
 }
 func (d *memDB) delete(ctx context.Context, domain string) error {
 	d.Lock()
-	delete(d.state.DomainMap, domain)
-	d.Unlock()
+	defer d.Unlock()
+	itm := d.state.DomainMap[domain]
+	if itm == nil {
+		return nil
+	}
+	cleanup := itm.ConnectionCleanup
+	if cleanup == nil {
+		delete(d.state.DomainMap, domain)
+	} else {
+		d.state.DomainMap[domain] = &cliconfigv1.State_Domain{
+			ConnectionCleanup: cleanup,
+		}
+	}
 
 	return nil
 }

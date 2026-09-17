@@ -82,6 +82,16 @@ func (c *Controller) doSetDNSResolvctl() error {
 
 	cmdDNSArgs, cmdDomainArgs = getResolvctlArgs(isResolvectl,
 		c.c.Preferences.DeviceName, dnsServers, domains)
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Dns = &cliconfigv1.ConnectionCleanup_DNS{
+			Config: &cliconfigv1.ConnectionCleanup_DNS_SystemdResolved_{
+				SystemdResolved: &cliconfigv1.ConnectionCleanup_DNS_SystemdResolved{
+					DeviceName:   c.c.Preferences.DeviceName,
+					IsResolvectl: isResolvectl,
+				},
+			},
+		}
+	})
 
 	if b, err := runOSCmdOutput(cmdBin, cmdDNSArgs...); err != nil {
 		zap.L().Debug("Could not run doSetDNSResolvctl cmd", zap.String("cmd", string(b)), zap.Error(err))

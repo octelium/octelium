@@ -49,6 +49,8 @@ type db interface {
 	list(ctx context.Context) (map[string]*cliconfigv1.State_Domain, error)
 	set(ctx context.Context, domain string, sessToken *authv1.SessionToken) error
 	setSettings(ctx context.Context, domain string, settings *daemonv1.DomainSettings) error
+	setConnectionCleanup(ctx context.Context, domain string, cleanup *cliconfigv1.ConnectionCleanup) error
+	deleteConnectionCleanup(ctx context.Context, domain string) error
 	deleteSessionToken(ctx context.Context, domain string) error
 	delete(ctx context.Context, domain string) error
 	close(ctx context.Context) error
@@ -126,6 +128,28 @@ func (d *DB) List() (map[string]*cliconfigv1.State_Domain, error) {
 
 func (d *DB) SetDomainSettings(clusterDomain string, settings *daemonv1.DomainSettings) error {
 	return d.db.setSettings(context.Background(), clusterDomain, settings)
+}
+
+func (d *DB) GetConnectionCleanup(clusterDomain string) (*cliconfigv1.ConnectionCleanup, error) {
+	domain, err := d.db.get(context.Background(), clusterDomain)
+	if err != nil {
+		return nil, err
+	}
+	if domain.GetConnectionCleanup() == nil {
+		return nil, ErrNotFound
+	}
+	return domain.ConnectionCleanup, nil
+}
+
+func (d *DB) SetConnectionCleanup(clusterDomain string, cleanup *cliconfigv1.ConnectionCleanup) error {
+	if cleanup == nil {
+		return d.DeleteConnectionCleanup(clusterDomain)
+	}
+	return d.db.setConnectionCleanup(context.Background(), clusterDomain, cleanup)
+}
+
+func (d *DB) DeleteConnectionCleanup(clusterDomain string) error {
+	return d.db.deleteConnectionCleanup(context.Background(), clusterDomain)
 }
 
 func (d *DB) DeleteSessionToken(clusterDomain string) error {

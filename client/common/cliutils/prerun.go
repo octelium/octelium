@@ -33,7 +33,9 @@ func PreRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cmd.SetContext(context.Background())
+	if cmd.Context() == nil {
+		cmd.SetContext(context.Background())
+	}
 
 	if cmd.Flags() != nil && cmd.Flags().Lookup("homedir") != nil && cmd.Flags().Lookup("homedir").Value.String() != "" {
 		if err := OpenDB(cmd.Flags().Lookup("homedir").Value.String()); err != nil {

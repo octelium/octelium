@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -190,6 +191,9 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	domain := i.Domain
 
 	ctx := cmd.Context()
+	if !cmdArgs.Detached {
+		controller.ReconcileConnectionCleanup(cliutils.GetDBFromCtx(ctx), domain)
+	}
 
 	authOpts := &authenticator.AuthenticateOpts{
 		Domain:    domain,

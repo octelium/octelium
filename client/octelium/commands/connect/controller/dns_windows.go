@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
@@ -247,6 +248,16 @@ func (c *Controller) setNRPT() (retErr error) {
 	if err != nil {
 		return err
 	}
+	c.updateCleanup(func(cleanup *cliconfigv1.ConnectionCleanup) {
+		cleanup.Dns = &cliconfigv1.ConnectionCleanup_DNS{
+			Config: &cliconfigv1.ConnectionCleanup_DNS_Windows_{
+				Windows: &cliconfigv1.ConnectionCleanup_DNS_Windows{
+					NrptRulePath: rulePath,
+					NrptMarker:   marker,
+				},
+			},
+		}
+	})
 
 	zap.L().Debug("Setting the NRPT rule", zap.String("path", rulePath),
 		zap.Strings("namespaces", namespaces), zap.Strings("servers", servers))
