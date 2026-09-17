@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -45,15 +46,43 @@ type middleware struct {
 	octeliumC octeliumc.ClientInterface
 	next      http.Handler
 	domain    string
+
+	v4Prefix *netip.Prefix
+	v6Prefix *netip.Prefix
 }
 
 func New(ctx context.Context, next http.Handler, octeliumC octeliumc.ClientInterface, domain string) (http.Handler, error) {
 
-	return &middleware{
+	ret := &middleware{
 		next:      next,
 		octeliumC: octeliumC,
 		domain:    domain,
-	}, nil
+	}
+
+	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if clusterNet := cc.Status.GetNetwork().GetClusterNetwork(); clusterNet != nil {
+		if clusterNet.V4 != "" {
+			v4Prefix, err := netip.ParsePrefix(clusterNet.V4)
+			if err != nil {
+				return nil, err
+			}
+			ret.v4Prefix = &v4Prefix
+		}
+
+		if clusterNet.V6 != "" {
+			v6Prefix, err := netip.ParsePrefix(clusterNet.V6)
+			if err != nil {
+				return nil, err
+			}
+			ret.v6Prefix = &v6Prefix
+		}
+	}
+
+	return ret, nil
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -71,6 +100,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	m.scrubDownstreamIPHeader(req)
 
 	corsCfg := ucorev1.ToServiceConfig(svc.Spec.Config).GetHTTPCors()
 	corsOrigin := httputils.GetCORSOrigin(req, corsCfg, svc, m.domain)
@@ -257,6 +288,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}
 	}
 
+	source := getDownstreamSource(req)
 	ip := req.Header.Get(vutils.GetDownstreamIPHeaderCanonical())
 
 	switch {
@@ -267,7 +299,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}
 
 		return &coctovigilv1.DownstreamRequest{
-			Source: getDownstreamSource(req),
+			Source: source,
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Kubernetes_{
@@ -287,7 +319,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}, nil
 	case ucorev1.ToService(svc).IsMCP():
 		return &coctovigilv1.DownstreamRequest{
-			Source: getDownstreamSource(req),
+			Source: source,
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Mcp{
@@ -297,7 +329,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}, nil
 	case ucorev1.ToService(svc).IsLLM():
 		return &coctovigilv1.DownstreamRequest{
-			Source: getDownstreamSource(req),
+			Source: source,
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Llm{
@@ -311,7 +343,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 			return nil, err
 		}
 		return &coctovigilv1.DownstreamRequest{
-			Source: getDownstreamSource(req),
+			Source: source,
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Grpc{
@@ -327,7 +359,7 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}, nil
 	default:
 		return &coctovigilv1.DownstreamRequest{
-			Source: getDownstreamSource(req),
+			Source: source,
 			Request: &corev1.RequestContext_Request{
 				Ip: ip,
 				Type: &corev1.RequestContext_Request_Http{
@@ -336,6 +368,29 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 			},
 		}, nil
 	}
+}
+
+func (m *middleware) scrubDownstreamIPHeader(req *http.Request) {
+	if m.isAddressFromClient(getDownstreamSource(req).GetAddress()) {
+		req.Header.Del(vutils.GetDownstreamIPHeaderCanonical())
+	}
+}
+
+func (m *middleware) isAddressFromClient(addrStr string) bool {
+	addr, err := netip.ParseAddr(addrStr)
+	if err != nil {
+		return false
+	}
+
+	if m.v6Prefix != nil && m.v6Prefix.Contains(addr) {
+		return true
+	}
+
+	if m.v4Prefix != nil && m.v4Prefix.Contains(addr) {
+		return true
+	}
+
+	return false
 }
 
 func getDownstreamSource(r *http.Request) *coctovigilv1.DownstreamRequest_Source {

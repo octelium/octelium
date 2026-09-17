@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,8 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -556,5 +559,57 @@ func TestDenyPolicyIsNotBypassable(t *testing.T) {
 		}
 
 		assert.True(t, isDenied(req.URL.Path), "%s -> %s", target, req.URL.Path)
+	}
+}
+
+func TestScrubDownstreamIPHeader(t *testing.T) {
+
+	v4Prefix := netip.MustParsePrefix("100.64.0.0/10")
+	v6Prefix := netip.MustParsePrefix("fd00::/64")
+
+	m := &middleware{
+		v4Prefix: &v4Prefix,
+		v6Prefix: &v6Prefix,
+	}
+
+	newReq := func(remoteAddr, hdr string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+		req.RemoteAddr = remoteAddr
+		if hdr != "" {
+			req.Header.Set(vutils.GetDownstreamIPHeaderCanonical(), hdr)
+		}
+		return req
+	}
+
+	{
+		req := newReq("100.64.0.9:39481", "203.0.113.7")
+		m.scrubDownstreamIPHeader(req)
+		assert.Equal(t, "", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+		assert.Empty(t, httputils.GetHeaders(req.Header)[strings.ToLower(
+			vutils.GetDownstreamIPHeaderCanonical())])
+	}
+
+	{
+		req := newReq("[fd00::9]:39481", "203.0.113.7")
+		m.scrubDownstreamIPHeader(req)
+		assert.Equal(t, "", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+	}
+
+	{
+		req := newReq("100.64.0.9:39481", "100.64.0.88")
+		m.scrubDownstreamIPHeader(req)
+		assert.Equal(t, "", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+	}
+
+	{
+		req := newReq("10.4.1.9:39481", "203.0.113.7")
+		m.scrubDownstreamIPHeader(req)
+		assert.Equal(t, "203.0.113.7", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
+	}
+
+	{
+		req := newReq("10.4.1.9:39481", "")
+		m.scrubDownstreamIPHeader(req)
+		assert.Equal(t, "", req.Header.Get(vutils.GetDownstreamIPHeaderCanonical()))
 	}
 }

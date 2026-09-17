@@ -79,8 +79,10 @@ func serveCORS(t *testing.T, svc *corev1.Service, method, origin string,
 		next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	}
 
-	mdlwr, err := New(ctx, next, nil, "example.com")
-	assert.Nil(t, err)
+	mdlwr := &middleware{
+		next:   next,
+		domain: "example.com",
+	}
 
 	req := httptest.NewRequest(method,
 		"http://my-svc.example.com/mcp", strings.NewReader(""))
