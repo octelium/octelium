@@ -187,6 +187,132 @@ func TestMiddleware(t *testing.T) {
 	assert.Equal(t, 1, len(mdlwr.(*middleware).cMap))
 }
 
+func newJSONSchemaPlugin(inline string) *corev1.Service_Spec_Config_HTTP_Plugin {
+	return &corev1.Service_Spec_Config_HTTP_Plugin{
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+		Type: &corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema{
+			JsonSchema: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema{
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline{
+					Inline: inline,
+				},
+			},
+		},
+	}
+}
+
+func newRateLimitPlugin() *corev1.Service_Spec_Config_HTTP_Plugin {
+	return &corev1.Service_Spec_Config_HTTP_Plugin{
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+		Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_{
+			RateLimit: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{
+				Limit: 1000,
+			},
+		},
+	}
+}
+
+func servePlugins(t *testing.T, reqCtx *middlewares.RequestContext) int {
+	t.Helper()
+
+	ctx := context.Background()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	mdlwr, err := New(ctx, next, celEngine,
+		corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+	assert.Nil(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/models", nil)
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, reqCtx))
+
+	rw := httptest.NewRecorder()
+	mdlwr.ServeHTTP(rw, req)
+
+	return rw.Code
+}
+
+func newPluginReqCtx(body []byte,
+	plugins ...*corev1.Service_Spec_Config_HTTP_Plugin) *middlewares.RequestContext {
+	return &middlewares.RequestContext{
+		CreatedAt: time.Now(),
+		Body:      body,
+		ServiceConfig: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Plugins: plugins,
+				},
+			},
+		},
+	}
+}
+
+func TestEmptyBodyIsNotValidated(t *testing.T) {
+	for _, body := range [][]byte{nil, {}} {
+		assert.Equal(t, http.StatusOK,
+			servePlugins(t, newPluginReqCtx(body, newRateLimitPlugin())))
+
+		assert.Equal(t, http.StatusOK,
+			servePlugins(t, newPluginReqCtx(body, newJSONSchemaPlugin(schema))))
+	}
+}
+
+func TestBodyNotParsedWithoutJSONSchemaPlugin(t *testing.T) {
+	for _, body := range [][]byte{
+		[]byte(`[1, 2, 3]`),
+		[]byte(`username=octelium&id=1`),
+		[]byte(`not json at all`),
+	} {
+		assert.Equal(t, http.StatusOK,
+			servePlugins(t, newPluginReqCtx(body, newRateLimitPlugin())))
+	}
+}
+
+func TestTopLevelArrayIsValidated(t *testing.T) {
+	assert.Equal(t, http.StatusOK,
+		servePlugins(t, newPluginReqCtx([]byte(`["admin", "viewer"]`),
+			newJSONSchemaPlugin(arraySchema))))
+
+	assert.Equal(t, http.StatusBadRequest,
+		servePlugins(t, newPluginReqCtx([]byte(`["admin", "admin"]`),
+			newJSONSchemaPlugin(arraySchema))))
+
+	assert.Equal(t, http.StatusBadRequest,
+		servePlugins(t, newPluginReqCtx([]byte(`["admin", "viewer"]`),
+			newJSONSchemaPlugin(schema))))
+}
+
+func TestNonJSONBodyIsDeniedByJSONSchemaPlugin(t *testing.T) {
+	assert.Equal(t, http.StatusBadRequest,
+		servePlugins(t, newPluginReqCtx([]byte(`username=octelium&id=1`),
+			newJSONSchemaPlugin(schema))))
+}
+
+const arraySchema = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "string",
+    "enum": ["admin", "editor", "viewer"]
+  },
+  "minItems": 1,
+  "uniqueItems": true
+}`
+
 const schema = `
 {
   "$schema": "http://json-schema.org/draft-07/schema#",

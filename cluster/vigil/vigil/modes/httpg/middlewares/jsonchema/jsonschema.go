@@ -19,7 +19,6 @@ package jsonschema
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -58,18 +57,9 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	cfg := reqCtx.ServiceConfig
 
 	plugins := ucorev1.ToServiceConfig(cfg).GetHTTPPlugins()
-	if reqCtx.Body == nil || len(plugins) == 0 {
+	if len(reqCtx.Body) == 0 || len(plugins) == 0 {
 		m.next.ServeHTTP(rw, req)
 		return
-	}
-
-	if reqCtx.BodyJSONMap == nil {
-		bodyMap := make(map[string]any)
-		if err := json.Unmarshal(reqCtx.Body, &bodyMap); err != nil {
-			rw.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		reqCtx.BodyJSONMap = bodyMap
 	}
 
 	for _, plugin := range plugins {
@@ -92,7 +82,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			res := schema.Validate(reqCtx.BodyJSONMap)
+			res := schema.Validate(getValidationBody(reqCtx))
 			if res == nil || res.IsValid() {
 				continue
 			}
@@ -126,6 +116,14 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	m.next.ServeHTTP(rw, req)
+}
+
+func getValidationBody(reqCtx *middlewares.RequestContext) any {
+	if reqCtx.BodyJSONMap != nil {
+		return reqCtx.BodyJSONMap
+	}
+
+	return reqCtx.Body
 }
 
 func (m *middleware) getSchema(arg string) *jsonschema.Schema {
