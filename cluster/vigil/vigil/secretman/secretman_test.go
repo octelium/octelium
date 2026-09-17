@@ -272,3 +272,300 @@ func TestSecretManager(t *testing.T) {
 		assert.True(t, pbutils.IsEqual(sec2, sec2V))
 	}
 }
+
+func TestUntrackedSecretIsRefreshedAndEvicted(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(""))
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	secretMan, err := New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	err = secretMan.ApplyService(ctx)
+	assert.Nil(t, err)
+
+	sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(10),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	secV, err := secretMan.GetByName(ctx, sec.Metadata.Name)
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(sec, secV))
+	assert.Equal(t, 0, len(secretMan.secretNames))
+
+	rotated := pbutils.Clone(sec).(*corev1.Secret)
+	rotated.Data = &corev1.Secret_Data{
+		Type: &corev1.Secret_Data_Value{
+			Value: utilrand.GetRandomString(10),
+		},
+	}
+
+	secretMan.Set(rotated)
+
+	secV, err = secretMan.GetByName(ctx, sec.Metadata.Name)
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(rotated, secV))
+
+	secretMan.Delete(rotated)
+
+	_, isCached := secretMan.c.Get(sec.Metadata.Name)
+	assert.False(t, isCached)
+}
+
+func TestUnreferencedSecretIsNotCached(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(""))
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	secretMan, err := New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	err = secretMan.ApplyService(ctx)
+	assert.Nil(t, err)
+
+	secretMan.Set(&corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(10),
+			},
+		},
+	})
+
+	assert.Equal(t, 0, secretMan.c.ItemCount())
+}
+
+func TestOAuth2TokenSourceIsRebuiltOnRotation(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(""))
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	secretMan, err := New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	err = secretMan.ApplyService(ctx)
+	assert.Nil(t, err)
+
+	tstSrv := &tstOAuthSrv{
+		port:        tests.GetPort(),
+		accessToken: utilrand.GetRandomString(12),
+	}
+	tstSrv.run(t)
+	t.Cleanup(func() {
+		tstSrv.close()
+	})
+
+	sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(10),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	req := &GetOAuth2CCTokenReq{
+		ClientID:   utilrand.GetRandomStringCanonical(8),
+		TokenURL:   fmt.Sprintf("http://localhost:%d/token", tstSrv.port),
+		SecretName: sec.Metadata.Name,
+	}
+
+	accessToken, err := secretMan.GetOAuth2CCToken(ctx, req)
+	assert.Nil(t, err)
+	assert.Equal(t, tstSrv.accessToken, accessToken)
+
+	tstSrv.accessToken = utilrand.GetRandomString(12)
+
+	accessToken, err = secretMan.GetOAuth2CCToken(ctx, req)
+	assert.Nil(t, err)
+	assert.NotEqual(t, tstSrv.accessToken, accessToken)
+
+	sec.Data = &corev1.Secret_Data{
+		Type: &corev1.Secret_Data_Value{
+			Value: utilrand.GetRandomString(10),
+		},
+	}
+	sec, err = fakeC.OcteliumC.CoreC().UpdateSecret(ctx, sec)
+	assert.Nil(t, err)
+
+	secretMan.Set(sec)
+
+	accessToken, err = secretMan.GetOAuth2CCToken(ctx, req)
+	assert.Nil(t, err)
+	assert.Equal(t, tstSrv.accessToken, accessToken)
+}
+
+func TestApplyServiceSurvivesMissingSecret(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newSecret := func() *corev1.Secret {
+		ret, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(6),
+			},
+			Spec: &corev1.Secret_Spec{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(10),
+				},
+			},
+		})
+		assert.Nil(t, err)
+		return ret
+	}
+
+	newBearerCfg := func(name, secretName string) *corev1.Service_Spec_Config {
+		return &corev1.Service_Spec_Config{
+			Name: name,
+			Upstream: &corev1.Service_Spec_Config_Upstream{
+				Type: &corev1.Service_Spec_Config_Upstream_Url{
+					Url: "https://example.com",
+				},
+			},
+			Type: &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_{
+							Bearer: &corev1.Service_Spec_Config_HTTP_Auth_Bearer{
+								Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_FromSecret{
+									FromSecret: secretName,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	sec1 := newSecret()
+	sec2 := newSecret()
+
+	svc := tests.GenService("")
+	svc.Spec.Mode = corev1.Service_Spec_HTTP
+	svc.Spec.Config = newBearerCfg("", sec1.Metadata.Name)
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+		Configs: []*corev1.Service_Spec_Config{
+			newBearerCfg("cfg01", sec2.Metadata.Name),
+		},
+	}
+
+	svc, err = adminSrv.CreateService(ctx, svc)
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	secretMan, err := New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	err = secretMan.ApplyService(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, 2, secretMan.c.ItemCount())
+
+	_, err = fakeC.OcteliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{
+		Uid: sec1.Metadata.Uid,
+	})
+	assert.Nil(t, err)
+
+	err = secretMan.ApplyService(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, 2, len(secretMan.secretNames))
+
+	assert.Equal(t, 1, secretMan.c.ItemCount())
+	sec2V, err := secretMan.GetByName(ctx, sec2.Metadata.Name)
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(sec2, sec2V))
+}

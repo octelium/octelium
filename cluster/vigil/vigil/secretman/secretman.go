@@ -52,7 +52,8 @@ type SecretManager struct {
 }
 
 type oauth2ClientCredentialsInfo struct {
-	TokenSource oauth2.TokenSource
+	TokenSource     oauth2.TokenSource
+	resourceVersion string
 }
 
 func New(ctx context.Context, octeliumC octeliumc.ClientInterface, vCache *vcache.Cache) (*SecretManager, error) {
@@ -84,8 +85,13 @@ func (s *SecretManager) GetByName(ctx context.Context, name string) (*corev1.Sec
 }
 
 func (s *SecretManager) Set(secret *corev1.Secret) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !s.isInSecretNames(secret.Metadata.Name) {
-		return
+		if _, ok := s.c.Get(secret.Metadata.Name); !ok {
+			return
+		}
 	}
 
 	s.c.Set(secret.Metadata.Name, secret, 0)
@@ -105,11 +111,13 @@ func (s *SecretManager) Set(secret *corev1.Secret) {
 }
 
 func (s *SecretManager) Delete(secret *corev1.Secret) {
-	if !s.isInSecretNames(secret.Metadata.Name) {
-		return
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	_, isCached := s.c.Get(secret.Metadata.Name)
+	if !s.isInSecretNames(secret.Metadata.Name) && !isCached {
+		return
+	}
 
 	defer s.generation.Add(1)
 
@@ -132,6 +140,22 @@ func (s *SecretManager) isInSecretNames(name string) bool {
 }
 
 func (s *SecretManager) ApplyService(ctx context.Context) error {
+	oauth2Reqs, err := s.applyService(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, req := range oauth2Reqs {
+		if _, err := s.setOAuth2CCToken(ctx, req); err != nil {
+			zap.L().Warn("Could not set the OAuth2 client credentials token",
+				zap.String("secretName", req.SecretName), zap.Error(err))
+		}
+	}
+
+	return nil
+}
+
+func (s *SecretManager) applyService(ctx context.Context) ([]*GetOAuth2CCTokenReq, error) {
 	zap.L().Debug("Apply Service Secrets")
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,11 +163,13 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 	zap.L().Debug("Initial secret names", zap.Strings("names", s.secretNames))
 	s.secretNames = nil
 
+	var oauth2Reqs []*GetOAuth2CCTokenReq
+
 	s.c.Flush()
 
 	svc := s.vCache.GetService()
 	if svc == nil {
-		return errors.Errorf("Nil Service in Vigil's cache")
+		return nil, errors.Errorf("Nil Service in Vigil's cache")
 	}
 
 	doAppend := func(secretName string) {
@@ -230,7 +256,7 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 				authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
 				authS.GetOauth2ClientCredentials().GetClientSecret().GetFromSecret() != "" {
 
-				defer s.setOAuth2CCToken(ctx, &GetOAuth2CCTokenReq{
+				oauth2Reqs = append(oauth2Reqs, &GetOAuth2CCTokenReq{
 					ClientID:   authS.GetOauth2ClientCredentials().ClientID,
 					TokenURL:   authS.GetOauth2ClientCredentials().TokenURL,
 					Scopes:     authS.GetOauth2ClientCredentials().Scopes,
@@ -295,19 +321,21 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 		}
 	}
 
-	return s.setSecretNames(ctx)
+	s.setSecretNames(ctx)
+
+	return oauth2Reqs, nil
 }
 
-func (s *SecretManager) setSecretNames(ctx context.Context) error {
+func (s *SecretManager) setSecretNames(ctx context.Context) {
 	for _, name := range s.secretNames {
 		secret, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: name})
 		if err != nil {
-			return err
+			zap.L().Warn("Could not prefetch Secret",
+				zap.String("name", name), zap.Error(err))
+			continue
 		}
 		s.c.Set(secret.Metadata.Name, secret, 0)
 	}
-
-	return nil
 }
 
 /*
@@ -337,7 +365,12 @@ func (s *SecretManager) setOAuth2ClientCredentialsSecret(ctx context.Context) er
 
 func (s *SecretManager) GetOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTokenReq) (string, error) {
 
-	tkn, err := s.getOAuth2CCToken(ctx, req)
+	secret, err := s.GetByName(ctx, req.SecretName)
+	if err != nil {
+		return "", err
+	}
+
+	tkn, err := s.getOAuth2CCToken(ctx, req, secret.Metadata.ResourceVersion)
 	if err == nil {
 		return tkn, nil
 	} else if errors.Is(err, errOAuth2CCNotFound) {
@@ -347,13 +380,16 @@ func (s *SecretManager) GetOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTo
 	}
 }
 
-func (s *SecretManager) getOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTokenReq) (string, error) {
+func (s *SecretManager) getOAuth2CCToken(ctx context.Context,
+	req *GetOAuth2CCTokenReq, resourceVersion string) (string, error) {
 	s.oauth2ccMap.Lock()
-	defer s.oauth2ccMap.Unlock()
 	ret, ok := s.oauth2ccMap.oauth2ccMap[req.getID()]
-	if !ok {
+	s.oauth2ccMap.Unlock()
+
+	if !ok || ret.resourceVersion != resourceVersion {
 		return "", errOAuth2CCNotFound
 	}
+
 	tkn, err := ret.TokenSource.Token()
 	if err != nil {
 		return "", err
@@ -364,12 +400,11 @@ func (s *SecretManager) getOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTo
 var errOAuth2CCNotFound = errors.New("cc info not found")
 
 func (s *SecretManager) setOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTokenReq) (string, error) {
-	s.oauth2ccMap.Lock()
-	defer s.oauth2ccMap.Unlock()
 	secret, err := s.GetByName(ctx, req.SecretName)
 	if err != nil {
 		return "", err
 	}
+
 	cfg := &clientcredentials.Config{
 		ClientID:     req.ClientID,
 		ClientSecret: ucorev1.ToSecret(secret).GetValueStr(),
@@ -378,9 +413,13 @@ func (s *SecretManager) setOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTo
 	}
 
 	tknSrc := cfg.TokenSource(context.Background())
+
+	s.oauth2ccMap.Lock()
 	s.oauth2ccMap.oauth2ccMap[req.getID()] = &oauth2ClientCredentialsInfo{
-		TokenSource: tknSrc,
+		TokenSource:     tknSrc,
+		resourceVersion: secret.Metadata.ResourceVersion,
 	}
+	s.oauth2ccMap.Unlock()
 
 	tkn, err := tknSrc.Token()
 	if err != nil {
