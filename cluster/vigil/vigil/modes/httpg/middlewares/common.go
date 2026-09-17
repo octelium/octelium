@@ -94,8 +94,9 @@ type RequestContext struct {
 	DecisionReason *corev1.AccessLog_Entry_Common_Reason
 	AuthResponse   *coctovigilv1.AuthenticateAndAuthorizeResponse
 
-	Body        []byte
-	BodyJSONMap map[string]any
+	Body           []byte
+	BodyJSONMap    map[string]any
+	IsBodyBuffered bool
 
 	ReqCtxMap map[string]any
 

@@ -25,17 +25,23 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/net/http/httpguts"
 )
 
-const maxBodySize = 200_000_000
+const (
+	defaultMaxBodySize = 4 * 1024 * 1024
+	maxBodySize        = 64 * 1024 * 1024
+)
 
 type middleware struct {
 	next http.Handler
@@ -55,6 +61,32 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		svcCfg.GetHttp().Retry == nil {
 		m.next.ServeHTTP(rw, req)
 		return
+	}
+
+	if !isRetriableRequest(req, reqCtx) {
+		m.next.ServeHTTP(rw, req)
+		return
+	}
+
+	var bodyBytes []byte
+
+	if reqCtx.IsBodyBuffered {
+		bodyBytes = reqCtx.Body
+	} else {
+		if req.ContentLength < 0 || req.ContentLength > getMaxBodySize(svcCfg) {
+			m.next.ServeHTTP(rw, req)
+			return
+		}
+
+		if req.ContentLength > 0 {
+			body, err := io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
+			if err != nil {
+				rw.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			req.Body.Close()
+			bodyBytes = body
+		}
 	}
 
 	retryCfg := svcCfg.GetHttp().Retry
@@ -95,16 +127,6 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	startedAt := time.Now()
 	backOff.Reset()
 
-	bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxBodySize))
-	if len(bodyBytes) == maxBodySize {
-		rw.WriteHeader(http.StatusRequestEntityTooLarge)
-		return
-	} else if err != nil {
-		rw.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	req.Body.Close()
-
 	for attempts := 1; ; attempts++ {
 		reqC := req.Clone(ctx)
 		reqC.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -138,6 +160,40 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+}
+
+func isRetriableRequest(req *http.Request, reqCtx *middlewares.RequestContext) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions,
+		http.MethodTrace, http.MethodPut, http.MethodDelete:
+	default:
+		return false
+	}
+
+	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
+		return false
+	}
+
+	if strings.HasPrefix(strings.ToLower(req.Header.Get("Content-Type")), "application/grpc") {
+		return false
+	}
+
+	if reqCtx.Service != nil && ucorev1.ToService(reqCtx.Service).IsGRPC() {
+		return false
+	}
+
+	return true
+}
+
+func getMaxBodySize(svcCfg *corev1.Service_Spec_Config) int64 {
+	cfg := svcCfg.GetHttp().GetBody()
+	if cfg == nil || cfg.MaxRequestSize == 0 {
+		return defaultMaxBodySize
+	}
+	if int64(cfg.MaxRequestSize) > maxBodySize {
+		return maxBodySize
+	}
+	return int64(cfg.MaxRequestSize)
 }
 
 type responseWriter struct {

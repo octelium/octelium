@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,4 +149,174 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, http.StatusBadGateway, rw.Result().StatusCode)
 	}
 
+}
+
+func newRetryReqCtx(svc *corev1.Service) *middlewares.RequestContext {
+	return &middlewares.RequestContext{
+		CreatedAt: time.Now(),
+		Service:   svc,
+		ServiceConfig: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{
+					Retry: &corev1.Service_Spec_Config_HTTP_Retry{
+						MaxRetries: 4,
+						InitialInterval: &metav1.Duration{
+							Type: &metav1.Duration_Milliseconds{
+								Milliseconds: 1,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func serveRetry(t *testing.T, reqCtx *middlewares.RequestContext,
+	req *http.Request) (int, int) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	var attempts int
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadGateway)
+	})
+
+	mdlwr, err := New(ctx, next)
+	assert.Nil(t, err)
+
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, reqCtx))
+
+	rw := httptest.NewRecorder()
+	mdlwr.ServeHTTP(rw, req)
+
+	return attempts, rw.Result().StatusCode
+}
+
+func TestNonIdempotentMethodsAreNotRetried(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodConnect} {
+		req := httptest.NewRequest(method, "http://localhost/v1",
+			strings.NewReader("body"))
+
+		attempts, statusCode := serveRetry(t, newRetryReqCtx(nil), req)
+
+		assert.Equal(t, 1, attempts, method)
+		assert.Equal(t, http.StatusBadGateway, statusCode, method)
+	}
+}
+
+func TestIdempotentMethodsAreRetried(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead,
+		http.MethodOptions, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "http://localhost/v1",
+			strings.NewReader("body"))
+
+		attempts, statusCode := serveRetry(t, newRetryReqCtx(nil), req)
+
+		assert.Equal(t, 4, attempts, method)
+		assert.Equal(t, http.StatusBadGateway, statusCode, method)
+	}
+}
+
+func TestUpgradeAndGRPCAreNotRetried(t *testing.T) {
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+
+		attempts, _ := serveRetry(t, newRetryReqCtx(nil), req)
+		assert.Equal(t, 1, attempts)
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+		req.Header.Set("Content-Type", "application/grpc+proto")
+
+		attempts, _ := serveRetry(t, newRetryReqCtx(nil), req)
+		assert.Equal(t, 1, attempts)
+	}
+
+	{
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{Name: "tst.default"},
+			Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_GRPC},
+			Status:   &corev1.Service_Status{},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+
+		attempts, _ := serveRetry(t, newRetryReqCtx(svc), req)
+		assert.Equal(t, 1, attempts)
+	}
+}
+
+func TestOversizedAndStreamingBodiesAreNotRetried(t *testing.T) {
+	{
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/v1",
+			strings.NewReader(strings.Repeat("a", 16)))
+		req.ContentLength = -1
+
+		attempts, _ := serveRetry(t, newRetryReqCtx(nil), req)
+		assert.Equal(t, 1, attempts)
+	}
+
+	{
+		reqCtx := newRetryReqCtx(nil)
+		reqCtx.ServiceConfig.GetHttp().Body = &corev1.Service_Spec_Config_HTTP_Body{
+			MaxRequestSize: 8,
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/v1",
+			strings.NewReader(strings.Repeat("a", 16)))
+
+		attempts, _ := serveRetry(t, reqCtx, req)
+		assert.Equal(t, 1, attempts)
+	}
+
+	{
+		reqCtx := newRetryReqCtx(nil)
+		reqCtx.ServiceConfig.GetHttp().Body = &corev1.Service_Spec_Config_HTTP_Body{
+			MaxRequestSize: 64,
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/v1",
+			strings.NewReader(strings.Repeat("a", 16)))
+
+		attempts, _ := serveRetry(t, reqCtx, req)
+		assert.Equal(t, 4, attempts)
+	}
+}
+
+func TestBufferedBodyIsReusedAndReplayed(t *testing.T) {
+	ctx := context.Background()
+
+	reqCtx := newRetryReqCtx(nil)
+	reqCtx.Body = []byte("buffered-body")
+	reqCtx.IsBodyBuffered = true
+
+	var bodies []string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		bodies = append(bodies, string(body))
+		w.WriteHeader(http.StatusBadGateway)
+	})
+
+	mdlwr, err := New(ctx, next)
+	assert.Nil(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/v1",
+		strings.NewReader("stale-body"))
+	req = req.WithContext(context.WithValue(context.Background(),
+		middlewares.CtxRequestContext, reqCtx))
+
+	rw := httptest.NewRecorder()
+	mdlwr.ServeHTTP(rw, req)
+
+	assert.Equal(t, []string{
+		"buffered-body", "buffered-body", "buffered-body", "buffered-body",
+	}, bodies)
 }

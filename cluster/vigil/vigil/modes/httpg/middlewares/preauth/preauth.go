@@ -156,6 +156,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		additional.Body = body
 		reqCtx.Body = additional.Body
+		reqCtx.IsBodyBuffered = true
 
 		if cfg != nil && cfg.GetHttp() != nil && cfg.GetHttp().Body != nil {
 			buffer := cfg.GetHttp().Body
