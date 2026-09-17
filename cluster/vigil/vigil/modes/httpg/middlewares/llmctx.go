@@ -23,7 +23,6 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 func GetLLMRequestContext(llmReq *httputils.LLMRequest,
@@ -75,15 +74,8 @@ func SetLLMRequestContext(reqCtx *RequestContext, req *http.Request) {
 		httpC.Method = req.Method
 		httpC.Path = req.URL.Path
 		httpC.Uri = req.URL.RequestURI()
-		httpC.Body = reqCtx.Body
 		httpC.Size = int64(len(reqCtx.Body))
-		if len(reqCtx.Body) > MaxReqCtxBodySize {
-			httpC.Body = nil
-		}
-		httpC.BodyMap = nil
-		if httpC.Body != nil && reqCtx.BodyJSONMap != nil {
-			httpC.BodyMap, _ = pbutils.MapToStruct(reqCtx.BodyJSONMap)
-		}
+		SetRequestContextBody(httpC, reqCtx.Body, reqCtx.BodyJSONMap)
 	}
 
 	updated := GetLLMRequestContext(llmReq, httpC)

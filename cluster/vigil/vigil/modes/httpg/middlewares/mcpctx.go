@@ -22,7 +22,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
-	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 func GetMCPRequestContext(mcpReq *httputils.MCPRequest,
@@ -73,15 +72,8 @@ func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
 
 	httpC := mcpC.Http
 	if httpC != nil {
-		httpC.Body = reqCtx.Body
 		httpC.Size = int64(len(reqCtx.Body))
-		if len(reqCtx.Body) > MaxReqCtxBodySize {
-			httpC.Body = nil
-		}
-		httpC.BodyMap = nil
-		if httpC.Body != nil && reqCtx.BodyJSONMap != nil {
-			httpC.BodyMap, _ = pbutils.MapToStruct(reqCtx.BodyJSONMap)
-		}
+		SetRequestContextBody(httpC, reqCtx.Body, reqCtx.BodyJSONMap)
 	}
 
 	updated := GetMCPRequestContext(mcpReq, httpC)

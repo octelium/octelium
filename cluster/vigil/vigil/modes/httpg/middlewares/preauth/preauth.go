@@ -36,7 +36,6 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -253,8 +252,6 @@ type additionalInfo struct {
 	llmReq     *httputils.LLMRequest
 }
 
-const maxReqCtxBodySize = middlewares.MaxReqCtxBodySize
-
 func (m *middleware) getDownstreamReq(req *http.Request,
 	reqCtx *middlewares.RequestContext,
 	additional *additionalInfo) (*coctovigilv1.DownstreamRequest, error) {
@@ -269,16 +266,9 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		Size:    req.ContentLength,
 		Path:    req.URL.Path,
 		Uri:     req.URL.RequestURI(),
-		Body:    additional.Body,
 	}
 
-	if len(httpC.Body) > maxReqCtxBodySize {
-		httpC.Body = nil
-	}
-
-	if httpC.Body != nil {
-		httpC.BodyMap, _ = pbutils.MapToStruct(additional.bodyMap)
-	}
+	middlewares.SetRequestContextBody(httpC, additional.Body, additional.bodyMap)
 
 	if qry := req.URL.Query(); len(qry) > 0 {
 		httpC.QueryParams = make(map[string]string)

@@ -303,6 +303,24 @@ func (r *RequestContext) SetReqCtxMap() {
 	r.ReqCtxMap = pbutils.MustConvertToMap(r.DownstreamInfo)
 }
 
+func SetRequestContextBody(httpC *corev1.RequestContext_Request_HTTP,
+	body []byte, bodyMap map[string]any) {
+
+	httpC.Body = body
+	httpC.BodyMap = nil
+
+	if len(body) > MaxReqCtxBodySize {
+		httpC.Body = nil
+		return
+	}
+
+	if len(body) == 0 || bodyMap == nil {
+		return
+	}
+
+	httpC.BodyMap, _ = pbutils.MapToStruct(bodyMap)
+}
+
 func (r *RequestContext) SetBodyDigest() {
 	r.BodyDigest = sha256.Sum256(r.Body)
 }

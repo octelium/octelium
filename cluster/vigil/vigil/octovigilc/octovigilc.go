@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/octovigil/octovigil"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -102,10 +103,20 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 		ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
 
-		return c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+		body := unsetRequestBody(req.Request.GetRequest())
+		defer setRequestBody(req.Request.GetRequest(), body)
+
+		resp, err := c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
 			ServiceUID: c.svcUID,
 			Request:    req.Request,
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		setRequestBody(resp.GetRequestContext().GetRequest(), body)
+
+		return resp, nil
 	}
 }
 
@@ -138,6 +149,28 @@ func (c *Client) Authorize(ctx context.Context, req *coctovigilv1.AuthorizeReque
 			SessionUID: req.SessionUID,
 			Request:    req.Request,
 		})
+	}
+}
+
+func unsetRequestBody(req *corev1.RequestContext_Request) []byte {
+	httpC := ucorev1.GetRequestHTTP(req)
+	if httpC == nil || httpC.BodyMap == nil || len(httpC.Body) == 0 {
+		return nil
+	}
+
+	body := httpC.Body
+	httpC.Body = nil
+
+	return body
+}
+
+func setRequestBody(req *corev1.RequestContext_Request, body []byte) {
+	if len(body) == 0 {
+		return
+	}
+
+	if httpC := ucorev1.GetRequestHTTP(req); httpC != nil {
+		httpC.Body = body
 	}
 }
 
