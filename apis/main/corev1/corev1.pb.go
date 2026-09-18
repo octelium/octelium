@@ -17062,11 +17062,25 @@ func (x *Service_Spec_Config_LLM_Embedding) GetDimensions() uint32 {
 // common. The provider-specific features that no other protocol
 // defines (e.g. the OpenAI logprobs, logit biases, penalties, seeds
 // and structured outputs, the Anthropic top_k sampling, thinking
-// blocks, assistant prefills, documents, citations and server tools)
-// are rejected. The prompt cache controls of a protocol that the
-// target protocol does not define are dropped rather than rejected,
-// since they change what a request costs rather than what it
-// generates.
+// blocks, assistant prefills, documents, citations and server tools,
+// the Gemini safety settings, cached content, multiple candidates and
+// built-in tools, and the Bedrock guardrail configuration, prompt
+// variables and additional model request fields) are rejected. The
+// prompt cache controls of a protocol that the target protocol does
+// not define are dropped rather than rejected, since they change what
+// a request costs rather than what it generates. The tool schemas are
+// proxied verbatim rather than rewritten, so a schema that the target
+// model does not accept is rejected by the provider itself rather
+// than silently stripped of its constraints.
+//
+// Note that the Gemini models which sign their tool calls require
+// that signature to be returned on the next turn of the conversation,
+// while no other protocol has anywhere to carry it. Octelium
+// therefore retains those signatures itself, bound to the Session
+// that received them and to the upstream model that issued them, for
+// as long as a turn plausibly continues, and restores them into the
+// translated requests. Nothing of the reasoning content itself is
+// ever exposed to a downstream that did not receive it.
 //
 // Note that a reasoning configuration that a downstream requested for
 // itself is translated only where the two protocols express reasoning
@@ -17085,14 +17099,25 @@ type Service_Spec_Config_LLM_Translation struct {
 	// no translation is performed at all and the requests are proxied
 	// in the protocol that the downstreams themselves used.
 	//
-	// The OPENAI and the ANTHROPIC protocols currently translate to one
-	// another, for their generation operations (i.e. the
-	// `CHAT_COMPLETIONS` route of the former and the `MESSAGES` route
-	// of the latter). The other operations of the two protocols, which
-	// have no counterpart at all in one another (e.g. embeddings,
-	// moderations and token counting), are rejected rather than
-	// proxied, since an upstream that speaks another protocol serves
-	// none of them.
+	// Every protocol currently translates to every other one, for the
+	// generation operation that each of them defines, which is the
+	// `CHAT_COMPLETIONS` route of the OPENAI protocol, the `MESSAGES`
+	// route of the ANTHROPIC one, the `GENERATE_CONTENT` route of the
+	// GEMINI one and the `CONVERSE` route of the BEDROCK one, together
+	// with their streaming forms. The other operations, which have no
+	// counterpart at all in one another (e.g. embeddings, moderations,
+	// token counting, model listing and the Bedrock InvokeModel
+	// operations whose bodies are model-native), are rejected rather
+	// than proxied, since an upstream that speaks another protocol
+	// serves none of them.
+	//
+	// Note that the GEMINI and the BEDROCK protocols name the model in
+	// the request path rather than in the request body, so a translated
+	// request is addressed to the model that the Service resolved for
+	// it, which is the one that the Model field, a Model Plugin or a
+	// SemanticRouter Plugin decided and otherwise the one that the
+	// downstream itself requested. A model name that the target
+	// protocol cannot address is rejected rather than rewritten.
 	UpstreamProtocol Service_Spec_Config_LLM_Protocol `protobuf:"varint,1,opt,name=upstreamProtocol,proto3,enum=octelium.api.main.core.v1.Service_Spec_Config_LLM_Protocol" json:"upstreamProtocol,omitempty"`
 	// DefaultMaxOutputTokens is the maximum output token count that is
 	// served to an upstream whose protocol requires one while the
@@ -17104,7 +17129,9 @@ type Service_Spec_Config_LLM_Translation struct {
 	// asked for, so the `ctx.request.llm.maxOutputTokens` field and the
 	// AccessLogs keep reporting zero for such a request, and that the
 	// `limits.maxOutputTokens` field bounds it in the same way that it
-	// bounds a downstream's own limit. Note also that a reasoning token
+	// bounds a downstream's own limit. It is only needed for an
+	// ANTHROPIC upstream, since the other protocols let a request
+	// declare no output limit at all. Note also that a reasoning token
 	// budget which the Service itself decided is added on top of it,
 	// since a model whose output limit does not exceed its own reasoning
 	// budget rejects the request outright.

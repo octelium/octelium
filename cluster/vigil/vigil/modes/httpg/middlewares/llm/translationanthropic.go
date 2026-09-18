@@ -73,12 +73,16 @@ var anthropicMetadataFields = newTransFields([]string{"user_id"}, nil)
 
 type anthropicMessagesCodec struct{}
 
+func (c *anthropicMessagesCodec) protocol() corev1.Service_Spec_Config_LLM_Protocol {
+	return corev1.Service_Spec_Config_LLM_ANTHROPIC
+}
+
 func (c *anthropicMessagesCodec) route() corev1.RequestContext_Request_LLM_Route {
 	return corev1.RequestContext_Request_LLM_MESSAGES
 }
 
-func (c *anthropicMessagesCodec) path() string {
-	return anthropicMessagesPath
+func (c *anthropicMessagesCodec) streamMediaType() string {
+	return transSSEMediaType
 }
 
 func (c *anthropicMessagesCodec) decodeRequest(body []byte) (*transRequest, error) {
@@ -474,7 +478,7 @@ func (c *anthropicMessagesCodec) decodeToolResult(
 		}
 	}
 
-	ret.toolResult = transBlocksText(blocks)
+	ret.toolResult = transToolResultOf(transBlocksText(blocks))
 
 	return ret, nil
 }
@@ -743,7 +747,7 @@ func (c *anthropicMessagesCodec) encodeBlocks(blocks []*transBlock) ([]any, erro
 			cur := map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": block.toolCallID,
-				"content":     block.toolResult,
+				"content":     transToolResultText(block.toolResult),
 			}
 			if block.isToolError {
 				cur["is_error"] = true
@@ -970,7 +974,7 @@ func (c *anthropicMessagesCodec) encodeResponse(resp *transResponse,
 		"id":            newAnthropicResponseID(),
 		"type":          "message",
 		"role":          roleAssistant,
-		"model":         resp.model,
+		"model":         transResponseModel(resp.model, o),
 		"content":       content,
 		"stop_reason":   nil,
 		"stop_sequence": nil,
@@ -1000,7 +1004,8 @@ func (c *anthropicMessagesCodec) newStreamDecoder() transStreamDecoder {
 
 func (c *anthropicMessagesCodec) newStreamEncoder(o *transEncodeOpts) transStreamEncoder {
 	return &anthropicStreamEncoder{
-		id: newAnthropicResponseID(),
+		id:    newAnthropicResponseID(),
+		model: o.model,
 	}
 }
 
@@ -1049,7 +1054,7 @@ type anthropicStreamDecoder struct {
 	blockKinds map[int]transBlockKind
 }
 
-func (d *anthropicStreamDecoder) decode(data []byte) ([]*transEvent, error) {
+func (d *anthropicStreamDecoder) decode(eventType string, data []byte) ([]*transEvent, error) {
 	env := &anthropicStreamEventEnvelope{}
 	if err := json.Unmarshal(data, env); err != nil {
 		return nil, nil
@@ -1214,7 +1219,9 @@ func (e *anthropicStreamEncoder) encodeStart(model string) ([]byte, error) {
 		return nil, nil
 	}
 	e.isStarted = true
-	e.model = model
+	if model != "" {
+		e.model = model
+	}
 
 	return sseEventOf("message_start", map[string]any{
 		"type": "message_start",

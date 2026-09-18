@@ -17,12 +17,15 @@
 package llm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/pkg/errors"
 )
 
@@ -302,4 +305,139 @@ func sseEventOf(name string, val any) ([]byte, error) {
 	}
 
 	return sseEvent(name, payload), nil
+}
+
+func transToolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	if raw[0] == '"' {
+		var ret string
+		if err := json.Unmarshal(raw, &ret); err == nil {
+			return ret
+		}
+	}
+
+	return string(raw)
+}
+
+func transToolResultObject(raw json.RawMessage, isError bool) (map[string]any, error) {
+	key := "result"
+	if isError {
+		key = "error"
+	}
+
+	if len(raw) == 0 {
+		return map[string]any{key: ""}, nil
+	}
+
+	if raw[0] == '{' && !isError {
+		var ret map[string]any
+		if err := json.Unmarshal(raw, &ret); err == nil {
+			return ret, nil
+		}
+	}
+
+	var val any
+	if err := json.Unmarshal(raw, &val); err != nil {
+		return map[string]any{key: string(raw)}, nil
+	}
+
+	return map[string]any{key: val}, nil
+}
+
+func transUnwrapToolResult(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 || raw[0] != '{' {
+		return raw, false
+	}
+
+	obj, err := transObject(raw)
+	if err != nil || len(obj) != 1 {
+		return raw, false
+	}
+
+	if cur, ok := obj["result"]; ok {
+		return cur, false
+	}
+	if cur, ok := obj["error"]; ok {
+		return cur, true
+	}
+
+	return raw, false
+}
+
+func transToolResultOf(text string) json.RawMessage {
+	ret, err := json.Marshal(text)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return ret
+}
+
+func transResolveToolNames(req *transRequest) {
+	names := make(map[string]string)
+
+	for _, msg := range req.messages {
+		for _, block := range msg.blocks {
+			if block.kind == transBlockToolCall && block.toolName != "" {
+				names[block.toolCallID] = block.toolName
+			}
+		}
+	}
+
+	for _, msg := range req.messages {
+		for _, block := range msg.blocks {
+			if block.kind != transBlockToolResult || block.toolName != "" {
+				continue
+			}
+			block.toolName = names[block.toolCallID]
+		}
+	}
+}
+
+func transSyntheticID(prefix string, args ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(args, "\x00")))
+	return prefix + hex.EncodeToString(sum[:])[:24]
+}
+
+const (
+	transSSEMediaType         = "text/event-stream"
+	transEventStreamMediaType = httputils.LLMEventStreamMediaType
+)
+
+func hasTransField(obj map[string]json.RawMessage, key string) bool {
+	raw, ok := obj[key]
+	return ok && !transIsNull(raw)
+}
+
+func appendTransToolInput[T any](calls []T, ev *transEvent,
+	index func(T) int, input func(T) *[]byte) error {
+
+	for _, cur := range calls {
+		if index(cur) != ev.index {
+			continue
+		}
+		buf := input(cur)
+		if len(*buf)+len(ev.text) > maxTransToolInputBytes {
+			return transInvalidResponse(
+				"the inference upstream sent a tool call whose arguments are too large")
+		}
+		*buf = append(*buf, ev.text...)
+		return nil
+	}
+
+	return nil
+}
+
+func transJoinLines(args []string) string {
+	return strings.Join(args, "\n")
+}
+
+func transResponseModel(model string, o *transEncodeOpts) string {
+	if model != "" {
+		return model
+	}
+
+	return o.model
 }

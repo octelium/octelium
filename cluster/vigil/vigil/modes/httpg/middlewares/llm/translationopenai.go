@@ -66,12 +66,16 @@ var openAIStreamOptionsFields = newTransFields([]string{"include_usage"}, nil)
 
 type openAIChatCodec struct{}
 
+func (c *openAIChatCodec) protocol() corev1.Service_Spec_Config_LLM_Protocol {
+	return corev1.Service_Spec_Config_LLM_OPENAI
+}
+
 func (c *openAIChatCodec) route() corev1.RequestContext_Request_LLM_Route {
 	return corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS
 }
 
-func (c *openAIChatCodec) path() string {
-	return openAIChatPath
+func (c *openAIChatCodec) streamMediaType() string {
+	return transSSEMediaType
 }
 
 func (c *openAIChatCodec) decodeRequest(body []byte) (*transRequest, error) {
@@ -365,7 +369,7 @@ func (c *openAIChatCodec) decodeToolResult(ret *transRequest,
 	block := &transBlock{
 		kind:       transBlockToolResult,
 		toolCallID: id,
-		toolResult: text,
+		toolResult: transToolResultOf(text),
 	}
 
 	if len(ret.messages) > 0 {
@@ -708,7 +712,7 @@ func (c *openAIChatCodec) encodeMessages(req *transRequest) ([]*openAIOutMessage
 			if block.kind != transBlockToolResult {
 				continue
 			}
-			content, err := marshalRaw(block.toolResult)
+			content, err := marshalRaw(transToolResultText(block.toolResult))
 			if err != nil {
 				return nil, err
 			}
@@ -1029,7 +1033,7 @@ func (c *openAIChatCodec) encodeResponse(resp *transResponse,
 		"id":      newOpenAIResponseID(),
 		"object":  openAIObjectCompletion,
 		"created": time.Now().Unix(),
-		"model":   resp.model,
+		"model":   transResponseModel(resp.model, o),
 		"choices": []any{choice},
 	}
 
@@ -1074,6 +1078,7 @@ func (c *openAIChatCodec) newStreamEncoder(o *transEncodeOpts) transStreamEncode
 	return &openAIStreamEncoder{
 		id:          newOpenAIResponseID(),
 		created:     time.Now().Unix(),
+		model:       o.model,
 		streamUsage: o.streamUsage,
 	}
 }
@@ -1112,7 +1117,7 @@ type openAIStreamDecoder struct {
 	seenTools map[int]struct{}
 }
 
-func (d *openAIStreamDecoder) decode(data []byte) ([]*transEvent, error) {
+func (d *openAIStreamDecoder) decode(eventType string, data []byte) ([]*transEvent, error) {
 	if httputils.IsLLMStreamDone(data) {
 		return nil, nil
 	}
@@ -1239,7 +1244,9 @@ func (e *openAIStreamEncoder) deltaChunk(delta map[string]any,
 func (e *openAIStreamEncoder) encode(ev *transEvent) ([]byte, error) {
 	switch ev.kind {
 	case transEventStart:
-		e.model = ev.model
+		if ev.model != "" {
+			e.model = ev.model
+		}
 		return e.deltaChunk(map[string]any{
 			"role":    roleAssistant,
 			"content": "",

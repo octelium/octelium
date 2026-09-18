@@ -2136,17 +2136,22 @@ func TestValidateLLMTranslation(t *testing.T) {
 		corev1.Service_Spec_Config_LLM_ANTHROPIC,
 		corev1.Service_Spec_Config_LLM_OPENAI, 0)))
 
-	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+	for _, protocol := range []corev1.Service_Spec_Config_LLM_Protocol{
 		corev1.Service_Spec_Config_LLM_OPENAI,
-		corev1.Service_Spec_Config_LLM_GEMINI, 0)))
-
-	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
 		corev1.Service_Spec_Config_LLM_GEMINI,
-		corev1.Service_Spec_Config_LLM_OPENAI, 0)))
-
-	assert.NotNil(t, s.validateLLMTranslation(newLLM(
 		corev1.Service_Spec_Config_LLM_BEDROCK,
-		corev1.Service_Spec_Config_LLM_ANTHROPIC, 0)))
+	} {
+		for _, upstreamProtocol := range []corev1.Service_Spec_Config_LLM_Protocol{
+			corev1.Service_Spec_Config_LLM_OPENAI,
+			corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			corev1.Service_Spec_Config_LLM_BEDROCK,
+		} {
+			assert.Nil(t, s.validateLLMTranslation(
+				newLLM(protocol, upstreamProtocol, 0)))
+		}
+	}
 
 	assert.NotNil(t, s.validateLLMTranslation(newLLM(
 		corev1.Service_Spec_Config_LLM_OPENAI,

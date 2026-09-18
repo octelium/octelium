@@ -18,6 +18,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,6 +42,7 @@ const (
 type transResponseWriter struct {
 	http.ResponseWriter
 
+	ctx    context.Context
 	reqCtx *middlewares.RequestContext
 	plan   *transPlan
 
@@ -48,11 +50,12 @@ type transResponseWriter struct {
 
 	statusCode int
 
-	isResolved   bool
-	isStream     bool
-	isError      bool
-	isFailed     bool
-	isOverflowed bool
+	isResolved    bool
+	isStream      bool
+	isEventStream bool
+	isError       bool
+	isFailed      bool
+	isOverflowed  bool
 
 	buf bytes.Buffer
 
@@ -64,14 +67,17 @@ type transResponseWriter struct {
 	dec transStreamDecoder
 	enc transStreamEncoder
 
+	continuation *transContinuation
+
 	obs transObserver
 }
 
-func newTransResponseWriter(w http.ResponseWriter, reqCtx *middlewares.RequestContext,
-	plan *transPlan) *transResponseWriter {
+func newTransResponseWriter(ctx context.Context, w http.ResponseWriter,
+	reqCtx *middlewares.RequestContext, plan *transPlan) *transResponseWriter {
 
 	return &transResponseWriter{
 		ResponseWriter: w,
+		ctx:            ctx,
 		reqCtx:         reqCtx,
 		plan:           plan,
 		statusCode:     http.StatusOK,
@@ -124,17 +130,23 @@ func (rw *transResponseWriter) resolve() {
 	}
 
 	mediaType := strings.TrimSpace(strings.Split(hdr.Get("Content-Type"), ";")[0])
-	if !strings.EqualFold(mediaType, "text/event-stream") {
+
+	switch {
+	case strings.EqualFold(mediaType, transSSEMediaType):
+	case strings.EqualFold(mediaType, transEventStreamMediaType):
+		rw.isEventStream = true
+	default:
 		return
 	}
 
 	rw.isStream = true
 	rw.dec = rw.plan.to.newStreamDecoder()
 	rw.enc = rw.plan.from.newStreamEncoder(&transEncodeOpts{
+		model:       rw.plan.model,
 		streamUsage: rw.plan.streamUsage,
 	})
 
-	hdr.Set("Content-Type", "text/event-stream")
+	hdr.Set("Content-Type", rw.plan.from.streamMediaType())
 	hdr.Del("Content-Encoding")
 
 	rw.ResponseWriter.WriteHeader(rw.statusCode)
@@ -188,6 +200,11 @@ func (rw *transResponseWriter) writeStream(b []byte) {
 
 	rw.lineBuf = append(rw.lineBuf, b...)
 
+	if rw.isEventStream {
+		rw.writeEventStream()
+		return
+	}
+
 	for {
 		idx, sep := indexTransSSEDelimiter(rw.lineBuf)
 		if idx == -1 {
@@ -203,7 +220,12 @@ func (rw *transResponseWriter) writeStream(b []byte) {
 			return
 		}
 
-		if !rw.writeStreamEvent(event) {
+		data := httputils.GetSSEEventData(event)
+		if len(data) == 0 {
+			continue
+		}
+
+		if !rw.writeStreamEvent(httputils.GetSSEEventName(event), data) {
 			return
 		}
 	}
@@ -214,19 +236,45 @@ func (rw *transResponseWriter) writeStream(b []byte) {
 	}
 }
 
-func (rw *transResponseWriter) writeStreamEvent(event []byte) bool {
-	data := httputils.GetSSEEventData(event)
-	if len(data) == 0 {
-		return true
+func (rw *transResponseWriter) writeEventStream() {
+	for {
+		eventType, payload, n := httputils.NextLLMEventStreamEvent(rw.lineBuf)
+		if n == 0 {
+			break
+		}
+		if n < 0 {
+			rw.failStream(transInvalidResponse(
+				"the inference upstream sent a malformed event stream"))
+			return
+		}
+
+		rw.lineBuf = rw.lineBuf[n:]
+
+		if len(payload) == 0 {
+			continue
+		}
+
+		if !rw.writeStreamEvent(eventType, payload) {
+			return
+		}
 	}
 
+	if len(rw.lineBuf) > rw.maxEvent {
+		rw.failStream(transInvalidResponse(
+			"the inference upstream sent an event that is too large"))
+	}
+}
+
+func (rw *transResponseWriter) writeStreamEvent(eventType string, data []byte) bool {
 	rw.obs.observe(data)
 
-	evs, err := rw.dec.decode(data)
+	evs, err := rw.dec.decode(eventType, data)
 	if err != nil {
 		rw.failStream(err)
 		return false
 	}
+
+	rw.storeEvents(evs)
 
 	return rw.encodeEvents(evs)
 }
@@ -378,7 +426,11 @@ func (rw *transResponseWriter) translateBody() ([]byte, error) {
 		return nil, err
 	}
 
-	return rw.plan.from.encodeResponse(resp, &transEncodeOpts{})
+	rw.continuation.store(rw.ctx, rw.reqCtx, rw.plan, resp.blocks)
+
+	return rw.plan.from.encodeResponse(resp, &transEncodeOpts{
+		model: rw.plan.model,
+	})
 }
 
 type transUpstreamError struct {
@@ -427,4 +479,25 @@ func indexTransSSEDelimiter(arg []byte) (int, int) {
 	}
 
 	return best, sep
+}
+
+func (rw *transResponseWriter) storeEvents(evs []*transEvent) {
+	var blocks []*transBlock
+
+	for _, ev := range evs {
+		if ev.kind != transEventToolCallStart || ev.toolSignature == "" {
+			continue
+		}
+		blocks = append(blocks, &transBlock{
+			kind:          transBlockToolCall,
+			toolCallID:    ev.toolCallID,
+			toolSignature: ev.toolSignature,
+		})
+	}
+
+	if len(blocks) == 0 {
+		return
+	}
+
+	rw.continuation.store(rw.ctx, rw.reqCtx, rw.plan, blocks)
 }

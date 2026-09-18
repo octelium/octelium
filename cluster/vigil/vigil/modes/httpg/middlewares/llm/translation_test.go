@@ -28,10 +28,15 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type transOpts struct {
@@ -47,6 +52,10 @@ type transOpts struct {
 	defaultMaxOutputTokens uint64
 
 	header map[string]string
+
+	isStream bool
+
+	cacheC *fakeCache
 
 	upstream http.HandlerFunc
 }
@@ -88,11 +97,45 @@ func (r *transResult) events(t *testing.T) []map[string]any {
 	return ret
 }
 
-func transDefaultPath(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
-	if protocol == corev1.Service_Spec_Config_LLM_ANTHROPIC {
-		return anthropicMessagesPath
+const transTestModel = "corp-model"
+
+func transDefaultPath(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	isStream bool) string {
+
+	path, _, query := httputils.GetLLMRoutePath(protocol,
+		getTransRoute(protocol, corev1.Service_Spec_Config_LLM_GENERATE),
+		transTestModel, isStream)
+
+	if query != "" {
+		return path + "?" + query
 	}
-	return openAIChatPath
+
+	return path
+}
+
+type fakeCache struct {
+	rcachev1.MainServiceClient
+
+	entries map[string][]byte
+}
+
+func newFakeCache() *fakeCache {
+	return &fakeCache{entries: make(map[string][]byte)}
+}
+
+func (c *fakeCache) SetCache(ctx context.Context, req *rcachev1.SetCacheRequest,
+	opts ...grpc.CallOption) (*rcachev1.SetCacheResponse, error) {
+	c.entries[string(req.Key)] = req.Data
+	return &rcachev1.SetCacheResponse{}, nil
+}
+
+func (c *fakeCache) GetCache(ctx context.Context, req *rcachev1.GetCacheRequest,
+	opts ...grpc.CallOption) (*rcachev1.GetCacheResponse, error) {
+	data, ok := c.entries[string(req.Key)]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "not found")
+	}
+	return &rcachev1.GetCacheResponse{Data: data}, nil
 }
 
 func serveTranslation(t *testing.T, o *transOpts) *transResult {
@@ -122,7 +165,12 @@ func serveTranslation(t *testing.T, o *transOpts) *transResult {
 
 	var mdlwr http.Handler = next
 
-	mdlwr, err = NewTranslation(ctx, mdlwr)
+	if o.cacheC == nil {
+		o.cacheC = newFakeCache()
+	}
+
+	mdlwr, err = NewTranslation(ctx, mdlwr,
+		&fakeOcteliumC{cacheC: o.cacheC}, newService().Metadata.Uid)
 	assert.Nil(t, err)
 
 	mdlwr, err = NewReasoning(ctx, mdlwr, celEngine)
@@ -130,7 +178,7 @@ func serveTranslation(t *testing.T, o *transOpts) *transResult {
 
 	path := o.path
 	if path == "" {
-		path = transDefaultPath(o.protocol)
+		path = transDefaultPath(o.protocol, o.isStream)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "http://my-llm.example.com"+path,
@@ -161,7 +209,7 @@ func serveTranslation(t *testing.T, o *transOpts) *transResult {
 
 	httpC := &corev1.RequestContext_Request_HTTP{
 		Method: http.MethodPost,
-		Path:   path,
+		Path:   req.URL.Path,
 		Body:   []byte(o.body),
 		Size:   int64(len(o.body)),
 	}
@@ -183,6 +231,9 @@ func serveTranslation(t *testing.T, o *transOpts) *transResult {
 		DownstreamRequest: downstreamReq,
 		DownstreamInfo: &corev1.RequestContext{
 			Request: downstreamReq.Request,
+			Session: &corev1.Session{
+				Metadata: &metav1.Metadata{Uid: "f1c1d2a2-0000-0000-0000-000000000009"},
+			},
 		},
 	}
 	reqCtx.SetBodyDigest()
@@ -1030,4 +1081,1024 @@ func TestTranslationRequestContextPreserved(t *testing.T) {
 	assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS,
 		res.reqCtx.LLM.GetRoute())
 	assert.Equal(t, uint64(0), res.reqCtx.LLM.GetMaxOutputTokens())
+}
+
+func newTransOpts(protocol,
+	upstreamProtocol corev1.Service_Spec_Config_LLM_Protocol, body string) *transOpts {
+	return &transOpts{
+		protocol:         protocol,
+		upstreamProtocol: upstreamProtocol,
+		body:             body,
+	}
+}
+
+const (
+	transOpenAIBody = `{"model":"corp-model","messages":[` +
+		`{"role":"developer","content":"You are concise."},` +
+		`{"role":"user","content":"Weather in Cairo?"}],` +
+		`"max_completion_tokens":500,"stop":["END"],"temperature":0.5,` +
+		`"tools":[{"type":"function","function":{"name":"get_weather",` +
+		`"description":"Get current weather","parameters":{"type":"object",` +
+		`"properties":{"city":{"type":"string"}},"required":["city"]}}}],` +
+		`"tool_choice":"auto"}`
+
+	transAnthropicBody = `{"model":"corp-model","system":"You are concise.",` +
+		`"max_tokens":500,"stop_sequences":["END"],"temperature":0.5,` +
+		`"messages":[{"role":"user","content":"Weather in Cairo?"}],` +
+		`"tools":[{"name":"get_weather","description":"Get current weather",` +
+		`"input_schema":{"type":"object","properties":{"city":{"type":"string"}},` +
+		`"required":["city"]}}],"tool_choice":{"type":"auto"}}`
+
+	transGeminiBody = `{"systemInstruction":{"parts":[{"text":"You are concise."}]},` +
+		`"contents":[{"role":"user","parts":[{"text":"Weather in Cairo?"}]}],` +
+		`"generationConfig":{"maxOutputTokens":500,"stopSequences":["END"],` +
+		`"temperature":0.5},` +
+		`"tools":[{"functionDeclarations":[{"name":"get_weather",` +
+		`"description":"Get current weather","parameters":{"type":"object",` +
+		`"properties":{"city":{"type":"string"}},"required":["city"]}}]}],` +
+		`"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}}`
+
+	transBedrockBody = `{"system":[{"text":"You are concise."}],` +
+		`"messages":[{"role":"user","content":[{"text":"Weather in Cairo?"}]}],` +
+		`"inferenceConfig":{"maxTokens":500,"stopSequences":["END"],` +
+		`"temperature":0.5},` +
+		`"toolConfig":{"tools":[{"toolSpec":{"name":"get_weather",` +
+		`"description":"Get current weather","inputSchema":{"json":{"type":"object",` +
+		`"properties":{"city":{"type":"string"}},"required":["city"]}}}}],` +
+		`"toolChoice":{"auto":{}}}}`
+)
+
+func transSourceBody(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return transAnthropicBody
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return transGeminiBody
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return transBedrockBody
+	default:
+		return transOpenAIBody
+	}
+}
+
+var transProtocols = []corev1.Service_Spec_Config_LLM_Protocol{
+	corev1.Service_Spec_Config_LLM_OPENAI,
+	corev1.Service_Spec_Config_LLM_ANTHROPIC,
+	corev1.Service_Spec_Config_LLM_GEMINI,
+	corev1.Service_Spec_Config_LLM_BEDROCK,
+}
+
+func transUpstreamSystem(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, upstream map[string]any) string {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		ret, ok := upstream["system"].(string)
+		assert.True(t, ok)
+		return ret
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		obj := upstream["systemInstruction"].(map[string]any)
+		return obj["parts"].([]any)[0].(map[string]any)["text"].(string)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return upstream["system"].([]any)[0].(map[string]any)["text"].(string)
+	default:
+		msgs := upstream["messages"].([]any)
+		first := msgs[0].(map[string]any)
+		assert.Equal(t, roleSystem, first["role"])
+		return first["content"].(string)
+	}
+}
+
+func transUpstreamMaxTokens(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, upstream map[string]any) float64 {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return upstream["max_tokens"].(float64)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return upstream["generationConfig"].(map[string]any)["maxOutputTokens"].(float64)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return upstream["inferenceConfig"].(map[string]any)["maxTokens"].(float64)
+	default:
+		return upstream["max_completion_tokens"].(float64)
+	}
+}
+
+func transUpstreamToolName(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, upstream map[string]any) string {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return upstream["tools"].([]any)[0].(map[string]any)["name"].(string)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		group := upstream["tools"].([]any)[0].(map[string]any)
+		decl := group["functionDeclarations"].([]any)[0].(map[string]any)
+		return decl["name"].(string)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		cfg := upstream["toolConfig"].(map[string]any)
+		spec := cfg["tools"].([]any)[0].(map[string]any)["toolSpec"].(map[string]any)
+		return spec["name"].(string)
+	default:
+		fn := upstream["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
+		return fn["name"].(string)
+	}
+}
+
+func TestTranslationMatrixRequest(t *testing.T) {
+	for _, from := range transProtocols {
+		for _, to := range transProtocols {
+			if from == to {
+				continue
+			}
+
+			label := from.String() + "->" + to.String()
+
+			o := newTransOpts(from, to, transSourceBody(from))
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, transUpstreamResponse(to))
+			}
+
+			res := serveTranslation(t, o)
+
+			assert.True(t, res.isNext, label)
+			assert.Equal(t, http.StatusOK, res.code, label+" "+res.body)
+
+			expectedPath, _, _ := httputils.GetLLMRoutePath(to,
+				getTransRoute(to, corev1.Service_Spec_Config_LLM_GENERATE),
+				transTestModel, false)
+			assert.Equal(t, expectedPath, res.upstreamPath, label)
+
+			assert.Equal(t, "You are concise.",
+				transUpstreamSystem(t, to, res.upstream), label)
+			assert.Equal(t, float64(500),
+				transUpstreamMaxTokens(t, to, res.upstream), label)
+			assert.Equal(t, "get_weather",
+				transUpstreamToolName(t, to, res.upstream), label)
+
+			assert.Equal(t, to, res.reqCtx.LLMTranslation.UpstreamProtocol, label)
+			assert.Equal(t, getTransRoute(to, corev1.Service_Spec_Config_LLM_GENERATE),
+				res.reqCtx.LLMTranslation.UpstreamRoute, label)
+		}
+	}
+}
+
+func transUpstreamResponse(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return `{"id":"msg_abc","type":"message","role":"assistant","model":"m-1",` +
+			`"content":[{"type":"text","text":"It is 31 C."}],` +
+			`"stop_reason":"end_turn",` +
+			`"usage":{"input_tokens":20,"output_tokens":10}}`
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return `{"candidates":[{"content":{"role":"model","parts":[` +
+			`{"text":"It is 31 C."}]},"finishReason":"STOP"}],` +
+			`"modelVersion":"m-1","responseId":"resp-abc",` +
+			`"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":10,` +
+			`"totalTokenCount":30}}`
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return `{"output":{"message":{"role":"assistant","content":[` +
+			`{"text":"It is 31 C."}]}},"stopReason":"end_turn",` +
+			`"usage":{"inputTokens":20,"outputTokens":10,"totalTokens":30}}`
+	default:
+		return `{"id":"chatcmpl_abc","object":"chat.completion","created":1,` +
+			`"model":"m-1","choices":[{"index":0,"message":{"role":"assistant",` +
+			`"content":"It is 31 C."},"finish_reason":"stop"}],` +
+			`"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}`
+	}
+}
+
+func transDownstreamText(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, out map[string]any) string {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return out["content"].([]any)[0].(map[string]any)["text"].(string)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		candidate := out["candidates"].([]any)[0].(map[string]any)
+		content := candidate["content"].(map[string]any)
+		return content["parts"].([]any)[0].(map[string]any)["text"].(string)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		msg := out["output"].(map[string]any)["message"].(map[string]any)
+		return msg["content"].([]any)[0].(map[string]any)["text"].(string)
+	default:
+		choice := out["choices"].([]any)[0].(map[string]any)
+		return choice["message"].(map[string]any)["content"].(string)
+	}
+}
+
+func transDownstreamUsage(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, out map[string]any) (float64, float64) {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		usage := out["usage"].(map[string]any)
+		return usage["input_tokens"].(float64), usage["output_tokens"].(float64)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		usage := out["usageMetadata"].(map[string]any)
+		return usage["promptTokenCount"].(float64), usage["candidatesTokenCount"].(float64)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		usage := out["usage"].(map[string]any)
+		return usage["inputTokens"].(float64), usage["outputTokens"].(float64)
+	default:
+		usage := out["usage"].(map[string]any)
+		return usage["prompt_tokens"].(float64), usage["completion_tokens"].(float64)
+	}
+}
+
+func TestTranslationMatrixResponse(t *testing.T) {
+	for _, from := range transProtocols {
+		for _, to := range transProtocols {
+			if from == to {
+				continue
+			}
+
+			label := from.String() + "->" + to.String()
+
+			o := newTransOpts(from, to, transSourceBody(from))
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, transUpstreamResponse(to))
+			}
+
+			res := serveTranslation(t, o)
+
+			assert.Equal(t, http.StatusOK, res.code, label+" "+res.body)
+
+			out := res.json(t)
+			assert.Equal(t, "It is 31 C.", transDownstreamText(t, from, out), label)
+
+			input, output := transDownstreamUsage(t, from, out)
+			assert.Equal(t, float64(20), input, label)
+			assert.Equal(t, float64(10), output, label)
+
+			assert.Equal(t, uint64(20),
+				res.reqCtx.LLMUpstreamResponse.Usage.InputTokens, label)
+		}
+	}
+}
+
+func transUpstreamStream(protocol corev1.Service_Spec_Config_LLM_Protocol) []string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return []string{
+			`data: {"type":"message_start","message":{"id":"msg_abc","type":"message",` +
+				`"role":"assistant","model":"m-1",` +
+				`"usage":{"input_tokens":20,"output_tokens":0}}}` + "\n\n",
+			`data: {"type":"content_block_start","index":0,` +
+				`"content_block":{"type":"text","text":""}}` + "\n\n",
+			`data: {"type":"content_block_delta","index":0,` +
+				`"delta":{"type":"text_delta","text":"It is "}}` + "\n\n",
+			`data: {"type":"content_block_delta","index":0,` +
+				`"delta":{"type":"text_delta","text":"31 C."}}` + "\n\n",
+			`data: {"type":"content_block_stop","index":0}` + "\n\n",
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},` +
+				`"usage":{"output_tokens":10}}` + "\n\n",
+			`data: {"type":"message_stop"}` + "\n\n",
+		}
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return []string{
+			`data: {"candidates":[{"content":{"role":"model",` +
+				`"parts":[{"text":"It is "}]}}],"modelVersion":"m-1",` +
+				`"responseId":"resp-abc"}` + "\n\n",
+			`data: {"candidates":[{"content":{"role":"model",` +
+				`"parts":[{"text":"31 C."}]},"finishReason":"STOP"}],` +
+				`"modelVersion":"m-1","responseId":"resp-abc",` +
+				`"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":10,` +
+				`"totalTokenCount":30}}` + "\n\n",
+		}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return []string{
+			transBedrockEvent("messageStart", `{"role":"assistant"}`),
+			transBedrockEvent("contentBlockStart",
+				`{"contentBlockIndex":0,"start":{}}`),
+			transBedrockEvent("contentBlockDelta",
+				`{"contentBlockIndex":0,"delta":{"text":"It is "}}`),
+			transBedrockEvent("contentBlockDelta",
+				`{"contentBlockIndex":0,"delta":{"text":"31 C."}}`),
+			transBedrockEvent("contentBlockStop", `{"contentBlockIndex":0}`),
+			transBedrockEvent("messageStop", `{"stopReason":"end_turn"}`),
+			transBedrockEvent("metadata",
+				`{"usage":{"inputTokens":20,"outputTokens":10,"totalTokens":30}}`),
+		}
+	default:
+		return []string{
+			`data: {"id":"chatcmpl_abc","object":"chat.completion.chunk","model":"m-1",` +
+				`"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}` + "\n\n",
+			`data: {"id":"chatcmpl_abc","object":"chat.completion.chunk","model":"m-1",` +
+				`"choices":[{"index":0,"delta":{"content":"It is "}}]}` + "\n\n",
+			`data: {"id":"chatcmpl_abc","object":"chat.completion.chunk","model":"m-1",` +
+				`"choices":[{"index":0,"delta":{"content":"31 C."}}]}` + "\n\n",
+			`data: {"id":"chatcmpl_abc","object":"chat.completion.chunk","model":"m-1",` +
+				`"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n",
+			`data: {"id":"chatcmpl_abc","object":"chat.completion.chunk","model":"m-1",` +
+				`"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":10,` +
+				`"total_tokens":30}}` + "\n\n",
+			"data: [DONE]\n\n",
+		}
+	}
+}
+
+func transBedrockEvent(eventType, payload string) string {
+	return string(httputils.EncodeLLMEventStreamEvent(eventType, []byte(payload)))
+}
+
+func transStreamMediaType(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	if protocol == corev1.Service_Spec_Config_LLM_BEDROCK {
+		return transEventStreamMediaType
+	}
+	return transSSEMediaType
+}
+
+func (r *transResult) streamEvents(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol) []map[string]any {
+
+	if protocol != corev1.Service_Spec_Config_LLM_BEDROCK {
+		return r.events(t)
+	}
+
+	var ret []map[string]any
+
+	buf := []byte(r.body)
+	for len(buf) > 0 {
+		eventType, payload, n := httputils.NextLLMEventStreamEvent(buf)
+		assert.True(t, n > 0, r.body)
+		buf = buf[n:]
+
+		cur := make(map[string]any)
+		assert.Nil(t, json.Unmarshal(payload, &cur), string(payload))
+		cur["__event"] = eventType
+
+		ret = append(ret, cur)
+	}
+
+	return ret
+}
+
+func transStreamText(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol, evs []map[string]any) string {
+
+	var ret string
+
+	for _, ev := range evs {
+		switch protocol {
+		case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+			if ev["type"] != "content_block_delta" {
+				continue
+			}
+			delta := ev["delta"].(map[string]any)
+			if text, ok := delta["text"].(string); ok {
+				ret = ret + text
+			}
+		case corev1.Service_Spec_Config_LLM_GEMINI:
+			candidates, ok := ev["candidates"].([]any)
+			if !ok || len(candidates) == 0 {
+				continue
+			}
+			content := candidates[0].(map[string]any)["content"].(map[string]any)
+			for _, part := range content["parts"].([]any) {
+				if text, ok := part.(map[string]any)["text"].(string); ok {
+					ret = ret + text
+				}
+			}
+		case corev1.Service_Spec_Config_LLM_BEDROCK:
+			if ev["__event"] != "contentBlockDelta" {
+				continue
+			}
+			delta := ev["delta"].(map[string]any)
+			if text, ok := delta["text"].(string); ok {
+				ret = ret + text
+			}
+		default:
+			choices, ok := ev["choices"].([]any)
+			if !ok || len(choices) == 0 {
+				continue
+			}
+			delta := choices[0].(map[string]any)["delta"].(map[string]any)
+			if text, ok := delta["content"].(string); ok {
+				ret = ret + text
+			}
+		}
+	}
+
+	return ret
+}
+
+func TestTranslationMatrixStream(t *testing.T) {
+	for _, from := range transProtocols {
+		for _, to := range transProtocols {
+			if from == to {
+				continue
+			}
+
+			label := from.String() + "->" + to.String()
+
+			o := newTransOpts(from, to, transStreamBody(from))
+			o.isStream = true
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", transStreamMediaType(to))
+				for _, event := range transUpstreamStream(to) {
+					w.Write([]byte(event))
+				}
+			}
+
+			res := serveTranslation(t, o)
+
+			assert.Equal(t, http.StatusOK, res.code, label+" "+res.body)
+			assert.Equal(t, transStreamMediaType(from),
+				res.header.Get("Content-Type"), label)
+
+			expectedPath, _, _ := httputils.GetLLMRoutePath(to,
+				getTransRoute(to, corev1.Service_Spec_Config_LLM_GENERATE),
+				transTestModel, true)
+			assert.Equal(t, expectedPath, res.upstreamPath, label)
+
+			evs := res.streamEvents(t, from)
+			assert.Equal(t, "It is 31 C.", transStreamText(t, from, evs), label)
+
+			assert.Equal(t, uint64(10),
+				res.reqCtx.LLMUpstreamResponse.Usage.OutputTokens, label)
+		}
+	}
+}
+
+func transStreamBody(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return `{"model":"corp-model","max_tokens":500,"stream":true,` +
+			`"messages":[{"role":"user","content":"Hi"}]}`
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return `{"contents":[{"role":"user","parts":[{"text":"Hi"}]}]}`
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return `{"messages":[{"role":"user","content":[{"text":"Hi"}]}]}`
+	default:
+		return `{"model":"corp-model","stream":true,` +
+			`"stream_options":{"include_usage":true},` +
+			`"messages":[{"role":"user","content":"Hi"}]}`
+	}
+}
+
+func transToolHistoryBody(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return `{"model":"corp-model","max_tokens":500,"messages":[` +
+			`{"role":"user","content":"Weather in Cairo?"},` +
+			`{"role":"assistant","content":[{"type":"tool_use","id":"call_123",` +
+			`"name":"get_weather","input":{"city":"Cairo"}}]},` +
+			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_123",` +
+			`"content":"31 C"}]}],` +
+			`"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return `{"contents":[` +
+			`{"role":"user","parts":[{"text":"Weather in Cairo?"}]},` +
+			`{"role":"model","parts":[{"functionCall":{"id":"call_123",` +
+			`"name":"get_weather","args":{"city":"Cairo"}}}]},` +
+			`{"role":"user","parts":[{"functionResponse":{"id":"call_123",` +
+			`"name":"get_weather","response":{"result":"31 C"}}}]}],` +
+			`"tools":[{"functionDeclarations":[{"name":"get_weather",` +
+			`"parameters":{"type":"object"}}]}]}`
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return `{"messages":[` +
+			`{"role":"user","content":[{"text":"Weather in Cairo?"}]},` +
+			`{"role":"assistant","content":[{"toolUse":{"toolUseId":"call_123",` +
+			`"name":"get_weather","input":{"city":"Cairo"}}}]},` +
+			`{"role":"user","content":[{"toolResult":{"toolUseId":"call_123",` +
+			`"content":[{"text":"31 C"}],"status":"success"}}]}],` +
+			`"toolConfig":{"tools":[{"toolSpec":{"name":"get_weather",` +
+			`"inputSchema":{"json":{"type":"object"}}}}]}}`
+	default:
+		return `{"model":"corp-model","messages":[` +
+			`{"role":"user","content":"Weather in Cairo?"},` +
+			`{"role":"assistant","tool_calls":[{"id":"call_123","type":"function",` +
+			`"function":{"name":"get_weather","arguments":"{\"city\":\"Cairo\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"call_123","content":"31 C"}],` +
+			`"tools":[{"type":"function","function":{"name":"get_weather",` +
+			`"parameters":{"type":"object"}}}]}`
+	}
+}
+
+type transToolTurn struct {
+	callID string
+	name   string
+	city   string
+
+	resultID   string
+	resultText string
+}
+
+func transUpstreamToolTurn(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol,
+	upstream map[string]any) *transToolTurn {
+
+	ret := &transToolTurn{}
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		msgs := upstream["messages"].([]any)
+		call := msgs[1].(map[string]any)["content"].([]any)[0].(map[string]any)
+		ret.callID = call["id"].(string)
+		ret.name = call["name"].(string)
+		ret.city = call["input"].(map[string]any)["city"].(string)
+
+		result := msgs[2].(map[string]any)["content"].([]any)[0].(map[string]any)
+		ret.resultID = result["tool_use_id"].(string)
+		ret.resultText = result["content"].(string)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		contents := upstream["contents"].([]any)
+		call := contents[1].(map[string]any)["parts"].([]any)[0].(map[string]any)
+		fn := call["functionCall"].(map[string]any)
+		ret.callID, _ = fn["id"].(string)
+		ret.name = fn["name"].(string)
+		ret.city = fn["args"].(map[string]any)["city"].(string)
+
+		result := contents[2].(map[string]any)["parts"].([]any)[0].(map[string]any)
+		resp := result["functionResponse"].(map[string]any)
+		ret.resultID, _ = resp["id"].(string)
+		ret.resultText = resp["response"].(map[string]any)["result"].(string)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		msgs := upstream["messages"].([]any)
+		call := msgs[1].(map[string]any)["content"].([]any)[0].(map[string]any)
+		use := call["toolUse"].(map[string]any)
+		ret.callID = use["toolUseId"].(string)
+		ret.name = use["name"].(string)
+		ret.city = use["input"].(map[string]any)["city"].(string)
+
+		result := msgs[2].(map[string]any)["content"].([]any)[0].(map[string]any)
+		res := result["toolResult"].(map[string]any)
+		ret.resultID = res["toolUseId"].(string)
+		content := res["content"].([]any)[0].(map[string]any)
+		if text, ok := content["text"].(string); ok {
+			ret.resultText = text
+		} else {
+			ret.resultText = content["json"].(map[string]any)["result"].(string)
+		}
+	default:
+		msgs := upstream["messages"].([]any)
+		call := msgs[1].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+		ret.callID = call["id"].(string)
+		fn := call["function"].(map[string]any)
+		ret.name = fn["name"].(string)
+
+		args := make(map[string]any)
+		assert.Nil(t, json.Unmarshal([]byte(fn["arguments"].(string)), &args))
+		ret.city = args["city"].(string)
+
+		result := msgs[2].(map[string]any)
+		ret.resultID = result["tool_call_id"].(string)
+		ret.resultText = result["content"].(string)
+	}
+
+	return ret
+}
+
+func TestTranslationMatrixToolHistory(t *testing.T) {
+	for _, from := range transProtocols {
+		for _, to := range transProtocols {
+			if from == to {
+				continue
+			}
+
+			label := from.String() + "->" + to.String()
+
+			o := newTransOpts(from, to, transToolHistoryBody(from))
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, transUpstreamResponse(to))
+			}
+
+			res := serveTranslation(t, o)
+
+			assert.Equal(t, http.StatusOK, res.code, label+" "+res.body)
+
+			turn := transUpstreamToolTurn(t, to, res.upstream)
+			assert.Equal(t, "get_weather", turn.name, label)
+			assert.Equal(t, "Cairo", turn.city, label)
+			assert.Equal(t, "31 C", turn.resultText, label)
+			assert.Equal(t, turn.callID, turn.resultID, label)
+
+			if to != corev1.Service_Spec_Config_LLM_GEMINI {
+				assert.Equal(t, "call_123", turn.callID, label)
+			}
+		}
+	}
+}
+
+func transUpstreamToolResponse(protocol corev1.Service_Spec_Config_LLM_Protocol) string {
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return `{"id":"msg_abc","type":"message","role":"assistant","model":"m-1",` +
+			`"content":[{"type":"tool_use","id":"tool_1","name":"get_weather",` +
+			`"input":{"city":"Cairo"}}],"stop_reason":"tool_use",` +
+			`"usage":{"input_tokens":20,"output_tokens":10}}`
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return `{"candidates":[{"content":{"role":"model","parts":[` +
+			`{"functionCall":{"id":"tool_1","name":"get_weather",` +
+			`"args":{"city":"Cairo"}}}]},"finishReason":"STOP"}],` +
+			`"modelVersion":"m-1","responseId":"resp-abc",` +
+			`"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":10}}`
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return `{"output":{"message":{"role":"assistant","content":[` +
+			`{"toolUse":{"toolUseId":"tool_1","name":"get_weather",` +
+			`"input":{"city":"Cairo"}}}]}},"stopReason":"tool_use",` +
+			`"usage":{"inputTokens":20,"outputTokens":10,"totalTokens":30}}`
+	default:
+		return `{"id":"chatcmpl_abc","object":"chat.completion","created":1,` +
+			`"model":"m-1","choices":[{"index":0,"message":{"role":"assistant",` +
+			`"content":null,"tool_calls":[{"id":"tool_1","type":"function",` +
+			`"function":{"name":"get_weather","arguments":"{\"city\":\"Cairo\"}"}}]},` +
+			`"finish_reason":"tool_calls"}],` +
+			`"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}`
+	}
+}
+
+func transDownstreamToolCall(t *testing.T,
+	protocol corev1.Service_Spec_Config_LLM_Protocol,
+	out map[string]any) (string, string, string) {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		assert.Equal(t, "tool_use", out["stop_reason"])
+		block := out["content"].([]any)[0].(map[string]any)
+		return block["id"].(string), block["name"].(string),
+			block["input"].(map[string]any)["city"].(string)
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		candidate := out["candidates"].([]any)[0].(map[string]any)
+		content := candidate["content"].(map[string]any)
+		fn := content["parts"].([]any)[0].(map[string]any)["functionCall"].(map[string]any)
+		id, _ := fn["id"].(string)
+		return id, fn["name"].(string), fn["args"].(map[string]any)["city"].(string)
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		assert.Equal(t, "tool_use", out["stopReason"])
+		msg := out["output"].(map[string]any)["message"].(map[string]any)
+		use := msg["content"].([]any)[0].(map[string]any)["toolUse"].(map[string]any)
+		return use["toolUseId"].(string), use["name"].(string),
+			use["input"].(map[string]any)["city"].(string)
+	default:
+		choice := out["choices"].([]any)[0].(map[string]any)
+		assert.Equal(t, "tool_calls", choice["finish_reason"])
+		call := choice["message"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+		fn := call["function"].(map[string]any)
+
+		args := make(map[string]any)
+		assert.Nil(t, json.Unmarshal([]byte(fn["arguments"].(string)), &args))
+
+		return call["id"].(string), fn["name"].(string), args["city"].(string)
+	}
+}
+
+func TestTranslationMatrixToolResponse(t *testing.T) {
+	for _, from := range transProtocols {
+		for _, to := range transProtocols {
+			if from == to {
+				continue
+			}
+
+			label := from.String() + "->" + to.String()
+
+			o := newTransOpts(from, to, transSourceBody(from))
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, transUpstreamToolResponse(to))
+			}
+
+			res := serveTranslation(t, o)
+
+			assert.Equal(t, http.StatusOK, res.code, label+" "+res.body)
+
+			id, name, city := transDownstreamToolCall(t, from, res.json(t))
+			assert.Equal(t, "tool_1", id, label)
+			assert.Equal(t, "get_weather", name, label)
+			assert.Equal(t, "Cairo", city, label)
+		}
+	}
+}
+
+func TestTranslationGeminiThoughtSignature(t *testing.T) {
+	cacheC := newFakeCache()
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"model":"corp-model","max_tokens":64,`+
+				`"messages":[{"role":"user","content":"Hi"}]}`)
+		o.cacheC = cacheC
+		o.upstream = func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, `{"candidates":[{"content":{"role":"model","parts":[`+
+				`{"functionCall":{"id":"call_123","name":"get_weather",`+
+				`"args":{"city":"Cairo"}},"thoughtSignature":"sig-abc"}]},`+
+				`"finishReason":"STOP"}],"modelVersion":"m-1"}`)
+		}
+
+		res := serveTranslation(t, o)
+
+		assert.Equal(t, http.StatusOK, res.code)
+		assert.Equal(t, 1, len(cacheC.entries))
+
+		block := res.json(t)["content"].([]any)[0].(map[string]any)
+		assert.Equal(t, "tool_use", block["type"])
+		assert.Equal(t, "call_123", block["id"])
+		assert.NotContains(t, res.body, "sig-abc")
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"model":"corp-model","max_tokens":64,"messages":[`+
+				`{"role":"user","content":"Hi"},`+
+				`{"role":"assistant","content":[{"type":"tool_use","id":"call_123",`+
+				`"name":"get_weather","input":{"city":"Cairo"}}]},`+
+				`{"role":"user","content":[{"type":"tool_result",`+
+				`"tool_use_id":"call_123","content":"31 C"}]}]}`)
+		o.cacheC = cacheC
+		o.upstream = func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, transUpstreamResponse(corev1.Service_Spec_Config_LLM_GEMINI))
+		}
+
+		res := serveTranslation(t, o)
+
+		assert.Equal(t, http.StatusOK, res.code)
+
+		part := res.upstream["contents"].([]any)[1].(map[string]any)["parts"].([]any)[0]
+		assert.Equal(t, "sig-abc", part.(map[string]any)["thoughtSignature"])
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"model":"corp-model","max_tokens":64,"messages":[`+
+				`{"role":"user","content":"Hi"},`+
+				`{"role":"assistant","content":[{"type":"tool_use","id":"unknown_1",`+
+				`"name":"get_weather","input":{"city":"Cairo"}}]}]}`)
+		o.cacheC = newFakeCache()
+		o.upstream = func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, transUpstreamResponse(corev1.Service_Spec_Config_LLM_GEMINI))
+		}
+
+		res := serveTranslation(t, o)
+
+		assert.Equal(t, http.StatusOK, res.code)
+
+		part := res.upstream["contents"].([]any)[1].(map[string]any)["parts"].([]any)[0]
+		_, ok := part.(map[string]any)["thoughtSignature"]
+		assert.False(t, ok)
+	}
+}
+
+func TestTranslationModelInPath(t *testing.T) {
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"Hi"}]}`)
+
+		res := serveTranslation(t, o)
+
+		assert.Equal(t, "/v1beta/models/gemini-2.5-pro:generateContent", res.upstreamPath)
+		_, ok := res.upstream["model"]
+		assert.False(t, ok)
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_GEMINI,
+			corev1.Service_Spec_Config_LLM_OPENAI,
+			`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}]}`)
+
+		res := serveTranslation(t, o)
+
+		assert.Equal(t, openAIChatPath, res.upstreamPath)
+		assert.Equal(t, transTestModel, res.upstream["model"])
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+			corev1.Service_Spec_Config_LLM_BEDROCK,
+			`{"messages":[{"role":"user","content":"Hi"}]}`)
+
+		res := serveTranslation(t, o)
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_BEDROCK,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"messages":[{"role":"user","content":[{"text":"Hi"}]}]}`)
+		o.path = "/model/anthropic.claude-sonnet-4-5-v1:0/converse"
+
+		res := serveTranslation(t, o)
+
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+		assert.Contains(t, res.body, "cannot be translated")
+	}
+}
+
+func TestTranslationReasoningMatrix(t *testing.T) {
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			`{"model":"corp-model","messages":[{"role":"user","content":"Hi"}]}`)
+		o.reasoning = &corev1.Service_Spec_Config_LLM_Reasoning{
+			Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+				Level: corev1.Service_Spec_Config_LLM_Reasoning_LOW,
+			},
+		}
+
+		res := serveTranslation(t, o)
+
+		cfg := res.upstream["generationConfig"].(map[string]any)
+		thinking := cfg["thinkingConfig"].(map[string]any)
+		assert.Equal(t, float64(lowReasoningBudget), thinking["thinkingBudget"])
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+			corev1.Service_Spec_Config_LLM_BEDROCK,
+			`{"model":"corp-model","messages":[{"role":"user","content":"Hi"}]}`)
+		o.reasoning = &corev1.Service_Spec_Config_LLM_Reasoning{
+			Type: &corev1.Service_Spec_Config_LLM_Reasoning_Level_{
+				Level: corev1.Service_Spec_Config_LLM_Reasoning_HIGH,
+			},
+		}
+
+		res := serveTranslation(t, o)
+
+		fields := res.upstream["additionalModelRequestFields"].(map[string]any)
+		cfg := fields["reasoning_config"].(map[string]any)
+		assert.Equal(t, "enabled", cfg["type"])
+		assert.Equal(t, float64(highReasoningBudget), cfg["budget_tokens"])
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_GEMINI,
+			corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],`+
+				`"generationConfig":{"thinkingConfig":{"thinkingBudget":8192}}}`)
+
+		res := serveTranslation(t, o)
+
+		thinking := res.upstream["thinking"].(map[string]any)
+		assert.Equal(t, "enabled", thinking["type"])
+		assert.Equal(t, float64(8192), thinking["budget_tokens"])
+	}
+
+	{
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_GEMINI,
+			corev1.Service_Spec_Config_LLM_ANTHROPIC,
+			`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],`+
+				`"generationConfig":{"thinkingConfig":{"thinkingBudget":0}}}`)
+
+		res := serveTranslation(t, o)
+
+		thinking := res.upstream["thinking"].(map[string]any)
+		assert.Equal(t, "disabled", thinking["type"])
+	}
+}
+
+func TestTranslationUnsupportedGeminiBedrock(t *testing.T) {
+	for _, body := range []string{
+		`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
+			`"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT"}]}`,
+		`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
+			`"cachedContent":"caches/abc"}`,
+		`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
+			`"generationConfig":{"candidateCount":2}}`,
+		`{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
+			`"tools":[{"googleSearch":{}}]}`,
+		`{"contents":[{"role":"user","parts":[{"fileData":` +
+			`{"fileUri":"files/abc"}}]}]}`,
+	} {
+		res := serveTranslation(t, newTransOpts(
+			corev1.Service_Spec_Config_LLM_GEMINI,
+			corev1.Service_Spec_Config_LLM_OPENAI, body))
+
+		assert.False(t, res.isNext, body)
+		assert.Equal(t, http.StatusBadRequest, res.code, body)
+		assert.Contains(t, res.body, "cannot be translated", body)
+	}
+
+	for _, body := range []string{
+		`{"messages":[{"role":"user","content":[{"text":"Hi"}]}],` +
+			`"guardrailConfig":{"guardrailIdentifier":"g1"}}`,
+		`{"messages":[{"role":"user","content":[{"text":"Hi"}]}],` +
+			`"additionalModelRequestFields":{"top_k":10}}`,
+		`{"messages":[{"role":"user","content":[{"video":{"format":"mp4"}}]}]}`,
+		`{"messages":[{"role":"user","content":[{"text":"Hi"}]}],` +
+			`"promptVariables":{"a":{"text":"b"}}}`,
+	} {
+		o := newTransOpts(corev1.Service_Spec_Config_LLM_BEDROCK,
+			corev1.Service_Spec_Config_LLM_OPENAI, body)
+
+		res := serveTranslation(t, o)
+
+		assert.False(t, res.isNext, body)
+		assert.Equal(t, http.StatusBadRequest, res.code, body)
+	}
+}
+
+func TestTranslationGeminiPromptBlocked(t *testing.T) {
+	o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_GEMINI,
+		`{"model":"corp-model","messages":[{"role":"user","content":"Hi"}]}`)
+	o.upstream = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, `{"promptFeedback":{"blockReason":"SAFETY"},`+
+			`"usageMetadata":{"promptTokenCount":9}}`)
+	}
+
+	res := serveTranslation(t, o)
+
+	assert.Equal(t, http.StatusBadGateway, res.code)
+	assert.Contains(t, res.body, "SAFETY")
+	assert.Equal(t, uint64(9), res.reqCtx.LLMUpstreamResponse.Usage.InputTokens)
+}
+
+func TestTranslationBedrockToolName(t *testing.T) {
+	body := `{"model":"corp-model","messages":[{"role":"user","content":"Hi"}],` +
+		`"tools":[{"type":"function","function":{"name":"get.weather",` +
+		`"parameters":{"type":"object"}}}]}`
+
+	res := serveTranslation(t, newTransOpts(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_BEDROCK, body))
+
+	assert.False(t, res.isNext)
+	assert.Equal(t, http.StatusBadRequest, res.code)
+	assert.Contains(t, res.body, "get.weather")
+}
+
+func TestTranslationBedrockToolCallID(t *testing.T) {
+	body := `{"model":"corp-model","messages":[` +
+		`{"role":"user","content":"Hi"},` +
+		`{"role":"assistant","tool_calls":[{"id":"call/with:invalid",` +
+		`"type":"function","function":{"name":"get_weather",` +
+		`"arguments":"{\"city\":\"Cairo\"}"}}]},` +
+		`{"role":"tool","tool_call_id":"call/with:invalid","content":"31 C"}]}`
+
+	res := serveTranslation(t, newTransOpts(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_BEDROCK, body))
+
+	assert.True(t, res.isNext)
+
+	turn := transUpstreamToolTurn(t, corev1.Service_Spec_Config_LLM_BEDROCK, res.upstream)
+	assert.Equal(t, turn.callID, turn.resultID)
+	assert.NotEqual(t, "call/with:invalid", turn.callID)
+	assert.True(t, len(turn.callID) <= maxBedrockToolIDLen)
+}
+
+func TestTranslationBedrockResponseModel(t *testing.T) {
+	o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_BEDROCK,
+		`{"model":"corp-model","messages":[{"role":"user","content":"Hi"}]}`)
+	o.upstream = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, transUpstreamResponse(corev1.Service_Spec_Config_LLM_BEDROCK))
+	}
+
+	res := serveTranslation(t, o)
+
+	assert.Equal(t, transTestModel, res.json(t)["model"])
+	assert.Equal(t, "", res.reqCtx.LLMUpstreamResponse.Model)
+}
+
+func TestTranslationStreamEventStreamFraming(t *testing.T) {
+	o := newTransOpts(corev1.Service_Spec_Config_LLM_BEDROCK,
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		transStreamBody(corev1.Service_Spec_Config_LLM_BEDROCK))
+	o.isStream = true
+	o.upstream = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", transSSEMediaType)
+		for _, event := range transUpstreamStream(corev1.Service_Spec_Config_LLM_OPENAI) {
+			w.Write([]byte(event))
+		}
+	}
+
+	res := serveTranslation(t, o)
+
+	assert.Equal(t, transEventStreamMediaType, res.header.Get("Content-Type"))
+
+	evs := res.streamEvents(t, corev1.Service_Spec_Config_LLM_BEDROCK)
+
+	var kinds []string
+	for _, ev := range evs {
+		kinds = append(kinds, ev["__event"].(string))
+	}
+
+	assert.Equal(t, []string{
+		"messageStart", "contentBlockDelta", "contentBlockDelta",
+		"contentBlockStop", "messageStop", "metadata",
+	}, kinds)
+
+	assert.Equal(t, "end_turn", evs[4]["stopReason"])
+	assert.Equal(t, float64(10),
+		evs[5]["usage"].(map[string]any)["outputTokens"])
+}
+
+func TestTranslationEventStreamRoundTrip(t *testing.T) {
+	payload := `{"contentBlockIndex":3,"delta":{"text":"Hello"}}`
+
+	frame := httputils.EncodeLLMEventStreamEvent("contentBlockDelta", []byte(payload))
+
+	eventType, out, n := httputils.NextLLMEventStreamEvent(frame)
+	assert.Equal(t, len(frame), n)
+	assert.Equal(t, "contentBlockDelta", eventType)
+	assert.Equal(t, payload, string(out))
+
+	_, _, n = httputils.NextLLMEventStreamEvent(frame[:len(frame)-1])
+	assert.Equal(t, 0, n)
 }

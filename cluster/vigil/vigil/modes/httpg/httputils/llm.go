@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"net/http"
 	"net/url"
 	"sort"
@@ -415,6 +416,34 @@ func matchLLMRouteBedrock(method, path string) (*llmRouteMatch, bool) {
 		}, true
 	default:
 		return nil, false
+	}
+}
+
+func GetLLMRoutePath(protocol corev1.Service_Spec_Config_LLM_Protocol,
+	route corev1.RequestContext_Request_LLM_Route, model string,
+	isStream bool) (string, string, string) {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		verb := "generateContent"
+		var query string
+		if isStream {
+			verb = "streamGenerateContent"
+			query = "alt=sse"
+		}
+		return llmGeminiModelsPath + "/" + model + ":" + verb,
+			llmGeminiModelsPath + "/" + url.PathEscape(model) + ":" + verb, query
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		verb := "converse"
+		if isStream {
+			verb = "converse-stream"
+		}
+		return llmBedrockModelPrefix + model + "/" + verb,
+			llmBedrockModelPrefix + url.PathEscape(model) + "/" + verb, ""
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return "/v1/messages", "", ""
+	default:
+		return "/v1/chat/completions", "", ""
 	}
 }
 
@@ -1654,4 +1683,126 @@ func isLLMContentEventType(arg string) bool {
 
 func IsLLMStreamDone(data []byte) bool {
 	return bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]"))
+}
+
+const (
+	llmEventStreamHeaderString = 7
+	maxLLMEventStreamHeaders   = 32
+)
+
+func NextLLMEventStreamEvent(buf []byte) (string, []byte, int) {
+	if len(buf) < llmEventStreamPreludeLen {
+		return "", nil, 0
+	}
+
+	totalLen := int(binary.BigEndian.Uint32(buf[0:4]))
+	headersLen := int(binary.BigEndian.Uint32(buf[4:8]))
+
+	if totalLen < llmEventStreamPreludeLen+llmEventStreamCRCLen ||
+		totalLen > maxLLMEventStreamMessageLen {
+		return "", nil, -1
+	}
+
+	if headersLen > totalLen-llmEventStreamPreludeLen-llmEventStreamCRCLen {
+		return "", nil, -1
+	}
+
+	if len(buf) < totalLen {
+		return "", nil, 0
+	}
+
+	headers := buf[llmEventStreamPreludeLen : llmEventStreamPreludeLen+headersLen]
+	payload := buf[llmEventStreamPreludeLen+headersLen : totalLen-llmEventStreamCRCLen]
+
+	eventType, ok := parseLLMEventStreamHeaders(headers)
+	if !ok {
+		return "", nil, -1
+	}
+
+	return eventType, bytes.Clone(payload), totalLen
+}
+
+func parseLLMEventStreamHeaders(buf []byte) (string, bool) {
+	var ret string
+
+	for i := 0; len(buf) > 0; i++ {
+		if i > maxLLMEventStreamHeaders {
+			return "", false
+		}
+
+		if len(buf) < 1 {
+			return "", false
+		}
+		nameLen := int(buf[0])
+		buf = buf[1:]
+
+		if len(buf) < nameLen+1 {
+			return "", false
+		}
+		name := string(buf[:nameLen])
+		valueType := buf[nameLen]
+		buf = buf[nameLen+1:]
+
+		if valueType != llmEventStreamHeaderString {
+			return "", false
+		}
+
+		if len(buf) < 2 {
+			return "", false
+		}
+		valueLen := int(binary.BigEndian.Uint16(buf[0:2]))
+		buf = buf[2:]
+
+		if len(buf) < valueLen {
+			return "", false
+		}
+		value := string(buf[:valueLen])
+		buf = buf[valueLen:]
+
+		if name == ":event-type" {
+			ret = value
+		}
+	}
+
+	return ret, true
+}
+
+func EncodeLLMEventStreamEvent(eventType string, payload []byte) []byte {
+	headers := encodeLLMEventStreamHeaders(map[string]string{
+		":event-type":   eventType,
+		":message-type": "event",
+		":content-type": "application/json",
+	})
+
+	totalLen := llmEventStreamPreludeLen + len(headers) + len(payload) + llmEventStreamCRCLen
+
+	ret := make([]byte, 0, totalLen)
+	ret = binary.BigEndian.AppendUint32(ret, uint32(totalLen))
+	ret = binary.BigEndian.AppendUint32(ret, uint32(len(headers)))
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret[:8]))
+	ret = append(ret, headers...)
+	ret = append(ret, payload...)
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret))
+
+	return ret
+}
+
+var llmEventStreamHeaderOrder = []string{":event-type", ":content-type", ":message-type"}
+
+func encodeLLMEventStreamHeaders(hdrs map[string]string) []byte {
+	var ret []byte
+
+	for _, name := range llmEventStreamHeaderOrder {
+		value, ok := hdrs[name]
+		if !ok {
+			continue
+		}
+		ret = append(ret, byte(len(name)))
+		ret = append(ret, name...)
+		ret = append(ret, llmEventStreamHeaderString)
+		ret = binary.BigEndian.AppendUint16(ret, uint16(len(value)))
+		ret = append(ret, value...)
+	}
+
+	return ret
 }

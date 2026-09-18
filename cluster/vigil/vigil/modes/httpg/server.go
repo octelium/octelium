@@ -442,7 +442,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return llm.NewTranslation(ctx, next)
+		return llm.NewTranslation(ctx, next, s.octeliumC, s.svcUID)
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {

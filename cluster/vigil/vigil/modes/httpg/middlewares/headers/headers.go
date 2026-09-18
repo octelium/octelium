@@ -319,6 +319,10 @@ var llmCredentialHeaders = []string{
 	"Authorization",
 	"X-Api-Key",
 	"Api-Key",
+	"X-Goog-Api-Key",
+	"X-Amz-Content-Sha256",
+	"X-Amz-Date",
+	"X-Amz-Security-Token",
 }
 
 func scrubLLMCredentialHeaders(req *http.Request) {

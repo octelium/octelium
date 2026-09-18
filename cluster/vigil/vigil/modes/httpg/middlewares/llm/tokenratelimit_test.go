@@ -23,6 +23,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -40,6 +41,11 @@ type fakeOcteliumC struct {
 	octeliumc.ClientInterface
 	rateLimitC *fakeRateLimit
 	vectorC    *fakeVector
+	cacheC     *fakeCache
+}
+
+func (c *fakeOcteliumC) CacheC() rcachev1.MainServiceClient {
+	return c.cacheC
 }
 
 func (c *fakeOcteliumC) RateLimitC() rratelimitv1.MainServiceClient {

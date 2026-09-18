@@ -259,7 +259,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 
 				payloadHash := fmt.Sprintf(
 					"%x",
-					sha256.Sum256([]byte(reqCtx.Body)),
+					sha256.Sum256(reqCtx.GetUpstreamBody()),
 				)
 				outReq.Header.Set(
 					"X-Amz-Content-Sha256",

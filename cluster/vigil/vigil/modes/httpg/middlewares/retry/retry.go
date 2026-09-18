@@ -70,8 +70,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	var bodyBytes []byte
 
-	if len(reqCtx.Body) > 0 && reqCtx.LLMTranslation == nil {
-		bodyBytes = reqCtx.Body
+	if len(reqCtx.GetUpstreamBody()) > 0 {
+		bodyBytes = reqCtx.GetUpstreamBody()
 	} else {
 		if req.ContentLength < 0 || req.ContentLength > getMaxBodySize(svcCfg) {
 			m.next.ServeHTTP(rw, req)

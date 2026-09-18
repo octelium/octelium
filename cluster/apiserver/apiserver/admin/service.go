@@ -2628,11 +2628,19 @@ func (s *Server) validateLLMTranslation(llm *corev1.Service_Spec_Config_LLM) err
 func isLLMTranslationSupported(protocol,
 	upstreamProtocol corev1.Service_Spec_Config_LLM_Protocol) bool {
 
+	return isLLMTranslationProtocol(protocol) &&
+		isLLMTranslationProtocol(upstreamProtocol)
+}
+
+func isLLMTranslationProtocol(
+	protocol corev1.Service_Spec_Config_LLM_Protocol) bool {
+
 	switch protocol {
-	case corev1.Service_Spec_Config_LLM_OPENAI:
-		return upstreamProtocol == corev1.Service_Spec_Config_LLM_ANTHROPIC
-	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
-		return upstreamProtocol == corev1.Service_Spec_Config_LLM_OPENAI
+	case corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		corev1.Service_Spec_Config_LLM_GEMINI,
+		corev1.Service_Spec_Config_LLM_BEDROCK:
+		return true
 	default:
 		return false
 	}

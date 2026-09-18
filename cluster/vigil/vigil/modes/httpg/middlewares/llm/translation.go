@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonguardrail"
@@ -45,15 +46,27 @@ var transProtocolHeaders = map[corev1.Service_Spec_Config_LLM_Protocol][]string{
 		"Anthropic-Beta",
 		"Anthropic-Dangerous-Direct-Browser-Access",
 	},
+	corev1.Service_Spec_Config_LLM_GEMINI: {
+		geminiAPIKeyHeader,
+		"X-Goog-User-Project",
+		"X-Goog-Api-Client",
+	},
+	corev1.Service_Spec_Config_LLM_BEDROCK: {
+		"X-Amzn-Bedrock-Accept",
+		"X-Amzn-Bedrock-Save",
+	},
 }
 
 type translation struct {
-	next http.Handler
+	next         http.Handler
+	continuation *transContinuation
 }
 
-func NewTranslation(ctx context.Context, next http.Handler) (http.Handler, error) {
+func NewTranslation(ctx context.Context, next http.Handler,
+	octeliumC octeliumc.ClientInterface, svcUID string) (http.Handler, error) {
 	return &translation{
-		next: next,
+		next:         next,
+		continuation: newTransContinuation(octeliumC, svcUID),
 	}, nil
 }
 
@@ -65,6 +78,9 @@ type transPlan struct {
 	toProtocol   corev1.Service_Spec_Config_LLM_Protocol
 
 	llm *corev1.Service_Spec_Config_LLM
+
+	model  string
+	stream bool
 
 	streamUsage bool
 }
@@ -90,7 +106,7 @@ func (m *translation) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := m.translateRequest(req, reqCtx, plan); err != nil {
+	if err := m.translateRequest(ctx, req, reqCtx, plan); err != nil {
 		zap.L().Debug("Could not translate the LLM request", zap.Error(err))
 		m.writeError(w, reqCtx, err)
 		return
@@ -101,7 +117,9 @@ func (m *translation) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		UpstreamRoute:    plan.to.route(),
 	}
 
-	rw := newTransResponseWriter(w, reqCtx, plan)
+	rw := newTransResponseWriter(ctx, w, reqCtx, plan)
+	rw.continuation = m.continuation
+
 	m.next.ServeHTTP(rw, req)
 	rw.finish()
 }
@@ -122,14 +140,39 @@ func (m *translation) getPlan(reqCtx *middlewares.RequestContext) (*transPlan, e
 			route.String(), fromProtocol.String(), toProtocol.String())
 	}
 
+	model := transEffectiveModel(reqCtx)
+
+	if model == "" && httputils.IsLLMModelInPath(toProtocol) {
+		return nil, transUnsupported(
+			"a request that names no model cannot be translated to the %s protocol",
+			toProtocol.String())
+	}
+
+	if err := checkModelName(toProtocol, model); err != nil {
+		return nil, transUnsupported(
+			"the requested model cannot be translated to the %s protocol: %s",
+			toProtocol.String(), err.Error())
+	}
+
 	return &transPlan{
 		from:         from,
 		to:           to,
 		fromProtocol: fromProtocol,
 		toProtocol:   toProtocol,
 
+		model:  model,
+		stream: reqCtx.LLM.GetStream(),
+
 		llm: svcCfg.GetLLM(),
 	}, nil
+}
+
+func transEffectiveModel(reqCtx *middlewares.RequestContext) string {
+	if cur := reqCtx.LLMModel; cur != nil && cur.Effective != "" {
+		return cur.Effective
+	}
+
+	return reqCtx.LLM.GetModel()
 }
 
 func (p *transPlan) maxOutputTokens(ir *transRequest) uint64 {
@@ -149,7 +192,7 @@ func (p *transPlan) maxOutputTokens(ir *transRequest) uint64 {
 	return ret
 }
 
-func (m *translation) translateRequest(req *http.Request,
+func (m *translation) translateRequest(ctx context.Context, req *http.Request,
 	reqCtx *middlewares.RequestContext, plan *transPlan) error {
 
 	if !reqCtx.LLM.IsBodyValid {
@@ -162,11 +205,20 @@ func (m *translation) translateRequest(req *http.Request,
 		return err
 	}
 
+	ir.model = plan.model
+	ir.stream = plan.stream
+	transResolveToolNames(ir)
+
+	if plan.toProtocol == corev1.Service_Spec_Config_LLM_GEMINI {
+		m.continuation.restore(ctx, reqCtx, plan, ir)
+	}
+
 	if err := m.setReasoning(reqCtx, plan, ir); err != nil {
 		return err
 	}
 
 	root, err := plan.to.encodeRequest(ir, &transEncodeOpts{
+		model:                  plan.model,
 		defaultMaxOutputTokens: plan.maxOutputTokens(ir),
 	})
 	if err != nil {
@@ -197,6 +249,7 @@ func (m *translation) translateRequest(req *http.Request,
 	plan.streamUsage = ir.streamUsage
 
 	setTransRequest(req, plan, body)
+	reqCtx.UpstreamBody = body
 
 	return nil
 }
@@ -204,7 +257,7 @@ func (m *translation) translateRequest(req *http.Request,
 func (m *translation) setReasoning(reqCtx *middlewares.RequestContext,
 	plan *transPlan, ir *transRequest) error {
 
-	caps := getReasoningCaps(plan.toProtocol, ir.model)
+	caps := getReasoningCaps(plan.toProtocol, plan.model)
 	ir.reasoningFormat = caps.format
 
 	if cur := reqCtx.LLMReasoning; cur != nil {
@@ -244,8 +297,15 @@ func setTransRequest(req *http.Request, plan *transPlan, body []byte) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 
-	req.URL.Path = plan.to.path()
+	path, rawPath, rawQuery := httputils.GetLLMRoutePath(plan.toProtocol,
+		plan.to.route(), plan.model, plan.stream)
+
+	req.URL.Path = path
 	req.URL.RawPath = ""
+	if rawPath != "" && rawPath != path {
+		req.URL.RawPath = rawPath
+	}
+	req.URL.RawQuery = rawQuery
 	req.RequestURI = req.URL.RequestURI()
 
 	req.Header.Set("Content-Type", "application/json")

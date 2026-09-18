@@ -561,3 +561,16 @@ var mcpKnownMethods = map[string]struct{}{
 	"notifications/subscriptions/acknowledged": {},
 	"notifications/tasks":                      {},
 }
+
+func GetSSEEventName(event []byte) string {
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if !bytes.HasPrefix(line, []byte("event:")) {
+			continue
+		}
+
+		return string(bytes.TrimPrefix(bytes.TrimPrefix(line, []byte("event:")), []byte(" ")))
+	}
+
+	return ""
+}

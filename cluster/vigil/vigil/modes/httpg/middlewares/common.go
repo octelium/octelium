@@ -97,6 +97,8 @@ type RequestContext struct {
 	Body        []byte
 	BodyJSONMap map[string]any
 
+	UpstreamBody []byte
+
 	ReqCtxMap map[string]any
 
 	MCP *httputils.MCPRequest
@@ -349,6 +351,14 @@ func SetRequestContextBody(httpC *corev1.RequestContext_Request_HTTP,
 	}
 
 	httpC.BodyMap, _ = pbutils.MapToStruct(bodyMap)
+}
+
+func (r *RequestContext) GetUpstreamBody() []byte {
+	if r.UpstreamBody != nil {
+		return r.UpstreamBody
+	}
+
+	return r.Body
 }
 
 func (r *RequestContext) SetBodyDigest() {

@@ -48,7 +48,9 @@ type transBlock struct {
 	toolName   string
 	toolInput  json.RawMessage
 
-	toolResult  string
+	toolSignature string
+
+	toolResult  json.RawMessage
 	isToolError bool
 }
 
@@ -129,12 +131,21 @@ type transUsage struct {
 	inputTokens  uint64
 	outputTokens uint64
 
+	totalTokens uint64
+
 	cacheReadTokens     uint64
 	cacheCreationTokens uint64
 
 	reasoningTokens uint64
 
 	isSet bool
+}
+
+func (u transUsage) total() uint64 {
+	if u.totalTokens > 0 {
+		return u.totalTokens
+	}
+	return u.inputTokens + u.outputTokens
 }
 
 func (u *transUsage) merge(arg transUsage) {
@@ -156,6 +167,9 @@ func (u *transUsage) merge(arg transUsage) {
 	}
 	if arg.reasoningTokens > 0 {
 		u.reasoningTokens = arg.reasoningTokens
+	}
+	if arg.totalTokens > 0 {
+		u.totalTokens = arg.totalTokens
 	}
 
 	u.isSet = true
@@ -202,9 +216,10 @@ type transEvent struct {
 
 	text string
 
-	index      int
-	toolCallID string
-	toolName   string
+	index         int
+	toolCallID    string
+	toolName      string
+	toolSignature string
 
 	finishReason transFinishReason
 	stopSequence string
@@ -213,14 +228,16 @@ type transEvent struct {
 }
 
 type transEncodeOpts struct {
+	model string
+
 	defaultMaxOutputTokens uint64
 
 	streamUsage bool
 }
 
 type transCodec interface {
+	protocol() corev1.Service_Spec_Config_LLM_Protocol
 	route() corev1.RequestContext_Request_LLM_Route
-	path() string
 
 	decodeRequest(body []byte) (*transRequest, error)
 	encodeRequest(req *transRequest, o *transEncodeOpts) (map[string]json.RawMessage, error)
@@ -230,10 +247,12 @@ type transCodec interface {
 
 	newStreamDecoder() transStreamDecoder
 	newStreamEncoder(o *transEncodeOpts) transStreamEncoder
+
+	streamMediaType() string
 }
 
 type transStreamDecoder interface {
-	decode(data []byte) ([]*transEvent, error)
+	decode(eventType string, data []byte) ([]*transEvent, error)
 	finish() []*transEvent
 }
 
@@ -245,17 +264,19 @@ type transStreamEncoder interface {
 func getTransCodec(protocol corev1.Service_Spec_Config_LLM_Protocol,
 	route corev1.RequestContext_Request_LLM_Route) transCodec {
 
+	if route != getTransRoute(protocol, corev1.Service_Spec_Config_LLM_GENERATE) {
+		return nil
+	}
+
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_OPENAI:
-		if route != corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS {
-			return nil
-		}
 		return &openAIChatCodec{}
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
-		if route != corev1.RequestContext_Request_LLM_MESSAGES {
-			return nil
-		}
 		return &anthropicMessagesCodec{}
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return &geminiContentCodec{}
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return &bedrockConverseCodec{}
 	default:
 		return nil
 	}
@@ -273,6 +294,10 @@ func getTransRoute(protocol corev1.Service_Spec_Config_LLM_Protocol,
 		return corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS
 	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
 		return corev1.RequestContext_Request_LLM_MESSAGES
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return corev1.RequestContext_Request_LLM_GENERATE_CONTENT
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return corev1.RequestContext_Request_LLM_CONVERSE
 	default:
 		return corev1.RequestContext_Request_LLM_ROUTE_UNSET
 	}
