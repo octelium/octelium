@@ -102,7 +102,7 @@ func getUpstreamPath(svc *corev1.Service, upstreamPath, reqPath string) string {
 	case ucorev1.ToService(svc).IsLLM():
 		return upstreamPath + strings.TrimPrefix(reqPath,
 			httputils.GetLLMVersionPrefix(
-				ucorev1.ToServiceConfig(svc.Spec.Config).GetLLMProtocol()))
+				ucorev1.ToServiceConfig(svc.Spec.Config).GetLLMUpstreamProtocol()))
 	case ucorev1.ToService(svc).IsMCP():
 		return upstreamPath
 	default:

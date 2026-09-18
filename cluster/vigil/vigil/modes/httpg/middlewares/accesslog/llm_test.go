@@ -759,3 +759,60 @@ func TestLLMAccessLogRequestShape(t *testing.T) {
 	assert.False(t, llmC.HasImageInput)
 	assert.False(t, llmC.HasAudioInput)
 }
+
+func TestLLMAccessLogTranslation(t *testing.T) {
+	reqCtx := newLLMReqCtx(t, &corev1.Service_Spec_Config_LLM{
+		Translation: &corev1.Service_Spec_Config_LLM_Translation{
+			UpstreamProtocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		},
+	})
+
+	reqCtx.LLMTranslation = &middlewares.LLMTranslationInfo{
+		UpstreamProtocol: corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		UpstreamRoute:    corev1.RequestContext_Request_LLM_MESSAGES,
+	}
+
+	reqCtx.LLMUpstreamResponse = &middlewares.LLMResponseInfo{
+		ResponseID:   "msg_abc",
+		Model:        "claude-sonnet-4-5-20250929",
+		FinishReason: "end_turn",
+		Usage: httputils.LLMUsage{
+			InputTokens:  10,
+			OutputTokens: 5,
+			TotalTokens:  15,
+			IsSet:        true,
+		},
+	}
+
+	translated := `{"id":"chatcmpl_octelium","model":"claude-sonnet-4-5-20250929",` +
+		`"choices":[{"finish_reason":"stop","message":{"content":"hi"}}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+
+	llmC := serveLLMLogCtx(t, reqCtx, translated, false)
+
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_OPENAI, llmC.Protocol)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_CHAT_COMPLETIONS, llmC.Route)
+
+	assert.Equal(t, corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		llmC.Translation.UpstreamProtocol)
+	assert.Equal(t, corev1.RequestContext_Request_LLM_MESSAGES,
+		llmC.Translation.UpstreamRoute)
+
+	assert.Equal(t, "msg_abc", llmC.ResponseID)
+	assert.Equal(t, "end_turn", llmC.RawFinishReason)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_LLM_STOP, llmC.FinishReason)
+	assert.Equal(t, "claude-sonnet-4-5-20250929", llmC.Model.Reported)
+
+	assert.Equal(t, uint64(10), llmC.Usage.InputTokens)
+	assert.Equal(t, uint64(5), llmC.Usage.OutputTokens)
+	assert.Equal(t, uint64(15), llmC.Usage.TotalTokens)
+
+	obs := &llmObserver{}
+	obs.setRequestContext(reqCtx,
+		newResponseWriter(httptest.NewRecorder(), streamKindLLM), logPhaseComplete)
+
+	assert.Equal(t, "msg_abc", reqCtx.LLMResponse.ResponseID)
+	assert.Equal(t, "end_turn", reqCtx.LLMResponse.FinishReason)
+	assert.Equal(t, uint64(10), reqCtx.LLMResponse.Usage.InputTokens)
+	assert.Equal(t, middlewares.LLMUsageSourceProvider, reqCtx.LLMResponse.UsageSource)
+}

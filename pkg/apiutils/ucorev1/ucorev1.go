@@ -423,6 +423,29 @@ func (s *ServiceConfig) GetLLMProtocol() corev1.Service_Spec_Config_LLM_Protocol
 	}
 }
 
+func (s *ServiceConfig) GetLLMUpstreamProtocol() corev1.Service_Spec_Config_LLM_Protocol {
+	if s == nil || s.Service_Spec_Config == nil {
+		return corev1.Service_Spec_Config_LLM_OPENAI
+	}
+
+	switch s.GetLlm().GetTranslation().GetUpstreamProtocol() {
+	case corev1.Service_Spec_Config_LLM_OPENAI:
+		return corev1.Service_Spec_Config_LLM_OPENAI
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return corev1.Service_Spec_Config_LLM_ANTHROPIC
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		return corev1.Service_Spec_Config_LLM_GEMINI
+	case corev1.Service_Spec_Config_LLM_BEDROCK:
+		return corev1.Service_Spec_Config_LLM_BEDROCK
+	default:
+		return s.GetLLMProtocol()
+	}
+}
+
+func (s *ServiceConfig) IsLLMTranslated() bool {
+	return s.GetLLMUpstreamProtocol() != s.GetLLMProtocol()
+}
+
 func (s *ServiceConfig) GetLLMVisibility() *corev1.Service_Spec_Config_HTTP_Visibility {
 	var cfg *corev1.Service_Spec_Config_LLM_Visibility
 	if s != nil && s.Service_Spec_Config != nil {

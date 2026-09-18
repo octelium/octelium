@@ -2104,6 +2104,60 @@ func TestValidateLLMLimits(t *testing.T) {
 	}))
 }
 
+func TestValidateLLMTranslation(t *testing.T) {
+	s := &Server{}
+
+	newLLM := func(protocol, upstreamProtocol corev1.Service_Spec_Config_LLM_Protocol,
+		defaultMaxOutputTokens uint64) *corev1.Service_Spec_Config_LLM {
+		return &corev1.Service_Spec_Config_LLM{
+			Protocol: protocol,
+			Translation: &corev1.Service_Spec_Config_LLM_Translation{
+				UpstreamProtocol:       upstreamProtocol,
+				DefaultMaxOutputTokens: defaultMaxOutputTokens,
+			},
+		}
+	}
+
+	assert.Nil(t, s.validateLLMTranslation(&corev1.Service_Spec_Config_LLM{}))
+
+	assert.Nil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET, 0)))
+
+	assert.Nil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_OPENAI, 0)))
+
+	assert.Nil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET,
+		corev1.Service_Spec_Config_LLM_ANTHROPIC, 4096)))
+
+	assert.Nil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		corev1.Service_Spec_Config_LLM_OPENAI, 0)))
+
+	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_GEMINI, 0)))
+
+	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_GEMINI,
+		corev1.Service_Spec_Config_LLM_OPENAI, 0)))
+
+	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_BEDROCK,
+		corev1.Service_Spec_Config_LLM_ANTHROPIC, 0)))
+
+	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_ANTHROPIC,
+		maxLLMTranslationOutputTokens+1)))
+
+	assert.NotNil(t, s.validateLLMTranslation(newLLM(
+		corev1.Service_Spec_Config_LLM_OPENAI,
+		corev1.Service_Spec_Config_LLM_Protocol(1000), 0)))
+}
+
 func newLLMEmbedding() *corev1.Service_Spec_Config_LLM_Embedding {
 	return &corev1.Service_Spec_Config_LLM_Embedding{
 		Model: "text-embedding-3-small",

@@ -2053,6 +2053,8 @@ const (
 
 	maxLLMTokenRateLimitTokens = 1024 * 1024 * 1024
 
+	maxLLMTranslationOutputTokens = 1024 * 1024
+
 	maxLLMRequestBytesLimit     = 64 * 1024 * 1024
 	maxLLMStreamEventBytesLimit = 4 * 1024 * 1024
 
@@ -2097,6 +2099,10 @@ func (s *Server) validateLLMConfig(ctx context.Context, cfg *corev1.Service_Spec
 	}
 
 	if err := s.validateLLMLimits(llm.GetLimits()); err != nil {
+		return err
+	}
+
+	if err := s.validateLLMTranslation(llm); err != nil {
 		return err
 	}
 
@@ -2578,6 +2584,57 @@ func (s *Server) validateLLMProtocol(protocol corev1.Service_Spec_Config_LLM_Pro
 		return nil
 	default:
 		return grpcutils.InvalidArg("Unsupported LLM protocol")
+	}
+}
+
+func (s *Server) validateLLMTranslation(llm *corev1.Service_Spec_Config_LLM) error {
+	cfg := llm.GetTranslation()
+	if cfg == nil {
+		return nil
+	}
+
+	upstreamProtocol := cfg.GetUpstreamProtocol()
+	if upstreamProtocol == corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET {
+		return nil
+	}
+
+	if err := s.validateLLMProtocol(upstreamProtocol); err != nil {
+		return err
+	}
+
+	protocol := llm.GetProtocol()
+	if protocol == corev1.Service_Spec_Config_LLM_PROTOCOL_UNSET {
+		protocol = corev1.Service_Spec_Config_LLM_OPENAI
+	}
+
+	if protocol == upstreamProtocol {
+		return nil
+	}
+
+	if !isLLMTranslationSupported(protocol, upstreamProtocol) {
+		return grpcutils.InvalidArg(
+			"The %s protocol cannot be translated to the %s protocol",
+			protocol.String(), upstreamProtocol.String())
+	}
+
+	if cfg.GetDefaultMaxOutputTokens() > maxLLMTranslationOutputTokens {
+		return grpcutils.InvalidArg(
+			"defaultMaxOutputTokens is above the maximum allowed value")
+	}
+
+	return nil
+}
+
+func isLLMTranslationSupported(protocol,
+	upstreamProtocol corev1.Service_Spec_Config_LLM_Protocol) bool {
+
+	switch protocol {
+	case corev1.Service_Spec_Config_LLM_OPENAI:
+		return upstreamProtocol == corev1.Service_Spec_Config_LLM_ANTHROPIC
+	case corev1.Service_Spec_Config_LLM_ANTHROPIC:
+		return upstreamProtocol == corev1.Service_Spec_Config_LLM_OPENAI
+	default:
+		return false
 	}
 }
 

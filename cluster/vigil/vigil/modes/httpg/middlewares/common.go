@@ -106,6 +106,9 @@ type RequestContext struct {
 	MCPResponse *MCPResponseInfo
 	LLMResponse *LLMResponseInfo
 
+	LLMTranslation      *LLMTranslationInfo
+	LLMUpstreamResponse *LLMResponseInfo
+
 	LLMEmbeddings     map[string][]float32
 	LLMSemanticCache  *LLMSemanticCacheInfo
 	LLMSemanticRouter *LLMSemanticRouterInfo
@@ -130,7 +133,13 @@ type MCPResponseInfo struct {
 	EventCount      uint64
 }
 
+type LLMTranslationInfo struct {
+	UpstreamProtocol corev1.Service_Spec_Config_LLM_Protocol
+	UpstreamRoute    corev1.RequestContext_Request_LLM_Route
+}
+
 type LLMResponseInfo struct {
+	ResponseID   string
 	Model        string
 	FinishReason string
 
@@ -271,6 +280,20 @@ func (r *LLMResponseInfo) GetFinishReason() string {
 		return ""
 	}
 	return r.FinishReason
+}
+
+func (r *LLMResponseInfo) GetResponseID() string {
+	if r == nil {
+		return ""
+	}
+	return r.ResponseID
+}
+
+func (r *LLMResponseInfo) GetUsage() httputils.LLMUsage {
+	if r == nil {
+		return httputils.LLMUsage{}
+	}
+	return r.Usage
 }
 
 func (r *RequestContext) SetLLMGuardrail(

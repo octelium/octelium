@@ -164,7 +164,10 @@ func (m *reasoning) setReasoning(ctx context.Context, req *http.Request,
 		return nil, nil
 	}
 
-	caps := getReasoningCaps(reqCtx.LLM.GetProtocol(), getReasoningModel(req, reqCtx, d))
+	svcCfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig)
+
+	caps := getReasoningCaps(svcCfg.GetLLMUpstreamProtocol(),
+		getReasoningModel(req, reqCtx, d))
 
 	val, err := caps.resolve(target)
 	if err != nil {
@@ -179,8 +182,10 @@ func (m *reasoning) setReasoning(ctx context.Context, req *http.Request,
 		}, nil
 	}
 
-	if err := val.apply(d, caps.format); err != nil {
-		return nil, err
+	if !svcCfg.IsLLMTranslated() {
+		if err := val.apply(d, caps.format); err != nil {
+			return nil, err
+		}
 	}
 
 	reqCtx.LLMReasoning = &middlewares.LLMReasoningInfo{

@@ -442,6 +442,10 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	})
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+		return llm.NewTranslation(ctx, next)
+	})
+
+	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return headers.New(ctx, next, s.celEngine, s.secretMan)
 	})
 

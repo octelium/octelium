@@ -204,13 +204,28 @@ func (m *middleware) serveLLM(w http.ResponseWriter, req *http.Request,
 		m.getLLMAccessLog(req, crw, reqCtx, obs, logPhaseStreamClose, connID, 1))
 }
 
+func (o *llmObserver) upstream(reqCtx *middlewares.RequestContext) {
+	cur := reqCtx.LLMUpstreamResponse
+	if cur == nil {
+		return
+	}
+
+	o.responseID = cur.ResponseID
+	o.model = cur.Model
+	o.finishReason = cur.FinishReason
+	o.usage = cur.Usage
+}
+
 func (o *llmObserver) setRequestContext(reqCtx *middlewares.RequestContext,
 	crw *responseWriter, phase logPhase) {
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	o.upstream(reqCtx)
+
 	ret := &middlewares.LLMResponseInfo{
+		ResponseID:   o.responseID,
 		Model:        o.model,
 		FinishReason: o.finishReason,
 		EventCount:   o.eventCount,
@@ -263,6 +278,15 @@ func (m *middleware) getLLMAccessLog(
 
 	obs.mu.Lock()
 	defer obs.mu.Unlock()
+
+	obs.upstream(reqCtx)
+
+	if cur := reqCtx.LLMTranslation; cur != nil {
+		llmC.Translation = &corev1.AccessLog_Entry_Info_LLM_Translation{
+			UpstreamProtocol: cur.UpstreamProtocol,
+			UpstreamRoute:    cur.UpstreamRoute,
+		}
+	}
 
 	llmC.EventCount = obs.eventCount
 	llmC.ResponseID = obs.responseID
