@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -225,7 +226,22 @@ func (m *middleware) getKey(ctx context.Context,
 			if key == "" {
 				return nil, true
 			}
-			return m.doGetKey("custom:" + key), true
+
+			parts := []string{
+				"custom",
+				key,
+				"ae:" + getNormalizedAcceptEncoding(req),
+			}
+
+			if m.phase == corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH {
+				scope, ok := getDefaultPostAuthScope(reqCtx)
+				if !ok {
+					return nil, true
+				}
+				parts = append(parts, scope)
+			}
+
+			return m.doGetKey(strings.Join(parts, "\x00")), true
 		}
 	}
 
@@ -234,6 +250,7 @@ func (m *middleware) getKey(ctx context.Context,
 		req.Method,
 		req.Host,
 		req.URL.RequestURI(),
+		"ae:" + getNormalizedAcceptEncoding(req),
 	}
 
 	if cfgHash, ok := m.cfgHasher.get(reqCtx.Service, reqCtx.ServiceConfig); ok {
@@ -263,6 +280,47 @@ func (m *middleware) getKey(ctx context.Context,
 	}
 
 	return m.doGetKey(strings.Join(parts, "\x00")), false
+}
+
+func getNormalizedAcceptEncoding(req *http.Request) string {
+	var codings []string
+
+	for _, value := range req.Header.Values("Accept-Encoding") {
+		for _, part := range strings.Split(value, ",") {
+			coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+
+			coding = strings.ToLower(strings.TrimSpace(coding))
+			if coding == "" || isZeroQValue(params) {
+				continue
+			}
+
+			if !slices.Contains(codings, coding) {
+				codings = append(codings, coding)
+			}
+		}
+	}
+
+	slices.Sort(codings)
+
+	return strings.Join(codings, ",")
+}
+
+func isZeroQValue(params string) bool {
+	for _, param := range strings.Split(params, ";") {
+		name, value, hasValue := strings.Cut(strings.TrimSpace(param), "=")
+		if !hasValue || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+
+		q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			continue
+		}
+
+		return q == 0
+	}
+
+	return false
 }
 
 func getDefaultPostAuthScope(reqCtx *middlewares.RequestContext) (string, bool) {
@@ -569,7 +627,7 @@ func requestAllowsCache(req *http.Request,
 		return false
 	}
 
-	if phase == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH && !isCustomKey {
+	if phase == corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH {
 		if req.Header.Get("Authorization") != "" || req.Header.Get("Cookie") != "" {
 			return false
 		}
