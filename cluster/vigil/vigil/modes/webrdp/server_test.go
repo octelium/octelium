@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/rdp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -294,4 +295,139 @@ func TestWebSocketRejectsInvalidRDCleanPath(t *testing.T) {
 	}
 
 	assert.Equal(t, websocket.StatusUnsupportedData, websocket.CloseStatus(closeErr))
+}
+
+func TestConnectSrc(t *testing.T) {
+	getCSP := func(srv *Server) string {
+		w := httptest.NewRecorder()
+		srv.setIndexSecurityHeaders(w, "testnonce")
+		return w.Header().Get("Content-Security-Policy")
+	}
+
+	{
+		assert.Contains(t, getCSP(&Server{}), "connect-src 'self' data:")
+	}
+
+	{
+		ctx := context.Background()
+
+		vCache, err := vcache.NewCache(ctx)
+		assert.Nil(t, err)
+		vCache.SetService(&corev1.Service{
+			Metadata: &metav1.Metadata{Name: "rdp.default"},
+			Spec:     &corev1.Service_Spec{},
+			Status: &corev1.Service_Status{
+				NamespaceRef:        &metav1.ObjectReference{Name: "default"},
+				AdditionalHostnames: []string{"rdp.default"},
+			},
+		})
+
+		csp := getCSP(&Server{vCache: vCache, domain: "example.com"})
+
+		assert.Contains(t, csp, "connect-src 'self' ")
+		assert.Contains(t, csp, "wss://rdp.example.com")
+		assert.Contains(t, csp, "wss://rdp.local.example.com")
+		assert.Contains(t, csp, "wss://rdp.default.example.com")
+		assert.Contains(t, csp, "wss://rdp.default.local.example.com")
+		assert.Contains(t, csp, "wss://example.com")
+
+		assert.NotContains(t, csp, "connect-src 'self' ws: wss:")
+	}
+}
+
+func TestWebSocketRejectsForeignOrigin(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamPort := tests.GetPort()
+	echo := newEchoSrv(t, upstreamPort)
+	defer echo.close()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_TCP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", upstreamPort),
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	svc.Status.AdditionalHostnames = []string{"rdp.default"}
+
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
+	assert.Nil(t, err)
+	srv.domain = "example.com"
+
+	err = srv.lbManager.Run(ctx)
+	assert.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	ts := httptest.NewServer(srv.getMux())
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + webSocketPath
+
+	{
+		_, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{
+				"Origin": []string{"https://evil.example.org"},
+			},
+		})
+		assert.NotNil(t, err)
+	}
+
+	{
+		ws, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{
+				"Origin": []string{"http://" + strings.TrimPrefix(ts.URL, "http://")},
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+		ws.CloseNow()
+	}
+
+	{
+		ws, _, err := websocket.Dial(ctx, wsURL, nil)
+		assert.Nil(t, err, "%+v", err)
+		ws.CloseNow()
+	}
+
+	for _, origin := range []string{
+		fmt.Sprintf("https://%s", vutils.GetServicePublicFQDN(svc, "example.com")),
+		fmt.Sprintf("https://%s", vutils.GetServicePrivateFQDN(svc, "example.com")),
+		"https://rdp.default.example.com",
+		"https://rdp.default.local.example.com",
+		"https://example.com",
+	} {
+		ws, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{
+				"Origin": []string{origin},
+			},
+		})
+		assert.Nil(t, err, "%s: %+v", origin, err)
+		if ws != nil {
+			ws.CloseNow()
+		}
+	}
 }

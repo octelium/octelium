@@ -388,6 +388,47 @@ func (s *Server) buildTemplateGlobals() *templateGlobals {
 	return ret
 }
 
+func (s *Server) getOriginHosts() []string {
+	var ret []string
+
+	var svc *corev1.Service
+	if s.vCache != nil {
+		svc = s.vCache.GetService()
+	}
+
+	if svc != nil && svc.Status != nil && svc.Status.NamespaceRef != nil && s.domain != "" {
+		ret = append(ret,
+			vutils.GetServicePublicFQDN(svc, s.domain),
+			vutils.GetServicePrivateFQDN(svc, s.domain))
+
+		for _, hostname := range svc.Status.AdditionalHostnames {
+			ret = append(ret,
+				fmt.Sprintf("%s.%s", hostname, s.domain),
+				fmt.Sprintf("%s.local.%s", hostname, s.domain))
+		}
+	}
+
+	if s.domain != "" {
+		ret = append(ret, s.domain)
+	}
+
+	return ret
+}
+
+func (s *Server) getConnectSrc() string {
+	ret := []string{"'self'"}
+
+	for _, host := range s.getOriginHosts() {
+		ret = append(ret,
+			fmt.Sprintf("wss://%s", host),
+			fmt.Sprintf("ws://%s", host))
+	}
+
+	ret = append(ret, "data:")
+
+	return fmt.Sprintf("connect-src %s", strings.Join(ret, " "))
+}
+
 func (s *Server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
 	csp := strings.Join([]string{
 		"default-src 'none'",
@@ -395,7 +436,7 @@ func (s *Server) setIndexSecurityHeaders(w http.ResponseWriter, nonce string) {
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: blob:",
 		"font-src 'self' data:",
-		"connect-src 'self' ws: wss: data:",
+		s.getConnectSrc(),
 		"worker-src 'self' blob:",
 		"frame-src 'none'",
 		"frame-ancestors 'none'",
@@ -430,8 +471,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("userAgent", r.UserAgent()),
 		zap.Strings("header", r.Header["Sec-Websocket-Protocol"]))
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		CompressionMode:    websocket.CompressionDisabled,
-		InsecureSkipVerify: true,
+		CompressionMode: websocket.CompressionDisabled,
+		OriginPatterns:  s.getOriginHosts(),
 	})
 	if err != nil {
 		zap.L().Debug("Could not accept webrdp websocket", zap.Error(err))
