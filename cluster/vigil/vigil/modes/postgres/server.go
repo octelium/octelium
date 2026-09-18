@@ -50,6 +50,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const startupTimeout = 10 * time.Second
+
 type Server struct {
 	octovigilC *octovigilc.Client
 	vCache     *vcache.Cache
@@ -181,6 +183,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	cc := newCountingConn(c)
 	c = cc
 
+	if err := c.SetDeadline(time.Now().Add(startupTimeout)); err != nil {
+		zap.L().Debug("Could not set the startup deadline", zap.Error(err))
+	}
+
 	startupMessage, pgBackend, err := s.getStartupMessage(ctx, svc, c)
 	if err != nil {
 		zap.L().Debug("Could not get startup msg", zap.Error(err))
@@ -192,6 +198,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
+	}
+
+	if err := c.SetDeadline(time.Time{}); err != nil {
+		zap.L().Debug("Could not clear the startup deadline", zap.Error(err))
 	}
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{

@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -465,4 +466,160 @@ func TestServer(t *testing.T) {
 		err = c.Close()
 		assert.Nil(t, err)
 	}
+}
+
+func assertClosedByDeadline(t *testing.T, c net.Conn, timeout time.Duration) {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(timeout + 8*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now()
+	_, err := io.Copy(io.Discard, c)
+	elapsed := time.Since(startedAt)
+
+	assert.False(t, isTimeoutErr(err), "the server never closed the idle conn: %+v", err)
+	assert.Less(t, elapsed, timeout+8*time.Second)
+	assert.Greater(t, elapsed, timeout/2)
+}
+
+func isTimeoutErr(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func TestTLSHandshakeDeadline(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	upstreamPort := tests.GetPort()
+	upstreamSrv := newTestServer(upstreamPort)
+	upstreamSrv.run(t)
+	t.Cleanup(func() {
+		upstreamSrv.close()
+	})
+
+	svc, err := adminSrv.CreateService(ctx, &v1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &v1.Service_Spec{
+			Port:  uint32(tests.GetPort()),
+			Mode:  corev1.Service_Spec_TCP,
+			IsTLS: true,
+			Config: &v1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", upstreamPort),
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	octovigilC.GetCache().SetSession(usr.Session)
+	usr.Resync()
+
+	time.Sleep(1 * time.Second)
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", svc.Spec.Port))
+	assert.Nil(t, err)
+	defer c.Close()
+
+	assertClosedByDeadline(t, c, handshakeTimeout)
 }

@@ -51,6 +51,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const handshakeTimeout = 10 * time.Second
+
 type Server struct {
 	octovigilC *octovigilc.Client
 	vCache     *vcache.Cache
@@ -221,11 +223,20 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	zap.L().Debug("Creating new dctx", zap.Any("requestCtx", i))
 
+	if err := c.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		zap.L().Debug("Could not set the handshake deadline", zap.Error(err))
+	}
+
 	downstreamConn, err := s.getDownstreamConn(c)
 	if err != nil {
+		zap.L().Debug("Could not get the downstream conn", zap.Error(err))
 		s.metricsStore.AddConnRejected("HANDSHAKE")
 		c.Close()
 		return
+	}
+
+	if err := c.SetDeadline(time.Time{}); err != nil {
+		zap.L().Debug("Could not clear the handshake deadline", zap.Error(err))
 	}
 
 	zap.L().Debug("Got downstream conn", zap.Int("seq", int(downstreamConn.Sequence)))

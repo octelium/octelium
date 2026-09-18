@@ -47,6 +47,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const handshakeTimeout = 10 * time.Second
+
 type Server struct {
 	octovigilC *octovigilc.Client
 	vCache     *vcache.Cache
@@ -174,18 +176,34 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		zap.L().Debug("Could not set keepAlive", zap.Error(err))
 	}
 
-	s.tlsCfgMan.mu.RLock()
 	if svc.Spec.IsTLS {
-		if s.tlsCfgMan.tlsCfg != nil {
-			c = tls.Server(c, s.tlsCfgMan.tlsCfg)
-			s.tlsCfgMan.mu.RUnlock()
-		} else {
-			s.tlsCfgMan.mu.RUnlock()
+		s.tlsCfgMan.mu.RLock()
+		tlsCfg := s.tlsCfgMan.tlsCfg
+		s.tlsCfgMan.mu.RUnlock()
+
+		if tlsCfg == nil {
 			c.Close()
 			return
 		}
-	} else {
-		s.tlsCfgMan.mu.RUnlock()
+
+		tlsConn := tls.Server(c, tlsCfg)
+
+		if err := tlsConn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+			zap.L().Debug("Could not set the TLS handshake deadline", zap.Error(err))
+		}
+
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			zap.L().Debug("Could not do the TLS handshake", zap.Error(err))
+			s.metricsStore.AddConnRejected("HANDSHAKE")
+			c.Close()
+			return
+		}
+
+		if err := tlsConn.SetDeadline(time.Time{}); err != nil {
+			zap.L().Debug("Could not clear the TLS handshake deadline", zap.Error(err))
+		}
+
+		c = tlsConn
 	}
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{

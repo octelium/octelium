@@ -17,7 +17,10 @@
 package postgres
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -528,4 +531,99 @@ func TestServer(t *testing.T) {
 
 	err = srv.Close()
 	zap.L().Debug("close err", zap.Error(err))
+}
+
+func assertClosedByDeadline(t *testing.T, c net.Conn, timeout time.Duration) {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(timeout + 8*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now()
+	_, err := io.Copy(io.Discard, c)
+	elapsed := time.Since(startedAt)
+
+	assert.False(t, isTimeoutErr(err), "the server never closed the idle conn: %+v", err)
+	assert.Less(t, elapsed, timeout+8*time.Second)
+	assert.Greater(t, elapsed, timeout/2)
+}
+
+func isTimeoutErr(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func TestStartupDeadline(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	port := tests.GetPort()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(port),
+			Mode: corev1.Service_Spec_POSTGRES,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "postgres://localhost:5432",
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	time.Sleep(1 * time.Second)
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	assert.Nil(t, err)
+	defer c.Close()
+
+	assertClosedByDeadline(t, c, startupTimeout)
 }
