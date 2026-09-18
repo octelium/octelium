@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -61,6 +62,9 @@ type dctx struct {
 	svcConfig *corev1.Service_Spec_Config
 	authResp  *coctovigilv1.AuthenticateAndAuthorizeResponse
 
+	octovigilC *octovigilc.Client
+	reasonInit *corev1.AccessLog_Entry_Common_Reason
+
 	commonMetrics *metricutils.CommonMetrics
 	dbMetrics     *metricutils.DBMetrics
 }
@@ -68,9 +72,11 @@ type dctx struct {
 func newDctx(ctx context.Context, conn net.Conn,
 	i *corev1.RequestContext, secretMan *secretman.SecretManager,
 	downstreamConnSQL *server.Conn,
+	octovigilC *octovigilc.Client,
 	commonMetrics *metricutils.CommonMetrics,
 	dbMetrics *metricutils.DBMetrics,
-	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse) *dctx {
+	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
+	reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 
 	return &dctx{
 		id:                vutils.GenerateLogID(),
@@ -86,6 +92,8 @@ func newDctx(ctx context.Context, conn net.Conn,
 
 		svcConfig:     vigilutils.GetServiceConfig(ctx, authResp),
 		authResp:      authResp,
+		octovigilC:    octovigilC,
+		reasonInit:    reasonInit,
 		commonMetrics: commonMetrics,
 		dbMetrics:     dbMetrics,
 	}
@@ -227,6 +235,8 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 
 	pktReader := newPacketReader(c.downstreamConnSQL)
 
+	var isDeniedPayload bool
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -241,13 +251,33 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 			bytesFromClient += int64(len(packetBytes))
 
 			if isCommand {
+				isDeniedPayload = false
+
 				pkt, err := decodePacket(packetBytes[4:])
 				if err != nil {
 					zap.L().Debug("Could not decode downstream packet. Skipping it...", zap.Error(err))
 					continue
 				}
 
-				c.setLog(pkt)
+				authzStartedAt := time.Now()
+				proceed, reason, err := c.authorizeCommand(ctx, pkt)
+				if err != nil {
+					c.dbMetrics.AddCommand(mysqlCommandName(pkt),
+						"ERROR", metricutils.ValueUnset)
+					c.downstreamCh <- err
+					return
+				}
+
+				state := "ALLOWED"
+				if !proceed {
+					state = "DENIED"
+				}
+
+				if c.isAuthorizingCommands() {
+					c.dbMetrics.RecordAuthz(authzStartedAt, state)
+				}
+
+				c.setLog(pkt, proceed, reason)
 
 				switch {
 				case pkt.isQuit():
@@ -261,13 +291,27 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 					return
 				}
 
-				c.dbMetrics.AddCommand(mysqlCommandName(pkt),
-					"ALLOWED", metricutils.ValueUnset)
+				c.dbMetrics.AddCommand(mysqlCommandName(pkt), state,
+					reason.GetType().String())
 
 				zap.L().Debug("downstream msg",
 					zap.Int("seq", int(packetBytes[3])),
 					zap.Int("type", int(pkt.typ)),
 					zap.String("content", string(pkt.content)))
+
+				isDeniedPayload = !proceed
+			}
+
+			if isDeniedPayload {
+				if !pktReader.hasMore() {
+					isDeniedPayload = false
+					if err := c.sendUnauthorized(packetBytes[3] + 1); err != nil {
+						c.downstreamCh <- errors.Errorf(
+							"Could not write the error packet to downstream: %+v", err)
+						return
+					}
+				}
+				continue
 			}
 
 			if err := writePacket(packetBytes, c.upstreamConnSQL); err != nil {
@@ -352,6 +396,81 @@ func mysqlCommandName(packet *mysqlPacket) string {
 	}
 }
 
+func (c *dctx) isAuthorizingCommands() bool {
+	auth := c.svcConfig.GetMysql().GetAuthorization()
+	return auth != nil &&
+		auth.Mode == corev1.Service_Spec_Config_MySQL_Authorization_ALL
+}
+
+func (c *dctx) sendUnauthorized(seq byte) error {
+	return writePacket(newErrPacket(seq,
+		mysql.ER_SPECIFIC_ACCESS_DENIED_ERROR, "42000", "Octelium: Unauthorized"),
+		c.downstreamConnSQL)
+}
+
+func getMySQLRequest(pkt *mysqlPacket) *corev1.RequestContext_Request {
+	ret := &corev1.RequestContext_Request_MySQL{}
+
+	switch {
+	case pkt.isQuery():
+		zap.L().Debug("Received a query", zap.String("query", pkt.toQuery().query))
+		ret.Type = &corev1.RequestContext_Request_MySQL_Query_{
+			Query: &corev1.RequestContext_Request_MySQL_Query{
+				Query: pkt.toQuery().query,
+			},
+		}
+	case pkt.isPreparedStatement():
+		zap.L().Debug("Received a prepare statement",
+			zap.String("query", pkt.toPreparedStatement().query))
+		ret.Type = &corev1.RequestContext_Request_MySQL_PrepareStatement_{
+			PrepareStatement: &corev1.RequestContext_Request_MySQL_PrepareStatement{
+				Query: pkt.toPreparedStatement().query,
+			},
+		}
+	case pkt.isInitDB():
+		zap.L().Debug("Received an initDB", zap.String("database", pkt.toInitDB().db))
+		ret.Type = &corev1.RequestContext_Request_MySQL_InitDB_{
+			InitDB: &corev1.RequestContext_Request_MySQL_InitDB{
+				Database: pkt.toInitDB().db,
+			},
+		}
+	default:
+		return nil
+	}
+
+	return &corev1.RequestContext_Request{
+		Type: &corev1.RequestContext_Request_Mysql{
+			Mysql: ret,
+		},
+	}
+}
+
+func (c *dctx) authorizeCommand(ctx context.Context,
+	pkt *mysqlPacket) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
+	if !c.isAuthorizingCommands() {
+		return true, c.reasonInit, nil
+	}
+
+	request := getMySQLRequest(pkt)
+	if request == nil {
+		return true, c.reasonInit, nil
+	}
+
+	resp, err := c.octovigilC.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
+		SessionUID: c.sessUID,
+		Request:    request,
+	})
+	if err != nil {
+		return false, nil, err
+	}
+
+	if !resp.IsAuthorized {
+		return false, resp.Reason, nil
+	}
+
+	return true, resp.Reason, nil
+}
+
 func truncateQuery(arg string) string {
 	if len(arg) <= maxLoggedQueryLen {
 		return arg
@@ -373,14 +492,16 @@ func (c *dctx) getLoggedQuery(query string) (string, bool) {
 	return truncateQuery(query), len(query) > maxLoggedQueryLen
 }
 
-func (c *dctx) setLog(packet *mysqlPacket) {
+func (c *dctx) setLog(packet *mysqlPacket, isAuthorized bool,
+	reason *corev1.AccessLog_Entry_Common_Reason) {
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       time.Now(),
 		IsAuthenticated: true,
-		IsAuthorized:    true,
+		IsAuthorized:    isAuthorized,
 		ReqCtx:          c.reqCtx,
 		ConnectionID:    c.id,
+		Reason:          reason,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Mysql{

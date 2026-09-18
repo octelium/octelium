@@ -242,8 +242,9 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	zap.L().Debug("Got downstream conn", zap.Int("seq", int(downstreamConn.Sequence)))
 
-	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn,
-		s.metricsStore.CommonMetrics, s.metricsStore.dbMetrics, authResp)
+	dctx := newDctx(ctx, c, i, s.secretMan, downstreamConn, s.octovigilC,
+		s.metricsStore.CommonMetrics, s.metricsStore.dbMetrics, authResp,
+		authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
 		zap.L().Error("Could not connect", zap.Error(err), zap.String("id", dctx.id))
 		s.metricsStore.AddConnRejected("UPSTREAM_DIAL")

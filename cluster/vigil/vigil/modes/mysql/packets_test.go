@@ -19,6 +19,7 @@ package mysql
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -35,16 +36,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestPacket(seq byte, payload []byte) []byte {
-	ret := make([]byte, 4+len(payload))
-	ret[0] = byte(len(payload))
-	ret[1] = byte(len(payload) >> 8)
-	ret[2] = byte(len(payload) >> 16)
-	ret[3] = seq
-	copy(ret[4:], payload)
-	return ret
-}
-
 func newTestFullPacket(seq byte, typ byte) []byte {
 	ret := make([]byte, 4+mysql.MaxPayloadLen)
 	ret[0] = 0xff
@@ -56,22 +47,22 @@ func newTestFullPacket(seq byte, typ byte) []byte {
 }
 
 func TestPacketPayloadLen(t *testing.T) {
-	assert.Equal(t, 0, packetPayloadLen(newTestPacket(0, nil)))
-	assert.Equal(t, 9, packetPayloadLen(newTestPacket(0, []byte("SELECT 1x"))))
+	assert.Equal(t, 0, packetPayloadLen(newPacket(0, nil)))
+	assert.Equal(t, 9, packetPayloadLen(newPacket(0, []byte("SELECT 1x"))))
 	assert.Equal(t, mysql.MaxPayloadLen,
 		packetPayloadLen(newTestFullPacket(0, mysql.COM_QUERY)))
 }
 
 func TestPacketReader(t *testing.T) {
 	newQueryPacket := func(seq byte, query string) []byte {
-		return newTestPacket(seq, append([]byte{mysql.COM_QUERY}, []byte(query)...))
+		return newPacket(seq, append([]byte{mysql.COM_QUERY}, []byte(query)...))
 	}
 
 	{
 		pkts := [][]byte{
 			newQueryPacket(0, "SELECT 1"),
 			newQueryPacket(0, "SELECT 2"),
-			newTestPacket(0, []byte{mysql.COM_QUIT}),
+			newPacket(0, []byte{mysql.COM_QUIT}),
 		}
 
 		p := newPacketReader(bytes.NewReader(bytes.Join(pkts, nil)))
@@ -90,7 +81,7 @@ func TestPacketReader(t *testing.T) {
 	{
 		pkts := [][]byte{
 			newTestFullPacket(0, mysql.COM_QUERY),
-			newTestPacket(1, []byte{mysql.COM_QUIT, 'a', 'b'}),
+			newPacket(1, []byte{mysql.COM_QUIT, 'a', 'b'}),
 			newQueryPacket(0, "SELECT 1"),
 		}
 
@@ -106,8 +97,8 @@ func TestPacketReader(t *testing.T) {
 	{
 		pkts := [][]byte{
 			newTestFullPacket(0, mysql.COM_QUERY),
-			newTestPacket(1, nil),
-			newTestPacket(0, []byte{mysql.COM_CHANGE_USER}),
+			newPacket(1, nil),
+			newPacket(0, []byte{mysql.COM_CHANGE_USER}),
 		}
 
 		p := newPacketReader(bytes.NewReader(bytes.Join(pkts, nil)))
@@ -131,7 +122,7 @@ func TestPacketReader(t *testing.T) {
 		pkts := [][]byte{
 			newTestFullPacket(0, mysql.COM_QUERY),
 			newTestFullPacket(1, mysql.COM_QUIT),
-			newTestPacket(2, []byte{mysql.COM_CHANGE_USER}),
+			newPacket(2, []byte{mysql.COM_CHANGE_USER}),
 			newQueryPacket(0, "SELECT 1"),
 		}
 
@@ -192,8 +183,8 @@ func TestDownstreamLoopMultiPacket(t *testing.T) {
 
 	pkts := [][]byte{
 		newTestFullPacket(0, mysql.COM_QUERY),
-		newTestPacket(1, []byte{mysql.COM_QUIT, 'a', 'b'}),
-		newTestPacket(0, []byte{mysql.COM_QUIT}),
+		newPacket(1, []byte{mysql.COM_QUIT, 'a', 'b'}),
+		newPacket(0, []byte{mysql.COM_QUIT}),
 	}
 
 	assert.Nil(t, downstreamClient.SetDeadline(time.Now().Add(30*time.Second)))
@@ -220,4 +211,80 @@ func TestDownstreamLoopMultiPacket(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the forwarded packets were never read")
 	}
+}
+
+func TestNewErrPacket(t *testing.T) {
+	pkt := newErrPacket(1, mysql.ER_SPECIFIC_ACCESS_DENIED_ERROR, "42000", "Octelium: Unauthorized")
+
+	assert.Equal(t, len(pkt)-4, packetPayloadLen(pkt))
+	assert.Equal(t, byte(1), pkt[3])
+
+	payload := pkt[4:]
+	assert.Equal(t, mysql.ERR_HEADER, payload[0])
+	assert.Equal(t, uint16(mysql.ER_SPECIFIC_ACCESS_DENIED_ERROR),
+		uint16(payload[1])|uint16(payload[2])<<8)
+	assert.Equal(t, byte('#'), payload[3])
+	assert.Equal(t, "42000", string(payload[4:9]))
+	assert.Equal(t, "Octelium: Unauthorized", string(payload[9:]))
+}
+
+func TestGetMySQLRequest(t *testing.T) {
+	newTestMysqlPacket := func(t *testing.T, typ byte, content string) *mysqlPacket {
+		t.Helper()
+
+		pkt, err := decodePacket(append([]byte{typ}, []byte(content)...))
+		assert.Nil(t, err, "%+v", err)
+		return pkt
+	}
+
+	{
+		req := getMySQLRequest(newTestMysqlPacket(t, mysql.COM_QUERY, "SELECT 1"))
+		assert.NotNil(t, req.GetMysql().GetQuery())
+		assert.Equal(t, "SELECT 1", req.GetMysql().GetQuery().Query)
+	}
+
+	{
+		req := getMySQLRequest(newTestMysqlPacket(t, mysql.COM_STMT_PREPARE, "SELECT ?"))
+		assert.NotNil(t, req.GetMysql().GetPrepareStatement())
+		assert.Equal(t, "SELECT ?", req.GetMysql().GetPrepareStatement().Query)
+	}
+
+	{
+		req := getMySQLRequest(newTestMysqlPacket(t, mysql.COM_INIT_DB, "mydb"))
+		assert.NotNil(t, req.GetMysql().GetInitDB())
+		assert.Equal(t, "mydb", req.GetMysql().GetInitDB().Database)
+	}
+
+	for _, arg := range []byte{
+		mysql.COM_QUIT,
+		mysql.COM_PING,
+		mysql.COM_STMT_EXECUTE,
+		mysql.COM_STMT_CLOSE,
+		mysql.COM_CHANGE_USER,
+		mysql.COM_DEBUG,
+	} {
+		assert.Nil(t, getMySQLRequest(newTestMysqlPacket(t, arg, "")),
+			fmt.Sprintf("%#x", arg))
+	}
+}
+
+func TestIsAuthorizingCommands(t *testing.T) {
+	assert.False(t, newTestDctx(nil).isAuthorizingCommands())
+	assert.False(t, newTestDctx(&corev1.Service_Spec_Config_MySQL{}).isAuthorizingCommands())
+
+	assert.False(t, newTestDctx(&corev1.Service_Spec_Config_MySQL{
+		Authorization: &corev1.Service_Spec_Config_MySQL_Authorization{},
+	}).isAuthorizingCommands())
+
+	assert.False(t, newTestDctx(&corev1.Service_Spec_Config_MySQL{
+		Authorization: &corev1.Service_Spec_Config_MySQL_Authorization{
+			Mode: corev1.Service_Spec_Config_MySQL_Authorization_NONE,
+		},
+	}).isAuthorizingCommands())
+
+	assert.True(t, newTestDctx(&corev1.Service_Spec_Config_MySQL{
+		Authorization: &corev1.Service_Spec_Config_MySQL_Authorization{
+			Mode: corev1.Service_Spec_Config_MySQL_Authorization_ALL,
+		},
+	}).isAuthorizingCommands())
 }

@@ -159,6 +159,28 @@ func (p *mysqlPacket) toQuit() *packetQuit {
 	return &packetQuit{}
 }
 
+func newPacket(seq byte, payload []byte) []byte {
+	ret := make([]byte, 4+len(payload))
+	ret[0] = byte(len(payload))
+	ret[1] = byte(len(payload) >> 8)
+	ret[2] = byte(len(payload) >> 16)
+	ret[3] = seq
+	copy(ret[4:], payload)
+
+	return ret
+}
+
+func newErrPacket(seq byte, code uint16, state string, msg string) []byte {
+	payload := make([]byte, 0, 9+len(msg))
+	payload = append(payload, mysql.ERR_HEADER)
+	payload = append(payload, byte(code), byte(code>>8))
+	payload = append(payload, '#')
+	payload = append(payload, state...)
+	payload = append(payload, msg...)
+
+	return newPacket(seq, payload)
+}
+
 func packetPayloadLen(pkt []byte) int {
 	return int(uint32(pkt[0]) | uint32(pkt[1])<<8 | uint32(pkt[2])<<16)
 }
@@ -182,6 +204,10 @@ func (p *packetReader) read() ([]byte, bool, error) {
 	p.isContinuation = packetPayloadLen(pkt) == mysql.MaxPayloadLen
 
 	return pkt, isCommand, nil
+}
+
+func (p *packetReader) hasMore() bool {
+	return p.isContinuation
 }
 
 func readPacket(conn io.Reader) ([]byte, error) {
