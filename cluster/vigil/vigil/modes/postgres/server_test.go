@@ -17,10 +17,12 @@
 package postgres
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -634,87 +636,18 @@ const (
 	testIdleTimeout = 2 * time.Second
 )
 
-func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn) {
+type testPostgresServer struct {
+	srv    *Server
+	vCache *vcache.Cache
+	svc    *corev1.Service
+	port   int
+}
+
+func newTestPostgresServer(t *testing.T, ctx context.Context, tst *tests.T,
+	rules []*corev1.Policy_Spec_Rule,
+	pgAuthz *corev1.Service_Spec_Config_Postgres_Authorization) *testPostgresServer {
 	t.Helper()
 
-	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fe := pgproto3.NewFrontend(c, c)
-	fe.Send(&pgproto3.StartupMessage{
-		ProtocolVersion: pgproto3.ProtocolVersionNumber,
-		Parameters: map[string]string{
-			"user":     "postgres",
-			"database": "postgres",
-		},
-	})
-	if err := fe.Flush(); err != nil {
-		t.Fatal(err)
-	}
-
-	receiveUntilReadyForQuery(t, c, fe)
-
-	return fe, c
-}
-
-func receiveMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) pgproto3.BackendMessage {
-	t.Helper()
-
-	if err := c.SetReadDeadline(time.Now().Add(testReadTimeout)); err != nil {
-		t.Fatal(err)
-	}
-
-	msg, err := fe.Receive()
-	if err != nil {
-		t.Fatalf("could not receive a backend msg: %+v", err)
-	}
-
-	return msg
-}
-
-func receiveUntilReadyForQuery(t *testing.T, c net.Conn, fe *pgproto3.Frontend) []pgproto3.BackendMessage {
-	t.Helper()
-
-	var ret []pgproto3.BackendMessage
-	for {
-		msg := receiveMessage(t, c, fe)
-		ret = append(ret, msg)
-		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
-			return ret
-		}
-	}
-}
-
-func assertNoMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) {
-	t.Helper()
-
-	if err := c.SetReadDeadline(time.Now().Add(testIdleTimeout)); err != nil {
-		t.Fatal(err)
-	}
-
-	msg, err := fe.Receive()
-	assert.True(t, isTimeoutErr(err), "received an unexpected backend msg: %v %+v", msg, err)
-}
-
-func errorResponseCode(msgs ...pgproto3.BackendMessage) string {
-	for _, msg := range msgs {
-		if errResp, ok := msg.(*pgproto3.ErrorResponse); ok {
-			return errResp.Code
-		}
-	}
-	return ""
-}
-
-func TestAuthorizationDeny(t *testing.T) {
-	ctx := context.Background()
-
-	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err, "%+v", err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
 	fakeC := tst.C
 	{
 		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
@@ -761,32 +694,7 @@ func TestAuthorizationDeny(t *testing.T) {
 				InlinePolicies: []*corev1.InlinePolicy{
 					{
 						Spec: &corev1.Policy_Spec{
-							Rules: []*corev1.Policy_Spec_Rule{
-								{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
-										},
-									},
-									Effect: corev1.Policy_Spec_Rule_DENY,
-								},
-								{
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_Match{
-											Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
-										},
-									},
-									Effect: corev1.Policy_Spec_Rule_DENY,
-								},
-								{
-									Effect: corev1.Policy_Spec_Rule_ALLOW,
-									Condition: &corev1.Condition{
-										Type: &corev1.Condition_MatchAny{
-											MatchAny: true,
-										},
-									},
-								},
-							},
+							Rules: rules,
 						},
 					},
 				},
@@ -799,11 +707,9 @@ func TestAuthorizationDeny(t *testing.T) {
 				},
 				Type: &corev1.Service_Spec_Config_Postgres_{
 					Postgres: &corev1.Service_Spec_Config_Postgres{
-						User:     "postgres",
-						Database: "postgres",
-						Authorization: &corev1.Service_Spec_Config_Postgres_Authorization{
-							Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
-						},
+						User:          "postgres",
+						Database:      "postgres",
+						Authorization: pgAuthz,
 						Auth: &corev1.Service_Spec_Config_Postgres_Auth{
 							Type: &corev1.Service_Spec_Config_Postgres_Auth_Password_{
 								Password: &corev1.Service_Spec_Config_Postgres_Auth_Password{
@@ -876,7 +782,167 @@ func TestAuthorizationDeny(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	fe, c := newTestFrontend(t, port)
+	return &testPostgresServer{
+		srv:    srv,
+		vCache: vCache,
+		svc:    svc,
+		port:   port,
+	}
+}
+
+func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn) {
+	t.Helper()
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fe := pgproto3.NewFrontend(c, c)
+	fe.Send(&pgproto3.StartupMessage{
+		ProtocolVersion: pgproto3.ProtocolVersionNumber,
+		Parameters: map[string]string{
+			"user":     "postgres",
+			"database": "postgres",
+		},
+	})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	receiveUntilReadyForQuery(t, c, fe)
+
+	return fe, c
+}
+
+func receiveMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) pgproto3.BackendMessage {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(testReadTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := fe.Receive()
+	if err != nil {
+		t.Fatalf("could not receive a backend msg: %+v", err)
+	}
+
+	return msg
+}
+
+func receiveUntilReadyForQuery(t *testing.T, c net.Conn, fe *pgproto3.Frontend) []pgproto3.BackendMessage {
+	t.Helper()
+
+	var ret []pgproto3.BackendMessage
+	for {
+		msg := receiveMessage(t, c, fe)
+		ret = append(ret, msg)
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			return ret
+		}
+	}
+}
+
+func receiveFunctionOID(t *testing.T, c net.Conn, fe *pgproto3.Frontend, name string) uint32 {
+	t.Helper()
+
+	fe.Send(&pgproto3.Query{String: fmt.Sprintf("SELECT '%s'::regproc::oid;", name)})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	var ret uint64
+	for {
+		msg := receiveMessage(t, c, fe)
+		if dataRow, ok := msg.(*pgproto3.DataRow); ok && len(dataRow.Values) == 1 {
+			var err error
+			ret, err = strconv.ParseUint(string(dataRow.Values[0]), 10, 32)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			break
+		}
+	}
+
+	if ret == 0 {
+		t.Fatalf("could not get the oid of the function %s", name)
+	}
+
+	return uint32(ret)
+}
+
+func assertNoMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(testIdleTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := fe.Receive()
+	assert.True(t, isTimeoutErr(err), "received an unexpected backend msg: %v %+v", msg, err)
+}
+
+func assertClosedByServer(t *testing.T, c net.Conn) {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(testReadTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := io.Copy(io.Discard, c)
+	assert.False(t, isTimeoutErr(err), "the server never closed the conn: %+v", err)
+}
+
+func errorResponseCode(msgs ...pgproto3.BackendMessage) string {
+	for _, msg := range msgs {
+		if errResp, ok := msg.(*pgproto3.ErrorResponse); ok {
+			return errResp.Code
+		}
+	}
+	return ""
+}
+
+func TestAuthorizationDeny(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{
+		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+	})
+
+	fe, c := newTestFrontend(t, ts.port)
 	defer c.Close()
 
 	{
@@ -935,5 +1001,113 @@ func TestAuthorizationDeny(t *testing.T) {
 		msgs := receiveUntilReadyForQuery(t, c, fe)
 		assert.Empty(t, errorResponseCode(msgs...))
 		assert.Len(t, msgs, 4)
+	}
+}
+
+func TestFunctionCall(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{
+		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+	})
+
+	{
+		fe, c := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		oid := receiveFunctionOID(t, c, fe, "pg_backend_pid")
+
+		fe.Send(&pgproto3.FunctionCall{Function: oid})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Len(t, msgs, 2)
+		assert.Equal(t, "42501", errorResponseCode(msgs...))
+
+		fe.Send(&pgproto3.Query{String: "SELECT 1;"})
+		assert.Nil(t, fe.Flush())
+
+		msgs = receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+		assert.Len(t, msgs, 4)
+	}
+
+	ts.svc.Spec.Config.GetPostgres().Authorization = nil
+	ts.svc, err = tst.C.OcteliumC.CoreC().UpdateService(ctx, ts.svc)
+	assert.Nil(t, err)
+	ts.vCache.SetService(ts.svc)
+
+	{
+		fe, c := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		oid := receiveFunctionOID(t, c, fe, "pg_backend_pid")
+
+		fe.Send(&pgproto3.FunctionCall{Function: oid})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+		assert.Len(t, msgs, 2)
+	}
+}
+
+func TestMaxMessageBodyLen(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, nil)
+
+	{
+		_, c := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		header := make([]byte, 5)
+		header[0] = 'Q'
+		binary.BigEndian.PutUint32(header[1:], uint32(maxMessageBodyLen)+64)
+		_, err := c.Write(header)
+		assert.Nil(t, err, "%+v", err)
+
+		assertClosedByServer(t, c)
+	}
+
+	{
+		fe, c := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		fe.Send(&pgproto3.Query{String: fmt.Sprintf("SELECT repeat('x', %d);",
+			maxMessageBodyLen+1024*1024)})
+		assert.Nil(t, fe.Flush())
+
+		assertClosedByServer(t, c)
 	}
 }

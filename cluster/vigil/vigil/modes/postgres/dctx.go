@@ -245,6 +245,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	c.upstreamConn = nil
 
 	c.pgFrontend = c.upstreamHijackedConn.Frontend
+	c.pgFrontend.SetMaxBodyLen(maxMessageBodyLen)
 
 	c.pgBackend.Send(&pgproto3.AuthenticationOk{})
 
@@ -415,6 +416,17 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 				Name:  msg.Name,
 			},
 		}
+	case *pgproto3.FunctionCall:
+		zap.L().Debug("Received a fast-path function call",
+			zap.Uint32("oid", msg.Function))
+		reason := &corev1.AccessLog_Entry_Common_Reason{
+			Type: corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH,
+		}
+		if err := c.sendUnauthorized(); err != nil {
+			return false, reason, err
+		}
+
+		return false, reason, nil
 	default:
 		return true, c.reasonInit, nil
 	}
@@ -428,13 +440,7 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 	}
 
 	if !resp.IsAuthorized {
-		c.pgBackend.Send(&pgproto3.ErrorResponse{
-			Severity: "ERROR",
-			Code:     "42501",
-			Message:  "Octelium: Unauthorized",
-		})
-
-		if err := c.pgBackend.Flush(); err != nil {
+		if err := c.sendUnauthorized(); err != nil {
 			return false, resp.Reason, err
 		}
 
@@ -489,6 +495,15 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 		}
 
 	}
+}
+
+func (c *dctx) sendUnauthorized() error {
+	c.pgBackend.Send(&pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501",
+		Message:  "Octelium: Unauthorized",
+	})
+	return c.pgBackend.Flush()
 }
 
 func (c *dctx) sendReadyForQuery() error {

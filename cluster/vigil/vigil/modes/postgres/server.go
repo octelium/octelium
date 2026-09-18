@@ -51,6 +51,7 @@ import (
 )
 
 const startupTimeout = 10 * time.Second
+const maxMessageBodyLen = 64 * 1024 * 1024
 
 type Server struct {
 	octovigilC *octovigilc.Client
@@ -344,6 +345,7 @@ func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c n
 		default:
 			zap.L().Debug("Creating a new pg backend")
 			pgBackend := pgproto3.NewBackend(c, c)
+			pgBackend.SetMaxBodyLen(maxMessageBodyLen)
 
 			zap.L().Debug("Waiting for the startup msg")
 			startupMessage, err := pgBackend.ReceiveStartupMessage()
