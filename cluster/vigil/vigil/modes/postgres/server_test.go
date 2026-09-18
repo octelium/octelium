@@ -26,6 +26,7 @@ import (
 
 	"context"
 
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -626,4 +627,313 @@ func TestStartupDeadline(t *testing.T) {
 	defer c.Close()
 
 	assertClosedByDeadline(t, c, startupTimeout)
+}
+
+const (
+	testReadTimeout = 10 * time.Second
+	testIdleTimeout = 2 * time.Second
+)
+
+func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn) {
+	t.Helper()
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fe := pgproto3.NewFrontend(c, c)
+	fe.Send(&pgproto3.StartupMessage{
+		ProtocolVersion: pgproto3.ProtocolVersionNumber,
+		Parameters: map[string]string{
+			"user":     "postgres",
+			"database": "postgres",
+		},
+	})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	receiveUntilReadyForQuery(t, c, fe)
+
+	return fe, c
+}
+
+func receiveMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) pgproto3.BackendMessage {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(testReadTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := fe.Receive()
+	if err != nil {
+		t.Fatalf("could not receive a backend msg: %+v", err)
+	}
+
+	return msg
+}
+
+func receiveUntilReadyForQuery(t *testing.T, c net.Conn, fe *pgproto3.Frontend) []pgproto3.BackendMessage {
+	t.Helper()
+
+	var ret []pgproto3.BackendMessage
+	for {
+		msg := receiveMessage(t, c, fe)
+		ret = append(ret, msg)
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			return ret
+		}
+	}
+}
+
+func assertNoMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) {
+	t.Helper()
+
+	if err := c.SetReadDeadline(time.Now().Add(testIdleTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := fe.Receive()
+	assert.True(t, isTimeoutErr(err), "received an unexpected backend msg: %v %+v", msg, err)
+}
+
+func errorResponseCode(msgs ...pgproto3.BackendMessage) string {
+	for _, msg := range msgs {
+		if errResp, ok := msg.(*pgproto3.ErrorResponse); ok {
+			return errResp.Code
+		}
+	}
+	return ""
+}
+
+func TestAuthorizationDeny(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	sec, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: "postgres",
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	port := tests.GetPort()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(port),
+			Mode: corev1.Service_Spec_POSTGRES,
+
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_DENY,
+								},
+								{
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_Match{
+											Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+										},
+									},
+									Effect: corev1.Policy_Spec_Rule_DENY,
+								},
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "postgres://localhost:5432",
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Postgres_{
+					Postgres: &corev1.Service_Spec_Config_Postgres{
+						User:     "postgres",
+						Database: "postgres",
+						Authorization: &corev1.Service_Spec_Config_Postgres_Authorization{
+							Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+						},
+						Auth: &corev1.Service_Spec_Config_Postgres_Auth{
+							Type: &corev1.Service_Spec_Config_Postgres_Auth_Password_{
+								Password: &corev1.Service_Spec_Config_Postgres_Auth_Password{
+									Type: &corev1.Service_Spec_Config_Postgres_Auth_Password_FromSecret{
+										FromSecret: sec.Metadata.Name,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	secretMan.Set(sec)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	srv.octovigilC.GetCache().SetSession(usr.Session)
+
+	time.Sleep(1 * time.Second)
+
+	fe, c := newTestFrontend(t, port)
+	defer c.Close()
+
+	{
+		fe.Send(&pgproto3.Query{String: "UPDATE octelium_nonexistent SET status = 'inactive';"})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Len(t, msgs, 2)
+		assert.Equal(t, "42501", errorResponseCode(msgs...))
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT 1;"})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+		assert.Len(t, msgs, 4)
+	}
+
+	{
+		fe.Send(&pgproto3.Parse{Query: "UPDATE octelium_nonexistent SET status = $1"})
+		fe.Send(&pgproto3.Describe{ObjectType: 'S'})
+		fe.Send(&pgproto3.Flush{})
+		assert.Nil(t, fe.Flush())
+
+		msg := receiveMessage(t, c, fe)
+		assert.Equal(t, "42501", errorResponseCode(msg))
+
+		assertNoMessage(t, c, fe)
+
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msg = receiveMessage(t, c, fe)
+		_, ok := msg.(*pgproto3.ReadyForQuery)
+		assert.True(t, ok, "%T", msg)
+	}
+
+	{
+		fe.Send(&pgproto3.Parse{Query: "SELECT 1"})
+		fe.Send(&pgproto3.Bind{})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+		assert.Len(t, msgs, 5)
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT 1;"})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+		assert.Len(t, msgs, 4)
+	}
 }

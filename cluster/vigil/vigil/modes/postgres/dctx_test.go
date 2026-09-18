@@ -17,6 +17,7 @@
 package postgres
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -186,5 +187,27 @@ func TestGetUpstreamConfigSecretValue(t *testing.T) {
 		pgCfg, err := c.getUpstreamConfig(upstream, arg)
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, arg, pgCfg.Password, arg)
+	}
+}
+
+func TestIsExtendedProtocolMessage(t *testing.T) {
+	for _, arg := range []struct {
+		msg        pgproto3.FrontendMessage
+		isExtended bool
+	}{
+		{&pgproto3.Query{}, false},
+		{&pgproto3.FunctionCall{}, false},
+		{&pgproto3.CopyData{}, false},
+		{&pgproto3.CopyDone{}, false},
+		{&pgproto3.CopyFail{}, false},
+		{&pgproto3.Parse{}, true},
+		{&pgproto3.Bind{}, true},
+		{&pgproto3.Execute{}, true},
+		{&pgproto3.Describe{}, true},
+		{&pgproto3.Close{}, true},
+		{&pgproto3.Flush{}, true},
+	} {
+		assert.Equal(t, arg.isExtended, isExtendedProtocolMessage(arg.msg),
+			fmt.Sprintf("%T", arg.msg))
 	}
 }

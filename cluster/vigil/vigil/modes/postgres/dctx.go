@@ -330,6 +330,10 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 			case *pgproto3.Sync:
 				if pendingSync {
 					pendingSync = false
+					if err := c.sendReadyForQuery(); err != nil {
+						c.downstreamCh <- err
+						return
+					}
 					continue
 				}
 			default:
@@ -358,7 +362,13 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 
 				c.setMessageLog(message, reason)
 				if !proceed {
-					pendingSync = true
+					pendingSync = isExtendedProtocolMessage(message)
+					if !pendingSync {
+						if err := c.sendReadyForQuery(); err != nil {
+							c.downstreamCh <- err
+							return
+						}
+					}
 					continue
 				}
 			}
@@ -423,7 +433,6 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 			Code:     "42501",
 			Message:  "Octelium: Unauthorized",
 		})
-		c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: c.lastTxStatus})
 
 		if err := c.pgBackend.Flush(); err != nil {
 			return false, resp.Reason, err
@@ -479,6 +488,21 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 			}
 		}
 
+	}
+}
+
+func (c *dctx) sendReadyForQuery() error {
+	c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: c.lastTxStatus})
+	return c.pgBackend.Flush()
+}
+
+func isExtendedProtocolMessage(msg pgproto3.FrontendMessage) bool {
+	switch msg.(type) {
+	case *pgproto3.Parse, *pgproto3.Bind, *pgproto3.Execute,
+		*pgproto3.Describe, *pgproto3.Close, *pgproto3.Flush:
+		return true
+	default:
+		return false
 	}
 }
 
