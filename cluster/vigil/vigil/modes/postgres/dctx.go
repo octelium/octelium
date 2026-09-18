@@ -23,6 +23,7 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -556,34 +557,48 @@ func postgresCommandName(msg pgproto3.FrontendMessage) string {
 	}
 }
 
-func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.AccessLog_Entry_Common_Reason) {
-	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
-		StartTime:       time.Now(),
-		IsAuthenticated: true,
-		IsAuthorized:    true,
-		ReqCtx:          c.reqCtx,
-		ConnectionID:    c.id,
-		Reason:          reason,
-	})
-	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
-		Postgres: &corev1.AccessLog_Entry_Info_Postgres{},
+func truncateQuery(arg string) string {
+	if len(arg) <= maxLoggedQueryLen {
+		return arg
 	}
-	info := logE.Entry.Info.GetPostgres()
+
+	ret := arg[:maxLoggedQueryLen]
+	for len(ret) > 0 && !utf8.ValidString(ret) {
+		ret = ret[:len(ret)-1]
+	}
+
+	return ret
+}
+
+func (c *dctx) getLoggedQuery(query string) (string, bool) {
+	if c.svcConfig.GetPostgres().GetVisibility().GetDisableQuery() {
+		return "", false
+	}
+
+	return truncateQuery(query), len(query) > maxLoggedQueryLen
+}
+
+func (c *dctx) getMessageLogInfo(msg pgproto3.FrontendMessage) *corev1.AccessLog_Entry_Info_Postgres {
+	info := &corev1.AccessLog_Entry_Info_Postgres{}
 
 	switch m := msg.(type) {
 	case *pgproto3.Query:
+		query, isTruncated := c.getLoggedQuery(m.String)
 		info.Type = corev1.AccessLog_Entry_Info_Postgres_QUERY
+		info.IsTruncated = isTruncated
 		info.Details = &corev1.AccessLog_Entry_Info_Postgres_Query_{
 			Query: &corev1.AccessLog_Entry_Info_Postgres_Query{
-				Query: m.String,
+				Query: query,
 			},
 		}
 	case *pgproto3.Parse:
+		query, isTruncated := c.getLoggedQuery(m.Query)
 		info.Type = corev1.AccessLog_Entry_Info_Postgres_PARSE
+		info.IsTruncated = isTruncated
 		info.Details = &corev1.AccessLog_Entry_Info_Postgres_Parse_{
 			Parse: &corev1.AccessLog_Entry_Info_Postgres_Parse{
 				Name:  m.Name,
-				Query: m.Query,
+				Query: query,
 			},
 		}
 	case *pgproto3.Bind:
@@ -594,6 +609,29 @@ func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.Access
 		info.Type = corev1.AccessLog_Entry_Info_Postgres_CLOSE
 	case *pgproto3.FunctionCall:
 		info.Type = corev1.AccessLog_Entry_Info_Postgres_FUNCTION_CALL
+	default:
+		return nil
+	}
+
+	return info
+}
+
+func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.AccessLog_Entry_Common_Reason) {
+	info := c.getMessageLogInfo(msg)
+	if info == nil {
+		return
+	}
+
+	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
+		StartTime:       time.Now(),
+		IsAuthenticated: true,
+		IsAuthorized:    true,
+		ReqCtx:          c.reqCtx,
+		ConnectionID:    c.id,
+		Reason:          reason,
+	})
+	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
+		Postgres: info,
 	}
 
 	otelutils.EmitAccessLog(logE)

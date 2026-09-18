@@ -18,7 +18,9 @@ package postgres
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -209,5 +211,117 @@ func TestIsExtendedProtocolMessage(t *testing.T) {
 	} {
 		assert.Equal(t, arg.isExtended, isExtendedProtocolMessage(arg.msg),
 			fmt.Sprintf("%T", arg.msg))
+	}
+}
+
+func TestGetMessageLogInfo(t *testing.T) {
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)
+
+		for _, arg := range []struct {
+			msg pgproto3.FrontendMessage
+			typ corev1.AccessLog_Entry_Info_Postgres_Type
+		}{
+			{&pgproto3.Query{String: "SELECT 1"}, corev1.AccessLog_Entry_Info_Postgres_QUERY},
+			{&pgproto3.Parse{Query: "SELECT 1"}, corev1.AccessLog_Entry_Info_Postgres_PARSE},
+			{&pgproto3.Bind{}, corev1.AccessLog_Entry_Info_Postgres_BIND},
+			{&pgproto3.Execute{}, corev1.AccessLog_Entry_Info_Postgres_EXECUTE},
+			{&pgproto3.Close{}, corev1.AccessLog_Entry_Info_Postgres_CLOSE},
+			{&pgproto3.FunctionCall{}, corev1.AccessLog_Entry_Info_Postgres_FUNCTION_CALL},
+		} {
+			info := c.getMessageLogInfo(arg.msg)
+			assert.NotNil(t, info, fmt.Sprintf("%T", arg.msg))
+			assert.Equal(t, arg.typ, info.Type, fmt.Sprintf("%T", arg.msg))
+			assert.False(t, info.IsTruncated, fmt.Sprintf("%T", arg.msg))
+		}
+
+		for _, arg := range []pgproto3.FrontendMessage{
+			&pgproto3.Describe{},
+			&pgproto3.Flush{},
+			&pgproto3.CopyData{},
+			&pgproto3.CopyDone{},
+			&pgproto3.CopyFail{},
+			&pgproto3.Sync{},
+			&pgproto3.Terminate{},
+		} {
+			assert.Nil(t, c.getMessageLogInfo(arg), fmt.Sprintf("%T", arg))
+		}
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)
+
+		info := c.getMessageLogInfo(&pgproto3.Query{String: "SELECT 1"})
+		assert.Equal(t, "SELECT 1", info.GetQuery().Query)
+
+		info = c.getMessageLogInfo(&pgproto3.Parse{Name: "stmt", Query: "SELECT 1"})
+		assert.Equal(t, "SELECT 1", info.GetParse().Query)
+		assert.Equal(t, "stmt", info.GetParse().Name)
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			Visibility: &corev1.Service_Spec_Config_Postgres_Visibility{
+				DisableQuery: true,
+			},
+		}, nil)
+
+		info := c.getMessageLogInfo(&pgproto3.Query{String: "SELECT 1"})
+		assert.Equal(t, corev1.AccessLog_Entry_Info_Postgres_QUERY, info.Type)
+		assert.Equal(t, "", info.GetQuery().Query)
+		assert.False(t, info.IsTruncated)
+
+		info = c.getMessageLogInfo(&pgproto3.Parse{Name: "stmt", Query: "SELECT 1"})
+		assert.Equal(t, corev1.AccessLog_Entry_Info_Postgres_PARSE, info.Type)
+		assert.Equal(t, "", info.GetParse().Query)
+		assert.Equal(t, "stmt", info.GetParse().Name)
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)
+
+		query := strings.Repeat("a", maxLoggedQueryLen+100)
+
+		info := c.getMessageLogInfo(&pgproto3.Query{String: query})
+		assert.Len(t, info.GetQuery().Query, maxLoggedQueryLen)
+		assert.True(t, info.IsTruncated)
+
+		info = c.getMessageLogInfo(&pgproto3.Parse{Query: query})
+		assert.Len(t, info.GetParse().Query, maxLoggedQueryLen)
+		assert.True(t, info.IsTruncated)
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			Visibility: &corev1.Service_Spec_Config_Postgres_Visibility{
+				DisableQuery: true,
+			},
+		}, nil)
+
+		info := c.getMessageLogInfo(&pgproto3.Query{
+			String: strings.Repeat("a", maxLoggedQueryLen+100)})
+		assert.Equal(t, "", info.GetQuery().Query)
+		assert.False(t, info.IsTruncated)
+	}
+}
+
+func TestTruncateQuery(t *testing.T) {
+	for _, arg := range []struct {
+		query string
+		out   string
+	}{
+		{"", ""},
+		{"SELECT 1", "SELECT 1"},
+		{strings.Repeat("a", maxLoggedQueryLen), strings.Repeat("a", maxLoggedQueryLen)},
+		{strings.Repeat("a", maxLoggedQueryLen+1), strings.Repeat("a", maxLoggedQueryLen)},
+	} {
+		assert.Equal(t, arg.out, truncateQuery(arg.query))
+	}
+
+	{
+		query := strings.Repeat("a", maxLoggedQueryLen-1) + "€"
+		out := truncateQuery(query)
+		assert.True(t, utf8.ValidString(out))
+		assert.Equal(t, strings.Repeat("a", maxLoggedQueryLen-1), out)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"net"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-mysql-org/go-mysql/client"
 	"github.com/go-mysql-org/go-mysql/mysql"
@@ -224,46 +225,50 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 		c.commonMetrics.AddBytesTransferred(0, bytesFromClient)
 	}()
 
+	pktReader := newPacketReader(c.downstreamConnSQL)
+
 	for {
 		select {
 		case <-ctx.Done():
 			zap.L().Debug("ctx done. Exiting downstreamLoop")
 			return
 		default:
-			packetBytes, err := readPacket(c.downstreamConnSQL)
+			packetBytes, isCommand, err := pktReader.read()
 			if err != nil {
 				c.downstreamCh <- errors.Errorf("Could not read downstream packet: %+v", err)
 				return
 			}
 			bytesFromClient += int64(len(packetBytes))
 
-			pkt, err := decodePacket(packetBytes[4:])
-			if err != nil {
-				zap.L().Debug("Could not decode downstream packet. Skipping it...", zap.Error(err))
-				continue
+			if isCommand {
+				pkt, err := decodePacket(packetBytes[4:])
+				if err != nil {
+					zap.L().Debug("Could not decode downstream packet. Skipping it...", zap.Error(err))
+					continue
+				}
+
+				c.setLog(pkt)
+
+				switch {
+				case pkt.isQuit():
+					zap.L().Debug("Got quit msg. Exiting...")
+					c.dbMetrics.AddCommand("QUIT", "ALLOWED", metricutils.ValueUnset)
+					c.downstreamCh <- nil
+					return
+				case pkt.isChangeUser():
+					c.dbMetrics.AddCommand("CHANGE_USER", "DENIED", "UNSUPPORTED")
+					c.downstreamCh <- errors.Errorf("Cannot change user")
+					return
+				}
+
+				c.dbMetrics.AddCommand(mysqlCommandName(pkt),
+					"ALLOWED", metricutils.ValueUnset)
+
+				zap.L().Debug("downstream msg",
+					zap.Int("seq", int(packetBytes[3])),
+					zap.Int("type", int(pkt.typ)),
+					zap.String("content", string(pkt.content)))
 			}
-
-			c.setLog(pkt)
-
-			switch {
-			case pkt.isQuit():
-				zap.L().Debug("Got quit msg. Exiting...")
-				c.dbMetrics.AddCommand("QUIT", "ALLOWED", metricutils.ValueUnset)
-				c.downstreamCh <- nil
-				return
-			case pkt.isChangeUser():
-				c.dbMetrics.AddCommand("CHANGE_USER", "DENIED", "UNSUPPORTED")
-				c.downstreamCh <- errors.Errorf("Cannot change user")
-				return
-			}
-
-			c.dbMetrics.AddCommand(mysqlCommandName(pkt),
-				"ALLOWED", metricutils.ValueUnset)
-
-			zap.L().Debug("downstream msg",
-				zap.Int("seq", int(packetBytes[3])),
-				zap.Int("type", int(pkt.typ)),
-				zap.String("content", string(pkt.content)))
 
 			if err := writePacket(packetBytes, c.upstreamConnSQL); err != nil {
 				c.downstreamCh <- errors.Errorf("Could not write packet to upstream: %+v", err)
@@ -347,6 +352,27 @@ func mysqlCommandName(packet *mysqlPacket) string {
 	}
 }
 
+func truncateQuery(arg string) string {
+	if len(arg) <= maxLoggedQueryLen {
+		return arg
+	}
+
+	ret := arg[:maxLoggedQueryLen]
+	for len(ret) > 0 && !utf8.ValidString(ret) {
+		ret = ret[:len(ret)-1]
+	}
+
+	return ret
+}
+
+func (c *dctx) getLoggedQuery(query string) (string, bool) {
+	if c.svcConfig.GetMysql().GetVisibility().GetDisableQuery() {
+		return "", false
+	}
+
+	return truncateQuery(query), len(query) > maxLoggedQueryLen
+}
+
 func (c *dctx) setLog(packet *mysqlPacket) {
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -365,10 +391,12 @@ func (c *dctx) setLog(packet *mysqlPacket) {
 
 	switch {
 	case packet.isQuery():
+		query, isTruncated := c.getLoggedQuery(packet.toQuery().query)
 		info.Type = corev1.AccessLog_Entry_Info_MySQL_QUERY
+		info.IsTruncated = isTruncated
 		info.Details = &corev1.AccessLog_Entry_Info_MySQL_Query_{
 			Query: &corev1.AccessLog_Entry_Info_MySQL_Query{
-				Query: packet.toQuery().query,
+				Query: query,
 			},
 		}
 	case packet.isInitDB():
@@ -393,10 +421,12 @@ func (c *dctx) setLog(packet *mysqlPacket) {
 			},
 		}
 	case packet.isPreparedStatement():
+		query, isTruncated := c.getLoggedQuery(packet.toPreparedStatement().query)
 		info.Type = corev1.AccessLog_Entry_Info_MySQL_PREPARE_STATEMENT
+		info.IsTruncated = isTruncated
 		info.Details = &corev1.AccessLog_Entry_Info_MySQL_PrepareStatement_{
 			PrepareStatement: &corev1.AccessLog_Entry_Info_MySQL_PrepareStatement{
-				Query: packet.toPreparedStatement().query,
+				Query: query,
 			},
 		}
 	case packet.isExecuteStatement():

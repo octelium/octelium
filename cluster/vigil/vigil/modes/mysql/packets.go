@@ -159,6 +159,31 @@ func (p *mysqlPacket) toQuit() *packetQuit {
 	return &packetQuit{}
 }
 
+func packetPayloadLen(pkt []byte) int {
+	return int(uint32(pkt[0]) | uint32(pkt[1])<<8 | uint32(pkt[2])<<16)
+}
+
+type packetReader struct {
+	conn           io.Reader
+	isContinuation bool
+}
+
+func newPacketReader(conn io.Reader) *packetReader {
+	return &packetReader{conn: conn}
+}
+
+func (p *packetReader) read() ([]byte, bool, error) {
+	pkt, err := readPacket(p.conn)
+	if err != nil {
+		return nil, false, err
+	}
+
+	isCommand := !p.isContinuation
+	p.isContinuation = packetPayloadLen(pkt) == mysql.MaxPayloadLen
+
+	return pkt, isCommand, nil
+}
+
 func readPacket(conn io.Reader) ([]byte, error) {
 	var header [4]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
