@@ -790,7 +790,7 @@ func newTestPostgresServer(t *testing.T, ctx context.Context, tst *tests.T,
 	}
 }
 
-func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn) {
+func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn, *pgproto3.BackendKeyData) {
 	t.Helper()
 
 	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
@@ -810,9 +810,54 @@ func newTestFrontend(t *testing.T, port int) (*pgproto3.Frontend, net.Conn) {
 		t.Fatal(err)
 	}
 
-	receiveUntilReadyForQuery(t, c, fe)
+	ret := &pgproto3.BackendKeyData{}
+	for _, msg := range receiveUntilReadyForQuery(t, c, fe) {
+		if keyData, ok := msg.(*pgproto3.BackendKeyData); ok {
+			ret.ProcessID = keyData.ProcessID
+			ret.SecretKey = keyData.SecretKey
+		}
+	}
 
-	return fe, c
+	return fe, c, ret
+}
+
+func sendCancelRequest(t *testing.T, port int, keyData *pgproto3.BackendKeyData) {
+	t.Helper()
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	fe := pgproto3.NewFrontend(c, c)
+	fe.Send(&pgproto3.CancelRequest{
+		ProcessID: keyData.ProcessID,
+		SecretKey: keyData.SecretKey,
+	})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func receiveQueryValue(t *testing.T, c net.Conn, fe *pgproto3.Frontend, query string) string {
+	t.Helper()
+
+	fe.Send(&pgproto3.Query{String: query})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	var ret string
+	for {
+		msg := receiveMessage(t, c, fe)
+		if dataRow, ok := msg.(*pgproto3.DataRow); ok && len(dataRow.Values) == 1 {
+			ret = string(dataRow.Values[0])
+		}
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			return ret
+		}
+	}
 }
 
 func receiveMessage(t *testing.T, c net.Conn, fe *pgproto3.Frontend) pgproto3.BackendMessage {
@@ -942,7 +987,7 @@ func TestAuthorizationDeny(t *testing.T) {
 		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
 	})
 
-	fe, c := newTestFrontend(t, ts.port)
+	fe, c, _ := newTestFrontend(t, ts.port)
 	defer c.Close()
 
 	{
@@ -1027,7 +1072,7 @@ func TestFunctionCall(t *testing.T) {
 	})
 
 	{
-		fe, c := newTestFrontend(t, ts.port)
+		fe, c, _ := newTestFrontend(t, ts.port)
 		defer c.Close()
 
 		oid := receiveFunctionOID(t, c, fe, "pg_backend_pid")
@@ -1053,7 +1098,7 @@ func TestFunctionCall(t *testing.T) {
 	ts.vCache.SetService(ts.svc)
 
 	{
-		fe, c := newTestFrontend(t, ts.port)
+		fe, c, _ := newTestFrontend(t, ts.port)
 		defer c.Close()
 
 		oid := receiveFunctionOID(t, c, fe, "pg_backend_pid")
@@ -1088,7 +1133,7 @@ func TestMaxMessageBodyLen(t *testing.T) {
 	}, nil)
 
 	{
-		_, c := newTestFrontend(t, ts.port)
+		_, c, _ := newTestFrontend(t, ts.port)
 		defer c.Close()
 
 		header := make([]byte, 5)
@@ -1101,7 +1146,7 @@ func TestMaxMessageBodyLen(t *testing.T) {
 	}
 
 	{
-		fe, c := newTestFrontend(t, ts.port)
+		fe, c, _ := newTestFrontend(t, ts.port)
 		defer c.Close()
 
 		fe.Send(&pgproto3.Query{String: fmt.Sprintf("SELECT repeat('x', %d);",
@@ -1109,5 +1154,61 @@ func TestMaxMessageBodyLen(t *testing.T) {
 		assert.Nil(t, fe.Flush())
 
 		assertClosedByServer(t, c)
+	}
+}
+
+func TestCancelRequest(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, nil)
+
+	fe, c, keyData := newTestFrontend(t, ts.port)
+	defer c.Close()
+
+	assert.Len(t, keyData.SecretKey, 4)
+
+	{
+		upstreamPID := receiveQueryValue(t, c, fe, "SELECT pg_backend_pid();")
+		assert.NotEmpty(t, upstreamPID)
+		assert.NotEqual(t, upstreamPID, fmt.Sprintf("%d", keyData.ProcessID))
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT pg_sleep(30);"})
+		assert.Nil(t, fe.Flush())
+
+		time.Sleep(1 * time.Second)
+		sendCancelRequest(t, ts.port, keyData)
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, "57014", errorResponseCode(msgs...))
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT pg_sleep(1);"})
+		assert.Nil(t, fe.Flush())
+
+		sendCancelRequest(t, ts.port, &pgproto3.BackendKeyData{
+			ProcessID: keyData.ProcessID + 1,
+			SecretKey: []byte("octe"),
+		})
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
 	}
 }

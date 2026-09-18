@@ -18,6 +18,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -35,11 +37,13 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/mtls"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -102,6 +106,9 @@ type dctx struct {
 	octovigilC *octovigilc.Client
 	vCache     *vcache.Cache
 
+	cancelKeys *cancelKeyStore
+	cancelKey  cancelKey
+
 	reasonInit *corev1.AccessLog_Entry_Common_Reason
 	authResp   *coctovigilv1.AuthenticateAndAuthorizeResponse
 
@@ -117,6 +124,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 	pgBackend *pgproto3.Backend, startupMessage pgproto3.FrontendMessage,
 	octovigilC *octovigilc.Client,
 	vCache *vcache.Cache,
+	cancelKeys *cancelKeyStore,
 	downstreamConn *countingConn,
 	commonMetrics *metricutils.CommonMetrics,
 	dbMetrics *metricutils.DBMetrics,
@@ -130,6 +138,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 		createdAt:  time.Now(),
 		octovigilC: octovigilC,
 		vCache:     vCache,
+		cancelKeys: cancelKeys,
 
 		downstreamCh: make(chan error, 1),
 		upstreamCh:   make(chan error, 1),
@@ -149,6 +158,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 }
 
 func (c *dctx) close() error {
+	c.cancelKeys.delete(c.cancelKey)
 	if c.conn != nil {
 		c.conn.Close()
 	}
@@ -181,6 +191,10 @@ func (c *dctx) getUpstreamConfig(upstream *loadbalancer.Upstream, password strin
 		connStr = fmt.Sprintf("%s sslmode=disable", connStr)
 	case corev1.Service_Spec_Config_Postgres_REQUIRE:
 		connStr = fmt.Sprintf("%s sslmode=require", connStr)
+	case corev1.Service_Spec_Config_Postgres_VERIFY_CA:
+		connStr = fmt.Sprintf("%s sslmode=verify-ca", connStr)
+	case corev1.Service_Spec_Config_Postgres_VERIFY_FULL:
+		connStr = fmt.Sprintf("%s sslmode=verify-full", connStr)
 	default:
 		connStr = fmt.Sprintf("%s sslmode=prefer", connStr)
 	}
@@ -199,6 +213,66 @@ func (c *dctx) getUpstreamConfig(upstream *loadbalancer.Upstream, password strin
 	pgCfg.Password = password
 
 	return pgCfg, nil
+}
+
+func upstreamTLSConfigs(pgCfg *pgconn.Config) []*tls.Config {
+	var ret []*tls.Config
+
+	if pgCfg.TLSConfig != nil {
+		ret = append(ret, pgCfg.TLSConfig)
+	}
+
+	for _, fallback := range pgCfg.Fallbacks {
+		if fallback.TLSConfig != nil {
+			ret = append(ret, fallback.TLSConfig)
+		}
+	}
+
+	return ret
+}
+
+func (c *dctx) setUpstreamTLSConfig(ctx context.Context, svc *corev1.Service,
+	pgCfg *pgconn.Config, upstream *loadbalancer.Upstream) error {
+	if c.svcConfig.GetTls() == nil {
+		return nil
+	}
+
+	tlsCfg, err := mtls.GetClientTLSCfg(ctx, svc, c.svcConfig, c.secretMan, upstream)
+	if err != nil {
+		return err
+	}
+
+	for _, cfg := range upstreamTLSConfigs(pgCfg) {
+		cfg.RootCAs = tlsCfg.RootCAs
+		cfg.Certificates = tlsCfg.Certificates
+	}
+
+	return nil
+}
+
+func (c *dctx) setCancelKey() error {
+	processID, err := utilrand.GetRandomBytes(4)
+	if err != nil {
+		return err
+	}
+
+	secretKey, err := utilrand.GetRandomBytes(4)
+	if err != nil {
+		return err
+	}
+
+	c.cancelKey = cancelKey{
+		processID: binary.BigEndian.Uint32(processID),
+		secretKey: string(secretKey),
+	}
+
+	c.cancelKeys.set(c.cancelKey, &cancelTarget{
+		addr:      c.upstreamHijackedConn.Conn.RemoteAddr().String(),
+		processID: c.upstreamHijackedConn.PID,
+		secretKey: c.upstreamHijackedConn.SecretKey,
+	})
+
+	return nil
 }
 
 func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) error {
@@ -234,6 +308,10 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		return err
 	}
 
+	if err := c.setUpstreamTLSConfig(ctx, svc, pgCfg, upstream); err != nil {
+		return err
+	}
+
 	c.upstreamConn, err = pgconn.ConnectConfig(ctx, pgCfg)
 	if err != nil {
 		return err
@@ -248,11 +326,15 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	c.pgFrontend = c.upstreamHijackedConn.Frontend
 	c.pgFrontend.SetMaxBodyLen(maxMessageBodyLen)
 
+	if err := c.setCancelKey(); err != nil {
+		return err
+	}
+
 	c.pgBackend.Send(&pgproto3.AuthenticationOk{})
 
 	c.pgBackend.Send(&pgproto3.BackendKeyData{
-		ProcessID: c.upstreamHijackedConn.PID,
-		SecretKey: c.upstreamHijackedConn.SecretKey,
+		ProcessID: c.cancelKey.processID,
+		SecretKey: []byte(c.cancelKey.secretKey),
 	})
 
 	for k, v := range c.upstreamHijackedConn.ParameterStatuses {

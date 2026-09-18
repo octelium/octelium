@@ -53,6 +53,47 @@ import (
 const startupTimeout = 10 * time.Second
 const maxMessageBodyLen = 64 * 1024 * 1024
 const maxLoggedQueryLen = 32 * 1024
+const cancelRequestTimeout = 5 * time.Second
+
+type cancelKey struct {
+	processID uint32
+	secretKey string
+}
+
+type cancelTarget struct {
+	addr      string
+	processID uint32
+	secretKey []byte
+}
+
+type cancelKeyStore struct {
+	mu      sync.Mutex
+	targets map[cancelKey]*cancelTarget
+}
+
+func newCancelKeyStore() *cancelKeyStore {
+	return &cancelKeyStore{
+		targets: make(map[cancelKey]*cancelTarget),
+	}
+}
+
+func (s *cancelKeyStore) set(key cancelKey, target *cancelTarget) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.targets[key] = target
+}
+
+func (s *cancelKeyStore) get(key cancelKey) *cancelTarget {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.targets[key]
+}
+
+func (s *cancelKeyStore) delete(key cancelKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.targets, key)
+}
 
 type Server struct {
 	octovigilC *octovigilc.Client
@@ -85,6 +126,7 @@ type Server struct {
 		mu     sync.RWMutex
 	}
 	metricsStore *metricsStore
+	cancelKeys   *cancelKeyStore
 }
 
 type metricsStore struct {
@@ -115,6 +157,7 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		// sessionCtl:   &controllers.SessionController{},
 		secretMan:    opts.SecretMan,
 		metricsStore: &metricsStore{},
+		cancelKeys:   newCancelKeyStore(),
 	}
 
 	server.dctxMap.dctxMap = make(map[string]*dctx)
@@ -189,10 +232,14 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		zap.L().Debug("Could not set the startup deadline", zap.Error(err))
 	}
 
-	startupMessage, pgBackend, err := s.getStartupMessage(ctx, svc, c)
+	startupMessage, pgBackend, isCancelRequest, err := s.getStartupMessage(ctx, svc, c)
 	if err != nil {
 		zap.L().Debug("Could not get startup msg", zap.Error(err))
 		s.metricsStore.AddConnRejected("HANDSHAKE")
+		c.Close()
+		return
+	}
+	if isCancelRequest {
 		c.Close()
 		return
 	}
@@ -252,7 +299,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	dctx := newDctx(ctx,
 		c, i, s.secretMan, pgBackend, startupMessage,
-		s.octovigilC, s.vCache,
+		s.octovigilC, s.vCache, s.cancelKeys,
 		cc, s.metricsStore.CommonMetrics, s.metricsStore.dbMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
 	if err := dctx.connect(ctx, s.lbManager, svc, s.secretMan); err != nil {
@@ -335,14 +382,14 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 }
 
-func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c net.Conn) (*pgproto3.StartupMessage, *pgproto3.Backend, error) {
+func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c net.Conn) (*pgproto3.StartupMessage, *pgproto3.Backend, bool, error) {
 
 	n := 0
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, nil, nil
+			return nil, nil, false, nil
 		default:
 			zap.L().Debug("Creating a new pg backend")
 			pgBackend := pgproto3.NewBackend(c, c)
@@ -352,7 +399,7 @@ func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c n
 			startupMessage, err := pgBackend.ReceiveStartupMessage()
 			if err != nil {
 				zap.L().Debug("Could not receive startup msg", zap.Error(err))
-				return nil, nil, err
+				return nil, nil, false, err
 			}
 
 			zap.L().Debug("Received startup msg", zap.Any("msg", startupMessage))
@@ -360,20 +407,24 @@ func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c n
 			switch msg := startupMessage.(type) {
 			case *pgproto3.StartupMessage:
 				zap.L().Debug("Received startup msg", zap.Any("msg", msg))
-				return msg, pgBackend, nil
+				return msg, pgBackend, false, nil
+			case *pgproto3.CancelRequest:
+				zap.L().Debug("Received cancelRequest msg")
+				s.doCancelRequest(ctx, msg)
+				return nil, nil, true, nil
 			case *pgproto3.SSLRequest:
 				zap.L().Debug("Received sslRequest msg")
 				n = n + 1
 
 				if n > 10 {
-					return nil, nil, errors.Errorf("Too many ssl requests")
+					return nil, nil, false, errors.Errorf("Too many ssl requests")
 				}
 
 				if svc.Spec.IsTLS {
 					_, err := c.Write([]byte{'S'})
 					if err != nil {
 						zap.L().Debug("Could not accept SSL request msg", zap.Error(err))
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 					s.tlsCfgMan.mu.RLock()
 					c = tls.Server(c, s.tlsCfgMan.tlsCfg)
@@ -382,17 +433,56 @@ func (s *Server) getStartupMessage(ctx context.Context, svc *corev1.Service, c n
 					_, err := c.Write([]byte{'N'})
 					if err != nil {
 						zap.L().Debug("Could not decline SSL request msg", zap.Error(err))
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 				}
 
 			default:
 				zap.L().Debug("Received unknown startup msg type",
 					zap.Any("msg", startupMessage), zap.Any("msg", msg))
-				return nil, nil, errors.Errorf("Received unknown startup msg type")
+				return nil, nil, false, errors.Errorf("Received unknown startup msg type")
 			}
 		}
 	}
+}
+
+func (s *Server) doCancelRequest(ctx context.Context, msg *pgproto3.CancelRequest) {
+	target := s.cancelKeys.get(cancelKey{
+		processID: msg.ProcessID,
+		secretKey: string(msg.SecretKey),
+	})
+	if target == nil {
+		zap.L().Debug("Could not find a cancelRequest target")
+		return
+	}
+
+	buf, err := (&pgproto3.CancelRequest{
+		ProcessID: target.processID,
+		SecretKey: target.secretKey,
+	}).Encode(nil)
+	if err != nil {
+		zap.L().Debug("Could not encode the cancelRequest msg", zap.Error(err))
+		return
+	}
+
+	dialer := &net.Dialer{Timeout: cancelRequestTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", target.addr)
+	if err != nil {
+		zap.L().Debug("Could not dial the upstream for the cancelRequest", zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(cancelRequestTimeout)); err != nil {
+		zap.L().Debug("Could not set the cancelRequest deadline", zap.Error(err))
+	}
+
+	if _, err := conn.Write(buf); err != nil {
+		zap.L().Debug("Could not send the cancelRequest to the upstream", zap.Error(err))
+		return
+	}
+
+	zap.L().Debug("cancelRequest has been sent to the upstream")
 }
 
 func (s *Server) getDownstreamReq(ctx context.Context, c net.Conn, startupMessage *pgproto3.StartupMessage) *coctovigilv1.DownstreamRequest {

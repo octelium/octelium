@@ -17,14 +17,19 @@
 package postgres
 
 import (
+	"context"
+	"crypto/x509"
 	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -324,4 +329,172 @@ func TestTruncateQuery(t *testing.T) {
 		assert.True(t, utf8.ValidString(out))
 		assert.Equal(t, strings.Repeat("a", maxLoggedQueryLen-1), out)
 	}
+}
+
+func hasPlaintextFallback(pgCfg *pgconn.Config) bool {
+	for _, fallback := range pgCfg.Fallbacks {
+		if fallback.TLSConfig == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGetUpstreamConfigSSLMode(t *testing.T) {
+	upstream := &loadbalancer.Upstream{
+		Host: "10.0.0.5",
+		Port: 5432,
+	}
+
+	newCfg := func(t *testing.T,
+		sslMode corev1.Service_Spec_Config_Postgres_SSLMode) *pgconn.Config {
+		t.Helper()
+
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			User:    "postgres",
+			SslMode: sslMode,
+		}, nil)
+		c.dbUser = c.getEffectiveUser()
+
+		pgCfg, err := c.getUpstreamConfig(upstream, "mypassword")
+		assert.Nil(t, err, "%+v", err)
+		return pgCfg
+	}
+
+	for _, arg := range []struct {
+		sslMode              corev1.Service_Spec_Config_Postgres_SSLMode
+		isTLS                bool
+		canFallbackPlaintext bool
+	}{
+		{corev1.Service_Spec_Config_Postgres_SSL_MODE_UNSET, true, true},
+		{corev1.Service_Spec_Config_Postgres_DISABLE, false, false},
+		{corev1.Service_Spec_Config_Postgres_REQUIRE, true, false},
+		{corev1.Service_Spec_Config_Postgres_VERIFY_CA, true, false},
+		{corev1.Service_Spec_Config_Postgres_VERIFY_FULL, true, false},
+	} {
+		pgCfg := newCfg(t, arg.sslMode)
+		assert.Equal(t, arg.isTLS, pgCfg.TLSConfig != nil, arg.sslMode.String())
+		assert.Equal(t, arg.canFallbackPlaintext, hasPlaintextFallback(pgCfg),
+			arg.sslMode.String())
+	}
+
+	{
+		pgCfg := newCfg(t, corev1.Service_Spec_Config_Postgres_REQUIRE)
+		assert.True(t, pgCfg.TLSConfig.InsecureSkipVerify)
+		assert.Nil(t, pgCfg.TLSConfig.VerifyPeerCertificate)
+	}
+
+	{
+		pgCfg := newCfg(t, corev1.Service_Spec_Config_Postgres_VERIFY_CA)
+		assert.True(t, pgCfg.TLSConfig.InsecureSkipVerify)
+		assert.NotNil(t, pgCfg.TLSConfig.VerifyPeerCertificate)
+	}
+
+	{
+		pgCfg := newCfg(t, corev1.Service_Spec_Config_Postgres_VERIFY_FULL)
+		assert.False(t, pgCfg.TLSConfig.InsecureSkipVerify)
+		assert.Nil(t, pgCfg.TLSConfig.VerifyPeerCertificate)
+		assert.Equal(t, upstream.Host, pgCfg.TLSConfig.ServerName)
+	}
+}
+
+func TestSetUpstreamTLSConfig(t *testing.T) {
+	ctx := context.Background()
+
+	upstream := &loadbalancer.Upstream{
+		Host: "10.0.0.5",
+		Port: 5432,
+	}
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: "svc",
+		},
+		Spec:   &corev1.Service_Spec{},
+		Status: &corev1.Service_Status{},
+	}
+
+	ca, err := utils_cert.GenerateCARoot()
+	assert.Nil(t, err, "%+v", err)
+
+	caPEM, err := utils_cert.GetCertificatePEMStr(ca.Certificate)
+	assert.Nil(t, err, "%+v", err)
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			SslMode: corev1.Service_Spec_Config_Postgres_VERIFY_FULL,
+		}, nil)
+
+		pgCfg, err := c.getUpstreamConfig(upstream, "mypassword")
+		assert.Nil(t, err, "%+v", err)
+
+		assert.Nil(t, c.setUpstreamTLSConfig(ctx, svc, pgCfg, upstream))
+		assert.Nil(t, pgCfg.TLSConfig.RootCAs)
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			SslMode: corev1.Service_Spec_Config_Postgres_VERIFY_FULL,
+		}, nil)
+		c.svcConfig.Tls = &corev1.Service_Spec_Config_TLS{
+			TrustedCAs: []string{caPEM},
+		}
+
+		pgCfg, err := c.getUpstreamConfig(upstream, "mypassword")
+		assert.Nil(t, err, "%+v", err)
+
+		assert.Nil(t, c.setUpstreamTLSConfig(ctx, svc, pgCfg, upstream))
+		assert.NotNil(t, pgCfg.TLSConfig.RootCAs)
+		assert.True(t, pgCfg.TLSConfig.RootCAs.Equal(caPool(t, ca.Certificate)))
+	}
+
+	{
+		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{
+			SslMode: corev1.Service_Spec_Config_Postgres_SSL_MODE_UNSET,
+		}, nil)
+		c.svcConfig.Tls = &corev1.Service_Spec_Config_TLS{
+			TrustedCAs: []string{caPEM},
+		}
+
+		pgCfg, err := c.getUpstreamConfig(upstream, "mypassword")
+		assert.Nil(t, err, "%+v", err)
+
+		assert.Nil(t, c.setUpstreamTLSConfig(ctx, svc, pgCfg, upstream))
+		for _, cfg := range upstreamTLSConfigs(pgCfg) {
+			assert.NotNil(t, cfg.RootCAs)
+		}
+	}
+}
+
+func caPool(t *testing.T, crt *x509.Certificate) *x509.CertPool {
+	t.Helper()
+
+	ret := x509.NewCertPool()
+	ret.AddCert(crt)
+	return ret
+}
+
+func TestCancelKeyStore(t *testing.T) {
+	store := newCancelKeyStore()
+
+	key := cancelKey{
+		processID: 1234,
+		secretKey: "abcd",
+	}
+
+	assert.Nil(t, store.get(key))
+
+	target := &cancelTarget{
+		addr:      "10.0.0.5:5432",
+		processID: 4321,
+		secretKey: []byte("dcba"),
+	}
+	store.set(key, target)
+
+	assert.Equal(t, target, store.get(key))
+	assert.Nil(t, store.get(cancelKey{processID: 1234, secretKey: "abce"}))
+	assert.Nil(t, store.get(cancelKey{processID: 1235, secretKey: "abcd"}))
+
+	store.delete(key)
+	assert.Nil(t, store.get(key))
 }
