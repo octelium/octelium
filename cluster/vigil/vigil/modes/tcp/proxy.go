@@ -32,6 +32,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const upstreamDialTimeout = 20 * time.Second
+
 type proxy struct {
 	lbManager *loadbalancer.LBManager
 	dctx      *dctx
@@ -73,20 +75,49 @@ func (p *proxy) getUpstreamConn(ctx context.Context, svc *corev1.Service, secret
 		return nil, err
 	}
 
-	if p.dctx.svcConfig != nil &&
-		p.dctx.svcConfig.ClientCertificate != nil {
-		tlsCfg, err := mtls.GetClientTLSCfg(ctx, svc, p.dctx.svcConfig, secretMan, upstream)
-		if err != nil {
-			return nil, err
-		}
-		return tls.Dial("tcp", upstream.HostPort, tlsCfg)
-	}
-
-	conn, err := net.DialTimeout("tcp", upstream.HostPort, 20*time.Second)
+	tlsCfg, err := mtls.GetClientTLSCfg(ctx, svc, p.dctx.svcConfig, secretMan, upstream)
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+
+	ctx, cancel := context.WithTimeout(ctx, upstreamDialTimeout)
+	defer cancel()
+
+	dialer := &net.Dialer{
+		Timeout: upstreamDialTimeout,
+	}
+
+	if tlsCfg == nil && !isUpstreamTLS(upstream) {
+		return dialer.DialContext(ctx, "tcp", upstream.HostPort)
+	}
+
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS13,
+			ServerName: upstream.SNIHost,
+		}
+	}
+
+	tlsDialer := &tls.Dialer{
+		NetDialer: dialer,
+		Config:    tlsCfg,
+	}
+
+	return tlsDialer.DialContext(ctx, "tcp", upstream.HostPort)
+}
+
+func isUpstreamTLS(upstream *loadbalancer.Upstream) bool {
+	if upstream.URL == nil {
+		return false
+	}
+
+	switch upstream.URL.Scheme {
+	case "tls", "https":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *proxy) doServe(clientConn, backendConn net.Conn) {

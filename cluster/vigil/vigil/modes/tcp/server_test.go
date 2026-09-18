@@ -623,3 +623,174 @@ func TestTLSHandshakeDeadline(t *testing.T) {
 
 	assertClosedByDeadline(t, c, handshakeTimeout)
 }
+
+func TestUpstreamTLSFromConfigTLS(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	{
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{
+			V4: "127.0.0.0/8",
+			V6: "::1/128",
+		}
+		_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	}
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+
+	root, err := utils_cert.GenerateCARoot()
+	assert.Nil(t, err)
+	sn, err := utils_cert.GenerateSerialNumber()
+	assert.Nil(t, err)
+	srvCrt, err := utils_cert.GenerateCertificate(&x509.Certificate{
+		BasicConstraintsValid: true,
+		SerialNumber:          sn,
+		Subject: pkix.Name{
+			CommonName: "localhost",
+		},
+		DNSNames:    []string{"localhost"},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}, root.Certificate, root.PrivateKey, false)
+	assert.Nil(t, err)
+
+	srvCert, err := tls.X509KeyPair(srvCrt.MustGetCertPEM(), srvCrt.MustGetPrivateKeyPEM())
+	assert.Nil(t, err)
+
+	upstreamPort := tests.GetPort()
+	upstreamSrv := newTestServer(upstreamPort)
+	upstreamSrv.crt = &srvCert
+	upstreamSrv.run(t)
+	t.Cleanup(func() {
+		upstreamSrv.close()
+	})
+
+	svc, err := adminSrv.CreateService(ctx, &v1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &v1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_TCP,
+			Config: &v1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", upstreamPort),
+					},
+				},
+				Tls: &corev1.Service_Spec_Config_TLS{
+					TrustedCAs: []string{
+						string(root.MustGetCertPEM()),
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	err = usr.Connect()
+	assert.Nil(t, err, "%+v", err)
+
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{
+			{
+				V4: "127.0.0.1/32",
+				V6: "::1/128",
+			},
+		},
+		Type:   corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode: corev1.Session_Status_Connection_V4,
+	}
+
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	assert.Nil(t, err)
+	usr.Resync()
+
+	octovigilC.GetCache().SetSession(usr.Session)
+	usr.Resync()
+
+	time.Sleep(1 * time.Second)
+
+	c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", svc.Spec.Port))
+	assert.Nil(t, err)
+	defer c.Close()
+
+	msg := utilrand.GetRandomBytesMust(32)
+
+	_, err = c.Write(msg)
+	assert.Nil(t, err)
+
+	assert.Nil(t, c.SetReadDeadline(time.Now().Add(10*time.Second)))
+
+	buf := make([]byte, 4096)
+	n, err := c.Read(buf)
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, msg, buf[:n])
+}
