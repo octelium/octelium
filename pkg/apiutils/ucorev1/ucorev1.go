@@ -111,6 +111,8 @@ func NewObjectListOptions(kind string) (proto.Message, error) {
 		return &corev1.ListSessionOptions{}, nil
 	case KindSecret:
 		return &corev1.ListSecretOptions{}, nil
+	case KindConfig:
+		return &corev1.ListConfigOptions{}, nil
 	case KindPolicy:
 		return &corev1.ListPolicyOptions{}, nil
 

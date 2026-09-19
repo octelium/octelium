@@ -15,6 +15,7 @@
 package apply
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -160,4 +161,24 @@ func TestGetCmpMetadata(t *testing.T) {
 
 	assert.True(t, pbutils.IsEqual(
 		getCmpMetadata(&corev1.ClusterConfig{}), getCmpMetadata(&corev1.ClusterConfig{})))
+}
+
+func TestSupportedResourceKindsAreUsable(t *testing.T) {
+
+	client := reflect.ValueOf(corev1.NewMainServiceClient(nil))
+
+	for _, kind := range supportedResourceNames {
+		obj, err := ucorev1.NewObject(kind)
+		assert.Nil(t, err, "kind %s: %+v", kind, err)
+		assert.NotNil(t, obj, "kind %s", kind)
+
+		listOpts, err := ucorev1.NewObjectListOptions(kind)
+		assert.Nil(t, err, "kind %s: %+v", kind, err)
+		assert.NotNil(t, listOpts, "kind %s", kind)
+
+		for _, verb := range []string{"List", "Create", "Update", "Delete"} {
+			assert.True(t, client.MethodByName(verb+kind).IsValid(),
+				"the Cluster API has no %s%s method", verb, kind)
+		}
+	}
 }
