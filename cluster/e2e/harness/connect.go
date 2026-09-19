@@ -43,10 +43,12 @@ type ConnectOpts struct {
 	TunnelMode     string
 	Root           bool
 	Args           []string
+	Env            []string
 }
 
 type PublishSpec struct {
 	Service string
+	Address string
 	Port    int
 }
 
@@ -142,6 +144,11 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 
 	for _, spec := range o.PublishOrdered {
 		ports[spec.Service] = spec.Port
+		if spec.Address != "" {
+			args = append(args,
+				fmt.Sprintf("-p %s:%s:%d", spec.Service, spec.Address, spec.Port))
+			continue
+		}
 		args = append(args, fmt.Sprintf("-p %s:%d", spec.Service, spec.Port))
 	}
 
@@ -182,6 +189,7 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 	cmd := h.Cmd(h.rootCtx, cmdStr)
 
 	cmd.Env = append(os.Environ(), "OCTELIUM_DEV=true")
+	cmd.Env = append(cmd.Env, o.Env...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

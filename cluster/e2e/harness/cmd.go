@@ -89,6 +89,32 @@ func (h *H) MustOutput(t *testing.T, cmdStr string) []byte {
 	return out
 }
 
+func (h *H) OutputWithin(t *testing.T, cmdStr string, budget time.Duration) ([]byte, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), budget)
+	defer cancel()
+
+	out, err := h.Output(ctx, cmdStr)
+	if ctx.Err() != nil {
+		t.Fatalf("Command did not exit within %s: %s\n%s", budget, cmdStr, out)
+	}
+
+	return out, err
+}
+
+func (h *H) MustOutputWithin(t *testing.T, cmdStr string, budget time.Duration) []byte {
+	t.Helper()
+
+	out, err := h.OutputWithin(t, cmdStr, budget)
+	if err != nil {
+		t.Fatalf("Command failed: %s: %+v\n%s", cmdStr, err, out)
+	}
+
+	zap.L().Debug("Command out", zap.String("cmd", cmdStr), zap.String("out", string(out)))
+	return out
+}
+
 func (h *H) MustOutputProto(t *testing.T, cmdStr string, msg proto.Message) {
 	t.Helper()
 

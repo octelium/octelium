@@ -106,6 +106,16 @@ func (h *H) DNSClient(t *testing.T) *DNSClient {
 	return nil
 }
 
+func (h *H) DNSClientAt(server string) *DNSClient {
+	return &DNSClient{
+		Server: server,
+		c: &dns.Client{
+			Net:     "udp",
+			Timeout: dnsQueryTimeout,
+		},
+	}
+}
+
 func (c *DNSClient) Exchange(ctx context.Context, name string, qtype uint16) (*dns.Msg, error) {
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(name), qtype)

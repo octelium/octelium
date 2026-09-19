@@ -17,7 +17,9 @@
 package harness
 
 import (
+	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -123,4 +125,102 @@ func (h *H) TunDevice(t *testing.T) (string, error) {
 
 	return "", errors.Errorf(
 		"No host interface holds any of the Session addresses %v", addrs)
+}
+
+func (h *H) DeviceHoldingAddr(t *testing.T, addr string) string {
+	t.Helper()
+
+	out, err := h.Output(t.Context(), "ip -o addr show")
+	if err != nil {
+		t.Fatalf("Could not list the host addresses: %+v: %s", err, out)
+	}
+
+	return deviceHoldingAddr(string(out), addr)
+}
+
+func (h *H) HasDevice(t *testing.T, dev string) bool {
+	t.Helper()
+
+	_, err := h.Output(t.Context(), fmt.Sprintf("ip link show dev %s", dev))
+	return err == nil
+}
+
+func (h *H) DeviceMTU(t *testing.T, dev string) int {
+	t.Helper()
+
+	out, err := h.Output(t.Context(), fmt.Sprintf("ip -o link show dev %s", dev))
+	if err != nil {
+		t.Fatalf("Could not show the device %s: %+v: %s", dev, err, out)
+	}
+
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f != "mtu" || i+1 >= len(fields) {
+			continue
+		}
+		mtu, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			continue
+		}
+		return mtu
+	}
+
+	t.Fatalf("Could not find the MTU of the device %s: %s", dev, out)
+	return 0
+}
+
+func (h *H) DeviceAddrs(t *testing.T, dev string) []netip.Addr {
+	t.Helper()
+
+	out, err := h.Output(t.Context(), fmt.Sprintf("ip -o addr show dev %s", dev))
+	if err != nil {
+		t.Fatalf("Could not list the addresses of %s: %+v: %s", dev, err, out)
+	}
+
+	var ret []netip.Addr
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		pfx, err := netip.ParsePrefix(fields[3])
+		if err != nil {
+			continue
+		}
+		ret = append(ret, pfx.Addr())
+	}
+
+	return ret
+}
+
+func (h *H) DeviceRoutes(t *testing.T, dev string) []netip.Prefix {
+	t.Helper()
+
+	var ret []netip.Prefix
+
+	for _, cmd := range []string{
+		fmt.Sprintf("ip -o route show table all dev %s", dev),
+		fmt.Sprintf("ip -o -6 route show table all dev %s", dev),
+	} {
+		out, err := h.Output(t.Context(), cmd)
+		if err != nil {
+			t.Fatalf("Could not list the routes of %s: %+v: %s", dev, err, out)
+		}
+
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			if pfx, err := netip.ParsePrefix(fields[0]); err == nil {
+				ret = append(ret, pfx)
+				continue
+			}
+			if addr, err := netip.ParseAddr(fields[0]); err == nil {
+				ret = append(ret, netip.PrefixFrom(addr, addr.BitLen()))
+			}
+		}
+	}
+
+	return ret
 }

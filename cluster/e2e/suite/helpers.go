@@ -59,6 +59,16 @@ func routeDevice(route string) string {
 	return ""
 }
 
+func routeSource(route string) string {
+	fields := strings.Fields(route)
+	for i, f := range fields {
+		if f == "src" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
 func hasRouteVia(routes, dev string) bool {
 	for _, line := range strings.Split(routes, "\n") {
 		if routeDevice(line) == dev {
