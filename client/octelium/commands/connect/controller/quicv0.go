@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -53,6 +54,23 @@ const (
 	IPv6offsetDst = IPv6offsetSrc + net.IPv6len
 )
 
+type errGW struct {
+	err error
+}
+
+func (e *errGW) Error() string {
+	return e.err.Error()
+}
+
+func (e *errGW) Unwrap() error {
+	return e.err
+}
+
+func isErrGW(err error) bool {
+	var gwErr *errGW
+	return stderrors.As(err, &gwErr)
+}
+
 func (c *Controller) doInitDevQUICV0(ctx context.Context) error {
 
 	zap.L().Debug("Initializing the QUIC engine")
@@ -60,7 +78,7 @@ func (c *Controller) doInitDevQUICV0(ctx context.Context) error {
 	c.quicEngine = newQUICEngine(c)
 
 	if err := c.quicEngine.run(ctx); err != nil {
-		return err
+		return &errGW{err: err}
 	}
 
 	return nil

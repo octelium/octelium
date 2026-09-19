@@ -36,6 +36,8 @@ type dctx struct {
 
 	createdAt time.Time
 
+	connStartedAt time.Time
+
 	mu       sync.Mutex
 	isClosed bool
 	conn     *quic.Conn
@@ -58,13 +60,14 @@ func newDctx(sess *corev1.Session,
 	zap.L().Debug("Creating a new dctx", zap.String("sessionUID", sess.Metadata.Uid), zap.Int("mtu", mtu))
 
 	ret := &dctx{
-		id:        sess.Metadata.Uid,
-		createdAt: time.Now(),
-		conn:      conn,
-		sendCh:    make(chan []byte, 1024),
-		processCh: make(chan []byte, 1024),
-		tunCh:     tunCh,
-		mtu:       mtu,
+		id:            sess.Metadata.Uid,
+		createdAt:     time.Now(),
+		connStartedAt: sess.Status.Connection.StartedAt.AsTime(),
+		conn:          conn,
+		sendCh:        make(chan []byte, 1024),
+		processCh:     make(chan []byte, 1024),
+		tunCh:         tunCh,
+		mtu:           mtu,
 	}
 
 	for _, addr := range sess.Status.Connection.Addresses {
@@ -97,7 +100,9 @@ func (d *dctx) close() error {
 	}
 	zap.L().Debug("Closing dctx", zap.String("id", d.id))
 	d.isClosed = true
-	d.cancelFn()
+	if d.cancelFn != nil {
+		d.cancelFn()
+	}
 	d.conn.CloseWithError(12, "")
 	zap.L().Debug("dctx is now closed", zap.String("id", d.id))
 	return nil
@@ -105,7 +110,16 @@ func (d *dctx) close() error {
 
 func (d *dctx) runAndWait(ctx context.Context) error {
 	ctx, cancelFn := context.WithCancel(ctx)
+
+	d.mu.Lock()
+	if d.isClosed {
+		d.mu.Unlock()
+		cancelFn()
+		return nil
+	}
 	d.cancelFn = cancelFn
+	d.mu.Unlock()
+
 	zap.L().Debug("Starting running dctx", zap.String("id", d.id))
 
 	go d.startReceiveLoop(ctx)

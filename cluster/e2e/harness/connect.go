@@ -55,6 +55,8 @@ type Conn struct {
 	cmd *exec.Cmd
 
 	ports map[string]int
+
+	exited chan struct{}
 }
 
 func (c *Conn) Port(svc string) int {
@@ -69,8 +71,34 @@ func (c *Conn) Addr(svc string) string {
 	return fmt.Sprintf("localhost:%d", c.ports[svc])
 }
 
+func (c *Conn) IsRunning() bool {
+	if c.exited == nil {
+		return false
+	}
+
+	select {
+	case <-c.exited:
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *Conn) WaitExit(budget time.Duration) error {
+	if c.exited == nil {
+		return nil
+	}
+
+	select {
+	case <-c.exited:
+		return nil
+	case <-time.After(budget):
+		return errors.Errorf("octelium connect did not exit within %s", budget)
+	}
+}
+
 func (c *Conn) Disconnect() error {
-	if c.cmd == nil || c.cmd.ProcessState != nil {
+	if !c.IsRunning() {
 		return nil
 	}
 
@@ -78,7 +106,10 @@ func (c *Conn) Disconnect() error {
 		return err
 	}
 
-	c.cmd.Wait()
+	if err := c.WaitExit(ConnectBudget); err != nil {
+		return err
+	}
+
 	zap.L().Debug("octelium connect exited")
 	return nil
 }
@@ -143,8 +174,9 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 	}
 
 	ret := &Conn{
-		h:     h,
-		ports: ports,
+		h:      h,
+		ports:  ports,
+		exited: make(chan struct{}),
 	}
 
 	cmd := h.Cmd(h.rootCtx, cmdStr)
@@ -159,13 +191,18 @@ func (h *H) connect(t *testing.T, o ConnectOpts) (*Conn, error) {
 	}
 	ret.cmd = cmd
 
+	go func() {
+		cmd.Wait()
+		close(ret.exited)
+	}()
+
 	t.Cleanup(func() {
 		if err := ret.Disconnect(); err != nil {
 			zap.L().Warn("Could not cleanly disconnect", zap.Error(err))
 		}
-		if cmd.Process != nil && cmd.ProcessState == nil {
+		if ret.IsRunning() {
 			cmd.Process.Kill()
-			cmd.Wait()
+			<-ret.exited
 		}
 	})
 

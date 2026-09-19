@@ -63,6 +63,8 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 		if err := c.doInitDevTUN(ctx); err == nil {
 			zap.L().Debug("WG mode chosen: TUN mode")
 			return nil
+		} else if isErrGW(err) {
+			return err
 		} else {
 			c.c.Preferences.LinuxPrefs.ImplementationMode = cliconfigv1.Connection_Preferences_Linux_WG_NETSTACK
 			zap.L().Debug("Could not init userspace implementation. Trying gVisor netstack mode.", zap.Error(err))

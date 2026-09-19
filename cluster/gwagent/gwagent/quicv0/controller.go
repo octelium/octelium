@@ -275,10 +275,6 @@ func (c *QUICController) doInit(ctx context.Context, stream *quic.Stream) (*core
 		return nil, errors.Errorf("Not a CLIENT Session")
 	}
 
-	if c.hasActiveSessionUID(sess.Metadata.Uid) {
-		return nil, errors.Errorf("Session already has another active Connection")
-	}
-
 	if sess.Status.Connection == nil {
 		return nil, errors.Errorf("This Session is not Connected")
 	}
@@ -350,12 +346,25 @@ func (c *QUICController) doHandleConnection(ctx context.Context, conn *quic.Conn
 
 	dctx := newDctx(sess, conn, c.tunWriteCh, c.svcCIDRs, c.mtu)
 
-	c.dctxMap.Lock()
-	if _, ok := c.dctxMap.dctxMap[sess.Metadata.Uid]; ok {
-		c.dctxMap.Unlock()
-		return errors.Errorf("Session is already connected")
+	if err := c.addDctx(dctx); err != nil {
+		return err
+	}
+	defer c.removeDctx(dctx)
+
+	if err := dctx.runAndWait(ctx); err != nil {
+		zap.L().Debug("runAndWait error", zap.Error(err))
 	}
 
+	return nil
+}
+
+func (c *QUICController) addDctx(dctx *dctx) error {
+	c.dctxMap.Lock()
+	old := c.dctxMap.dctxMap[dctx.id]
+	if old != nil && old.connStartedAt.Equal(dctx.connStartedAt) {
+		c.dctxMap.Unlock()
+		return errors.Errorf("Session already has another active Connection")
+	}
 	c.dctxMap.dctxMap[dctx.id] = dctx
 	c.dctxMap.Unlock()
 
@@ -365,29 +374,30 @@ func (c *QUICController) doHandleConnection(ctx context.Context, conn *quic.Conn
 	}
 	c.lookupMap.Unlock()
 
-	if err := dctx.runAndWait(ctx); err != nil {
-		zap.L().Debug("runAndWait error", zap.Error(err))
+	if old != nil {
+		zap.L().Debug("Evicting the dctx of an old Connection of the Session",
+			zap.String("id", old.id))
+		old.close()
 	}
-
-	c.dctxMap.Lock()
-	delete(c.dctxMap.dctxMap, dctx.id)
-	c.dctxMap.Unlock()
-
-	c.lookupMap.Lock()
-	for _, addr := range dctx.addrs {
-		delete(c.lookupMap.lookupMap, addr.Addr().String())
-	}
-	c.lookupMap.Unlock()
 
 	return nil
 }
 
-func (c *QUICController) hasActiveSessionUID(sessUID string) bool {
-	c.dctxMap.RLock()
-	defer c.dctxMap.RUnlock()
+func (c *QUICController) removeDctx(dctx *dctx) {
+	c.dctxMap.Lock()
+	if cur, ok := c.dctxMap.dctxMap[dctx.id]; ok && cur == dctx {
+		delete(c.dctxMap.dctxMap, dctx.id)
+	}
+	c.dctxMap.Unlock()
 
-	_, ok := c.dctxMap.dctxMap[sessUID]
-	return ok
+	c.lookupMap.Lock()
+	for _, addr := range dctx.addrs {
+		k := addr.Addr().String()
+		if cur, ok := c.lookupMap.lookupMap[k]; ok && cur == dctx {
+			delete(c.lookupMap.lookupMap, k)
+		}
+	}
+	c.lookupMap.Unlock()
 }
 
 func (c *QUICController) Close() error {
@@ -482,6 +492,12 @@ func (c *QUICController) RemoveConnection(sess *corev1.Session) error {
 	dctx, ok := c.dctxMap.dctxMap[sess.Metadata.Uid]
 	if !ok {
 		zap.L().Debug("Session doesn't exist. Nothing to be done...", zap.String("id", sess.Metadata.Uid))
+		return nil
+	}
+
+	if !dctx.connStartedAt.Equal(conn.StartedAt.AsTime()) {
+		zap.L().Debug("The Session is now using a newer Connection. Nothing to be done...",
+			zap.String("uid", sess.Metadata.Uid))
 		return nil
 	}
 

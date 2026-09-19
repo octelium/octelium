@@ -47,6 +47,10 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 			zap.L().Debug("QUICV0 mode chosen: Wintun mode")
 			return nil
 		}
+		if isErrGW(err) {
+			c.unwindPartialDev()
+			return err
+		}
 		zap.L().Debug("Could not init the Wintun implementation. Trying gVisor netstack mode.",
 			zap.Error(err))
 

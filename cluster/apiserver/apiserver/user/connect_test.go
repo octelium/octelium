@@ -834,3 +834,65 @@ func TestDisconnectRemovedSession(t *testing.T) {
 	_, err = usrSrv.Disconnect(usrT.Ctx(), &userv1.DisconnectRequest{})
 	assert.NotNil(t, err)
 }
+
+func TestDoDisconnectConnection(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	usrSrv, adminSrv := newFakeServers(tst.C)
+
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err, "%+v", err)
+
+	getSess := func() *corev1.Session {
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usrT.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err, "%+v", err)
+		return sess
+	}
+
+	_, oldConn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+	assert.NotNil(t, oldConn)
+
+	usrT.Resync()
+	oldCtx, err := userctx.GetUserCtx(usrT.Ctx())
+	assert.Nil(t, err, "%+v", err)
+
+	_, err = usrSrv.doDisconnect(usrT.Ctx(), oldCtx)
+	assert.Nil(t, err, "%+v", err)
+
+	usrT.Resync()
+	_, newConn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+	assert.NotNil(t, newConn)
+	assert.False(t, isSameConnection(oldConn, newConn))
+
+	resourceVersion := getSess().Metadata.ResourceVersion
+
+	_, err = usrSrv.doDisconnectConnection(ctx, oldCtx, oldConn)
+	assert.Nil(t, err, "%+v", err)
+
+	sess := getSess()
+	assert.True(t, sess.Status.IsConnected)
+	assert.NotNil(t, sess.Status.Connection)
+	assert.True(t, isSameConnection(sess.Status.Connection, newConn))
+	assert.Equal(t, resourceVersion, sess.Metadata.ResourceVersion)
+
+	usrT.Resync()
+	newCtx, err := userctx.GetUserCtx(usrT.Ctx())
+	assert.Nil(t, err, "%+v", err)
+
+	_, err = usrSrv.doDisconnectConnection(ctx, newCtx, newConn)
+	assert.Nil(t, err, "%+v", err)
+
+	sess = getSess()
+	assert.False(t, sess.Status.IsConnected)
+	assert.Nil(t, sess.Status.Connection)
+}

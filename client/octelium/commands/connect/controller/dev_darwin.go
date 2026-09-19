@@ -35,6 +35,9 @@ func (c *Controller) doInitDev(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
+	if isErrGW(err) {
+		return err
+	}
 	zap.L().Debug("Could not init TUN implementation. Trying gVisor netstack mode.", zap.Error(err))
 	return c.doInitDevNetstack(ctx)
 }

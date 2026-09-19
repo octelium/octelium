@@ -71,6 +71,7 @@ func Phases() []Phase {
 		{"Connect", testConnect},
 		{"ConnectServiceLifecycle", testConnectServiceLifecycle},
 		{"ConnectResilience", testConnectResilience},
+		{"ConnectTakeover", testConnectTakeover},
 		{"DNSResolution", testDNSResolution},
 		{"Apply", testApply},
 		{"ConnectQUIC", testConnectQUIC},

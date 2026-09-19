@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
+	"github.com/octelium/octelium/cluster/e2e/scenario"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -268,4 +269,89 @@ func testConnectResilience(t *testing.T, h *harness.H) {
 			zap.Duration("replacement", replaced),
 			zap.Duration("recovered", recovered))
 	})
+}
+
+func testConnectTakeover(t *testing.T, h *harness.H) {
+	svc := h.NewPublicService(t, "default")
+
+	for _, tunnel := range []struct {
+		name string
+		mode string
+		caps []scenario.Capability
+	}{
+		{
+			name: "WireGuard",
+			mode: "",
+		},
+		{
+			name: "QUICv0",
+			mode: "quicv0",
+			caps: []scenario.Capability{capQUICv0},
+		},
+	} {
+		t.Run(tunnel.name, func(t *testing.T) {
+			h.Require(t, tunnel.caps...)
+
+			firstPort := h.Port()
+			first := h.Connect(t, harness.ConnectOpts{
+				TunnelMode: tunnel.mode,
+				Publish:    map[string]int{svc.Metadata.Name: firstPort},
+			})
+
+			h.WaitGetStatus(t, h.HTTP(), first.URL(svc.Metadata.Name), http.StatusOK)
+
+			sessName := h.Status(t).Session.Metadata.Name
+			sess := h.GetSession(t, sessName)
+			require.NotNil(t, sess.Status.Connection)
+			previous := sess.Status.Connection.StartedAt.AsTime()
+
+			secondPort := h.Port()
+			second := h.Connect(t, harness.ConnectOpts{
+				TunnelMode: tunnel.mode,
+				Publish:    map[string]int{svc.Metadata.Name: secondPort},
+			})
+
+			takeover := waitConnectionState(t, h, sessName,
+				func(c *corev1.Session_Status_Connection) error {
+					if c == nil {
+						return errors.Errorf("the Session has no Connection")
+					}
+					if !c.StartedAt.AsTime().After(previous) {
+						return errors.Errorf("the Session still uses the previous Connection")
+					}
+					return nil
+				})
+
+			current := h.GetSession(t, sessName).Status.Connection.StartedAt.AsTime()
+
+			require.Nil(t, first.WaitExit(harness.ConnectBudget),
+				"the first octelium connect did not exit after being taken over")
+
+			h.Consistently(t, "the Connection of the second octelium connect to survive",
+				harness.DecisionBudget/2, func(ctx context.Context) error {
+					sess, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: sessName})
+					if err != nil {
+						return err
+					}
+					if sess.Status == nil || !sess.Status.IsConnected {
+						return errors.Errorf("the Session is no longer connected")
+					}
+					if sess.Status.Connection == nil {
+						return errors.Errorf("the Session Connection has been removed")
+					}
+					if !sess.Status.Connection.StartedAt.AsTime().Equal(current) {
+						return errors.Errorf("the Session Connection has been replaced")
+					}
+					if !second.IsRunning() {
+						return errors.Errorf("the second octelium connect has exited")
+					}
+					return nil
+				})
+
+			h.WaitGetStatus(t, h.HTTP(), second.URL(svc.Metadata.Name), http.StatusOK)
+
+			zap.L().Info("octelium connect takeover",
+				zap.String("tunnel", tunnel.name), zap.Duration("takeover", takeover))
+		})
+	}
 }

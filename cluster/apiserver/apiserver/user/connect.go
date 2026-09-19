@@ -17,6 +17,7 @@
 package user
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"fmt"
@@ -77,10 +78,16 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		}
 	}
 
-	connState, err := s.DoInitConnect(ctx, req)
+	connState, curConn, err := s.doInitConnect(ctx, req)
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.doDisconnectConnection(ctx, i, curConn)
+	}()
 
 	if err := stream.Send(connState); err != nil {
 		return serr.InternalWithErr(err)
@@ -90,12 +97,6 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 
 	tickerCh := time.NewTicker(5 * time.Minute)
 	defer tickerCh.Stop()
-
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		s.doDisconnect(ctx, i)
-	}()
 
 	cs := s.connServer.addConnectedSess(stream.Context(), i.Session, stream)
 	defer s.connServer.removeConnectedSess(cs)
@@ -160,37 +161,45 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 	}
 }
 
-func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_Initialize) (*userv1.ConnectResponse, error) {
+func (s *Server) DoInitConnect(ctx context.Context,
+	req *userv1.ConnectRequest_Initialize) (*userv1.ConnectResponse, error) {
+	connState, _, err := s.doInitConnect(ctx, req)
+	return connState, err
+}
+
+func (s *Server) doInitConnect(ctx context.Context,
+	req *userv1.ConnectRequest_Initialize) (
+	*userv1.ConnectResponse, *corev1.Session_Status_Connection, error) {
 
 	i, err := userctx.GetUserCtx(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: i.Session.Metadata.Uid})
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, nil, serr.InternalWithErr(err)
 	}
 
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, nil, serr.InternalWithErr(err)
 	}
 
 	hasV4 := req.L3Mode == userv1.ConnectRequest_Initialize_V4 || req.L3Mode == userv1.ConnectRequest_Initialize_BOTH
 	hasV6 := req.L3Mode == userv1.ConnectRequest_Initialize_V6 || req.L3Mode == userv1.ConnectRequest_Initialize_BOTH
 
 	if hasV4 && !ucorev1.ToClusterConfig(cc).HasV4() {
-		return nil, serr.InvalidArg("The Cluster does not support v4 only networking")
+		return nil, nil, serr.InvalidArg("The Cluster does not support v4 only networking")
 	}
 
 	if hasV6 && !ucorev1.ToClusterConfig(cc).HasV6() {
-		return nil, serr.InvalidArg("The Cluster does not support v6 only networking")
+		return nil, nil, serr.InvalidArg("The Cluster does not support v6 only networking")
 	}
 
 	privateKey, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, nil, serr.InternalWithErr(err)
 	}
 
 	reqServices, err := func() ([]*corev1.Session_Status_Connection_ServiceOptions_RequestedService, error) {
@@ -244,7 +253,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 		return ret, nil
 	}()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	publishedServices, err := func() ([]*corev1.Session_Status_Connection_PublishedService, error) {
@@ -305,18 +314,18 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 		return ret, nil
 	}()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if req.ESSHPort != 0 {
 		if err := apivalidation.ValidatePort(int(req.ESSHPort)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	if req.ESOCKS5Port != 0 {
 		if err := apivalidation.ValidatePort(int(req.ESOCKS5Port)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -324,7 +333,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 	pubKey := privateKey.PublicKey()
 	ed25519Pub, ed25519Priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
-		return nil, grpcutils.InternalWithErr(err)
+		return nil, nil, grpcutils.InternalWithErr(err)
 	}
 
 	sess.Status.Connection = &corev1.Session_Status_Connection{
@@ -409,7 +418,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 	sess.Status.TotalConnections = sess.Status.TotalConnections + 1
 
 	if err := upstream.AddAddressToConnection(ctx, s.octeliumC, sess); err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, nil, serr.InternalWithErr(err)
 	}
 
 	if req.ServiceOptions != nil {
@@ -423,7 +432,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 				},
 			})
 			if err != nil {
-				return nil, serr.InternalWithErr(err)
+				return nil, nil, serr.InternalWithErr(err)
 			}
 			zap.L().Debug("Found candidate Services to serve by User",
 				zap.Int("len", len(svcs.Items)), zap.String("user", i.User.Metadata.Name))
@@ -431,7 +440,7 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 			for _, svc := range svcs.Items {
 				if upstream.ServeService(svc, sess) {
 					if err := upstream.SetConnectionUpstreams(ctx, s.octeliumC, sess, svc); err != nil {
-						return nil, serr.InternalWithErr(err)
+						return nil, nil, serr.InternalWithErr(err)
 					}
 				}
 			}
@@ -441,15 +450,15 @@ func (s *Server) DoInitConnect(ctx context.Context, req *userv1.ConnectRequest_I
 
 	connState, err := getConnectionState(ctx, s.octeliumC, sess, cc, privateKey, ed25519Priv)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
 	if err != nil {
-		return nil, serr.InternalWithErr(err)
+		return nil, nil, serr.InternalWithErr(err)
 	}
 
-	return connState, nil
+	return connState, sess.Status.Connection, nil
 }
 
 func (s *Server) Disconnect(ctx context.Context, req *userv1.DisconnectRequest) (*userv1.DisconnectResponse, error) {
@@ -468,6 +477,11 @@ func (s *Server) Disconnect(ctx context.Context, req *userv1.DisconnectRequest) 
 }
 
 func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.DisconnectResponse, error) {
+	return s.doDisconnectConnection(ctx, i, nil)
+}
+
+func (s *Server) doDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
+	curConn *corev1.Session_Status_Connection) (*userv1.DisconnectResponse, error) {
 
 	if err := checkIfCanConnect(i); err != nil {
 		return nil, err
@@ -488,6 +502,13 @@ func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.
 	}
 
 	if !sess.Status.IsConnected || sess.Status.Connection == nil {
+		return &userv1.DisconnectResponse{}, nil
+	}
+
+	if curConn != nil && !isSameConnection(sess.Status.Connection, curConn) {
+		zap.L().Debug(
+			"The Session is now using a newer Connection. Nothing to be disconnected...",
+			zap.String("uid", sess.Metadata.Uid))
 		return &userv1.DisconnectResponse{}, nil
 	}
 
@@ -520,4 +541,16 @@ func (s *Server) doDisconnect(ctx context.Context, i *userctx.UserCtx) (*userv1.
 	zap.L().Debug("Successfully disconnected Session", zap.String("sess", i.Session.Metadata.Name))
 
 	return &userv1.DisconnectResponse{}, nil
+}
+
+func isSameConnection(a, b *corev1.Session_Status_Connection) bool {
+	if a == nil || b == nil {
+		return false
+	}
+
+	if len(a.X25519PublicKey) == 0 || len(b.X25519PublicKey) == 0 {
+		return pbutils.IsEqual(a.StartedAt, b.StartedAt)
+	}
+
+	return bytes.Equal(a.X25519PublicKey, b.X25519PublicKey)
 }

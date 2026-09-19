@@ -31,6 +31,7 @@ import (
 const (
 	sessionSendQueueSize = 256
 	sessionSendTimeout   = 15 * time.Second
+	sessionDisplaceGrace = 5 * time.Second
 )
 
 type Server struct {
@@ -80,6 +81,23 @@ func (cs *connectedSession) enqueue(msg *userv1.ConnectResponse) bool {
 	}
 }
 
+func (cs *connectedSession) displace() {
+	cs.enqueue(&userv1.ConnectResponse{
+		CreatedAt: pbutils.Now(),
+		Event: &userv1.ConnectResponse_Disconnect_{
+			Disconnect: &userv1.ConnectResponse_Disconnect{},
+		},
+	})
+
+	go func() {
+		select {
+		case <-cs.ctx.Done():
+		case <-time.After(sessionDisplaceGrace):
+		}
+		cs.cancel()
+	}()
+}
+
 func (cs *connectedSession) runSendLoop() {
 	for {
 		select {
@@ -120,13 +138,15 @@ func (s *connServer) addConnectedSess(
 	}
 
 	s.Lock()
-	if old, ok := s.connectedSessMap[sess.Metadata.Uid]; ok {
-		old.cancel()
-	}
+	old := s.connectedSessMap[sess.Metadata.Uid]
 	s.connectedSessMap[sess.Metadata.Uid] = cs
 	s.Unlock()
 
 	go cs.runSendLoop()
+
+	if old != nil {
+		old.displace()
+	}
 
 	return cs
 }
