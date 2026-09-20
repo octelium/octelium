@@ -35,9 +35,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	k8scorev1 "k8s.io/api/core/v1"
 )
 
-const redeployBudget = 3 * time.Minute
+const (
+	redeployBudget = 3 * time.Minute
+
+	k8sComponentLabel = "octelium.com/component"
+	k8sComponentVigil = "svc"
+)
 
 type lifecycleCtx struct {
 	h    *harness.H
@@ -49,10 +55,31 @@ func (l *lifecycleCtx) url(scheme string) string {
 	return fmt.Sprintf("%s://localhost:%d", scheme, l.port)
 }
 
+func (l *lifecycleCtx) vigilPods(ctx context.Context) ([]k8scorev1.Pod, error) {
+	pods, err := l.h.ServicePods(ctx, l.svc.Metadata.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	var ret []k8scorev1.Pod
+	for _, pod := range pods {
+		if pod.Labels[k8sComponentLabel] == k8sComponentVigil {
+			ret = append(ret, pod)
+		}
+	}
+
+	if len(ret) < 1 {
+		return nil, errors.Errorf("No Vigil pods found for the Service %q",
+			l.svc.Metadata.Name)
+	}
+
+	return ret, nil
+}
+
 func (l *lifecycleCtx) pods(t *testing.T) []string {
 	t.Helper()
 
-	pods, err := l.h.ServicePods(t.Context(), l.svc.Metadata.Name)
+	pods, err := l.vigilPods(t.Context())
 	require.Nil(t, err, "could not list the Service pods")
 
 	var ret []string
@@ -68,7 +95,7 @@ func (l *lifecycleCtx) waitRedeployed(t *testing.T, what string, before []string
 
 	l.h.Eventually(t, fmt.Sprintf("the Service pods to be replaced after %s", what),
 		redeployBudget, func(ctx context.Context) error {
-			pods, err := l.h.ServicePods(ctx, l.svc.Metadata.Name)
+			pods, err := l.vigilPods(ctx)
 			if err != nil {
 				return err
 			}
@@ -203,8 +230,7 @@ func testVigilTLSSwitch(t *testing.T, h *harness.H) {
 	t.Run("TLSEnabled", func(t *testing.T) {
 		l.waitServing(t, "over TLS", tlsClient, l.url("https"))
 
-		_, err := h.HTTPNoRetry().R().Get(l.url("http"))
-		assert.NotNil(t, err,
+		assertNotServed(t, h.HTTPNoRetry(), l.url("http"),
 			"a TLS Service must not serve plaintext requests")
 	})
 
@@ -213,13 +239,23 @@ func testVigilTLSSwitch(t *testing.T, h *harness.H) {
 	t.Run("TLSDisabled", func(t *testing.T) {
 		l.waitServing(t, "over plaintext again", h.HTTP(), l.url("http"))
 
-		_, err := h.HTTPNoRetry().SetTLSClientConfig(&tls.Config{
+		assertNotServed(t, h.HTTPNoRetry().SetTLSClientConfig(&tls.Config{
 			ServerName: fqdn,
 			MinVersion: tls.VersionTLS12,
-		}).R().Get(l.url("https"))
-		assert.NotNil(t, err,
+		}), l.url("https"),
 			"a plaintext Service must not serve TLS requests")
 	})
+}
+
+func assertNotServed(t *testing.T, c *resty.Client, url, msg string) {
+	t.Helper()
+
+	res, err := c.R().Get(url)
+	if err != nil {
+		return
+	}
+
+	assert.NotEqual(t, http.StatusOK, res.StatusCode(), msg)
 }
 
 func setTLS(t *testing.T, l *lifecycleCtx, isTLS bool) {
