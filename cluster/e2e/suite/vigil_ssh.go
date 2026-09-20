@@ -103,6 +103,45 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 			})
 	})
 
+	t.Run("Stderr", func(t *testing.T) {
+		outNonce := utilrand.GetRandomStringCanonical(12)
+		errNonce := utilrand.GetRandomStringCanonical(12)
+
+		command := fmt.Sprintf("'echo %s; echo %s >&2'", outNonce, errNonce)
+
+		out := h.MustOutputWithin(t, ssh(fullPort, command), sshBudget)
+		assert.Contains(t, string(out), outNonce)
+		assert.Contains(t, string(out), errNonce,
+			"the remote stderr was not proxied to the downstream")
+
+		out = h.MustOutputWithin(t,
+			fmt.Sprintf("%s 2>/dev/null", ssh(fullPort, command)), sshBudget)
+		assert.Contains(t, string(out), outNonce)
+		assert.NotContains(t, string(out), errNonce,
+			"the remote stderr must not be merged into the remote stdout")
+
+		out = h.MustOutputWithin(t,
+			fmt.Sprintf("%s 2>&1 >/dev/null", ssh(fullPort, command)), sshBudget)
+		assert.Contains(t, string(out), errNonce)
+		assert.NotContains(t, string(out), outNonce,
+			"the remote stdout must not be merged into the remote stderr")
+	})
+
+	t.Run("StderrMultiPacket", func(t *testing.T) {
+		lines := 10000
+		nonce := utilrand.GetRandomStringCanonical(12)
+
+		out := h.MustOutputWithin(t,
+			fmt.Sprintf("%s 2>&1 >/dev/null",
+				ssh(fullPort,
+					fmt.Sprintf("'seq 1 %d >&2; echo %s >&2'", lines, nonce))), sshBudget)
+
+		assert.GreaterOrEqual(t, strings.Count(string(out), "\n"), lines,
+			"the remote stderr was truncated")
+		assert.Contains(t, string(out), nonce,
+			"the trailing remote stderr was truncated by the downstream EOF")
+	})
+
 	t.Run("ExitStatus", func(t *testing.T) {
 		out := h.MustOutputWithin(t,
 			fmt.Sprintf("%s; echo status=$?", ssh(fullPort, "'exit 7'")), sshBudget)

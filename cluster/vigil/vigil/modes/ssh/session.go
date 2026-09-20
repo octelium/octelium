@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -51,23 +52,61 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 	upCopyDone := make(chan struct{}, 1)
 	downCopyDone := make(chan struct{}, 1)
 
+	var upstreamOutput sync.WaitGroup
+	var stdoutDrained, stderrDrained bool
+
+	upstreamOutput.Add(2)
+
+	go func() {
+		defer modes.Recover()
+		defer upstreamOutput.Done()
+
+		mult := io.MultiWriter(downstreamCh, stdoutWriter)
+		n, err := io.Copy(mult, upstreamCh)
+		c.commonMetrics.AddBytesTransferred(n, 0)
+		stdoutDrained = err == nil || errors.Is(err, io.EOF)
+
+		zap.L().Debug("Upstream stdout goroutine ended",
+			zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
+	}()
+
+	go func() {
+		defer modes.Recover()
+		defer upstreamOutput.Done()
+
+		n, err := io.Copy(downstreamCh.Stderr(), upstreamCh.Stderr())
+		c.commonMetrics.AddBytesTransferred(n, 0)
+		stderrDrained = err == nil || errors.Is(err, io.EOF)
+
+		zap.L().Debug("Upstream stderr goroutine ended",
+			zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
+	}()
+
 	go func() {
 		defer modes.Recover()
 		defer func() {
 			upCopyDone <- struct{}{}
 		}()
 
-		mult := io.MultiWriter(downstreamCh, stdoutWriter)
-		n, err := io.Copy(mult, upstreamCh)
-		c.commonMetrics.AddBytesTransferred(n, 0)
-		if err == nil || errors.Is(err, io.EOF) {
-			if err := downstreamCh.CloseWrite(); err != nil {
-				zap.L().Debug("Could not downstream closeWrite", zap.String("id", c.id), zap.Error(err))
-			} else {
-				zap.L().Debug("Sent downstream EOF msg", zap.String("id", c.id))
-			}
+		upstreamOutput.Wait()
+
+		if !stdoutDrained || !stderrDrained {
+			return
 		}
-		zap.L().Debug("Upstream goroutine ended", zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
+
+		if err := downstreamCh.CloseWrite(); err != nil {
+			zap.L().Debug("Could not downstream closeWrite", zap.String("id", c.id), zap.Error(err))
+		} else {
+			zap.L().Debug("Sent downstream EOF msg", zap.String("id", c.id))
+		}
+	}()
+
+	go func() {
+		defer modes.Recover()
+
+		n, err := io.Copy(io.Discard, downstreamCh.Stderr())
+		zap.L().Debug("Downstream stderr goroutine ended",
+			zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
 	}()
 
 	go func() {
@@ -86,7 +125,8 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 				zap.L().Debug("Sent upstream EOF msg", zap.String("id", c.id))
 			}
 		}
-		zap.L().Debug("Downstream goroutine ended", zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
+		zap.L().Debug("Downstream stdin goroutine ended",
+			zap.Int64("n", n), zap.String("id", c.id), zap.Error(err))
 	}()
 
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
@@ -126,6 +166,32 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 
 	var upIODone, downIODone, exitStatusSent bool
 
+	drainUpstreamReqs := func() {
+		for upstreamReqs != nil {
+			select {
+			case req, ok := <-upstreamReqs:
+				if !ok || req == nil {
+					zap.L().Debug("No more upstream reqs.", zap.String("id", c.id))
+					upstreamReqs = nil
+					return
+				}
+
+				zap.L().Debug("Pending upstream Req",
+					zap.String("id", c.id), zap.String("type", req.Type))
+
+				if err := c.handleSessionUpstreamReq(req, downstreamCh); err != nil {
+					zap.L().Debug("Upstream req error", zap.String("id", c.id), zap.Error(err))
+				}
+				if req.Type == "exit-status" {
+					exitStatusSent = true
+					zap.L().Debug("exit-status successfully sent", zap.String("id", c.id))
+				}
+			default:
+				return
+			}
+		}
+	}
+
 	for {
 		select {
 		case req, ok := <-downstreamReqs:
@@ -164,6 +230,8 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 			zap.L().Debug("runSessionLoop ctx done", zap.String("id", c.id))
 			return
 		}
+
+		drainUpstreamReqs()
 
 		if exitStatusSent && upIODone {
 			zap.L().Debug("Exiting runSessionLoop after exit-status and upstream EOF", zap.String("id", c.id))
