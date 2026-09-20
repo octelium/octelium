@@ -31,7 +31,6 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
-	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -91,17 +90,28 @@ func validateFieldParts(args []string) error {
 	return nil
 }
 
-func getListFilters(req *rmetav1.ListOptions) []exp.Expression {
+func getJSONExistsFilter(arg, key string) exp.LiteralExpression {
+	return goqu.L(fmt.Sprintf(`jsonb_exists(%s, ?)`, arg), key)
+}
+
+func getListFilters(req *rmetav1.ListOptions) ([]exp.Expression, error) {
 	var ret []exp.Expression
 
 	for _, filter := range req.Filters {
+		if filter == nil {
+			return nil, errors.Errorf("Nil listFilter")
+		}
+
+		if filter.Value == nil {
+			return nil, errors.Errorf("Nil listFilter value for the field: %s", filter.Field)
+		}
+
 		retFilter := "resource"
 
 		args := strings.Split(filter.Field, ".")
 
 		if err := validateFieldParts(args); err != nil {
-			zap.L().Warn("Could not validateFieldParts", zap.Error(err))
-			continue
+			return nil, err
 		}
 
 		for idx := 0; idx < len(args)-1; idx++ {
@@ -116,8 +126,7 @@ func getListFilters(req *rmetav1.ListOptions) []exp.Expression {
 					retFilter = fmt.Sprintf(`%s->>'%s'`, retFilter, args[len(args)-1])
 					ret = append(ret, goqu.L(retFilter).Eq(getPBVal(filter.Value)))
 				} else {
-					retFilter = fmt.Sprintf(`%s ? '%s'`, retFilter, args[len(args)-1])
-					ret = append(ret, goqu.L(retFilter).IsNotTrue())
+					ret = append(ret, getJSONExistsFilter(retFilter, args[len(args)-1]).IsNotTrue())
 				}
 			case *structpb.Value_NumberValue:
 				if filter.Value.GetNumberValue() != 0 {
@@ -125,8 +134,7 @@ func getListFilters(req *rmetav1.ListOptions) []exp.Expression {
 					retFilter = fmt.Sprintf(`(%s)::int`, retFilter)
 					ret = append(ret, goqu.L(retFilter).Eq(getPBVal(filter.Value)))
 				} else {
-					retFilter = fmt.Sprintf(`%s ? '%s'`, retFilter, args[len(args)-1])
-					ret = append(ret, goqu.L(retFilter).IsNotTrue())
+					ret = append(ret, getJSONExistsFilter(retFilter, args[len(args)-1]).IsNotTrue())
 				}
 
 			case *structpb.Value_StringValue:
@@ -134,30 +142,31 @@ func getListFilters(req *rmetav1.ListOptions) []exp.Expression {
 					retFilter = fmt.Sprintf(`%s->>'%s'`, retFilter, args[len(args)-1])
 					ret = append(ret, goqu.L(retFilter).Eq(getPBVal(filter.Value)))
 				} else {
-					retFilter = fmt.Sprintf(`%s ? '%s'`, retFilter, args[len(args)-1])
-					ret = append(ret, goqu.L(retFilter).IsNotTrue())
+					ret = append(ret, getJSONExistsFilter(retFilter, args[len(args)-1]).IsNotTrue())
 				}
 
 			default:
-				zap.L().Warn("Unsupported listFilter type. Skipping", zap.Any("val", filter.Value))
+				return nil, errors.Errorf("Unsupported listFilter value type for the field: %s", filter.Field)
 			}
 		case rmetav1.ListOptions_Filter_OP_INCLUDES:
 			switch filter.Value.Kind.(type) {
 			case *structpb.Value_StringValue:
-				if filter.Value.GetStringValue() != "" {
-					retFilter = fmt.Sprintf(`%s->'%s' ? '%s'`, retFilter, args[len(args)-1], getPBVal(filter.Value))
-					ret = append(ret, goqu.L(retFilter).IsTrue())
+				if filter.Value.GetStringValue() == "" {
+					return nil, errors.Errorf("Empty listFilter value for the field: %s", filter.Field)
 				}
 
+				retFilter = fmt.Sprintf(`%s->'%s'`, retFilter, args[len(args)-1])
+				ret = append(ret, getJSONExistsFilter(retFilter, filter.Value.GetStringValue()).IsTrue())
+
 			default:
-				zap.L().Warn("Unsupported listFilter type. Skipping", zap.Any("val", filter.Value))
+				return nil, errors.Errorf("Unsupported listFilter value type for the field: %s", filter.Field)
 			}
 		default:
-
+			return nil, errors.Errorf("Unsupported listFilter op for the field: %s", filter.Field)
 		}
 	}
 
-	return ret
+	return ret, nil
 }
 
 func getPBVal(arg *structpb.Value) any {

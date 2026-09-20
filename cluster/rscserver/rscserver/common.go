@@ -367,6 +367,13 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 	return req, old, nil
 }
 
+const specLabelsPath = `resource->'metadata'->'specLabels'->>?`
+const systemLabelsPath = `resource->'metadata'->'systemLabels'->>?`
+
+func getLabelFilter(path, k, v string) exp.Expression {
+	return goqu.L(path, k).Eq(v)
+}
+
 func (s *Server) doList(ctx context.Context,
 	req *rmetav1.ListOptions, api, version, kind string) ([]umetav1.ResourceObjectI, *metav1.ListResponseMeta, error) {
 	var filters []exp.Expression
@@ -395,16 +402,14 @@ func (s *Server) doList(ctx context.Context,
 	{
 		if req.SpecLabels != nil {
 			for k, v := range req.SpecLabels {
-				filters = append(filters,
-					goqu.L(fmt.Sprintf(`resource->'metadata'->'specLabels'->>'%s'`, k)).Eq(v))
+				filters = append(filters, getLabelFilter(specLabelsPath, k, v))
 			}
 		}
 
 		if req.SpecLabelsORed != nil {
 			oredFilters := []exp.Expression{}
 			for k, v := range req.SpecLabelsORed {
-				oredFilters = append(oredFilters,
-					goqu.L(fmt.Sprintf(`resource->'metadata'->'specLabels'->>'%s'`, k)).Eq(v))
+				oredFilters = append(oredFilters, getLabelFilter(specLabelsPath, k, v))
 			}
 
 			filters = append(filters, goqu.Or(oredFilters...))
@@ -414,16 +419,14 @@ func (s *Server) doList(ctx context.Context,
 	{
 		if req.SystemLabels != nil {
 			for k, v := range req.SystemLabels {
-				filters = append(filters,
-					goqu.L(fmt.Sprintf(`resource->'metadata'->'systemLabels'->>'%s'`, k)).Eq(v))
+				filters = append(filters, getLabelFilter(systemLabelsPath, k, v))
 			}
 		}
 
 		if req.SystemLabelsORed != nil {
 			oredFilters := []exp.Expression{}
 			for k, v := range req.SystemLabelsORed {
-				oredFilters = append(oredFilters,
-					goqu.L(fmt.Sprintf(`resource->'metadata'->'systemLabels'->>'%s'`, k)).Eq(v))
+				oredFilters = append(oredFilters, getLabelFilter(systemLabelsPath, k, v))
 			}
 
 			filters = append(filters, goqu.Or(oredFilters...))
@@ -431,7 +434,12 @@ func (s *Server) doList(ctx context.Context,
 	}
 
 	if len(req.Filters) > 0 {
-		filters = append(filters, getListFilters(req)...)
+		listFilters, err := getListFilters(req)
+		if err != nil {
+			return nil, nil, rerr.InvalidWithErr(err)
+		}
+
+		filters = append(filters, listFilters...)
 	}
 
 	ds := goqu.From(tableName).Where(filters...).
