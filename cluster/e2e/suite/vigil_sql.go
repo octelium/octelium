@@ -261,8 +261,8 @@ func testVigilMySQL(t *testing.T, h *harness.H) {
 							Env: []*corev1.Service_Spec_Config_Upstream_Container_Env{
 								{
 									Name: "MYSQL_ROOT_PASSWORD",
-									Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{
-										FromSecret: secret.Metadata.Name,
+									Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{
+										Value: password,
 									},
 								},
 							},

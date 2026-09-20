@@ -118,9 +118,6 @@ func testVigilLoadBalancer(t *testing.T, h *harness.H) {
 			Mode:        corev1.Service_Spec_HTTP,
 			IsPublic:    true,
 			IsAnonymous: true,
-			Authorization: &corev1.Service_Spec_Authorization{
-				InlinePolicies: harness.InlineAllowAny("allow-lb"),
-			},
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Loadbalance_{

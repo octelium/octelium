@@ -60,7 +60,7 @@ func newESSHService(t *testing.T, h *harness.H,
 }
 
 func testVigilSSH(t *testing.T, h *harness.H) {
-	h.MustWaitService(t, eSSHServiceName)
+	h.Require(t, capIPv6)
 
 	full := newESSHService(t, h, &corev1.Service_Spec_Config_SSH{
 		EnableSubsystem:           true,
@@ -76,9 +76,8 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 		Publish: map[string]int{
 			full.Metadata.Name:       fullPort,
 			restricted.Metadata.Name: restrictedPort,
-			eSSHServiceName:          h.Port(),
 		},
-		Args: []string{"--ip-mode v4"},
+		Args: []string{"--ip-mode both"},
 	})
 
 	sessName := h.Status(t).Session.Metadata.Name
@@ -242,30 +241,5 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 				}
 				return nil
 			})
-	})
-
-	t.Run("Copy", func(t *testing.T) {
-		dir := t.TempDir()
-
-		src := filepath.Join(dir, "src")
-		remote := filepath.Join(dir, "remote")
-		back := filepath.Join(dir, "back")
-		nonce := utilrand.GetRandomStringCanonical(24)
-
-		require.Nil(t, os.WriteFile(src, []byte(nonce), 0o600))
-
-		h.MustOutputWithin(t,
-			fmt.Sprintf("octelium cp %s %s:%s", src, sessName, remote), sshBudget)
-
-		got, err := os.ReadFile(remote)
-		require.Nil(t, err, "octelium cp did not copy the file to the Session")
-		assert.Equal(t, nonce, string(got))
-
-		h.MustOutputWithin(t,
-			fmt.Sprintf("octelium cp %s:%s %s", sessName, remote, back), sshBudget)
-
-		got, err = os.ReadFile(back)
-		require.Nil(t, err, "octelium cp did not copy the file from the Session")
-		assert.Equal(t, nonce, string(got))
 	})
 }

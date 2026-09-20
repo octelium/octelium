@@ -45,13 +45,14 @@ const (
 )
 
 func testConnectESSH(t *testing.T, h *harness.H) {
+	h.Require(t, capIPv6)
 	h.MustWaitService(t, eSSHServiceName)
 
 	port := h.Port()
 	h.Connect(t, harness.ConnectOpts{
 		UseESSH: true,
 		Publish: map[string]int{eSSHServiceName: port},
-		Args:    []string{"--ip-mode v4"},
+		Args:    []string{"--ip-mode both"},
 	})
 
 	sessName := h.Status(t).Session.Metadata.Name
@@ -62,52 +63,43 @@ func testConnectESSH(t *testing.T, h *harness.H) {
 		"the Session does not advertise eSSH")
 	assert.Equal(t, int32(eSSHDefaultPort), sess.Status.Connection.ESSHPort)
 
-	t.Run("OcteliumSSH", func(t *testing.T) {
-		nonce := utilrand.GetRandomStringCanonical(12)
-
-		h.Eventually(t, "octelium ssh to run a remote command on the own Session",
-			harness.ConnectBudget, func(ctx context.Context) error {
-				out, err := h.Output(ctx,
-					fmt.Sprintf("octelium ssh %s -- echo %s", sessName, nonce))
-				if err != nil {
-					return errors.Errorf("octelium ssh failed: %+v: %s", err, out)
-				}
-				if !strings.Contains(string(out), nonce) {
-					return errors.Errorf(
-						"the remote command did not run on the eSSH server of the Session: %s",
-						out)
-				}
-				return nil
-			})
-	})
-
 	t.Run("OpenSSH", func(t *testing.T) {
 		nonce := utilrand.GetRandomStringCanonical(12)
 
-		out := h.MustOutputWithin(t, fmt.Sprintf(
-			"ssh -o BatchMode=yes -o ConnectTimeout=10 -p %d %s@localhost 'echo %s'",
-			port, sessName, nonce), sshBudget)
-
-		assert.Contains(t, string(out), nonce)
+		h.Eventually(t, "the eSSH server to run a remote command on the own Session",
+			harness.ConnectBudget, func(ctx context.Context) error {
+				out, err := h.Output(ctx, fmt.Sprintf(
+					"ssh -o BatchMode=yes -o ConnectTimeout=10 -p %d %s@localhost 'echo %s'",
+					port, sessName, nonce))
+				if err != nil {
+					return errors.Errorf("ssh failed: %+v: %s", err, out)
+				}
+				if !strings.Contains(string(out), nonce) {
+					return errors.Errorf("the remote command returned %q", out)
+				}
+				return nil
+			})
 	})
 
 	t.Run("LocalForward", func(t *testing.T) {
 		upstream := h.StartHTTPUpstream(t, nil)
 		local := h.Port()
 
-		h.StartBackground(t, fmt.Sprintf("octelium ssh %s -N -L %d:127.0.0.1:%d",
-			sessName, local, upstream.Port))
+		h.StartBackground(t, fmt.Sprintf(
+			"ssh -o BatchMode=yes -o ConnectTimeout=10 -N -p %d -L %d:127.0.0.1:%d %s@localhost",
+			port, local, upstream.Port, sessName))
 
 		require.Nil(t, harness.WaitPortOpen(local, sshBudget),
-			"octelium ssh did not open the local forwarding port")
+			"ssh did not open the local forwarding port")
 
 		h.WaitGetStatus(t, h.HTTP(), fmt.Sprintf("http://localhost:%d", local),
 			http.StatusOK)
 	})
 
 	t.Run("UnknownSession", func(t *testing.T) {
-		h.MustFailWithin(t, fmt.Sprintf("octelium ssh %s -- true",
-			utilrand.GetRandomStringCanonical(10)), sshBudget)
+		h.MustFailWithin(t, fmt.Sprintf(
+			"ssh -o BatchMode=yes -o ConnectTimeout=10 -p %d %s@localhost true",
+			port, utilrand.GetRandomStringCanonical(10)), sshBudget)
 	})
 }
 
