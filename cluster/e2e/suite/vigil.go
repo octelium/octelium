@@ -358,6 +358,132 @@ func testVigilPlugins(t *testing.T, h *harness.H) {
 			})
 	})
 
+	t.Run("Lua", func(t *testing.T) {
+		v.record(t, http.StatusOK, "")
+
+		sessName := h.Status(t).Session.Metadata.Name
+
+		script := `
+function onRequest(ctx)
+  if octelium.req.getQueryParam("deny") == "1" then
+    octelium.req.exit(403)
+    return
+  end
+  octelium.req.setRequestHeader("X-E2E-Lua-Session", ctx.session.metadata.name)
+end
+
+function onResponse(ctx)
+  octelium.req.setResponseHeader("X-E2E-Lua", "done")
+end`
+
+		v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+			Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{
+					Name:      "lua",
+					Condition: matchAny,
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+						Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+								Inline: script,
+							},
+						},
+					},
+				},
+			},
+		})
+
+		v.waitSeen(t, "the upstream to receive the header set by the Lua script", "/",
+			func(r *seenRequest) error {
+				if got := r.Header.Get("X-E2E-Lua-Session"); got != sessName {
+					return errors.Errorf("the upstream saw X-E2E-Lua-Session %q, want %q",
+						got, sessName)
+				}
+				return nil
+			})
+
+		res, err := h.HTTP().R().Get(v.url("/"))
+		require.Nil(t, err)
+		assert.Equal(t, "done", res.Header().Get("X-E2E-Lua"))
+
+		v.waitStatusAt(t, "/?deny=1", http.StatusForbidden)
+
+		v.seen.Store(nil)
+		_, err = h.HTTP().R().Get(v.url("/?deny=1"))
+		require.Nil(t, err)
+		assert.Nil(t, v.seen.Load(), "a Lua exit must not reach the upstream")
+	})
+
+	t.Run("ResponseCache", func(t *testing.T) {
+		v.record(t, http.StatusOK, "first")
+
+		path := fmt.Sprintf("/%s", utilrand.GetRandomStringCanonical(8))
+
+		v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+			Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{
+					Name:      "cache",
+					Condition: matchAny,
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{
+						Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{
+							Ttl:             &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 120}},
+							UseXCacheHeader: true,
+						},
+					},
+				},
+			},
+		})
+
+		h.Eventually(t, "the cache plugin to store the upstream response",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				res, err := h.HTTP().R().SetContext(ctx).Get(v.url(path))
+				if err != nil {
+					return err
+				}
+				if res.StatusCode() != http.StatusOK {
+					return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+				}
+				if res.Header().Get("X-Cache") == "" {
+					return errors.New("the cache plugin is not enforced yet")
+				}
+				if got := res.String(); got != "first" {
+					return errors.Errorf("got body %q, want %q", got, "first")
+				}
+				return nil
+			})
+
+		v.record(t, http.StatusOK, "second")
+
+		h.Eventually(t, "the cached response to be served from the cache",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				res, err := h.HTTP().R().SetContext(ctx).Get(v.url(path))
+				if err != nil {
+					return err
+				}
+				if got := res.Header().Get("X-Cache"); got != "HIT" {
+					return errors.Errorf("got X-Cache %q, want %q", got, "HIT")
+				}
+				if got := res.String(); got != "first" {
+					return errors.Errorf("the cached response returned %q, want %q",
+						got, "first")
+				}
+				return nil
+			})
+
+		other := fmt.Sprintf("/%s", utilrand.GetRandomStringCanonical(8))
+
+		h.Eventually(t, "a different path to reach the upstream again",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				res, err := h.HTTP().R().SetContext(ctx).Get(v.url(other))
+				if err != nil {
+					return err
+				}
+				if got := res.String(); got != "second" {
+					return errors.Errorf("got body %q, want %q", got, "second")
+				}
+				return nil
+			})
+	})
+
 	t.Run("RateLimit", func(t *testing.T) {
 		v.record(t, http.StatusOK, "")
 

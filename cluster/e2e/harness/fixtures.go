@@ -165,6 +165,58 @@ func (h *H) CredentialToken(t *testing.T, cred *corev1.Credential) *corev1.Crede
 	return tkn
 }
 
+func (h *H) CreateSecret(t *testing.T, name, value string) *corev1.Secret {
+	t.Helper()
+
+	if name == "" {
+		name = h.Name()
+	}
+
+	ctx, cancel := h.opCtx(t)
+	defer cancel()
+
+	ret, err := h.coreC.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: name},
+		Spec:     &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{Value: value},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Could not create the Secret %s: %+v", name, err)
+	}
+
+	t.Cleanup(func() {
+		h.deleteQuietly(t, "Secret", ret.Metadata.Name, func(ctx context.Context) error {
+			_, err := h.coreC.DeleteSecret(ctx, &metav1.DeleteOptions{Uid: ret.Metadata.Uid})
+			return err
+		})
+	})
+
+	zap.L().Debug("Created Secret fixture", zap.String("name", ret.Metadata.Name))
+	return ret
+}
+
+func (h *H) UpdateSecret(t *testing.T, name, value string) *corev1.Secret {
+	t.Helper()
+
+	ctx, cancel := h.opCtx(t)
+	defer cancel()
+
+	ret, err := h.coreC.UpdateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: name},
+		Spec:     &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{Value: value},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Could not update the Secret %s: %+v", name, err)
+	}
+
+	return ret
+}
+
 func (h *H) UpdateService(t *testing.T, svc *corev1.Service) *corev1.Service {
 	t.Helper()
 
