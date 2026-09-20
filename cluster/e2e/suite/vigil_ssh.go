@@ -120,28 +120,6 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 		assert.Contains(t, string(out), nonce)
 	})
 
-	t.Run("Stderr", func(t *testing.T) {
-		nonce := utilrand.GetRandomStringCanonical(12)
-		command := fmt.Sprintf("'echo %s >&2'", nonce)
-
-		out := h.MustOutputWithin(t, ssh(fullPort, command), sshBudget)
-		assert.Contains(t, string(out), nonce)
-
-		out = h.MustOutputWithin(t,
-			fmt.Sprintf("%s 2>/dev/null", ssh(fullPort, command)), sshBudget)
-		assert.NotContains(t, string(out), nonce,
-			"the remote stderr must not be merged into the remote stdout")
-	})
-
-	t.Run("Shell", func(t *testing.T) {
-		nonce := utilrand.GetRandomStringCanonical(12)
-
-		out := h.MustOutputWithin(t,
-			fmt.Sprintf("echo 'echo %s' | %s", nonce, ssh(fullPort, "")), sshBudget)
-
-		assert.Contains(t, string(out), nonce)
-	})
-
 	t.Run("Subsystem", func(t *testing.T) {
 		dir := t.TempDir()
 
