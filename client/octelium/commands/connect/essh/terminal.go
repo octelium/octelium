@@ -41,7 +41,7 @@ type terminal struct {
 	pty *os.File
 	tty *os.File
 
-	closeCh chan struct{}
+	ptyIODoneCh chan struct{}
 
 	dctx *dctx
 
@@ -62,8 +62,11 @@ func newTerminal(dctx *dctx, sessCtx *sessCtx) (*terminal, error) {
 		dctx:    dctx,
 		ch:      sessCtx.ch,
 		sessCtx: sessCtx,
-		closeCh: make(chan struct{}, 10),
 		noPty:   sessCtx.ptyParams == nil,
+	}
+
+	if !ret.noPty {
+		ret.ptyIODoneCh = make(chan struct{}, 10)
 	}
 
 	zap.L().Debug("Creating a new terminal",
@@ -182,9 +185,9 @@ func (t *terminal) run(ctx context.Context, req *ssh.Request) error {
 	var once sync.Once
 	var err error
 
-	closeFn := func() {
-		zap.L().Debug("closing terminal closeCh", zap.String("tid", t.id))
-		t.closeCh <- struct{}{}
+	ptyIODoneFn := func() {
+		zap.L().Debug("closing terminal ptyIODoneCh", zap.String("tid", t.id))
+		t.ptyIODoneCh <- struct{}{}
 	}
 
 	var stdinPipe io.WriteCloser
@@ -211,20 +214,22 @@ func (t *terminal) run(ctx context.Context, req *ssh.Request) error {
 	if t.noPty {
 
 		go func() {
-			io.Copy(stdinPipe, t.ch)
-			once.Do(closeFn)
-			stdinPipe.Close()
+			defer stdinPipe.Close()
+
+			n, err := io.Copy(stdinPipe, t.ch)
+			zap.L().Debug("Downstream stdin copy ended",
+				zap.Int64("n", n), zap.String("tid", t.id), zap.Error(err))
 		}()
 
 	} else {
 		go func() {
 			io.Copy(t.ch, t.pty)
-			once.Do(closeFn)
+			once.Do(ptyIODoneFn)
 		}()
 
 		go func() {
 			io.Copy(t.pty, t.ch)
-			once.Do(closeFn)
+			once.Do(ptyIODoneFn)
 		}()
 
 		t.tty.Close()
@@ -266,7 +271,7 @@ func (t *terminal) waitAndClose(ctx context.Context) error {
 		killProcessGroup(t.cmd)
 		waitErr = <-waitCh
 	case waitErr = <-waitCh:
-	case <-t.closeCh:
+	case <-t.ptyIODoneCh:
 		killProcessGroup(t.cmd)
 		waitErr = <-waitCh
 	}

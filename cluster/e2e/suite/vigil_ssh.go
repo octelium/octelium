@@ -103,6 +103,21 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 			})
 	})
 
+	t.Run("Shell", func(t *testing.T) {
+		outNonce := utilrand.GetRandomStringCanonical(12)
+		errNonce := utilrand.GetRandomStringCanonical(12)
+
+		script := fmt.Sprintf("sleep 1\\necho %s\\necho %s >&2\\n", outNonce, errNonce)
+
+		out := h.MustOutputWithin(t,
+			fmt.Sprintf("printf '%s' | %s", script, ssh(fullPort, "")), sshBudget)
+
+		assert.Contains(t, string(out), outNonce,
+			"the remote shell was killed by the downstream stdin EOF")
+		assert.Contains(t, string(out), errNonce,
+			"the remote shell stderr written after the stdin EOF was lost")
+	})
+
 	t.Run("Stderr", func(t *testing.T) {
 		outNonce := utilrand.GetRandomStringCanonical(12)
 		errNonce := utilrand.GetRandomStringCanonical(12)
@@ -128,7 +143,7 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 	})
 
 	t.Run("StderrMultiPacket", func(t *testing.T) {
-		lines := 10000
+		lines := 200000
 		nonce := utilrand.GetRandomStringCanonical(12)
 
 		out := h.MustOutputWithin(t,
