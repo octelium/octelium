@@ -1,6 +1,5 @@
 @import "tailwindcss";
-
-@custom-variant dark (&:where([data-mantine-color-scheme="dark"], [data-mantine-color-scheme="dark"] *));
+@import "./utils/theme/colors.css";
 
 @theme inline {
   --color-canvas: var(--portal-canvas);
@@ -48,23 +47,27 @@
 }
 
 :root[data-mantine-color-scheme="dark"] {
-  --portal-canvas: #0f0f0f;
-  --portal-surface: #1c1c1c;
-  --portal-surface-muted: #232323;
-  --portal-surface-strong: #2a2a2a;
-  --portal-surface-active: #333333;
-  --portal-line: #2b2b2b;
-  --portal-line-soft: #242424;
-  --portal-line-strong: #3d3d3d;
-  --portal-fg: #ededed;
-  --portal-fg-muted: #d0d0d0;
-  --portal-fg-subtle: #a3a3a3;
-  --portal-fg-faint: #7a7a7a;
-  --portal-fg-ghost: #545454;
-  --portal-accent: #ededed;
-  --portal-accent-hover: #fafafa;
-  --portal-accent-fg: #141414;
-  --portal-accent-ring: rgb(237 237 237 / 0.35);
+  --portal-canvas: oklch(15.5% 0.004 286);
+  --portal-surface: oklch(20.5% 0.005 286);
+  --portal-surface-muted: oklch(23% 0.004 286);
+  --portal-surface-strong: oklch(26% 0.005 286);
+  --portal-surface-active: oklch(30% 0.005 286);
+  --portal-line: oklch(29.5% 0.005 286);
+  --portal-line-soft: oklch(24.5% 0.004 286);
+  --portal-line-strong: oklch(38% 0.006 286);
+  --portal-fg: oklch(94.5% 0.004 286);
+  --portal-fg-muted: oklch(85% 0.005 286);
+  --portal-fg-subtle: oklch(72.5% 0.007 286);
+  --portal-fg-faint: oklch(58% 0.008 286);
+  --portal-fg-ghost: oklch(45% 0.007 286);
+  --portal-accent: oklch(94.5% 0.004 286);
+  --portal-accent-hover: oklch(98% 0.002 286);
+  --portal-accent-fg: oklch(20% 0.005 286);
+  --portal-accent-ring: color-mix(
+    in oklab,
+    oklch(94.5% 0.004 286) 35%,
+    transparent
+  );
 }
 
 html,
@@ -77,6 +80,7 @@ body,
 body {
   margin: 0;
   font-family: "Ubuntu", sans-serif;
+  background-color: var(--portal-canvas);
 }
 
 button,

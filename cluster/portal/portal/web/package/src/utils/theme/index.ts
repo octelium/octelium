@@ -21,13 +21,15 @@ export const colorSchemeManager = localStorageColorSchemeManager({
 
 export const PAGINATION_COLOR = {
   light: "#111",
-  dark: "#e2e8f0",
+  dark: "oklch(94.5% 0.004 286)",
 };
 
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: {},
   light: {},
   dark: {
+    "--mantine-color-black": "var(--portal-surface)",
+
     "--mantine-color-dark-0": "var(--portal-fg)",
     "--mantine-color-dark-1": "var(--portal-fg-muted)",
     "--mantine-color-dark-2": "var(--portal-fg-subtle)",
@@ -42,8 +44,17 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     "--mantine-color-accent-filled": "var(--portal-accent)",
     "--mantine-color-accent-filled-hover": "var(--portal-accent-hover)",
     "--mantine-color-accent-outline": "var(--portal-accent)",
-    "--mantine-color-accent-outline-hover": "rgb(237 237 237 / 0.05)",
+    "--mantine-color-accent-outline-hover":
+      "color-mix(in oklab, var(--portal-accent) 6%, transparent)",
     "--mantine-color-accent-contrast": "var(--portal-accent-fg)",
+
+    "--mantine-color-accent-light": "var(--portal-surface-strong)",
+    "--mantine-color-accent-light-hover": "var(--portal-surface-active)",
+    "--mantine-color-accent-light-color": "var(--portal-fg)",
+
+    "--mantine-primary-color-light": "var(--portal-surface-strong)",
+    "--mantine-primary-color-light-hover": "var(--portal-surface-active)",
+    "--mantine-primary-color-light-color": "var(--portal-fg)",
   },
 });
 

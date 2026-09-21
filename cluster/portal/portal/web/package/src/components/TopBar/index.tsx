@@ -2,7 +2,6 @@
 
 import Logo from "@/assets/l03.svg?react";
 import { useAppSelector } from "@/utils/hooks";
-import Settings from "../Settings";
 
 const TopBar = () => {
   const settings = useAppSelector((state) => state.settings);
@@ -23,8 +22,6 @@ const TopBar = () => {
       <div className="flex-grow"></div>
 
       <div className="flex-none flex items-center gap-2">
-        <Settings />
-
         <div className="flex items-center justify-center align-middle">
           <div
             className="h-10 w-10 rounded-full border-2 border-surface text-fg-subtle transition-all duration-300"

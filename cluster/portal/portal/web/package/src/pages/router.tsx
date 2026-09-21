@@ -5,6 +5,7 @@ import Home from "./Home";
 import Root from "./index";
 import routerNamespaces from "./Namespaces/router";
 import routerServices from "./Services/router";
+import routerSettings from "./Settings/router";
 
 export default (): RouteObject => {
   return {
@@ -17,6 +18,7 @@ export default (): RouteObject => {
       },
       routerServices(),
       routerNamespaces(),
+      routerSettings(),
     ],
   };
 };

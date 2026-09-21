@@ -24,7 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <MantineProvider
       theme={theme}
-      defaultColorScheme="light"
+      defaultColorScheme="auto"
       colorSchemeManager={colorSchemeManager}
       cssVariablesResolver={cssVariablesResolver}
     >

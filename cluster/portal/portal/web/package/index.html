@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-mantine-color-scheme="light">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./src/assets/logo.svg" />
@@ -7,19 +7,26 @@
     <title>Octelium Portal</title>
     <script>
       (function () {
+        var scheme = "light";
         try {
-          if (
-            window.localStorage.getItem("octelium-portal-color-scheme") ===
-            "dark"
+          var stored = window.localStorage.getItem(
+            "octelium-portal-color-scheme",
+          );
+          if (stored === "dark" || stored === "light") {
+            scheme = stored;
+          } else if (
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
           ) {
-            document.documentElement.setAttribute(
-              "data-mantine-color-scheme",
-              "dark",
-            );
+            scheme = "dark";
           }
         } catch (e) {
           void e;
         }
+        document.documentElement.setAttribute(
+          "data-mantine-color-scheme",
+          scheme,
+        );
       })();
     </script>
   </head>

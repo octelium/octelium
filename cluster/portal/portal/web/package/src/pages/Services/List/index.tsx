@@ -520,7 +520,7 @@ const Page = () => {
                 : `${totalCount} ${totalCount === 1 ? "Service" : "Services"}`}
             </p>
             {isTruncatedSearch && (
-              <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+              <p className="text-xs font-semibold text-amber-600">
                 Only the first {SEARCH_FETCH_LIMIT} Services are searched
               </p>
             )}

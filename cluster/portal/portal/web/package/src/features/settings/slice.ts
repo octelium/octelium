@@ -1,4 +1,5 @@
 import Settings from "@/utils/types/settings";
+import { loadItemsPerPage } from "@/utils/preferences";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import * as UserPB from "@octelium/apis/main/userv1";
@@ -6,7 +7,7 @@ import * as UserPB from "@octelium/apis/main/userv1";
 export const slice = createSlice({
   name: "settings",
   initialState: {
-    itemsPerPage: 10,
+    itemsPerPage: loadItemsPerPage(),
   } as Settings,
   reducers: {
     setItemsPerPage: (

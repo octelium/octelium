@@ -60,7 +60,7 @@ const buildConnectCommand = (
 const Cursor = (props: { blink: boolean }) =>
   props.blink ? (
     <motion.span
-      className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-cyan-300"
+      className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-terminal-accent"
       animate={{ opacity: [1, 1, 0, 0] }}
       transition={{
         duration: 1.1,
@@ -70,7 +70,7 @@ const Cursor = (props: { blink: boolean }) =>
       }}
     />
   ) : (
-    <span className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-cyan-300" />
+    <span className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-terminal-accent" />
   );
 
 const ConnectCommand = (props: { service: Service; domain: string }) => {
@@ -132,26 +132,26 @@ const ConnectCommand = (props: { service: Service; domain: string }) => {
       initial={reduced ? false : { opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
-      className="mt-3 overflow-hidden rounded-xl bg-slate-900 shadow-lg shadow-slate-900/10 ring-1 ring-white/10 dark:bg-neutral-950"
+      className="mt-3 overflow-hidden rounded-xl bg-terminal shadow-lg ring-1 ring-terminal-line/70"
     >
-      <div className="flex items-center justify-between border-b border-white/5 px-3 py-2">
+      <div className="flex items-center justify-between border-b border-terminal-line/50 bg-terminal-panel px-3 py-2">
         <div className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-rose-400/60" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/60" />
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/60" />
         </div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-terminal-muted">
           {info.tool}
         </span>
       </div>
 
       <div className="flex items-start gap-3 px-3.5 py-3">
-        <code className="min-w-0 flex-1 font-mono text-sm leading-relaxed text-slate-100">
+        <code className="min-w-0 flex-1 font-mono text-sm leading-relaxed text-terminal-text">
           <span className="sr-only">{full}</span>
           <span aria-hidden className="flex flex-col gap-1">
             {lines.map((line, idx) => (
               <span key={idx} className="flex items-start">
-                <span className="select-none pr-2 text-cyan-300">❯</span>
+                <span className="select-none pr-2 text-terminal-accent">❯</span>
                 <span className="break-all">
                   {line}
                   {idx === lines.length - 1 && !reduced && (
@@ -167,7 +167,7 @@ const ConnectCommand = (props: { service: Service; domain: string }) => {
           type="button"
           onClick={onCopy}
           aria-label={copied ? "Copied" : "Copy command"}
-          className="-mr-1 flex h-7 w-7 flex-none items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
+          className="-mr-1 flex h-7 w-7 flex-none items-center justify-center rounded-md text-terminal-muted transition-colors hover:bg-terminal-line/40 hover:text-terminal-text"
         >
           <AnimatePresence mode="wait" initial={false}>
             {copied ? (

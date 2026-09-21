@@ -1,5 +1,5 @@
 import { Alert, Button, Modal } from "@mantine/core";
-import { Boxes, LockKeyhole, LogOut, PanelTop } from "lucide-react";
+import { Boxes, Cog, LockKeyhole, LogOut, PanelTop } from "lucide-react";
 
 import Links from "@/pages/Links";
 import { getPortalURL } from "@/utils";
@@ -20,6 +20,11 @@ const items = [
     title: "Namespaces",
     url: "/namespaces",
     icon: Boxes,
+  },
+  {
+    title: "Settings",
+    url: "/settings",
+    icon: Cog,
   },
 ];
 

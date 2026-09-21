@@ -43,8 +43,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "Web App",
     icon: AppWindow,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/25",
+    chip: "bg-sky-50 text-sky-700 ring-sky-200",
   },
   {
     key: "HTTP",
@@ -52,8 +51,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "HTTP",
     icon: Globe2,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25",
+    chip: "bg-blue-50 text-blue-700 ring-blue-200",
   },
   {
     key: "GRPC",
@@ -61,8 +59,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "gRPC",
     icon: Network,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25",
+    chip: "bg-violet-50 text-violet-700 ring-violet-200",
   },
   {
     key: "SSH",
@@ -70,8 +67,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "SSH",
     icon: Terminal,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700",
+    chip: "bg-slate-100 text-slate-700 ring-slate-200",
   },
   {
     key: "KUBERNETES",
@@ -79,8 +75,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "Kubernetes",
     icon: SiKubernetes,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/25",
+    chip: "bg-indigo-50 text-indigo-700 ring-indigo-200",
   },
   {
     key: "POSTGRES",
@@ -88,8 +83,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "PostgreSQL",
     icon: SiPostgresql,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-300 dark:ring-cyan-500/25",
+    chip: "bg-cyan-50 text-cyan-700 ring-cyan-200",
   },
   {
     key: "MYSQL",
@@ -97,8 +91,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "MySQL",
     icon: GrMysql,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25",
+    chip: "bg-amber-50 text-amber-700 ring-amber-200",
   },
   {
     key: "TCP",
@@ -106,8 +99,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "TCP",
     icon: Cable,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-teal-50 text-teal-700 ring-teal-200 dark:bg-teal-500/10 dark:text-teal-300 dark:ring-teal-500/25",
+    chip: "bg-teal-50 text-teal-700 ring-teal-200",
   },
   {
     key: "UDP",
@@ -115,8 +107,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "UDP",
     icon: Radio,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25",
+    chip: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   },
   {
     key: "DNS",
@@ -124,8 +115,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "DNS",
     icon: Waypoints,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25",
+    chip: "bg-green-50 text-green-700 ring-green-200",
   },
   {
     key: "SOCKS5",
@@ -133,8 +123,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "SOCKS5",
     icon: Router,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-300 dark:ring-fuchsia-500/25",
+    chip: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200",
   },
   {
     key: "RDP_WEB",
@@ -142,8 +131,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "RDP Web",
     icon: Monitor,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/25",
+    chip: "bg-rose-50 text-rose-700 ring-rose-200",
   },
   {
     key: "LLM",
@@ -151,8 +139,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "AI / LLM",
     icon: BrainCircuit,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25",
+    chip: "bg-purple-50 text-purple-700 ring-purple-200",
   },
   {
     key: "MCP",
@@ -160,8 +147,7 @@ export const SERVICE_TYPES: ServiceTypeInfo[] = [
     label: "MCP",
     icon: SiModelcontextprotocol,
     tile: SERVICE_TYPE_TILE,
-    chip:
-      "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25",
+    chip: "bg-orange-50 text-orange-700 ring-orange-200",
   },
 ];
 
@@ -171,8 +157,7 @@ export const UNKNOWN_SERVICE_TYPE: ServiceTypeInfo = {
   label: "Service",
   icon: Server,
   tile: SERVICE_TYPE_TILE,
-  chip:
-    "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-neutral-800 dark:text-neutral-200 dark:ring-neutral-700",
+  chip: "bg-slate-100 text-slate-700 ring-slate-200",
 };
 
 const byType = new Map<Service_Spec_Type, ServiceTypeInfo>(
