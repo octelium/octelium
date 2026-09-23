@@ -76,6 +76,23 @@ func TestGetError(t *testing.T) {
 		assert.False(t, err.Retryable)
 	}
 	{
+		err := getError(errors.Wrap(status.Error(codes.Unauthenticated, "no"),
+			"Could not connect to API Server"), daemonv1.Error_CONNECTION_FAILED)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, err.Code)
+		assert.Equal(t, "Could not connect to API Server: rpc error: code = Unauthenticated desc = no", err.Message)
+	}
+	{
+		err := getError(errors.Wrap(status.Error(codes.Unavailable, "no"),
+			"Abruptly disconnected by API Server"), daemonv1.Error_CONNECTION_FAILED)
+		assert.Equal(t, daemonv1.Error_CLUSTER_UNREACHABLE, err.Code)
+		assert.True(t, err.Retryable)
+	}
+	{
+		err := getError(errors.Wrap(authenticator.ErrAuthenticationRequired,
+			"Could not connect to API Server"), daemonv1.Error_CONNECTION_FAILED)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, err.Code)
+	}
+	{
 		err := getError(errors.Errorf("internal"), daemonv1.Error_INTERNAL)
 		assert.Equal(t, daemonv1.Error_INTERNAL, err.Code)
 		assert.False(t, err.Retryable)

@@ -286,11 +286,11 @@ func (d *domainCtl) startAuthenticateBrowser(req *daemonv1.AuthenticateRequest) 
 		d.lastErr = nil
 	})
 
-	go func() {
+	d.c.goWork(func() {
 		defer cancelFn()
 
 		d.finishAuthenticate(op, appAuth.Wait(ctx))
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
@@ -355,22 +355,25 @@ func (d *domainCtl) startAuthenticateWithOpts(opts *authenticator.AuthenticateOp
 		d.lastErr = nil
 	})
 
-	go func() {
+	d.c.goWork(func() {
 		defer cancelFn()
 
 		d.finishAuthenticate(op, authenticator.Authenticate(ctx, opts))
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
 
 func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 	d.c.update(func() {
-		if d.op == op {
+		isCurrent := d.op == op
+		if isCurrent {
 			d.appAuth = nil
 		}
 
-		d.reloadAuthentication()
+		if isCurrent || d.isAuthenticationReleased() {
+			d.reloadAuthentication()
+		}
 
 		if err == nil && d.authState != daemonv1.AuthenticationStatus_AUTHENTICATED {
 			err = errors.Errorf("The Cluster did not provide usable credentials")
@@ -378,14 +381,16 @@ func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 
 		if err != nil {
 			authErr := getError(err, daemonv1.Error_AUTHENTICATION_FAILED)
-			if authErr.Code != daemonv1.Error_OPERATION_CANCELED {
+			if isCurrent && authErr.Code != daemonv1.Error_OPERATION_CANCELED {
 				d.lastErr = authErr
 			}
 			op.setFailed(authErr)
 			return
 		}
 
-		d.lastErr = nil
+		if isCurrent {
+			d.lastErr = nil
+		}
 		op.setState(daemonv1.Operation_SUCCEEDED)
 	})
 
@@ -396,6 +401,14 @@ func (d *domainCtl) finishAuthenticate(op *operation, err error) {
 	}
 
 	zap.L().Debug("Successfully authenticated", zap.String("domain", d.domain))
+}
+
+func (d *domainCtl) isAuthenticationReleased() bool {
+	if d.authState != daemonv1.AuthenticationStatus_AUTHENTICATING {
+		return false
+	}
+
+	return d.op == nil || d.op.isDone() || d.op.typ != daemonv1.Operation_AUTHENTICATE
 }
 
 func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Operation, error) {
@@ -479,7 +492,7 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 
 	connOpts.OnEvent = d.getConnectEventHandler(op, gen, &stopErr, cancelFn)
 
-	go func() {
+	d.c.goWork(func() {
 		defer cancelFn()
 
 		err := conn.Run(ctx)
@@ -517,7 +530,7 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 		})
 
 		close(doneCh)
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
@@ -600,7 +613,7 @@ func (d *domainCtl) startDisconnect() (*daemonv1.Operation, error) {
 		return d.getOperationPB(op), nil
 	}
 
-	go func() {
+	d.c.goWork(func() {
 		err := d.doDisconnect(cancelFn, doneCh)
 
 		d.c.update(func() {
@@ -613,7 +626,7 @@ func (d *domainCtl) startDisconnect() (*daemonv1.Operation, error) {
 			d.lastErr = nil
 			op.setState(daemonv1.Operation_SUCCEEDED)
 		})
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
@@ -638,7 +651,7 @@ func (d *domainCtl) doDisconnect(cancelFn context.CancelFunc, doneCh chan struct
 		return retErr
 	}
 
-	ctx, cancel := context.WithTimeout(d.c.withCtx(context.Background()), clusterCallTimeout)
+	ctx, cancel := context.WithTimeout(d.c.opCtx(), clusterCallTimeout)
 	defer cancel()
 
 	conn, err := client.GetGRPCClientConn(ctx, d.domain)
@@ -674,7 +687,7 @@ func (d *domainCtl) startLogout() (*daemonv1.Operation, error) {
 	d.c.notify()
 	d.c.mu.Unlock()
 
-	go func() {
+	d.c.goWork(func() {
 		err := d.doDisconnectAndLogout(cancelFn, doneCh)
 
 		d.c.update(func() {
@@ -688,7 +701,7 @@ func (d *domainCtl) startLogout() (*daemonv1.Operation, error) {
 			d.lastErr = nil
 			op.setState(daemonv1.Operation_SUCCEEDED)
 		})
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
@@ -717,7 +730,7 @@ func (d *domainCtl) doLogout() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(d.c.withCtx(context.Background()), clusterCallTimeout)
+	ctx, cancel := context.WithTimeout(d.c.opCtx(), clusterCallTimeout)
 	defer cancel()
 
 	if c, err := cliutils.NewAuthClient(ctx, d.domain, nil); err == nil {
@@ -761,7 +774,7 @@ func (d *domainCtl) startDelete() (*daemonv1.Operation, error) {
 	d.c.notify()
 	d.c.mu.Unlock()
 
-	go func() {
+	d.c.goWork(func() {
 		err := d.doDelete(cancelFn, doneCh)
 
 		d.c.update(func() {
@@ -776,7 +789,7 @@ func (d *domainCtl) startDelete() (*daemonv1.Operation, error) {
 			delete(d.c.domains, d.domain)
 			op.setState(daemonv1.Operation_SUCCEEDED)
 		})
-	}()
+	})
 
 	return d.getOperationPB(op), nil
 }
@@ -882,7 +895,7 @@ func (d *domainCtl) startRefreshLoop() {
 	d.refreshCancelFn = cancelFn
 	d.c.mu.Unlock()
 
-	go func() {
+	d.c.goWork(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -898,7 +911,7 @@ func (d *domainCtl) startRefreshLoop() {
 				}
 			}
 		}
-	}()
+	})
 }
 
 func (d *domainCtl) getRefreshWait() time.Duration {

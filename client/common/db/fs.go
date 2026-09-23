@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -195,6 +196,12 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 		if err != nil {
 			return err
 		}
+
+		if err := writeFileAtomic(d.dbPath, stateBytes); err != nil {
+			return err
+		}
+
+		return d.owner.setOwner(d.dbPath)
 	}
 
 	if err := os.WriteFile(d.dbPath, stateBytes, 0600); err != nil {
@@ -202,6 +209,49 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 	}
 
 	return d.owner.setOwner(d.dbPath)
+}
+
+func writeFileAtomic(filePath string, content []byte) error {
+	dir := filepath.Dir(filePath)
+
+	f, err := os.CreateTemp(dir, fmt.Sprintf("%s.tmp-*", filepath.Base(filePath)))
+	if err != nil {
+		return err
+	}
+
+	tmpPath := f.Name()
+	isRenamed := false
+	defer func() {
+		if !isRenamed {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return err
+	}
+
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		return err
+	}
+	isRenamed = true
+
+	if dirFile, err := os.Open(dir); err == nil {
+		dirFile.Sync()
+		dirFile.Close()
+	}
+
+	return nil
 }
 
 func (d *fsDB) readState() (*cliconfigv1.State, error) {

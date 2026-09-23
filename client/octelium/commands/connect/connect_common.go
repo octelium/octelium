@@ -712,14 +712,14 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	streamC, err := cl.Connect(ctx)
 	if err != nil {
 		return tryConnectRet{
-			err:            errors.Errorf("Could not connect to API Server: %s", err),
+			err:            errors.Wrap(err, "Could not connect to API Server"),
 			needsReconnect: doNeedReconnect(err),
 		}
 	}
 
 	if err := c.sendInitializeRequest(streamC, publishedServices); err != nil {
 		return tryConnectRet{
-			err:            errors.Errorf("Could not send init request to API Server: %s", err),
+			err:            errors.Wrap(err, "Could not send init request to API Server"),
 			needsReconnect: doNeedReconnect(err),
 		}
 	}
@@ -735,7 +735,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	ctl, err := newCtl(ctx, streamC, connCfg, initAt, c.opts.Platform)
 	if err != nil {
 		return tryConnectRet{
-			err:            errors.Errorf("Could not initialize controller: %s", err.Error()),
+			err:            errors.Wrap(err, "Could not initialize controller"),
 			needsReconnect: ctx.Err() == nil,
 		}
 	}
@@ -743,7 +743,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	if err := ctl.start(ctx); err != nil {
 		zap.L().Warn("Could not start controller", zap.Error(err))
 		return tryConnectRet{
-			err:            errors.Errorf("Could not start controller: %s", err.Error()),
+			err:            errors.Wrap(err, "Could not start controller"),
 			needsReconnect: ctx.Err() == nil,
 		}
 	}
@@ -773,7 +773,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		cliutils.LineInfo("Received shutdown signal\n")
 	case err := <-ctl.stateController.getConnErrCh:
 		needsReconnect = true
-		retErr = errors.Errorf("Abruptly disconnected by API Server: %s", err)
+		retErr = errors.Wrap(err, "Abruptly disconnected by API Server")
 	case <-ctl.stateController.apiserverDisconnectCh:
 		cliutils.LineInfo("Disconnected by API Server\n")
 	}

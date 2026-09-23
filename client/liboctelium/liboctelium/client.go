@@ -60,6 +60,9 @@ type Client struct {
 
 	ctx      context.Context
 	cancelFn context.CancelFunc
+	wg       sync.WaitGroup
+
+	eventsCancelFn context.CancelFunc
 
 	mu           sync.Mutex
 	revision     uint64
@@ -68,12 +71,12 @@ type Client struct {
 	tunnelDomain string
 	isClosed     bool
 
-	events        *eventDispatcher
-	requests      *requestMap
-	network       *network
-	openTUN       func(fd int) (tun.Device, error)
-	restoreLogger func()
-	closeOnce     sync.Once
+	events           *eventDispatcher
+	requests         *requestMap
+	network          *network
+	openTUN          func(fd int) (tun.Device, error)
+	unregisterLogger func()
+	closeOnce        sync.Once
 }
 
 func New(cfg *mobilev1.Config, host Host) (*Client, error) {
@@ -98,19 +101,21 @@ func New(cfg *mobilev1.Config, host Host) (*Client, error) {
 	}
 
 	ctx, cancelFn := context.WithCancel(context.Background())
+	eventsCtx, eventsCancelFn := context.WithCancel(context.Background())
 
 	ret := &Client{
-		cfg:        pbutils.Clone(cfg).(*mobilev1.Config),
-		host:       host,
-		instanceID: uuid.NewString(),
-		dbC:        dbC,
-		ctx:        ctx,
-		cancelFn:   cancelFn,
-		domains:    make(map[string]*domainCtl),
-		ops:        make(map[string]*operation),
-		requests:   newRequestMap(),
-		network:    newNetwork(),
-		openTUN:    newTUNFromFD,
+		cfg:            pbutils.Clone(cfg).(*mobilev1.Config),
+		host:           host,
+		instanceID:     uuid.NewString(),
+		dbC:            dbC,
+		ctx:            ctx,
+		cancelFn:       cancelFn,
+		eventsCancelFn: eventsCancelFn,
+		domains:        make(map[string]*domainCtl),
+		ops:            make(map[string]*operation),
+		requests:       newRequestMap(),
+		network:        newNetwork(),
+		openTUN:        newTUNFromFD,
 	}
 
 	ret.svc = &service{
@@ -120,13 +125,14 @@ func New(cfg *mobilev1.Config, host Host) (*Client, error) {
 
 	if err := ret.loadDomains(); err != nil {
 		cancelFn()
+		eventsCancelFn()
 		dbC.Close()
 		return nil, status.Errorf(codes.Internal, "Could not load the state: %s", err)
 	}
 
-	ret.restoreLogger = zap.ReplaceGlobals(zap.New(newLogCore(cfg.LogLevel, ret.events.sendLog)))
+	ret.unregisterLogger = registerLogCore(newLogCore(cfg.LogLevel, ret.events.sendLog))
 
-	go ret.events.run(ctx)
+	go ret.events.run(eventsCtx)
 
 	return ret, nil
 }
@@ -150,6 +156,10 @@ func validateConfig(cfg *mobilev1.Config) error {
 		return status.Errorf(codes.InvalidArgument, "The state key must be %d bytes", stateKeyLen)
 	}
 
+	if cfg.GetDevice().GetId() == "" {
+		return status.Error(codes.InvalidArgument, "The device ID is not set")
+	}
+
 	if _, ok := mobilev1.Log_Level_name[int32(cfg.LogLevel)]; !ok {
 		return status.Errorf(codes.InvalidArgument, "Unsupported log level: %d", cfg.LogLevel)
 	}
@@ -158,9 +168,16 @@ func validateConfig(cfg *mobilev1.Config) error {
 }
 
 func (c *Client) Call(ctx context.Context, method string, req []byte) ([]byte, error) {
-	if c.getIsClosed() {
+	if !c.beginWork() {
 		return nil, status.Error(codes.Unavailable, "The client is closed")
 	}
+	defer c.wg.Done()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stop := context.AfterFunc(c.ctx, cancel)
+	defer stop()
 
 	for _, m := range mobilev1.MainService_ServiceDesc.Methods {
 		if m.MethodName != method {
@@ -198,8 +215,11 @@ func (c *Client) Close() error {
 		}
 
 		c.cancelFn()
+		c.wg.Wait()
+
+		c.eventsCancelFn()
 		c.events.wait()
-		c.restoreLogger()
+		c.unregisterLogger()
 
 		if err := c.dbC.Close(); err != nil {
 			zap.L().Debug("Could not close the state", zap.Error(err))
@@ -209,25 +229,36 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) getIsClosed() bool {
+func (c *Client) beginWork() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.isClosed
+	if c.isClosed {
+		return false
+	}
+
+	c.wg.Add(1)
+
+	return true
+}
+
+func (c *Client) goWork(fn func()) {
+	c.wg.Add(1)
+
+	go func() {
+		defer c.wg.Done()
+		fn()
+	}()
 }
 
 func (c *Client) withCtx(ctx context.Context) context.Context {
 	ctx = authenticator.WithNonInteractive(cliutils.WithDB(ctx, c.dbC))
 
-	if device := c.cfg.GetDevice(); device.GetId() != "" {
-		ctx = deviceinfo.WithDeviceInfo(ctx, &deviceinfo.DeviceInfo{
-			ID:           device.GetId(),
-			Hostname:     device.GetName(),
-			SerialNumber: device.GetSerialNumber(),
-		})
-	}
-
-	return ctx
+	return deviceinfo.WithDeviceInfo(ctx, &deviceinfo.DeviceInfo{
+		ID:           c.cfg.GetDevice().GetId(),
+		Hostname:     c.cfg.GetDevice().GetName(),
+		SerialNumber: c.cfg.GetDevice().GetSerialNumber(),
+	})
 }
 
 func (c *Client) opCtx() context.Context {

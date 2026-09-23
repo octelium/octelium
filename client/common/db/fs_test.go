@@ -588,3 +588,71 @@ func TestOpenWithOptsEncrypted(t *testing.T) {
 
 	assert.Nil(t, dbC.Close())
 }
+
+func TestFSDBEncryptedAtomicWrite(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "octelium.db")
+	key := utilrand.GetRandomBytesMust(32)
+
+	db, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: key})
+	assert.Nil(t, err)
+	assert.Nil(t, db.migrate(ctx))
+
+	sessTkn := &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(32),
+	}
+
+	for i := range 10 {
+		assert.Nil(t, db.set(ctx, fmt.Sprintf("d%d.example.com", i), sessTkn))
+	}
+
+	fi, err := os.Stat(dbPath)
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
+
+	entries, err := os.ReadDir(tmpDir)
+	assert.Nil(t, err)
+	for _, entry := range entries {
+		assert.False(t, strings.HasPrefix(entry.Name(), "octelium.db.tmp"), entry.Name())
+	}
+
+	domainMap, err := db.list(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, 10, len(domainMap))
+
+	if os.Geteuid() == 0 {
+		t.Skip("Skipping the read-only directory check as root")
+	}
+
+	assert.Nil(t, os.Chmod(tmpDir, 0500))
+	t.Cleanup(func() {
+		os.Chmod(tmpDir, 0700)
+	})
+
+	assert.NotNil(t, db.set(ctx, "failed.example.com", sessTkn))
+
+	domainMap, err = db.list(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, 10, len(domainMap))
+	_, ok := domainMap["failed.example.com"]
+	assert.False(t, ok)
+}
+
+func TestWriteFileAtomic(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "state")
+
+	assert.Nil(t, writeFileAtomic(filePath, []byte("first")))
+	assert.Nil(t, writeFileAtomic(filePath, []byte("second")))
+
+	content, err := os.ReadFile(filePath)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte("second"), content)
+
+	entries, err := os.ReadDir(tmpDir)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, len(entries))
+
+	assert.NotNil(t, writeFileAtomic(filepath.Join(tmpDir, "missing", "state"), []byte("third")))
+}

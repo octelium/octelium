@@ -64,10 +64,12 @@ const (
 //
 // The buffers passed by the host remain owned by the host while the output
 // buffers are allocated by liboctelium and they must be released via
-// `octelium_free`. The Event and PlatformRequest callbacks can be invoked from
-// arbitrary threads and their buffers are only valid during the callback. The
-// host must never call `octelium_client_free` from within a callback. No
-// callback is invoked once `octelium_client_free` returns.
+// `octelium_free`. The output pointers are required. The Event and
+// PlatformRequest callbacks can be invoked from arbitrary threads and their
+// buffers are only valid during the callback. A PlatformRequest can be
+// completed from within its callback or later from any thread. The host must
+// never call `octelium_client_free` from within a callback. No callback is
+// invoked once `octelium_client_free` returns.
 //
 // The Service intentionally reuses the local state model of the Octelium
 // daemon API (i.e. octelium.api.client.daemon.v1) so that the mobile and the
@@ -280,10 +282,12 @@ func (c *mainServiceClient) SetNetworkState(ctx context.Context, in *SetNetworkS
 //
 // The buffers passed by the host remain owned by the host while the output
 // buffers are allocated by liboctelium and they must be released via
-// `octelium_free`. The Event and PlatformRequest callbacks can be invoked from
-// arbitrary threads and their buffers are only valid during the callback. The
-// host must never call `octelium_client_free` from within a callback. No
-// callback is invoked once `octelium_client_free` returns.
+// `octelium_free`. The output pointers are required. The Event and
+// PlatformRequest callbacks can be invoked from arbitrary threads and their
+// buffers are only valid during the callback. A PlatformRequest can be
+// completed from within its callback or later from any thread. The host must
+// never call `octelium_client_free` from within a callback. No callback is
+// invoked once `octelium_client_free` returns.
 //
 // The Service intentionally reuses the local state model of the Octelium
 // daemon API (i.e. octelium.api.client.daemon.v1) so that the mobile and the

@@ -126,6 +126,17 @@ func getGoBytes(data *C.uint8_t, dataLen C.size_t) ([]byte, error) {
 	return C.GoBytes(unsafe.Pointer(data), C.int(dataLen)), nil
 }
 
+func initResult(out **C.uint8_t, outLen *C.size_t) bool {
+	if out == nil || outLen == nil {
+		return false
+	}
+
+	*out = nil
+	*outLen = 0
+
+	return true
+}
+
 func setResult(out **C.uint8_t, outLen *C.size_t, resp []byte, err error) C.int32_t {
 	code, data := getResult(resp, err)
 
@@ -156,6 +167,14 @@ func octelium_client_new(config *C.uint8_t, configLen C.size_t,
 			ret = setResult(out, outLen, nil, getPanicErr(r))
 		}
 	}()
+
+	if !initResult(out, outLen) {
+		return C.int32_t(codes.InvalidArgument)
+	}
+
+	if client != nil {
+		*client = 0
+	}
 
 	if client == nil || callbacks == nil || callbacks.on_event == nil || callbacks.on_request == nil {
 		return setResult(out, outLen, nil,
@@ -198,6 +217,10 @@ func octelium_client_call(client C.uint64_t, method *C.char,
 			ret = setResult(out, outLen, nil, getPanicErr(r))
 		}
 	}()
+
+	if !initResult(out, outLen) {
+		return C.int32_t(codes.InvalidArgument)
+	}
 
 	inst, ok := instances.get(uint64(client))
 	if !ok {

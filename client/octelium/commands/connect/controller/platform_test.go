@@ -407,6 +407,11 @@ func TestControllerPlatform(t *testing.T) {
 		assert.NotNil(t, c.SetConnectionState(state))
 		assert.Equal(t, "100.64.1.9/32", c.c.Connection.Addresses[0].V4)
 
+		assert.NotNil(t, c.UpdateDNS(&userv1.DNS{
+			Servers: []string{"100.64.0.55"},
+		}))
+		assert.Equal(t, []string{"100.64.0.54"}, c.c.Connection.Dns.Servers)
+
 		platform.mu.Lock()
 		platform.setErr = nil
 		platform.mu.Unlock()

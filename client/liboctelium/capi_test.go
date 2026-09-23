@@ -104,7 +104,13 @@ int main(int argc, char **argv) {
 	}
 	octelium_free(out);
 
-	if (octelium_client_new((const uint8_t *)"\xff\xff", 2, &cb, &client, &out, &out_len) != 3) {
+	client = 100;
+	if (octelium_client_new(cfg, cfg_len, &cb, &client, NULL, &out_len) != 3 || client != 100) {
+		return 18;
+	}
+
+	client = 100;
+	if (octelium_client_new((uint8_t *)"\xff\xff", 2, &cb, &client, &out, &out_len) != 3 || client != 0) {
 		return 5;
 	}
 	octelium_free(out);
@@ -126,6 +132,14 @@ int main(int argc, char **argv) {
 		return 9;
 	}
 	octelium_free(out);
+
+	if (octelium_client_call(client, "GetInfo", NULL, 0, NULL, &out_len) != 3) {
+		return 19;
+	}
+
+	if (octelium_client_call(client, "GetInfo", NULL, 0, &out, NULL) != 3) {
+		return 20;
+	}
 
 	if (octelium_client_call(client + 100, "GetInfo", NULL, 0, &out, &out_len) != 5) {
 		return 10;
@@ -239,6 +253,9 @@ func TestCABI(t *testing.T) {
 		Platform: mobilev1.Config_ANDROID,
 		StateDir: filepath.Join(dir, "state"),
 		StateKey: utilrand.GetRandomBytesMust(32),
+		Device: &mobilev1.Config_Device{
+			Id: utilrand.GetRandomStringCanonical(16),
+		},
 	}), 0600))
 
 	reqPath := filepath.Join(dir, "req.bin")

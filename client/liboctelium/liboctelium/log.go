@@ -15,12 +15,106 @@
 package liboctelium
 
 import (
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/octelium/octelium/apis/client/mobilev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+type logRouter struct {
+	mu    sync.RWMutex
+	cores map[*logCore]struct{}
+}
+
+var defaultLogRouter = newLogRouter()
+
+var installLogRouterOnce sync.Once
+
+func newLogRouter() *logRouter {
+	return &logRouter{
+		cores: make(map[*logCore]struct{}),
+	}
+}
+
+func registerLogCore(core *logCore) func() {
+	installLogRouterOnce.Do(func() {
+		zap.ReplaceGlobals(zap.New(&routerCore{
+			r: defaultLogRouter,
+		}))
+	})
+
+	return defaultLogRouter.register(core)
+}
+
+func (r *logRouter) register(core *logCore) func() {
+	r.mu.Lock()
+	r.cores[core] = struct{}{}
+	r.mu.Unlock()
+
+	return func() {
+		r.mu.Lock()
+		delete(r.cores, core)
+		r.mu.Unlock()
+	}
+}
+
+type routerCore struct {
+	r      *logRouter
+	fields []zapcore.Field
+}
+
+func (c *routerCore) Enabled(level zapcore.Level) bool {
+	c.r.mu.RLock()
+	defer c.r.mu.RUnlock()
+
+	for core := range c.r.cores {
+		if core.Enabled(level) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *routerCore) With(fields []zapcore.Field) zapcore.Core {
+	return &routerCore{
+		r:      c.r,
+		fields: append(slices.Clip(c.fields), fields...),
+	}
+}
+
+func (c *routerCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(ent.Level) {
+		return ce.AddCore(ent, c)
+	}
+
+	return ce
+}
+
+func (c *routerCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	if len(c.fields) > 0 {
+		fields = append(slices.Clip(c.fields), fields...)
+	}
+
+	c.r.mu.RLock()
+	defer c.r.mu.RUnlock()
+
+	for core := range c.r.cores {
+		if core.Enabled(ent.Level) {
+			core.Write(ent, fields)
+		}
+	}
+
+	return nil
+}
+
+func (c *routerCore) Sync() error {
+	return nil
+}
 
 type logCore struct {
 	zapcore.LevelEnabler

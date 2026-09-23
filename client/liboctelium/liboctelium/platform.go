@@ -104,7 +104,7 @@ func (c *Client) doPlatformRequest(ctx context.Context,
 		}
 	}()
 
-	c.host.SendPlatformRequest(id, req)
+	go c.host.SendPlatformRequest(id, req)
 
 	select {
 	case <-ctx.Done():
@@ -134,7 +134,7 @@ func (c *Client) CompleteRequest(id uint64, respBytes []byte) error {
 	}
 
 	if resp.GetApplyTunnelConfiguration() != nil {
-		tunFD, err := c.getTUNFD(resp.GetApplyTunnelConfiguration().GetTunFD())
+		tunFD, err := c.getTUNFD(resp.GetApplyTunnelConfiguration())
 		if err != nil {
 			ret.resp = &mobilev1.PlatformResponse{
 				Type: &mobilev1.PlatformResponse_Error_{
@@ -156,20 +156,25 @@ func (c *Client) CompleteRequest(id uint64, respBytes []byte) error {
 	return nil
 }
 
-func (c *Client) getTUNFD(fd int32) (int, error) {
-	if fd <= 0 {
+func (c *Client) getTUNFD(resp *mobilev1.PlatformResponse_ApplyTunnelConfiguration) (int, error) {
+	if resp.TunFD == nil {
 		if c.cfg.Platform != mobilev1.Config_IOS {
 			return -1, errors.Errorf("The TUN file descriptor is not set")
 		}
 
-		found, err := findTUNFD()
+		fd, err := findTUNFD()
 		if err != nil {
 			return -1, err
 		}
-		fd = int32(found)
+
+		return dupFD(fd)
 	}
 
-	return dupFD(int(fd))
+	if resp.GetTunFD() < 0 {
+		return -1, errors.Errorf("Invalid TUN file descriptor: %d", resp.GetTunFD())
+	}
+
+	return dupFD(int(resp.GetTunFD()))
 }
 
 type platformNetwork struct {
@@ -240,6 +245,7 @@ func (p *platformNetwork) SetTunnelConfiguration(ctx context.Context,
 
 	dev, err := p.c.openTUN(p.tunFD)
 	if err != nil {
+		p.cfg = nil
 		return err
 	}
 

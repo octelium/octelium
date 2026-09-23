@@ -407,10 +407,17 @@ func (c *Controller) UpdateDNS(dns *userv1.DNS) error {
 		return nil
 	}
 
+	old := c.c.Connection.Dns
 	c.c.Connection.Dns = dns
 
 	if c.platform != nil {
-		return c.setPlatformTunnelConfiguration()
+		if err := c.setPlatformTunnelConfiguration(); err != nil {
+			zap.L().Warn("Could not apply the new DNS. Rolling back", zap.Error(err))
+			c.c.Connection.Dns = old
+			return err
+		}
+
+		return nil
 	}
 
 	return c.setDNS()

@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/apis/client/mobilev1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/authenticator"
+	"github.com/octelium/octelium/client/common/cliutils/deviceinfo"
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/pkg/common/clientlogin"
@@ -40,7 +41,9 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -150,6 +153,14 @@ func TestNew(t *testing.T) {
 		},
 		func(cfg *mobilev1.Config) *mobilev1.Config {
 			cfg.LogLevel = mobilev1.Log_Level(100)
+			return cfg
+		},
+		func(cfg *mobilev1.Config) *mobilev1.Config {
+			cfg.Device = nil
+			return cfg
+		},
+		func(cfg *mobilev1.Config) *mobilev1.Config {
+			cfg.Device.Id = ""
 			return cfg
 		},
 	}
@@ -886,4 +897,236 @@ func TestGetRefreshWait(t *testing.T) {
 
 	setToken(3600*24, time.Now())
 	assert.Equal(t, refreshMaxInterval, d.getRefreshWait())
+}
+
+func TestWithCtxDeviceInfo(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Device.SerialNumber = "1234"
+
+	c, err := New(cfg, newFakeHost())
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	info, err := deviceinfo.GetDeviceInfo(c.opCtx())
+	assert.Nil(t, err)
+	assert.Equal(t, cfg.Device.Id, info.ID)
+	assert.Equal(t, "phone", info.Hostname)
+	assert.Equal(t, "1234", info.SerialNumber)
+}
+
+func TestCloseWaitsForOperations(t *testing.T) {
+	cfg := newTestConfig(t)
+	setTestSessionToken(t, cfg, "a.example.invalid")
+
+	c, err := New(cfg, newFakeHost())
+	assert.Nil(t, err)
+
+	authOp := &daemonv1.Operation{}
+	assert.Nil(t, doCall(t, c, "Authenticate", &daemonv1.AuthenticateRequest{
+		Domain: "b.example.invalid",
+		Type: &daemonv1.AuthenticateRequest_AuthenticationToken_{
+			AuthenticationToken: &daemonv1.AuthenticateRequest_AuthenticationToken{
+				AuthenticationToken: utilrand.GetRandomString(32),
+			},
+		},
+	}, authOp))
+
+	logoutOp := &daemonv1.Operation{}
+	assert.Nil(t, doCall(t, c, "Logout", &daemonv1.LogoutRequest{
+		Domain: "a.example.invalid",
+	}, logoutOp))
+
+	startedAt := time.Now()
+	assert.Nil(t, c.Close())
+	assert.Less(t, time.Since(startedAt), 5*time.Second)
+
+	c.mu.Lock()
+	assert.True(t, c.ops[authOp.Id].isDone())
+	assert.True(t, c.ops[logoutOp.Id].isDone())
+	c.mu.Unlock()
+
+	_, err = c.dbC.GetSessionToken("a.example.invalid")
+	assert.True(t, c.dbC.ErrorIsNotFound(err))
+
+	_, err = c.Call(context.Background(), "GetStatus", nil)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestCloseCancelsInFlightCall(t *testing.T) {
+	cfg := newTestConfig(t)
+
+	c, err := New(cfg, newFakeHost())
+	assert.Nil(t, err)
+
+	assert.True(t, c.beginWork())
+	callDoneCh := make(chan error, 1)
+	go func() {
+		defer c.wg.Done()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stop := context.AfterFunc(c.ctx, cancel)
+		defer stop()
+
+		<-ctx.Done()
+		callDoneCh <- ctx.Err()
+	}()
+
+	closeDoneCh := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closeDoneCh)
+	}()
+
+	select {
+	case err := <-callDoneCh:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("The in-flight call was not canceled")
+	}
+
+	select {
+	case <-closeDoneCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return")
+	}
+
+	assert.False(t, c.beginWork())
+}
+
+func TestFinishAuthenticateSuperseded(t *testing.T) {
+	cfg := newTestConfig(t)
+	setTestSessionToken(t, cfg, "example.com")
+
+	c, err := New(cfg, newFakeHost())
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	d, err := c.getDomain("example.com")
+	assert.Nil(t, err)
+
+	startAuth := func() *operation {
+		op, err := d.beginSupersedingOperation(daemonv1.Operation_AUTHENTICATE, func() {})
+		assert.Nil(t, err)
+
+		c.update(func() {
+			d.authState = daemonv1.AuthenticationStatus_AUTHENTICATING
+			d.lastErr = nil
+		})
+
+		return op
+	}
+
+	{
+		authOp := startAuth()
+
+		logoutOp, err := d.beginSupersedingOperation(daemonv1.Operation_LOGOUT, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, daemonv1.Operation_CANCELED, authOp.state)
+
+		c.update(func() {
+			d.authState = daemonv1.AuthenticationStatus_LOGGING_OUT
+		})
+
+		d.finishAuthenticate(authOp, errors.Errorf("could not authenticate"))
+
+		assert.Equal(t, daemonv1.AuthenticationStatus_LOGGING_OUT, d.authState)
+		assert.Nil(t, d.lastErr)
+
+		c.update(func() {
+			logoutOp.setState(daemonv1.Operation_SUCCEEDED)
+		})
+	}
+
+	{
+		authOp := startAuth()
+
+		disconnectOp, err := d.beginSupersedingOperation(daemonv1.Operation_DISCONNECT, nil)
+		assert.Nil(t, err)
+
+		d.finishAuthenticate(authOp, context.Canceled)
+
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, d.authState)
+		assert.Nil(t, d.lastErr)
+		assert.Equal(t, daemonv1.Operation_CANCELED, authOp.state)
+
+		c.update(func() {
+			disconnectOp.setState(daemonv1.Operation_SUCCEEDED)
+		})
+	}
+
+	{
+		authOp := startAuth()
+
+		_, err := c.cancelOperation(authOp.id)
+		assert.Nil(t, err)
+
+		newAuthOp := startAuth()
+		assert.Equal(t, daemonv1.Operation_RUNNING, newAuthOp.state)
+
+		d.finishAuthenticate(authOp, errors.Errorf("could not authenticate"))
+
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATING, d.authState)
+		assert.Nil(t, d.lastErr)
+		assert.Equal(t, daemonv1.Operation_RUNNING, newAuthOp.state)
+
+		d.finishAuthenticate(newAuthOp, errors.Errorf("could not authenticate"))
+
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, d.authState)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_FAILED, d.lastErr.GetCode())
+		assert.Equal(t, daemonv1.Operation_FAILED, newAuthOp.state)
+	}
+
+	{
+		authOp := startAuth()
+
+		_, err := c.cancelOperation(authOp.id)
+		assert.Nil(t, err)
+
+		d.finishAuthenticate(authOp, context.Canceled)
+
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, d.authState)
+		assert.Nil(t, d.lastErr)
+	}
+}
+
+func TestClientLogs(t *testing.T) {
+	hostA := newFakeHost()
+	cA, err := New(newTestConfig(t), hostA)
+	assert.Nil(t, err)
+
+	hostB := newFakeHost()
+	cB, err := New(newTestConfig(t), hostB)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		cB.Close()
+	})
+
+	hasLog := func(host *fakeHost, msg string) bool {
+		for _, log := range host.getLogEvents() {
+			if log.Message == msg {
+				return true
+			}
+		}
+		return false
+	}
+
+	zap.L().Info("first message")
+
+	assert.Eventually(t, func() bool {
+		return hasLog(hostA, "first message") && hasLog(hostB, "first message")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	assert.Nil(t, cA.Close())
+
+	zap.L().Info("second message")
+
+	assert.Eventually(t, func() bool {
+		return hasLog(hostB, "second message")
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.False(t, hasLog(hostA, "second message"))
 }

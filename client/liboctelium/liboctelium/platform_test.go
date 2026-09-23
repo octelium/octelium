@@ -28,9 +28,11 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestPipeFD(t *testing.T) int {
@@ -64,18 +66,27 @@ func newTestConfig(t *testing.T) *mobilev1.Config {
 		Platform: mobilev1.Config_ANDROID,
 		StateDir: t.TempDir(),
 		StateKey: utilrand.GetRandomBytesMust(32),
+		Device: &mobilev1.Config_Device{
+			Id:   utilrand.GetRandomStringCanonical(16),
+			Name: "phone",
+		},
 	}
 }
 
 type fakeTUNFactory struct {
-	mu   sync.Mutex
-	fds  []int
-	devs []*fakeDev
+	mu      sync.Mutex
+	fds     []int
+	devs    []*fakeDev
+	openErr error
 }
 
 func (f *fakeTUNFactory) openTUN(fd int) (tun.Device, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
 
 	ret := newFakeDev("faketun")
 	f.fds = append(f.fds, fd)
@@ -102,8 +113,18 @@ func completeApplyWithFD(c *Client, fd int) func(id uint64, req *mobilev1.Platfo
 		c.CompleteRequest(id, pbutils.MarshalMust(&mobilev1.PlatformResponse{
 			Type: &mobilev1.PlatformResponse_ApplyTunnelConfiguration_{
 				ApplyTunnelConfiguration: &mobilev1.PlatformResponse_ApplyTunnelConfiguration{
-					TunFD: int32(fd),
+					TunFD: proto.Int32(int32(fd)),
 				},
+			},
+		}))
+	}
+}
+
+func completeApplyWithoutFD(c *Client) func(id uint64, req *mobilev1.PlatformRequest) {
+	return func(id uint64, req *mobilev1.PlatformRequest) {
+		c.CompleteRequest(id, pbutils.MarshalMust(&mobilev1.PlatformResponse{
+			Type: &mobilev1.PlatformResponse_ApplyTunnelConfiguration_{
+				ApplyTunnelConfiguration: &mobilev1.PlatformResponse_ApplyTunnelConfiguration{},
 			},
 		}))
 	}
@@ -181,10 +202,27 @@ func TestDoPlatformRequest(t *testing.T) {
 	}
 
 	{
-		host.onReq = completeApplyWithFD(c, 0)
+		host.onReq = completeApplyWithoutFD(c)
 
 		_, err := c.doPlatformRequest(ctx, newTestApplyRequest())
 		assert.NotNil(t, err)
+	}
+
+	{
+		host.onReq = completeApplyWithFD(c, -1)
+
+		_, err := c.doPlatformRequest(ctx, newTestApplyRequest())
+		assert.NotNil(t, err)
+	}
+
+	if isFDOpen(0) {
+		host.onReq = completeApplyWithFD(c, 0)
+
+		resp, err := c.doPlatformRequest(ctx, newTestApplyRequest())
+		assert.Nil(t, err, "%+v", err)
+		assert.Greater(t, resp.tunFD, 0)
+		resp.close()
+		assert.True(t, isFDOpen(0))
 	}
 
 	{
@@ -195,9 +233,9 @@ func TestDoPlatformRequest(t *testing.T) {
 	}
 
 	{
-		var reqID uint64
+		reqIDCh := make(chan uint64, 1)
 		host.onReq = func(id uint64, req *mobilev1.PlatformRequest) {
-			reqID = id
+			reqIDCh <- id
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -206,7 +244,36 @@ func TestDoPlatformRequest(t *testing.T) {
 		_, err := c.doPlatformRequest(ctx, newTestApplyRequest())
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 
-		err = c.CompleteRequest(reqID, pbutils.MarshalMust(&mobilev1.PlatformResponse{}))
+		err = c.CompleteRequest(<-reqIDCh, pbutils.MarshalMust(&mobilev1.PlatformResponse{}))
+		assert.True(t, grpcerr.IsNotFound(err))
+	}
+
+	{
+		releaseCh := make(chan struct{})
+		reqIDCh := make(chan uint64, 1)
+		host.onReq = func(id uint64, req *mobilev1.PlatformRequest) {
+			<-releaseCh
+			reqIDCh <- id
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+
+		startedAt := time.Now()
+		_, err := c.doPlatformRequest(ctx, newTestApplyRequest())
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(startedAt), 5*time.Second)
+
+		close(releaseCh)
+
+		pipeFD := newTestPipeFD(t)
+		err = c.CompleteRequest(<-reqIDCh, pbutils.MarshalMust(&mobilev1.PlatformResponse{
+			Type: &mobilev1.PlatformResponse_ApplyTunnelConfiguration_{
+				ApplyTunnelConfiguration: &mobilev1.PlatformResponse_ApplyTunnelConfiguration{
+					TunFD: proto.Int32(int32(pipeFD)),
+				},
+			},
+		}))
 		assert.True(t, grpcerr.IsNotFound(err))
 	}
 
@@ -339,4 +406,55 @@ func TestPlatformNetwork(t *testing.T) {
 
 	p.close()
 	assert.True(t, isFDOpen(pipeFD))
+}
+
+func TestPlatformNetworkOpenTUNFailure(t *testing.T) {
+	ctx := context.Background()
+
+	host := newFakeHost()
+	c, factory := newTestClient(t, host)
+
+	pipeFD := newTestPipeFD(t)
+	host.onReq = completeApplyWithFD(c, pipeFD)
+
+	p := newPlatformNetwork(c, "example.com")
+	defer p.close()
+
+	cfg1 := &mobilev1.TunnelConfiguration{
+		Addresses: []string{"fdee:be1d::3/128"},
+		Mtu:       1280,
+	}
+
+	dev, err := p.OpenTUN(ctx, cfg1)
+	assert.Nil(t, err)
+	defer dev.Close()
+
+	cfg2 := pbutils.Clone(cfg1).(*mobilev1.TunnelConfiguration)
+	cfg2.Mtu = 1300
+
+	factory.mu.Lock()
+	factory.openErr = errors.Errorf("could not open the TUN device")
+	factory.mu.Unlock()
+
+	assert.NotNil(t, p.SetTunnelConfiguration(ctx, cfg2))
+	assert.Equal(t, 2, host.getRequestCount())
+	assert.Nil(t, p.cfg)
+	assert.False(t, factory.devs[0].isClosed())
+
+	factory.mu.Lock()
+	factory.openErr = nil
+	factory.mu.Unlock()
+
+	assert.Nil(t, p.SetTunnelConfiguration(ctx, cfg2))
+	assert.Equal(t, 3, host.getRequestCount())
+	assert.True(t, pbutils.IsEqual(cfg2, p.cfg))
+	assert.Equal(t, 2, len(factory.devs))
+	assert.True(t, factory.devs[0].isClosed())
+
+	mtu, err := dev.MTU()
+	assert.Nil(t, err)
+	assert.Equal(t, 1300, mtu)
+
+	assert.Nil(t, p.SetTunnelConfiguration(ctx, cfg2))
+	assert.Equal(t, 3, host.getRequestCount())
 }

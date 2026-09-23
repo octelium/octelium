@@ -99,3 +99,69 @@ func TestLogCoreLevel(t *testing.T) {
 	assert.Equal(t, mobilev1.Log_ERROR, getLogLevel(zapcore.ErrorLevel))
 	assert.Equal(t, mobilev1.Log_ERROR, getLogLevel(zapcore.PanicLevel))
 }
+
+func TestLogRouter(t *testing.T) {
+	r := newLogRouter()
+	logger := zap.New(&routerCore{r: r})
+
+	var infoLogs, debugLogs []*mobilev1.Log
+
+	infoCore := newLogCore(mobilev1.Log_INFO, func(log *mobilev1.Log) {
+		infoLogs = append(infoLogs, log)
+	})
+	debugCore := newLogCore(mobilev1.Log_DEBUG, func(log *mobilev1.Log) {
+		debugLogs = append(debugLogs, log)
+	})
+
+	logger.Info("no cores")
+	assert.False(t, logger.Core().Enabled(zapcore.ErrorLevel))
+
+	unregisterInfo := r.register(infoCore)
+	unregisterDebug := r.register(debugCore)
+
+	logger.Debug("debug msg")
+	assert.Equal(t, 0, len(infoLogs))
+	assert.Equal(t, 1, len(debugLogs))
+
+	logger.With(zap.String("domain", "example.com")).Info("info msg", zap.Int("gen", 1))
+	assert.Equal(t, 1, len(infoLogs))
+	assert.Equal(t, 2, len(debugLogs))
+	assert.Equal(t, infoLogs[0].Message, debugLogs[1].Message)
+	assert.True(t, strings.Contains(infoLogs[0].Message, `"domain": "example.com"`))
+	assert.True(t, strings.Contains(infoLogs[0].Message, `"gen": 1`))
+
+	unregisterDebug()
+
+	logger.Warn("warn msg")
+	assert.Equal(t, 2, len(infoLogs))
+	assert.Equal(t, 2, len(debugLogs))
+
+	unregisterInfo()
+
+	logger.Error("error msg")
+	assert.Equal(t, 2, len(infoLogs))
+	assert.False(t, logger.Core().Enabled(zapcore.ErrorLevel))
+}
+
+func TestLogRouterWithFields(t *testing.T) {
+	r := newLogRouter()
+
+	var logs []*mobilev1.Log
+	unregister := r.register(newLogCore(mobilev1.Log_INFO, func(log *mobilev1.Log) {
+		logs = append(logs, log)
+	}))
+	defer unregister()
+
+	base := zap.New(&routerCore{r: r}).With(zap.String("a", "1"))
+	first := base.With(zap.String("b", "2"))
+	second := base.With(zap.String("c", "3"))
+
+	first.Info("first")
+	second.Info("second")
+
+	assert.Equal(t, 2, len(logs))
+	assert.True(t, strings.Contains(logs[0].Message, `"b": "2"`))
+	assert.False(t, strings.Contains(logs[0].Message, `"c": "3"`))
+	assert.True(t, strings.Contains(logs[1].Message, `"c": "3"`))
+	assert.False(t, strings.Contains(logs[1].Message, `"b": "2"`))
+}
