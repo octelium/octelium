@@ -15,9 +15,11 @@
 package connect
 
 import (
+	"context"
 	"os"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/pkg/errors"
 )
 
@@ -42,6 +44,10 @@ type Opts struct {
 	TunnelMode string
 
 	MTU int32
+
+	Platform controller.Platform
+
+	WaitReconnect func(ctx context.Context, attempt int) error
 
 	OnEvent func(ev *Event)
 }

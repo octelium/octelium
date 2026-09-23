@@ -51,8 +51,17 @@ export const getPortalURL = (): string => {
   return domain ? `https://portal.${domain}` : "/";
 };
 
+const appCallbackProtocol = "com.octelium.client:";
+const appCallbackPath = "/callback/success";
+
 export const getSafeRedirectURL = (value: string): string => {
   const url = new URL(value, window.location.origin);
+  if (url.protocol === appCallbackProtocol) {
+    if (url.host !== "" || url.pathname !== appCallbackPath) {
+      throw new Error("Invalid app callback URL");
+    }
+    return value;
+  }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Unsupported redirect URL protocol");
   }

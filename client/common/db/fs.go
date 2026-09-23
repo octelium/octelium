@@ -15,7 +15,11 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path"
@@ -38,16 +42,29 @@ const (
 	lockRetryInterval = 1000 * time.Millisecond
 )
 
+const encryptionKeyLen = 32
+
+var encryptedStatePrefix = []byte("octelium-db-v1:")
+
 type fsDB struct {
 	mu     sync.Mutex
 	flock  *flock.Flock
 	dbPath string
 	owner  *Owner
+	aead   cipher.AEAD
 }
 
 func newFSDB(o *Opts) (*fsDB, error) {
 	ret := &fsDB{
 		owner: o.Owner,
+	}
+
+	if len(o.EncryptionKey) > 0 {
+		aead, err := newAEAD(o.EncryptionKey)
+		if err != nil {
+			return nil, err
+		}
+		ret.aead = aead
 	}
 
 	dbDir := o.Path
@@ -71,6 +88,49 @@ func newFSDB(o *Opts) (*fsDB, error) {
 	}
 
 	ret.flock = flock.New(lockPath)
+
+	return ret, nil
+}
+
+func newAEAD(key []byte) (cipher.AEAD, error) {
+	if len(key) != encryptionKeyLen {
+		return nil, errors.Errorf("OcteliumDB: The encryption key must be %d bytes", encryptionKeyLen)
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return cipher.NewGCM(block)
+}
+
+func (d *fsDB) seal(plaintext []byte) ([]byte, error) {
+	nonce := make([]byte, d.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+
+	ret := make([]byte, 0, len(encryptedStatePrefix)+len(nonce)+len(plaintext)+d.aead.Overhead())
+	ret = append(ret, encryptedStatePrefix...)
+	ret = append(ret, nonce...)
+
+	return d.aead.Seal(ret, nonce, plaintext, encryptedStatePrefix), nil
+}
+
+func (d *fsDB) open(ciphertext []byte) ([]byte, error) {
+	if !bytes.HasPrefix(ciphertext, encryptedStatePrefix) ||
+		len(ciphertext) < len(encryptedStatePrefix)+d.aead.NonceSize() {
+		return nil, errors.Errorf("OcteliumDB: The state is not encrypted")
+	}
+
+	ciphertext = ciphertext[len(encryptedStatePrefix):]
+	nonce := ciphertext[:d.aead.NonceSize()]
+
+	ret, err := d.aead.Open(nil, nonce, ciphertext[d.aead.NonceSize():], encryptedStatePrefix)
+	if err != nil {
+		return nil, errors.Errorf("OcteliumDB: Could not decrypt the state")
+	}
 
 	return ret, nil
 }
@@ -130,6 +190,13 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 		return err
 	}
 
+	if d.aead != nil {
+		stateBytes, err = d.seal(stateBytes)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := os.WriteFile(d.dbPath, stateBytes, 0600); err != nil {
 		return err
 	}
@@ -159,6 +226,13 @@ func (d *fsDB) readStateLocked() (*cliconfigv1.State, error) {
 			return ret, nil
 		}
 		return nil, err
+	}
+
+	if d.aead != nil && len(stateBytes) > 0 {
+		stateBytes, err = d.open(stateBytes)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := pbutils.Unmarshal(stateBytes, ret); err != nil {

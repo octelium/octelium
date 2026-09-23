@@ -47,7 +47,7 @@ func (c *Controller) addGateway(ctx context.Context, gw *userv1.Gateway) error {
 		return c.quicEngine.addGW(ctx, gw)
 	}
 
-	if c.isNetstack {
+	if c.isUserspaceDev() {
 		if c.dev == nil {
 			return errors.Errorf("The WireGuard device is not initialized")
 		}
@@ -88,7 +88,7 @@ func (c *Controller) updateGateway(ctx context.Context, gw *userv1.Gateway) erro
 		if cur.Id == gw.Id {
 			c.c.Connection.Gateways[i] = gw
 
-			if c.isNetstack {
+			if c.isUserspaceDev() {
 				if c.dev == nil {
 					return errors.Errorf("The WireGuard device is not initialized")
 				}
@@ -141,7 +141,7 @@ func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 
 			zap.L().Debug("Removing gw", zap.Any("gw", gw))
 
-			if c.isNetstack {
+			if c.isUserspaceDev() {
 				if c.dev == nil {
 					return errors.Errorf("The WireGuard device is not initialized")
 				}

@@ -41,6 +41,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/clientlogin"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -1019,6 +1020,103 @@ func TestGetLoginReqPKCE(t *testing.T) {
 	}
 }
 
+func TestGetLoginReqApp(t *testing.T) {
+
+	codeVerifier, err := opkce.NewVerifier()
+	assert.Nil(t, err)
+	codeChallenge := opkce.GetChallenge(codeVerifier)
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CodeChallenge: codeChallenge,
+			CallbackType:  authv1.ClientLoginRequest_APP,
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, authv1.ClientLoginRequest_V2, ret.ApiVersion)
+		assert.Equal(t, authv1.ClientLoginRequest_APP, ret.CallbackType)
+		assert.Equal(t, codeChallenge, ret.CodeChallenge)
+		assert.Equal(t, clientlogin.AppCallbackURL, getLoginReqCallbackURL(ret))
+	}
+
+	{
+		ret, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V2,
+			CodeChallenge: codeChallenge,
+			CallbackType:  authv1.ClientLoginRequest_APP,
+		}))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, authv1.ClientLoginRequest_APP, ret.CallbackType)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:   authv1.ClientLoginRequest_V1,
+			CallbackType: authv1.ClientLoginRequest_APP,
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CodeChallenge: codeChallenge[:opkce.ChallengeLen-1],
+			CallbackType:  authv1.ClientLoginRequest_APP,
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CallbackPort:  12345,
+			CodeChallenge: codeChallenge,
+			CallbackType:  authv1.ClientLoginRequest_APP,
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:     authv1.ClientLoginRequest_V1,
+			CallbackSuffix: "abcdefgh",
+			CodeChallenge:  codeChallenge,
+			CallbackType:   authv1.ClientLoginRequest_APP,
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CodeChallenge: codeChallenge,
+			CallbackType:  authv1.ClientLoginRequest_CallbackType(100),
+		}))
+		assert.NotNil(t, err)
+	}
+
+	{
+		_, err := getLoginReq(encodeLoginReq(t, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CodeChallenge: codeChallenge,
+		}))
+		assert.NotNil(t, err)
+	}
+}
+
+func TestGetLoginReqCallbackURL(t *testing.T) {
+	assert.Equal(t, "http://localhost:12345/callback/success/abcd",
+		getLoginReqCallbackURL(&authv1.ClientLoginRequest{
+			CallbackPort:   12345,
+			CallbackSuffix: "abcd",
+		}))
+
+	assert.Equal(t, "com.octelium.client:/callback/success",
+		getLoginReqCallbackURL(&authv1.ClientLoginRequest{
+			CallbackType: authv1.ClientLoginRequest_APP,
+		}))
+}
+
 func TestValidateLoginQuery(t *testing.T) {
 
 	assert.Nil(t, validateLoginQuery("redirect=https%3A%2F%2Fexample.com"))
@@ -1208,6 +1306,30 @@ func TestGenerateCallbackURL(t *testing.T) {
 		assert.Nil(t, err)
 		assert.True(t, isApp)
 		assert.Equal(t, "http://localhost:12345/callback/success/abcd", callbackURL)
+	}
+
+	{
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		callbackURL, isApp, err := srv.generateCallbackURL(fmt.Sprintf("octelium_req=%s",
+			encodeLoginReq(t, &authv1.ClientLoginRequest{
+				ApiVersion:    authv1.ClientLoginRequest_V1,
+				CodeChallenge: opkce.GetChallenge(codeVerifier),
+				CallbackType:  authv1.ClientLoginRequest_APP,
+			})))
+		assert.Nil(t, err)
+		assert.True(t, isApp)
+		assert.Equal(t, clientlogin.AppCallbackURL, callbackURL)
+	}
+
+	{
+		_, _, err := srv.generateCallbackURL(fmt.Sprintf("octelium_req=%s",
+			encodeLoginReq(t, &authv1.ClientLoginRequest{
+				ApiVersion:   authv1.ClientLoginRequest_V1,
+				CallbackType: authv1.ClientLoginRequest_APP,
+			})))
+		assert.NotNil(t, err)
 	}
 }
 
@@ -1881,11 +2003,19 @@ func doClientLoginFlow(t *testing.T, ctx context.Context, srv *server, adminSrv 
 
 	u, err := url.Parse(out.RedirectURL)
 	assert.Nil(t, err)
-	assert.Equal(t, fmt.Sprintf("%d", loginReq.CallbackPort), u.Port())
-	assert.Equal(t, fmt.Sprintf("/callback/success/%s", loginReq.CallbackSuffix), u.Path)
+	switch loginReq.CallbackType {
+	case authv1.ClientLoginRequest_APP:
+		assert.Equal(t, clientlogin.AppCallbackScheme, u.Scheme)
+		assert.Equal(t, "", u.Host)
+		assert.Equal(t, clientlogin.AppCallbackPath, u.Path)
+	default:
+		assert.Equal(t, fmt.Sprintf("%d", loginReq.CallbackPort), u.Port())
+		assert.Equal(t, fmt.Sprintf("/callback/success/%s", loginReq.CallbackSuffix), u.Path)
+	}
 
 	loginResp := decodeLoginResp(t, u)
 	assert.NotEmpty(t, loginResp.AuthenticationToken)
+	assert.Equal(t, loginReq.CodeChallenge, loginResp.CodeChallenge)
 
 	sessTkn, err := srv.doAuthenticateWithAuthenticationToken(ctx,
 		&authv1.AuthenticateWithAuthenticationTokenRequest{
@@ -1933,6 +2063,17 @@ func TestClientLoginFlow(t *testing.T) {
 			CallbackPort:   12345,
 			CallbackSuffix: "abcdefgh",
 			CodeChallenge:  opkce.GetChallenge(codeVerifier),
+		}, codeVerifier)
+	})
+
+	t.Run("app", func(t *testing.T) {
+		codeVerifier, err := opkce.NewVerifier()
+		assert.Nil(t, err)
+
+		doClientLoginFlow(t, ctx, srv, adminSrv, &authv1.ClientLoginRequest{
+			ApiVersion:    authv1.ClientLoginRequest_V1,
+			CodeChallenge: opkce.GetChallenge(codeVerifier),
+			CallbackType:  authv1.ClientLoginRequest_APP,
 		}, codeVerifier)
 	})
 }

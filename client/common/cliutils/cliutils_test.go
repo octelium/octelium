@@ -16,6 +16,7 @@ package cliutils
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -67,4 +68,12 @@ func TestIsContainerRuntime(t *testing.T) {
 		t.Setenv("container", "podman")
 		assert.Equal(t, IsLinux(), IsContainerRuntime())
 	}
+}
+
+func TestIsOS(t *testing.T) {
+	assert.Equal(t, runtime.GOOS == "linux", IsLinux())
+	assert.Equal(t, runtime.GOOS == "darwin", IsDarwin())
+	assert.Equal(t, runtime.GOOS == "windows", IsWindows())
+	assert.Equal(t, runtime.GOOS == "android", IsAndroid())
+	assert.Equal(t, runtime.GOOS == "ios", IsIOS())
 }

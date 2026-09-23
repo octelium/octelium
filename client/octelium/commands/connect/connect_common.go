@@ -448,12 +448,16 @@ type ctl struct {
 func newCtl(ctx context.Context,
 	streamC userv1.MainService_ConnectClient,
 	connCfg *cliconfigv1.Connection,
-	initAt *timestamppb.Timestamp) (*ctl, error) {
+	initAt *timestamppb.Timestamp,
+	platform controller.Platform) (*ctl, error) {
 	var err error
 	ret := &ctl{}
 
 	zap.L().Debug("Creating dev controller")
-	ret.devCtl, err = controller.NewControllerWithDB(connCfg, cliutils.GetDBFromCtx(ctx))
+	ret.devCtl, err = controller.NewControllerWithOpts(connCfg, &controller.Opts{
+		DB:       cliutils.GetDBFromCtx(ctx),
+		Platform: platform,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -629,15 +633,26 @@ func (c *Connector) Run(ctx context.Context) error {
 
 			attempt++
 
-			select {
-			case <-ctx.Done():
+			if err := c.waitReconnect(ctx, attempt); err != nil {
 				c.setEvent(&Event{
 					Type: EventTypeDisconnected,
 				})
 				return nil
-			case <-time.After(getReconnectBackoff(attempt)):
 			}
 		}
+	}
+}
+
+func (c *Connector) waitReconnect(ctx context.Context, attempt int) error {
+	if c.opts.WaitReconnect != nil {
+		return c.opts.WaitReconnect(ctx, attempt)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(getReconnectBackoff(attempt)):
+		return nil
 	}
 }
 
@@ -717,7 +732,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		}
 	}
 
-	ctl, err := newCtl(ctx, streamC, connCfg, initAt)
+	ctl, err := newCtl(ctx, streamC, connCfg, initAt, c.opts.Platform)
 	if err != nil {
 		return tryConnectRet{
 			err:            errors.Errorf("Could not initialize controller: %s", err.Error()),

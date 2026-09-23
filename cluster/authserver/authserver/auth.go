@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/clientlogin"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -132,20 +133,38 @@ func getLoginReq(arg string) (*authv1.ClientLoginRequest, error) {
 		return nil, errors.Errorf("invalid code challenge")
 	}
 
-	if ret.CallbackPort < 10000 || ret.CallbackPort > 65535 {
-		return nil, errors.Errorf("invalid callback port")
-	}
+	switch ret.CallbackType {
+	case authv1.ClientLoginRequest_LOOPBACK:
+		if ret.CallbackPort < 10000 || ret.CallbackPort > 65535 {
+			return nil, errors.Errorf("invalid callback port")
+		}
 
-	if !govalidator.IsASCII(ret.CallbackSuffix) || !govalidator.IsByteLength(ret.CallbackSuffix, 4, 8) {
-		return nil, errors.Errorf("invalid callback suffix")
+		if !govalidator.IsASCII(ret.CallbackSuffix) || !govalidator.IsByteLength(ret.CallbackSuffix, 4, 8) {
+			return nil, errors.Errorf("invalid callback suffix")
+		}
+	case authv1.ClientLoginRequest_APP:
+		if ret.ApiVersion != authv1.ClientLoginRequest_V2 {
+			return nil, errors.Errorf("code challenge is required for app callbacks")
+		}
+
+		if ret.CallbackPort != 0 || ret.CallbackSuffix != "" {
+			return nil, errors.Errorf("app callbacks cannot set a callback port or suffix")
+		}
+	default:
+		return nil, errors.Errorf("Unsupported callback type")
 	}
 
 	return ret, nil
 }
 
 func getLoginReqCallbackURL(req *authv1.ClientLoginRequest) string {
-	return fmt.Sprintf("http://localhost:%d/callback/success/%s",
-		req.CallbackPort, req.CallbackSuffix)
+	switch req.CallbackType {
+	case authv1.ClientLoginRequest_APP:
+		return clientlogin.AppCallbackURL
+	default:
+		return fmt.Sprintf("http://localhost:%d/callback/success/%s",
+			req.CallbackPort, req.CallbackSuffix)
+	}
 }
 
 func (s *server) savePendingClientAuthFromQuery(ctx context.Context,

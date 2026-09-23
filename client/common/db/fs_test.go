@@ -15,12 +15,14 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -442,4 +444,147 @@ func TestGetMissingDirs(t *testing.T) {
 			filepath.Join(dir, "a"),
 		}, ret)
 	}
+}
+
+func TestFSDBEncrypted(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "octelium.db")
+	key := utilrand.GetRandomBytesMust(32)
+
+	db, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: key})
+	assert.Nil(t, err)
+
+	assert.Nil(t, db.migrate(ctx))
+
+	rawBytes, err := os.ReadFile(dbPath)
+	assert.Nil(t, err)
+	assert.True(t, bytes.HasPrefix(rawBytes, encryptedStatePrefix))
+
+	_, err = db.get(ctx, "example.com")
+	assert.True(t, errors.Is(err, ErrNotFound))
+
+	sessTkn := &authv1.SessionToken{
+		AccessToken:  utilrand.GetRandomString(32),
+		RefreshToken: utilrand.GetRandomString(32),
+	}
+	assert.Nil(t, db.set(ctx, "example.com", sessTkn))
+
+	rawBytes, err = os.ReadFile(dbPath)
+	assert.Nil(t, err)
+	assert.True(t, bytes.HasPrefix(rawBytes, encryptedStatePrefix))
+	assert.False(t, bytes.Contains(rawBytes, []byte(sessTkn.AccessToken)))
+	assert.False(t, bytes.Contains(rawBytes, []byte(sessTkn.RefreshToken)))
+	assert.False(t, bytes.Contains(rawBytes, []byte("example.com")))
+
+	state, err := db.get(ctx, "example.com")
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(sessTkn, state.SessionToken))
+
+	{
+		otherDB, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: key})
+		assert.Nil(t, err)
+
+		state, err := otherDB.get(ctx, "example.com")
+		assert.Nil(t, err)
+		assert.True(t, pbutils.IsEqual(sessTkn, state.SessionToken))
+
+		domainMap, err := otherDB.list(ctx)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(domainMap))
+	}
+
+	{
+		otherDB, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: utilrand.GetRandomBytesMust(32)})
+		assert.Nil(t, err)
+
+		_, err = otherDB.get(ctx, "example.com")
+		assert.NotNil(t, err)
+		assert.False(t, errors.Is(err, ErrNotFound))
+
+		err = otherDB.set(ctx, "example.com", sessTkn)
+		assert.NotNil(t, err)
+	}
+
+	{
+		tamperedBytes := slices.Clone(rawBytes)
+		tamperedBytes[len(tamperedBytes)-1] ^= 0xff
+		assert.Nil(t, os.WriteFile(dbPath, tamperedBytes, 0600))
+
+		_, err = db.get(ctx, "example.com")
+		assert.NotNil(t, err)
+		assert.False(t, errors.Is(err, ErrNotFound))
+	}
+}
+
+func TestFSDBEncryptedRejectsPlaintext(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	plainDB, err := newFSDB(&Opts{Path: tmpDir})
+	assert.Nil(t, err)
+	assert.Nil(t, plainDB.set(ctx, "example.com", &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(32),
+	}))
+
+	db, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: utilrand.GetRandomBytesMust(32)})
+	assert.Nil(t, err)
+
+	_, err = db.get(ctx, "example.com")
+	assert.NotNil(t, err)
+	assert.False(t, errors.Is(err, ErrNotFound))
+}
+
+func TestFSDBEncryptedEmptyFile(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	assert.Nil(t, os.WriteFile(filepath.Join(tmpDir, "octelium.db"), nil, 0600))
+
+	db, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: utilrand.GetRandomBytesMust(32)})
+	assert.Nil(t, err)
+
+	_, err = db.get(ctx, "example.com")
+	assert.True(t, errors.Is(err, ErrNotFound))
+
+	assert.Nil(t, db.set(ctx, "example.com", &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(32),
+	}))
+
+	_, err = db.get(ctx, "example.com")
+	assert.Nil(t, err)
+}
+
+func TestFSDBInvalidEncryptionKey(t *testing.T) {
+	for _, keyLen := range []int{1, 16, 24, 31, 33, 64} {
+		_, err := newFSDB(&Opts{
+			Path:          t.TempDir(),
+			EncryptionKey: utilrand.GetRandomBytesMust(keyLen),
+		})
+		assert.NotNil(t, err, "keyLen: %d", keyLen)
+	}
+}
+
+func TestOpenWithOptsEncrypted(t *testing.T) {
+	tmpDir := t.TempDir()
+	key := utilrand.GetRandomBytesMust(32)
+
+	dbC, err := OpenWithOpts(&Opts{Path: tmpDir, EncryptionKey: key})
+	assert.Nil(t, err)
+	assert.Nil(t, dbC.Migrate())
+
+	sessTkn := &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(32),
+	}
+	assert.Nil(t, dbC.SetSessionToken("example.com", sessTkn))
+
+	ret, err := dbC.GetSessionToken("example.com")
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(sessTkn, ret))
+
+	assert.Nil(t, dbC.DeleteSessionToken("example.com"))
+	_, err = dbC.GetSessionToken("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+
+	assert.Nil(t, dbC.Close())
 }

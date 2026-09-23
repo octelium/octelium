@@ -22,7 +22,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -234,5 +236,47 @@ func TestWebAuthenticatorServeHTTP(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
 		assert.False(t, isClosed())
+	}
+}
+
+func TestGetAccessTokenRenewAt(t *testing.T) {
+	setAt := time.Now().Add(-10 * time.Minute)
+
+	{
+		assert.True(t, GetAccessTokenRenewAt(nil).IsZero())
+		assert.True(t, GetAccessTokenRenewAt(&cliconfigv1.State_Domain{}).IsZero())
+		assert.True(t, needsNewAccessToken(nil))
+		assert.True(t, needsNewAccessToken(&cliconfigv1.State_Domain{}))
+	}
+
+	{
+		at := &cliconfigv1.State_Domain{
+			SessionToken:      &authv1.SessionToken{},
+			SessionTokenSetAt: pbutils.Timestamp(setAt),
+		}
+		assert.True(t, GetAccessTokenRenewAt(at).IsZero())
+		assert.False(t, needsNewAccessToken(at))
+	}
+
+	{
+		at := &cliconfigv1.State_Domain{
+			SessionToken: &authv1.SessionToken{
+				ExpiresIn: 7200,
+			},
+			SessionTokenSetAt: pbutils.Timestamp(setAt),
+		}
+		assert.True(t, setAt.Add(3600*time.Second).Equal(GetAccessTokenRenewAt(at)))
+		assert.False(t, needsNewAccessToken(at))
+	}
+
+	{
+		at := &cliconfigv1.State_Domain{
+			SessionToken: &authv1.SessionToken{
+				ExpiresIn: 1200,
+			},
+			SessionTokenSetAt: pbutils.Timestamp(setAt),
+		}
+		assert.True(t, setAt.Add(600*time.Second).Equal(GetAccessTokenRenewAt(at)))
+		assert.True(t, needsNewAccessToken(at))
 	}
 }

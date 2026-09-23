@@ -47,6 +47,7 @@ func doMain(ctx context.Context) error {
 	}
 
 	clientComponents := []string{
+		"liboctelium",
 		"octelium",
 		"octeliumctl",
 		"octops",

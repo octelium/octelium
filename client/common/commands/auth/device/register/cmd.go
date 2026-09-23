@@ -91,23 +91,29 @@ func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.R
 			Hostname:     info.Hostname,
 			Id:           info.ID,
 			SerialNumber: info.SerialNumber,
-			OsType: func() authv1.RegisterDeviceBeginRequest_Info_OSType {
-				switch {
-				case cliutils.IsWindows():
-					return authv1.RegisterDeviceBeginRequest_Info_WINDOWS
-				case cliutils.IsLinux():
-					return authv1.RegisterDeviceBeginRequest_Info_LINUX
-				case cliutils.IsDarwin():
-					return authv1.RegisterDeviceBeginRequest_Info_MAC
-				default:
-					return authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN
-				}
-			}(),
+			OsType:       getOSType(),
 			MacAddresses: info.MacAddresses,
 		},
 	}
 
 	return c.RegisterDeviceBegin(ctx, req)
+}
+
+func getOSType() authv1.RegisterDeviceBeginRequest_Info_OSType {
+	switch {
+	case cliutils.IsWindows():
+		return authv1.RegisterDeviceBeginRequest_Info_WINDOWS
+	case cliutils.IsLinux():
+		return authv1.RegisterDeviceBeginRequest_Info_LINUX
+	case cliutils.IsDarwin():
+		return authv1.RegisterDeviceBeginRequest_Info_MAC
+	case cliutils.IsAndroid():
+		return authv1.RegisterDeviceBeginRequest_Info_ANDROID
+	case cliutils.IsIOS():
+		return authv1.RegisterDeviceBeginRequest_Info_IOS
+	default:
+		return authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN
+	}
 }
 
 func doRegisterFinish(ctx context.Context, c authv1.MainServiceClient, req *authv1.RegisterDeviceBeginResponse) (*authv1.RegisterDeviceFinishResponse, error) {

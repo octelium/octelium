@@ -321,6 +321,14 @@ func IsDarwin() bool {
 	return runtime.GOOS == "darwin"
 }
 
+func IsAndroid() bool {
+	return runtime.GOOS == "android"
+}
+
+func IsIOS() bool {
+	return runtime.GOOS == "ios"
+}
+
 func IsKubernetes() bool {
 	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
 }

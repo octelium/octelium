@@ -35,8 +35,9 @@ func OpenDefault() (*DB, error) {
 }
 
 type Opts struct {
-	Path  string
-	Owner *Owner
+	Path          string
+	Owner         *Owner
+	EncryptionKey []byte
 }
 
 type Owner struct {

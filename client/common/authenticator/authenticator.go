@@ -53,6 +53,9 @@ type AuthenticateOptsAssertion struct {
 	IdentityProviderRef *metav1.ObjectReference
 }
 
+var ErrAuthenticationRequired = errors.Errorf(
+	"Interactive authentication is not available in this mode. Please authenticate yourself first")
+
 type nonInteractiveCtxKey struct{}
 
 func WithNonInteractive(ctx context.Context) context.Context {
@@ -290,8 +293,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		return sessTkn.AccessToken, nil
 	case a.isAuthentication:
 		if a.opts.IsWeb && IsNonInteractive(ctx) {
-			return "", errors.Errorf(
-				"Interactive authentication is not available in this mode. Please authenticate yourself first")
+			return "", ErrAuthenticationRequired
 		}
 
 		switch {
@@ -336,8 +338,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 			return sessTkn.AccessToken, nil
 		default:
 			if IsNonInteractive(ctx) {
-				return "", errors.Errorf(
-					"Interactive authentication is not available in this mode. Please authenticate yourself first")
+				return "", ErrAuthenticationRequired
 			}
 
 			if !cliutils.IsSuggestedWorkloadHost() {
@@ -407,15 +408,23 @@ func needsNewAccessToken(at *cliconfigv1.State_Domain) bool {
 		return true
 	}
 
-	if at.SessionToken.ExpiresIn == 0 {
+	renewAt := GetAccessTokenRenewAt(at)
+	if renewAt.IsZero() {
 		return false
 	}
 
-	expiresAt := at.SessionTokenSetAt.AsTime().
+	return time.Now().After(renewAt)
+}
+
+func GetAccessTokenRenewAt(at *cliconfigv1.State_Domain) time.Time {
+	if at == nil || at.SessionToken == nil || !at.SessionTokenSetAt.IsValid() ||
+		at.SessionToken.ExpiresIn == 0 {
+		return time.Time{}
+	}
+
+	return at.SessionTokenSetAt.AsTime().
 		Add(time.Second * time.Duration(at.SessionToken.ExpiresIn)).
 		Add(getExpirationGap(at.SessionToken.ExpiresIn))
-
-	return time.Now().After(expiresAt)
 }
 
 func GetAccessTokenExpiresAt(at *cliconfigv1.State_Domain) time.Time {
