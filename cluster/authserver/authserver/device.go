@@ -341,8 +341,10 @@ func (s *server) validateRegisterDeviceBeginRequest(req *authv1.RegisterDeviceBe
 	switch info.OsType {
 	case authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN:
 		return errors.Errorf("Unknown osType")
-	case authv1.RegisterDeviceBeginRequest_Info_ANDROID, authv1.RegisterDeviceBeginRequest_Info_IOS:
-		return errors.Errorf("Unsupported osType")
+		/*
+			case authv1.RegisterDeviceBeginRequest_Info_ANDROID, authv1.RegisterDeviceBeginRequest_Info_IOS:
+				return errors.Errorf("Unsupported osType")
+		*/
 	}
 
 	if len(info.MacAddresses) > 0 {
