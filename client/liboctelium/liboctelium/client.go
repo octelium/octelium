@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,12 +72,14 @@ type Client struct {
 	tunnelDomain string
 	isClosed     bool
 
-	events           *eventDispatcher
-	requests         *requestMap
-	network          *network
-	openTUN          func(fd int) (tun.Device, error)
-	unregisterLogger func()
-	closeOnce        sync.Once
+	events            *eventDispatcher
+	requests          *requestMap
+	platformGen       atomic.Uint64
+	network           *network
+	openTUN           func(fd int) (tun.Device, error)
+	credentialTimeout time.Duration
+	unregisterLogger  func()
+	closeOnce         sync.Once
 }
 
 func New(cfg *mobilev1.Config, host Host) (*Client, error) {
@@ -104,18 +107,19 @@ func New(cfg *mobilev1.Config, host Host) (*Client, error) {
 	eventsCtx, eventsCancelFn := context.WithCancel(context.Background())
 
 	ret := &Client{
-		cfg:            pbutils.Clone(cfg).(*mobilev1.Config),
-		host:           host,
-		instanceID:     uuid.NewString(),
-		dbC:            dbC,
-		ctx:            ctx,
-		cancelFn:       cancelFn,
-		eventsCancelFn: eventsCancelFn,
-		domains:        make(map[string]*domainCtl),
-		ops:            make(map[string]*operation),
-		requests:       newRequestMap(),
-		network:        newNetwork(),
-		openTUN:        newTUNFromFD,
+		cfg:               pbutils.Clone(cfg).(*mobilev1.Config),
+		host:              host,
+		instanceID:        uuid.NewString(),
+		dbC:               dbC,
+		ctx:               ctx,
+		cancelFn:          cancelFn,
+		eventsCancelFn:    eventsCancelFn,
+		domains:           make(map[string]*domainCtl),
+		ops:               make(map[string]*operation),
+		requests:          newRequestMap(),
+		network:           newNetwork(),
+		openTUN:           newTUNFromFD,
+		credentialTimeout: apiCredentialTimeout,
 	}
 
 	ret.svc = &service{

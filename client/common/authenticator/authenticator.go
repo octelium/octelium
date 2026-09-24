@@ -243,7 +243,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 
 	switch {
 	case a.isRefresh:
-		if !needsNewAccessToken(a.at) {
+		if !NeedsNewAccessToken(a.at) {
 			return a.at.SessionToken.AccessToken, nil
 		}
 
@@ -403,7 +403,7 @@ func (a *authenticator) doWebAuthentication(ctx context.Context) (string, error)
 	return at.AccessToken, nil
 }
 
-func needsNewAccessToken(at *cliconfigv1.State_Domain) bool {
+func NeedsNewAccessToken(at *cliconfigv1.State_Domain) bool {
 	if at == nil || at.SessionToken == nil || !at.SessionTokenSetAt.IsValid() {
 		return true
 	}

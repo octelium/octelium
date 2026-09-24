@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -88,7 +89,7 @@ func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.R
 
 	req := &authv1.RegisterDeviceBeginRequest{
 		Info: &authv1.RegisterDeviceBeginRequest_Info{
-			Hostname:     info.Hostname,
+			Hostname:     getHostname(info.Hostname),
 			Id:           info.ID,
 			SerialNumber: info.SerialNumber,
 			OsType:       getOSType(),
@@ -97,6 +98,25 @@ func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.R
 	}
 
 	return c.RegisterDeviceBegin(ctx, req)
+}
+
+const maxHostnameLen = 32
+
+func getHostname(arg string) string {
+	arg = strings.TrimSpace(arg)
+	if len(arg) <= maxHostnameLen {
+		return arg
+	}
+
+	end := 0
+	for i := range arg {
+		if i > maxHostnameLen {
+			break
+		}
+		end = i
+	}
+
+	return strings.TrimSpace(arg[:end])
 }
 
 func getOSType() authv1.RegisterDeviceBeginRequest_Info_OSType {

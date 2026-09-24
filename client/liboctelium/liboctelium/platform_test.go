@@ -458,3 +458,47 @@ func TestPlatformNetworkOpenTUNFailure(t *testing.T) {
 	assert.Nil(t, p.SetTunnelConfiguration(ctx, cfg2))
 	assert.Equal(t, 3, host.getRequestCount())
 }
+
+func TestPlatformNetworkGeneration(t *testing.T) {
+	host := newFakeHost()
+	c, _ := newTestClient(t, host)
+
+	cfg := &mobilev1.TunnelConfiguration{
+		Addresses: []string{"fdee:be1d::3/128"},
+		Mtu:       1280,
+	}
+
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		host.onReq = func(id uint64, req *mobilev1.PlatformRequest) {
+			cancel()
+		}
+
+		p := newPlatformNetwork(c, "example.com")
+		_, err := p.OpenTUN(ctx, cfg)
+		assert.True(t, errors.Is(err, context.Canceled))
+		p.close()
+	}
+
+	pipeFD := newTestPipeFD(t)
+	host.mu.Lock()
+	host.onReq = completeApplyWithFD(c, pipeFD)
+	host.mu.Unlock()
+
+	for range 2 {
+		p := newPlatformNetwork(c, "example.com")
+
+		dev, err := p.OpenTUN(context.Background(), cfg)
+		assert.Nil(t, err)
+		assert.Nil(t, dev.Close())
+		p.close()
+	}
+
+	host.mu.Lock()
+	defer host.mu.Unlock()
+
+	assert.Equal(t, 3, len(host.requests))
+	assert.Equal(t, uint64(1), host.requests[1].GetApplyTunnelConfiguration().Generation)
+	assert.Equal(t, uint64(2), host.requests[2].GetApplyTunnelConfiguration().Generation)
+	assert.Equal(t, uint64(3), host.requests[3].GetApplyTunnelConfiguration().Generation)
+}

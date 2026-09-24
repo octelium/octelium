@@ -245,8 +245,8 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 	{
 		assert.True(t, GetAccessTokenRenewAt(nil).IsZero())
 		assert.True(t, GetAccessTokenRenewAt(&cliconfigv1.State_Domain{}).IsZero())
-		assert.True(t, needsNewAccessToken(nil))
-		assert.True(t, needsNewAccessToken(&cliconfigv1.State_Domain{}))
+		assert.True(t, NeedsNewAccessToken(nil))
+		assert.True(t, NeedsNewAccessToken(&cliconfigv1.State_Domain{}))
 	}
 
 	{
@@ -255,7 +255,7 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 			SessionTokenSetAt: pbutils.Timestamp(setAt),
 		}
 		assert.True(t, GetAccessTokenRenewAt(at).IsZero())
-		assert.False(t, needsNewAccessToken(at))
+		assert.False(t, NeedsNewAccessToken(at))
 	}
 
 	{
@@ -266,7 +266,7 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 			SessionTokenSetAt: pbutils.Timestamp(setAt),
 		}
 		assert.True(t, setAt.Add(3600*time.Second).Equal(GetAccessTokenRenewAt(at)))
-		assert.False(t, needsNewAccessToken(at))
+		assert.False(t, NeedsNewAccessToken(at))
 	}
 
 	{
@@ -277,6 +277,6 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 			SessionTokenSetAt: pbutils.Timestamp(setAt),
 		}
 		assert.True(t, setAt.Add(600*time.Second).Equal(GetAccessTokenRenewAt(at)))
-		assert.True(t, needsNewAccessToken(at))
+		assert.True(t, NeedsNewAccessToken(at))
 	}
 }

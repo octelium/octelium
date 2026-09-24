@@ -919,6 +919,74 @@ func TestWithCtxDeviceInfo(t *testing.T) {
 	assert.Equal(t, "1234", info.SerialNumber)
 }
 
+func TestGetAPICredential(t *testing.T) {
+	const domain = "a.example.invalid"
+
+	newClient := func(t *testing.T, expiresIn int64) *Client {
+		cfg := newTestConfig(t)
+
+		dbC, err := db.OpenWithOpts(&db.Opts{
+			Path:          cfg.StateDir,
+			EncryptionKey: cfg.StateKey,
+		})
+		assert.Nil(t, err)
+		assert.Nil(t, dbC.SetSessionToken(domain, &authv1.SessionToken{
+			AccessToken:           "access-token",
+			RefreshToken:          utilrand.GetRandomString(32),
+			ExpiresIn:             expiresIn,
+			RefreshTokenExpiresIn: 3600,
+		}))
+
+		c, err := New(cfg, newFakeHost())
+		assert.Nil(t, err)
+		t.Cleanup(func() {
+			c.Close()
+		})
+
+		return c
+	}
+
+	getCredential := func(c *Client) (*daemonv1.GetAPICredentialResponse, error) {
+		ret := &daemonv1.GetAPICredentialResponse{}
+		if err := doCall(t, c, "GetAPICredential", &daemonv1.GetAPICredentialRequest{
+			Domain: domain,
+		}, ret); err != nil {
+			return nil, err
+		}
+
+		return ret, nil
+	}
+
+	{
+		c := newClient(t, 7200)
+		c.network.set(false, "")
+
+		resp, err := getCredential(c)
+		assert.Nil(t, err)
+		assert.Equal(t, "access-token", resp.AccessToken)
+	}
+
+	{
+		c := newClient(t, 60)
+		c.network.set(false, "")
+
+		_, err := getCredential(c)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
+		assert.Nil(t, getTestDomainState(t, c, domain).LastError)
+	}
+
+	{
+		c := newClient(t, 60)
+		c.credentialTimeout = 200 * time.Millisecond
+
+		startedAt := time.Now()
+		_, err := getCredential(c)
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err), "%+v", err)
+		assert.Less(t, time.Since(startedAt), 10*time.Second)
+		assert.NotNil(t, getTestDomainState(t, c, domain).LastError)
+	}
+}
+
 func TestCloseWaitsForOperations(t *testing.T) {
 	cfg := newTestConfig(t)
 	setTestSessionToken(t, cfg, "a.example.invalid")

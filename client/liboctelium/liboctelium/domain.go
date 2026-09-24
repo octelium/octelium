@@ -37,8 +37,9 @@ import (
 )
 
 const (
-	clusterCallTimeout = 10 * time.Second
-	disconnectTimeout  = 30 * time.Second
+	clusterCallTimeout   = 10 * time.Second
+	disconnectTimeout    = 30 * time.Second
+	apiCredentialTimeout = 30 * time.Second
 
 	refreshMinInterval = time.Minute
 	refreshMaxInterval = time.Hour
@@ -836,6 +837,14 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 			"You are not authenticated to the domain %s", d.domain)
 	}
 
+	if !d.c.network.getIsAvailable() && d.isRefreshRequired() {
+		return nil, status.Errorf(codes.Unavailable,
+			"The network is not available to renew the access token of the domain %s", d.domain)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, d.c.credentialTimeout)
+	defer cancel()
+
 	d.credMu.Lock()
 	accessToken, err := authenticator.GetAccessToken(d.c.withCtx(ctx), d.domain)
 	d.credMu.Unlock()
@@ -849,6 +858,11 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 		if grpcerr.IsUnauthenticated(err) || errors.Is(err, authenticator.ErrAuthenticationRequired) {
 			return nil, status.Errorf(codes.Unauthenticated,
 				"You are not authenticated to the domain %s", d.domain)
+		}
+
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, status.Errorf(codes.DeadlineExceeded,
+				"Timed out getting an access token for the domain %s", d.domain)
 		}
 
 		return nil, status.Errorf(codes.Internal,
@@ -881,6 +895,15 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 	}
 
 	return ret, nil
+}
+
+func (d *domainCtl) isRefreshRequired() bool {
+	itm, err := d.c.dbC.Get(d.domain)
+	if err != nil {
+		return false
+	}
+
+	return authenticator.HasValidRefreshToken(itm) && authenticator.NeedsNewAccessToken(itm)
 }
 
 func (d *domainCtl) startRefreshLoop() {

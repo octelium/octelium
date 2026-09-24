@@ -182,7 +182,6 @@ type platformNetwork struct {
 	domain string
 
 	mu       sync.Mutex
-	gen      uint64
 	cfg      *mobilev1.TunnelConfiguration
 	tunFD    int
 	active   *platformTUN
@@ -255,16 +254,16 @@ func (p *platformNetwork) SetTunnelConfiguration(ctx context.Context,
 }
 
 func (p *platformNetwork) apply(ctx context.Context, cfg *mobilev1.TunnelConfiguration) error {
-	p.gen++
+	gen := p.c.platformGen.Add(1)
 
 	zap.L().Debug("Applying the tunnel configuration",
-		zap.String("domain", p.domain), zap.Uint64("generation", p.gen), zap.Any("cfg", cfg))
+		zap.String("domain", p.domain), zap.Uint64("generation", gen), zap.Any("cfg", cfg))
 
 	resp, err := p.c.doPlatformRequest(ctx, &mobilev1.PlatformRequest{
 		Type: &mobilev1.PlatformRequest_ApplyTunnelConfiguration_{
 			ApplyTunnelConfiguration: &mobilev1.PlatformRequest_ApplyTunnelConfiguration{
 				Domain:        p.domain,
-				Generation:    p.gen,
+				Generation:    gen,
 				Configuration: cfg,
 			},
 		},
