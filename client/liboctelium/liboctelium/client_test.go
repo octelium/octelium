@@ -21,10 +21,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -203,6 +205,27 @@ func TestNew(t *testing.T) {
 		assert.Nil(t, c.Close())
 		assert.Nil(t, c.Close())
 	}
+}
+
+func TestSetMemoryLimit(t *testing.T) {
+	prev := debug.SetMemoryLimit(math.MaxInt64)
+	t.Cleanup(func() {
+		debug.SetMemoryLimit(prev)
+	})
+
+	t.Setenv("GOMEMLIMIT", "")
+
+	setMemoryLimit(mobilev1.Config_ANDROID)
+	assert.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
+
+	setMemoryLimit(mobilev1.Config_IOS)
+	assert.Equal(t, int64(iosMemoryLimit), debug.SetMemoryLimit(-1))
+
+	debug.SetMemoryLimit(math.MaxInt64)
+	t.Setenv("GOMEMLIMIT", "64MiB")
+
+	setMemoryLimit(mobilev1.Config_IOS)
+	assert.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
 }
 
 func TestCall(t *testing.T) {

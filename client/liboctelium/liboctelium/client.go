@@ -16,6 +16,8 @@ package liboctelium
 
 import (
 	"context"
+	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -45,6 +47,7 @@ const (
 const (
 	stateKeyLen        = 32
 	operationRetention = 10 * time.Minute
+	iosMemoryLimit     = 32 << 20
 )
 
 type Host interface {
@@ -90,6 +93,8 @@ func New(cfg *mobilev1.Config, host Host) (*Client, error) {
 	if host == nil {
 		return nil, status.Error(codes.InvalidArgument, "The host is not set")
 	}
+
+	setMemoryLimit(cfg.Platform)
 
 	dbC, err := db.OpenWithOpts(&db.Opts{
 		Path:          cfg.StateDir,
@@ -139,6 +144,14 @@ func New(cfg *mobilev1.Config, host Host) (*Client, error) {
 	go ret.events.run(eventsCtx)
 
 	return ret, nil
+}
+
+func setMemoryLimit(platform mobilev1.Config_Platform) {
+	if platform != mobilev1.Config_IOS || os.Getenv("GOMEMLIMIT") != "" {
+		return
+	}
+
+	debug.SetMemoryLimit(iosMemoryLimit)
 }
 
 func validateConfig(cfg *mobilev1.Config) error {

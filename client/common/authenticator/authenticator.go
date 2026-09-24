@@ -275,6 +275,14 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 
 		sessTkn, err := a.c.C().AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})
 		if err != nil {
+			if grpcerr.AlreadyExists(err) || grpcerr.IsUnauthenticated(err) {
+				if renewed := a.getRenewedSessionToken(ctx); renewed != nil {
+					zap.L().Debug("The session token has already been renewed by another client",
+						zap.String("domain", a.domain))
+					return renewed.AccessToken, nil
+				}
+			}
+
 			if grpcerr.AlreadyExists(err) {
 				return a.at.SessionToken.AccessToken, nil
 			}
@@ -354,6 +362,20 @@ You must choose the authentication type: either with an authentication token usi
 		return "", errors.Errorf("Neither a refresh nor an authentication flow")
 	}
 
+}
+
+func (a *authenticator) getRenewedSessionToken(ctx context.Context) *authv1.SessionToken {
+	at, err := cliutils.GetDBFromCtx(ctx).Get(a.domain)
+	if err != nil {
+		return nil
+	}
+
+	if at.GetSessionToken().GetRefreshToken() == a.at.GetSessionToken().GetRefreshToken() ||
+		!HasValidRefreshToken(at) || NeedsNewAccessToken(at) {
+		return nil
+	}
+
+	return at.SessionToken
 }
 
 func (a *authenticator) doWebAuthentication(ctx context.Context) (string, error) {

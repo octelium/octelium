@@ -15,6 +15,7 @@
 package authenticator
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -26,6 +27,8 @@ import (
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
@@ -279,4 +282,45 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 		assert.True(t, setAt.Add(600*time.Second).Equal(GetAccessTokenRenewAt(at)))
 		assert.True(t, NeedsNewAccessToken(at))
 	}
+}
+
+func TestGetRenewedSessionToken(t *testing.T) {
+	const domain = "example.com"
+
+	dbC, err := db.Open("mem")
+	assert.Nil(t, err)
+	ctx := cliutils.WithDB(context.Background(), dbC)
+
+	setToken := func(idx int, expiresIn, refreshTokenExpiresIn int64) {
+		assert.Nil(t, dbC.SetSessionToken(domain, &authv1.SessionToken{
+			AccessToken:           fmt.Sprintf("access-%d", idx),
+			RefreshToken:          fmt.Sprintf("refresh-%d", idx),
+			ExpiresIn:             expiresIn,
+			RefreshTokenExpiresIn: refreshTokenExpiresIn,
+		}))
+	}
+
+	setToken(1, 7200, 86400)
+
+	at, err := dbC.Get(domain)
+	assert.Nil(t, err)
+
+	a := &authenticator{
+		domain: domain,
+		at:     at,
+	}
+
+	assert.Nil(t, a.getRenewedSessionToken(ctx))
+
+	setToken(2, 60, 86400)
+	assert.Nil(t, a.getRenewedSessionToken(ctx))
+
+	setToken(3, 7200, 0)
+	assert.Nil(t, a.getRenewedSessionToken(ctx))
+
+	setToken(4, 7200, 86400)
+	assert.Equal(t, "access-4", a.getRenewedSessionToken(ctx).GetAccessToken())
+
+	assert.Nil(t, dbC.DeleteSessionToken(domain))
+	assert.Nil(t, a.getRenewedSessionToken(ctx))
 }
