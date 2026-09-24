@@ -17,11 +17,16 @@
 package gw
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/stretchr/testify/assert"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -656,8 +661,69 @@ func TestGetGatewaySetsIndex(t *testing.T) {
 	assert.Equal(t, int32(3), gw.Status.GetIndex())
 	assert.Equal(t, "100.64.35.0/24", gw.Status.Cidr.V4)
 	assert.Equal(t, "fd00::2:3:0/112", gw.Status.Cidr.V6)
+	assert.Equal(t, fmt.Sprintf("octelium-gw-%s.example.com", gw.Status.Id), gw.Status.Hostname)
 
 	ret, err := getGatewayIndex(c, gw, 2)
 	assert.Nil(t, err)
 	assert.Equal(t, 3, ret)
+}
+
+func TestGetGatewayHostname(t *testing.T) {
+	cc := &corev1.ClusterConfig{
+		Status: &corev1.ClusterConfig_Status{
+			Domain: "example.com",
+		},
+	}
+
+	assert.Equal(t, "octelium-gw-abcd1234.example.com", getGatewayHostname("abcd1234", cc))
+}
+
+func TestDoUpdateGatewayHostname(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	octeliumC := tst.C.OcteliumC
+
+	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	node := &k8scorev1.Node{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name: "node-1",
+			UID:  "11111111-1111-1111-1111-111111111111",
+		},
+	}
+
+	privateKey, err := wgtypes.GeneratePrivateKey()
+	assert.Nil(t, err)
+
+	{
+		gw, err := doUpdateGateway(ctx, octeliumC, cc, node, nil, 0, privateKey)
+		assert.Nil(t, err)
+		assert.Nil(t, gw)
+	}
+
+	gwObject, err := getGateway(0, []string{"1.2.3.4"}, node, &privateKey, cc, 0,
+		&metav1.ObjectReference{Uid: vutils.UUIDv4(), Name: "default"})
+	assert.Nil(t, err)
+
+	gwObject.Status.Hostname = fmt.Sprintf("_gw-%s.%s", gwObject.Status.Id, cc.Status.Domain)
+
+	_, err = octeliumC.CoreC().CreateGateway(ctx, gwObject)
+	assert.Nil(t, err)
+
+	gw, err := doUpdateGateway(ctx, octeliumC, cc, node, []string{"5.6.7.8"}, 0, privateKey)
+	assert.Nil(t, err)
+	assert.Equal(t, gwObject.Status.Id, gw.Status.Id)
+	assert.Equal(t,
+		fmt.Sprintf("octelium-gw-%s.%s", gwObject.Status.Id, cc.Status.Domain), gw.Status.Hostname)
+	assert.Equal(t, []string{"5.6.7.8"}, gw.Status.PublicIPs)
+
+	gw, err = octeliumC.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: gwObject.Metadata.Name})
+	assert.Nil(t, err)
+	assert.Equal(t, getGatewayHostname(gwObject.Status.Id, cc), gw.Status.Hostname)
 }

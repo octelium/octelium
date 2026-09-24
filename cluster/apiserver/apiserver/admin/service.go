@@ -215,6 +215,11 @@ func (s *Server) DoCreateService(ctx context.Context, req *corev1.Service, isSys
 	}
 
 	if !isSystemService && item.Status.NamespaceRef != nil && item.Status.NamespaceRef.Name == "default" {
+		if strings.HasPrefix(ucorev1.ToService(item).Name(), "octelium") {
+			return nil, grpcutils.InvalidArg("This name is reserved and cannot be used: %s",
+				ucorev1.ToService(item).Name())
+		}
+
 		if _, err := s.octeliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{
 			Name: ucorev1.ToService(item).Name(),
 		}); err == nil {

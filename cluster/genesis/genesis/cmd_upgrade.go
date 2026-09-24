@@ -147,6 +147,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		Id:      os.Getenv("OCTELIUM_INSTALL_ID"),
 	}
 
+	vutils.SetRegionPublicHostName(region)
+
 	_, err = g.octeliumC.CoreC().UpdateRegion(ctx, region)
 	if err != nil {
 		return err

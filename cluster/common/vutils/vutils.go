@@ -315,7 +315,7 @@ func IsCertReady(sec *corev1.Secret) bool {
 }
 
 func SetRegionPublicHostName(r *corev1.Region) {
-	r.Status.PublicHostname = fmt.Sprintf("_r-%s", r.Metadata.Name)
+	r.Status.PublicHostname = fmt.Sprintf("octelium-region-%s", r.Metadata.Name)
 }
 
 func NowRFC3339Nano() string {

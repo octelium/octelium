@@ -18,8 +18,11 @@ package vutils
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -46,5 +49,27 @@ func TestGetServiceFullNameFromName(t *testing.T) {
 
 		assert.Equal(t, fmt.Sprintf("%s.default", svc), vutils.GetServiceFullNameFromName(svc))
 		assert.Equal(t, fmt.Sprintf("%s.%s", svc, ns), vutils.GetServiceFullNameFromName(fmt.Sprintf("%s.%s", svc, ns)))
+	}
+}
+
+func TestSetRegionPublicHostName(t *testing.T) {
+	{
+		r := &corev1.Region{
+			Metadata: &metav1.Metadata{Name: "default"},
+			Status:   &corev1.Region_Status{PublicHostname: "_r-default"},
+		}
+		vutils.SetRegionPublicHostName(r)
+		assert.Equal(t, "octelium-region-default", r.Status.PublicHostname)
+	}
+	{
+		name := utilrand.GetRandomStringCanonical(40)
+		r := &corev1.Region{
+			Metadata: &metav1.Metadata{Name: name},
+			Status:   &corev1.Region_Status{},
+		}
+		vutils.SetRegionPublicHostName(r)
+		assert.Equal(t, fmt.Sprintf("octelium-region-%s", name), r.Status.PublicHostname)
+		assert.False(t, strings.Contains(r.Status.PublicHostname, "_"))
+		assert.LessOrEqual(t, len(r.Status.PublicHostname), 63)
 	}
 }

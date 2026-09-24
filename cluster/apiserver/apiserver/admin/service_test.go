@@ -623,6 +623,72 @@ func TestCreateService(t *testing.T) {
 	}
 }
 
+func TestCreateServiceReservedName(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	ns, err := srv.CreateNamespace(ctx, tests.GenNamespace())
+	assert.Nil(t, err)
+
+	genSvc := func(name string) *corev1.Service {
+		return &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: name,
+			},
+			Spec: &corev1.Service_Spec{
+				Port: 80,
+				Mode: corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: "https://example.com",
+						},
+					},
+				},
+			},
+		}
+	}
+
+	invalids := []string{
+		fmt.Sprintf("octelium-gw-%s", utilrand.GetRandomStringCanonical(8)),
+		fmt.Sprintf("octelium-region-%s.default", utilrand.GetRandomStringCanonical(8)),
+		fmt.Sprintf("octelium%s", utilrand.GetRandomStringCanonical(8)),
+	}
+
+	for _, name := range invalids {
+		_, err := srv.CreateService(ctx, genSvc(name))
+		assert.NotNil(t, err, "%s", name)
+		assert.True(t, grpcerr.IsInvalidArg(err), "%s", name)
+	}
+
+	{
+		svc, err := srv.CreateService(ctx, genSvc(fmt.Sprintf("octelium-gw-%s.%s",
+			utilrand.GetRandomStringCanonical(8), ns.Metadata.Name)))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, ns.Metadata.Name, svc.Status.NamespaceRef.Name)
+	}
+
+	{
+		name := fmt.Sprintf("octelium-gw-%s", utilrand.GetRandomStringCanonical(8))
+		svc, err := srv.DoCreateService(ctx, genSvc(name), true)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, fmt.Sprintf("%s.default", name), svc.Metadata.Name)
+	}
+
+	{
+		_, err := srv.CreateService(ctx, genSvc(fmt.Sprintf("svc-octelium-%s",
+			utilrand.GetRandomStringCanonical(8))))
+		assert.Nil(t, err, "%+v", err)
+	}
+}
+
 func TestServiceMode(t *testing.T) {
 	ctx := context.Background()
 

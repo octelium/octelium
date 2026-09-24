@@ -205,6 +205,7 @@ func TestRunInit(t *testing.T) {
 			Name: region.Metadata.Name,
 		})
 		assert.Nil(t, err)
+		assert.Equal(t, "octelium-region-default", region.Status.PublicHostname)
 
 		{
 			svcList, err := g.getAllServices(ctx, region)
@@ -213,8 +214,21 @@ func TestRunInit(t *testing.T) {
 		}
 
 		{
+			region.Status.PublicHostname = "_r-default"
+			region, err = g.octeliumC.CoreC().UpdateRegion(ctx, region)
+			assert.Nil(t, err)
+			assert.Equal(t, "_r-default", region.Status.PublicHostname)
+		}
+
+		{
 			err = g.RunUpgrade(ctx, nil)
 			assert.Nil(t, err, "%+v", err)
+
+			region, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+				Name: region.Metadata.Name,
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, "octelium-region-default", region.Status.PublicHostname)
 		}
 
 		{

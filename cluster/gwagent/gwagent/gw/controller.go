@@ -47,6 +47,10 @@ const (
 	maxGatewaysPerRegionV6 = 65536
 )
 
+func getGatewayHostname(gwID string, cc *corev1.ClusterConfig) string {
+	return fmt.Sprintf("octelium-gw-%s.%s", gwID, cc.Status.Domain)
+}
+
 func getGatewayIndexLockKey(regionRef *metav1.ObjectReference) []byte {
 	return []byte(fmt.Sprintf("gateway-index:%s", regionRef.Uid))
 }
@@ -168,6 +172,10 @@ func doUpdateGateway(ctx context.Context,
 
 	if len(publicIPs) > 0 {
 		gw.Status.PublicIPs = publicIPs
+	}
+
+	if gw.Status.Id != "" {
+		gw.Status.Hostname = getGatewayHostname(gw.Status.Id, cc)
 	}
 
 	if gw.Status.Index == nil {
@@ -492,7 +500,7 @@ func getGateway(nodeIdx int, publicIPs []string, node *k8scorev1.Node, privateKe
 
 			PublicIPs: publicIPs,
 			Id:        gwID,
-			Hostname:  fmt.Sprintf("_gw-%s.%s", gwID, cc.Status.Domain),
+			Hostname:  getGatewayHostname(gwID, cc),
 		},
 	}
 
