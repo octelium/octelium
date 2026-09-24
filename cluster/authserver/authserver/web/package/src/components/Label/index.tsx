@@ -6,8 +6,8 @@ const Label = (props: { children?: React.ReactNode; outlined?: boolean }) => {
       className={twMerge(
         "px-2 py-1 rounded-full font-bold text-xs flex-none mx-1",
         props.outlined
-          ? `text-gray-800 border-[1px] border-gray-400 shadow-sm`
-          : `bg-gray-800 text-white shadow-lg`,
+          ? `text-fg-muted border-[1px] border-line shadow-sm`
+          : `bg-accent text-accent-fg shadow-lg`,
       )}
     >
       {props.children}

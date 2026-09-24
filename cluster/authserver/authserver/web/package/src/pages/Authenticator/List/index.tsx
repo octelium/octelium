@@ -78,7 +78,7 @@ const Page = () => {
     return (
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
         <div className="flex flex-col items-center justify-center my-4 text-center" role="alert">
-          <div className="font-bold text-xl text-slate-700">
+          <div className="font-bold text-xl text-fg-muted">
             Could not load your Authenticators.
           </div>
           <Button className="mt-4" onClick={() => refetch()}>

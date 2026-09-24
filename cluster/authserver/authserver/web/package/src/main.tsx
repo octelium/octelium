@@ -7,7 +7,7 @@ import "./index.css";
 import { RouterProvider } from "react-router-dom";
 
 import router from "@/router";
-import theme from "@/utils/theme";
+import theme, { colorSchemeManager, cssVariablesResolver } from "@/utils/theme";
 import { MantineProvider } from "@mantine/core";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./utils";
@@ -19,7 +19,12 @@ if (!root) {
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <MantineProvider theme={theme}>
+    <MantineProvider
+      theme={theme}
+      defaultColorScheme="auto"
+      colorSchemeManager={colorSchemeManager}
+      cssVariablesResolver={cssVariablesResolver}
+    >
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router()} />
       </QueryClientProvider>

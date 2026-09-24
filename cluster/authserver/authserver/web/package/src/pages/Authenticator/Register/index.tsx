@@ -85,18 +85,18 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
     <div className="w-full flex items-center justify-center">
       {url && (
         <div className="w-full flex flex-col items-center justify-center">
-          <div className="mt-4 mb-4">
+          <div className="mt-4 mb-4 rounded-lg bg-white p-4">
             <QRCodeSVG size={256} value={url} />
           </div>
 
-          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
             Scan the QR Code Above by Your TOTP Authenticator (e.g. Google
             Authenticator) then Enter the OTP
           </div>
 
-          <div className="font-bold text-sm text-slate-500 flex items-center justify-center my-2 text-center">
+          <div className="font-bold text-sm text-fg-subtle flex items-center justify-center my-2 text-center">
             <span>Or use the link </span>{" "}
-            <a className="ml-2 text-black font-extrabold shadow-2xl" href={url}>
+            <a className="ml-2 text-fg font-extrabold shadow-2xl" href={url}>
               here
             </a>
           </div>
@@ -128,7 +128,7 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
 
       {!url && mutation.isError && (
         <div className="w-full flex flex-col items-center justify-center my-4">
-          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
             Could not start registration
           </div>
           <Button
@@ -216,13 +216,13 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
   return (
     <div className="w-full flex flex-col items-center justify-center my-4">
       {mutation.isPending && (
-        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+        <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
           Waiting for your security key
         </div>
       )}
       {mutation.isError && (
         <div className="w-full flex flex-col items-center justify-center">
-          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
             Registration was not completed
           </div>
           <Button
@@ -288,7 +288,7 @@ const Page = () => {
           <div className="w-full mt-16">
             <div className="w-full">
               <div
-                className="font-bold text-xl mb-4 text-zinc-700 text-center"
+                className="font-bold text-xl mb-4 text-fg-muted text-center"
                 style={{
                   textShadow: "0 2px 8px rgba(0, 0, 0, 0.2)",
                 }}
@@ -304,7 +304,7 @@ const Page = () => {
                 placeholder="My Authenticator"
                 variant={"unstyled"}
                 description={
-                  <span className="text-xs font-bold text-black">
+                  <span className="text-xs font-bold text-fg">
                     Display Name (Optional)
                   </span>
                 }
@@ -336,8 +336,8 @@ const Page = () => {
                   className={twMerge(
                     "w-full px-3 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
                     "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed font-bold",
-                    "bg-[#242323] hover:bg-black text-white text-lg",
-                    mutation.isPending ? "!bg-[#777] shadow-none" : undefined,
+                    "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
+                    mutation.isPending ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
                   )}
                   onClick={() => {
                     mutation.mutate({
@@ -350,7 +350,7 @@ const Page = () => {
                       <Loader size="sm" color="gray" aria-label="Creating authenticator" />
                     )}
                     <span className="shrink-0 font-bold text-xl">{x.name}</span>
-                    <span className="min-w-0 text-left text-sm font-bold text-slate-300 sm:ml-2">
+                    <span className="min-w-0 text-left text-sm font-bold text-accent-fg sm:ml-2">
                       {x.description}
                     </span>
                   </div>
@@ -381,7 +381,7 @@ export const ReturnToPortal = () => {
   return (
     <div className="w-full flex items-center mt-8 text-center justify-center">
       <a
-        className="text-center font-bold text-gray-700 hover:text-gray-900 transition-all duration-500 text-shadow-2xs"
+        className="text-center font-bold text-fg-muted hover:text-fg transition-all duration-500 text-shadow-2xs"
         href={getPortalURL()}
       >
         Return to Portal

@@ -180,8 +180,8 @@ const Passkey = (props: {
         className={twMerge(
           "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
           "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-          "bg-[#242323] hover:bg-black text-white text-lg",
-          busy ? "!bg-[#777] shadow-none" : undefined,
+          "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
+          busy ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
         )}
         onClick={() => {
           mutation.mutate();
@@ -269,7 +269,7 @@ const Page = () => {
           className="container mx-auto mt-2 max-w-lg px-2 md:px-4"
           role="alert"
         >
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-semibold text-red-700">
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950 px-4 py-3 text-center text-sm font-semibold text-red-700 dark:text-red-300">
             We could not start sign-in. Please try again.
           </div>
         </div>
@@ -278,7 +278,7 @@ const Page = () => {
       {!hasProviders && (
         <div className="container mx-auto mt-2 p-2 md:p-8 w-full max-w-lg">
           {!state.isPasskeyLoginEnabled && (
-            <h2 className="font-bold text-2xl text-slate-700 flex items-center justify-center mb-4 text-center">
+            <h2 className="font-bold text-2xl text-fg-muted flex items-center justify-center mb-4 text-center">
               No Available Identity Providers
             </h2>
           )}
@@ -296,10 +296,10 @@ const Page = () => {
       )}
       {hasProviders && (
         <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-          <h1 className="font-bold text-xl mb-4 text-zinc-700 text-center">
+          <h1 className="font-bold text-xl mb-4 text-fg-muted text-center">
             <span>Login to</span>
             <span> </span>
-            <span className="text-black">Octelium</span>
+            <span className="text-fg">Octelium</span>
             <span> </span>
             <span>with an Identity Provider</span>
           </h1>
@@ -312,8 +312,8 @@ const Page = () => {
                   className={twMerge(
                     "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
                     "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-                    "bg-[#242323] hover:bg-black text-white text-lg",
-                    busy ? "!bg-[#777] shadow-none" : undefined,
+                    "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
+                    busy ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
                   )}
                   disabled={busy}
                   aria-busy={pending === c.uid}

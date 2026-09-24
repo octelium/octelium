@@ -78,7 +78,7 @@ const TOTP = (props: {
 
   return (
     <div className="w-full flex flex-col items-center justify-center">
-      <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+      <h2 className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
         Enter the OTP
       </h2>
 
@@ -97,7 +97,7 @@ const TOTP = (props: {
         }}
       />
       {mutation.isPending && (
-        <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-slate-500" role="status">
+        <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-fg-subtle" role="status">
           <Loader size="xs" /> Verifying…
         </div>
       )}
@@ -180,7 +180,7 @@ const Fido = (props: {
     <div className="w-full flex flex-col items-center justify-center my-4">
       {mutation.isPending && (
         <h2
-          className="font-bold text-xl text-slate-700 flex items-center justify-center gap-2 my-4 text-center"
+          className="font-bold text-xl text-fg-muted flex items-center justify-center gap-2 my-4 text-center"
           role="status"
         >
           <Loader size="sm" />
@@ -189,7 +189,7 @@ const Fido = (props: {
       )}
       {mutation.isError && (
         <div className="w-full flex flex-col items-center justify-center">
-          <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+          <h2 className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
             Authentication was not completed
           </h2>
           <Button
@@ -263,34 +263,21 @@ export const Authenticator = (props: {
   return (
     <div
       className={twMerge(
-        "w-full",
-        "p-4 mb-3",
-
-        `bg-slate-50 hover:bg-white`,
-        `border-[2px] border-gray-200 rounded-lg`,
-        "w-full",
-
-        "transition-all duration-300",
-        // "hover:bg-transparent",
-        "py-4 px-2",
-        "font-semibold",
-        "rounded-xl",
-        "shadow-sm shadow-slate-200",
-        "border-[2px] border-slate-300",
-        "mb-4",
+        "w-full mb-4 rounded-xl border-2 border-line bg-surface px-2 py-4",
+        "font-semibold shadow-sm shadow-line transition-all duration-300 hover:bg-surface-strong",
       )}
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div className="min-w-0 flex-1 font-bold">
           <div className="flex min-w-0 items-start gap-2">
-            <span className="flex-none text-white bg-slate-800 rounded-lg py-2 px-2 text-xs shadow-md">
+            <span className="flex-none text-accent-fg bg-accent rounded-lg py-2 px-2 text-xs shadow-md">
               {authn.status?.type === Auth.Authenticator_Status_Type.FIDO &&
                 "FIDO"}
               {authn.status?.type === Auth.Authenticator_Status_Type.TOTP &&
                 "TOTP"}
             </span>{" "}
             <div className="min-w-0 flex-1">
-              <div className="text-black flex min-w-0 items-center w-full">
+              <div className="text-fg flex min-w-0 items-center w-full">
                 <Tooltip label="Edit Display Name">
                   <ActionIcon
                     variant="transparent"
@@ -300,9 +287,9 @@ export const Authenticator = (props: {
                     }}
                   >
                     {isEdit ? (
-                      <MdEditOff className="text-slate-500" />
+                      <MdEditOff className="text-fg-subtle" />
                     ) : (
-                      <MdEdit className="text-slate-500" />
+                      <MdEdit className="text-fg-subtle" />
                     )}
                   </ActionIcon>
                 </Tooltip>
@@ -350,18 +337,18 @@ export const Authenticator = (props: {
               </div>
 
               {displayName.length > 0 && (
-                <div className="break-words text-slate-700 text-xs">
+                <div className="break-words text-fg-muted text-xs">
                   {canonicalName}
                 </div>
               )}
               {!!authn.status?.description && (
-                <div className="text-slate-500 text-xs ml-1">
+                <div className="text-fg-subtle text-xs ml-1">
                   {authn.status.description}
                 </div>
               )}
             </div>
           </div>
-          <div className="text-xs mt-1 mb-2 text-slate-500">
+          <div className="text-xs mt-1 mb-2 text-fg-subtle">
             <span>Created </span>
             <TimeAgo rfc3339={authn.metadata?.createdAt} />
           </div>
@@ -379,13 +366,13 @@ export const Authenticator = (props: {
             </Button>
           )}
           <Button
-            className="mt-0 w-full !rounded-md !transition-all !duration-500 !border-slate-500 sm:mt-3"
+            className="mt-0 w-full !rounded-md !transition-all !duration-500 !border-line sm:mt-3"
             fullWidth
             size="compact-xs"
             variant="outline"
             onClick={isDelete[1].open}
           >
-            <span className="text-slate-600">Delete</span>
+            <span className="text-fg-muted">Delete</span>
           </Button>
         </div>
       </div>
@@ -404,7 +391,7 @@ export const Authenticator = (props: {
             {authn.status?.type !== Auth.Authenticator_Status_Type.FIDO &&
               authn.status?.type !== Auth.Authenticator_Status_Type.TOTP && (
                 <div
-                  className="my-4 text-center text-sm font-semibold text-red-700"
+                  className="my-4 text-center text-sm font-semibold text-red-700 dark:text-red-300"
                   role="alert"
                 >
                   This authenticator type is not supported by this version of the portal.
@@ -478,7 +465,7 @@ export const ListAvailableAuthenticators = (props: {
   if (resp.availableAuthenticators.length < 1) {
     return (
       <div className="w-full">
-        <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+        <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
           You have no Available Authenticators{" "}
           <Button
             className="ml-2 shadow-md"
@@ -496,7 +483,7 @@ export const ListAvailableAuthenticators = (props: {
     <div className="w-full">
       {resp.mainAuthenticator && (
         <div className="mb-24">
-          <div className="font-bold text-xl text-slate-700 flex items-center justify-center my-2 text-center">
+          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
             Your Session's Main Authenticator
           </div>
 
@@ -504,7 +491,7 @@ export const ListAvailableAuthenticators = (props: {
         </div>
       )}
       <div>
-        <h2 className="font-bold text-xl text-slate-700 flex items-center justify-center my-4 text-center">
+        <h2 className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
           Your Available Authenticators{" "}
           <Button
             className="ml-2 shadow-md"
@@ -568,7 +555,7 @@ const Page = () => {
           className="flex flex-col items-center justify-center my-4 text-center"
           role="alert"
         >
-          <div className="font-bold text-xl text-slate-700">
+          <div className="font-bold text-xl text-fg-muted">
             Could not load your Authenticators.
           </div>
           <Button className="mt-4" onClick={() => refetch()}>
@@ -599,7 +586,7 @@ const Page = () => {
               Auth.Authenticator_Status_Type.FIDO &&
               data.mainAuthenticator.status?.type !==
                 Auth.Authenticator_Status_Type.TOTP && (
-                <div className="my-4 text-center text-sm font-semibold text-red-700" role="alert">
+                <div className="my-4 text-center text-sm font-semibold text-red-700 dark:text-red-300" role="alert">
                   This authenticator type is not supported by this version of the portal.
                 </div>
               )}

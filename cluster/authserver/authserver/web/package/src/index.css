@@ -1,12 +1,55 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-mantine-color-scheme="dark"], [data-mantine-color-scheme="dark"] *));
+
+@theme inline {
+  --color-canvas: var(--portal-canvas);
+  --color-surface: var(--portal-surface);
+  --color-surface-strong: var(--portal-surface-strong);
+  --color-line: var(--portal-line);
+  --color-fg: var(--portal-fg);
+  --color-fg-muted: var(--portal-fg-muted);
+  --color-fg-subtle: var(--portal-fg-subtle);
+  --color-accent: var(--portal-accent);
+  --color-accent-hover: var(--portal-accent-hover);
+  --color-accent-fg: var(--portal-accent-fg);
+}
+
 :root {
+  color-scheme: light;
+  --portal-canvas: #f1f5f9;
+  --portal-surface: #ffffff;
+  --portal-surface-strong: #f1f5f9;
+  --portal-line: #cbd5e1;
+  --portal-fg: #0f172a;
+  --portal-fg-muted: #334155;
+  --portal-fg-subtle: #64748b;
+  --portal-accent: #18181b;
+  --portal-accent-hover: #000000;
+  --portal-accent-fg: #ffffff;
+  color: var(--portal-fg);
+  background: var(--portal-canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
 
+:root[data-mantine-color-scheme="dark"] {
+  color-scheme: dark;
+  --portal-canvas: oklch(15.5% 0.004 286);
+  --portal-surface: oklch(20.5% 0.005 286);
+  --portal-surface-strong: oklch(26% 0.005 286);
+  --portal-line: oklch(38% 0.006 286);
+  --portal-fg: oklch(94.5% 0.004 286);
+  --portal-fg-muted: oklch(85% 0.005 286);
+  --portal-fg-subtle: oklch(72.5% 0.007 286);
+  --portal-accent: oklch(94.5% 0.004 286);
+  --portal-accent-hover: oklch(98% 0.002 286);
+  --portal-accent-fg: oklch(20% 0.005 286);
+}
+
 body {
   margin: 0;
+  background: var(--portal-canvas);
   font-family: "Ubuntu", sans-serif;
 }
 

@@ -10,9 +10,9 @@ const RouteError = () => {
     : "Something went wrong while loading this page.";
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-6 text-center">
-      <h1 className="text-2xl font-bold text-slate-900">We could not load this page</h1>
-      <p className="mt-2 max-w-md text-sm font-medium text-slate-600">{message}</p>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-canvas px-6 text-center">
+      <h1 className="text-2xl font-bold text-fg">We could not load this page</h1>
+      <p className="mt-2 max-w-md text-sm font-medium text-fg-muted">{message}</p>
       <div className="mt-6 flex flex-wrap justify-center gap-3">
         <Button variant="filled" onClick={() => window.location.reload()}>
           Try again

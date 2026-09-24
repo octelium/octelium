@@ -57,16 +57,16 @@ const Page = () => {
       </div>
 
       <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        <h1 className="font-bold text-xl mb-4 text-zinc-700 text-center">
+        <h1 className="font-bold text-xl mb-4 text-fg-muted text-center">
           <span>Approve a Login to</span>
           <span> </span>
-          <span className="text-black">Octelium</span>
+          <span className="text-fg">Octelium</span>
         </h1>
 
-        <div className="mb-8 text-center text-zinc-600">
+        <div className="mb-8 text-center text-fg-muted">
           <span>A client running on this device is asking to log in to</span>
           <span> </span>
-          <span className="font-semibold text-zinc-900">{getDomain()}</span>
+          <span className="font-semibold text-fg">{getDomain()}</span>
           <span>
             . Approve it only if you have just started a login yourself.
           </span>
@@ -77,8 +77,8 @@ const Page = () => {
             className={twMerge(
               "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
               "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-              "bg-[#242323] hover:bg-black text-white text-lg",
-              pending ? "!bg-[#777] shadow-none" : undefined,
+              "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
+              pending ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
             )}
             disabled={pending}
             aria-busy={pending}
@@ -92,8 +92,8 @@ const Page = () => {
             className={twMerge(
               "w-full px-2 py-3 transition-all duration-500",
               "rounded-lg cursor-pointer disabled:cursor-not-allowed",
-              "text-zinc-500 hover:text-black",
-              pending ? "!text-[#aaa]" : undefined,
+              "text-fg-subtle hover:text-fg",
+              pending ? "!text-fg-subtle" : undefined,
             )}
             disabled={pending}
             onClick={() => decide(false)}

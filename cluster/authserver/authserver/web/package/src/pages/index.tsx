@@ -9,7 +9,7 @@ const Root = () => {
     <div>
       <title>Octelium Login</title>
 
-      <div className=" bg-slate-100 flex flex-col items-center min-h-screen antialiased">
+      <div className=" bg-canvas flex flex-col items-center min-h-screen antialiased">
         <TopBar />
         <div className="mb-2"></div>
 
@@ -21,7 +21,7 @@ const Root = () => {
           </div>
         </div>
 
-        <Toaster position="bottom-center" />
+        <Toaster position="bottom-center" toastOptions={{ style: { background: "var(--portal-surface)", color: "var(--portal-fg)" } }} />
         <Footer />
       </div>
     </div>
