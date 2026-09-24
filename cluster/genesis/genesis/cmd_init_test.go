@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,7 +206,9 @@ func TestRunInit(t *testing.T) {
 			Name: region.Metadata.Name,
 		})
 		assert.Nil(t, err)
-		assert.Equal(t, "octelium-region-default", region.Status.PublicHostname)
+
+		regionHostname := fmt.Sprintf("octelium-region-%s", strings.Split(region.Metadata.Uid, "-")[4])
+		assert.Equal(t, regionHostname, region.Status.PublicHostname)
 
 		{
 			svcList, err := g.getAllServices(ctx, region)
@@ -228,12 +231,18 @@ func TestRunInit(t *testing.T) {
 				Name: region.Metadata.Name,
 			})
 			assert.Nil(t, err)
-			assert.Equal(t, "octelium-region-default", region.Status.PublicHostname)
+			assert.Equal(t, regionHostname, region.Status.PublicHostname)
 		}
 
 		{
 			err = g.RunUpgrade(ctx, nil)
 			assert.Nil(t, err, "%+v", err)
+
+			region, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+				Name: region.Metadata.Name,
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, regionHostname, region.Status.PublicHostname)
 		}
 	}
 }

@@ -191,6 +191,12 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 
 	g.octeliumC = octeliumC
 
+	vutils.SetRegionPublicHostName(iCtx.Region)
+	iCtx.Region, err = g.octeliumC.CoreC().UpdateRegion(ctx, iCtx.Region)
+	if err != nil {
+		return err
+	}
+
 	if err := g.createUsersGroups(ctx, clusterCfg); err != nil {
 		return err
 	}

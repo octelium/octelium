@@ -111,7 +111,6 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 			SetAt:   pbutils.Now(),
 			Version: ldflags.GetVersion(),
 		}
-		vutils.SetRegionPublicHostName(region)
 
 		zap.L().Debug("Initialized Region from loaded init", zap.Any("region", region))
 
@@ -129,7 +128,6 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 			Version: ldflags.GetVersion(),
 		},
 	}
-	vutils.SetRegionPublicHostName(ret)
 
 	zap.L().Debug("Initialized Region", zap.Any("region", ret))
 

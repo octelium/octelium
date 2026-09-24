@@ -55,21 +55,29 @@ func TestGetServiceFullNameFromName(t *testing.T) {
 func TestSetRegionPublicHostName(t *testing.T) {
 	{
 		r := &corev1.Region{
-			Metadata: &metav1.Metadata{Name: "default"},
-			Status:   &corev1.Region_Status{PublicHostname: "_r-default"},
+			Metadata: &metav1.Metadata{
+				Name: "aws-eu-1",
+				Uid:  "0b5e6d0e-6a1f-4c1d-9b3e-3f2a9c1b7e4d",
+			},
+			Status: &corev1.Region_Status{PublicHostname: "_r-aws-eu-1"},
 		}
 		vutils.SetRegionPublicHostName(r)
-		assert.Equal(t, "octelium-region-default", r.Status.PublicHostname)
+		assert.Equal(t, "octelium-region-3f2a9c1b7e4d", r.Status.PublicHostname)
+
+		vutils.SetRegionPublicHostName(r)
+		assert.Equal(t, "octelium-region-3f2a9c1b7e4d", r.Status.PublicHostname)
 	}
 	{
 		name := utilrand.GetRandomStringCanonical(40)
+		uid := vutils.UUIDv4()
 		r := &corev1.Region{
-			Metadata: &metav1.Metadata{Name: name},
+			Metadata: &metav1.Metadata{Name: name, Uid: uid},
 			Status:   &corev1.Region_Status{},
 		}
 		vutils.SetRegionPublicHostName(r)
-		assert.Equal(t, fmt.Sprintf("octelium-region-%s", name), r.Status.PublicHostname)
+		assert.Equal(t, fmt.Sprintf("octelium-region-%s", strings.Split(uid, "-")[4]), r.Status.PublicHostname)
+		assert.False(t, strings.Contains(r.Status.PublicHostname, name))
 		assert.False(t, strings.Contains(r.Status.PublicHostname, "_"))
-		assert.LessOrEqual(t, len(r.Status.PublicHostname), 63)
+		assert.Equal(t, 28, len(r.Status.PublicHostname))
 	}
 }
