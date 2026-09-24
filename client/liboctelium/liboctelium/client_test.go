@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -901,6 +902,7 @@ func TestGetRefreshWait(t *testing.T) {
 
 func TestWithCtxDeviceInfo(t *testing.T) {
 	cfg := newTestConfig(t)
+	cfg.Device.Id = "3f2a8c1e-7b4d-4e6a-9c2f-1d5e8b7a6c43"
 	cfg.Device.SerialNumber = "1234"
 
 	c, err := New(cfg, newFakeHost())
@@ -911,7 +913,8 @@ func TestWithCtxDeviceInfo(t *testing.T) {
 
 	info, err := deviceinfo.GetDeviceInfo(c.opCtx())
 	assert.Nil(t, err)
-	assert.Equal(t, cfg.Device.Id, info.ID)
+	assert.Equal(t, deviceinfo.HashID(cfg.Device.Id), info.ID)
+	assert.True(t, regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(info.ID))
 	assert.Equal(t, "phone", info.Hostname)
 	assert.Equal(t, "1234", info.SerialNumber)
 }

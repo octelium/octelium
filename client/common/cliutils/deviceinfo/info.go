@@ -38,7 +38,11 @@ func getID() (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(machineID))), nil
+	return HashID(machineID), nil
+}
+
+func HashID(arg string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(arg)))
 }
 
 type deviceInfoCtxKey struct{}

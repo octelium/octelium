@@ -255,7 +255,7 @@ func (c *Client) withCtx(ctx context.Context) context.Context {
 	ctx = authenticator.WithNonInteractive(cliutils.WithDB(ctx, c.dbC))
 
 	return deviceinfo.WithDeviceInfo(ctx, &deviceinfo.DeviceInfo{
-		ID:           c.cfg.GetDevice().GetId(),
+		ID:           deviceinfo.HashID(c.cfg.GetDevice().GetId()),
 		Hostname:     c.cfg.GetDevice().GetName(),
 		SerialNumber: c.cfg.GetDevice().GetSerialNumber(),
 	})

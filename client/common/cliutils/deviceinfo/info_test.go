@@ -16,6 +16,7 @@ package deviceinfo
 
 import (
 	"context"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,4 +32,22 @@ func TestGetDeviceInfoFromCtx(t *testing.T) {
 	ret, err := GetDeviceInfo(WithDeviceInfo(context.Background(), info))
 	assert.Nil(t, err)
 	assert.Equal(t, info, ret)
+}
+
+func TestHashID(t *testing.T) {
+	rgx := regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+	for _, arg := range []string{
+		"3f2a8c1e-7b4d-4e6a-9c2f-1d5e8b7a6c43",
+		"3F2A8C1E-7B4D-4E6A-9C2F-1D5E8B7A6C43",
+		"abcdef",
+	} {
+		ret := HashID(arg)
+		assert.True(t, rgx.MatchString(ret), "arg: %s", arg)
+		assert.Equal(t, ret, HashID(arg))
+	}
+
+	assert.NotEqual(t, HashID("abc"), HashID("abd"))
+	assert.Equal(t,
+		"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", HashID("abc"))
 }
