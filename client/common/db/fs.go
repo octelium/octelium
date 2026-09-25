@@ -478,6 +478,29 @@ func (d *fsDB) deleteSessionToken(_ context.Context, clusterDomain string) error
 	return d.writeStateLocked(state)
 }
 
+func (d *fsDB) deleteStaleSessionToken(_ context.Context, clusterDomain string, refreshToken string) error {
+
+	unlock, err := d.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, err := d.readStateLocked()
+	if err != nil {
+		return err
+	}
+
+	domain := state.DomainMap[clusterDomain]
+	if domain == nil || domain.GetSessionToken().GetRefreshToken() != refreshToken {
+		return nil
+	}
+	domain.SessionToken = nil
+	domain.SessionTokenSetAt = nil
+
+	return d.writeStateLocked(state)
+}
+
 func (d *fsDB) delete(_ context.Context, clusterDomain string) error {
 
 	unlock, err := d.lock()

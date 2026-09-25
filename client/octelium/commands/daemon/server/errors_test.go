@@ -78,6 +78,12 @@ func TestGetError(t *testing.T) {
 			daemonv1.Error_AUTHENTICATION_FAILED)
 		assert.Equal(t, daemonv1.Error_AUTHENTICATION_TIMED_OUT, err.Code)
 	}
+	{
+		err := getError(errors.Wrap(authenticator.ErrAuthenticationRequired, "connect"),
+			daemonv1.Error_CONNECTION_FAILED)
+		assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, err.Code)
+		assert.False(t, err.Retryable)
+	}
 }
 
 func TestCanonicalizeDomain(t *testing.T) {

@@ -32,6 +32,8 @@ func getError(err error, code daemonv1.Error_Code) *daemonv1.Error {
 	switch {
 	case errors.Is(err, authenticator.ErrWebAuthenticationTimedOut):
 		ret.Code = daemonv1.Error_AUTHENTICATION_TIMED_OUT
+	case errors.Is(err, authenticator.ErrAuthenticationRequired):
+		ret.Code = daemonv1.Error_AUTHENTICATION_REQUIRED
 	case errors.Is(err, context.Canceled):
 		ret.Code = daemonv1.Error_OPERATION_CANCELED
 	case errors.Is(err, context.DeadlineExceeded):

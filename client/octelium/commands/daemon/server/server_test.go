@@ -28,12 +28,17 @@ import (
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/common/db"
+	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type testServer struct {
@@ -909,4 +914,68 @@ func TestReconcile(t *testing.T) {
 		Id: authOp.Id,
 	})
 	assert.Nil(t, err)
+}
+
+func TestConnectEventHandlerAuthenticationRequired(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	p := srv.srv.principal
+	domain := "example.com"
+
+	assert.Nil(t, p.dbC.SetSessionToken(domain, &authv1.SessionToken{
+		AccessToken:           "at",
+		RefreshToken:          "rt",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 7200,
+	}))
+
+	d, err := p.getDomain(domain)
+	assert.Nil(t, err)
+
+	op, err := d.beginOperation(daemonv1.Operation_CONNECT, func() {})
+	assert.Nil(t, err)
+
+	var isCanceled bool
+	var stopErr error
+
+	p.update(func() {
+		d.connGen = 1
+		d.connState = daemonv1.ConnectionStatus_CONNECTING
+	})
+
+	getState := func() (daemonv1.AuthenticationStatus_State, daemonv1.Error_Code) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return d.authState, d.lastErr.GetCode()
+	}
+
+	handler := d.getConnectEventHandler(op, 1, &stopErr, func() {
+		isCanceled = true
+	})
+
+	handler(&connect.Event{
+		Type: connect.EventTypeConnecting,
+		Err:  status.Error(codes.Unavailable, "unavailable"),
+	})
+	authState, errCode := getState()
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, authState)
+	assert.Equal(t, daemonv1.Error_CLUSTER_UNREACHABLE, errCode)
+	assert.False(t, isCanceled)
+	assert.Nil(t, stopErr)
+
+	assert.Nil(t, p.dbC.DeleteStaleSessionToken(domain, "rt"))
+
+	handler(&connect.Event{
+		Type: connect.EventTypeConnecting,
+		Err:  errors.Wrap(authenticator.ErrAuthenticationRequired, "connect"),
+	})
+	authState, errCode = getState()
+	assert.Equal(t, daemonv1.AuthenticationStatus_LOGGED_OUT, authState)
+	assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, errCode)
+	assert.True(t, isCanceled)
+	assert.ErrorIs(t, stopErr, authenticator.ErrAuthenticationRequired)
 }

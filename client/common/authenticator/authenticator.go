@@ -287,6 +287,12 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 				return a.at.SessionToken.AccessToken, nil
 			}
 			if grpcerr.IsUnauthenticated(err) {
+				if err := cliutils.GetDBFromCtx(ctx).DeleteStaleSessionToken(a.domain,
+					a.at.GetSessionToken().GetRefreshToken()); err != nil {
+					zap.L().Debug("Could not delete the stale session token",
+						zap.String("domain", a.domain), zap.Error(err))
+				}
+
 				a.isRefresh = false
 				a.isAuthentication = true
 				return a.doGetAccessToken(ctx)

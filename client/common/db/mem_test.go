@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -92,4 +93,27 @@ func TestMemDBConnectionCleanup(t *testing.T) {
 	assert.Nil(t, db.deleteConnectionCleanup(context.Background(), domain))
 	_, err = db.get(context.Background(), domain)
 	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestMemDBDeleteStaleSessionToken(t *testing.T) {
+	db, err := newMemDB()
+	assert.Nil(t, err)
+
+	domain := "example.com"
+	assert.Nil(t, db.setSettings(context.Background(), domain, &daemonv1.DomainSettings{AutoConnect: true}))
+	assert.Nil(t, db.set(context.Background(), domain, &authv1.SessionToken{RefreshToken: "new"}))
+
+	assert.Nil(t, db.deleteStaleSessionToken(context.Background(), domain, "old"))
+	state, err := db.get(context.Background(), domain)
+	assert.Nil(t, err)
+	assert.Equal(t, "new", state.GetSessionToken().GetRefreshToken())
+
+	assert.Nil(t, db.deleteStaleSessionToken(context.Background(), domain, "new"))
+	state, err = db.get(context.Background(), domain)
+	assert.Nil(t, err)
+	assert.Nil(t, state.SessionToken)
+	assert.Nil(t, state.SessionTokenSetAt)
+	assert.True(t, state.GetSettings().GetAutoConnect())
+
+	assert.Nil(t, db.deleteStaleSessionToken(context.Background(), "other.com", "new"))
 }

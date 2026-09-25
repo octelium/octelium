@@ -127,6 +127,21 @@ func (d *memDB) deleteSessionToken(ctx context.Context, domain string) error {
 
 	return nil
 }
+
+func (d *memDB) deleteStaleSessionToken(ctx context.Context, domain string, refreshToken string) error {
+	d.Lock()
+	defer d.Unlock()
+
+	itm := d.state.DomainMap[domain]
+	if itm == nil || itm.GetSessionToken().GetRefreshToken() != refreshToken {
+		return nil
+	}
+	itm.SessionToken = nil
+	itm.SessionTokenSetAt = nil
+
+	return nil
+}
+
 func (d *memDB) delete(ctx context.Context, domain string) error {
 	d.Lock()
 	defer d.Unlock()

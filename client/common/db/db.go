@@ -53,6 +53,7 @@ type db interface {
 	setConnectionCleanup(ctx context.Context, domain string, cleanup *cliconfigv1.ConnectionCleanup) error
 	deleteConnectionCleanup(ctx context.Context, domain string) error
 	deleteSessionToken(ctx context.Context, domain string) error
+	deleteStaleSessionToken(ctx context.Context, domain string, refreshToken string) error
 	delete(ctx context.Context, domain string) error
 	close(ctx context.Context) error
 	migrate(ctx context.Context) error
@@ -155,6 +156,10 @@ func (d *DB) DeleteConnectionCleanup(clusterDomain string) error {
 
 func (d *DB) DeleteSessionToken(clusterDomain string) error {
 	return d.db.deleteSessionToken(context.Background(), clusterDomain)
+}
+
+func (d *DB) DeleteStaleSessionToken(clusterDomain string, refreshToken string) error {
+	return d.db.deleteStaleSessionToken(context.Background(), clusterDomain, refreshToken)
 }
 
 func (d *DB) Delete(clusterDomain string) error {

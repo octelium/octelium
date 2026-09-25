@@ -413,6 +413,7 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 	doneCh := make(chan struct{})
 
 	var gen uint64
+	var stopErr error
 
 	d.p.update(func() {
 		d.connGen++
@@ -424,7 +425,7 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 		d.lastErr = nil
 	})
 
-	connOpts.OnEvent = d.getConnectEventHandler(op, gen)
+	connOpts.OnEvent = d.getConnectEventHandler(op, gen, &stopErr, cancelFn)
 
 	go func() {
 		defer cancelFn()
@@ -434,6 +435,10 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 		d.stopRefreshLoop()
 
 		d.p.update(func() {
+			if err == nil {
+				err = stopErr
+			}
+
 			if d.connGen == gen {
 				d.connState = daemonv1.ConnectionStatus_DISCONNECTED
 				d.connectedAt = nil
@@ -462,9 +467,11 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 	return d.getOperationPB(op), nil
 }
 
-func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64) func(ev *connect.Event) {
+func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
+	stopErr *error, cancelFn context.CancelFunc) func(ev *connect.Event) {
 	return func(ev *connect.Event) {
 		var startRefresh bool
+		var isStopped bool
 
 		d.p.update(func() {
 			if d.connGen != gen {
@@ -486,11 +493,31 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64) func(ev *c
 			case connect.EventTypeReconnecting:
 				d.connState = daemonv1.ConnectionStatus_RECONNECTING
 				d.connCfg = nil
-				if ev.Err != nil {
-					d.lastErr = getError(ev.Err, daemonv1.Error_CONNECTION_FAILED)
+			}
+
+			switch ev.Type {
+			case connect.EventTypeConnecting, connect.EventTypeReconnecting:
+				if ev.Err == nil {
+					return
+				}
+
+				d.lastErr = getError(ev.Err, daemonv1.Error_CONNECTION_FAILED)
+				if d.lastErr.Code == daemonv1.Error_AUTHENTICATION_REQUIRED {
+					*stopErr = ev.Err
+					isStopped = true
+					if d.canReconcile() {
+						d.reloadAuthentication()
+					}
 				}
 			}
 		})
+
+		if isStopped {
+			zap.L().Debug("Stopping the Connection since authentication is required",
+				zap.String("domain", d.domain), zap.Error(ev.Err))
+			cancelFn()
+			return
+		}
 
 		if startRefresh {
 			d.startRefreshLoop()
@@ -768,7 +795,7 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 			d.lastErr = getError(err, daemonv1.Error_AUTHENTICATION_FAILED)
 		})
 
-		if grpcerr.IsUnauthenticated(err) {
+		if grpcerr.IsUnauthenticated(err) || errors.Is(err, authenticator.ErrAuthenticationRequired) {
 			return nil, status.Errorf(codes.Unauthenticated,
 				"You are not authenticated to the domain %s", d.domain)
 		}
