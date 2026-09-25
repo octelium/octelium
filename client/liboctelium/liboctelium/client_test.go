@@ -80,6 +80,21 @@ func getTestDomainState(t *testing.T, c *Client, domain string) *daemonv1.Domain
 	return nil
 }
 
+func getLastStatusEventDomain(h *fakeHost, domain string) *daemonv1.DomainState {
+	events := h.getStatusEvents()
+	if len(events) == 0 {
+		return nil
+	}
+
+	for _, d := range events[len(events)-1].Domains {
+		if d.Domain == domain {
+			return d
+		}
+	}
+
+	return nil
+}
+
 func setTestSessionToken(t *testing.T, cfg *mobilev1.Config, domain string) {
 	dbC, err := db.OpenWithOpts(&db.Opts{
 		Path:          cfg.StateDir,
@@ -820,6 +835,172 @@ func TestConnectEventHandler(t *testing.T) {
 		Type: connect.EventTypeConnecting,
 	})
 	assert.Equal(t, daemonv1.ConnectionStatus_RECONNECTING, d.connState)
+}
+
+func TestConnectEventHandlerReloadsAuthentication(t *testing.T) {
+	const domain = "example.com"
+
+	for _, tc := range []struct {
+		name      string
+		hasToken  bool
+		authState daemonv1.AuthenticationStatus_State
+		expected  daemonv1.AuthenticationStatus_State
+	}{
+		{
+			name:      "credentials removed",
+			authState: daemonv1.AuthenticationStatus_AUTHENTICATED,
+			expected:  daemonv1.AuthenticationStatus_LOGGED_OUT,
+		},
+		{
+			name:      "credentials stored",
+			hasToken:  true,
+			authState: daemonv1.AuthenticationStatus_AUTHENTICATED,
+			expected:  daemonv1.AuthenticationStatus_AUTHENTICATED,
+		},
+		{
+			name:      "authenticating",
+			authState: daemonv1.AuthenticationStatus_AUTHENTICATING,
+			expected:  daemonv1.AuthenticationStatus_AUTHENTICATING,
+		},
+		{
+			name:      "logging out",
+			authState: daemonv1.AuthenticationStatus_LOGGING_OUT,
+			expected:  daemonv1.AuthenticationStatus_LOGGING_OUT,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := newFakeHost()
+			c, _ := newTestClient(t, host)
+
+			if tc.hasToken {
+				assert.Nil(t, c.dbC.SetSessionToken(domain, &authv1.SessionToken{
+					AccessToken:           "at",
+					RefreshToken:          "rt",
+					RefreshTokenExpiresIn: 3600,
+				}))
+			}
+
+			d, err := c.getDomain(domain)
+			assert.Nil(t, err)
+
+			op, err := d.beginOperation(daemonv1.Operation_CONNECT, func() {})
+			assert.Nil(t, err)
+
+			c.update(func() {
+				d.connGen = 1
+				d.connState = daemonv1.ConnectionStatus_RECONNECTING
+				d.authState = tc.authState
+			})
+
+			var isCanceled bool
+			var stopErr error
+
+			handler := d.getConnectEventHandler(op, 1, &stopErr, func() {
+				isCanceled = true
+			})
+			handler(&connect.Event{
+				Type: connect.EventTypeReconnecting,
+				Err:  authenticator.ErrAuthenticationRequired,
+			})
+
+			assert.True(t, isCanceled)
+			assert.ErrorIs(t, stopErr, authenticator.ErrAuthenticationRequired)
+
+			c.mu.Lock()
+			assert.Equal(t, tc.expected, d.authState)
+			assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, d.lastErr.GetCode())
+			c.mu.Unlock()
+
+			assert.Eventually(t, func() bool {
+				ev := getLastStatusEventDomain(host, domain)
+				return ev.GetAuthentication().GetState() == tc.expected &&
+					ev.GetLastError().GetCode() == daemonv1.Error_AUTHENTICATION_REQUIRED
+			}, 5*time.Second, 20*time.Millisecond)
+		})
+	}
+}
+
+func TestConnectStopsWhenAuthenticationRequired(t *testing.T) {
+	const domain = "a.example.invalid"
+
+	cfg := newTestConfig(t)
+	setTestSessionToken(t, cfg, domain)
+
+	host := newFakeHost()
+	c, err := New(cfg, host)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	op := &daemonv1.Operation{}
+	assert.Nil(t, doCall(t, c, "Connect", &daemonv1.ConnectRequest{
+		Domain: domain,
+	}, op))
+
+	assert.Eventually(t, func() bool {
+		ev := getLastStatusEventDomain(host, domain)
+		return ev.GetLastError() != nil &&
+			ev.GetLastError().GetCode() != daemonv1.Error_AUTHENTICATION_REQUIRED
+	}, 10*time.Second, 50*time.Millisecond)
+
+	deleteTestSessionToken(t, cfg, domain)
+
+	c.network.set(false, "")
+	c.network.set(true, "wifi")
+
+	assert.Eventually(t, func() bool {
+		ev := getLastStatusEventDomain(host, domain)
+		return ev.GetConnection().GetState() == daemonv1.ConnectionStatus_DISCONNECTED
+	}, 10*time.Second, 50*time.Millisecond)
+
+	ev := getLastStatusEventDomain(host, domain)
+	assert.Equal(t, daemonv1.AuthenticationStatus_LOGGED_OUT, ev.GetAuthentication().GetState())
+	assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, ev.GetLastError().GetCode())
+	assert.False(t, ev.GetLastError().GetRetryable())
+
+	c.mu.Lock()
+	assert.Equal(t, "", c.tunnelDomain)
+	c.mu.Unlock()
+
+	err = doCall(t, c, "Connect", &daemonv1.ConnectRequest{
+		Domain: domain,
+	}, &daemonv1.Operation{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestConnectNotifiesExpiredAuthentication(t *testing.T) {
+	const domain = "a.example.invalid"
+
+	cfg := newTestConfig(t)
+	setTestSessionToken(t, cfg, domain)
+
+	host := newFakeHost()
+	c, err := New(cfg, host)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	c.mu.Lock()
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, c.domains[domain].authState)
+	c.mu.Unlock()
+
+	deleteTestSessionToken(t, cfg, domain)
+
+	err = doCall(t, c, "Connect", &daemonv1.ConnectRequest{
+		Domain: domain,
+	}, &daemonv1.Operation{})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+
+	assert.Eventually(t, func() bool {
+		ev := getLastStatusEventDomain(host, domain)
+		return ev.GetAuthentication().GetState() == daemonv1.AuthenticationStatus_LOGGED_OUT
+	}, 5*time.Second, 20*time.Millisecond)
+
+	c.mu.Lock()
+	assert.Equal(t, "", c.tunnelDomain)
+	c.mu.Unlock()
 }
 
 func TestLogoutAndDeleteDomain(t *testing.T) {

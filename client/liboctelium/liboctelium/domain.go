@@ -414,8 +414,8 @@ func (d *domainCtl) isAuthenticationReleased() bool {
 
 func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Operation, error) {
 	d.c.mu.Lock()
-	if d.canReconcile() {
-		d.reloadAuthentication()
+	if d.canReconcile() && d.reloadAuthentication() {
+		d.c.notify()
 	}
 	authState := d.authState
 	connState := d.connState
@@ -574,6 +574,9 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 				if d.lastErr.Code == daemonv1.Error_AUTHENTICATION_REQUIRED {
 					*stopErr = ev.Err
 					isStopped = true
+					if d.canReconcile() {
+						d.reloadAuthentication()
+					}
 				}
 			}
 		})
