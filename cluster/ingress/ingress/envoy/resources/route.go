@@ -29,6 +29,7 @@ import (
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/browserorigin"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -100,20 +101,12 @@ func getVirtualHostAPI(_ context.Context, r *GetListenersReq) (*routev3.VirtualH
 
 	{
 		filter := &corsv3.CorsPolicy{
-			AllowOriginStringMatch: []*envoy_type_matcher.StringMatcher{
-				{
-					MatchPattern: &envoy_type_matcher.StringMatcher_SafeRegex{
-						SafeRegex: &matcherv3.RegexMatcher{
-							Regex: fmt.Sprintf(`^https://([a-zA-Z0-9-]+\.)*%s(:[0-9]+)?$`, regexp.QuoteMeta(domain)),
-						},
-					},
-				},
-			},
-			AllowMethods:     "GET, PUT, DELETE, POST, OPTIONS",
-			AllowHeaders:     "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
-			MaxAge:           "86400",
-			ExposeHeaders:    "set-cookie,grpc-status,grpc-message",
-			AllowCredentials: wrapperspb.Bool(true),
+			AllowOriginStringMatch: getAPIAllowedOriginMatchers(domain, svcList),
+			AllowMethods:           "GET, PUT, DELETE, POST, OPTIONS",
+			AllowHeaders:           "cookie,keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-grpc-web,grpc-timeout",
+			MaxAge:                 "86400",
+			ExposeHeaders:          "set-cookie,grpc-status,grpc-message",
+			AllowCredentials:       wrapperspb.Bool(true),
 		}
 		pbFilter, err := anypb.New(filter)
 		if err != nil {
@@ -128,6 +121,29 @@ func getVirtualHostAPI(_ context.Context, r *GetListenersReq) (*routev3.VirtualH
 	}
 
 	return vh, nil
+}
+
+func getAPIAllowedOriginMatchers(domain string, services []*corev1.Service) []*envoy_type_matcher.StringMatcher {
+	hosts := browserorigin.SystemServiceHosts(domain, services)
+	ret := make([]*envoy_type_matcher.StringMatcher, 0, len(hosts)*2)
+
+	for _, host := range hosts {
+		ret = append(ret, &envoy_type_matcher.StringMatcher{
+			MatchPattern: &envoy_type_matcher.StringMatcher_Exact{Exact: "https://" + host.Name},
+		})
+
+		if host.AllowSubdomains {
+			ret = append(ret, &envoy_type_matcher.StringMatcher{
+				MatchPattern: &envoy_type_matcher.StringMatcher_SafeRegex{
+					SafeRegex: &matcherv3.RegexMatcher{
+						Regex: fmt.Sprintf(`^https://([a-zA-Z0-9-]+\.)+%s$`, regexp.QuoteMeta(host.Name)),
+					},
+				},
+			})
+		}
+	}
+
+	return ret
 }
 
 func getRoutesMain(domain string, svcList []*corev1.Service) ([]*routev3.Route, error) {

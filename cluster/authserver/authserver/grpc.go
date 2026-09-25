@@ -18,10 +18,16 @@ package authserver
 
 import (
 	"context"
+	"net/http"
 	"runtime/debug"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/browserorigin"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -45,7 +51,69 @@ func (s *server) unaryServerInterceptor(ctx context.Context, req any,
 		}
 	}()
 
+	if err := s.checkGRPCCookieOrigin(ctx); err != nil {
+		return nil, err
+	}
+
 	return handler(ctx, req)
+}
+
+const systemServiceHostsCacheKey = "system-service-browser-hosts"
+
+func (s *server) checkGRPCCookieOrigin(ctx context.Context) error {
+	if grpcutils.GetHeaderValueMust(ctx, "x-octelium-refresh-token") != "" {
+		return nil
+	}
+
+	cookieValues := grpcutils.GetHeaderValueAll(ctx, "cookie")
+	if len(cookieValues) == 0 {
+		return nil
+	}
+
+	req := &http.Request{Header: make(http.Header)}
+	for _, value := range cookieValues {
+		req.Header.Add("Cookie", value)
+	}
+	cookie, err := req.Cookie("octelium_rt")
+	if err != nil || cookie.Value == "" {
+		return nil
+	}
+
+	origins := grpcutils.GetHeaderValueAll(ctx, "x-octelium-origin")
+	if len(origins) != 1 {
+		return s.errPermissionDenied("Invalid browser origin")
+	}
+
+	hosts, err := s.getSystemServiceBrowserHosts(ctx)
+	if err != nil {
+		return s.errInternalErr(err)
+	}
+	if !browserorigin.IsAllowed(origins[0], hosts) {
+		return s.errPermissionDenied("Invalid browser origin")
+	}
+
+	return nil
+}
+
+func (s *server) getSystemServiceBrowserHosts(ctx context.Context) ([]browserorigin.Host, error) {
+	if val, found := s.genCache.Get(systemServiceHostsCacheKey); found {
+		return val.([]browserorigin.Host), nil
+	}
+
+	services, err := s.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterFieldBooleanTrue("metadata.isSystem"),
+			urscsrv.FilterFieldBooleanTrue("spec.isPublic"),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	hosts := browserorigin.SystemServiceHosts(s.domain, services.Items)
+	s.genCache.Set(systemServiceHostsCacheKey, hosts, 5*time.Second)
+
+	return hosts, nil
 }
 
 func (s *authMainSvc) AuthenticateWithAuthenticationToken(ctx context.Context,

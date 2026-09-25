@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/browserorigin"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
@@ -37,6 +38,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcmetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -105,6 +107,186 @@ func TestUnaryServerInterceptor(t *testing.T) {
 		assert.NotNil(t, resp)
 		assert.NotNil(t, err)
 	}
+}
+
+func TestUnaryServerInterceptorCookieOrigin(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	srv, err := initServer(ctx, tst.C.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+	srv.genCache.SetDefault(systemServiceHostsCacheKey, []browserorigin.Host{
+		{Name: "example.com"},
+		{Name: "portal.example.com"},
+		{Name: "cordium.example.com", AllowSubdomains: true},
+	})
+
+	info := &grpc.UnaryServerInfo{
+		FullMethod: "/octelium.api.main.auth.v1.MainService/DeleteAuthenticator",
+	}
+
+	tests := []struct {
+		name    string
+		md      grpcmetadata.MD
+		allowed bool
+	}{
+		{
+			name:    "NoCookie",
+			md:      grpcmetadata.MD{},
+			allowed: true,
+		},
+		{
+			name: "AccessCookieOnly",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_auth=access",
+			),
+			allowed: true,
+		},
+		{
+			name: "ExplicitRefreshToken",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-refresh-token", "refresh",
+				"x-octelium-origin", "https://evil.example.com",
+			),
+			allowed: true,
+		},
+		{
+			name: "Apex",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", "https://example.com",
+			),
+			allowed: true,
+		},
+		{
+			name: "Portal",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", "https://portal.example.com",
+			),
+			allowed: true,
+		},
+		{
+			name: "SystemWildcard",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", "https://workspace.cordium.example.com",
+			),
+			allowed: true,
+		},
+		{
+			name: "MissingOrigin",
+			md:   grpcmetadata.Pairs("cookie", "octelium_rt=refresh"),
+		},
+		{
+			name: "SiblingOrigin",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", "https://evil.example.com",
+			),
+		},
+		{
+			name: "AllowedHostWithPort",
+			md: grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", "https://portal.example.com:8443",
+			),
+		},
+		{
+			name: "DuplicateOrigin",
+			md: grpcmetadata.MD{
+				"cookie":            {"octelium_rt=refresh"},
+				"x-octelium-origin": {"https://example.com", "https://evil.example.com"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			resp, err := srv.unaryServerInterceptor(
+				grpcmetadata.NewIncomingContext(ctx, tt.md),
+				&metav1.DeleteOptions{}, info,
+				func(ctx context.Context, req any) (any, error) {
+					called = true
+					return &metav1.OperationResult{}, nil
+				})
+
+			if tt.allowed {
+				assert.True(t, called)
+				assert.NotNil(t, resp)
+				assert.NoError(t, err)
+			} else {
+				assert.False(t, called)
+				assert.Nil(t, resp)
+				assert.Equal(t, codes.PermissionDenied, status.Code(err))
+			}
+		})
+	}
+}
+
+func TestGetSystemServiceBrowserHosts(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	srv, err := initServer(ctx, tst.C.OcteliumC, clusterCfg)
+	assert.Nil(t, err)
+
+	ns, err := tst.C.OcteliumC.CoreC().GetNamespace(ctx, &rmetav1.GetOptions{Name: "default"})
+	assert.Nil(t, err)
+
+	for _, svc := range []*corev1.Service{
+		{
+			Metadata: &metav1.Metadata{Name: "default.default", IsSystem: true},
+			Spec:     &corev1.Service_Spec{IsPublic: true},
+			Status: &corev1.Service_Status{
+				NamespaceRef:   &metav1.ObjectReference{Name: ns.Metadata.Name, Uid: ns.Metadata.Uid},
+				ManagedService: &corev1.Service_Status_ManagedService{},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: "portal.default", IsSystem: true},
+			Spec:     &corev1.Service_Spec{IsPublic: true},
+			Status: &corev1.Service_Status{
+				NamespaceRef:   &metav1.ObjectReference{Name: ns.Metadata.Name, Uid: ns.Metadata.Uid},
+				ManagedService: &corev1.Service_Status_ManagedService{},
+			},
+		},
+		{
+			Metadata: &metav1.Metadata{Name: "untrusted.default"},
+			Spec:     &corev1.Service_Spec{IsPublic: true},
+			Status: &corev1.Service_Status{
+				NamespaceRef:   &metav1.ObjectReference{Name: ns.Metadata.Name, Uid: ns.Metadata.Uid},
+				ManagedService: &corev1.Service_Status_ManagedService{},
+			},
+		},
+	} {
+		_, err := tst.C.OcteliumC.CoreC().CreateService(ctx, svc)
+		assert.Nil(t, err)
+	}
+
+	hosts, err := srv.getSystemServiceBrowserHosts(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, []browserorigin.Host{
+		{Name: "default.default.example.com"},
+		{Name: "default.example.com"},
+		{Name: "example.com"},
+		{Name: "portal.default.example.com"},
+		{Name: "portal.example.com"},
+	}, hosts)
 }
 
 func TestShutdown(t *testing.T) {
