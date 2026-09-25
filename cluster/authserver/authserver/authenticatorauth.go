@@ -241,8 +241,7 @@ func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
 	for _, rule := range cc.Spec.Authenticator.PostAuthenticationRules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Warn("Could not evalCondition in doPostAuthenticatorAuthenticationRules", zap.Error(err))
-			continue
+			return errors.Errorf("Could not evaluate authenticator post-authentication rule: %+v", err)
 		}
 
 		if isMatched {

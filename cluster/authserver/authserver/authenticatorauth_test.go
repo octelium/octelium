@@ -558,6 +558,27 @@ func TestDoPostAuthenticatorAuthenticationRules(t *testing.T) {
 				Aal: corev1.Session_Status_Authentication_Info_AAL1,
 			}))
 	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			PostAuthenticationRules: []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `int(ctx.user.metadata.name) > 0`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			},
+		}
+		assert.NotNil(t, srv.doPostAuthenticatorAuthenticationRules(ctx, cc, nil, usrT.Session, usrT.Usr,
+			&corev1.Session_Status_Authentication_Info{}))
+	}
 }
 
 func TestValidatePreChallenge(t *testing.T) {

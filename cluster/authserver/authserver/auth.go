@@ -965,8 +965,7 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 	for _, rule := range idp.Spec.PostAuthenticationRules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Warn("Could not evalCondition in doPostAuthenticationRules", zap.Error(err))
-			continue
+			return errors.Errorf("Could not evaluate post-authentication rule: %+v", err)
 		}
 
 		if isMatched {
@@ -1046,7 +1045,8 @@ func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	rules []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule,
 	idp *corev1.IdentityProvider,
 	usr *corev1.User, sess *corev1.Session,
-	authnList *corev1.AuthenticatorList) corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect {
+	authnList *corev1.AuthenticatorList) (corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect,
+	error) {
 
 	inputMap := map[string]any{
 		"ctx": map[string]any{
@@ -1060,16 +1060,16 @@ func (s *server) doAuthenticatorEnforcementRule(ctx context.Context,
 	for _, rule := range rules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			zap.L().Warn("Could not evalCondition in doAuthenticatorEnforcementRule", zap.Error(err))
-			continue
+			return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN,
+				errors.Errorf("Could not evaluate authenticator enforcement rule: %+v", err)
 		}
 
 		if isMatched {
-			return rule.Effect
+			return rule.Effect, nil
 		}
 	}
 
-	return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN
+	return corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, nil
 }
 
 func (s *server) checkSessionValid(sess *corev1.Session) error {

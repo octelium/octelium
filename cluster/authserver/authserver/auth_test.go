@@ -832,6 +832,29 @@ func TestDoPostAuthenticationRules(t *testing.T) {
 
 		idp.Spec.PostAuthenticationRules = nil
 	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		idp.Spec.PostAuthenticationRules = []*corev1.IdentityProvider_Spec_PostAuthenticationRule{
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: `int(ctx.user.metadata.name) > 0`,
+					},
+				},
+				Effect: corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY,
+			},
+		}
+
+		err = srv.doPostAuthenticationRules(ctx, idp, usrT.Usr, &corev1.Session_Status_Authentication_Info{
+			Aal: corev1.Session_Status_Authentication_Info_AAL1,
+		})
+		assert.NotNil(t, err)
+
+		idp.Spec.PostAuthenticationRules = nil
+	}
 }
 
 func encodeLoginReq(t *testing.T, req *authv1.ClientLoginRequest) string {
@@ -1588,12 +1611,13 @@ func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 	authnList := &corev1.AuthenticatorList{}
 
 	{
-		ret := srv.doAuthenticatorEnforcementRule(ctx, nil, nil, usrT.Usr, usrT.Session, authnList)
+		ret, err := srv.doAuthenticatorEnforcementRule(ctx, nil, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Nil(t, err)
 		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, ret)
 	}
 
 	{
-		ret := srv.doAuthenticatorEnforcementRule(ctx,
+		ret, err := srv.doAuthenticatorEnforcementRule(ctx,
 			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
 				{
 					Condition: &corev1.Condition{
@@ -1604,11 +1628,12 @@ func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
 				},
 			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Nil(t, err)
 		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE, ret)
 	}
 
 	{
-		ret := srv.doAuthenticatorEnforcementRule(ctx,
+		ret, err := srv.doAuthenticatorEnforcementRule(ctx,
 			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
 				{
 					Condition: &corev1.Condition{
@@ -1619,11 +1644,12 @@ func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
 				},
 			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Nil(t, err)
 		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND, ret)
 	}
 
 	{
-		ret := srv.doAuthenticatorEnforcementRule(ctx,
+		ret, err := srv.doAuthenticatorEnforcementRule(ctx,
 			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
 				{
 					Condition: &corev1.Condition{
@@ -1634,16 +1660,17 @@ func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
 				},
 			}, nil, usrT.Usr, usrT.Session, authnList)
+		assert.Nil(t, err)
 		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, ret)
 	}
 
 	{
-		ret := srv.doAuthenticatorEnforcementRule(ctx,
+		ret, err := srv.doAuthenticatorEnforcementRule(ctx,
 			[]*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
 				{
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_Match{
-							Match: `invalid CEL expr`,
+							Match: `int(ctx.user.metadata.name) > 0`,
 						},
 					},
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
@@ -1657,7 +1684,8 @@ func TestDoAuthenticatorEnforcementRule(t *testing.T) {
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
 				},
 			}, nil, usrT.Usr, usrT.Session, authnList)
-		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE, ret)
+		assert.NotNil(t, err)
+		assert.Equal(t, corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN, ret)
 	}
 }
 

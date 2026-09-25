@@ -687,4 +687,27 @@ func TestGetAuthenticatorAction(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, ret)
 	}
+
+	{
+		usrT := newUser()
+
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			RegistrationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `int(ctx.user.metadata.name) > 0`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			},
+		}
+
+		ret, err := srv.getAuthenticatorAction(ctx, cc, idp, usrT.Usr, usrT.Session)
+		assert.NotNil(t, err)
+		assert.Equal(t, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, ret)
+	}
 }
