@@ -163,7 +163,10 @@ gen-go-client:
 	protoc -I . -I $(PROTO_IN_CLIENT)/daemonv1 daemonv1.proto \
 		--go_out=apis/client/daemonv1 --go-grpc_out=apis/client/daemonv1 $(PROTO_GO_OPT_GRPC)
 
-gen-api: gen-go-main gen-go-cluster gen-go-client gen-go-rsc
+cp-pb:
+	cp -r ../pb/apis/protobuf ./apis
+
+gen-api: cp-pb gen-go-main gen-go-cluster gen-go-client gen-go-rsc
 	rm -rf ./apis/protobuf
 	go run unsorted/licenser/main.go
 
