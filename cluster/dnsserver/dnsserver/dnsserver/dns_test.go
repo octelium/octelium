@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
@@ -169,6 +170,55 @@ func TestFallbackUpstreams(t *testing.T) {
 	assert.Equal(t, 53, dnsSrv.upstreams[0].port)
 }
 
+func TestDNSZoneSelection(t *testing.T) {
+	dnsSrv := &DNSServer{
+		fallbackZoneCache: newZoneCache(0),
+	}
+
+	dnsSrv.setDNSConfig(&corev1.ClusterConfig{
+		Spec: &corev1.ClusterConfig_Spec{
+			Dns: &corev1.ClusterConfig_Spec_DNS{
+				FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+					Servers: []string{"9.9.9.9"},
+				},
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{
+						Domains: []string{"example.com", "example.net."},
+						Servers: []string{"udp://10.0.0.1:5353"},
+						CacheDuration: &metav1.Duration{
+							Type: &metav1.Duration_Minutes{Minutes: 1},
+						},
+					},
+					{
+						Domains: []string{"sub.example.com"},
+						Servers: []string{"tls://dns.internal.example:8853"},
+					},
+				},
+			},
+		},
+	})
+
+	fallback := dnsSrv.getDNSZone("unmatched.example.org.")
+	assert.Equal(t, "9.9.9.9", fallback.upstreams[0].host)
+	assert.Equal(t, 53, fallback.upstreams[0].port)
+	assert.Same(t, dnsSrv.fallbackZoneCache, fallback.cache)
+
+	zone := dnsSrv.getDNSZone("EXAMPLE.COM")
+	assert.Equal(t, "10.0.0.1", zone.upstreams[0].host)
+	assert.Equal(t, 5353, zone.upstreams[0].port)
+	assert.Equal(t, time.Minute, zone.cache.duration)
+	assert.Same(t, zone, dnsSrv.getDNSZone("www.example.net."))
+	assert.NotSame(t, zone, fallback)
+
+	subZone := dnsSrv.getDNSZone("api.sub.example.com.")
+	assert.Equal(t, "dns.internal.example", subZone.upstreams[0].host)
+	assert.Equal(t, 8853, subZone.upstreams[0].port)
+	assert.Equal(t, "tcp-tls", subZone.upstreams[0].typ)
+	assert.NotSame(t, zone, subZone)
+
+	assert.Same(t, fallback, dnsSrv.getDNSZone("notexample.com."))
+	assert.Same(t, fallback, dnsSrv.getDNSZone("example.com.invalid."))
+}
 func TestResolve(t *testing.T) {
 
 	ctx := context.Background()

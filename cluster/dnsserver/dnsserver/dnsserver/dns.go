@@ -52,31 +52,32 @@ type DNSServer struct {
 	ccCtl             *ccctl.Controller
 	mu                sync.RWMutex
 	fallbackZoneCache *zoneCache
+	fallbackZone      *dnsZone
+	zones             []*dnsZone
 
 	reservedNamespaces []string
+}
+
+type dnsZone struct {
+	domains   []string
+	upstreams []*upstream
+	cache     *zoneCache
 }
 
 func Initialize(ctx context.Context, octeliumC octeliumc.ClientInterface) (*DNSServer, error) {
 
 	ret := &DNSServer{
-		cache: newCache(),
+		cache:             newCache(),
+		fallbackZoneCache: newZoneCache(0),
 	}
 
 	ret.setReservedNamespaces(ctx)
 
-	getDuration := func(cc *corev1.ClusterConfig) time.Duration {
-		if cc.Spec.Dns == nil || cc.Spec.Dns.FallbackZone == nil || cc.Spec.Dns.FallbackZone.CacheDuration == nil {
-			return 0
-		}
-		return umetav1.ToDuration(cc.Spec.Dns.FallbackZone.CacheDuration).ToGo()
-	}
-
 	ccCtl, err := ccctl.New(ctx, octeliumC, &ccctl.Opts{
 		OnUpdate: func(ctx context.Context, new, old *corev1.ClusterConfig) error {
 			if !pbutils.IsEqual(new.Spec.Dns, old.Spec.Dns) {
-				zap.L().Debug("Updating fallback upstreams", zap.Any("dnsConfig", new.Spec.Dns))
-				ret.setDefaultUpstreams(new)
-				ret.fallbackZoneCache.setDuration(getDuration(new))
+				zap.L().Debug("Updating DNS upstreams", zap.Any("dnsConfig", new.Spec.Dns))
+				ret.setDNSConfig(new)
 			}
 
 			return nil
@@ -87,9 +88,7 @@ func Initialize(ctx context.Context, octeliumC octeliumc.ClientInterface) (*DNSS
 	}
 	ret.ccCtl = ccCtl
 	ret.domain = ccCtl.Get().Status.Domain
-	ret.setDefaultUpstreams(ccCtl.Get())
-
-	ret.fallbackZoneCache = newZoneCache(getDuration(ret.ccCtl.Get()))
+	ret.setDNSConfig(ccCtl.Get())
 
 	return ret, nil
 }
@@ -317,11 +316,7 @@ func (s *DNSServer) Run(ctx context.Context) error {
 		return err
 	}
 
-	if len(s.upstreams) == 0 {
-		s.setDefaultUpstreams(s.ccCtl.Get())
-	}
-
-	go s.fallbackZoneCache.startCleanupLoop(ctx)
+	go s.startZoneCacheCleanupLoop(ctx)
 
 	for _, addr := range []string{
 		fmt.Sprintf("[::1]:%d", vutils.ManagedServicePort),
@@ -343,12 +338,13 @@ func (s *DNSServer) Run(ctx context.Context) error {
 }
 
 func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error) {
+	zone := s.getDNSZone(domain)
 
-	if cached := s.fallbackZoneCache.get(domain, typ); cached != nil {
+	if cached := zone.cache.get(domain, typ); cached != nil {
 		return cached, nil
 	}
 
-	upstream := s.chooseUpstream()
+	upstream := chooseUpstream(zone)
 	c := dns.Client{
 		Net:     upstream.typ,
 		Timeout: 6 * time.Second,
@@ -362,68 +358,179 @@ func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error
 		return nil, err
 	}
 
-	s.fallbackZoneCache.set(domain, typ, r)
+	zone.cache.set(domain, typ, r)
 
 	return r, nil
 }
 
-func (s *DNSServer) chooseUpstream() *upstream {
+func chooseUpstream(zone *dnsZone) *upstream {
+	return zone.upstreams[utilrand.GetRandomRangeMath(0, len(zone.upstreams)-1)]
+}
+
+func (s *DNSServer) getDNSZone(domain string) *dnsZone {
+	domain = strings.ToLower(dns.Fqdn(domain))
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.upstreams[utilrand.GetRandomRangeMath(0, len(s.upstreams)-1)]
+	ret := s.fallbackZone
+	matchLen := 0
+	for _, zone := range s.zones {
+		for _, suffix := range zone.domains {
+			if len(suffix) <= matchLen {
+				continue
+			}
+			if domain == suffix || strings.HasSuffix(domain, "."+suffix) {
+				ret = zone
+				matchLen = len(suffix)
+			}
+		}
+	}
+
+	return ret
+}
+
+func (s *DNSServer) startZoneCacheCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(6 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.RLock()
+			caches := make([]*zoneCache, 0, len(s.zones)+1)
+			caches = append(caches, s.fallbackZoneCache)
+			for _, zone := range s.zones {
+				caches = append(caches, zone.cache)
+			}
+			s.mu.RUnlock()
+
+			for _, cache := range caches {
+				cache.doCleanup()
+			}
+		}
+	}
+}
+
+func (s *DNSServer) setDNSConfig(cc *corev1.ClusterConfig) {
+	s.setDefaultUpstreams(cc)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var dnsConfig *corev1.ClusterConfig_Spec_DNS
+	if cc != nil && cc.Spec != nil {
+		dnsConfig = cc.Spec.Dns
+	}
+
+	var fallbackConfig *corev1.ClusterConfig_Spec_DNS_Zone
+	if dnsConfig != nil {
+		fallbackConfig = dnsConfig.FallbackZone
+	}
+	s.fallbackZoneCache.setDuration(getZoneDuration(fallbackConfig))
+	s.fallbackZone = &dnsZone{
+		upstreams: s.upstreams,
+		cache:     s.fallbackZoneCache,
+	}
+
+	s.zones = nil
+	if dnsConfig == nil {
+		return
+	}
+
+	for _, zoneConfig := range dnsConfig.Zones {
+		if zoneConfig == nil {
+			continue
+		}
+
+		zone := &dnsZone{
+			upstreams: parseZoneUpstreams(zoneConfig.Servers),
+			cache:     newZoneCache(getZoneDuration(zoneConfig)),
+		}
+		for _, domain := range zoneConfig.Domains {
+			domain = strings.ToLower(dns.Fqdn(domain))
+			if domain != "." {
+				zone.domains = append(zone.domains, domain)
+			}
+		}
+
+		if len(zone.domains) > 0 && len(zone.upstreams) > 0 {
+			s.zones = append(s.zones, zone)
+		}
+	}
+}
+
+func getZoneDuration(zone *corev1.ClusterConfig_Spec_DNS_Zone) time.Duration {
+	if zone == nil || zone.CacheDuration == nil {
+		return 0
+	}
+	return umetav1.ToDuration(zone.CacheDuration).ToGo()
+}
+
+func parseZoneUpstreams(servers []string) []*upstream {
+	var ret []*upstream
+
+	for _, server := range servers {
+		if ip := net.ParseIP(server); ip != nil {
+			ret = append(ret, &upstream{host: server, port: 53})
+			continue
+		}
+
+		arg := server
+		if !strings.Contains(arg, "://") {
+			arg = "dns://" + arg
+		}
+
+		u, err := url.Parse(arg)
+		if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" ||
+			u.RawQuery != "" || u.Fragment != "" {
+			zap.L().Warn("Could not parse DNS server. Skipping...",
+				zap.Error(err), zap.String("server", server))
+			continue
+		}
+
+		port := 0
+		if u.Port() != "" {
+			port, err = strconv.Atoi(u.Port())
+			if err != nil || port < 1 || port > 65535 {
+				zap.L().Warn("Could not parse DNS server port. Skipping...",
+					zap.Error(err), zap.String("server", server))
+				continue
+			}
+		}
+
+		upstream := &upstream{host: u.Hostname()}
+		switch u.Scheme {
+		case "dns", "udp":
+			if port == 0 {
+				port = 53
+			}
+		case "tls":
+			upstream.typ = "tcp-tls"
+			if port == 0 {
+				port = 853
+			}
+		default:
+			continue
+		}
+		upstream.port = port
+		ret = append(ret, upstream)
+	}
+
+	return ret
 }
 
 func (s *DNSServer) setDefaultUpstreams(cc *corev1.ClusterConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	getPort := func(u *url.URL) int {
-		if u.Port() != "" {
-			if port, err := strconv.Atoi(u.Port()); err == nil && port > 0 && port <= 65535 {
-				return port
-			}
-		}
-		return 0
+	var servers []string
+	if cc != nil && cc.Spec != nil && cc.Spec.Dns != nil && cc.Spec.Dns.FallbackZone != nil {
+		servers = cc.Spec.Dns.FallbackZone.Servers
 	}
-
-	s.upstreams = nil
-	if cc != nil && cc.Spec.Dns != nil && cc.Spec.Dns.FallbackZone != nil &&
-		len(cc.Spec.Dns.FallbackZone.Servers) > 0 {
-		for _, server := range cc.Spec.Dns.FallbackZone.Servers {
-			u, err := url.Parse(server)
-			if err != nil {
-				zap.L().Warn("Could not parse fallback server. Skipping...",
-					zap.Error(err), zap.String("server", server))
-				continue
-			}
-
-			switch u.Scheme {
-			case "dns", "", "udp":
-				upstream := &upstream{
-					host: u.Host,
-					port: getPort(u),
-				}
-				if upstream.port == 0 {
-					upstream.port = 53
-				}
-				s.upstreams = append(s.upstreams, upstream)
-			case "tls":
-				upstream := &upstream{
-					host: u.Host,
-					port: getPort(u),
-					typ:  "tcp-tls",
-				}
-				if upstream.port == 0 {
-					upstream.port = 853
-				}
-				s.upstreams = append(s.upstreams, upstream)
-			default:
-				continue
-			}
-
-		}
-	}
+	s.upstreams = parseZoneUpstreams(servers)
 
 	if len(s.upstreams) > 0 {
 		return
@@ -443,7 +550,6 @@ func (s *DNSServer) setDefaultUpstreams(cc *corev1.ClusterConfig) {
 			typ:  "tcp-tls",
 		},
 	}
-
 }
 
 func (s *DNSServer) setReservedNamespaces(ctx context.Context) {

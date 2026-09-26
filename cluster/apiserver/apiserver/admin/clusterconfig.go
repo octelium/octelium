@@ -18,6 +18,8 @@ package admin
 
 import (
 	"context"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -38,6 +40,9 @@ const (
 	ccMaxDevicesPerUser    = 1000
 	ccMaxDNSServers        = 32
 	ccMaxDNSServerLen      = 256
+	ccMaxDNSZones          = 64
+	ccMaxDNSDomainsPerZone = 64
+	ccMaxDNSDomainLen      = 253
 	ccMaxXFFNumTrustedHops = 64
 	ccMaxURLLen            = 1024
 	ccMaxNameLen           = 256
@@ -268,11 +273,60 @@ func validateDNS(c *corev1.ClusterConfig) error {
 		return nil
 	}
 
-	zone := c.Spec.Dns.FallbackZone
-	if zone == nil {
-		return nil
+	cfg := c.Spec.Dns
+	if len(cfg.Zones) > ccMaxDNSZones {
+		return grpcutils.InvalidArg("Too many DNS zones")
 	}
 
+	if cfg.FallbackZone != nil {
+		if len(cfg.FallbackZone.Domains) > 0 {
+			return grpcutils.InvalidArg("Fallback DNS zone cannot have domains")
+		}
+		if err := validateDNSZone(cfg.FallbackZone); err != nil {
+			return err
+		}
+	}
+
+	domains := make(map[string]struct{})
+	for _, zone := range cfg.Zones {
+		if zone == nil {
+			return grpcutils.InvalidArg("Nil DNS zone")
+		}
+		if len(zone.Domains) == 0 {
+			return grpcutils.InvalidArg("DNS zone must have at least one domain")
+		}
+		if len(zone.Domains) > ccMaxDNSDomainsPerZone {
+			return grpcutils.InvalidArg("Too many DNS zone domains")
+		}
+		if len(zone.Servers) == 0 {
+			return grpcutils.InvalidArg("DNS zone must have at least one server")
+		}
+		if err := validateDNSZone(zone); err != nil {
+			return err
+		}
+
+		for _, domain := range zone.Domains {
+			normalized := strings.TrimSuffix(strings.ToLower(domain), ".")
+			if normalized == "" {
+				return grpcutils.InvalidArg("Empty DNS zone domain")
+			}
+			if len(normalized) > ccMaxDNSDomainLen {
+				return grpcutils.InvalidArg("DNS zone domain is too long")
+			}
+			if !govalidator.IsDNSName(normalized) {
+				return grpcutils.InvalidArg("Invalid DNS zone domain: %s", domain)
+			}
+			if _, ok := domains[normalized]; ok {
+				return grpcutils.InvalidArg("Duplicate DNS zone domain: %s", domain)
+			}
+			domains[normalized] = struct{}{}
+		}
+	}
+
+	return nil
+}
+
+func validateDNSZone(zone *corev1.ClusterConfig_Spec_DNS_Zone) error {
 	if err := apivalidation.ValidateDuration(zone.CacheDuration); err != nil {
 		return err
 	}
@@ -290,14 +344,43 @@ func validateDNS(c *corev1.ClusterConfig) error {
 			return grpcutils.InvalidArg("DNS server is too long")
 		}
 
-		switch {
-		case govalidator.IsDNSName(srv), govalidator.IsIP(srv), govalidator.IsURL(srv):
-		default:
+		if !isValidDNSServer(srv) {
 			return grpcutils.InvalidArg("Invalid DNS server: %s", srv)
 		}
 	}
 
 	return nil
+}
+func isValidDNSServer(server string) bool {
+
+	if govalidator.IsDNSName(server) || govalidator.IsIP(server) {
+		return true
+	}
+
+	u, err := url.Parse(server)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" ||
+		u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+
+	switch u.Scheme {
+	case "dns", "udp", "tls":
+	default:
+		return false
+	}
+
+	if !govalidator.IsDNSName(u.Hostname()) && !govalidator.IsIP(u.Hostname()) {
+		return false
+	}
+
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (s *Server) validateCCAuthenticator(ctx context.Context, c *corev1.ClusterConfig) error {

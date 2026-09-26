@@ -45,6 +45,29 @@ func getTestCondition() *corev1.Condition {
 	}
 }
 
+func TestIsValidDNSServer(t *testing.T) {
+	for _, server := range []string{
+		"dns.example.com",
+		"1.1.1.1",
+		"2606:4700:4700::1111",
+		"dns://dns.example.com",
+		"udp://1.1.1.1:5353",
+		"tls://[2606:4700:4700::1111]:853",
+	} {
+		assert.True(t, isValidDNSServer(server), server)
+	}
+
+	for _, server := range []string{
+		"",
+		"https://dns.example.com",
+		"udp://dns.example.com:65536",
+		"tls://dns.example.com/path",
+		"dns://user@dns.example.com",
+	} {
+		assert.False(t, isValidDNSServer(server), server)
+	}
+}
+
 func TestClusterConfig(t *testing.T) {
 	ctx := context.Background()
 	tst, err := tests.Initialize(nil)
@@ -527,8 +550,128 @@ func TestValidateClusterConfig(t *testing.T) {
 			}
 			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
 		}
-	})
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+					Servers: []string{"tls://1.1.1.1:853"},
+				},
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{
+						Domains: []string{"example.com", "example.net."},
+						Servers: []string{"udp://10.0.0.1:5353"},
+						CacheDuration: &metav1.Duration{
+							Type: &metav1.Duration_Minutes{Minutes: 5},
+						},
+					},
+					{
+						Domains: []string{"sub.example.com"},
+						Servers: []string{"dns.internal.example"},
+					},
+				},
+			}
+			assert.Nil(t, srv.validateClusterConfig(ctx, cc))
+		}
 
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{nil},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{Servers: []string{"10.0.0.1"}},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{Domains: []string{"example.com"}},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{
+						Domains: []string{".example.com"},
+						Servers: []string{"10.0.0.1"},
+					},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{
+						Domains: []string{"example.com"},
+						Servers: []string{"10.0.0.1"},
+					},
+					{
+						Domains: []string{"EXAMPLE.COM."},
+						Servers: []string{"10.0.0.2"},
+					},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+					Domains: []string{"example.com"},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			zones := make([]*corev1.ClusterConfig_Spec_DNS_Zone, 0, ccMaxDNSZones+1)
+			for i := 0; i < ccMaxDNSZones+1; i++ {
+				zones = append(zones, &corev1.ClusterConfig_Spec_DNS_Zone{
+					Domains: []string{fmt.Sprintf("zone-%d.example.com", i)},
+					Servers: []string{"10.0.0.1"},
+				})
+			}
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{Zones: zones}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			domains := make([]string, 0, ccMaxDNSDomainsPerZone+1)
+			for i := 0; i < ccMaxDNSDomainsPerZone+1; i++ {
+				domains = append(domains, fmt.Sprintf("zone-%d.example.com", i))
+			}
+			cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+				Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{
+						Domains: domains,
+						Servers: []string{"10.0.0.1"},
+					},
+				},
+			}
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+	})
 	t.Run("authorization", func(t *testing.T) {
 		{
 			cc := getTestClusterConfig(ctx, t, srv)
