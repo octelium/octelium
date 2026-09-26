@@ -3,7 +3,6 @@ go 1.26.8
 use (
 	./apis
 	./client/common
-	./client/liboctelium
 	./client/octelium
 	./client/octeliumctl
 	./client/octops

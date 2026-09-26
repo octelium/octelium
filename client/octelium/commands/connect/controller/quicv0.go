@@ -473,15 +473,6 @@ func (c *quicGW) connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *quicEngine) reconnectGWs() {
-	c.quicGWMap.RLock()
-	defer c.quicGWMap.RUnlock()
-
-	for _, gw := range c.quicGWMap.gwMap {
-		gw.close()
-	}
-}
-
 func (c *quicEngine) deleteGWByID(gwID string) error {
 	c.quicGWMap.Lock()
 	defer c.quicGWMap.Unlock()

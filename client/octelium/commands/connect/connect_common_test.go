@@ -15,7 +15,6 @@
 package connect
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -139,34 +138,4 @@ func TestGetReconnectBackoff(t *testing.T) {
 	}
 
 	assert.Equal(t, reconnectBackoffMax, getReconnectBackoff(20))
-}
-
-func TestWaitReconnect(t *testing.T) {
-	{
-		c, err := NewConnector("example.com", nil)
-		assert.Nil(t, err)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		assert.ErrorIs(t, c.waitReconnect(ctx, 1), context.Canceled)
-	}
-
-	{
-		var attempts []int
-		c, err := NewConnector("example.com", &Opts{
-			WaitReconnect: func(ctx context.Context, attempt int) error {
-				attempts = append(attempts, attempt)
-				if attempt > 1 {
-					return context.Canceled
-				}
-				return nil
-			},
-		})
-		assert.Nil(t, err)
-
-		assert.Nil(t, c.waitReconnect(context.Background(), 1))
-		assert.NotNil(t, c.waitReconnect(context.Background(), 2))
-		assert.Equal(t, []int{1, 2}, attempts)
-	}
 }

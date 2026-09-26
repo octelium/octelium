@@ -80,24 +80,13 @@ type Controller struct {
 	localDNSSrv  *dnssrv.Server
 	dbC          *db.DB
 	cleanup      *cliconfigv1.ConnectionCleanup
-
-	platform    Platform
-	platformCtx context.Context
-}
-
-type Opts struct {
-	DB       *db.DB
-	Platform Platform
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {
-	return NewControllerWithOpts(c, nil)
+	return NewControllerWithDB(c, nil)
 }
 
-func NewControllerWithOpts(c *cliconfigv1.Connection, o *Opts) (*Controller, error) {
-	if o == nil {
-		o = &Opts{}
-	}
+func NewControllerWithDB(c *cliconfigv1.Connection, dbC *db.DB) (*Controller, error) {
 
 	ipv4Supported := c.Connection.L3Mode == userv1.ConnectionState_V4 ||
 		c.Connection.L3Mode == userv1.ConnectionState_BOTH
@@ -109,25 +98,21 @@ func NewControllerWithOpts(c *cliconfigv1.Connection, o *Opts) (*Controller, err
 		ipv4Supported: ipv4Supported,
 		ipv6Supported: ipv6Supported,
 		isQUIC:        c.Preferences.ConnectionType == cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0,
-		dbC:           o.DB,
-		platform:      o.Platform,
+		dbC:           dbC,
 	}
 
 	switch {
-	case ret.platform != nil:
 	case cliutils.IsLinux(), cliutils.IsWindows(), cliutils.IsDarwin():
 	default:
 		return nil, errors.Errorf("Could not initialize controller, invalid runtime OS")
 	}
 
-	if ret.platform == nil {
-		if wgClient, err := wgctrl.New(); err != nil {
-			zap.L().Debug(
-				"Could not create the WireGuard control client. Kernel WireGuard will be unavailable",
-				zap.Error(err))
-		} else {
-			ret.wgC = wgClient
-		}
+	if wgClient, err := wgctrl.New(); err != nil {
+		zap.L().Debug(
+			"Could not create the WireGuard control client. Kernel WireGuard will be unavailable",
+			zap.Error(err))
+	} else {
+		ret.wgC = wgClient
 	}
 
 	privK, err := wgtypes.NewKey(c.Connection.X25519Key)
@@ -152,12 +137,6 @@ func (c *Controller) Close() error {
 	zap.L().Debug("Closing dev controller")
 
 	c.isClosed = true
-
-	if c.platform != nil {
-		c.closeErr = c.doClosePlatform()
-		return c.closeErr
-	}
-
 	c.setCleanupPhase(cliconfigv1.ConnectionCleanup_CLEANING)
 	var retErr error
 	if c.svcProxy != nil {
@@ -227,11 +206,6 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 
 	zap.L().Debug("Starting controller...")
-
-	if c.platform != nil {
-		return c.startPlatform(ctx)
-	}
-
 	c.prepareCleanup()
 
 	if err := c.setServiceConfigs(); err != nil {
@@ -350,10 +324,6 @@ func (c *Controller) reconfigure() error {
 		return err
 	}
 
-	if c.platform != nil {
-		return c.setPlatformTunnelConfiguration()
-	}
-
 	if err := c.setDevAddrsAndRoutes(); err != nil {
 		return err
 	}
@@ -407,18 +377,7 @@ func (c *Controller) UpdateDNS(dns *userv1.DNS) error {
 		return nil
 	}
 
-	old := c.c.Connection.Dns
 	c.c.Connection.Dns = dns
-
-	if c.platform != nil {
-		if err := c.setPlatformTunnelConfiguration(); err != nil {
-			zap.L().Warn("Could not apply the new DNS. Rolling back", zap.Error(err))
-			c.c.Connection.Dns = old
-			return err
-		}
-
-		return nil
-	}
 
 	return c.setDNS()
 }

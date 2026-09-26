@@ -15,17 +15,9 @@
 package controller
 
 func (c *Controller) setRoutes() error {
-	if c.platform != nil {
-		return nil
-	}
-
 	return c.doSetRoutes()
 }
 
 func (c *Controller) unsetRoutes() error {
-	if c.platform != nil {
-		return nil
-	}
-
 	return c.doUnsetRoutes()
 }

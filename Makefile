@@ -29,15 +29,6 @@ GO_BIN_DIR := $${HOME}/go/bin
 LDFLAGS := -ldflags '-X $(LDF_COMMIT) -X $(LDF_TAG) -X $(LDF_BRANCH) -X $(LDF_SEMVER)\
 -X $(LDF_IMAGE_REGISTRY) -X $(LDF_IMAGE_REGISTRY_PREFIX)'
 
-LIBOCTELIUM_LDFLAGS := -ldflags '-s -w -X $(LDF_COMMIT) -X $(LDF_TAG) -X $(LDF_BRANCH) -X $(LDF_SEMVER)'
-LIBOCTELIUM_PKG := github.com/octelium/octelium/client/liboctelium
-LIBOCTELIUM_OUT := bin/liboctelium
-
-ANDROID_API ?= 29
-ANDROID_NDK_TOOLCHAIN = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(shell uname -s | tr A-Z a-z)-x86_64/bin
-
-IOS_MIN_VERSION ?= 16.0
-
 PROTO_GO_OPT := --go_opt=paths=source_relative
 PROTO_GO_OPT_GRPC := $(PROTO_GO_OPT) --go-grpc_opt=paths=source_relative
 PROTO_IN_PREFIX := apis/protobuf
@@ -115,55 +106,6 @@ build-cli-octops:
 
 build-cli: build-cli-octelium build-cli-octeliumctl build-cli-octops
 
-build-liboctelium-android-arm64:
-	CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
-		CC=$(ANDROID_NDK_TOOLCHAIN)/aarch64-linux-android$(ANDROID_API)-clang \
-		CGO_LDFLAGS="-Wl,-z,max-page-size=16384 -Wl,-soname,liboctelium.so" \
-		go build $(LIBOCTELIUM_LDFLAGS) -buildmode=c-shared \
-		-o $(LIBOCTELIUM_OUT)/android/arm64-v8a/liboctelium.so $(LIBOCTELIUM_PKG)
-
-build-liboctelium-android-amd64:
-	CGO_ENABLED=1 GOOS=android GOARCH=amd64 \
-		CC=$(ANDROID_NDK_TOOLCHAIN)/x86_64-linux-android$(ANDROID_API)-clang \
-		CGO_LDFLAGS="-Wl,-z,max-page-size=16384 -Wl,-soname,liboctelium.so" \
-		go build $(LIBOCTELIUM_LDFLAGS) -buildmode=c-shared \
-		-o $(LIBOCTELIUM_OUT)/android/x86_64/liboctelium.so $(LIBOCTELIUM_PKG)
-
-build-liboctelium-android: build-liboctelium-android-arm64 build-liboctelium-android-amd64
-
-build-liboctelium-ios-device:
-	CGO_ENABLED=1 GOOS=ios GOARCH=arm64 \
-		CC="$$(xcrun --sdk iphoneos --find clang) -isysroot $$(xcrun --sdk iphoneos --show-sdk-path) -arch arm64 -miphoneos-version-min=$(IOS_MIN_VERSION)" \
-		go build $(LIBOCTELIUM_LDFLAGS) -buildmode=c-archive \
-		-o $(LIBOCTELIUM_OUT)/ios/iphoneos/liboctelium.a $(LIBOCTELIUM_PKG)
-
-build-liboctelium-ios-simulator:
-	CGO_ENABLED=1 GOOS=ios GOARCH=arm64 \
-		CC="$$(xcrun --sdk iphonesimulator --find clang) -isysroot $$(xcrun --sdk iphonesimulator --show-sdk-path) -target arm64-apple-ios$(IOS_MIN_VERSION)-simulator" \
-		go build $(LIBOCTELIUM_LDFLAGS) -buildmode=c-archive \
-		-o $(LIBOCTELIUM_OUT)/ios/iphonesimulator-arm64/liboctelium.a $(LIBOCTELIUM_PKG)
-	CGO_ENABLED=1 GOOS=ios GOARCH=amd64 \
-		CC="$$(xcrun --sdk iphonesimulator --find clang) -isysroot $$(xcrun --sdk iphonesimulator --show-sdk-path) -target x86_64-apple-ios$(IOS_MIN_VERSION)-simulator" \
-		go build $(LIBOCTELIUM_LDFLAGS) -buildmode=c-archive \
-		-o $(LIBOCTELIUM_OUT)/ios/iphonesimulator-amd64/liboctelium.a $(LIBOCTELIUM_PKG)
-	mkdir -p $(LIBOCTELIUM_OUT)/ios/iphonesimulator
-	lipo -create $(LIBOCTELIUM_OUT)/ios/iphonesimulator-arm64/liboctelium.a \
-		$(LIBOCTELIUM_OUT)/ios/iphonesimulator-amd64/liboctelium.a \
-		-output $(LIBOCTELIUM_OUT)/ios/iphonesimulator/liboctelium.a
-	cp $(LIBOCTELIUM_OUT)/ios/iphonesimulator-arm64/liboctelium.h $(LIBOCTELIUM_OUT)/ios/iphonesimulator/liboctelium.h
-
-build-liboctelium-ios: build-liboctelium-ios-device build-liboctelium-ios-simulator
-	rm -rf $(LIBOCTELIUM_OUT)/ios/OcteliumCore.xcframework
-	mkdir -p $(LIBOCTELIUM_OUT)/ios/iphoneos/include $(LIBOCTELIUM_OUT)/ios/iphonesimulator/include
-	cp $(LIBOCTELIUM_OUT)/ios/iphoneos/liboctelium.h $(LIBOCTELIUM_OUT)/ios/iphoneos/include/
-	cp $(LIBOCTELIUM_OUT)/ios/iphonesimulator/liboctelium.h $(LIBOCTELIUM_OUT)/ios/iphonesimulator/include/
-	xcodebuild -create-xcframework \
-		-library $(LIBOCTELIUM_OUT)/ios/iphoneos/liboctelium.a \
-		-headers $(LIBOCTELIUM_OUT)/ios/iphoneos/include \
-		-library $(LIBOCTELIUM_OUT)/ios/iphonesimulator/liboctelium.a \
-		-headers $(LIBOCTELIUM_OUT)/ios/iphonesimulator/include \
-		-output $(LIBOCTELIUM_OUT)/ios/OcteliumCore.xcframework
-
 install-cli: build-cli
 	mkdir -p ~/go/bin
 	cp bin/octelium ~/go/bin/octelium
@@ -215,13 +157,11 @@ gen-go-rsc:
 
 
 gen-go-client:
-	mkdir -p apis/client/cliconfigv1 apis/client/daemonv1 apis/client/mobilev1
+	mkdir -p apis/client/cliconfigv1 apis/client/daemonv1
 	protoc -I . -I $(PROTO_IN_CLIENT)/configv1 configv1.proto \
 		--go_out=apis/client/cliconfigv1 --go-grpc_out=apis/client/cliconfigv1 $(PROTO_GO_OPT)
 	protoc -I . -I $(PROTO_IN_CLIENT)/daemonv1 daemonv1.proto \
 		--go_out=apis/client/daemonv1 --go-grpc_out=apis/client/daemonv1 $(PROTO_GO_OPT_GRPC)
-	protoc -I . -I $(PROTO_IN_CLIENT)/mobilev1 mobilev1.proto \
-		--go_out=apis/client/mobilev1 --go-grpc_out=apis/client/mobilev1 $(PROTO_GO_OPT_GRPC)
 
 gen-api: gen-go-main gen-go-cluster gen-go-client gen-go-rsc
 	rm -rf ./apis/protobuf
@@ -243,7 +183,6 @@ tidy:
 	cd pkg; $(CMD_TIDY)
 	cd octelium-go; $(CMD_TIDY)
 	cd client/common; $(CMD_TIDY)
-	cd client/liboctelium; $(CMD_TIDY)
 	cd client/octelium; $(CMD_TIDY)
 	cd client/octeliumctl; $(CMD_TIDY)
 	cd client/octops; $(CMD_TIDY)

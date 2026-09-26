@@ -38,24 +38,10 @@ func getID() (string, error) {
 		return "", err
 	}
 
-	return HashID(machineID), nil
-}
-
-func HashID(arg string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(arg)))
-}
-
-type deviceInfoCtxKey struct{}
-
-func WithDeviceInfo(ctx context.Context, info *DeviceInfo) context.Context {
-	return context.WithValue(ctx, deviceInfoCtxKey{}, info)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(machineID))), nil
 }
 
 func GetDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
-	if ret, ok := ctx.Value(deviceInfoCtxKey{}).(*DeviceInfo); ok && ret != nil {
-		return ret, nil
-	}
-
 	var err error
 	ret := &DeviceInfo{}
 

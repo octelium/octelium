@@ -34,7 +34,7 @@ func (c *Controller) setWGDev() error {
 		return nil
 	}
 
-	if c.isUserspaceDev() {
+	if c.isNetstack {
 		if c.dev == nil {
 			return errors.Errorf("The WireGuard device is not initialized")
 		}
