@@ -5,29 +5,31 @@ on: workflow_dispatch
 
 jobs:
   test-install:
-    name: ${{ matrix.os }} (${{ matrix.arch }})
+    name: ${{ matrix.os }} (${{ matrix.arch }}, package manager ${{ matrix.package-manager }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-26-intel, macos-latest, windows-latest]
+        package-manager: [auto, "false"]
         include:
-          - os: linux
+          - runner: ubuntu-24.04
+            os: linux
             arch: amd64
-            runner: ubuntu-24.04
-          - os: linux
+          - runner: ubuntu-24.04-arm
+            os: linux
             arch: arm64
-            runner: ubuntu-24.04-arm
-          
-          - os: macos
+          - runner: macos-26-intel
+            os: macos
             arch: amd64
-            runner: macos-26-intel
-          - os: macos
+          - runner: macos-latest
+            os: macos
             arch: arm64
-            runner: macos-latest
-            
-          - os: windows
+          - runner: windows-latest
+            os: windows
             arch: amd64
-            runner: windows-latest
+    env:
+      USE_PACKAGE_MANAGER: ${{ matrix.package-manager }}
 
     steps:
       - name: Checkout Code
@@ -37,15 +39,15 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           curl -fsSL https://octelium.com/install.sh | bash
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run PowerShell Installer (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           iwr https://octelium.com/install.ps1 -useb | iex
-          $binDir = Join-Path $HOME ".local\bin"
-          echo $binDir >> $env:GITHUB_PATH
+          foreach ($bin in @("octelium", "octeliumctl", "octops")) {
+              Split-Path (Get-Command $bin).Source >> $env:GITHUB_PATH
+          }
 
       - name: Verify Version and Files (Linux/macOS)
         if: matrix.os != 'windows'
@@ -53,6 +55,13 @@ jobs:
           octelium version
           octeliumctl version
           octops version
+          if [[ "$USE_PACKAGE_MANAGER" == "false" ]]; then
+            test "$(command -v octelium)" = /usr/local/bin/octelium
+          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            dpkg -s octelium octeliumctl octops > /dev/null
+          else
+            brew list octelium
+          fi
 
       - name: Verify Version and Files (Windows)
         if: matrix.os == 'windows'
@@ -61,7 +70,16 @@ jobs:
           octelium version
           octeliumctl version
           octops version
-          $binDir = Join-Path $HOME ".local\bin"
+          $binDir = Split-Path (Get-Command octelium).Source
+          if ($env:USE_PACKAGE_MANAGER -eq "false") {
+              if ($binDir -ne (Join-Path $HOME ".local\bin")) {
+                  Write-Error "octelium was installed to $binDir instead of the binary directory"
+                  exit 1
+              }
+          } elseif (-not (Test-Path (Join-Path $env:ChocolateyInstall "lib\octelium"))) {
+              Write-Error "octelium was not installed with Chocolatey"
+              exit 1
+          }
           foreach ($dll in @("wireguard.dll", "wintun.dll")) {
               $dllPath = Join-Path $binDir $dll
               if (Test-Path $dllPath) {
