@@ -979,3 +979,98 @@ func TestConnectEventHandlerAuthenticationRequired(t *testing.T) {
 	assert.True(t, isCanceled)
 	assert.ErrorIs(t, stopErr, authenticator.ErrAuthenticationRequired)
 }
+
+func TestConnectEventHandlerRenewAPICredential(t *testing.T) {
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "renewed")
+
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	p := srv.srv.principal
+	domain := "example.com"
+
+	assert.Nil(t, p.dbC.SetSessionToken(domain, &authv1.SessionToken{
+		AccessToken:           "at",
+		RefreshToken:          "rt",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 7200,
+	}))
+
+	d, err := p.getDomain(domain)
+	assert.Nil(t, err)
+
+	op, err := d.beginOperation(daemonv1.Operation_CONNECT, func() {})
+	assert.Nil(t, err)
+
+	var isCanceled bool
+	var stopErr error
+
+	p.update(func() {
+		d.connGen = 1
+		d.connState = daemonv1.ConnectionStatus_RECONNECTING
+	})
+
+	handler := d.getConnectEventHandler(op, 1, &stopErr, func() {
+		isCanceled = true
+	})
+
+	handler(&connect.Event{
+		Type: connect.EventTypeReconnecting,
+		Err:  status.Error(codes.Unauthenticated, "Session no longer exists"),
+	})
+
+	p.mu.Lock()
+	authState := d.authState
+	lastErr := d.lastErr
+	p.mu.Unlock()
+
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, authState)
+	assert.Nil(t, lastErr)
+	assert.True(t, isCanceled)
+	assert.True(t, grpcerr.IsUnauthenticated(stopErr))
+}
+
+func TestGetAPICredentialRenew(t *testing.T) {
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "renewed")
+
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	domain := "example.com"
+
+	_, err := srv.c.UpdateDomainSettings(ctx, &daemonv1.UpdateDomainSettingsRequest{
+		Domain:   domain,
+		Settings: &daemonv1.DomainSettings{},
+	})
+	assert.Nil(t, err)
+
+	{
+		_, err := srv.c.GetAPICredential(ctx, &daemonv1.GetAPICredentialRequest{
+			Domain: domain,
+			Renew:  true,
+		})
+		assert.True(t, grpcerr.IsUnauthenticated(err))
+	}
+
+	assert.Nil(t, srv.srv.principal.dbC.SetSessionToken(domain, &authv1.SessionToken{
+		AccessToken:           "at",
+		RefreshToken:          "rt",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 7200,
+	}))
+	srv.srv.principal.reconcile()
+
+	{
+		resp, err := srv.c.GetAPICredential(ctx, &daemonv1.GetAPICredentialRequest{
+			Domain: domain,
+			Renew:  true,
+		})
+		assert.Nil(t, err)
+		assert.Equal(t, "renewed", resp.AccessToken)
+	}
+}

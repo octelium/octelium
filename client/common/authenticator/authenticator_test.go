@@ -284,6 +284,44 @@ func TestGetAccessTokenRenewAt(t *testing.T) {
 	}
 }
 
+func TestAuthenticatorNeedsNewAccessToken(t *testing.T) {
+	at := &cliconfigv1.State_Domain{
+		SessionToken: &authv1.SessionToken{
+			ExpiresIn: 7200,
+		},
+		SessionTokenSetAt: pbutils.Timestamp(time.Now().Add(-10 * time.Minute)),
+	}
+
+	{
+		a := &authenticator{
+			at: at,
+		}
+		assert.False(t, a.needsNewAccessToken())
+	}
+
+	{
+		a := &authenticator{
+			at:      at,
+			isRenew: true,
+		}
+		assert.True(t, a.needsNewAccessToken())
+	}
+
+	{
+		a := &authenticator{}
+		assert.True(t, a.needsNewAccessToken())
+	}
+}
+
+func TestRenewAccessToken(t *testing.T) {
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "static")
+
+	ret, err := RenewAccessToken(context.Background(), "example.com")
+	assert.Nil(t, err)
+	assert.Equal(t, "static", ret)
+}
+
 func TestGetRenewedSessionToken(t *testing.T) {
 	const domain = "example.com"
 

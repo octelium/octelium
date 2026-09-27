@@ -472,6 +472,7 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 	return func(ev *connect.Event) {
 		var startRefresh bool
 		var isStopped bool
+		var needsRenew bool
 
 		d.p.update(func() {
 			if d.connGen != gen {
@@ -507,6 +508,7 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 					isStopped = true
 					if d.canReconcile() {
 						d.reloadAuthentication()
+						needsRenew = d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED
 					}
 				}
 			}
@@ -516,6 +518,16 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 			zap.L().Debug("Stopping the Connection since authentication is required",
 				zap.String("domain", d.domain), zap.Error(ev.Err))
 			cancelFn()
+
+			if needsRenew {
+				ctx, cancel := context.WithTimeout(d.p.opCtx(), clusterCallTimeout)
+				defer cancel()
+
+				if _, err := d.getAPICredential(ctx, true); err != nil {
+					zap.L().Debug("Could not renew the access token",
+						zap.String("domain", d.domain), zap.Error(err))
+				}
+			}
 			return
 		}
 
@@ -773,7 +785,7 @@ func (d *domainCtl) updateSettings(settings *daemonv1.DomainSettings) (*daemonv1
 	return ret, nil
 }
 
-func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICredentialResponse, error) {
+func (d *domainCtl) getAPICredential(ctx context.Context, isRenew bool) (*daemonv1.GetAPICredentialResponse, error) {
 	d.p.mu.Lock()
 	authState := d.authState
 	d.p.mu.Unlock()
@@ -785,8 +797,13 @@ func (d *domainCtl) getAPICredential(ctx context.Context) (*daemonv1.GetAPICrede
 			"You are not authenticated to the domain %s", d.domain)
 	}
 
+	getAccessToken := authenticator.GetAccessToken
+	if isRenew {
+		getAccessToken = authenticator.RenewAccessToken
+	}
+
 	d.credMu.Lock()
-	accessToken, err := authenticator.GetAccessToken(d.p.ctx(ctx), d.domain)
+	accessToken, err := getAccessToken(d.p.ctx(ctx), d.domain)
 	d.credMu.Unlock()
 
 	if err != nil {
@@ -853,7 +870,7 @@ func (d *domainCtl) startRefreshLoop() {
 			case <-ctx.Done():
 				return
 			case <-tickerCh.C:
-				if _, err := d.getAPICredential(ctx); err != nil {
+				if _, err := d.getAPICredential(ctx, false); err != nil {
 					zap.L().Debug("Could not renew the access token",
 						zap.String("domain", d.domain), zap.Error(err))
 				}

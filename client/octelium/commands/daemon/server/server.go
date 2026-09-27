@@ -37,7 +37,7 @@ import (
 
 const (
 	apiMajorVersion = 1
-	apiMinorVersion = 0
+	apiMinorVersion = 1
 )
 
 const gracefulStopTimeout = 5 * time.Second

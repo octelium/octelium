@@ -227,7 +227,7 @@ func (svc *service) GetAPICredential(ctx context.Context,
 		return nil, err
 	}
 
-	return d.getAPICredential(ctx)
+	return d.getAPICredential(ctx, req.Renew)
 }
 
 func (svc *service) UpdateDomainSettings(ctx context.Context,

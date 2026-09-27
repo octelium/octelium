@@ -131,6 +131,14 @@ func StartGetAccessToken(ctx context.Context, domain string) {
 }
 
 func GetAccessToken(ctx context.Context, domain string) (string, error) {
+	return getAccessToken(ctx, domain, false)
+}
+
+func RenewAccessToken(ctx context.Context, domain string) (string, error) {
+	return getAccessToken(ctx, domain, true)
+}
+
+func getAccessToken(ctx context.Context, domain string, isRenew bool) (string, error) {
 
 	if isAuthProxyMode() {
 		return "", nil
@@ -148,6 +156,8 @@ func GetAccessToken(ctx context.Context, domain string) (string, error) {
 	}
 	defer authC.c.Close()
 
+	authC.isRenew = isRenew
+
 	return authC.doGetAccessToken(ctx)
 }
 
@@ -159,6 +169,7 @@ type authenticator struct {
 
 	isAuthentication bool
 	isRefresh        bool
+	isRenew          bool
 
 	c *authc.Client
 }
@@ -243,7 +254,7 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 
 	switch {
 	case a.isRefresh:
-		if !NeedsNewAccessToken(a.at) {
+		if !a.needsNewAccessToken() {
 			return a.at.SessionToken.AccessToken, nil
 		}
 
@@ -429,6 +440,10 @@ func (a *authenticator) doWebAuthentication(ctx context.Context) (string, error)
 		return "", err
 	}
 	return at.AccessToken, nil
+}
+
+func (a *authenticator) needsNewAccessToken() bool {
+	return a.isRenew || NeedsNewAccessToken(a.at)
 }
 
 func NeedsNewAccessToken(at *cliconfigv1.State_Domain) bool {
