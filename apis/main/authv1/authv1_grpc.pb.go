@@ -39,6 +39,7 @@ const (
 	MainService_AuthenticateWithRefreshToken_FullMethodName        = "/octelium.api.main.auth.v1.MainService/AuthenticateWithRefreshToken"
 	MainService_AuthenticateWithAuthenticator_FullMethodName       = "/octelium.api.main.auth.v1.MainService/AuthenticateWithAuthenticator"
 	MainService_Logout_FullMethodName                              = "/octelium.api.main.auth.v1.MainService/Logout"
+	MainService_RegisterDevice_FullMethodName                      = "/octelium.api.main.auth.v1.MainService/RegisterDevice"
 	MainService_RegisterDeviceBegin_FullMethodName                 = "/octelium.api.main.auth.v1.MainService/RegisterDeviceBegin"
 	MainService_RegisterDeviceFinish_FullMethodName                = "/octelium.api.main.auth.v1.MainService/RegisterDeviceFinish"
 	MainService_GetAuthenticator_FullMethodName                    = "/octelium.api.main.auth.v1.MainService/GetAuthenticator"
@@ -65,6 +66,10 @@ type MainServiceClient interface {
 	AuthenticateWithRefreshToken(ctx context.Context, in *AuthenticateWithRefreshTokenRequest, opts ...grpc.CallOption) (*SessionToken, error)
 	AuthenticateWithAuthenticator(ctx context.Context, in *AuthenticateWithAuthenticatorRequest, opts ...grpc.CallOption) (*SessionToken, error)
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
+	RegisterDevice(ctx context.Context, in *RegisterDeviceRequest, opts ...grpc.CallOption) (*RegisterDeviceResponse, error)
+	// RegisterDeviceBegin and RegisterDeviceFinish are the legacy two-step
+	// registration that is only kept for the clients that predate
+	// RegisterDevice.
 	RegisterDeviceBegin(ctx context.Context, in *RegisterDeviceBeginRequest, opts ...grpc.CallOption) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(ctx context.Context, in *RegisterDeviceFinishRequest, opts ...grpc.CallOption) (*RegisterDeviceFinishResponse, error)
 	GetAuthenticator(ctx context.Context, in *metav1.GetOptions, opts ...grpc.CallOption) (*Authenticator, error)
@@ -134,6 +139,16 @@ func (c *mainServiceClient) Logout(ctx context.Context, in *LogoutRequest, opts 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LogoutResponse)
 	err := c.cc.Invoke(ctx, MainService_Logout_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mainServiceClient) RegisterDevice(ctx context.Context, in *RegisterDeviceRequest, opts ...grpc.CallOption) (*RegisterDeviceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterDeviceResponse)
+	err := c.cc.Invoke(ctx, MainService_RegisterDevice_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +314,10 @@ type MainServiceServer interface {
 	AuthenticateWithRefreshToken(context.Context, *AuthenticateWithRefreshTokenRequest) (*SessionToken, error)
 	AuthenticateWithAuthenticator(context.Context, *AuthenticateWithAuthenticatorRequest) (*SessionToken, error)
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
+	RegisterDevice(context.Context, *RegisterDeviceRequest) (*RegisterDeviceResponse, error)
+	// RegisterDeviceBegin and RegisterDeviceFinish are the legacy two-step
+	// registration that is only kept for the clients that predate
+	// RegisterDevice.
 	RegisterDeviceBegin(context.Context, *RegisterDeviceBeginRequest) (*RegisterDeviceBeginResponse, error)
 	RegisterDeviceFinish(context.Context, *RegisterDeviceFinishRequest) (*RegisterDeviceFinishResponse, error)
 	GetAuthenticator(context.Context, *metav1.GetOptions) (*Authenticator, error)
@@ -338,6 +357,9 @@ func (UnimplementedMainServiceServer) AuthenticateWithAuthenticator(context.Cont
 }
 func (UnimplementedMainServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Logout not implemented")
+}
+func (UnimplementedMainServiceServer) RegisterDevice(context.Context, *RegisterDeviceRequest) (*RegisterDeviceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterDevice not implemented")
 }
 func (UnimplementedMainServiceServer) RegisterDeviceBegin(context.Context, *RegisterDeviceBeginRequest) (*RegisterDeviceBeginResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterDeviceBegin not implemented")
@@ -491,6 +513,24 @@ func _MainService_Logout_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MainServiceServer).Logout(ctx, req.(*LogoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MainService_RegisterDevice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterDeviceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MainServiceServer).RegisterDevice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MainService_RegisterDevice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MainServiceServer).RegisterDevice(ctx, req.(*RegisterDeviceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -791,6 +831,10 @@ var MainService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Logout",
 			Handler:    _MainService_Logout_Handler,
+		},
+		{
+			MethodName: "RegisterDevice",
+			Handler:    _MainService_RegisterDevice_Handler,
 		},
 		{
 			MethodName: "RegisterDeviceBegin",

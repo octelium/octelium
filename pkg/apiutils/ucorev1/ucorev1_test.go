@@ -16,10 +16,12 @@ package ucorev1
 
 import (
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestServiceAddresses(t *testing.T) {
@@ -221,5 +223,80 @@ func TestSecretValues(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, []byte("spec-value"), chain)
 		assert.Equal(t, []byte("data-value"), key)
+	}
+}
+
+func TestDeviceIsPostureUsable(t *testing.T) {
+	now := time.Now()
+
+	getDevice := func() *corev1.Device {
+		return &corev1.Device{
+			Status: &corev1.Device_Status{
+				Binding: &corev1.Device_Status_Binding{
+					OwnerRef: &metav1.ObjectReference{Uid: "dm1"},
+					State:    corev1.Device_Status_Binding_ACCEPTED,
+					Validity: corev1.Device_Status_Binding_VALID,
+				},
+				Posture: &corev1.Device_Status_Posture{
+					ExpiresAt:      timestamppb.New(now.Add(time.Hour)),
+					DiskEncryption: corev1.Device_Status_Posture_PASS,
+				},
+			},
+		}
+	}
+
+	assert.True(t, ToDevice(getDevice()).IsPostureUsable(now))
+
+	assert.False(t, ToDevice(nil).IsPostureUsable(now))
+	assert.False(t, ToDevice(&corev1.Device{}).IsPostureUsable(now))
+
+	{
+		dev := getDevice()
+		dev.Status.Posture = nil
+		assert.False(t, ToDevice(dev).IsPostureUsable(now))
+	}
+
+	{
+		dev := getDevice()
+		dev.Status.Binding = nil
+		assert.False(t, ToDevice(dev).IsPostureUsable(now))
+	}
+
+	for _, state := range []corev1.Device_Status_Binding_State{
+		corev1.Device_Status_Binding_STATE_UNKNOWN,
+		corev1.Device_Status_Binding_AMBIGUOUS,
+		corev1.Device_Status_Binding_CONFLICT,
+	} {
+		dev := getDevice()
+		dev.Status.Binding.State = state
+		assert.False(t, ToDevice(dev).IsPostureUsable(now), "state: %s", state)
+	}
+
+	for _, validity := range []corev1.Device_Status_Binding_Validity{
+		corev1.Device_Status_Binding_VALIDITY_UNKNOWN,
+		corev1.Device_Status_Binding_SUSPENDED,
+		corev1.Device_Status_Binding_LOST,
+	} {
+		dev := getDevice()
+		dev.Status.Binding.Validity = validity
+		assert.False(t, ToDevice(dev).IsPostureUsable(now), "validity: %s", validity)
+	}
+
+	{
+		dev := getDevice()
+		dev.Status.Posture.ExpiresAt = nil
+		assert.False(t, ToDevice(dev).IsPostureUsable(now))
+	}
+
+	{
+		dev := getDevice()
+		dev.Status.Posture.ExpiresAt = timestamppb.New(now)
+		assert.False(t, ToDevice(dev).IsPostureUsable(now))
+	}
+
+	{
+		dev := getDevice()
+		dev.Status.Posture.ExpiresAt = timestamppb.New(now.Add(-time.Second))
+		assert.False(t, ToDevice(dev).IsPostureUsable(now))
 	}
 }

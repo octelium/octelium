@@ -16,15 +16,13 @@ package register
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/deviceinfo"
+	"github.com/octelium/octelium/client/common/commands/auth/authcommon/deviceprobe"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -60,7 +58,41 @@ func DoRegisterDevice(ctx context.Context, domain string) error {
 	}
 	defer c.Close()
 
-	req, err := doRegisterBegin(ctx, c.C())
+	info, err := deviceinfo.GetDeviceInfo(ctx)
+	if err != nil {
+		return err
+	}
+
+	zap.L().Debug("Obtained Device info", zap.Any("info", info))
+
+	return doRegisterDevice(ctx, c.C(), info)
+}
+
+func doRegisterDevice(ctx context.Context, c authv1.MainServiceClient, info *deviceinfo.DeviceInfo) error {
+	req := getRegisterDeviceRequest(info)
+
+	_, err := c.RegisterDevice(ctx, req)
+	switch {
+	case err == nil:
+		cliutils.LineNotify("Device successfully registered\n")
+	case grpcerr.AlreadyExists(err):
+		cliutils.LineNotify("Device already registered\n")
+	case grpcerr.IsUnimplemented(err):
+		zap.L().Debug("RegisterDevice is not implemented by the Cluster. Falling back to the legacy registration")
+		return doRegisterDeviceLegacy(ctx, c, req.Info)
+	default:
+		return err
+	}
+
+	runDeviceProbe(ctx, c)
+
+	return nil
+}
+
+func doRegisterDeviceLegacy(ctx context.Context, c authv1.MainServiceClient, info *authv1.RegisterDeviceRequest_Info) error {
+	resp, err := c.RegisterDeviceBegin(ctx, &authv1.RegisterDeviceBeginRequest{
+		Info: info,
+	})
 	if err != nil {
 		if grpcerr.AlreadyExists(err) {
 			cliutils.LineNotify("Device already registered\n")
@@ -69,7 +101,9 @@ func DoRegisterDevice(ctx context.Context, domain string) error {
 		return err
 	}
 
-	if _, err := doRegisterFinish(ctx, c.C(), req); err != nil {
+	if _, err := c.RegisterDeviceFinish(ctx, &authv1.RegisterDeviceFinishRequest{
+		Uid: resp.Uid,
+	}); err != nil {
 		return err
 	}
 
@@ -78,17 +112,15 @@ func DoRegisterDevice(ctx context.Context, domain string) error {
 	return nil
 }
 
-func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.RegisterDeviceBeginResponse, error) {
-
-	info, err := deviceinfo.GetDeviceInfo(ctx)
-	if err != nil {
-		return nil, err
+func runDeviceProbe(ctx context.Context, c authv1.MainServiceClient) {
+	if err := deviceprobe.Run(ctx, c); err != nil {
+		zap.L().Warn("Could not run the Device probes", zap.Error(err))
 	}
+}
 
-	zap.L().Debug("Obtained Device info", zap.Any("info", info))
-
-	req := &authv1.RegisterDeviceBeginRequest{
-		Info: &authv1.RegisterDeviceBeginRequest_Info{
+func getRegisterDeviceRequest(info *deviceinfo.DeviceInfo) *authv1.RegisterDeviceRequest {
+	return &authv1.RegisterDeviceRequest{
+		Info: &authv1.RegisterDeviceRequest_Info{
 			Hostname:     getHostname(info.Hostname),
 			Id:           info.ID,
 			SerialNumber: info.SerialNumber,
@@ -96,8 +128,6 @@ func doRegisterBegin(ctx context.Context, c authv1.MainServiceClient) (*authv1.R
 			MacAddresses: info.MacAddresses,
 		},
 	}
-
-	return c.RegisterDeviceBegin(ctx, req)
 }
 
 const maxHostnameLen = 32
@@ -119,65 +149,19 @@ func getHostname(arg string) string {
 	return strings.TrimSpace(arg[:end])
 }
 
-func getOSType() authv1.RegisterDeviceBeginRequest_Info_OSType {
+func getOSType() authv1.RegisterDeviceRequest_Info_OSType {
 	switch {
 	case cliutils.IsWindows():
-		return authv1.RegisterDeviceBeginRequest_Info_WINDOWS
+		return authv1.RegisterDeviceRequest_Info_WINDOWS
 	case cliutils.IsLinux():
-		return authv1.RegisterDeviceBeginRequest_Info_LINUX
+		return authv1.RegisterDeviceRequest_Info_LINUX
 	case cliutils.IsDarwin():
-		return authv1.RegisterDeviceBeginRequest_Info_MAC
+		return authv1.RegisterDeviceRequest_Info_MAC
 	case cliutils.IsAndroid():
-		return authv1.RegisterDeviceBeginRequest_Info_ANDROID
+		return authv1.RegisterDeviceRequest_Info_ANDROID
 	case cliutils.IsIOS():
-		return authv1.RegisterDeviceBeginRequest_Info_IOS
+		return authv1.RegisterDeviceRequest_Info_IOS
 	default:
-		return authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN
+		return authv1.RegisterDeviceRequest_Info_OS_TYPE_UNKNOWN
 	}
-}
-
-func doRegisterFinish(ctx context.Context, c authv1.MainServiceClient, req *authv1.RegisterDeviceBeginResponse) (*authv1.RegisterDeviceFinishResponse, error) {
-
-	var responses []*authv1.RegisterDeviceFinishRequest_Response
-
-	for _, rq := range req.Requests {
-		switch rq.Type.(type) {
-		case *authv1.RegisterDeviceBeginResponse_Request_Command_:
-			out, err := exec.CommandContext(ctx, rq.GetCommand().Command, rq.GetCommand().Args...).CombinedOutput()
-			if err != nil {
-				return nil, err
-			}
-
-			resp := &authv1.RegisterDeviceFinishRequest_Response{
-				Uid: rq.Uid,
-				Type: &authv1.RegisterDeviceFinishRequest_Response_Command_{
-					Command: &authv1.RegisterDeviceFinishRequest_Response_Command{
-						Output: out,
-					},
-				},
-			}
-			responses = append(responses, resp)
-		case *authv1.RegisterDeviceBeginResponse_Request_File_:
-			out, err := os.ReadFile(rq.GetFile().Path)
-			if err != nil {
-				return nil, err
-			}
-			resp := &authv1.RegisterDeviceFinishRequest_Response{
-				Uid: rq.Uid,
-				Type: &authv1.RegisterDeviceFinishRequest_Response_File_{
-					File: &authv1.RegisterDeviceFinishRequest_Response_File{
-						Output: out,
-					},
-				},
-			}
-			responses = append(responses, resp)
-		default:
-			return nil, errors.Errorf("Unknown device registration type. Please upgrade Octelium...")
-		}
-	}
-
-	return c.RegisterDeviceFinish(ctx, &authv1.RegisterDeviceFinishRequest{
-		Uid:       req.Uid,
-		Responses: responses,
-	})
 }

@@ -19,6 +19,7 @@ package octovigil
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -89,7 +90,7 @@ func (s *internalService) GetDownstreamFromSessionUID(
 		Session: di.Session,
 		User:    di.User,
 		Groups:  di.Groups,
-		Device:  di.Device,
+		Device:  getEffectiveDevice(di.Device, time.Now()),
 	}, nil
 }
 

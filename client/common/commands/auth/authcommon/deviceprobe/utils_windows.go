@@ -17,6 +17,10 @@
 package deviceprobe
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/authv1"
@@ -34,34 +38,71 @@ func isElevated() bool {
 	return token.IsElevated()
 }
 
-func readRegistry(rr *authv1.DeviceProbe_ReadRegistry) ([]byte, error) {
+func readRegistry(probeID string, rr *authv1.DeviceProbe_ReadRegistry) *authv1.DeviceProbeResult {
 	hive, path, err := splitHive(rr.Key)
 	if err != nil {
-		return nil, err
+		return probeStatus(probeID, authv1.DeviceProbeResult_FAILED, err.Error())
 	}
 	k, err := registry.OpenKey(hive, path, registry.QUERY_VALUE|registry.WOW64_64KEY)
 	if err != nil {
-		return nil, err
+		return probeErr(probeID, err)
 	}
 	defer k.Close()
 
-	n, _, err := k.GetValue(rr.Name, nil)
+	_, valType, err := k.GetValue(rr.Name, nil)
 	if err != nil && err != registry.ErrShortBuffer {
-		return nil, err
-	}
-	if n > maxOutputBytes {
-		return nil, errors.Errorf("registry value is too large: %d bytes", n)
-	}
-	if n == 0 {
-		return nil, nil
+		return probeErr(probeID, err)
 	}
 
-	buf := make([]byte, n)
-	n, _, err = k.GetValue(rr.Name, buf)
-	if err != nil {
-		return nil, err
+	ret := &authv1.DeviceProbeResult{
+		ProbeID: probeID,
+		Status:  authv1.DeviceProbeResult_OK,
 	}
-	return buf[:n], nil
+
+	switch valType {
+	case registry.SZ, registry.EXPAND_SZ:
+		val, _, err := k.GetStringValue(rr.Name)
+		if err != nil {
+			return probeErr(probeID, err)
+		}
+		ret.Value = &authv1.DeviceProbeResult_Text{Text: val}
+	case registry.MULTI_SZ:
+		val, _, err := k.GetStringsValue(rr.Name)
+		if err != nil {
+			return probeErr(probeID, err)
+		}
+		ret.Value = &authv1.DeviceProbeResult_List_{
+			List: &authv1.DeviceProbeResult_List{
+				Items: val,
+			},
+		}
+	case registry.DWORD, registry.QWORD:
+		val, _, err := k.GetIntegerValue(rr.Name)
+		if err != nil {
+			return probeErr(probeID, err)
+		}
+		ret.Value = &authv1.DeviceProbeResult_Text{Text: strconv.FormatUint(val, 10)}
+	default:
+		n, _, err := k.GetValue(rr.Name, nil)
+		if err != nil && err != registry.ErrShortBuffer {
+			return probeErr(probeID, err)
+		}
+		if n > defaultMaxOutput {
+			return probeStatus(probeID, authv1.DeviceProbeResult_FAILED,
+				fmt.Sprintf("registry value is too large: %d bytes", n))
+		}
+
+		buf := make([]byte, n)
+		if n > 0 {
+			n, _, err = k.GetValue(rr.Name, buf)
+			if err != nil {
+				return probeErr(probeID, err)
+			}
+		}
+		ret.Value = &authv1.DeviceProbeResult_Data{Data: buf[:n]}
+	}
+
+	return ret
 }
 
 func splitHive(key string) (registry.Key, string, error) {
@@ -82,4 +123,27 @@ func splitHive(key string) (registry.Key, string, error) {
 	default:
 		return 0, "", errors.Errorf("unsupported registry hive: %s", parts[0])
 	}
+}
+
+func openProbeFile(pth string) (*os.File, error) {
+	return os.Open(pth)
+}
+
+func getCommandEnv() []string {
+	var ret []string
+	for _, name := range []string{
+		"SystemRoot", "SystemDrive", "windir", "PATH", "PATHEXT",
+		"TEMP", "TMP", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles",
+	} {
+		if val, ok := os.LookupEnv(name); ok {
+			ret = append(ret, fmt.Sprintf("%s=%s", name, val))
+		}
+	}
+	return ret
+}
+
+func setCommandProcAttrs(cmd *exec.Cmd) {
+}
+
+func cleanupCommand(cmd *exec.Cmd) {
 }

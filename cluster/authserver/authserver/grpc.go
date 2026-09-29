@@ -135,6 +135,11 @@ func (s *authMainSvc) Logout(ctx context.Context, req *authv1.LogoutRequest) (*a
 	return s.s.doLogout(ctx, req)
 }
 
+func (s *authMainSvc) RegisterDevice(ctx context.Context,
+	req *authv1.RegisterDeviceRequest) (*authv1.RegisterDeviceResponse, error) {
+	return s.s.doRegisterDevice(ctx, req)
+}
+
 func (s *authMainSvc) RegisterDeviceBegin(ctx context.Context,
 	req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
 	return s.s.doRegisterDeviceBegin(ctx, req)

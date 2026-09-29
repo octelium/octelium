@@ -20,13 +20,21 @@ import (
 	"os"
 
 	"github.com/octelium/octelium/apis/main/authv1"
-	"github.com/pkg/errors"
 )
 
 func isElevated() bool {
 	return os.Geteuid() == 0
 }
 
-func readRegistry(_ *authv1.DeviceProbe_ReadRegistry) ([]byte, error) {
-	return nil, errors.Errorf("registry probe not supported on this platform")
+func readRegistry(probeID string, _ *authv1.DeviceProbe_ReadRegistry) *authv1.DeviceProbeResult {
+	return probeStatus(probeID, authv1.DeviceProbeResult_UNSUPPORTED,
+		"registry probe not supported on this platform")
+}
+
+func getCommandEnv() []string {
+	return []string{
+		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+		"LANG=C",
+		"LC_ALL=C",
+	}
 }

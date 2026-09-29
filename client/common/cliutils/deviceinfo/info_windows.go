@@ -17,11 +17,16 @@ package deviceinfo
 import (
 	"context"
 
+	"github.com/pkg/errors"
 	"github.com/yusufpapurcu/wmi"
 )
 
 type Win32_BIOS struct {
 	SerialNumber string
+}
+
+type Win32_ComputerSystemProduct struct {
+	UUID string
 }
 
 func getSerialNumber(ctx context.Context) (string, error) {
@@ -32,5 +37,24 @@ func getSerialNumber(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	if len(dst) == 0 {
+		return "", nil
+	}
+
 	return dst[0].SerialNumber, nil
+}
+
+func getHardwareUUID(ctx context.Context) (string, error) {
+	var dst []Win32_ComputerSystemProduct
+	query := wmi.CreateQuery(&dst, "")
+	err := wmi.Query(query, &dst)
+	if err != nil {
+		return "", err
+	}
+
+	if len(dst) == 0 {
+		return "", errors.Errorf("Could not find hardware UUID")
+	}
+
+	return dst[0].UUID, nil
 }

@@ -36,6 +36,20 @@ func getSerialNumber(ctx context.Context) (string, error) {
 	return "", errors.Errorf("Could not find serialNumber")
 }
 
+func getHardwareUUID(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output()
+	if err != nil {
+		return "", err
+	}
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.Contains(l, "IOPlatformUUID") {
+			return doTrim(l), nil
+		}
+	}
+
+	return "", errors.Errorf("Could not find hardware UUID")
+}
+
 func doTrim(l string) string {
 	kv := strings.Split(l, "=")
 	if len(kv) != 2 {

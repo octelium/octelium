@@ -23,7 +23,6 @@ import (
 	"net"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,23 +43,18 @@ import (
 )
 
 func (s *server) doBuildDevice(ctx context.Context,
-	cc *corev1.ClusterConfig, req *authv1.RegisterDeviceBeginRequest,
+	cc *corev1.ClusterConfig, info *authv1.RegisterDeviceRequest_Info,
 	usr *corev1.User) (*corev1.Device, error) {
 
-	var macAddrs []string
-
-	for _, addr := range req.Info.MacAddresses {
-		hw, err := net.ParseMAC(addr)
-		if err != nil {
-			return nil, err
-		}
-		macAddrs = append(macAddrs, hw.String())
+	macAddrs, err := getDeviceMacAddresses(info)
+	if err != nil {
+		return nil, err
 	}
 
 	deviceReq := &corev1.Device{
 		Metadata: &metav1.Metadata{
 			Name: fmt.Sprintf("%s-%s",
-				strings.ToLower(req.Info.OsType.String()),
+				strings.ToLower(info.OsType.String()),
 				utilrand.GetRandomStringLowercase(8)),
 		},
 
@@ -84,10 +78,10 @@ func (s *server) doBuildDevice(ctx context.Context,
 
 		Status: &corev1.Device_Status{
 			UserRef:      umetav1.GetObjectReference(usr),
-			OsType:       corev1.Device_Status_OSType(req.Info.OsType),
-			Hostname:     req.Info.Hostname,
-			Id:           req.Info.Id,
-			SerialNumber: req.Info.SerialNumber,
+			OsType:       corev1.Device_Status_OSType(info.OsType),
+			Hostname:     info.Hostname,
+			Id:           info.Id,
+			SerialNumber: info.SerialNumber,
 			MacAddresses: macAddrs,
 		},
 	}
@@ -95,12 +89,67 @@ func (s *server) doBuildDevice(ctx context.Context,
 	return deviceReq, nil
 }
 
-func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
+func getDeviceMacAddresses(info *authv1.RegisterDeviceRequest_Info) ([]string, error) {
+	var ret []string
 
-	if err := s.validateRegisterDeviceBeginRequest(req); err != nil {
+	for _, addr := range info.MacAddresses {
+		hw, err := net.ParseMAC(addr)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, hw.String())
+	}
+
+	return ret, nil
+}
+
+func (s *server) doRegisterDevice(ctx context.Context, req *authv1.RegisterDeviceRequest) (*authv1.RegisterDeviceResponse, error) {
+
+	if err := s.validateRegisterDeviceRequest(req); err != nil {
 		return nil, s.errInvalidArgErr(err)
 	}
 
+	sess, err := s.getDeviceRegistrationSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	usr, err := s.getUserFromSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	dev, err := s.checkCanCreateDevice(ctx, cc, usr, req.Info)
+	if err != nil {
+		return nil, err
+	}
+
+	if dev == nil {
+		devReq, err := s.doBuildDevice(ctx, cc, req.Info, usr)
+		if err != nil {
+			return nil, err
+		}
+
+		dev, err = s.octeliumC.CoreC().CreateDevice(ctx, devReq)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	sess.Status.DeviceRef = umetav1.GetObjectReference(dev)
+	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	return &authv1.RegisterDeviceResponse{}, nil
+}
+
+func (s *server) getDeviceRegistrationSession(ctx context.Context) (*corev1.Session, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -118,6 +167,20 @@ func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.Register
 		return nil, grpcutils.AlreadyExists("This Device is already registered")
 	}
 
+	return sess, nil
+}
+
+func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.RegisterDeviceBeginRequest) (*authv1.RegisterDeviceBeginResponse, error) {
+
+	if err := s.validateRegisterDeviceBeginRequest(req); err != nil {
+		return nil, s.errInvalidArgErr(err)
+	}
+
+	sess, err := s.getDeviceRegistrationSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -127,8 +190,18 @@ func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.Register
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkCanCreateDevice(ctx, cc, usr, sess, req); err != nil {
+
+	existing, err := s.checkCanCreateDevice(ctx, cc, usr, req.Info)
+	if err != nil {
 		return nil, err
+	}
+
+	if existing != nil {
+		sess.Status.DeviceRef = umetav1.GetObjectReference(existing)
+		if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+			return nil, s.errInternalErr(err)
+		}
+		return nil, s.errAlreadyExists("Device is already registered")
 	}
 
 	ret := &authv1.RegisterDeviceBeginResponse{
@@ -208,7 +281,7 @@ func (s *server) doRegisterDeviceFinish(ctx context.Context, reqi *authv1.Regist
 		return nil, s.errInternalErr(err)
 	}
 
-	devReq, err := s.doBuildDevice(ctx, cc, req, usr)
+	devReq, err := s.doBuildDevice(ctx, cc, req.Info, usr)
 	if err != nil {
 		return nil, err
 	}
@@ -273,16 +346,8 @@ func (s *server) loadDeviceRegistrationBeginReq(ctx context.Context, sess *corev
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
-	if len(reqi.Responses) != len(beginResp.Requests) {
-		return nil, grpcutils.InvalidArg("Invalid responses len")
-	}
-
-	for _, req := range beginResp.Requests {
-		if !slices.ContainsFunc(reqi.Responses, func(a *authv1.RegisterDeviceFinishRequest_Response) bool {
-			return a.Uid == req.Uid
-		}) {
-			return nil, grpcutils.InvalidArg("Response of uid does not exist: %s", req.Uid)
-		}
+	if beginResp.Uid != reqi.Uid {
+		return nil, grpcutils.InvalidArg("Invalid registration UID")
 	}
 
 	return beginReq, nil
@@ -296,16 +361,26 @@ var rgxDeviceID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 var rgxDeviceRegistrationUID = regexp.MustCompile(`^[a-z0-9]{10}$`)
 
+func (s *server) validateRegisterDeviceRequest(req *authv1.RegisterDeviceRequest) error {
+	if req == nil {
+		return errors.Errorf("Nil req")
+	}
+
+	return s.validateDeviceInfo(req.Info)
+}
+
 func (s *server) validateRegisterDeviceBeginRequest(req *authv1.RegisterDeviceBeginRequest) error {
 	if req == nil {
 		return errors.Errorf("Nil req")
 	}
 
-	if req.Info == nil {
+	return s.validateDeviceInfo(req.Info)
+}
+
+func (s *server) validateDeviceInfo(info *authv1.RegisterDeviceRequest_Info) error {
+	if info == nil {
 		return errors.Errorf("Nil info")
 	}
-
-	info := req.Info
 
 	{
 		if info.Id == "" {
@@ -339,12 +414,14 @@ func (s *server) validateRegisterDeviceBeginRequest(req *authv1.RegisterDeviceBe
 	}
 
 	switch info.OsType {
-	case authv1.RegisterDeviceBeginRequest_Info_OS_TYPE_UNKNOWN:
+	case authv1.RegisterDeviceRequest_Info_LINUX,
+		authv1.RegisterDeviceRequest_Info_WINDOWS,
+		authv1.RegisterDeviceRequest_Info_MAC,
+		authv1.RegisterDeviceRequest_Info_ANDROID,
+		authv1.RegisterDeviceRequest_Info_IOS,
+		authv1.RegisterDeviceRequest_Info_CHROMEOS:
+	default:
 		return errors.Errorf("Unknown osType")
-		/*
-			case authv1.RegisterDeviceBeginRequest_Info_ANDROID, authv1.RegisterDeviceBeginRequest_Info_IOS:
-				return errors.Errorf("Unsupported osType")
-		*/
 	}
 
 	if len(info.MacAddresses) > 0 {
@@ -369,30 +446,6 @@ func (s *server) validateRegisterDeviceFinishRequest(req *authv1.RegisterDeviceF
 	if !rgxDeviceRegistrationUID.MatchString(req.Uid) {
 		return s.errInvalidArg("invalid UID")
 	}
-	if len(req.Responses) > 0 {
-		if len(req.Responses) > 100 {
-			return s.errInvalidArg("Too many responses")
-		}
-
-		for _, resp := range req.Responses {
-			if !rgxDeviceRegistrationUID.MatchString(resp.Uid) {
-				return s.errInvalidArg("invalid UID")
-			}
-
-			switch resp.Type.(type) {
-			case *authv1.RegisterDeviceFinishRequest_Response_Command_:
-				if len(resp.GetCommand().Output) > 10000 {
-					return s.errInvalidArg("Output is too large")
-				}
-			case *authv1.RegisterDeviceFinishRequest_Response_File_:
-				if len(resp.GetFile().Output) > 10000 {
-					return s.errInvalidArg("Output is too large")
-				}
-			default:
-				return s.errInvalidArg("Invalid response type")
-			}
-		}
-	}
 
 	return nil
 }
@@ -400,50 +453,35 @@ func (s *server) validateRegisterDeviceFinishRequest(req *authv1.RegisterDeviceF
 const defaultMaxDevicePerUser = 32
 
 func (s *server) checkCanCreateDevice(ctx context.Context,
-	cc *corev1.ClusterConfig, usr *corev1.User, sess *corev1.Session, req *authv1.RegisterDeviceBeginRequest) error {
+	cc *corev1.ClusterConfig, usr *corev1.User, info *authv1.RegisterDeviceRequest_Info) (*corev1.Device, error) {
 	{
 		devList, err := s.octeliumC.CoreC().ListDevice(ctx, &rmetav1.ListOptions{
 			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("status.id", req.Info.Id),
+				urscsrv.FilterFieldEQValStr("status.id", info.Id),
 			},
 		})
 		if err != nil {
-			return s.errInternalErr(err)
+			return nil, s.errInternalErr(err)
 		}
 		if len(devList.Items) > 0 {
 			dev := devList.Items[0]
 			if dev.Status.UserRef.Uid != usr.Metadata.Uid {
-				return s.errInvalidArg("Invalid ID")
+				return nil, s.errInvalidArg("Invalid ID")
 			}
-			sess.Status.DeviceRef = umetav1.GetObjectReference(dev)
-			_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
-			if err != nil {
-				return s.errInternalErr(err)
-			}
-			return s.errAlreadyExists("Device is already registered")
+			return dev, nil
 		}
 	}
 
-	if req.Info.SerialNumber != "" {
-		devList, err := s.octeliumC.CoreC().ListDevice(ctx, &rmetav1.ListOptions{
-			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("status.serialNumber", req.Info.SerialNumber),
-			},
-		})
-		if err != nil {
-			return s.errInternalErr(err)
-		}
-		if len(devList.Items) > 0 {
-			dev := devList.Items[0]
-			if dev.Status.UserRef.Uid != usr.Metadata.Uid {
-				return s.errInvalidArg("Invalid serial number")
+	devList, err := s.octeliumC.CoreC().ListDevice(ctx, urscsrv.FilterByUser(usr))
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	if info.SerialNumber != "" {
+		for _, dev := range devList.Items {
+			if dev.Status.SerialNumber == info.SerialNumber {
+				return dev, nil
 			}
-			sess.Status.DeviceRef = umetav1.GetObjectReference(dev)
-			_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
-			if err != nil {
-				return s.errInternalErr(err)
-			}
-			return s.errAlreadyExists("Device is already registered")
 		}
 	}
 
@@ -467,16 +505,12 @@ func (s *server) checkCanCreateDevice(ctx context.Context,
 			maxPerUser = 10000
 		}
 
-		devList, err := s.octeliumC.CoreC().ListDevice(ctx, urscsrv.FilterByUser(usr))
-		if err != nil {
-			return s.errInternalErr(err)
-		}
 		if len(devList.Items) >= int(maxPerUser) {
-			return s.errPermissionDenied("Limit of Devices has been exceeded")
+			return nil, s.errPermissionDenied("Limit of Devices has been exceeded")
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (s *server) getDeviceByID(ctx context.Context, id string) (*corev1.Device, error) {
@@ -495,18 +529,73 @@ func (s *server) getDeviceByID(ctx context.Context, id string) (*corev1.Device, 
 	return devList.Items[0], nil
 }
 
-const probeAttemptTTL = 10 * time.Minute
+const (
+	probeAttemptDuration = 10 * time.Minute
 
-const maxProbesPerAttempt = 100
+	maxProbesPerAttempt = 64
+
+	probeMaxTotalBytes = 128 * 1024
+
+	defaultProbeMaxOutputBytes = 16384
+	hardProbeMaxOutputBytes    = 65536
+
+	maxProbeResultListItems   = 256
+	maxProbeResultListItemLen = 1024
+	maxProbeResultDetailLen   = 2048
+)
 
 var rgxProbeAttemptUID = regexp.MustCompile(`^[a-z0-9]{32}$`)
 
-var rgxProbeID = regexp.MustCompile(`^(0|[1-9][0-9]{0,2})$`)
+var rgxProbeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+func (s *server) getProbeUserAndDevice(ctx context.Context, sess *corev1.Session) (*corev1.User, *corev1.Device, error) {
+	usr, err := s.getUserFromSession(ctx, sess)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if usr.Spec.Type != corev1.User_Spec_HUMAN {
+		return nil, nil, grpcutils.PermissionDenied("Not a human user")
+	}
+
+	dev, err := s.octeliumC.CoreC().GetDevice(ctx,
+		apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if dev.Status.UserRef.GetUid() != usr.Metadata.Uid {
+		return nil, nil, grpcutils.PermissionDenied("The Device belongs to another User")
+	}
+
+	if dev.Status.IsLocked {
+		return nil, nil, grpcutils.PermissionDenied("The Device is locked")
+	}
+
+	if dev.Spec.State == corev1.Device_Spec_REJECTED {
+		return nil, nil, grpcutils.PermissionDenied("The Device is rejected")
+	}
+
+	return usr, dev, nil
+}
 
 func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 	req *authv1.RunDeviceProbeBeginRequest) (*authv1.RunDeviceProbeBeginResponse, error) {
+
+	if err := s.validateRunDeviceProbeBegin(req); err != nil {
+		return nil, grpcutils.InvalidArg("Invalid request: %v", err)
+	}
+
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if sess.Status.Type != corev1.Session_Status_CLIENT {
+		return nil, s.errPermissionDenied("Not a CLIENT Session")
+	}
+
+	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
 
@@ -514,101 +603,159 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
 
-	usr, err := s.getUserFromSession(ctx, sess)
+	usr, dev, err := s.getProbeUserAndDevice(ctx, sess)
 	if err != nil {
 		return nil, err
-	}
-
-	if usr.Spec.Type != corev1.User_Spec_HUMAN {
-		return nil, grpcutils.PermissionDenied("Not a human user")
-	}
-
-	dev, err := s.octeliumC.CoreC().GetDevice(ctx,
-		apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
-	if err != nil {
-		return nil, err
-	}
-
-	if binding := dev.Status.Binding; binding != nil {
-		switch binding.State {
-		case corev1.Device_Status_Binding_ACCEPTED,
-			corev1.Device_Status_Binding_REJECTED,
-			corev1.Device_Status_Binding_WAITING_APPROVAL:
-			return &authv1.RunDeviceProbeBeginResponse{}, nil
-		}
-	}
-
-	if attempt := dev.Status.ProbeAttempt; attempt != nil {
-		if len(attempt.Results) > 0 {
-			return &authv1.RunDeviceProbeBeginResponse{}, nil
-		}
-		if attempt.StartedAt.IsValid() &&
-			time.Since(attempt.StartedAt.AsTime()) <= probeAttemptTTL {
-			return &authv1.RunDeviceProbeBeginResponse{
-				AttemptUID: attempt.Uid,
-				Probes:     s.toAuthProbes(attempt.Probes),
-			}, nil
-		}
 	}
 
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	cfg := cc.GetStatus().GetDevice()
-	if cfg == nil || len(cfg.Probes) == 0 {
+
+	probing := cc.GetSpec().GetDevice().GetProbing()
+	if probing.GetIsDisabled() {
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
 
-	inputMap := map[string]any{
-		"ctx": map[string]any{
-			"user":    pbutils.MustConvertToMap(usr),
-			"session": pbutils.MustConvertToMap(sess),
-			"device":  pbutils.MustConvertToMap(dev),
-		},
-	}
+	now := time.Now()
 
-	var issued []*corev1.ClusterConfig_Status_Device_Probe
-
-	for _, p := range cfg.Probes {
-		if p.GetOwnerRef() == nil || p.OsType != dev.Status.OsType {
-			continue
-		}
-		ok, err := s.celEngine.EvalCondition(ctx, p.Condition, inputMap)
-		if err != nil {
-			zap.L().Warn("Could not evaluate probe condition", zap.Error(err))
-			continue
-		}
-		if !ok {
-			continue
-		}
-
-		cloned := pbutils.Clone(p).(*corev1.ClusterConfig_Status_Device_Probe)
-		cloned.Condition = nil
-		issued = append(issued, cloned)
-
-		if len(issued) >= maxProbesPerAttempt {
-			break
+	if attempt := dev.Status.ProbeAttempt; attempt != nil && !isProbeAttemptExpired(attempt, now) {
+		switch attempt.State {
+		case corev1.Device_Status_ProbeAttempt_ISSUED:
+			if attempt.SessionRef.GetUid() == sess.Metadata.Uid {
+				return getProbeBeginResponse(attempt), nil
+			}
+		case corev1.Device_Status_ProbeAttempt_SUBMITTED:
+			return &authv1.RunDeviceProbeBeginResponse{}, nil
 		}
 	}
-	if len(issued) == 0 {
+
+	probes := s.getIssuableProbes(ctx, cc, usr, dev, now)
+	if len(probes) == 0 {
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
 
-	dev.Status.ProbeAttempt = &corev1.Device_Status_ProbeAttempt{
-		Uid:       utilrand.GetRandomStringCanonical(32),
-		StartedAt: pbutils.Now(),
-		Probes:    issued,
+	attempt := &corev1.Device_Status_ProbeAttempt{
+		Uid:        utilrand.GetRandomStringCanonical(32),
+		State:      corev1.Device_Status_ProbeAttempt_ISSUED,
+		StartedAt:  pbutils.Timestamp(now),
+		ExpiresAt:  pbutils.Timestamp(now.Add(probeAttemptDuration)),
+		SessionRef: umetav1.GetObjectReference(sess),
+		Probes:     probes,
 	}
+
+	dev.Status.ProbeAttempt = attempt
 
 	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
 		return nil, err
 	}
 
+	return getProbeBeginResponse(attempt), nil
+}
+
+func getProbeBeginResponse(attempt *corev1.Device_Status_ProbeAttempt) *authv1.RunDeviceProbeBeginResponse {
 	return &authv1.RunDeviceProbeBeginResponse{
-		AttemptUID: dev.Status.ProbeAttempt.Uid,
-		Probes:     s.toAuthProbes(dev.Status.ProbeAttempt.Probes),
-	}, nil
+		AttemptUID: attempt.Uid,
+		Probes:     toAuthProbes(attempt.Probes),
+	}
+}
+
+func isProbeAttemptExpired(attempt *corev1.Device_Status_ProbeAttempt, now time.Time) bool {
+	if !attempt.ExpiresAt.IsValid() {
+		return true
+	}
+
+	return !now.Before(attempt.ExpiresAt.AsTime())
+}
+
+func (s *server) getIssuableProbes(ctx context.Context,
+	cc *corev1.ClusterConfig, usr *corev1.User, dev *corev1.Device, now time.Time) []*corev1.ClusterConfig_Status_Device_Probe {
+
+	plan := cc.GetStatus().GetDevice()
+	if plan == nil || len(plan.Probes) == 0 {
+		return nil
+	}
+
+	ownerUID, ok := getProbeOwnerFilter(dev, now)
+	if !ok {
+		return nil
+	}
+
+	inputMap := map[string]any{
+		"ctx": map[string]any{
+			"user":   pbutils.MustConvertToMap(usr),
+			"device": pbutils.MustConvertToMap(dev),
+		},
+	}
+
+	var ret []*corev1.ClusterConfig_Status_Device_Probe
+	seen := make(map[string]struct{})
+
+	for _, p := range plan.Probes {
+		if p == nil || p.OwnerRef.GetUid() == "" || !rgxProbeID.MatchString(p.Id) {
+			continue
+		}
+
+		if ownerUID != "" && p.OwnerRef.Uid != ownerUID {
+			continue
+		}
+
+		if _, ok := seen[p.Id]; ok {
+			continue
+		}
+
+		if len(p.OsTypes) > 0 && !slices.Contains(p.OsTypes, dev.Status.OsType) {
+			continue
+		}
+
+		if p.Type == nil {
+			continue
+		}
+
+		if p.Condition != nil {
+			ok, err := s.celEngine.EvalCondition(ctx, p.Condition, inputMap)
+			if err != nil {
+				zap.L().Warn("Could not evaluate probe condition",
+					zap.String("probeID", p.Id), zap.Error(err))
+				continue
+			}
+			if !ok {
+				continue
+			}
+		}
+
+		if len(ret) >= maxProbesPerAttempt {
+			zap.L().Warn("The number of the applicable probes exceeds the maximum number of probes per attempt",
+				zap.String("device", dev.Metadata.Name), zap.Int("maxProbes", maxProbesPerAttempt))
+			break
+		}
+
+		cloned := pbutils.Clone(p).(*corev1.ClusterConfig_Status_Device_Probe)
+		cloned.Condition = nil
+		seen[p.Id] = struct{}{}
+		ret = append(ret, cloned)
+	}
+
+	return ret
+}
+
+func getProbeOwnerFilter(dev *corev1.Device, now time.Time) (string, bool) {
+	binding := dev.Status.Binding
+	if binding == nil || binding.State != corev1.Device_Status_Binding_ACCEPTED {
+		return "", true
+	}
+
+	if binding.Validity != corev1.Device_Status_Binding_VALID {
+		return binding.OwnerRef.GetUid(), true
+	}
+
+	nextAt := binding.NextVerificationAt
+	if nextAt.IsValid() && !now.Before(nextAt.AsTime()) {
+		return binding.OwnerRef.GetUid(), true
+	}
+
+	return "", false
 }
 
 func (s *server) doRunDeviceProbeFinish(ctx context.Context,
@@ -623,12 +770,19 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 		return nil, err
 	}
 
+	if sess.Status.Type != corev1.Session_Status_CLIENT {
+		return nil, s.errPermissionDenied("Not a CLIENT Session")
+	}
+
+	if err := s.checkSessionValid(sess); err != nil {
+		return nil, err
+	}
+
 	if sess.Status.DeviceRef == nil {
 		return nil, grpcutils.InvalidArg("No Device is associated with this Session")
 	}
 
-	dev, err := s.octeliumC.CoreC().GetDevice(ctx,
-		apivalidation.ObjectReferenceToRGetOptions(sess.Status.DeviceRef))
+	_, dev, err := s.getProbeUserAndDevice(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -638,12 +792,30 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 		return nil, grpcutils.InvalidArg("No matching pending probe attempt for this Device")
 	}
 
-	if len(attempt.Results) > 0 {
-		return nil, grpcutils.InvalidArg("Probe attempt results have already been submitted")
+	if attempt.SessionRef.GetUid() != sess.Metadata.Uid {
+		return nil, grpcutils.PermissionDenied("The probe attempt belongs to another Session")
 	}
 
-	if !attempt.StartedAt.IsValid() ||
-		time.Since(attempt.StartedAt.AsTime()) > probeAttemptTTL {
+	results, err := getProbeAttemptResults(attempt, req.Results)
+	if err != nil {
+		return nil, grpcutils.InvalidArg("Invalid results: %v", err)
+	}
+
+	switch attempt.State {
+	case corev1.Device_Status_ProbeAttempt_ISSUED:
+	case corev1.Device_Status_ProbeAttempt_SUBMITTED,
+		corev1.Device_Status_ProbeAttempt_PROCESSED:
+		if isProbeAttemptResultsEqual(attempt.Results, results) {
+			return &authv1.RunDeviceProbeFinishResponse{}, nil
+		}
+		return nil, grpcutils.InvalidArg("Probe attempt results have already been submitted")
+	default:
+		return nil, grpcutils.InvalidArg("Invalid probe attempt state")
+	}
+
+	now := time.Now()
+
+	if isProbeAttemptExpired(attempt, now) {
 		dev.Status.ProbeAttempt = nil
 		if _, uErr := s.octeliumC.CoreC().UpdateDevice(ctx, dev); uErr != nil {
 			return nil, uErr
@@ -651,43 +823,9 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 		return nil, grpcutils.InvalidArg("Probe attempt expired")
 	}
 
-	if len(req.Results) != len(attempt.Probes) {
-		return nil, grpcutils.InvalidArg("Invalid results len")
-	}
-
-	seen := map[int]struct{}{}
-	var results []*corev1.Device_Status_ProbeAttempt_Result
-
-	for _, r := range req.Results {
-		idx, err := strconv.Atoi(r.ProbeID)
-		if err != nil || idx < 0 || idx >= len(attempt.Probes) {
-			return nil, grpcutils.InvalidArg("Invalid probeID: %s", r.ProbeID)
-		}
-		if _, ok := seen[idx]; ok {
-			return nil, grpcutils.InvalidArg("Duplicate probeID: %s", r.ProbeID)
-		}
-		seen[idx] = struct{}{}
-
-		res := &corev1.Device_Status_ProbeAttempt_Result{
-			ProbeID: r.ProbeID,
-		}
-
-		switch t := r.Type.(type) {
-		case *authv1.DeviceProbeResult_Output:
-			if maxBytes := probeMaxOutputBytes(attempt.Probes[idx]); len(t.Output) > maxBytes {
-				return nil, grpcutils.InvalidArg("Output is too large for probeID: %s", r.ProbeID)
-			}
-			res.Type = &corev1.Device_Status_ProbeAttempt_Result_Output{Output: t.Output}
-		case *authv1.DeviceProbeResult_Error:
-			res.Type = &corev1.Device_Status_ProbeAttempt_Result_Error{Error: t.Error}
-		default:
-			return nil, grpcutils.InvalidArg("Invalid result type")
-		}
-
-		results = append(results, res)
-	}
-
 	attempt.Results = results
+	attempt.State = corev1.Device_Status_ProbeAttempt_SUBMITTED
+	attempt.SubmittedAt = pbutils.Timestamp(now)
 
 	if _, err := s.octeliumC.CoreC().UpdateDevice(ctx, dev); err != nil {
 		return nil, err
@@ -696,17 +834,123 @@ func (s *server) doRunDeviceProbeFinish(ctx context.Context,
 	return &authv1.RunDeviceProbeFinishResponse{}, nil
 }
 
-func (s *server) toAuthProbes(probes []*corev1.ClusterConfig_Status_Device_Probe) []*authv1.DeviceProbe {
+func getProbeAttemptResults(attempt *corev1.Device_Status_ProbeAttempt,
+	results []*authv1.DeviceProbeResult) ([]*corev1.Device_Status_ProbeAttempt_Result, error) {
+
+	if len(results) != len(attempt.Probes) {
+		return nil, errors.Errorf("Invalid results len")
+	}
+
+	probes := make(map[string]*corev1.ClusterConfig_Status_Device_Probe, len(attempt.Probes))
+	for _, p := range attempt.Probes {
+		probes[p.Id] = p
+	}
+
+	seen := make(map[string]struct{}, len(results))
+	totalBytes := 0
+
+	var ret []*corev1.Device_Status_ProbeAttempt_Result
+
+	for _, r := range results {
+		probe, ok := probes[r.ProbeID]
+		if !ok {
+			return nil, errors.Errorf("Unknown probeID: %s", r.ProbeID)
+		}
+
+		if _, ok := seen[r.ProbeID]; ok {
+			return nil, errors.Errorf("Duplicate probeID: %s", r.ProbeID)
+		}
+		seen[r.ProbeID] = struct{}{}
+
+		size := getProbeResultSize(r)
+		if size > probeMaxOutputBytes(probe) {
+			return nil, errors.Errorf("Output is too large for probeID: %s", r.ProbeID)
+		}
+
+		totalBytes += size
+		if totalBytes > probeMaxTotalBytes {
+			return nil, errors.Errorf("Total output is too large")
+		}
+
+		ret = append(ret, toCoreProbeResult(r))
+	}
+
+	return ret, nil
+}
+
+func isProbeAttemptResultsEqual(a, b []*corev1.Device_Status_ProbeAttempt_Result) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	resultMap := make(map[string]*corev1.Device_Status_ProbeAttempt_Result, len(a))
+	for _, r := range a {
+		resultMap[r.ProbeID] = r
+	}
+
+	for _, r := range b {
+		existing, ok := resultMap[r.ProbeID]
+		if !ok || !pbutils.IsEqual(existing, r) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func getProbeResultSize(r *authv1.DeviceProbeResult) int {
+	switch r.Value.(type) {
+	case *authv1.DeviceProbeResult_Text:
+		return len(r.GetText())
+	case *authv1.DeviceProbeResult_Data:
+		return len(r.GetData())
+	case *authv1.DeviceProbeResult_List_:
+		ret := 0
+		for _, itm := range r.GetList().GetItems() {
+			ret += len(itm)
+		}
+		return ret
+	default:
+		return 0
+	}
+}
+
+func toCoreProbeResult(r *authv1.DeviceProbeResult) *corev1.Device_Status_ProbeAttempt_Result {
+	ret := &corev1.Device_Status_ProbeAttempt_Result{
+		ProbeID:     r.ProbeID,
+		Status:      corev1.Device_Status_ProbeAttempt_Result_Status(r.Status),
+		IsTruncated: r.IsTruncated,
+		ExitCode:    r.ExitCode,
+		Detail:      r.Detail,
+	}
+
+	switch t := r.Value.(type) {
+	case *authv1.DeviceProbeResult_Text:
+		ret.Value = &corev1.Device_Status_ProbeAttempt_Result_Text{Text: t.Text}
+	case *authv1.DeviceProbeResult_Data:
+		ret.Value = &corev1.Device_Status_ProbeAttempt_Result_Data{Data: t.Data}
+	case *authv1.DeviceProbeResult_List_:
+		ret.Value = &corev1.Device_Status_ProbeAttempt_Result_List_{
+			List: &corev1.Device_Status_ProbeAttempt_Result_List{
+				Items: t.List.GetItems(),
+			},
+		}
+	}
+
+	return ret
+}
+
+func toAuthProbes(probes []*corev1.ClusterConfig_Status_Device_Probe) []*authv1.DeviceProbe {
 	out := make([]*authv1.DeviceProbe, 0, len(probes))
-	for i, p := range probes {
-		out = append(out, s.toAuthProbe(strconv.Itoa(i), p))
+	for _, p := range probes {
+		out = append(out, toAuthProbe(p))
 	}
 	return out
 }
 
-func (s *server) toAuthProbe(probeID string, p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
+func toAuthProbe(p *corev1.ClusterConfig_Status_Device_Probe) *authv1.DeviceProbe {
 	wp := &authv1.DeviceProbe{
-		ProbeID:          probeID,
+		ProbeID:          p.Id,
 		RequireElevation: p.RequireElevation,
 	}
 	switch t := p.Type.(type) {
@@ -727,14 +971,13 @@ func (s *server) toAuthProbe(probeID string, p *corev1.ClusterConfig_Status_Devi
 			Key:  t.ReadRegistry.Key,
 			Name: t.ReadRegistry.Name,
 		}}
+	case *corev1.ClusterConfig_Status_Device_Probe_PlatformIdentifier_:
+		wp.Type = &authv1.DeviceProbe_PlatformIdentifier_{PlatformIdentifier: &authv1.DeviceProbe_PlatformIdentifier{
+			Kind: authv1.DeviceProbe_PlatformIdentifier_Kind(t.PlatformIdentifier.Kind),
+		}}
 	}
 	return wp
 }
-
-const (
-	defaultProbeMaxOutputBytes = 10000
-	hardProbeMaxOutputBytes    = 65536
-)
 
 func probeMaxOutputBytes(p *corev1.ClusterConfig_Status_Device_Probe) int {
 	declared := 0
@@ -752,6 +995,14 @@ func probeMaxOutputBytes(p *corev1.ClusterConfig_Status_Device_Probe) int {
 		return hardProbeMaxOutputBytes
 	}
 	return declared
+}
+
+func (s *server) validateRunDeviceProbeBegin(req *authv1.RunDeviceProbeBeginRequest) error {
+	if req == nil {
+		return errors.Errorf("Nil req")
+	}
+
+	return nil
 }
 
 func (s *server) validateRunDeviceProbeFinish(req *authv1.RunDeviceProbeFinishRequest) error {
@@ -772,20 +1023,45 @@ func (s *server) validateRunDeviceProbeFinish(req *authv1.RunDeviceProbeFinishRe
 	}
 
 	for _, r := range req.Results {
+		if r == nil {
+			return errors.Errorf("Nil result")
+		}
+
 		if !rgxProbeID.MatchString(r.ProbeID) {
 			return errors.Errorf("Invalid probeID: %s", r.ProbeID)
 		}
-		switch r.Type.(type) {
-		case *authv1.DeviceProbeResult_Output:
-			if len(r.GetOutput()) > hardProbeMaxOutputBytes {
+
+		if r.Status == authv1.DeviceProbeResult_STATUS_UNKNOWN {
+			return errors.Errorf("Unknown result status")
+		}
+
+		if _, ok := authv1.DeviceProbeResult_Status_name[int32(r.Status)]; !ok {
+			return errors.Errorf("Invalid result status")
+		}
+
+		if len(r.Detail) > maxProbeResultDetailLen {
+			return errors.Errorf("Detail is too large")
+		}
+
+		switch r.Value.(type) {
+		case nil:
+		case *authv1.DeviceProbeResult_Text,
+			*authv1.DeviceProbeResult_Data:
+			if getProbeResultSize(r) > hardProbeMaxOutputBytes {
 				return errors.Errorf("Output is too large")
 			}
-		case *authv1.DeviceProbeResult_Error:
-			if len(r.GetError()) > 2048 {
-				return errors.Errorf("Error is too large")
+		case *authv1.DeviceProbeResult_List_:
+			items := r.GetList().GetItems()
+			if len(items) > maxProbeResultListItems {
+				return errors.Errorf("Too many list items")
+			}
+			for _, itm := range items {
+				if len(itm) > maxProbeResultListItemLen {
+					return errors.Errorf("List item is too large")
+				}
 			}
 		default:
-			return errors.Errorf("Invalid result type")
+			return errors.Errorf("Invalid result value type")
 		}
 	}
 

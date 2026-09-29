@@ -1,3 +1,5 @@
+//go:build unix
+
 // Copyright Octelium Labs, LLC. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,34 +14,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package deviceinfo
+package deviceprobe
 
 import (
-	"context"
 	"os"
-
-	"github.com/zcalusic/sysinfo"
+	"os/exec"
+	"syscall"
 )
 
-func getSerialNumber(ctx context.Context) (string, error) {
-
-	var si sysinfo.SysInfo
-	si.GetSysInfo()
-
-	for _, ret := range []string{si.Product.Serial, si.Chassis.Serial} {
-		if !isInvalidSerialNumber(ret) {
-			return ret, nil
-		}
-	}
-
-	return "", nil
+func openProbeFile(pth string) (*os.File, error) {
+	return os.OpenFile(pth, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 }
 
-func getHardwareUUID(ctx context.Context) (string, error) {
-	ret, err := os.ReadFile("/sys/class/dmi/id/product_uuid")
-	if err != nil {
-		return "", err
+func setCommandProcAttrs(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	cmd.Cancel = func() error {
+		return killProcessGroup(cmd)
+	}
+}
+
+func cleanupCommand(cmd *exec.Cmd) {
+	killProcessGroup(cmd)
+}
+
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return nil
 	}
 
-	return string(ret), nil
+	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }

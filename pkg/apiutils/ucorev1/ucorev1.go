@@ -209,6 +209,10 @@ type Config struct {
 	*corev1.Config
 }
 
+type Device struct {
+	*corev1.Device
+}
+
 func ToService(a *corev1.Service) *Service {
 	return &Service{
 		Service: a,
@@ -248,6 +252,12 @@ func ToConfig(a *corev1.Config) *Config {
 func ToCredential(a *corev1.Credential) *Credential {
 	return &Credential{
 		Credential: a,
+	}
+}
+
+func ToDevice(a *corev1.Device) *Device {
+	return &Device{
+		Device: a,
 	}
 }
 
@@ -1310,4 +1320,21 @@ func (s *Service) IsUpstreamHTTP2ByConfig(cfg *corev1.Service_Spec_Config) bool 
 
 func (s *Service) IsUpstreamHTTP2() bool {
 	return s.IsUpstreamHTTP2ByConfig(s.Spec.Config)
+}
+
+func (d *Device) IsPostureUsable(now time.Time) bool {
+	if d.Device == nil || d.Status == nil || d.Status.Posture == nil || d.Status.Binding == nil {
+		return false
+	}
+
+	if d.Status.Binding.State != corev1.Device_Status_Binding_ACCEPTED ||
+		d.Status.Binding.Validity != corev1.Device_Status_Binding_VALID {
+		return false
+	}
+
+	if !d.Status.Posture.ExpiresAt.IsValid() {
+		return false
+	}
+
+	return now.Before(d.Status.Posture.ExpiresAt.AsTime())
 }

@@ -376,9 +376,9 @@ func testAuthenticatorAccess(t *testing.T, h *harness.H) {
 }
 
 func testDeviceRegistration(t *testing.T, h *harness.H) {
-	deviceInfo := func() *authv1.RegisterDeviceBeginRequest_Info {
-		return &authv1.RegisterDeviceBeginRequest_Info{
-			OsType:       authv1.RegisterDeviceBeginRequest_Info_LINUX,
+	deviceInfo := func() *authv1.RegisterDeviceRequest_Info {
+		return &authv1.RegisterDeviceRequest_Info{
+			OsType:       authv1.RegisterDeviceRequest_Info_LINUX,
 			Hostname:     utilrand.GetRandomStringCanonical(8),
 			Id:           utilrand.GetRandomStringHex(64),
 			SerialNumber: utilrand.GetRandomStringCanonical(12),
@@ -415,11 +415,20 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 		require.NotNil(t, dev.Status)
 		assert.Equal(t, info.Id, dev.Status.Id)
 		assert.Equal(t, info.Hostname, dev.Status.Hostname)
-		assert.Equal(t, info.SerialNumber, dev.Status.SerialNumber)
 		assert.Equal(t, corev1.Device_Status_LINUX, dev.Status.OsType)
 		require.NotNil(t, dev.Status.UserRef)
 		assert.Equal(t, sess.User.Metadata.Uid, dev.Status.UserRef.Uid)
+		assert.Equal(t, info.SerialNumber, dev.Status.SerialNumber)
 		assert.Equal(t, []string{"02:42:ac:11:00:02"}, dev.Status.MacAddresses)
+
+		t.Run("ProbeNotRequired", func(t *testing.T) {
+			resp, err := sess.C().RunDeviceProbeBegin(sess.Ctx(t.Context()),
+				&authv1.RunDeviceProbeBeginRequest{})
+			require.Nil(t, err, "could not begin the Device probing")
+			assert.Empty(t, resp.AttemptUID,
+				"a Cluster without probes must not issue a probe attempt")
+			assert.Empty(t, resp.Probes)
+		})
 
 		t.Run("AlreadyRegistered", func(t *testing.T) {
 			_, err := sess.C().RegisterDeviceBegin(sess.Ctx(t.Context()),
@@ -503,6 +512,157 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 
 		assert.Nil(t, other.Session(t).Status.DeviceRef,
 			"a refused Device registration must not bind the Session to a Device")
+	})
+
+	t.Run("RegisterDevice", func(t *testing.T) {
+		sess := h.NewAuthSession(t, harness.AuthSessionOpts{
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		info := deviceInfo()
+
+		_, err := sess.C().RegisterDevice(sess.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: info})
+		require.Nil(t, err, "could not register the Device")
+
+		cur := sess.Session(t)
+		require.NotNil(t, cur.Status.DeviceRef,
+			"the Session must be bound to the registered Device")
+
+		dev, err := h.CoreC().GetDevice(t.Context(),
+			&metav1.GetOptions{Uid: cur.Status.DeviceRef.Uid})
+		require.Nil(t, err)
+		assert.Equal(t, info.Id, dev.Status.Id)
+		assert.Equal(t, info.Hostname, dev.Status.Hostname)
+		assert.Equal(t, info.SerialNumber, dev.Status.SerialNumber)
+		assert.Equal(t, corev1.Device_Status_LINUX, dev.Status.OsType)
+		assert.Equal(t, sess.User.Metadata.Uid, dev.Status.UserRef.Uid)
+
+		_, err = sess.C().RegisterDevice(sess.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: info})
+		require.NotNil(t, err, "a Session that is already bound to a Device must be reported")
+		assert.True(t, grpcerr.AlreadyExists(err),
+			"registering a Device twice returned an unexpected error: %+v", err)
+
+		legacy := h.NewAuthSession(t, harness.AuthSessionOpts{
+			User:        sess.User,
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		_, err = legacy.C().RegisterDeviceBegin(legacy.Ctx(t.Context()),
+			&authv1.RegisterDeviceBeginRequest{Info: info})
+		require.NotNil(t, err, "a legacy client must not register the Device again")
+		assert.True(t, grpcerr.AlreadyExists(err),
+			"a legacy registration of an existing Device returned an unexpected error: %+v", err)
+		require.NotNil(t, legacy.Session(t).Status.DeviceRef)
+		assert.Equal(t, cur.Status.DeviceRef.Uid, legacy.Session(t).Status.DeviceRef.Uid)
+	})
+
+	t.Run("RegisterDeviceAfterLegacy", func(t *testing.T) {
+		legacy := h.NewAuthSession(t, harness.AuthSessionOpts{
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		info := deviceInfo()
+
+		begin, err := legacy.C().RegisterDeviceBegin(legacy.Ctx(t.Context()),
+			&authv1.RegisterDeviceBeginRequest{Info: info})
+		require.Nil(t, err)
+
+		_, err = legacy.C().RegisterDeviceFinish(legacy.Ctx(t.Context()),
+			&authv1.RegisterDeviceFinishRequest{Uid: begin.Uid})
+		require.Nil(t, err)
+
+		deviceRef := legacy.Session(t).Status.DeviceRef
+		require.NotNil(t, deviceRef)
+
+		sess := h.NewAuthSession(t, harness.AuthSessionOpts{
+			User:        legacy.User,
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		_, err = sess.C().RegisterDevice(sess.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: info})
+		require.Nil(t, err, "a Device that is registered by a legacy client must be bound")
+
+		cur := sess.Session(t).Status.DeviceRef
+		require.NotNil(t, cur)
+		assert.Equal(t, deviceRef.Uid, cur.Uid)
+	})
+
+	t.Run("RegisterDeviceForeignIDRejected", func(t *testing.T) {
+		owner := h.NewAuthSession(t, harness.AuthSessionOpts{
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		info := deviceInfo()
+
+		_, err := owner.C().RegisterDevice(owner.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: info})
+		require.Nil(t, err)
+
+		other := h.NewAuthSession(t, harness.AuthSessionOpts{
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		_, err = other.C().RegisterDevice(other.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: info})
+		require.NotNil(t, err, "a Device that belongs to another User must not be claimed")
+		assert.True(t, grpcerr.IsInvalidArg(err),
+			"claiming a foreign Device returned an unexpected error: %+v", err)
+		assert.Nil(t, other.Session(t).Status.DeviceRef)
+	})
+
+	t.Run("SameUserReattached", func(t *testing.T) {
+		first := h.NewAuthSession(t, harness.AuthSessionOpts{
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		info := deviceInfo()
+
+		begin, err := first.C().RegisterDeviceBegin(first.Ctx(t.Context()),
+			&authv1.RegisterDeviceBeginRequest{Info: info})
+		require.Nil(t, err, "could not begin the Device registration")
+
+		_, err = first.C().RegisterDeviceFinish(first.Ctx(t.Context()),
+			&authv1.RegisterDeviceFinishRequest{Uid: begin.Uid})
+		require.Nil(t, err, "could not finish the Device registration")
+
+		deviceRef := first.Session(t).Status.DeviceRef
+		require.NotNil(t, deviceRef)
+
+		second := h.NewAuthSession(t, harness.AuthSessionOpts{
+			User:        first.User,
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		_, err = second.C().RegisterDeviceBegin(second.Ctx(t.Context()),
+			&authv1.RegisterDeviceBeginRequest{Info: info})
+		require.NotNil(t, err, "an already registered Device must not be registered again")
+		assert.True(t, grpcerr.AlreadyExists(err),
+			"registering an existing Device returned an unexpected error: %+v", err)
+
+		cur := second.Session(t).Status.DeviceRef
+		require.NotNil(t, cur, "a new Session of the same User must be bound to the existing Device")
+		assert.Equal(t, deviceRef.Uid, cur.Uid)
+
+		third := h.NewAuthSession(t, harness.AuthSessionOpts{
+			User:        first.User,
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		serialInfo := deviceInfo()
+		serialInfo.SerialNumber = info.SerialNumber
+
+		_, err = third.C().RegisterDeviceBegin(third.Ctx(t.Context()),
+			&authv1.RegisterDeviceBeginRequest{Info: serialInfo})
+		require.NotNil(t, err, "a Device with a known serial number must not be registered again")
+		assert.True(t, grpcerr.AlreadyExists(err),
+			"registering a Device with a known serial number returned an unexpected error: %+v", err)
+
+		cur = third.Session(t).Status.DeviceRef
+		require.NotNil(t, cur)
+		assert.Equal(t, deviceRef.Uid, cur.Uid)
 	})
 }
 

@@ -49,7 +49,7 @@ func GetDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret.SerialNumber, err = getSerialNumber(ctx)
+	ret.SerialNumber, err = GetSerialNumber(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +65,83 @@ func GetDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
 	}
 
 	return ret, nil
+}
+
+func GetSerialNumber(ctx context.Context) (string, error) {
+	ret, err := getSerialNumber(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	ret = strings.TrimSpace(ret)
+	if isInvalidSerialNumber(ret) {
+		return "", nil
+	}
+
+	return ret, nil
+}
+
+func GetHardwareUUID(ctx context.Context) (string, error) {
+	ret, err := getHardwareUUID(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.ToLower(strings.TrimSpace(ret)), nil
+}
+
+func GetOSInstallationID() (string, error) {
+	return machineid.ID()
+}
+
+func GetMacAddresses() ([]string, error) {
+	return getMacAddresses()
+}
+
+const minSerialNumberLen = 6
+
+func isInvalidSerialNumber(arg string) bool {
+	arg = strings.ToLower(strings.TrimSpace(arg))
+
+	if len(arg) < minSerialNumberLen {
+		return true
+	}
+
+	switch arg {
+	case "default string",
+		"to be filled by o.e.m.",
+		"system serial number",
+		"chassis serial number",
+		"not specified",
+		"not applicable",
+		"0123456789",
+		"123456789",
+		"null",
+		"none",
+		"invalid",
+		"unknown":
+		return true
+	}
+
+	return strings.Trim(arg, "0") == "" || strings.Trim(arg, "f") == ""
+}
+
+func isUsableMacAddress(hw net.HardwareAddr) bool {
+	if len(hw) != 6 {
+		return false
+	}
+
+	if hw[0]&0x01 != 0 || hw[0]&0x02 != 0 {
+		return false
+	}
+
+	for _, b := range hw {
+		if b != 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getMacAddresses() ([]string, error) {
@@ -105,6 +182,10 @@ func getMacAddresses() ([]string, error) {
 		}
 
 		if isVirtual(iface.Name) {
+			continue
+		}
+
+		if !isUsableMacAddress(iface.HardwareAddr) {
 			continue
 		}
 

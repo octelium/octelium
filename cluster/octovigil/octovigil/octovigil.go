@@ -207,7 +207,7 @@ func (s *Server) getReqCtx(di *acache.DownstreamInfo, req *corev1.RequestContext
 	} else {
 		reqCtx = &corev1.RequestContext{
 			User:    di.User,
-			Device:  di.Device,
+			Device:  getEffectiveDevice(di.Device, time.Now()),
 			Service: svc,
 			Session: di.Session,
 			Groups:  di.Groups,
@@ -218,6 +218,24 @@ func (s *Server) getReqCtx(di *acache.DownstreamInfo, req *corev1.RequestContext
 	reqCtx.Namespace, _ = s.cache.GetNamespace(svc.Status.NamespaceRef.Uid)
 
 	return reqCtx
+}
+
+func getEffectiveDevice(dev *corev1.Device, now time.Time) *corev1.Device {
+	if dev == nil || dev.Status == nil {
+		return dev
+	}
+
+	if dev.Status.Posture == nil && dev.Status.ProbeAttempt == nil {
+		return dev
+	}
+
+	ret := pbutils.Clone(dev).(*corev1.Device)
+	if !ucorev1.ToDevice(ret).IsPostureUsable(now) {
+		ret.Status.Posture = nil
+	}
+	ret.Status.ProbeAttempt = nil
+
+	return ret
 }
 
 func (s *Server) getConnectionIdentifier(r *coctovigilv1.DoAuthenticateAndAuthorizeRequest) (string, *jwkctl.AccessTokenClaims, error) {

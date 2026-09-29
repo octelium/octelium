@@ -43,19 +43,15 @@ const ingressDataplaneSvc = "octelium-ingress-dataplane"
 func registerDevice(t *testing.T, sess *harness.AuthSession) *metav1.ObjectReference {
 	t.Helper()
 
-	begin, err := sess.C().RegisterDeviceBegin(sess.Ctx(t.Context()),
-		&authv1.RegisterDeviceBeginRequest{
-			Info: &authv1.RegisterDeviceBeginRequest_Info{
-				OsType:   authv1.RegisterDeviceBeginRequest_Info_LINUX,
+	_, err := sess.C().RegisterDevice(sess.Ctx(t.Context()),
+		&authv1.RegisterDeviceRequest{
+			Info: &authv1.RegisterDeviceRequest_Info{
+				OsType:   authv1.RegisterDeviceRequest_Info_LINUX,
 				Hostname: utilrand.GetRandomStringCanonical(8),
 				Id:       utilrand.GetRandomStringHex(64),
 			},
 		})
-	require.Nil(t, err, "could not begin the Device registration")
-
-	_, err = sess.C().RegisterDeviceFinish(sess.Ctx(t.Context()),
-		&authv1.RegisterDeviceFinishRequest{Uid: begin.Uid})
-	require.Nil(t, err, "could not finish the Device registration")
+	require.Nil(t, err, "could not register the Device")
 
 	ref := sess.Session(t).Status.DeviceRef
 	require.NotNil(t, ref, "the Session was not bound to the registered Device")
