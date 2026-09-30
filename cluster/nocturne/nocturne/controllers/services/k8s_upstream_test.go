@@ -176,11 +176,50 @@ func TestSetK8sUpstreamEnvFromSecret(t *testing.T) {
 	assert.Equal(t, 1, len(dep.Spec.Template.Spec.Containers))
 	assert.True(t, len(dep.Spec.Template.Spec.Containers[0].Name) > 0)
 	assert.Equal(t, dep.Spec.Template.Spec.Containers[0].Env[0].ValueFrom.SecretKeyRef.Name, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid))
+	assert.Equal(t, "data", dep.Spec.Template.Spec.Containers[0].Env[0].ValueFrom.SecretKeyRef.Key)
 
-	{
-		_, err := fakeC.K8sC.CoreV1().Secrets(ns).Get(ctx, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid), k8smetav1.GetOptions{})
+	t.Run("Value", func(t *testing.T) {
+		k8sSec, err := fakeC.K8sC.CoreV1().Secrets(ns).Get(ctx, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid), k8smetav1.GetOptions{})
 		assert.Nil(t, err)
-	}
+		assert.Equal(t, sec.Data.GetValue(), k8sSec.StringData["data"])
+	})
+
+	t.Run("ValueBytes", func(t *testing.T) {
+		value := utilrand.GetRandomString(32)
+		sec.Data.Type = &corev1.Secret_Data_ValueBytes{
+			ValueBytes: []byte(value),
+		}
+		sec, err = fakeC.OcteliumC.CoreC().UpdateSecret(ctx, sec)
+		assert.Nil(t, err)
+
+		err = c.OnUpdate(ctx, svcV, svcV)
+		assert.Nil(t, err)
+
+		k8sSec, err := fakeC.K8sC.CoreV1().Secrets(ns).Get(ctx, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid), k8smetav1.GetOptions{})
+		assert.Nil(t, err)
+		assert.Equal(t, value, k8sSec.StringData["data"])
+	})
+
+	t.Run("SpecData", func(t *testing.T) {
+		value := utilrand.GetRandomString(32)
+		sec.Spec.Data = &corev1.Secret_Spec_Data{
+			Type: &corev1.Secret_Spec_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		}
+		sec.Data.Type = &corev1.Secret_Data_Value{
+			Value: value,
+		}
+		sec, err = fakeC.OcteliumC.CoreC().UpdateSecret(ctx, sec)
+		assert.Nil(t, err)
+
+		err = c.OnUpdate(ctx, svcV, svcV)
+		assert.Nil(t, err)
+
+		k8sSec, err := fakeC.K8sC.CoreV1().Secrets(ns).Get(ctx, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid), k8smetav1.GetOptions{})
+		assert.Nil(t, err)
+		assert.Equal(t, value, k8sSec.StringData["data"])
+	})
 
 	err = c.OnDelete(ctx, svcV)
 	assert.Nil(t, err)

@@ -24,12 +24,15 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func newManagedService(t *testing.T, h *harness.H, image string, port uint32) *corev1.Service {
@@ -161,6 +164,60 @@ func testNocturne(t *testing.T, h *harness.H) {
 			})
 
 		waitServiceAddresses(t, h, svc.Metadata.Name, 1)
+	})
+
+	t.Run("UpstreamEnvFromSecret", func(t *testing.T) {
+		value := utilrand.GetRandomStringCanonical(32)
+		secret := h.CreateSecret(t, "", value)
+
+		svc := h.CreateService(t, &corev1.Service{
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Container_{
+							Container: &corev1.Service_Spec_Config_Upstream_Container{
+								Image: "nginx",
+								Port:  80,
+								Env: []*corev1.Service_Spec_Config_Upstream_Container_Env{
+									{
+										Name: "OCTELIUM_E2E_SECRET",
+										Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{
+											FromSecret: secret.Metadata.Name,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+
+		h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+
+		upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+		secretName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, secret.Metadata.Uid)
+
+		k8sSec, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).
+			Get(t.Context(), secretName, k8smetav1.GetOptions{})
+		require.Nil(t, err)
+		assert.Equal(t, []byte(value), k8sSec.Data["data"])
+
+		dep := h.MustK8sDeployment(t, upstream)
+		require.Equal(t, 1, len(dep.Spec.Template.Spec.Containers))
+		require.Equal(t, 1, len(dep.Spec.Template.Spec.Containers[0].Env))
+		env := dep.Spec.Template.Spec.Containers[0].Env[0]
+		assert.Equal(t, "OCTELIUM_E2E_SECRET", env.Name)
+		require.NotNil(t, env.ValueFrom)
+		require.NotNil(t, env.ValueFrom.SecretKeyRef)
+		assert.Equal(t, secretName, env.ValueFrom.SecretKeyRef.Name)
+		assert.Equal(t, "data", env.ValueFrom.SecretKeyRef.Key)
+
+		out := h.MustOutput(t, fmt.Sprintf(
+			"kubectl exec -n %s deployment/%s -c backend -- printenv OCTELIUM_E2E_SECRET",
+			vutils.K8sNS, upstream))
+		assert.Equal(t, value+"\n", string(out))
 	})
 
 	t.Run("UpstreamRollout", func(t *testing.T) {

@@ -502,7 +502,7 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 							},
 						},
 						StringData: map[string]string{
-							"data": ucorev1.ToSecret(sec).GetSpecValueStr(),
+							"data": ucorev1.ToSecret(sec).GetValueStr(),
 						},
 
 						Type: k8scorev1.SecretTypeOpaque,
