@@ -20,6 +20,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +45,37 @@ const (
 
 	unauthorizedMySQLError = "Octelium: Unauthorized"
 )
+
+type postgresConn struct {
+	net.Conn
+	deadline time.Time
+}
+
+func (c *postgresConn) SetDeadline(deadline time.Time) error {
+	if deadline.IsZero() || deadline.After(c.deadline) {
+		deadline = c.deadline
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+type postgresDialer struct{}
+
+func (d *postgresDialer) Dial(network, address string) (net.Conn, error) {
+	return d.DialTimeout(network, address, 10*time.Second)
+}
+
+func (d *postgresDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
+	conn, err := net.DialTimeout(network, address, timeout)
+	if err != nil {
+		return nil, err
+	}
+	ret := &postgresConn{Conn: conn, deadline: time.Now().Add(2 * harness.SQLConnectBudget)}
+	if err := ret.SetDeadline(ret.deadline); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return ret, nil
+}
 
 func denySQLUpdateRules(queryAttr, prepareAttr string) []*corev1.InlinePolicy {
 	return []*corev1.InlinePolicy{
@@ -124,18 +157,22 @@ func testVigilPostgres(t *testing.T, h *harness.H) {
 	openDB := func(t *testing.T, username string) *sql.DB {
 		t.Helper()
 
-		db, err := harness.ConnectSQL("postgres", postgresutils.GetPostgresURLFromArgs(
+		connector, err := pq.NewConnector(postgresutils.GetPostgresURLFromArgs(
 			&postgresutils.PostgresDBArgs{
 				Host:     "localhost",
 				Port:     port,
 				NoSSL:    true,
 				Username: username,
-			}), harness.SQLConnectBudget)
+			}) + "&connect_timeout=10")
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}
 
+		connector.Dialer(&postgresDialer{})
+		db := sql.OpenDB(connector)
 		t.Cleanup(func() { db.Close() })
+		h.Eventually(t, "the PostgreSQL upstream to accept connections",
+			harness.SQLConnectBudget, db.PingContext)
 		return db
 	}
 
@@ -149,6 +186,125 @@ func testVigilPostgres(t *testing.T, h *harness.H) {
 		require.NotNil(t, err, "the query must be refused by the upstream database")
 		assert.Equal(t, pgErrUndefinedTable, pgErrorCode(err),
 			"the query did not reach the upstream database: %+v", err)
+	})
+
+	t.Run("CopyAndRollback", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), harness.SQLConnectBudget)
+		defer cancel()
+
+		db := openDB(t, "")
+		conn, err := db.Conn(ctx)
+		require.Nil(t, err)
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, fmt.Sprintf(
+			"CREATE TEMP TABLE %s (id INT PRIMARY KEY, payload TEXT NOT NULL)", table))
+		require.Nil(t, err)
+
+		tx, err := conn.BeginTx(ctx, nil)
+		require.Nil(t, err)
+		defer tx.Rollback()
+
+		stmt, err := tx.PrepareContext(ctx, pq.CopyIn(table, "id", "payload"))
+		require.Nil(t, err)
+		defer stmt.Close()
+
+		const total = 128
+		payload := strings.Repeat("octelium\tcopy\n"+h.Name(), 256)
+		for i := range total {
+			_, err = stmt.ExecContext(ctx, i, payload)
+			require.Nil(t, err)
+		}
+		_, err = stmt.ExecContext(ctx)
+		require.Nil(t, err)
+		require.Nil(t, stmt.Close())
+		require.Nil(t, tx.Commit())
+
+		tx, err = conn.BeginTx(ctx, nil)
+		require.Nil(t, err)
+		defer tx.Rollback()
+		_, err = tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", table), 0)
+		require.Nil(t, err)
+		require.Nil(t, tx.Rollback())
+
+		rows, err := conn.QueryContext(ctx, fmt.Sprintf("SELECT id, payload FROM %s ORDER BY id", table))
+		require.Nil(t, err)
+		defer rows.Close()
+
+		var count int
+		for rows.Next() {
+			var id int
+			var got string
+			require.Nil(t, rows.Scan(&id, &got))
+			assert.Equal(t, count, id)
+			assert.Equal(t, payload, got)
+			count++
+		}
+		require.Nil(t, rows.Err())
+		assert.Equal(t, total, count,
+			"the bulk COPY and rolled back DELETE must preserve every row")
+	})
+
+	t.Run("ExistingConnectionPolicy", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*harness.SQLConnectBudget)
+		defer cancel()
+
+		db := openDB(t, "")
+		conn, err := db.Conn(ctx)
+		require.Nil(t, err)
+		defer conn.Close()
+
+		var before int
+		require.Nil(t, conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&before))
+		_, err = conn.ExecContext(ctx, fmt.Sprintf(
+			"CREATE TEMP TABLE %s (status TEXT NOT NULL)", table))
+		require.Nil(t, err)
+		_, err = conn.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s VALUES ('active')", table))
+		require.Nil(t, err)
+
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: denySQLUpdateRules(
+				"ctx.request.postgres.query.query", "ctx.request.postgres.parse.query"),
+		}
+		svc = h.UpdateService(t, svc)
+
+		h.Eventually(t, "the existing connection to enforce the updated policy",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				_, err := conn.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET status = status", table))
+				if code := pgErrorCode(err); code != pgErrInsufficientPrivilege {
+					return errors.Errorf("got the error code %q, want %q: %+v",
+						code, pgErrInsufficientPrivilege, err)
+				}
+				return nil
+			})
+
+		tx, err := conn.BeginTx(ctx, nil)
+		require.Nil(t, err)
+		defer tx.Rollback()
+		_, err = tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET status = $1", table), "inactive")
+		require.NotNil(t, err)
+		assert.Equal(t, pgErrInsufficientPrivilege, pgErrorCode(err), "%+v", err)
+
+		var status string
+		require.Nil(t, tx.QueryRowContext(ctx, fmt.Sprintf("SELECT status FROM %s", table)).Scan(&status))
+		assert.Equal(t, "active", status,
+			"the denied prepared UPDATE must not change or abort the upstream transaction")
+		require.Nil(t, tx.Rollback())
+
+		svc.Spec.Authorization = nil
+		svc = h.UpdateService(t, svc)
+		h.Eventually(t, "the existing connection to regain UPDATE access",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				_, err := conn.ExecContext(ctx, update)
+				return err
+			})
+
+		require.Nil(t, conn.QueryRowContext(ctx, fmt.Sprintf("SELECT status FROM %s", table)).Scan(&status))
+		assert.Equal(t, "inactive", status)
+		var after int
+		require.Nil(t, conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&after))
+		assert.Equal(t, before, after,
+			"policy changes must be enforced without replacing the upstream connection")
 	})
 
 	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{

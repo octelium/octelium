@@ -104,7 +104,9 @@ func (c *Conn) Disconnect() error {
 		return nil
 	}
 
-	if err := c.h.Run(context.Background(), "octelium disconnect"); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), ConnectBudget)
+	defer cancel()
+	if err := c.h.Run(ctx, "octelium disconnect"); err != nil {
 		return err
 	}
 

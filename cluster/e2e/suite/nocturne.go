@@ -19,7 +19,10 @@ package suite
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -32,6 +35,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -52,6 +56,190 @@ func newManagedService(t *testing.T, h *harness.H, image string, port uint32) *c
 				},
 			},
 		},
+	})
+}
+
+func newManagedHTTPService(t *testing.T, h *harness.H,
+	env []*corev1.Service_Spec_Config_Upstream_Container_Env, replicas uint32) *corev1.Service {
+	t.Helper()
+
+	return h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_{
+						Container: &corev1.Service_Spec_Config_Upstream_Container{
+							Image:    "nginx",
+							Port:     80,
+							Replicas: replicas,
+							Command:  []string{"/bin/sh", "-c"},
+							Args: []string{
+								`printf '%s' "$OCTELIUM_E2E_RESPONSE" > /usr/share/nginx/html/index.html; exec nginx -g 'daemon off;'`,
+							},
+							Env: env,
+							ReadinessProbe: &corev1.Service_Spec_Config_Upstream_Container_Probe{
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet{
+									HttpGet: &corev1.Service_Spec_Config_Upstream_Container_Probe_HTTPGet{
+										Path: "/",
+										Port: 80,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+func testNocturneKubernetesSecret(t *testing.T, h *harness.H) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+
+	secrets := h.K8sC().CoreV1().Secrets(vutils.K8sNS)
+	secret, err := secrets.Create(ctx, &k8scorev1.Secret{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: h.Name()},
+		Data:       map[string][]byte{"unused": []byte("unused")},
+	}, k8smetav1.CreateOptions{})
+	cancel()
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		secrets.Delete(ctx, secret.Name, k8smetav1.DeleteOptions{})
+	})
+	updateSecret := func(t *testing.T) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		ret, err := secrets.Update(ctx, secret, k8smetav1.UpdateOptions{})
+		require.Nil(t, err)
+		secret = ret
+	}
+
+	svc := newManagedHTTPService(t, h,
+		[]*corev1.Service_Spec_Config_Upstream_Container_Env{
+			{
+				Name: "OCTELIUM_E2E_RESPONSE",
+				Type: &corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_{
+					KubernetesSecretRef: &corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef{
+						Name: secret.Name,
+						Key:  "response",
+					},
+				},
+			},
+		}, 2)
+	upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+
+	if !t.Run("MissingKey", func(t *testing.T) {
+		h.Eventually(t, "both upstream replicas to wait for the missing Secret key",
+			harness.DeploymentBudget, func(ctx context.Context) error {
+				pods, err := h.ServicePods(ctx, svc.Metadata.Name)
+				if err != nil {
+					return err
+				}
+				var blocked int
+				for _, pod := range pods {
+					for _, cs := range pod.Status.ContainerStatuses {
+						if cs.Name == "backend" && cs.State.Waiting != nil &&
+							cs.State.Waiting.Reason == "CreateContainerConfigError" {
+							blocked++
+							if cs.Ready {
+								return errors.Errorf("the upstream with a missing Secret key is ready")
+							}
+							if !strings.Contains(cs.State.Waiting.Message, "response") {
+								return errors.Errorf("the upstream failed for another reason: %s",
+									cs.State.Waiting.Message)
+							}
+						}
+					}
+				}
+				if blocked != 2 {
+					return errors.Errorf("%d upstream replicas are waiting for the key, want 2", blocked)
+				}
+				return nil
+			})
+	}) {
+		return
+	}
+
+	value := h.Name()
+	secret.Data["response"] = []byte(value)
+	updateSecret(t)
+
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+	h.MustWaitService(t, svc.Metadata.Name)
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{svc.Metadata.Name: h.Port()},
+	})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+
+	check := func(ctx context.Context, want string) error {
+		res, err := c.R().SetContext(ctx).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != want {
+			return errors.Errorf("the upstream returned %q, want %q", res.String(), want)
+		}
+		return nil
+	}
+
+	t.Run("KeyRestored", func(t *testing.T) {
+		h.Eventually(t, "the recovered upstream to serve the Secret value",
+			harness.DeploymentBudget, func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, upstream)
+				if err != nil {
+					return err
+				}
+				if dep.Status.ReadyReplicas != 2 {
+					return errors.Errorf("the upstream has %d ready replicas, want 2", dep.Status.ReadyReplicas)
+				}
+				return check(ctx, value)
+			})
+	})
+
+	t.Run("KeyChanged", func(t *testing.T) {
+		rotated := h.Name()
+		secret.Data["rotated"] = []byte(rotated)
+		updateSecret(t)
+
+		svc.Spec.Config.Upstream.GetContainer().Env[0].GetKubernetesSecretRef().Key = "rotated"
+		svc = h.UpdateService(t, svc)
+
+		h.Eventually(t, "both upstream replicas to roll out the new Secret key",
+			harness.DeploymentBudget, func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, upstream)
+				if err != nil {
+					return err
+				}
+				containers := dep.Spec.Template.Spec.Containers
+				if len(containers) != 1 || len(containers[0].Env) != 1 ||
+					containers[0].Env[0].ValueFrom == nil ||
+					containers[0].Env[0].ValueFrom.SecretKeyRef == nil {
+					return errors.Errorf("the Deployment has no Secret environment variable")
+				}
+				ref := containers[0].Env[0].ValueFrom.SecretKeyRef
+				if ref.Name != secret.Name || ref.Key != "rotated" {
+					return errors.Errorf("the Deployment still references the old Secret key")
+				}
+				if dep.Status.ObservedGeneration != dep.Generation ||
+					dep.Status.UpdatedReplicas != 2 || dep.Status.ReadyReplicas != 2 ||
+					dep.Status.Replicas != 2 {
+					return errors.Errorf("the upstream rollout is not complete")
+				}
+				return check(ctx, rotated)
+			})
+
+		h.Consistently(t, "every request to use the new Secret key", decisionSettle,
+			func(ctx context.Context) error {
+				return check(ctx, rotated)
+			})
 	})
 }
 
