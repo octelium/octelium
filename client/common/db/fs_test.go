@@ -176,15 +176,19 @@ func TestFSDBConcurrentSameHandle(t *testing.T) {
 
 func TestFSDBConcurrentSeparateHandles(t *testing.T) {
 
-	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
-	assert.Nil(t, err)
+	tmpDir := t.TempDir()
 	initDB, err := newFSDB(&Opts{Path: tmpDir})
-	assert.Nil(t, err)
+	if !assert.Nil(t, err) {
+		return
+	}
 
 	err = initDB.migrate(context.Background())
-	assert.Nil(t, err)
+	if !assert.Nil(t, err) {
+		return
+	}
 
 	n := 16
+	start := make(chan struct{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
@@ -193,7 +197,11 @@ func TestFSDBConcurrentSeparateHandles(t *testing.T) {
 			defer wg.Done()
 
 			db, err := newFSDB(&Opts{Path: tmpDir})
-			assert.Nil(t, err)
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			<-start
 
 			sessTkn := &authv1.SessionToken{
 				AccessToken: fmt.Sprintf("token-%d", i),
@@ -202,15 +210,118 @@ func TestFSDBConcurrentSeparateHandles(t *testing.T) {
 			assert.Nil(t, err)
 		}(i)
 	}
+	close(start)
 	wg.Wait()
 
 	for i := 0; i < n; i++ {
 		state, err := initDB.get(context.Background(), fmt.Sprintf("domain-%d.example.com", i))
-		assert.Nil(t, err)
-		assert.Equal(t, fmt.Sprintf("token-%d", i), state.SessionToken.AccessToken)
+		if !assert.Nil(t, err) {
+			continue
+		}
+		assert.Equal(t, fmt.Sprintf("token-%d", i), state.GetSessionToken().GetAccessToken())
+	}
+}
+
+func TestFSDBLockContention(t *testing.T) {
+
+	tmpDir := t.TempDir()
+	db, err := newFSDB(&Opts{Path: tmpDir})
+	if !assert.Nil(t, err) {
+		return
 	}
 
-	os.RemoveAll(tmpDir)
+	otherDB, err := newFSDB(&Opts{Path: tmpDir})
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	if !assert.Nil(t, db.flock.Lock()) {
+		return
+	}
+	defer db.flock.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- otherDB.set(context.Background(), "example.com", &authv1.SessionToken{
+			AccessToken: "token",
+		})
+	}()
+
+	select {
+	case err := <-done:
+		assert.Fail(t, "The write completed while the file lock was held", "err: %v", err)
+		return
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	assert.Nil(t, db.flock.Unlock())
+
+	select {
+	case err = <-done:
+	case <-time.After(750 * time.Millisecond):
+		assert.Fail(t, "The write did not complete promptly after the file lock was released")
+		err = <-done
+	}
+	assert.Nil(t, err)
+
+	state, err := db.get(context.Background(), "example.com")
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Equal(t, "token", state.GetSessionToken().GetAccessToken())
+}
+
+func TestFSDBEncryptedConcurrentSeparateHandles(t *testing.T) {
+
+	tmpDir := t.TempDir()
+	key := utilrand.GetRandomBytesMust(32)
+	initDB, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: key})
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	err = initDB.migrate(context.Background())
+	if !assert.Nil(t, err) {
+		return
+	}
+
+	n := 16
+	start := make(chan struct{})
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			db, err := newFSDB(&Opts{Path: tmpDir, EncryptionKey: key})
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			<-start
+
+			for j := 0; j < 4; j++ {
+				sessTkn := &authv1.SessionToken{
+					AccessToken: fmt.Sprintf("token-%d-%d", i, j),
+				}
+				err = db.set(context.Background(), fmt.Sprintf("domain-%d.example.com", i), sessTkn)
+				if !assert.Nil(t, err) {
+					return
+				}
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		state, err := initDB.get(context.Background(), fmt.Sprintf("domain-%d.example.com", i))
+		if !assert.Nil(t, err) {
+			continue
+		}
+		assert.Equal(t, fmt.Sprintf("token-%d-%d", i, 3), state.GetSessionToken().GetAccessToken())
+	}
 }
 
 func TestFSDBPreservesFileIdentity(t *testing.T) {

@@ -40,7 +40,7 @@ var ErrNotFound = errors.New("OcteliumDB: Not Found")
 
 const (
 	lockTimeout       = 10 * time.Second
-	lockRetryInterval = 1000 * time.Millisecond
+	lockRetryInterval = 10 * time.Millisecond
 )
 
 const encryptionKeyLen = 32
