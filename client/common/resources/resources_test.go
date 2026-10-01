@@ -22,6 +22,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -192,13 +193,164 @@ spec: {}
 	assert.Equal(t, "ns1", rscList[1].(*corev1.Namespace).Metadata.Name)
 
 	assert.Equal(t, 5, len(errs))
-	assert.True(t, strings.Contains(errs[0].Error(), "User `usr2` at file.yaml (document 2)"), "%+v", errs[0])
-	assert.True(t, strings.Contains(errs[0].Error(), "typ"), "%+v", errs[0])
-	assert.True(t, strings.Contains(errs[1].Error(), "User `usr3` at file.yaml (document 3)"), "%+v", errs[1])
-	assert.True(t, strings.Contains(errs[1].Error(), "HUMANN"), "%+v", errs[1])
-	assert.True(t, strings.Contains(errs[2].Error(), "Service `svc1` at file.yaml (document 4)"), "%+v", errs[2])
-	assert.True(t, strings.Contains(errs[3].Error(), "Resource at file.yaml (document 5)"), "%+v", errs[3])
-	assert.True(t, strings.Contains(errs[4].Error(), "Users `usr5` at file.yaml (document 6)"), "%+v", errs[4])
+	assert.True(t, strings.HasPrefix(errs[0].Error(), "Invalid User `usr2` at file.yaml:13:2: "), "%+v", errs[0])
+	assert.True(t, strings.Contains(errs[0].Error(), `"typ"`), "%+v", errs[0])
+	assert.True(t, strings.HasPrefix(errs[1].Error(), "Invalid User `usr3` at file.yaml:20:2: "), "%+v", errs[1])
+	assert.True(t, strings.Contains(errs[1].Error(), `"HUMANN"`), "%+v", errs[1])
+	assert.True(t, strings.HasPrefix(errs[2].Error(), "Invalid Service `svc1` at file.yaml:27:2: "), "%+v", errs[2])
+	assert.True(t, strings.Contains(errs[2].Error(), `"abc"`), "%+v", errs[2])
+	assert.True(t, strings.HasPrefix(errs[3].Error(), "Invalid Resource at file.yaml:30:1: "), "%+v", errs[3])
+	assert.True(t, strings.HasPrefix(errs[4].Error(), "Invalid Users `usr5` at file.yaml:35:1: "), "%+v", errs[4])
+
+	for _, err := range errs {
+		assert.False(t, strings.Contains(err.Error(), "(line"), "%+v", err)
+		assert.False(t, strings.Contains(err.Error(), "proto:"), "%+v", err)
+	}
+}
+
+func TestValidateResourcesNodeErrs(t *testing.T) {
+
+	yamlFile := `
+kind: Service
+metadata:
+ name: svc1
+spec:
+ port: abc
+ portt: 8080
+ config:
+  upstream:
+   urll: https://example.com
+
+---
+kind: Policy
+metadata:
+ name: pol1
+spec:
+ rules:
+  - effect: ALLOW
+  - effect: ALLOWW
+
+---
+kind: Service
+metadata:
+ name: svc2
+spec:
+ config:
+  upstream: &upstream
+   url: https://example.com
+   urll: https://example.com
+
+---
+kind: Service
+metadata:
+ name: svc3
+spec:
+ config:
+  upstream:
+   url: https://example.com
+   container: {}
+`
+
+	rscList, errs := validateResources(strings.NewReader(yamlFile), "file.yaml", ucorev1.NewObject)
+
+	assert.Equal(t, 0, len(rscList))
+	assert.Equal(t, 6, len(errs))
+
+	assert.True(t, strings.HasPrefix(errs[0].Error(), "Invalid Service `svc1` at file.yaml:6:2: "), "%+v", errs[0])
+	assert.True(t, strings.Contains(errs[0].Error(), `"abc"`), "%+v", errs[0])
+	assert.True(t, strings.HasPrefix(errs[1].Error(), "Invalid Service `svc1` at file.yaml:7:2: "), "%+v", errs[1])
+	assert.True(t, strings.Contains(errs[1].Error(), `"portt"`), "%+v", errs[1])
+	assert.True(t, strings.HasPrefix(errs[2].Error(), "Invalid Service `svc1` at file.yaml:10:4: "), "%+v", errs[2])
+	assert.True(t, strings.Contains(errs[2].Error(), `"urll"`), "%+v", errs[2])
+
+	assert.True(t, strings.HasPrefix(errs[3].Error(), "Invalid Policy `pol1` at file.yaml:19:5: "), "%+v", errs[3])
+	assert.True(t, strings.Contains(errs[3].Error(), `"ALLOWW"`), "%+v", errs[3])
+
+	assert.True(t, strings.HasPrefix(errs[4].Error(), "Invalid Service `svc2` at file.yaml:29:4: "), "%+v", errs[4])
+	assert.True(t, strings.Contains(errs[4].Error(), `"urll"`), "%+v", errs[4])
+
+	assert.True(t, strings.HasPrefix(errs[5].Error(), "Invalid Service `svc3` at file.yaml:37:3: "), "%+v", errs[5])
+	assert.True(t, strings.Contains(errs[5].Error(), "oneof"), "%+v", errs[5])
+
+	for _, err := range errs {
+		assert.False(t, strings.Contains(err.Error(), "(line"), "%+v", err)
+	}
+}
+
+func TestValidateResourcesMergeKey(t *testing.T) {
+
+	yamlFile := `
+kind: Policy
+metadata:
+ name: pol1
+spec:
+ rules:
+  - &rule
+   effect: ALLOW
+   condition:
+    match: ctx.user.spec.type == "HUMAN"
+  - <<: *rule
+    effect: DENY
+  - <<: *rule
+    effectt: DENY
+`
+
+	rscList, errs := validateResources(strings.NewReader(yamlFile), "file.yaml", ucorev1.NewObject)
+
+	assert.Equal(t, 0, len(rscList))
+	assert.Equal(t, 1, len(errs))
+	assert.True(t, strings.HasPrefix(errs[0].Error(), "Invalid Policy `pol1` at file.yaml:14:5: "), "%+v", errs[0])
+	assert.True(t, strings.Contains(errs[0].Error(), `"effectt"`), "%+v", errs[0])
+
+	rscList, errs = validateResources(strings.NewReader(strings.ReplaceAll(yamlFile, "effectt", "effect")),
+		"file.yaml", ucorev1.NewObject)
+	assert.Equal(t, 0, len(errs), "%+v", errs)
+	assert.Equal(t, 3, len(rscList[0].(*corev1.Policy).Spec.Rules))
+	assert.Equal(t, corev1.Policy_Spec_Rule_DENY, rscList[0].(*corev1.Policy).Spec.Rules[1].Effect)
+	assert.Equal(t, `ctx.user.spec.type == "HUMAN"`,
+		rscList[0].(*corev1.Policy).Spec.Rules[1].Condition.GetMatch())
+}
+
+func TestValidateResourcesDocuments(t *testing.T) {
+
+	yamlFile := `
+kind: User
+metadata:
+ name: usr1
+spec:
+ type: HUMAN
+---
+---
+~
+---
+- kind: User
+---
+kind: Group
+metadata:
+ name: grp1
+spec: {}
+`
+
+	rscList, errs := validateResources(strings.NewReader(yamlFile), "file.yaml", ucorev1.NewObject)
+
+	assert.Equal(t, 2, len(rscList))
+	assert.Equal(t, "usr1", rscList[0].(*corev1.User).Metadata.Name)
+	assert.Equal(t, "grp1", rscList[1].(*corev1.Group).Metadata.Name)
+
+	assert.Equal(t, 1, len(errs))
+	assert.True(t, strings.HasPrefix(errs[0].Error(), "Could not decode yaml item at file.yaml:11:1: "), "%+v", errs[0])
+}
+
+func TestGetErrMessage(t *testing.T) {
+
+	assert.Equal(t, `unknown field "typ"`,
+		getErrMessage(errors.New(`proto: (line 1:51): unknown field "typ"`)))
+	assert.Equal(t, `unknown field "typ"`,
+		getErrMessage(errors.New("proto:\u00a0(line 1:51):\u00a0unknown field \"typ\"")))
+	assert.Equal(t, `Invalid kind: Users`,
+		getErrMessage(errors.New(`Invalid kind: Users`)))
+	assert.Equal(t, `proto: unknown field "typ"`,
+		getErrMessage(errors.New(`proto: unknown field "typ"`)))
 }
 
 func TestValidateResourcesInvalidYAML(t *testing.T) {

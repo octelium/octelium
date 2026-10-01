@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -183,11 +184,9 @@ func validateResources(r io.Reader, path string,
 	var ret []umetav1.ResourceObjectI
 	var validationErrs []error
 
-	idx := 0
-
 	for {
-		itemMap := make(map[string]any)
-		err := d.Decode(&itemMap)
+		var node yaml.Node
+		err := d.Decode(&node)
 
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -199,22 +198,150 @@ func validateResources(r io.Reader, path string,
 			break
 		}
 
-		idx += 1
-
-		if itemMap == nil {
+		obj, errs := validateResource(&node, path, newObjFn)
+		if len(errs) > 0 {
+			validationErrs = append(validationErrs, errs...)
 			continue
 		}
 
-		obj, err := unmarshalResourceStrict(itemMap, newObjFn)
-		if err != nil {
-			validationErrs = append(validationErrs, getValidationErr(itemMap, getItemPath(path, idx), err))
-			continue
+		if obj != nil {
+			ret = append(ret, obj)
 		}
-
-		ret = append(ret, obj)
 	}
 
 	return ret, validationErrs
+}
+
+func validateResource(node *yaml.Node, path string,
+	newObjFn func(kind string) (umetav1.ResourceObjectI, error)) (umetav1.ResourceObjectI, []error) {
+
+	if len(node.Content) != 1 {
+		return nil, nil
+	}
+
+	rootNode := node.Content[0]
+
+	itemMap := make(map[string]any)
+	if err := node.Decode(&itemMap); err != nil {
+		return nil, []error{errors.Errorf("Could not decode yaml item at %s: %s",
+			getNodePath(path, rootNode), err)}
+	}
+
+	if itemMap == nil {
+		return nil, nil
+	}
+
+	newObj := func() (umetav1.ResourceObjectI, error) {
+		kind, ok := itemMap["kind"].(string)
+		if !ok {
+			return nil, errors.Errorf("Could not find kind")
+		}
+
+		return newObjFn(kind)
+	}
+
+	obj, err := newObj()
+	if err != nil {
+		return nil, []error{getValidationErr(itemMap, getNodePath(path, rootNode), err)}
+	}
+
+	err = pbutils.UnmarshalFromMapStrict(itemMap, obj)
+	if err == nil {
+		return obj, nil
+	}
+
+	nodeErrs := getNodeErrs(newObj, rootNode, itemMap, func(arg any) map[string]any {
+		ret, _ := arg.(map[string]any)
+		return ret
+	})
+	if len(nodeErrs) == 0 {
+		return nil, []error{getValidationErr(itemMap, getNodePath(path, rootNode), err)}
+	}
+
+	var ret []error
+	for _, nodeErr := range nodeErrs {
+		ret = append(ret, getValidationErr(itemMap, getNodePath(path, nodeErr.node), nodeErr.err))
+	}
+
+	return nil, ret
+}
+
+type nodeErr struct {
+	node *yaml.Node
+	err  error
+}
+
+// getNodeErrs finds the deepest YAML nodes that cause the strict unmarshal to fail.
+// Every child of the node is strictly unmarshaled in isolation, wrapped by wrapFn inside its parent
+// fields up to the root, and the children that fail are then searched recursively in the same way.
+// This keeps protojson as the only judge of validity while mapping its errors to the YAML source.
+func getNodeErrs(newObj func() (umetav1.ResourceObjectI, error),
+	node *yaml.Node, val any, wrapFn func(arg any) map[string]any) []*nodeErr {
+
+	if node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+
+	var ret []*nodeErr
+
+	checkChild := func(keyNode, valNode *yaml.Node, childVal any, childWrapFn func(arg any) map[string]any) {
+		obj, err := newObj()
+		if err != nil {
+			return
+		}
+
+		err = pbutils.UnmarshalFromMapStrict(childWrapFn(childVal), obj)
+		if err == nil {
+			return
+		}
+
+		childErrs := getNodeErrs(newObj, valNode, childVal, childWrapFn)
+		if len(childErrs) == 0 {
+			childErrs = []*nodeErr{
+				{
+					node: keyNode,
+					err:  err,
+				},
+			}
+		}
+
+		ret = append(ret, childErrs...)
+	}
+
+	switch v := val.(type) {
+	case map[string]any:
+		if node.Kind != yaml.MappingNode {
+			return nil
+		}
+
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i].Value
+			childVal, ok := v[key]
+			if !ok {
+				continue
+			}
+
+			checkChild(node.Content[i], node.Content[i+1], childVal, func(arg any) map[string]any {
+				return wrapFn(map[string]any{key: arg})
+			})
+		}
+	case []any:
+		if node.Kind != yaml.SequenceNode {
+			return nil
+		}
+
+		for i, childNode := range node.Content {
+			if i >= len(v) {
+				break
+			}
+
+			checkChild(childNode, childNode, v[i], func(arg any) map[string]any {
+				return wrapFn([]any{arg})
+			})
+		}
+	}
+
+	return ret
 }
 
 func getValidationErr(in map[string]any, itemPath string, err error) error {
@@ -223,10 +350,22 @@ func getValidationErr(in map[string]any, itemPath string, err error) error {
 	name, _ := md["name"].(string)
 
 	if kind == "" || name == "" {
-		return errors.Errorf("Invalid Resource at %s: %s", itemPath, err)
+		return errors.Errorf("Invalid Resource at %s: %s", itemPath, getErrMessage(err))
 	}
 
-	return errors.Errorf("Invalid %s `%s` at %s: %s", kind, name, itemPath, err)
+	return errors.Errorf("Invalid %s `%s` at %s: %s", kind, name, itemPath, getErrMessage(err))
+}
+
+// protojson errors refer to positions in the JSON generated from the YAML item and not to the YAML source.
+// Note that the "proto: " prefix deliberately uses either regular or non-breaking spaces.
+var protoErrPositionRegex = regexp.MustCompile(`^proto:[\s\x{00a0}]*\(line \d+:\d+\):[\s\x{00a0}]*`)
+
+func getErrMessage(err error) string {
+	return protoErrPositionRegex.ReplaceAllString(err.Error(), "")
+}
+
+func getNodePath(path string, node *yaml.Node) string {
+	return fmt.Sprintf("%s:%d:%d", path, node.Line, node.Column)
 }
 
 func getItemPath(path string, idx int) string {
@@ -270,26 +409,6 @@ func unmarshalResource(in map[string]any,
 	}
 
 	cliutils.LineWarn("Unknown field in the %s Resource at %s: %s\n", kind, itemPath, strictErr)
-
-	return obj, nil
-}
-
-func unmarshalResourceStrict(in map[string]any,
-	newObjFn func(kind string) (umetav1.ResourceObjectI, error)) (umetav1.ResourceObjectI, error) {
-
-	kind, ok := in["kind"].(string)
-	if !ok {
-		return nil, errors.Errorf("Could not find kind")
-	}
-
-	obj, err := newObjFn(kind)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := pbutils.UnmarshalFromMapStrict(in, obj); err != nil {
-		return nil, err
-	}
 
 	return obj, nil
 }
