@@ -233,6 +233,27 @@ func getClusterConfig(rscList []umetav1.ResourceObjectI) (*corev1.ClusterConfig,
 	return ret, nil
 }
 
+func ValidateResources(rscList []umetav1.ResourceObjectI) []error {
+	var ret []error
+
+	for _, itm := range rscList {
+		if itm.GetKind() == ucorev1.KindClusterConfig || isInList(supportedResourceNames, itm.GetKind()) {
+			continue
+		}
+
+		ret = append(ret, errors.Errorf("The %s `%s` cannot be applied. Its kind is not supported by the apply operation",
+			itm.GetKind(), itm.GetMetadata().GetName()))
+	}
+
+	if _, err := getClusterConfig(rscList); err != nil {
+		ret = append(ret, err)
+	}
+
+	ret = append(ret, rscdiff.CheckDuplicateCoreResources(supportedResourceNames, rscList)...)
+
+	return ret
+}
+
 func getCmpMetadata(itm *corev1.ClusterConfig) *metav1.Metadata {
 	md := itm.GetMetadata()
 	return &metav1.Metadata{

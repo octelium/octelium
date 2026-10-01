@@ -37,36 +37,71 @@ func LoadCoreResources(fPath string) ([]umetav1.ResourceObjectI, error) {
 
 func LoadResources(fPath string, newObjFn func(kind string) (umetav1.ResourceObjectI, error)) ([]umetav1.ResourceObjectI, error) {
 	var ret []umetav1.ResourceObjectI
-	var err error
+
+	if err := walkResourceFiles(fPath, func(r io.Reader, path string) error {
+		itms, err := loadResources(r, path, newObjFn)
+		if err != nil {
+			return err
+		}
+
+		ret = append(ret, itms...)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
+func ValidateCoreResources(fPath string) ([]umetav1.ResourceObjectI, []error, error) {
+	return ValidateResources(fPath, ucorev1.NewObject)
+}
+
+func ValidateResources(fPath string,
+	newObjFn func(kind string) (umetav1.ResourceObjectI, error)) ([]umetav1.ResourceObjectI, []error, error) {
+	var ret []umetav1.ResourceObjectI
+	var validationErrs []error
+
+	if err := walkResourceFiles(fPath, func(r io.Reader, path string) error {
+		itms, errs := validateResources(r, path, newObjFn)
+
+		ret = append(ret, itms...)
+		validationErrs = append(validationErrs, errs...)
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	return ret, validationErrs, nil
+}
+
+func walkResourceFiles(fPath string, fn func(r io.Reader, path string) error) error {
 	if fPath == "" {
-		return ret, nil
+		return nil
 	}
 
 	if fPath == "-" {
-		return loadResources(os.Stdin, "stdin", newObjFn)
+		return fn(os.Stdin, "stdin")
 	}
 
 	pathInfo, err := os.Stat(fPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	switch {
 	case pathInfo.Mode().IsRegular():
 		f, err := os.Open(fPath)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer f.Close()
 
-		ret, err = loadResources(f, fPath, newObjFn)
-		if err != nil {
-			return nil, err
-		}
+		return fn(f, fPath)
 
 	case pathInfo.IsDir():
 
-		if err := filepath.Walk(fPath,
+		return filepath.Walk(fPath,
 			func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -94,23 +129,12 @@ func LoadResources(fPath string, newObjFn func(kind string) (umetav1.ResourceObj
 				}
 				defer f.Close()
 
-				fileRet, err := loadResources(f, path, newObjFn)
-				if err != nil {
-					return err
-				}
-
-				ret = append(ret, fileRet...)
-
-				return nil
-			}); err != nil {
-			return nil, err
-		}
+				return fn(f, path)
+			})
 
 	default:
-		return nil, errors.Errorf("The path %s is neither a regular file nor a directory", fPath)
+		return errors.Errorf("The path %s is neither a regular file nor a directory", fPath)
 	}
-
-	return ret, nil
 }
 
 func loadResources(r io.Reader, path string, newObjFn func(kind string) (umetav1.ResourceObjectI, error)) ([]umetav1.ResourceObjectI, error) {
@@ -151,6 +175,58 @@ func loadResources(r io.Reader, path string, newObjFn func(kind string) (umetav1
 	}
 
 	return ret, nil
+}
+
+func validateResources(r io.Reader, path string,
+	newObjFn func(kind string) (umetav1.ResourceObjectI, error)) ([]umetav1.ResourceObjectI, []error) {
+	d := yaml.NewDecoder(r)
+	var ret []umetav1.ResourceObjectI
+	var validationErrs []error
+
+	idx := 0
+
+	for {
+		itemMap := make(map[string]any)
+		err := d.Decode(&itemMap)
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+
+			validationErrs = append(validationErrs,
+				errors.Errorf("Could not decode yaml item in %s: %s", path, err))
+			break
+		}
+
+		idx += 1
+
+		if itemMap == nil {
+			continue
+		}
+
+		obj, err := unmarshalResourceStrict(itemMap, newObjFn)
+		if err != nil {
+			validationErrs = append(validationErrs, getValidationErr(itemMap, getItemPath(path, idx), err))
+			continue
+		}
+
+		ret = append(ret, obj)
+	}
+
+	return ret, validationErrs
+}
+
+func getValidationErr(in map[string]any, itemPath string, err error) error {
+	kind, _ := in["kind"].(string)
+	md, _ := in["metadata"].(map[string]any)
+	name, _ := md["name"].(string)
+
+	if kind == "" || name == "" {
+		return errors.Errorf("Invalid Resource at %s: %s", itemPath, err)
+	}
+
+	return errors.Errorf("Invalid %s `%s` at %s: %s", kind, name, itemPath, err)
 }
 
 func getItemPath(path string, idx int) string {
@@ -194,6 +270,26 @@ func unmarshalResource(in map[string]any,
 	}
 
 	cliutils.LineWarn("Unknown field in the %s Resource at %s: %s\n", kind, itemPath, strictErr)
+
+	return obj, nil
+}
+
+func unmarshalResourceStrict(in map[string]any,
+	newObjFn func(kind string) (umetav1.ResourceObjectI, error)) (umetav1.ResourceObjectI, error) {
+
+	kind, ok := in["kind"].(string)
+	if !ok {
+		return nil, errors.Errorf("Could not find kind")
+	}
+
+	obj, err := newObjFn(kind)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pbutils.UnmarshalFromMapStrict(in, obj); err != nil {
+		return nil, err
+	}
 
 	return obj, nil
 }

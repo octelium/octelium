@@ -244,6 +244,32 @@ func (c *diffCtl) checkDuplicateItems() error {
 	return nil
 }
 
+func CheckDuplicateCoreResources(kinds []string, desiredItems []umetav1.ResourceObjectI) []error {
+	var ret []error
+
+	c := &diffCtl{
+		api: ucorev1.API,
+	}
+
+	counts := make(map[string]int)
+
+	for _, itm := range desiredItems {
+		if !slices.Contains(kinds, itm.GetKind()) {
+			continue
+		}
+
+		name := c.getFullName(itm)
+		key := fmt.Sprintf("%s/%s", itm.GetKind(), name)
+
+		counts[key] += 1
+		if counts[key] == 2 {
+			ret = append(ret, errors.Errorf("The %s `%s` is defined more than once", itm.GetKind(), name))
+		}
+	}
+
+	return ret
+}
+
 func (c *diffCtl) getDryRunSuffix() string {
 	if c.dryRun {
 		return " (dry run)"

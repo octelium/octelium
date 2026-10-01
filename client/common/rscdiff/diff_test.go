@@ -16,6 +16,7 @@ package rscdiff
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -271,4 +272,48 @@ func TestApplyDryRun(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCheckDuplicateCoreResources(t *testing.T) {
+
+	newSvc := func(name string) *corev1.Service {
+		return &corev1.Service{
+			Kind: ucorev1.KindService,
+			Metadata: &metav1.Metadata{
+				Name: name,
+			},
+			Spec: &corev1.Service_Spec{},
+		}
+	}
+
+	kinds := []string{ucorev1.KindUser, ucorev1.KindGroup, ucorev1.KindService}
+
+	desiredItems := []umetav1.ResourceObjectI{
+		newSvc("svc1"),
+		newSvc("svc2.ns1"),
+		&corev1.User{
+			Kind: ucorev1.KindUser,
+			Metadata: &metav1.Metadata{
+				Name: "usr1",
+			},
+			Spec: &corev1.User_Spec{},
+		},
+		&corev1.Group{
+			Kind: ucorev1.KindGroup,
+			Metadata: &metav1.Metadata{
+				Name: "usr1",
+			},
+			Spec: &corev1.Group_Spec{},
+		},
+	}
+
+	assert.Equal(t, 0, len(CheckDuplicateCoreResources(kinds, desiredItems)))
+
+	desiredItems = append(desiredItems, newSvc("svc1.default"), newSvc("svc1"))
+
+	errs := CheckDuplicateCoreResources(kinds, desiredItems)
+	assert.Equal(t, 1, len(errs))
+	assert.True(t, strings.Contains(errs[0].Error(), "svc1.default"), "%+v", errs[0])
+
+	assert.Equal(t, 0, len(CheckDuplicateCoreResources([]string{ucorev1.KindUser}, desiredItems)))
 }

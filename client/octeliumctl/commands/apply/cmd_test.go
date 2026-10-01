@@ -17,6 +17,7 @@ package apply
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -135,6 +136,63 @@ func TestGetClusterConfig(t *testing.T) {
 
 	_, err = getClusterConfig(rscList)
 	assert.NotNil(t, err)
+}
+
+func TestValidateResources(t *testing.T) {
+
+	newCC := func() *corev1.ClusterConfig {
+		return &corev1.ClusterConfig{
+			Kind: ucorev1.KindClusterConfig,
+			Metadata: &metav1.Metadata{
+				Name: "default",
+			},
+			Spec: &corev1.ClusterConfig_Spec{},
+		}
+	}
+
+	newUser := func(name string) *corev1.User {
+		return &corev1.User{
+			Kind: ucorev1.KindUser,
+			Metadata: &metav1.Metadata{
+				Name: name,
+			},
+			Spec: &corev1.User_Spec{},
+		}
+	}
+
+	rscList := []umetav1.ResourceObjectI{
+		newCC(),
+		newUser("usr1"),
+		newUser("usr2"),
+		&corev1.Secret{
+			Kind: ucorev1.KindSecret,
+			Metadata: &metav1.Metadata{
+				Name: "sec1",
+			},
+			Spec: &corev1.Secret_Spec{},
+		},
+	}
+
+	assert.Equal(t, 0, len(ValidateResources(rscList)))
+
+	rscList = append(rscList, &corev1.Device{
+		Kind: ucorev1.KindDevice,
+		Metadata: &metav1.Metadata{
+			Name: "dev1",
+		},
+		Spec: &corev1.Device_Spec{},
+	})
+
+	errs := ValidateResources(rscList)
+	assert.Equal(t, 1, len(errs))
+	assert.True(t, strings.Contains(errs[0].Error(), "Device `dev1`"), "%+v", errs[0])
+
+	rscList = append(rscList, newCC(), newUser("usr1"))
+
+	errs = ValidateResources(rscList)
+	assert.Equal(t, 3, len(errs))
+	assert.True(t, strings.Contains(errs[1].Error(), "ClusterConfig"), "%+v", errs[1])
+	assert.True(t, strings.Contains(errs[2].Error(), "User `usr1`"), "%+v", errs[2])
 }
 
 func TestGetCmpMetadata(t *testing.T) {

@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/client/octeliumctl/commands/delete"
 	"github.com/octelium/octelium/client/octeliumctl/commands/get"
 	"github.com/octelium/octelium/client/octeliumctl/commands/update"
+	"github.com/octelium/octelium/client/octeliumctl/commands/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,7 @@ func InitCmds() {
 	Cmd.AddCommand(create.Cmd)
 	Cmd.AddCommand(delete.Cmd)
 	Cmd.AddCommand(apply.Cmd)
+	Cmd.AddCommand(validate.Cmd)
 	Cmd.AddCommand(get.Cmd)
 	Cmd.AddCommand(version.Cmd)
 	Cmd.AddCommand(auth.Cmd)
