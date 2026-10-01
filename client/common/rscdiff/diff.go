@@ -69,7 +69,7 @@ func (c *diffCtl) getFullName(itm umetav1.ResourceObjectI) string {
 }
 
 func DiffCoreResources(ctx context.Context,
-	kinds []string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete bool) (*DiffCtlResponse, error) {
+	kinds []string, conn *grpc.ClientConn, desiredItems []umetav1.ResourceObjectI, doDelete, dryRun bool) (*DiffCtlResponse, error) {
 
 	ret := &DiffCtlResponse{}
 
@@ -81,7 +81,7 @@ func DiffCoreResources(ctx context.Context,
 				return ucorev1.NewObject(kind)
 			}, func() (protoreflect.ProtoMessage, error) {
 				return ucorev1.NewObjectListOptions(kind)
-			}, desiredItems, doDelete)
+			}, desiredItems, doDelete, dryRun)
 		if err != nil {
 			return nil, err
 		}
@@ -120,6 +120,7 @@ type diffCtl struct {
 	deleteItems []umetav1.ResourceObjectI
 
 	doDelete bool
+	dryRun   bool
 
 	getNewObjectFn         func() (umetav1.ResourceObjectI, error)
 	newObjectListOptionsFn func() (protoreflect.ProtoMessage, error)
@@ -128,7 +129,7 @@ type diffCtl struct {
 func NewDiffCtl(api, kind string, client any,
 	getNewObjectFn func() (umetav1.ResourceObjectI, error),
 	newObjectListOptionsFn func() (protoreflect.ProtoMessage, error),
-	desiredItems []umetav1.ResourceObjectI, doDelete bool) (*diffCtl, error) {
+	desiredItems []umetav1.ResourceObjectI, doDelete, dryRun bool) (*diffCtl, error) {
 
 	var filteredDesiredItems []umetav1.ResourceObjectI
 	for _, itm := range desiredItems {
@@ -143,6 +144,7 @@ func NewDiffCtl(api, kind string, client any,
 		client:                 reflect.ValueOf(client),
 		desiredItems:           filteredDesiredItems,
 		doDelete:               doDelete,
+		dryRun:                 dryRun,
 		getNewObjectFn:         getNewObjectFn,
 		newObjectListOptionsFn: newObjectListOptionsFn,
 	}, nil
@@ -182,7 +184,7 @@ func (c *diffCtl) Apply(ctx context.Context, ret *DiffCtlResponse) error {
 			return err
 		}
 		ret.CountCreated += 1
-		cliutils.LineNotify("%s: %s Created\n", c.kind, c.getFullName(itm))
+		cliutils.LineNotify("%s: %s Created%s\n", c.kind, c.getFullName(itm), c.getDryRunSuffix())
 	}
 
 	for _, itm := range c.updateItems {
@@ -195,7 +197,7 @@ func (c *diffCtl) Apply(ctx context.Context, ret *DiffCtlResponse) error {
 			return err
 		}
 		ret.CountUpdated += 1
-		cliutils.LineNotify("%s: %s Updated\n", c.kind, c.getFullName(itm))
+		cliutils.LineNotify("%s: %s Updated%s\n", c.kind, c.getFullName(itm), c.getDryRunSuffix())
 	}
 
 	return nil
@@ -220,7 +222,7 @@ func (c *diffCtl) Prune(ctx context.Context, ret *DiffCtlResponse) error {
 			return err
 		}
 		ret.CountDeleted += 1
-		cliutils.LineNotify("%s: %s Deleted\n", c.kind, c.getFullName(itm))
+		cliutils.LineNotify("%s: %s Deleted%s\n", c.kind, c.getFullName(itm), c.getDryRunSuffix())
 	}
 
 	return nil
@@ -240,6 +242,14 @@ func (c *diffCtl) checkDuplicateItems() error {
 	}
 
 	return nil
+}
+
+func (c *diffCtl) getDryRunSuffix() string {
+	if c.dryRun {
+		return " (dry run)"
+	}
+
+	return ""
 }
 
 func isUserError(err error) bool {
@@ -442,6 +452,10 @@ func (c diffCtl) doCreateItem(ctx context.Context, item umetav1.ResourceObjectI)
 		return errors.Errorf("Unsupported kind: %s", c.kind)
 	}
 
+	if c.dryRun {
+		return nil
+	}
+
 	res := c.client.MethodByName(fmt.Sprintf("Create%s", c.kind)).Call(
 		[]reflect.Value{
 			reflect.ValueOf(ctx),
@@ -468,6 +482,10 @@ func (c *diffCtl) doUpdateItem(ctx context.Context, item umetav1.ResourceObjectI
 		return errors.Errorf("Unsupported kind: %s", c.kind)
 	}
 
+	if c.dryRun {
+		return nil
+	}
+
 	res := c.client.MethodByName(fmt.Sprintf("Update%s", c.kind)).Call(
 		[]reflect.Value{
 			reflect.ValueOf(ctx),
@@ -492,6 +510,10 @@ func (c *diffCtl) doDeleteItem(ctx context.Context, item umetav1.ResourceObjectI
 
 	if !c.client.MethodByName(fmt.Sprintf("Delete%s", c.kind)).IsValid() {
 		return errors.Errorf("Unsupported kind: %s", c.kind)
+	}
+
+	if c.dryRun {
+		return nil
 	}
 
 	res := c.client.MethodByName(fmt.Sprintf("Delete%s", c.kind)).Call(

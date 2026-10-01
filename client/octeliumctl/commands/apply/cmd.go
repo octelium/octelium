@@ -15,6 +15,7 @@
 package apply
 
 import (
+	"context"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -33,6 +34,7 @@ import (
 
 type args struct {
 	DoDelete         bool
+	DryRun           bool
 	ResourceIncludes []string
 	ResourceExcludes []string
 	IncludeSecret    bool
@@ -62,6 +64,12 @@ octeliumctl apply --include-secret /path/to/directory
 
 # Synchronize the Cluster to the desired state and delete the Resources that are not described in it
 octeliumctl apply --prune /path/to/directory
+
+# Show the changes that would be applied to the Cluster without actually applying them
+octeliumctl apply --dry-run /path/to/directory
+
+# Show the changes, including the Resources that would be deleted, without actually applying them
+octeliumctl apply --dry-run --prune /path/to/directory
 `
 
 var Cmd = &cobra.Command{
@@ -85,6 +93,9 @@ func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.DoDelete, "prune", false,
 		`Delete the Resources that exist in the Cluster but are not described in the desired state.
 This synchronizes the Cluster to the described state instead of only creating and updating Resources. Disabled by default`)
+	Cmd.PersistentFlags().BoolVar(&cmdArgs.DryRun, "dry-run", false,
+		`Show the changes that would be applied to the Cluster without actually applying them.
+The current Resources are still fetched from the Cluster in order to compute the diff. However, the desired Resources are not validated by the Cluster in this mode. Disabled by default`)
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.ResourceIncludes, "include", nil,
 		`Only include these Resource kinds. This overrides the default list of included kinds.
 Use the flag multiple times to include more kinds`)
@@ -129,13 +140,13 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	defer conn.Close()
 	c := corev1.NewMainServiceClient(conn)
 
-	totalDiffResp, err := rscdiff.DiffCoreResources(ctx, allKinds, conn, rscList, cmdArgs.DoDelete)
+	totalDiffResp, err := rscdiff.DiffCoreResources(ctx, allKinds, conn, rscList, cmdArgs.DoDelete, cmdArgs.DryRun)
 	if err != nil {
 		return err
 	}
 
 	if totalDiffResp.CountCreated+totalDiffResp.CountUpdated+totalDiffResp.CountDeleted > 0 {
-		cliutils.LineNotify("Cluster Core resources successfully applied\n")
+		cliutils.LineNotify("Cluster Core resources successfully applied%s\n", getDryRunSuffix())
 		if totalDiffResp.CountCreated > 0 {
 			cliutils.LineInfo(" %d resources created\n", totalDiffResp.CountCreated)
 		}
@@ -146,24 +157,43 @@ func doCmd(cmd *cobra.Command, args []string) error {
 			cliutils.LineInfo(" %d resources deleted\n", totalDiffResp.CountDeleted)
 		}
 	} else {
-		cliutils.LineNotify("No applied changes in Cluster Core resources\n")
+		cliutils.LineNotify("No applied changes in Cluster Core resources%s\n", getDryRunSuffix())
 	}
 
 	if cc != nil {
-		curCC, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
-		if err != nil {
+		if err := applyClusterConfig(ctx, c, cc); err != nil {
 			return err
-		}
-		if !pbutils.IsEqual(cc.Spec, curCC.Spec) ||
-			!pbutils.IsEqual(getCmpMetadata(cc), getCmpMetadata(curCC)) {
-			if _, err := c.UpdateClusterConfig(ctx, cc); err != nil {
-				return err
-			}
-			cliutils.LineNotify("\n ClusterConfig updated\n")
 		}
 	}
 
 	return nil
+}
+
+func applyClusterConfig(ctx context.Context, c corev1.MainServiceClient, cc *corev1.ClusterConfig) error {
+	curCC, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+	if err != nil {
+		return err
+	}
+
+	if !pbutils.IsEqual(cc.Spec, curCC.Spec) ||
+		!pbutils.IsEqual(getCmpMetadata(cc), getCmpMetadata(curCC)) {
+		if !cmdArgs.DryRun {
+			if _, err := c.UpdateClusterConfig(ctx, cc); err != nil {
+				return err
+			}
+		}
+		cliutils.LineNotify("\n ClusterConfig updated%s\n", getDryRunSuffix())
+	}
+
+	return nil
+}
+
+func getDryRunSuffix() string {
+	if cmdArgs.DryRun {
+		return " (dry run)"
+	}
+
+	return ""
 }
 
 func loadResources(paths []string) ([]umetav1.ResourceObjectI, error) {

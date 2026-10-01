@@ -15,6 +15,7 @@
 package rscdiff
 
 import (
+	"context"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -22,6 +23,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 func TestDiff(t *testing.T) {
@@ -175,4 +177,98 @@ func TestCheckDuplicateItems(t *testing.T) {
 	})
 
 	assert.NotNil(t, diffCtl.checkDuplicateItems())
+}
+
+type fakeMainServiceClient struct {
+	corev1.MainServiceClient
+
+	createCount int
+	updateCount int
+	deleteCount int
+}
+
+func (c *fakeMainServiceClient) CreateUser(ctx context.Context,
+	req *corev1.User, opts ...grpc.CallOption) (*corev1.User, error) {
+	c.createCount++
+	return req, nil
+}
+
+func (c *fakeMainServiceClient) UpdateUser(ctx context.Context,
+	req *corev1.User, opts ...grpc.CallOption) (*corev1.User, error) {
+	c.updateCount++
+	return req, nil
+}
+
+func (c *fakeMainServiceClient) DeleteUser(ctx context.Context,
+	req *metav1.DeleteOptions, opts ...grpc.CallOption) (*metav1.OperationResult, error) {
+	c.deleteCount++
+	return &metav1.OperationResult{}, nil
+}
+
+func TestApplyDryRun(t *testing.T) {
+
+	ctx := context.Background()
+
+	newUser := func(name string, typ corev1.User_Spec_Type) *corev1.User {
+		return &corev1.User{
+			Kind: ucorev1.KindUser,
+			Metadata: &metav1.Metadata{
+				Name: name,
+			},
+			Spec: &corev1.User_Spec{
+				Type: typ,
+			},
+		}
+	}
+
+	currentItems := []umetav1.ResourceObjectI{
+		newUser("usr1", corev1.User_Spec_HUMAN),
+		newUser("usr2", corev1.User_Spec_HUMAN),
+		newUser("usr3", corev1.User_Spec_HUMAN),
+	}
+
+	desiredItems := []umetav1.ResourceObjectI{
+		newUser("usr1", corev1.User_Spec_HUMAN),
+		newUser("usr2", corev1.User_Spec_WORKLOAD),
+		newUser("usr4", corev1.User_Spec_HUMAN),
+	}
+
+	for _, doDelete := range []bool{false, true} {
+		for _, dryRun := range []bool{false, true} {
+			fakeC := &fakeMainServiceClient{}
+
+			diffCtl, err := NewDiffCtl(ucorev1.API, ucorev1.KindUser, fakeC,
+				nil, nil, desiredItems, doDelete, dryRun)
+			assert.Nil(t, err, "%+v", err)
+
+			diffCtl.currentItems = currentItems
+			diffCtl.setDiff()
+
+			ret := &DiffCtlResponse{}
+
+			err = diffCtl.Apply(ctx, ret)
+			assert.Nil(t, err, "%+v", err)
+
+			err = diffCtl.Prune(ctx, ret)
+			assert.Nil(t, err, "%+v", err)
+
+			assert.Equal(t, 1, ret.CountCreated)
+			assert.Equal(t, 1, ret.CountUpdated)
+			if doDelete {
+				assert.Equal(t, 1, ret.CountDeleted)
+			} else {
+				assert.Equal(t, 0, ret.CountDeleted)
+			}
+
+			if dryRun {
+				assert.Equal(t, 0, fakeC.createCount)
+				assert.Equal(t, 0, fakeC.updateCount)
+				assert.Equal(t, 0, fakeC.deleteCount)
+			} else {
+				assert.Equal(t, ret.CountCreated, fakeC.createCount)
+				assert.Equal(t, ret.CountUpdated, fakeC.updateCount)
+				assert.Equal(t, ret.CountDeleted, fakeC.deleteCount)
+			}
+		}
+	}
 }

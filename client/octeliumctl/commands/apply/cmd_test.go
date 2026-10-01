@@ -15,6 +15,7 @@
 package apply
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 func TestGetResourceKinds(t *testing.T) {
@@ -161,6 +163,75 @@ func TestGetCmpMetadata(t *testing.T) {
 
 	assert.True(t, pbutils.IsEqual(
 		getCmpMetadata(&corev1.ClusterConfig{}), getCmpMetadata(&corev1.ClusterConfig{})))
+}
+
+type fakeMainServiceClient struct {
+	corev1.MainServiceClient
+
+	cc          *corev1.ClusterConfig
+	updateCount int
+}
+
+func (c *fakeMainServiceClient) GetClusterConfig(ctx context.Context,
+	req *corev1.GetClusterConfigRequest, opts ...grpc.CallOption) (*corev1.ClusterConfig, error) {
+	return c.cc, nil
+}
+
+func (c *fakeMainServiceClient) UpdateClusterConfig(ctx context.Context,
+	req *corev1.ClusterConfig, opts ...grpc.CallOption) (*corev1.ClusterConfig, error) {
+	c.updateCount++
+	c.cc = req
+	return req, nil
+}
+
+func TestApplyClusterConfig(t *testing.T) {
+
+	ctx := context.Background()
+
+	newCC := func(displayName string) *corev1.ClusterConfig {
+		return &corev1.ClusterConfig{
+			Kind: ucorev1.KindClusterConfig,
+			Metadata: &metav1.Metadata{
+				Name:        "default",
+				DisplayName: displayName,
+			},
+			Spec: &corev1.ClusterConfig_Spec{},
+		}
+	}
+
+	{
+		cmdArgs.DryRun = false
+		fakeC := &fakeMainServiceClient{
+			cc: newCC("Cluster"),
+		}
+
+		err := applyClusterConfig(ctx, fakeC, newCC("Cluster"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, fakeC.updateCount)
+
+		err = applyClusterConfig(ctx, fakeC, newCC("Cluster 01"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, fakeC.updateCount)
+		assert.Equal(t, "Cluster 01", fakeC.cc.Metadata.DisplayName)
+	}
+
+	{
+		cmdArgs.DryRun = true
+		fakeC := &fakeMainServiceClient{
+			cc: newCC("Cluster"),
+		}
+
+		err := applyClusterConfig(ctx, fakeC, newCC("Cluster"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, fakeC.updateCount)
+
+		err = applyClusterConfig(ctx, fakeC, newCC("Cluster 01"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, fakeC.updateCount)
+		assert.Equal(t, "Cluster", fakeC.cc.Metadata.DisplayName)
+	}
+
+	cmdArgs.DryRun = false
 }
 
 func TestSupportedResourceKindsAreUsable(t *testing.T) {
