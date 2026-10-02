@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -66,8 +67,7 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http/httpguts"
 )
 
 const maxHeaderBytes = 32 * 1024
@@ -463,13 +463,39 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 	}
 
 	handler = http.AllowQuerySemicolons(handler)
-
-	if ucorev1.ToService(svc).IsListenerHTTP2() {
-		zap.L().Debug("Using HTTP2 on listener")
-		handler = h2c.NewHandler(handler, &http2.Server{})
-	}
+	handler = removeH2CUpgrade(handler)
 
 	return handler, nil
+}
+
+func removeH2CUpgrade(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if httpguts.HeaderValuesContainsToken(r.Header["Upgrade"], "h2c") {
+			r.Header.Del("Upgrade")
+			r.Header.Del("Http2-Settings")
+
+			var tokens []string
+			for _, val := range r.Header["Connection"] {
+				for token := range strings.SplitSeq(val, ",") {
+					token = strings.TrimSpace(token)
+					if token == "" ||
+						strings.EqualFold(token, "Upgrade") ||
+						strings.EqualFold(token, "HTTP2-Settings") {
+						continue
+					}
+					tokens = append(tokens, token)
+				}
+			}
+
+			if len(tokens) > 0 {
+				r.Header.Set("Connection", strings.Join(tokens, ", "))
+			} else {
+				r.Header.Del("Connection")
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) serve(ctx context.Context) error {
@@ -487,6 +513,14 @@ func (s *Server) serve(ctx context.Context) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		MaxHeaderBytes:    maxHeaderBytes,
+	}
+
+	if ucorev1.ToService(svc).IsListenerHTTP2() {
+		zap.L().Debug("Using HTTP2 on listener")
+		s.srv.Protocols = new(http.Protocols)
+		s.srv.Protocols.SetHTTP1(true)
+		s.srv.Protocols.SetHTTP2(true)
+		s.srv.Protocols.SetUnencryptedHTTP2(true)
 	}
 
 	if svc.Spec.IsTLS {

@@ -17,6 +17,7 @@
 package httpg
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -25,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -3577,5 +3579,235 @@ func TestMaxHeaderBytes(t *testing.T) {
 		resp, err := req.Get(url)
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, http.StatusRequestHeaderFieldsTooLarge, resp.StatusCode())
+	}
+}
+
+func TestH2C(t *testing.T) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamSrv := newSrvHTTP(t, tests.GetPort(), false, nil)
+	upstreamSrv.run(t)
+	t.Cleanup(func() {
+		upstreamSrv.close()
+	})
+
+	maxRequestSize := 1024
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Port:        uint32(tests.GetPort()),
+			Mode:        corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("http://localhost:%d", upstreamSrv.port),
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						ListenHTTP2:            true,
+						EnableRequestBuffering: true,
+						Body: &corev1.Service_Spec_Config_HTTP_Body{
+							MaxRequestSize: uint32(maxRequestSize),
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	svcV, err := fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svcV)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: fakeC.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		VCache:     vCache,
+		OctovigilC: octovigilC,
+		SecretMan:  secretMan,
+		LBManager:  loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	assert.Nil(t, err)
+	err = srv.Run(ctx)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		srv.Close()
+	})
+
+	time.Sleep(1 * time.Second)
+
+	url := fmt.Sprintf("http://localhost:%d", ucorev1.ToService(svcV).RealPort())
+
+	{
+		resp, err := resty.New().R().SetResult(&tstResp{}).Get(url)
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess())
+		assert.Equal(t, "world", resp.Result().(*tstResp).Hello)
+	}
+
+	{
+		tr := &http.Transport{}
+		tr.Protocols = new(http.Protocols)
+		tr.Protocols.SetUnencryptedHTTP2(true)
+		defer tr.CloseIdleConnections()
+
+		resp, err := (&http.Client{Transport: tr}).Get(url)
+		assert.Nil(t, err, "%+v", err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 2, resp.ProtoMajor)
+
+		res := &tstResp{}
+		assert.Nil(t, json.NewDecoder(resp.Body).Decode(res))
+		assert.Equal(t, "world", res.Hello)
+	}
+
+	doUpgrade := func(body []byte) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		assert.Nil(t, err)
+		req.Header.Set("Connection", "Upgrade, HTTP2-Settings")
+		req.Header.Set("Upgrade", "h2c")
+		req.Header.Set("HTTP2-Settings", "AAMAAABkAAQAoAAAAAIAAAAA")
+
+		tr := &http.Transport{}
+		t.Cleanup(tr.CloseIdleConnections)
+
+		resp, err := (&http.Client{Transport: tr}).Do(req)
+		assert.Nil(t, err, "%+v", err)
+		t.Cleanup(func() {
+			resp.Body.Close()
+		})
+		return resp
+	}
+
+	{
+		tReq := &tstResp{
+			Hello: utilrand.GetRandomString(32),
+		}
+		body, err := json.Marshal(tReq)
+		assert.Nil(t, err)
+
+		resp := doUpgrade(body)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 1, resp.ProtoMajor)
+
+		res := &tstResp{}
+		assert.Nil(t, json.NewDecoder(resp.Body).Decode(res))
+		assert.Equal(t, tReq.Hello, res.Hello)
+	}
+
+	{
+		resp := doUpgrade([]byte(utilrand.GetRandomString(2 * maxRequestSize)))
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	}
+}
+
+func TestRemoveH2CUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		header   http.Header
+		expected http.Header
+	}{
+		{
+			name: "h2c",
+			header: http.Header{
+				"Connection":     []string{"Upgrade, HTTP2-Settings"},
+				"Upgrade":        []string{"h2c"},
+				"Http2-Settings": []string{"AAMAAABkAAQAoAAAAAIAAAAA"},
+				"X-Custom":       []string{"value"},
+			},
+			expected: http.Header{
+				"X-Custom": []string{"value"},
+			},
+		},
+		{
+			name: "h2c with other connection tokens",
+			header: http.Header{
+				"Connection":     []string{"keep-alive, upgrade", "http2-settings, X-Hop"},
+				"Upgrade":        []string{"H2C"},
+				"Http2-Settings": []string{"AAMAAABkAAQAoAAAAAIAAAAA"},
+				"X-Hop":          []string{"value"},
+			},
+			expected: http.Header{
+				"Connection": []string{"keep-alive, X-Hop"},
+				"X-Hop":      []string{"value"},
+			},
+		},
+		{
+			name: "h2c without HTTP2-Settings",
+			header: http.Header{
+				"Connection": []string{"Upgrade"},
+				"Upgrade":    []string{"h2c"},
+			},
+			expected: http.Header{},
+		},
+		{
+			name: "websocket",
+			header: http.Header{
+				"Connection": []string{"Upgrade"},
+				"Upgrade":    []string{"websocket"},
+			},
+			expected: http.Header{
+				"Connection": []string{"Upgrade"},
+				"Upgrade":    []string{"websocket"},
+			},
+		},
+		{
+			name: "no upgrade",
+			header: http.Header{
+				"Connection":     []string{"keep-alive"},
+				"Http2-Settings": []string{"AAMAAABkAAQAoAAAAAIAAAAA"},
+			},
+			expected: http.Header{
+				"Connection":     []string{"keep-alive"},
+				"Http2-Settings": []string{"AAMAAABkAAQAoAAAAAIAAAAA"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got http.Header
+			handler := removeH2CUpgrade(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
+			req.Header = tc.header
+
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			assert.Equal(t, tc.expected, got)
+		})
 	}
 }
