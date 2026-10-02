@@ -554,6 +554,77 @@ func (s *Server) doList(ctx context.Context,
 	return objList.Items, listMeta, nil
 }
 
+func (s *Server) doListAfterID(ctx context.Context,
+	api, version, kind string, afterID int64, limit uint) ([]umetav1.ResourceObjectI, int64, bool, error) {
+	var retItems []umetav1.ResourceObjectI
+
+	ds := goqu.From(tableName).Where(
+		goqu.C("api").Eq(api),
+		goqu.C("version").Eq(version),
+		goqu.C("kind").Eq(kind),
+		goqu.C("id").Gt(afterID),
+	).Select("id", "resource").Order(goqu.I(`id`).Asc()).Limit(limit)
+
+	sqln, sqlargs, err := ds.ToSQL()
+	if err != nil {
+		return nil, 0, false, rerr.InternalWithErr(err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, sqln, sqlargs...)
+	if err != nil {
+		return nil, 0, false, rerr.InternalWithErr(err)
+	}
+
+	defer rows.Close()
+
+	lastID := afterID
+	count := uint(0)
+
+	for rows.Next() {
+		var id int64
+		var data []byte
+		if err := rows.Scan(&id, &data); err != nil {
+			return nil, 0, false, rerr.InternalWithErr(err)
+		}
+
+		lastID = id
+		count = count + 1
+
+		obj, err := s.opts.NewResourceObject(api, version, kind)
+		if err != nil {
+			return nil, 0, false, rerr.InternalWithErr(err)
+		}
+
+		if err := pbutils.UnmarshalJSON(data, obj); err != nil {
+			zap.L().Warn("Could not unmarshalJSON in doListAfterID",
+				zap.Any("data", data), zap.Error(err))
+			return nil, 0, false, rerr.InternalWithErr(err)
+		}
+		retItems = append(retItems, obj)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, rerr.InternalWithErr(err)
+	}
+
+	retItems, err = s.handleSecretManagerList(ctx, retItems, api, version, kind)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	objList := &ObjectList{
+		Items: retItems,
+	}
+
+	if s.opts.PostList != nil {
+		if err := s.opts.PostList(ctx, objList, api, version, kind); err != nil {
+			return nil, 0, false, err
+		}
+	}
+
+	return objList.Items, lastID, count == limit, nil
+}
+
 func (s *Server) doDelete(ctx context.Context, req *rmetav1.DeleteOptions, api, version, kind string) (umetav1.ResourceObjectI, error) {
 
 	getOpts := &rmetav1.GetOptions{
@@ -614,6 +685,9 @@ func (s *Server) doDelete(ctx context.Context, req *rmetav1.DeleteOptions, api, 
 }
 
 func (s *Server) doPostCreate(ctx context.Context, obj umetav1.ResourceObjectI, api, version, kind string) error {
+	ctx, cancel := getPostCommitContext(ctx)
+	defer cancel()
+
 	s.doSetCache(ctx, obj, api, version, kind)
 
 	msg := &rmetav1.WatchEvent{
@@ -628,7 +702,7 @@ func (s *Server) doPostCreate(ctx context.Context, obj umetav1.ResourceObjectI, 
 		},
 	}
 
-	if err := s.publishMessage(ctx, api, version, kind, msg); err != nil {
+	if err := s.publishWatchEvent(ctx, api, version, kind, msg); err != nil {
 		return err
 	}
 
@@ -636,6 +710,9 @@ func (s *Server) doPostCreate(ctx context.Context, obj umetav1.ResourceObjectI, 
 }
 
 func (s *Server) doPostUpdate(ctx context.Context, new, old umetav1.ResourceObjectI, api, version, kind string) error {
+	ctx, cancel := getPostCommitContext(ctx)
+	defer cancel()
+
 	s.doSetCache(ctx, new, api, version, kind)
 
 	msg := &rmetav1.WatchEvent{
@@ -651,7 +728,7 @@ func (s *Server) doPostUpdate(ctx context.Context, new, old umetav1.ResourceObje
 		},
 	}
 
-	if err := s.publishMessage(ctx, api, version, kind, msg); err != nil {
+	if err := s.publishWatchEvent(ctx, api, version, kind, msg); err != nil {
 		return err
 	}
 
@@ -659,6 +736,9 @@ func (s *Server) doPostUpdate(ctx context.Context, new, old umetav1.ResourceObje
 }
 
 func (s *Server) doPostDelete(ctx context.Context, obj umetav1.ResourceObjectI, api, version, kind string) error {
+	ctx, cancel := getPostCommitContext(ctx)
+	defer cancel()
+
 	s.doDeleteCache(ctx, obj, api, version, kind)
 
 	if err := s.doPostDeletePublish(ctx, obj, api, version, kind); err != nil {
@@ -682,7 +762,7 @@ func (s *Server) doPostDeletePublish(ctx context.Context, obj umetav1.ResourceOb
 		},
 	}
 
-	if err := s.publishMessage(ctx, api, version, kind, msg); err != nil {
+	if err := s.publishWatchEvent(ctx, api, version, kind, msg); err != nil {
 		return err
 	}
 
@@ -737,18 +817,32 @@ func (s *Server) doSetCache(ctx context.Context, itm umetav1.ResourceObjectI, ap
 
 	itmBytes, _ := pbutils.Marshal(itm)
 
+	hasErr := false
+
 	if _, err := s.redisC.Set(ctx,
 		getObjectKeyByName(api, version, kind, md.Name), string(itmBytes), cacheResourceTTL).Result(); err != nil {
 		zap.L().Warn("Could not set redis object",
 			zap.String("key", getObjectKeyByName(api, version, kind, md.Name)), zap.Error(err))
+		hasErr = true
 	}
 	if _, err := s.redisC.Set(ctx, getObjectKeyByUID(md.Uid), string(itmBytes), cacheResourceTTL).Result(); err != nil {
 		zap.L().Warn("Could not set redis object",
 			zap.String("key", getObjectKeyByUID(md.Uid)), zap.Error(err))
+		hasErr = true
+	}
+
+	if hasErr {
+		s.doDeleteCache(ctx, itm, api, version, kind)
 	}
 }
 
 const cacheResourceTTL = 5 * time.Minute
+
+const postCommitTimeout = 10 * time.Second
+
+func getPostCommitContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), postCommitTimeout)
+}
 
 func (s *Server) doDeleteCache(ctx context.Context, itm umetav1.ResourceObjectI, api, version, kind string) {
 	md := itm.GetMetadata()

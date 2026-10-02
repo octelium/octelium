@@ -510,3 +510,155 @@ func TestEventHubStopWithoutStart(t *testing.T) {
 	h.Stop()
 	h.Stop()
 }
+
+func TestEventHubCheckGaps(t *testing.T) {
+	ctx := context.Background()
+
+	redisC := redisutils.NewClient()
+	srv := &Server{redisC: redisC}
+
+	h := newEventHub(redisC)
+
+	api := "core"
+	version := "v1"
+
+	{
+		kind := newTestKind()
+		streamKey := getRscStreamKey(api, version, kind)
+
+		t.Cleanup(func() {
+			redisC.Del(context.Background(), streamKey)
+		})
+
+		assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+			newTestWatchEvent(api, version, kind, "before")))
+
+		sub, err := h.subscribe(ctx, api, version, kind)
+		assert.Nil(t, err)
+
+		h.checkGaps(ctx)
+		assert.False(t, waitForDone(sub, 100*time.Millisecond))
+
+		assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+			newTestWatchEvent(api, version, kind, "after")))
+
+		h.checkGaps(ctx)
+		assert.False(t, waitForDone(sub, 100*time.Millisecond))
+
+		assert.Nil(t, redisC.Del(ctx, streamKey).Err())
+
+		h.checkGaps(ctx)
+		assert.True(t, waitForDone(sub, 1*time.Second))
+		assert.False(t, h.hasSubscribers(streamKey))
+
+		_, hasCursor := h.getCursor(streamKey)
+		assert.False(t, hasCursor)
+	}
+
+	{
+		kind := newTestKind()
+		streamKey := getRscStreamKey(api, version, kind)
+
+		t.Cleanup(func() {
+			redisC.Del(context.Background(), streamKey)
+		})
+
+		assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+			newTestWatchEvent(api, version, kind, "before")))
+
+		sub, err := h.subscribe(ctx, api, version, kind)
+		assert.Nil(t, err)
+
+		assert.Nil(t, redisC.Del(ctx, streamKey).Err())
+		assert.Nil(t, redisC.XAdd(ctx, &redis.XAddArgs{
+			Stream: streamKey,
+			ID:     "1-1",
+			Values: map[string]any{
+				rscStreamFieldData: "recreated",
+			},
+		}).Err())
+
+		h.checkGaps(ctx)
+		assert.True(t, waitForDone(sub, 1*time.Second))
+		assert.False(t, h.hasSubscribers(streamKey))
+	}
+
+	{
+		kind := newTestKind()
+		streamKey := getRscStreamKey(api, version, kind)
+
+		t.Cleanup(func() {
+			redisC.Del(context.Background(), streamKey)
+		})
+
+		assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+			newTestWatchEvent(api, version, kind, "before")))
+
+		sub, err := h.subscribe(ctx, api, version, kind)
+		assert.Nil(t, err)
+
+		for i := range 3 {
+			assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+				newTestWatchEvent(api, version, kind, fmt.Sprintf("after-%d", i))))
+		}
+
+		assert.Nil(t, redisC.XTrimMaxLen(ctx, streamKey, 1).Err())
+
+		h.checkGaps(ctx)
+		assert.True(t, waitForDone(sub, 1*time.Second))
+		assert.False(t, h.hasSubscribers(streamKey))
+	}
+
+	{
+		kind := newTestKind()
+		streamKey := getRscStreamKey(api, version, kind)
+
+		sub, err := h.subscribe(ctx, api, version, kind)
+		assert.Nil(t, err)
+
+		cursor, hasCursor := h.getCursor(streamKey)
+		assert.True(t, hasCursor)
+		assert.Equal(t, streamIDZero, cursor)
+
+		h.checkGaps(ctx)
+		assert.False(t, waitForDone(sub, 100*time.Millisecond))
+		assert.True(t, h.hasSubscribers(streamKey))
+
+		h.unsubscribe(sub)
+	}
+}
+
+func TestEventHubGapCheckerLive(t *testing.T) {
+	ctx := context.Background()
+
+	redisC := redisutils.NewClient()
+	srv := &Server{redisC: redisC}
+
+	h := newEventHub(redisC)
+	assert.Nil(t, h.Start(ctx))
+	defer h.Stop()
+
+	api := "core"
+	version := "v1"
+	kind := newTestKind()
+	streamKey := getRscStreamKey(api, version, kind)
+
+	t.Cleanup(func() {
+		redisC.Del(context.Background(), streamKey)
+	})
+
+	sub, err := h.subscribe(ctx, api, version, kind)
+	assert.Nil(t, err)
+
+	assert.Nil(t, srv.publishMessage(ctx, api, version, kind,
+		newTestWatchEvent(api, version, kind, "first")))
+
+	ev := waitForEvent(sub, 10*time.Second)
+	assert.NotNil(t, ev)
+	assert.Equal(t, "first", getEventName(ev))
+
+	assert.Nil(t, redisC.Del(ctx, streamKey).Err())
+
+	assert.True(t, waitForDone(sub, streamGapCheckInterval+10*time.Second))
+	assert.False(t, h.hasSubscribers(streamKey))
+}

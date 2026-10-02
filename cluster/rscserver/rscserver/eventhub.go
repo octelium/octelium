@@ -35,11 +35,12 @@ import (
 const (
 	watchQueueSize = 4096
 
-	streamReadCount      = 500
-	streamReadBlock      = 30 * time.Second
-	streamRetryBackoff   = 500 * time.Millisecond
-	streamStopTimeout    = 10 * time.Second
-	streamUnblockTimeout = 3 * time.Second
+	streamReadCount        = 500
+	streamReadBlock        = 30 * time.Second
+	streamRetryBackoff     = 500 * time.Millisecond
+	streamStopTimeout      = 10 * time.Second
+	streamUnblockTimeout   = 3 * time.Second
+	streamGapCheckInterval = 10 * time.Second
 
 	streamIDZero = "0-0"
 )
@@ -417,6 +418,20 @@ func (h *eventHub) checkGaps(ctx context.Context) {
 			continue
 		}
 
+		lastID, err := h.getLastID(ctx, streamKey)
+		if err != nil {
+			continue
+		}
+
+		if compareStreamIDs(lastID, cursor) < 0 {
+			zap.L().Warn("The Watch stream is behind the current position. It was lost or recreated. Closing all its subscribers",
+				zap.String("stream", streamKey),
+				zap.String("cursor", cursor), zap.String("lastID", lastID))
+
+			h.closeStream(streamKey)
+			continue
+		}
+
 		firstID, err := h.getFirstID(ctx, streamKey)
 		if err != nil || firstID == "" {
 			continue
@@ -557,9 +572,32 @@ func (h *eventHub) doRead(ctx context.Context) error {
 	return nil
 }
 
+func (h *eventHub) runGapChecker(ctx context.Context) {
+	ticker := time.NewTicker(streamGapCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.checkGaps(ctx)
+		}
+	}
+}
+
 func (h *eventHub) run(ctx context.Context) {
 	defer close(h.doneCh)
 	defer h.closeAll()
+
+	gapCheckerDoneCh := make(chan struct{})
+	go func() {
+		defer close(gapCheckerDoneCh)
+		h.runGapChecker(ctx)
+	}()
+	defer func() {
+		<-gapCheckerDoneCh
+	}()
 
 	zap.L().Debug("Starting the rsc event hub loop")
 

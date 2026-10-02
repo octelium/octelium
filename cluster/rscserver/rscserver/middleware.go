@@ -152,6 +152,7 @@ func (s *Server) sendInitialState(ctx context.Context,
 	sub *eventSubscriber, stream grpc.ServerStream, api, version, kind string) error {
 
 	var page uint32
+	var afterID int64
 
 	for {
 		select {
@@ -162,11 +163,8 @@ func (s *Server) sendInitialState(ctx context.Context,
 		default:
 		}
 
-		itmList, listRes, err := s.doList(ctx, &rmetav1.ListOptions{
-			Paginate:     true,
-			ItemsPerPage: watchInitialItemsPerPag,
-			Page:         page,
-		}, api, version, kind)
+		itmList, lastID, hasMore, err := s.doListAfterID(ctx,
+			api, version, kind, afterID, watchInitialItemsPerPag)
 		if err != nil {
 			return err
 		}
@@ -189,10 +187,11 @@ func (s *Server) sendInitialState(ctx context.Context,
 			}
 		}
 
-		if listRes == nil || !listRes.HasMore {
+		if !hasMore {
 			return nil
 		}
 
+		afterID = lastID
 		page = page + 1
 
 		if page > maxWatchInitialPages {

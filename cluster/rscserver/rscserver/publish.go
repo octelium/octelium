@@ -24,6 +24,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -56,6 +57,19 @@ func parseRscStreamKey(streamKey string) (string, string, string, error) {
 	}
 
 	return args[0], args[1], args[2], nil
+}
+
+func (s *Server) publishWatchEvent(ctx context.Context, api, version, kind string, msg proto.Message) error {
+	if err := s.publishMessage(ctx, api, version, kind, msg); err != nil {
+		if s.eventHub != nil {
+			zap.L().Warn("Could not publish the Watch event. Closing all the stream subscribers to force resync",
+				zap.String("api", api), zap.String("version", version), zap.String("kind", kind), zap.Error(err))
+			s.eventHub.closeStream(getRscStreamKey(api, version, kind))
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (s *Server) publishMessage(ctx context.Context, api, version, kind string, msg proto.Message) error {

@@ -963,3 +963,97 @@ func TestFilter(t *testing.T) {
 
 	}
 }
+
+func TestDoListAfterID(t *testing.T) {
+
+	tst, err := initTest()
+	assert.Nil(t, err)
+
+	ctx := context.Background()
+
+	srv, err := NewServer(ctx, nil)
+	assert.Nil(t, err)
+
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	api := ucorev1.API
+	version := ucorev1.Version
+	kind := ucorev1.KindUser
+
+	{
+		itms, lastID, hasMore, err := srv.doListAfterID(ctx, api, version, kind, 0, 3)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(itms))
+		assert.Equal(t, int64(0), lastID)
+		assert.False(t, hasMore)
+	}
+
+	var uids []string
+
+	for range 7 {
+		obj := newTestResource(kind)
+		obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
+		out, err := srv.doCreate(ctx, obj, api, version, kind)
+		assert.Nil(t, err)
+		uids = append(uids, out.GetMetadata().Uid)
+	}
+
+	getUIDs := func(itms []umetav1.ResourceObjectI) []string {
+		var ret []string
+		for _, itm := range itms {
+			ret = append(ret, itm.GetMetadata().Uid)
+		}
+		return ret
+	}
+
+	{
+		itms, lastID, hasMore, err := srv.doListAfterID(ctx, api, version, kind, 0, 3)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, uids[0:3], getUIDs(itms))
+		assert.True(t, hasMore)
+		assert.True(t, lastID > 0)
+
+		_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uids[0]}, api, version, kind)
+		assert.Nil(t, err)
+
+		itms, lastID, hasMore, err = srv.doListAfterID(ctx, api, version, kind, lastID, 3)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, uids[3:6], getUIDs(itms))
+		assert.True(t, hasMore)
+
+		_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uids[3]}, api, version, kind)
+		assert.Nil(t, err)
+
+		itms, lastID, hasMore, err = srv.doListAfterID(ctx, api, version, kind, lastID, 3)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, uids[6:7], getUIDs(itms))
+		assert.False(t, hasMore)
+
+		itms, prevLastID, hasMore, err := srv.doListAfterID(ctx, api, version, kind, lastID, 3)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(itms))
+		assert.Equal(t, lastID, prevLastID)
+		assert.False(t, hasMore)
+	}
+
+	{
+		itms, lastID, hasMore, err := srv.doListAfterID(ctx, api, version, kind, 0, 5)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, []string{uids[1], uids[2], uids[4], uids[5], uids[6]}, getUIDs(itms))
+		assert.True(t, hasMore)
+
+		itms, _, hasMore, err = srv.doListAfterID(ctx, api, version, kind, lastID, 5)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(itms))
+		assert.False(t, hasMore)
+	}
+
+	{
+		itms, _, hasMore, err := srv.doListAfterID(ctx, api, version, ucorev1.KindGroup, 0, 100)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(itms))
+		assert.False(t, hasMore)
+	}
+}
