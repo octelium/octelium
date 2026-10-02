@@ -9,8 +9,9 @@ FROM rust:1-bookworm AS builder-rust
 
 WORKDIR /build
 COPY cluster/vigil/vigil/modes/rdp/credssp-rs/Cargo.toml /build/Cargo.toml
+COPY cluster/vigil/vigil/modes/rdp/credssp-rs/Cargo.lock /build/Cargo.lock
 COPY cluster/vigil/vigil/modes/rdp/credssp-rs/src /build/src
-RUN cargo build --release
+RUN cargo build --release --locked
 
 
 FROM golang:1.26.8-bookworm AS builder
