@@ -34,6 +34,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/coder/websocket"
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/ocrypto"
@@ -304,10 +305,10 @@ func (s *Server) handleStatic() http.Handler {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	s.renderIndex(w)
+	s.renderIndex(r.Context(), w)
 }
 
-func (s *Server) renderIndex(w http.ResponseWriter) {
+func (s *Server) renderIndex(ctx context.Context, w http.ResponseWriter) {
 	nonce := utilrand.GetRandomStringCanonical(24)
 
 	blob, err := fs.ReadFile(fsWeb, filepath.Join("web", "index.html"))
@@ -324,7 +325,7 @@ func (s *Server) renderIndex(w http.ResponseWriter) {
 		return
 	}
 
-	globalsJSON, err := json.Marshal(s.buildTemplateGlobals())
+	globalsJSON, err := json.Marshal(s.buildTemplateGlobals(ctx))
 	if err != nil {
 		zap.L().Error("Could not marshal webrdp globals", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -373,12 +374,14 @@ func (s *Server) renderIndex(w http.ResponseWriter) {
 	w.Write(out.Bytes())
 }
 
-func (s *Server) buildTemplateGlobals() *templateGlobals {
+func (s *Server) buildTemplateGlobals(ctx context.Context) *templateGlobals {
 	ret := &templateGlobals{
 		WebSocketPath: webSocketPath,
 	}
 
-	cred, err := s.getInjectedCredential(context.Background())
+	reqCtx := middlewares.GetCtxRequestContext(ctx)
+
+	cred, err := rdp.GetInjectedCredential(ctx, s.secretMan, reqCtx.ServiceConfig)
 	if err != nil {
 		zap.L().Debug("Could not resolve webrdp injected credential for globals", zap.Error(err))
 		return ret
@@ -508,7 +511,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		zap.String("destination", rdcpReq.Destination),
 		zap.Int("clientX224Length", len(rdcpReq.X224ConnectionPDU)))
 
-	cred, err := s.getInjectedCredential(ctx)
+	reqCtx := middlewares.GetCtxRequestContext(ctx)
+
+	cred, err := rdp.GetInjectedCredential(ctx, s.secretMan, reqCtx.ServiceConfig)
 	if err != nil {
 		zap.L().Debug("Could not resolve webrdp injected credential", zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
@@ -516,7 +521,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	trust, err := s.getUpstreamTLSTrust()
+	trust, err := rdp.GetUpstreamTLSTrust(reqCtx.ServiceConfig)
 	if err != nil {
 		zap.L().Debug("Could not resolve webrdp upstream TLS trust", zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
@@ -524,7 +529,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstream, err := s.getUpstream(ctx)
+	upstream, err := s.getUpstream(ctx, reqCtx.AuthResponse)
 	if err != nil {
 		zap.L().Debug("Could not get webrdp upstream",
 			zap.String("requestedDestination", rdcpReq.Destination),
@@ -632,13 +637,9 @@ func writeRDCleanPathError(ctx context.Context, ws *websocket.Conn, pdu []byte) 
 	}
 }
 
-func (s *Server) getUpstream(ctx context.Context) (*loadbalancer.Upstream, error) {
-	svc := s.vCache.GetService()
-	if svc == nil {
-		return nil, errors.Errorf("could not get Service from vcache")
-	}
-
-	upstream, err := s.lbManager.GetUpstreamFromConfig(ctx, svc, nil)
+func (s *Server) getUpstream(ctx context.Context,
+	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse) (*loadbalancer.Upstream, error) {
+	upstream, err := s.lbManager.GetUpstream(ctx, authResp)
 	if err != nil {
 		return nil, err
 	}

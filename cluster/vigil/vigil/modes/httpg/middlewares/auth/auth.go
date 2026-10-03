@@ -154,6 +154,7 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 		if isMatch {
 			switch rule.Type.(type) {
 			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
+				req.AuthResponse.ServiceConfigName = rule.GetConfigName()
 				req.ServiceConfig = vigilutils.GetServiceConfig(ctx, req.AuthResponse)
 				return
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
@@ -161,7 +162,8 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
 						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
-							req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
+							req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+							req.ServiceConfig = req.AuthResponse.Config
 							return
 						}
 					}
@@ -171,7 +173,8 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 					cfg := &corev1.Service_Spec_Config{}
 					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
 						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
-							req.ServiceConfig = rscutils.GetMergedServiceConfig(cfg, svc)
+							req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+							req.ServiceConfig = req.AuthResponse.Config
 							return
 						}
 					}

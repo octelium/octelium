@@ -264,23 +264,6 @@ func (c *LBManager) DeleteSession(sess *corev1.Session) {
 	c.cache.deleteSession(sess)
 }
 
-func (l *LBManager) GetUpstreamFromConfig(_ context.Context,
-	svc *corev1.Service, cfg *corev1.Service_Spec_Config) (*Upstream, error) {
-
-	if cfg == nil {
-		cfg = svc.Spec.Config
-	}
-
-	upstrs := ucorev1.ToService(svc).GetAllUpstreamEndpointsByConfig(cfg)
-	if len(upstrs) == 0 {
-		return nil, ErrNoUpstream
-	}
-
-	u := upstrs[utilrand.GetRandomRangeMath(0, len(upstrs)-1)]
-
-	return l.doGetUpstream(u, svc)
-}
-
 func getScheme(l *corev1.Service) string {
 	switch l.Spec.Mode {
 	case corev1.Service_Spec_HTTP, corev1.Service_Spec_GRPC,

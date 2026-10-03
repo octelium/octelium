@@ -22,6 +22,7 @@ cloud.google.com/go v0.110.10 h1:LXy9GEO+timppncPIAZoOj3l58LIU9k+kn48AN7IO3Y=
 cloud.google.com/go v0.110.10/go.mod h1:v1OoFqYxiBkUrruItNM3eT4lLByNjxmJSV/xDKJNnic=
 cloud.google.com/go v0.111.0 h1:YHLKNupSD1KqjDbQ3+LVdQ81h/UJbJyZG203cEfnQgM=
 cloud.google.com/go v0.111.0/go.mod h1:0mibmpKP1TyOOFYQY5izo0LnT+ecvOQ0Sg3OdmMiNRU=
+cloud.google.com/go v0.112.2/go.mod h1:iEqjp//KquGIJV/m+Pk3xecgKNhV+ry+vVTsy4TbDms=
 cloud.google.com/go v0.116.0 h1:B3fRrSDkLRt5qSHWe40ERJvhvnQwdZiHu0bJOpldweE=
 cloud.google.com/go v0.120.0/go.mod h1:/beW32s8/pGRuj4IILWQNd4uuebeT4dkOhKmkfit64Q=
 cloud.google.com/go/accessapproval v1.7.1/go.mod h1:JYczztsHRMK7NTXb6Xw+dwbs/WnOJxbo/2mTI+Kgg68=
@@ -340,6 +341,7 @@ cloud.google.com/go/logging v1.9.0/go.mod h1:1Io0vnZv4onoUnsVUQY3HZ3Igb1nBchky0A
 cloud.google.com/go/logging v1.11.0/go.mod h1:5LDiJC/RxTt+fHc1LAt20R9TKiUTReDg6RuuFOZ67+A=
 cloud.google.com/go/logging v1.13.0/go.mod h1:36CoKh6KA/M0PbhPKMq6/qety2DCAErbhXT62TuXALA=
 cloud.google.com/go/logging v1.13.2/go.mod h1:zaybliM3yun1J8mU2dVQ1/qDzjbOqEijZCn6hSBtKak=
+cloud.google.com/go/longrunning v0.5.6/go.mod h1:vUaDrWYOMKRuhiv6JBnn49YxCPz2Ayn9GqyjaBT8/mA=
 cloud.google.com/go/longrunning v0.6.6/go.mod h1:hyeGJUrPHcx0u2Uu1UFSoYZLn4lkMrccJig0t4FI7yw=
 cloud.google.com/go/longrunning v0.8.0/go.mod h1:UmErU2Onzi+fKDg2gR7dusz11Pe26aknR4kHmJJqIfk=
 cloud.google.com/go/managedidentities v1.6.1/go.mod h1:h/irGhTN2SkZ64F43tfGPMbHnypMbu4RB3yl8YcuEak=
@@ -539,6 +541,7 @@ cloud.google.com/go/translate v1.8.2/go.mod h1:d1ZH5aaOA0CNhWeXeC8ujd4tdCFw8XoNW
 cloud.google.com/go/translate v1.9.0/go.mod h1:d1ZH5aaOA0CNhWeXeC8ujd4tdCFw8XoNWRljklu5RHs=
 cloud.google.com/go/translate v1.9.3/go.mod h1:Kbq9RggWsbqZ9W5YpM94Q1Xv4dshw/gr/SHfsl5yCZ0=
 cloud.google.com/go/translate v1.10.0/go.mod h1:Kbq9RggWsbqZ9W5YpM94Q1Xv4dshw/gr/SHfsl5yCZ0=
+cloud.google.com/go/translate v1.10.3/go.mod h1:GW0vC1qvPtd3pgtypCv4k4U8B7EdgK9/QEF2aJEUovs=
 cloud.google.com/go/translate v1.12.1/go.mod h1:5f4RvC7/hh76qSl6LYuqOJaKbIzEpR1Sj+CMA6gSgIk=
 cloud.google.com/go/translate v1.12.7/go.mod h1:wwJp14NZyWvcrFANhIXutXj0pOBkYciBHwSlUOykcjI=
 cloud.google.com/go/video v1.19.0/go.mod h1:9qmqPqw/Ib2tLqaeHgtakU+l5TcJxCJbhFXM7UJjVzU=

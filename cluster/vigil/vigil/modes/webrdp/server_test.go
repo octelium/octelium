@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
@@ -35,9 +36,11 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/rdp"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -145,6 +148,12 @@ func TestRenderIndex(t *testing.T) {
 	assert.Nil(t, err)
 
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
+	req = req.WithContext(context.WithValue(req.Context(),
+		middlewares.CtxRequestContext,
+		&middlewares.RequestContext{
+			Service:       svc,
+			ServiceConfig: svc.Spec.Config,
+		}))
 	w := httptest.NewRecorder()
 	srv.handleIndex(w, req)
 
@@ -429,5 +438,231 @@ func TestWebSocketRejectsForeignOrigin(t *testing.T) {
 		if ws != nil {
 			ws.CloseNow()
 		}
+	}
+}
+
+func TestBuildTemplateGlobals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	sec, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Secret_Spec{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: utilrand.GetRandomString(32),
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_RDP_WEB,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", tests.GetPort()),
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Rdp{
+					Rdp: &corev1.Service_Spec_Config_RDP{},
+				},
+			},
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{
+					{
+						Name: "cfg1",
+						Upstream: &corev1.Service_Spec_Config_Upstream{
+							Type: &corev1.Service_Spec_Config_Upstream_Url{
+								Url: fmt.Sprintf("tcp://localhost:%d", tests.GetPort()),
+							},
+						},
+						Type: &corev1.Service_Spec_Config_Rdp{
+							Rdp: &corev1.Service_Spec_Config_RDP{
+								Auth: &corev1.Service_Spec_Config_RDP_Auth{
+									User: "administrator",
+									Password: &corev1.Service_Spec_Config_RDP_Auth_Password{
+										Type: &corev1.Service_Spec_Config_RDP_Auth_Password_FromSecret{
+											FromSecret: sec.Metadata.Name,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
+	assert.Nil(t, err)
+
+	getCtx := func(cfgName string) context.Context {
+		authResp := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: &corev1.RequestContext{
+				Service: svc,
+			},
+			ServiceConfigName: cfgName,
+		}
+
+		return context.WithValue(ctx, middlewares.CtxRequestContext, &middlewares.RequestContext{
+			Service:       svc,
+			AuthResponse:  authResp,
+			ServiceConfig: vigilutils.GetServiceConfig(ctx, authResp),
+		})
+	}
+
+	assert.False(t, srv.buildTemplateGlobals(getCtx("")).Secretless)
+	assert.True(t, srv.buildTemplateGlobals(getCtx("cfg1")).Secretless)
+}
+
+func TestWebSocketUsesSelectedConfig(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	newUpstream := func() (int, chan []byte) {
+		port := tests.GetPort()
+		lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		assert.Nil(t, err)
+		t.Cleanup(func() {
+			lis.Close()
+		})
+
+		ch := make(chan []byte, 1)
+		go func() {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			buf := make([]byte, 4096)
+			n, _ := conn.Read(buf)
+			ch <- buf[:n]
+		}()
+
+		return port, ch
+	}
+
+	defaultPort, defaultCh := newUpstream()
+	cfg1Port, cfg1Ch := newUpstream()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_RDP_WEB,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", defaultPort),
+					},
+				},
+			},
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{
+					{
+						Name: "cfg1",
+						Upstream: &corev1.Service_Spec_Config_Upstream{
+							Type: &corev1.Service_Spec_Config_Upstream_Url{
+								Url: fmt.Sprintf("tcp://localhost:%d", cfg1Port),
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
+	assert.Nil(t, err)
+
+	authResp := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+		RequestContext: &corev1.RequestContext{
+			Service: svc,
+		},
+		ServiceConfigName: "cfg1",
+	}
+
+	mux := srv.getMux()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				Service:       svc,
+				AuthResponse:  authResp,
+				ServiceConfig: vigilutils.GetServiceConfig(r.Context(), authResp),
+			})))
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + webSocketPath
+
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	assert.Nil(t, err, "%+v", err)
+	defer ws.CloseNow()
+
+	x224 := []byte(utilrand.GetRandomString(32))
+
+	rdcpReq := derWrap(derTagSequence, concatDER(
+		derWrapContext(0, derEncodeUint64(rdcleanpathVersion1)),
+		derWrapContext(2, derWrap(derTagUTF8String, []byte("rdp"))),
+		derWrapContext(6, derWrap(derTagOctetString, x224)),
+	))
+
+	err = ws.Write(ctx, websocket.MessageBinary, rdcpReq)
+	assert.Nil(t, err)
+
+	select {
+	case recv := <-cfg1Ch:
+		assert.Equal(t, x224, recv)
+	case <-time.After(10 * time.Second):
+		t.Fatal("The selected Config upstream was not used")
+	}
+
+	for {
+		if _, _, err := ws.Read(ctx); err != nil {
+			break
+		}
+	}
+
+	select {
+	case <-defaultCh:
+		t.Fatal("The default Config upstream must not be used")
+	default:
 	}
 }
