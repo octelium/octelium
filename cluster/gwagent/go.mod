@@ -131,7 +131,7 @@ require (
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
 	github.com/octelium/octelium/cluster/rscserver v0.0.0-00010101000000-000000000000 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
