@@ -387,9 +387,7 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 	}
 
 	t.Run("Register", func(t *testing.T) {
-		sess := h.NewAuthSession(t, harness.AuthSessionOpts{
-			SessionType: corev1.Session_Status_CLIENT,
-		})
+		sess := newHumanSession(t, h)
 
 		require.Nil(t, sess.Session(t).Status.DeviceRef,
 			"a fresh Session must not be bound to a Device")
@@ -516,6 +514,7 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 
 	t.Run("RegisterDevice", func(t *testing.T) {
 		sess := h.NewAuthSession(t, harness.AuthSessionOpts{
+			UserType:    corev1.User_Spec_WORKLOAD,
 			SessionType: corev1.Session_Status_CLIENT,
 		})
 
@@ -537,6 +536,14 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 		assert.Equal(t, info.SerialNumber, dev.Status.SerialNumber)
 		assert.Equal(t, corev1.Device_Status_LINUX, dev.Status.OsType)
 		assert.Equal(t, sess.User.Metadata.Uid, dev.Status.UserRef.Uid)
+
+		t.Run("WorkloadProbeRejected", func(t *testing.T) {
+			_, err := sess.C().RunDeviceProbeBegin(sess.Ctx(t.Context()),
+				&authv1.RunDeviceProbeBeginRequest{})
+			require.NotNil(t, err, "Device probing requires a human User")
+			assert.True(t, grpcerr.IsPermissionDenied(err),
+				"probing a Device from a workload Session returned an unexpected error: %+v", err)
+		})
 
 		_, err = sess.C().RegisterDevice(sess.Ctx(t.Context()),
 			&authv1.RegisterDeviceRequest{Info: info})

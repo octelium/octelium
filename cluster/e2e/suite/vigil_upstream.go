@@ -297,6 +297,7 @@ func testVigilSecretLifecycle(t *testing.T, h *harness.H) {
 
 	value := h.Name()
 	secret := h.CreateSecret(t, "", value)
+	fixtureT := t
 	var expected atomic.Value
 	expected.Store("Bearer " + value)
 	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +357,7 @@ func testVigilSecretLifecycle(t *testing.T, h *harness.H) {
 
 		before := secret.Metadata.Uid
 		value = h.Name()
-		secret = h.CreateSecret(t, secret.Metadata.Name, value)
+		secret = h.CreateSecret(fixtureT, secret.Metadata.Name, value)
 		assert.NotEqual(t, before, secret.Metadata.Uid)
 		expected.Store("Bearer " + value)
 
