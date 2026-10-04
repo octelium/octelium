@@ -197,21 +197,29 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 			return err
 		}
 
-		if err := writeFileAtomic(d.dbPath, stateBytes); err != nil {
-			return err
+		if err := replaceFile(d.dbPath, stateBytes); err != nil {
+			if err := writeFileAtomic(d.dbPath, stateBytes); err != nil {
+				return err
+			}
 		}
 
 		return d.owner.setOwner(d.dbPath)
 	}
 
-	if err := os.WriteFile(d.dbPath, stateBytes, 0600); err != nil {
-		return err
+	if err := replaceFile(d.dbPath, stateBytes); err != nil {
+		if err := os.WriteFile(d.dbPath, stateBytes, 0600); err != nil {
+			return err
+		}
 	}
 
 	return d.owner.setOwner(d.dbPath)
 }
 
 func writeFileAtomic(filePath string, content []byte) error {
+	return doWriteFileAtomic(filePath, content, nil)
+}
+
+func doWriteFileAtomic(filePath string, content []byte, prepareFn func(f *os.File) error) error {
 	dir := filepath.Dir(filePath)
 
 	f, err := os.CreateTemp(dir, fmt.Sprintf("%s.tmp-*", filepath.Base(filePath)))
@@ -230,6 +238,13 @@ func writeFileAtomic(filePath string, content []byte) error {
 	if _, err := f.Write(content); err != nil {
 		f.Close()
 		return err
+	}
+
+	if prepareFn != nil {
+		if err := prepareFn(f); err != nil {
+			f.Close()
+			return err
+		}
 	}
 
 	if err := f.Sync(); err != nil {

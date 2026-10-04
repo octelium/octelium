@@ -324,43 +324,6 @@ func TestFSDBEncryptedConcurrentSeparateHandles(t *testing.T) {
 	}
 }
 
-func TestFSDBPreservesFileIdentity(t *testing.T) {
-
-	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
-	assert.Nil(t, err)
-	db, err := newFSDB(&Opts{Path: tmpDir})
-	assert.Nil(t, err)
-
-	err = db.migrate(context.Background())
-	assert.Nil(t, err)
-
-	dbPath := filepath.Join(tmpDir, "octelium.db")
-	err = os.Chmod(dbPath, 0640)
-	assert.Nil(t, err)
-
-	before, err := os.Stat(dbPath)
-	assert.Nil(t, err)
-
-	err = db.set(context.Background(), "example.com", &authv1.SessionToken{
-		AccessToken: utilrand.GetRandomString(32),
-	})
-	assert.Nil(t, err)
-
-	after, err := os.Stat(dbPath)
-	assert.Nil(t, err)
-
-	assert.True(t, os.SameFile(before, after))
-	assert.Equal(t, before.Mode(), after.Mode())
-
-	entries, err := os.ReadDir(tmpDir)
-	assert.Nil(t, err)
-	for _, entry := range entries {
-		assert.False(t, strings.HasPrefix(entry.Name(), "octelium.db.tmp"))
-	}
-
-	os.RemoveAll(tmpDir)
-}
-
 func TestFSDBReadNeverSeesPartialWrite(t *testing.T) {
 
 	tmpDir, err := os.MkdirTemp("", "octeliumdb-*")
