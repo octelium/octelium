@@ -84,5 +84,12 @@ func (e *HTTPAuthorizationError) Error() string {
 }
 
 func (e *HTTPAuthorizationError) Unwrap() error {
-	return ErrHTTPDestinationNotAuthorized
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func (e *HTTPAuthorizationError) Is(target error) bool {
+	return target == ErrHTTPDestinationNotAuthorized
 }

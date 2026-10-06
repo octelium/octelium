@@ -23,58 +23,65 @@ import (
 )
 
 type tokenSnapshot struct {
-	accessToken  string
-	refreshToken string
-	expiresAt    time.Time
-	refreshAt    time.Time
-	invalidated  bool
+	accessToken      string
+	refreshToken     string
+	expiresAt        time.Time
+	refreshAt        time.Time
+	refreshExpiresAt time.Time
+	invalidated      bool
+	generation       uint64
+}
+
+type tokenValue struct {
+	AccessToken
+	generation uint64
 }
 
 type tokenManager struct {
-	mu sync.RWMutex
-
-	token             tokenSnapshot
-	everAuthenticated bool
-
-	refreshMu sync.Mutex
+	mu                      sync.RWMutex
+	token                   tokenSnapshot
+	authenticationAttempted bool
+	generation              uint64
 }
 
 func newTokenManager() *tokenManager {
 	return &tokenManager{}
 }
 
-func (m *tokenManager) current(now time.Time) (AccessToken, bool) {
+func (m *tokenManager) current(now time.Time) (tokenValue, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.token.accessToken == "" || m.token.invalidated {
-		return AccessToken{}, false
-	}
-	if !m.token.refreshAt.IsZero() && !now.Before(m.token.refreshAt) {
-		return AccessToken{}, false
-	}
-
-	return AccessToken{
-		Value:  m.token.accessToken,
-		Expiry: m.token.expiresAt,
-	}, true
-}
-
-func (m *tokenManager) usable(now time.Time) (AccessToken, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.token.accessToken == "" || m.token.invalidated {
-		return AccessToken{}, false
+		return tokenValue{}, false
 	}
 	if !m.token.expiresAt.IsZero() && !now.Before(m.token.expiresAt) {
-		return AccessToken{}, false
+		return tokenValue{}, false
 	}
+	if !m.token.refreshAt.IsZero() && !now.Before(m.token.refreshAt) {
+		return tokenValue{}, false
+	}
+	return m.value(), true
+}
 
-	return AccessToken{
-		Value:  m.token.accessToken,
-		Expiry: m.token.expiresAt,
-	}, true
+func (m *tokenManager) usable(now time.Time) (tokenValue, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.token.accessToken == "" || m.token.invalidated {
+		return tokenValue{}, false
+	}
+	if !m.token.expiresAt.IsZero() && !now.Before(m.token.expiresAt) {
+		return tokenValue{}, false
+	}
+	return m.value(), true
+}
+
+func (m *tokenManager) value() tokenValue {
+	return tokenValue{
+		AccessToken: AccessToken{Value: m.token.accessToken, Expiry: m.token.expiresAt},
+		generation:  m.token.generation,
+	}
 }
 
 func (m *tokenManager) snapshot() tokenSnapshot {
@@ -90,37 +97,43 @@ func (m *tokenManager) refreshToken() (string, bool) {
 	if m.token.refreshToken == "" {
 		return "", false
 	}
+	if !m.token.refreshExpiresAt.IsZero() && !time.Now().Before(m.token.refreshExpiresAt) {
+		return "", false
+	}
 	return m.token.refreshToken, true
 }
 
-func (m *tokenManager) hasEverAuthenticated() bool {
+func (m *tokenManager) hasAttemptedAuthentication() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.everAuthenticated
+	return m.authenticationAttempted
+}
+
+func (m *tokenManager) markAuthenticationAttempt() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.authenticationAttempted = true
 }
 
 func (m *tokenManager) setSession(
 	tkn *authv1.SessionToken,
 	now time.Time,
 	refreshBefore time.Duration,
-	fallbackRefreshToken string,
 ) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	refreshToken := strings.TrimSpace(tkn.RefreshToken)
-	if refreshToken == "" {
-		refreshToken = fallbackRefreshToken
-	}
-
 	m.token = newTokenSnapshot(
 		strings.TrimSpace(tkn.AccessToken),
-		refreshToken,
+		strings.TrimSpace(tkn.RefreshToken),
 		now,
 		time.Duration(tkn.ExpiresIn)*time.Second,
 		refreshBefore,
 	)
-	m.everAuthenticated = true
+	m.token.refreshExpiresAt = now.Add(time.Duration(tkn.RefreshTokenExpiresIn) * time.Second)
+	m.generation++
+	m.token.generation = m.generation
+	m.authenticationAttempted = true
 }
 
 func (m *tokenManager) setExternal(tkn AccessToken, now time.Time, refreshBefore time.Duration) {
@@ -130,12 +143,11 @@ func (m *tokenManager) setExternal(tkn AccessToken, now time.Time, refreshBefore
 	var lifetime time.Duration
 	if !tkn.Expiry.IsZero() {
 		lifetime = tkn.Expiry.Sub(now)
-		if lifetime < 0 {
-			lifetime = 0
-		}
 	}
-
 	m.token = newTokenSnapshot(tkn.Value, "", now, lifetime, refreshBefore)
+	m.token.expiresAt = tkn.Expiry
+	m.generation++
+	m.token.generation = m.generation
 }
 
 func newTokenSnapshot(
@@ -149,13 +161,11 @@ func newTokenSnapshot(
 		accessToken:  accessToken,
 		refreshToken: refreshToken,
 	}
-
 	if lifetime <= 0 {
 		return ret
 	}
 
 	ret.expiresAt = now.Add(lifetime)
-
 	early := refreshBefore
 	if early < 0 {
 		early = 0
@@ -167,20 +177,20 @@ func newTokenSnapshot(
 	if maxEarly := lifetime / 5; early > maxEarly {
 		early = maxEarly
 	}
-
 	ret.refreshAt = ret.expiresAt.Add(-early)
 	return ret
 }
 
-func (m *tokenManager) invalidateAccessToken() {
+func (m *tokenManager) invalidateAccessToken(generation uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.token.accessToken == "" {
-		return
+	if m.token.accessToken == "" || (generation != 0 && m.token.generation != generation) {
+		return false
 	}
 	m.token.invalidated = true
 	m.token.refreshAt = time.Unix(1, 0)
+	return true
 }
 
 func (m *tokenManager) clear() {

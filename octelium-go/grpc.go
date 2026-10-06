@@ -146,15 +146,15 @@ func (c *Client) AuthUnaryClientInterceptor() grpc.UnaryClientInterceptor {
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
 	) error {
-		token, err := c.AccessToken(ctx)
+		token, err := c.token(ctx)
 		if err != nil {
 			return err
 		}
 
-		ctx = setOutgoingMetadata(ctx, metadataKeyAuth, token)
+		ctx = setOutgoingMetadata(ctx, metadataKeyAuth, token.Value)
 		err = invoker(ctx, method, req, reply, cc, opts...)
 		if status.Code(err) == codes.Unauthenticated {
-			c.InvalidateAccessToken()
+			c.invalidateAccessToken(token.generation)
 		}
 		return err
 	}
@@ -171,18 +171,57 @@ func (c *Client) AuthStreamClientInterceptor() grpc.StreamClientInterceptor {
 		streamer grpc.Streamer,
 		opts ...grpc.CallOption,
 	) (grpc.ClientStream, error) {
-		token, err := c.AccessToken(ctx)
+		token, err := c.token(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		ctx = setOutgoingMetadata(ctx, metadataKeyAuth, token)
+		ctx = setOutgoingMetadata(ctx, metadataKeyAuth, token.Value)
 		stream, err := streamer(ctx, desc, cc, method, opts...)
 		if status.Code(err) == codes.Unauthenticated {
-			c.InvalidateAccessToken()
+			c.invalidateAccessToken(token.generation)
 		}
-		return stream, err
+		if err != nil {
+			return stream, err
+		}
+		return &authenticatedClientStream{ClientStream: stream, client: c, generation: token.generation}, nil
 	}
+}
+
+type authenticatedClientStream struct {
+	grpc.ClientStream
+	client     *Client
+	generation uint64
+}
+
+func (s *authenticatedClientStream) invalidate(err error) {
+	if status.Code(err) == codes.Unauthenticated {
+		s.client.invalidateAccessToken(s.generation)
+	}
+}
+
+func (s *authenticatedClientStream) Header() (metadata.MD, error) {
+	md, err := s.ClientStream.Header()
+	s.invalidate(err)
+	return md, err
+}
+
+func (s *authenticatedClientStream) SendMsg(msg any) error {
+	err := s.ClientStream.SendMsg(msg)
+	s.invalidate(err)
+	return err
+}
+
+func (s *authenticatedClientStream) RecvMsg(msg any) error {
+	err := s.ClientStream.RecvMsg(msg)
+	s.invalidate(err)
+	return err
+}
+
+func (s *authenticatedClientStream) CloseSend() error {
+	err := s.ClientStream.CloseSend()
+	s.invalidate(err)
+	return err
 }
 
 func (c *Client) refreshTokenUnaryInterceptor() grpc.UnaryClientInterceptor {

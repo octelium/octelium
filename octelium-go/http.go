@@ -17,9 +17,11 @@ package octelium
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/idna"
@@ -88,31 +90,93 @@ type authRoundTripper struct {
 }
 
 func (r *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	delegated := false
+	defer func() {
+		if !delegated && req != nil && req.Body != nil {
+			_ = req.Body.Close()
+		}
+	}()
 	if req == nil || req.URL == nil {
 		return nil, fmt.Errorf("octelium: invalid HTTP request")
 	}
 	if r == nil || r.client == nil || r.base == nil {
 		return nil, fmt.Errorf("octelium: invalid authenticated HTTP transport")
 	}
-
 	if err := r.client.authorizeHTTPRequest(req); err != nil {
 		return nil, &HTTPAuthorizationError{URL: req.URL.Redacted(), Err: err}
 	}
 
-	accessToken, err := r.client.AccessToken(req.Context())
+	ctx, cancel := r.client.requestContext(req.Context())
+	accessToken, err := r.client.token(ctx)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
 	// RoundTripper implementations must not mutate the caller's request. Clone
 	// also deep-copies the Header map while retaining the streaming Body.
-	out := req.Clone(req.Context())
-	out.Header.Set("Authorization", "Bearer "+accessToken)
+	out := req.Clone(ctx)
+	if out.Header == nil {
+		out.Header = make(http.Header)
+	}
+	for key := range out.Header {
+		if strings.EqualFold(key, metadataKeyAuth) {
+			delete(out.Header, key)
+		}
+	}
+	out.Header.Set(metadataKeyAuth, accessToken.Value)
 	if out.Header.Get("User-Agent") == "" {
 		out.Header.Set("User-Agent", r.client.cfg.userAgent)
 	}
 
-	return r.base.RoundTrip(out)
+	delegated = true
+	resp, err := r.base.RoundTrip(out)
+	if err != nil {
+		cancel()
+		return resp, err
+	}
+	if resp != nil && resp.StatusCode == http.StatusUnauthorized && strings.EqualFold(resp.Header.Get("X-Octelium-Unauthorized"), "true") {
+		r.client.invalidateAccessToken(accessToken.generation)
+	}
+	if resp == nil || resp.Body == nil {
+		cancel()
+	} else {
+		body := &authenticatedResponseBody{ReadCloser: resp.Body, cancel: cancel}
+		if writer, ok := resp.Body.(io.Writer); ok {
+			resp.Body = &authenticatedReadWriteBody{authenticatedResponseBody: body, writer: writer}
+		} else {
+			resp.Body = body
+		}
+	}
+	return resp, nil
+}
+
+type authenticatedResponseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (b *authenticatedResponseBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.once.Do(b.cancel)
+	}
+	return n, err
+}
+
+func (b *authenticatedResponseBody) Close() error {
+	defer b.once.Do(b.cancel)
+	return b.ReadCloser.Close()
+}
+
+type authenticatedReadWriteBody struct {
+	*authenticatedResponseBody
+	writer io.Writer
+}
+
+func (b *authenticatedReadWriteBody) Write(p []byte) (int, error) {
+	return b.writer.Write(p)
 }
 
 func (c *Client) authorizeHTTPRequest(req *http.Request) error {
@@ -154,7 +218,7 @@ func (c *Client) authorizeHTTPRequest(req *http.Request) error {
 }
 
 func normalizeHTTPHost(host string) (string, error) {
-	host = strings.TrimSpace(strings.TrimSuffix(host, "."))
+	host = strings.TrimSuffix(strings.TrimSpace(host), ".")
 	if host == "" {
 		return "", fmt.Errorf("empty HTTP host")
 	}

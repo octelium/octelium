@@ -209,8 +209,8 @@ type oauth2AccessTokenProvider struct {
 	source oauth2.TokenSource
 }
 
-// OAuth2AccessTokenProvider adapts an oauth2.TokenSource, including client
-// credentials, workload identity and other OAuth2 flows, to this SDK.
+// OAuth2AccessTokenProvider adapts an oauth2.TokenSource to this SDK.
+// The source must bound its own calls; TokenSource has no cancellation context.
 func OAuth2AccessTokenProvider(source oauth2.TokenSource) AccessTokenProvider {
 	return &oauth2AccessTokenProvider{source: source}
 }

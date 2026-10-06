@@ -280,8 +280,9 @@ func WithGRPCKeepalive(params keepalive.ClientParameters) Option {
 	}
 }
 
-// WithAuthenticationTimeout bounds authentication and refresh calls when the
-// caller's context has no earlier deadline. Zero disables the SDK timeout.
+// WithAuthenticationTimeout bounds shared authentication and refresh calls.
+// Caller cancellation stops waiting without canceling a shared token exchange.
+// Zero disables the SDK timeout.
 func WithAuthenticationTimeout(timeout time.Duration) Option {
 	return func(c *config) error {
 		if timeout < 0 {
