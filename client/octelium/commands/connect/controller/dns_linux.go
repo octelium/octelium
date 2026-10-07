@@ -106,8 +106,8 @@ func (c *Controller) doSetDNSResolvctl() error {
 		return err
 	}
 
-	if c.isFullDNS() && isResolvectl {
-		cmdDefaultRouteArgs := getResolvctlDefaultRouteArgs(c.c.Preferences.DeviceName)
+	if isResolvectl {
+		cmdDefaultRouteArgs := getResolvctlDefaultRouteArgs(c.c.Preferences.DeviceName, c.isFullDNS())
 		if b, err := runOSCmdOutput(cmdBin, cmdDefaultRouteArgs...); err != nil {
 			zap.L().Debug("Could not set the resolvectl default-route",
 				zap.String("cmd", string(b)), zap.Error(err))
@@ -130,8 +130,12 @@ func (c *Controller) getResolvctlDomains() []string {
 
 const resolvctlRoutingDomainAll = "~."
 
-func getResolvctlDefaultRouteArgs(devName string) []string {
-	return []string{"default-route", devName, "yes"}
+func getResolvctlDefaultRouteArgs(devName string, isFullDNS bool) []string {
+	if isFullDNS {
+		return []string{"default-route", devName, "yes"}
+	}
+
+	return []string{"default-route", devName, "no"}
 }
 
 func getResolvctlRevertArgs(isResolvectl bool, devName string) []string {

@@ -87,8 +87,10 @@ func TestGetResolvctlArgsInFullDNSMode(t *testing.T) {
 }
 
 func TestGetResolvctlDefaultRouteArgs(t *testing.T) {
+	assert.Equal(t, []string{"default-route", "octelium0", "no"},
+		getResolvctlDefaultRouteArgs("octelium0", false))
 	assert.Equal(t, []string{"default-route", "octelium0", "yes"},
-		getResolvctlDefaultRouteArgs("octelium0"))
+		getResolvctlDefaultRouteArgs("octelium0", true))
 }
 
 func TestGetResolvctlRevertArgs(t *testing.T) {
