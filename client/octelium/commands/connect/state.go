@@ -20,6 +20,7 @@ import (
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -34,6 +35,7 @@ type stateController struct {
 	proxy                 *proxy.Controller
 	getConnErrCh          chan error
 	apiserverDisconnectCh chan struct{}
+	resumeCh              chan time.Duration
 	streamC               userv1.MainService_ConnectClient
 }
 
@@ -50,6 +52,7 @@ func newStateController(c *cliconfigv1.Connection,
 		proxy:                 proxy,
 		getConnErrCh:          make(chan error, 1),
 		apiserverDisconnectCh: make(chan struct{}),
+		resumeCh:              make(chan time.Duration, 1),
 		streamC:               streamC,
 	}
 }
@@ -58,7 +61,59 @@ func (c *stateController) Start(ctx context.Context) error {
 	zap.L().Debug("Starting state controller")
 	go c.doStartLoop(ctx)
 	go c.doStartKeepAliveLoop(ctx)
+	go c.doStartSuspendLoop(ctx)
 	return nil
+}
+
+func (c *stateController) doStartSuspendLoop(ctx context.Context) {
+	tickerCh := time.NewTicker(suspendCheckInterval)
+	defer tickerCh.Stop()
+
+	defer zap.L().Debug("doStartSuspendLoop exiting....")
+
+	watchSuspend(ctx, tickerCh.C, time.Now, c.resumeCh)
+}
+
+func (c *stateController) waitDisconnected(ctx context.Context,
+	probeFn func(ctx context.Context) error) tryConnectRet {
+	for {
+		select {
+		case <-ctx.Done():
+			cliutils.LineInfo("Received shutdown signal\n")
+			return tryConnectRet{
+				isConnected: true,
+			}
+		case err := <-c.getConnErrCh:
+			return tryConnectRet{
+				err:            errors.Wrap(err, "Abruptly disconnected by API Server"),
+				needsReconnect: true,
+				isConnected:    true,
+			}
+		case <-c.apiserverDisconnectCh:
+			cliutils.LineInfo("Disconnected by API Server\n")
+			return tryConnectRet{
+				isConnected: true,
+			}
+		case suspended := <-c.resumeCh:
+			zap.L().Debug("Checking the Connection after the host has resumed",
+				zap.Duration("suspended", suspended))
+
+			if err := probeFn(ctx); err != nil {
+				if ctx.Err() != nil {
+					continue
+				}
+
+				return tryConnectRet{
+					err:            errors.Wrap(err, "Lost the Connection while the host was suspended"),
+					needsReconnect: true,
+					isConnected:    true,
+					isResumed:      true,
+				}
+			}
+
+			zap.L().Debug("The Connection is still alive after the host has resumed")
+		}
+	}
 }
 
 func (c *stateController) doStartKeepAliveLoop(ctx context.Context) {

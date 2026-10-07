@@ -83,8 +83,8 @@ func DoGetGRPCClientConn(domain string) (*grpc.ClientConn, error) {
 
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    45 * time.Second,
-			Timeout: 15 * time.Second,
+			Time:    30 * time.Second,
+			Timeout: 10 * time.Second,
 		}),
 
 		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),

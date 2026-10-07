@@ -432,7 +432,7 @@ const shutdownWaitHint = 30 * time.Second
 
 const (
 	reconnectBackoffMin = 2 * time.Second
-	reconnectBackoffMax = 10 * time.Second
+	reconnectBackoffMax = 5 * time.Second
 )
 
 type ctl struct {
@@ -627,6 +627,10 @@ func (c *Connector) Run(ctx context.Context) error {
 				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err.Error())
 			}
 
+			if ret.isResumed {
+				continue
+			}
+
 			attempt++
 
 			select {
@@ -657,6 +661,7 @@ type tryConnectRet struct {
 	cleanupErr     error
 	needsReconnect bool
 	isConnected    bool
+	isResumed      bool
 }
 
 func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
@@ -743,31 +748,16 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		}
 	}()
 
-	needsReconnect := false
-	var retErr error
 	cliutils.LineNotify("Connected successfully...\n")
-	isConnected := true
 
 	c.setEvent(&Event{
 		Type:       EventTypeConnected,
 		Connection: connCfg,
 	})
 
-	select {
-	case <-ctx.Done():
-		cliutils.LineInfo("Received shutdown signal\n")
-	case err := <-ctl.stateController.getConnErrCh:
-		needsReconnect = true
-		retErr = errors.Wrap(err, "Abruptly disconnected by API Server")
-	case <-ctl.stateController.apiserverDisconnectCh:
-		cliutils.LineInfo("Disconnected by API Server\n")
-	}
-
-	ret = tryConnectRet{
-		err:            retErr,
-		needsReconnect: needsReconnect,
-		isConnected:    isConnected,
-	}
+	ret = ctl.stateController.waitDisconnected(ctx, func(ctx context.Context) error {
+		return probeConnection(ctx, cl)
+	})
 	return
 }
 

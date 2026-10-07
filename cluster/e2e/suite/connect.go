@@ -206,6 +206,11 @@ func testConnectServiceLifecycle(t *testing.T, h *harness.H) {
 	assert.True(t, status.Session.Status.IsConnected)
 }
 
+const (
+	apiServerPort         = 443
+	resumeReconnectBudget = 10 * time.Second
+)
+
 func testConnectResilience(t *testing.T, h *harness.H) {
 	port := h.Port()
 	conn := h.Connect(t, harness.ConnectOpts{
@@ -269,6 +274,72 @@ func testConnectResilience(t *testing.T, h *harness.H) {
 			zap.Duration("replacement", replaced),
 			zap.Duration("recovered", recovered))
 	})
+
+	t.Run("Suspend", func(t *testing.T) {
+		requireBlackhole(t, h)
+
+		sess := h.GetSession(t, sessName)
+		require.NotNil(t, sess.Status)
+		require.True(t, sess.Status.IsConnected)
+		totalConnections := sess.Status.TotalConnections
+
+		h.BlackholeConnections(t, conn, apiServerPort)
+		require.Nil(t, conn.Suspend(t.Context()))
+		t.Cleanup(func() {
+			if err := conn.Resume(context.Background()); err != nil {
+				zap.L().Warn("Could not resume octelium connect", zap.Error(err))
+			}
+		})
+
+		dropped := h.Within(t, "the Cluster to drop the Connection of the suspended octelium connect",
+			harness.ConnectBudget, func(ctx context.Context) error {
+				sess, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: sessName})
+				if err != nil {
+					return err
+				}
+				if sess.Status != nil && sess.Status.IsConnected {
+					return errors.Errorf("the Session is still connected")
+				}
+				return nil
+			})
+
+		require.Nil(t, conn.Resume(t.Context()))
+
+		reconnected := h.Within(t, "octelium connect to reconnect after resuming",
+			resumeReconnectBudget, func(ctx context.Context) error {
+				sess, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: sessName})
+				if err != nil {
+					return err
+				}
+				if sess.Status == nil || !sess.Status.IsConnected {
+					return errors.Errorf("the Session is not connected")
+				}
+				if sess.Status.TotalConnections <= totalConnections {
+					return errors.Errorf("the Session has not opened a new API stream")
+				}
+				return nil
+			})
+
+		h.WaitGetStatus(t, h.HTTP(), conn.URL("demo-nginx"), http.StatusOK)
+
+		zap.L().Info("octelium connect recovery after a suspend",
+			zap.Duration("dropped", dropped),
+			zap.Duration("reconnected", reconnected))
+	})
+}
+
+func requireBlackhole(t *testing.T, h *harness.H) {
+	t.Helper()
+
+	for _, cmd := range []string{
+		"sudo -n iptables -S INPUT",
+		"sudo -n ip6tables -S INPUT",
+		"sudo -n ss -Htn",
+	} {
+		if out, err := h.Output(t.Context(), cmd); err != nil {
+			t.Skipf("this host cannot blackhole connections: %s: %+v: %s", cmd, err, out)
+		}
+	}
 }
 
 func testConnectTakeover(t *testing.T, h *harness.H) {

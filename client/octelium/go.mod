@@ -10,6 +10,7 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4
 	github.com/miekg/dns v1.1.72
 	github.com/moby/term v0.5.2
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
@@ -51,7 +52,6 @@ require (
 	github.com/google/go-attestation v0.6.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/native v1.1.0 // indirect
