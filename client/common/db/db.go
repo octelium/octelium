@@ -27,7 +27,8 @@ import (
 )
 
 type DB struct {
-	db db
+	db        db
+	refreshCh chan struct{}
 }
 
 func OpenDefault() (*DB, error) {
@@ -70,7 +71,9 @@ func OpenWithOpts(o *Opts) (*DB, error) {
 		o = &Opts{}
 	}
 
-	ret := &DB{}
+	ret := &DB{
+		refreshCh: make(chan struct{}, 1),
+	}
 	var err error
 
 	switch strings.ToLower(o.Path) {
@@ -96,6 +99,17 @@ func (d *DB) Migrate() error {
 
 func (d *DB) Close() error {
 	return d.db.close(context.Background())
+}
+
+func (d *DB) LockRefresh(ctx context.Context) (func(), error) {
+	select {
+	case d.refreshCh <- struct{}{}:
+		return func() {
+			<-d.refreshCh
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (d *DB) SetSessionToken(clusterDomain string, resp *authv1.SessionToken) error {

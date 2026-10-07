@@ -40,6 +40,7 @@ const (
 	accessTokenRefreshInterval = 5 * time.Minute
 	clusterCallTimeout         = 10 * time.Second
 	disconnectTimeout          = 30 * time.Second
+	maxConnectAuthFailures     = 5
 )
 
 type domainCtl struct {
@@ -121,12 +122,26 @@ func (d *domainCtl) canReconcile() bool {
 func (d *domainCtl) reloadAuthentication() bool {
 	itm, err := d.p.dbC.Get(d.domain)
 	if err != nil {
-		zap.L().Debug("Could not read the stored credentials",
-			zap.String("domain", d.domain), zap.Error(err))
+		if !d.p.dbC.ErrorIsNotFound(err) {
+			zap.L().Debug("Could not read the stored credentials",
+				zap.String("domain", d.domain), zap.Error(err))
+
+			if d.canReconcile() {
+				return false
+			}
+		}
+
 		itm = nil
 	}
 
 	return d.setAuthenticationFromState(itm)
+}
+
+func (d *domainCtl) needsAutoConnect() bool {
+	return !d.isDeleting && d.getSettings().GetAutoConnect() &&
+		d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED &&
+		d.connState == daemonv1.ConnectionStatus_DISCONNECTED &&
+		(d.op == nil || d.op.isDone())
 }
 
 func (d *domainCtl) toPB() *daemonv1.DomainState {
@@ -469,6 +484,8 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 
 func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 	stopErr *error, cancelFn context.CancelFunc) func(ev *connect.Event) {
+	var authFailures int
+
 	return func(ev *connect.Event) {
 		var startRefresh bool
 		var isStopped bool
@@ -490,6 +507,7 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 				}
 				d.lastErr = nil
 				op.setState(daemonv1.Operation_SUCCEEDED)
+				authFailures = 0
 				startRefresh = true
 			case connect.EventTypeReconnecting:
 				d.connState = daemonv1.ConnectionStatus_RECONNECTING
@@ -504,31 +522,49 @@ func (d *domainCtl) getConnectEventHandler(op *operation, gen uint64,
 
 				d.lastErr = getError(ev.Err, daemonv1.Error_CONNECTION_FAILED)
 				if d.lastErr.Code == daemonv1.Error_AUTHENTICATION_REQUIRED {
-					*stopErr = ev.Err
-					isStopped = true
+					authFailures++
 					if d.canReconcile() {
 						d.reloadAuthentication()
-						needsRenew = d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED
+						needsRenew = d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED &&
+							authFailures <= maxConnectAuthFailures
+					}
+
+					if !needsRenew {
+						*stopErr = ev.Err
+						isStopped = true
 					}
 				}
 			}
 		})
 
+		if needsRenew {
+			ctx, cancel := context.WithTimeout(d.p.opCtx(), clusterCallTimeout)
+			_, err := d.getAPICredential(ctx, true)
+			cancel()
+
+			if err != nil {
+				zap.L().Debug("Could not renew the access token",
+					zap.String("domain", d.domain), zap.Error(err))
+
+				if grpcerr.IsUnauthenticated(err) {
+					d.p.mu.Lock()
+					*stopErr = ev.Err
+					d.p.mu.Unlock()
+					isStopped = true
+				}
+			}
+		}
+
 		if isStopped {
 			zap.L().Debug("Stopping the Connection since authentication is required",
 				zap.String("domain", d.domain), zap.Error(ev.Err))
 			cancelFn()
-
-			if needsRenew {
-				ctx, cancel := context.WithTimeout(d.p.opCtx(), clusterCallTimeout)
-				defer cancel()
-
-				if _, err := d.getAPICredential(ctx, true); err != nil {
-					zap.L().Debug("Could not renew the access token",
-						zap.String("domain", d.domain), zap.Error(err))
-				}
-			}
 			return
+		}
+
+		if needsRenew {
+			zap.L().Debug("Retrying the Connection since the credentials are still usable",
+				zap.String("domain", d.domain))
 		}
 
 		if startRefresh {
@@ -768,11 +804,7 @@ func (d *domainCtl) updateSettings(settings *daemonv1.DomainSettings) (*daemonv1
 
 	d.p.update(func() {
 		d.settings = ret
-
-		needsConnect = ret.GetAutoConnect() &&
-			d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED &&
-			d.connState == daemonv1.ConnectionStatus_DISCONNECTED &&
-			(d.op == nil || d.op.isDone())
+		needsConnect = d.needsAutoConnect()
 	})
 
 	if needsConnect {

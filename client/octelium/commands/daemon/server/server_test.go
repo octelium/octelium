@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/client/common/authenticator"
@@ -916,6 +917,137 @@ func TestReconcile(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestReconcileAutoConnect(t *testing.T) {
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
+
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	p := srv.srv.principal
+
+	_, err = srv.c.UpdateDomainSettings(ctx, &daemonv1.UpdateDomainSettingsRequest{
+		Domain: "example.com",
+		Settings: &daemonv1.DomainSettings{
+			AutoConnect: true,
+		},
+	})
+	assert.Nil(t, err)
+
+	getState := func(domain string) *daemonv1.DomainState {
+		resp, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+
+		for _, itm := range resp.Domains {
+			if itm.Domain == domain {
+				return itm
+			}
+		}
+
+		t.Fatalf("Could not find the domain %s", domain)
+		return nil
+	}
+
+	{
+		ds := getState("example.com")
+		assert.Equal(t, daemonv1.AuthenticationStatus_LOGGED_OUT, ds.Authentication.State)
+		assert.Equal(t, daemonv1.ConnectionStatus_DISCONNECTED, ds.Connection.State)
+		assert.Nil(t, ds.LastOperation)
+	}
+
+	dbDir := path.Join(srv.dir, "state", "users", fmt.Sprintf("%d", os.Getuid()))
+	dbC, err := db.Open(dbDir)
+	assert.Nil(t, err)
+
+	for _, domain := range []string{"example.com", "other.com"} {
+		assert.Nil(t, dbC.SetSessionToken(domain, &authv1.SessionToken{
+			AccessToken:           "at",
+			RefreshToken:          "rt",
+			ExpiresIn:             3600,
+			RefreshTokenExpiresIn: 7200,
+		}))
+	}
+	assert.Nil(t, dbC.Close())
+
+	p.reconcile()
+
+	ds := getState("example.com")
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, ds.Authentication.State)
+	assert.Equal(t, daemonv1.Operation_CONNECT, ds.LastOperation.GetType())
+	assert.NotEqual(t, daemonv1.ConnectionStatus_DISCONNECTED, ds.Connection.State)
+
+	{
+		ds := getState("other.com")
+		assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, ds.Authentication.State)
+		assert.Equal(t, daemonv1.ConnectionStatus_DISCONNECTED, ds.Connection.State)
+		assert.Nil(t, ds.LastOperation)
+	}
+
+	p.reconcile()
+
+	assert.Equal(t, ds.LastOperation.Id, getState("example.com").LastOperation.GetId())
+}
+
+func TestReloadAuthenticationReadError(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	p := srv.srv.principal
+	domain := "example.com"
+
+	assert.Nil(t, p.dbC.SetSessionToken(domain, &authv1.SessionToken{
+		AccessToken:           "at",
+		RefreshToken:          "rt",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 7200,
+	}))
+
+	d, err := p.getDomain(domain)
+	assert.Nil(t, err)
+
+	getAuthState := func() daemonv1.AuthenticationStatus_State {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return d.authState
+	}
+
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, getAuthState())
+
+	dbPath := path.Join(srv.dir, "state", "users", fmt.Sprintf("%d", os.Getuid()), "octelium.db")
+	stateBytes, err := os.ReadFile(dbPath)
+	assert.Nil(t, err)
+
+	assert.Nil(t, os.WriteFile(dbPath, []byte{0xff, 0xff, 0xff, 0xff}, 0600))
+
+	_, err = p.dbC.Get(domain)
+	assert.NotNil(t, err)
+	assert.False(t, p.dbC.ErrorIsNotFound(err))
+
+	p.update(func() {
+		assert.False(t, d.reloadAuthentication())
+	})
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, getAuthState())
+
+	p.reconcile()
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, getAuthState())
+
+	p.update(func() {
+		d.authState = daemonv1.AuthenticationStatus_AUTHENTICATING
+		assert.True(t, d.reloadAuthentication())
+	})
+	assert.Equal(t, daemonv1.AuthenticationStatus_LOGGED_OUT, getAuthState())
+
+	assert.Nil(t, os.WriteFile(dbPath, stateBytes, 0600))
+
+	p.reconcile()
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, getAuthState())
+}
+
 func TestConnectEventHandlerAuthenticationRequired(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(t)
@@ -1018,18 +1150,89 @@ func TestConnectEventHandlerRenewAPICredential(t *testing.T) {
 		isCanceled = true
 	})
 
-	handler(&connect.Event{
-		Type: connect.EventTypeReconnecting,
-		Err:  status.Error(codes.Unauthenticated, "Session no longer exists"),
-	})
+	getState := func() (daemonv1.AuthenticationStatus_State, *daemonv1.Error) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return d.authState, d.lastErr
+	}
 
-	p.mu.Lock()
-	authState := d.authState
-	lastErr := d.lastErr
-	p.mu.Unlock()
+	failConnect := func() {
+		handler(&connect.Event{
+			Type: connect.EventTypeReconnecting,
+			Err:  status.Error(codes.Unauthenticated, "Octelium: Unauthenticated"),
+		})
+	}
 
+	failConnect()
+
+	authState, lastErr := getState()
 	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, authState)
 	assert.Nil(t, lastErr)
+	assert.False(t, isCanceled)
+	assert.Nil(t, stopErr)
+
+	handler(&connect.Event{
+		Type:       connect.EventTypeConnected,
+		Connection: &cliconfigv1.Connection{},
+	})
+
+	for range maxConnectAuthFailures {
+		failConnect()
+		assert.False(t, isCanceled)
+		assert.Nil(t, stopErr)
+	}
+
+	failConnect()
+
+	authState, lastErr = getState()
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, authState)
+	assert.Equal(t, daemonv1.Error_AUTHENTICATION_REQUIRED, lastErr.GetCode())
+	assert.True(t, isCanceled)
+	assert.True(t, grpcerr.IsUnauthenticated(stopErr))
+}
+
+func TestConnectEventHandlerRenewRejected(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	assert.Nil(t, err)
+
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "unused")
+
+	p := srv.srv.principal
+	domain := "example.com"
+
+	assert.Nil(t, p.dbC.SetSessionToken(domain, &authv1.SessionToken{
+		AccessToken:           "at",
+		RefreshToken:          "rt",
+		ExpiresIn:             3600,
+		RefreshTokenExpiresIn: 7200,
+	}))
+
+	d, err := p.getDomain(domain)
+	assert.Nil(t, err)
+
+	op, err := d.beginOperation(daemonv1.Operation_CONNECT, func() {})
+	assert.Nil(t, err)
+
+	var isCanceled bool
+	var stopErr error
+
+	p.update(func() {
+		d.connGen = 1
+		d.connState = daemonv1.ConnectionStatus_CONNECTING
+	})
+
+	handler := d.getConnectEventHandler(op, 1, &stopErr, func() {
+		isCanceled = true
+	})
+
+	handler(&connect.Event{
+		Type: connect.EventTypeConnecting,
+		Err:  status.Error(codes.Unauthenticated, "Octelium: Unauthenticated"),
+	})
+
 	assert.True(t, isCanceled)
 	assert.True(t, grpcerr.IsUnauthenticated(stopErr))
 }

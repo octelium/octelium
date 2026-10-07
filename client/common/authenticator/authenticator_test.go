@@ -362,3 +362,67 @@ func TestGetRenewedSessionToken(t *testing.T) {
 	assert.Nil(t, dbC.DeleteSessionToken(domain))
 	assert.Nil(t, a.getRenewedSessionToken(ctx))
 }
+
+func TestRefreshAccessTokenWaitsForRenewal(t *testing.T) {
+	const domain = "example.com"
+
+	dbC, err := db.Open("mem")
+	assert.Nil(t, err)
+	ctx := cliutils.WithDB(context.Background(), dbC)
+
+	setToken := func(idx int, expiresIn int64) {
+		assert.Nil(t, dbC.SetSessionToken(domain, &authv1.SessionToken{
+			AccessToken:           fmt.Sprintf("access-%d", idx),
+			RefreshToken:          fmt.Sprintf("refresh-%d", idx),
+			ExpiresIn:             expiresIn,
+			RefreshTokenExpiresIn: 86400,
+		}))
+	}
+
+	setToken(1, 60)
+
+	at, err := dbC.Get(domain)
+	assert.Nil(t, err)
+
+	a := &authenticator{
+		domain:    domain,
+		at:        at,
+		isRefresh: true,
+	}
+	assert.True(t, a.needsNewAccessToken())
+
+	unlock, err := dbC.LockRefresh(ctx)
+	assert.Nil(t, err)
+
+	type result struct {
+		accessToken string
+		err         error
+	}
+
+	resCh := make(chan result, 1)
+	go func() {
+		accessToken, err := a.refreshAccessToken(ctx)
+		resCh <- result{accessToken: accessToken, err: err}
+	}()
+
+	select {
+	case <-resCh:
+		t.Fatal("The access token was refreshed while another refresh was in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	setToken(2, 7200)
+	unlock()
+
+	select {
+	case res := <-resCh:
+		assert.Nil(t, res.err)
+		assert.Equal(t, "access-2", res.accessToken)
+	case <-time.After(5 * time.Second):
+		t.Fatal("The access token was not returned after the refresh lock was released")
+	}
+
+	unlock, err = dbC.LockRefresh(ctx)
+	assert.Nil(t, err)
+	unlock()
+}

@@ -258,64 +258,14 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 			return a.at.SessionToken.AccessToken, nil
 		}
 
-		if resp, err := a.c.C().GetAvailableAuthenticator(ctx,
-			&authv1.GetAvailableAuthenticatorRequest{}); err == nil {
-			if resp.MainAuthenticator != nil {
-				if err := authn.DoAuthenticate(ctx,
-					a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
-					sessTkn, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(a.domain)
-					if err != nil {
-						return "", err
-					}
-
-					zap.L().Debug("Successfully authenticated with main Authenticator",
-						zap.Any("authenticator", resp.MainAuthenticator))
-
-					return sessTkn.AccessToken, nil
-				} else {
-					zap.L().Warn("Could not DoAuthenticate for Authenticator",
-						zap.Error(err), zap.Any("authenticator", resp.MainAuthenticator))
-				}
-			}
-
-		} else if grpcerr.IsUnimplemented(err) {
-			zap.L().Debug("GetAvailableAuthenticator is not implemented at the Cluster.")
-		} else {
-			zap.L().Debug("Could not getAvailableAuthenticator", zap.Error(err))
+		accessToken, err := a.refreshAccessToken(ctx)
+		if errors.Is(err, errRefreshTokenRejected) {
+			a.isRefresh = false
+			a.isAuthentication = true
+			return a.doGetAccessToken(ctx)
 		}
 
-		sessTkn, err := a.c.C().AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})
-		if err != nil {
-			if grpcerr.AlreadyExists(err) || grpcerr.IsUnauthenticated(err) {
-				if renewed := a.getRenewedSessionToken(ctx); renewed != nil {
-					zap.L().Debug("The session token has already been renewed by another client",
-						zap.String("domain", a.domain))
-					return renewed.AccessToken, nil
-				}
-			}
-
-			if grpcerr.AlreadyExists(err) {
-				return a.at.SessionToken.AccessToken, nil
-			}
-			if grpcerr.IsUnauthenticated(err) {
-				if err := cliutils.GetDBFromCtx(ctx).DeleteStaleSessionToken(a.domain,
-					a.at.GetSessionToken().GetRefreshToken()); err != nil {
-					zap.L().Debug("Could not delete the stale session token",
-						zap.String("domain", a.domain), zap.Error(err))
-				}
-
-				a.isRefresh = false
-				a.isAuthentication = true
-				return a.doGetAccessToken(ctx)
-			}
-
-			return "", err
-		}
-		if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(a.domain, sessTkn); err != nil {
-			return "", err
-		}
-
-		return sessTkn.AccessToken, nil
+		return accessToken, err
 	case a.isAuthentication:
 		if a.opts.IsWeb && IsNonInteractive(ctx) {
 			return "", ErrAuthenticationRequired
@@ -379,6 +329,79 @@ You must choose the authentication type: either with an authentication token usi
 		return "", errors.Errorf("Neither a refresh nor an authentication flow")
 	}
 
+}
+
+var errRefreshTokenRejected = errors.New("The refresh token was rejected by the Cluster")
+
+func (a *authenticator) refreshAccessToken(ctx context.Context) (string, error) {
+	unlock, err := cliutils.GetDBFromCtx(ctx).LockRefresh(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
+	if renewed := a.getRenewedSessionToken(ctx); renewed != nil {
+		zap.L().Debug("The session token has already been renewed while waiting to renew it",
+			zap.String("domain", a.domain))
+		return renewed.AccessToken, nil
+	}
+
+	if resp, err := a.c.C().GetAvailableAuthenticator(ctx,
+		&authv1.GetAvailableAuthenticatorRequest{}); err == nil {
+		if resp.MainAuthenticator != nil {
+			if err := authn.DoAuthenticate(ctx,
+				a.domain, a.c, umetav1.GetObjectReference(resp.MainAuthenticator)); err == nil {
+				sessTkn, err := cliutils.GetDBFromCtx(ctx).GetSessionToken(a.domain)
+				if err != nil {
+					return "", err
+				}
+
+				zap.L().Debug("Successfully authenticated with main Authenticator",
+					zap.Any("authenticator", resp.MainAuthenticator))
+
+				return sessTkn.AccessToken, nil
+			} else {
+				zap.L().Warn("Could not DoAuthenticate for Authenticator",
+					zap.Error(err), zap.Any("authenticator", resp.MainAuthenticator))
+			}
+		}
+
+	} else if grpcerr.IsUnimplemented(err) {
+		zap.L().Debug("GetAvailableAuthenticator is not implemented at the Cluster.")
+	} else {
+		zap.L().Debug("Could not getAvailableAuthenticator", zap.Error(err))
+	}
+
+	sessTkn, err := a.c.C().AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})
+	if err != nil {
+		if grpcerr.AlreadyExists(err) || grpcerr.IsUnauthenticated(err) {
+			if renewed := a.getRenewedSessionToken(ctx); renewed != nil {
+				zap.L().Debug("The session token has already been renewed by another client",
+					zap.String("domain", a.domain))
+				return renewed.AccessToken, nil
+			}
+		}
+
+		if grpcerr.AlreadyExists(err) {
+			return a.at.SessionToken.AccessToken, nil
+		}
+		if grpcerr.IsUnauthenticated(err) {
+			if err := cliutils.GetDBFromCtx(ctx).DeleteStaleSessionToken(a.domain,
+				a.at.GetSessionToken().GetRefreshToken()); err != nil {
+				zap.L().Debug("Could not delete the stale session token",
+					zap.String("domain", a.domain), zap.Error(err))
+			}
+
+			return "", errRefreshTokenRejected
+		}
+
+		return "", err
+	}
+	if err := cliutils.GetDBFromCtx(ctx).SetSessionToken(a.domain, sessTkn); err != nil {
+		return "", err
+	}
+
+	return sessTkn.AccessToken, nil
 }
 
 func (a *authenticator) getRenewedSessionToken(ctx context.Context) *authv1.SessionToken {

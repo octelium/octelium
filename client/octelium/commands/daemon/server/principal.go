@@ -143,19 +143,14 @@ func (p *principal) reconcile() {
 		return
 	}
 
-	canonicalMap := make(map[string]*cliconfigv1.State_Domain)
-	for domain, itm := range domainMap {
-		canonical, err := canonicalizeDomain(domain)
-		if err != nil {
-			continue
-		}
-		canonicalMap[canonical] = itm
-	}
+	storedMap := getStoredDomains(domainMap)
+
+	var autoConnectDomains []*domainCtl
 
 	p.updateIf(func() bool {
 		var isChanged bool
 
-		for domain, itm := range canonicalMap {
+		for domain, itm := range storedMap {
 			d, ok := p.domains[domain]
 			if !ok {
 				d = p.newDomainCtl(domain)
@@ -163,6 +158,10 @@ func (p *principal) reconcile() {
 				d.setAuthenticationFromState(itm)
 				p.domains[domain] = d
 				isChanged = true
+
+				if d.needsAutoConnect() {
+					autoConnectDomains = append(autoConnectDomains, d)
+				}
 				continue
 			}
 
@@ -170,13 +169,18 @@ func (p *principal) reconcile() {
 				continue
 			}
 
+			wasAuthenticated := d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED
 			if d.setAuthenticationFromState(itm) {
 				isChanged = true
+
+				if !wasAuthenticated && d.needsAutoConnect() {
+					autoConnectDomains = append(autoConnectDomains, d)
+				}
 			}
 		}
 
 		for domain, d := range p.domains {
-			if _, ok := canonicalMap[domain]; ok {
+			if _, ok := storedMap[domain]; ok {
 				continue
 			}
 
@@ -191,6 +195,38 @@ func (p *principal) reconcile() {
 
 		return isChanged
 	})
+
+	for _, d := range autoConnectDomains {
+		zap.L().Debug("Auto-connecting the domain since its credentials became usable",
+			zap.String("principal", p.id), zap.String("domain", d.domain))
+		if _, err := d.startConnect(nil); err != nil {
+			zap.L().Debug("Could not auto-connect the domain",
+				zap.String("domain", d.domain), zap.Error(err))
+		}
+	}
+}
+
+func getStoredDomains(domainMap map[string]*cliconfigv1.State_Domain) map[string]*cliconfigv1.State_Domain {
+	ret := make(map[string]*cliconfigv1.State_Domain)
+
+	for domain, itm := range domainMap {
+		canonical, err := canonicalizeDomain(domain)
+		if err != nil {
+			zap.L().Debug("Skipping an invalid stored domain", zap.String("domain", domain))
+			continue
+		}
+
+		if domain == canonical {
+			ret[canonical] = itm
+			continue
+		}
+
+		if _, ok := ret[canonical]; !ok {
+			ret[canonical] = nil
+		}
+	}
+
+	return ret
 }
 
 func (p *principal) displayName() string {
@@ -207,23 +243,12 @@ func (p *principal) loadDomains() error {
 		return err
 	}
 
-	for domain, itm := range domainMap {
-		canonical, err := canonicalizeDomain(domain)
-		if err != nil {
-			zap.L().Warn("Skipping an invalid stored domain", zap.String("domain", domain))
-			continue
-		}
-
-		if _, ok := p.domains[canonical]; ok {
-			zap.L().Warn("Skipping a duplicate stored domain", zap.String("domain", domain))
-			continue
-		}
-
-		d := p.newDomainCtl(canonical)
+	for domain, itm := range getStoredDomains(domainMap) {
+		d := p.newDomainCtl(domain)
 		d.settings = itm.GetSettings()
 		d.setAuthenticationFromState(itm)
 
-		p.domains[canonical] = d
+		p.domains[domain] = d
 	}
 
 	return nil
@@ -414,8 +439,7 @@ func (p *principal) doAutoConnect() {
 	p.mu.Lock()
 	var domains []*domainCtl
 	for _, d := range p.domains {
-		if !d.isDeleting && d.settings.GetAutoConnect() &&
-			d.authState == daemonv1.AuthenticationStatus_AUTHENTICATED {
+		if d.needsAutoConnect() {
 			domains = append(domains, d)
 		}
 	}
