@@ -19,10 +19,13 @@ package harness
 import (
 	"testing"
 
+	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/e2e/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func testPod(name string, labels map[string]string, restarts map[string]int32, reason string) k8scorev1.Pod {
@@ -94,4 +97,42 @@ garbage line
 	assert.Equal(t, "envoy", got[0].Container, "the heaviest container comes first")
 	assert.Equal(t, int64(512), got[0].MemoryMiB)
 	assert.Equal(t, int64(200), got[0].MilliCPU)
+}
+
+func TestHealthIncludesTheStorage(t *testing.T) {
+	sc, err := scenario.Get("k3s-flannel")
+	require.NoError(t, err)
+
+	inNS := func(ns string, pod k8scorev1.Pod) *k8scorev1.Pod {
+		pod.Namespace = ns
+		return &pod
+	}
+
+	h := &H{
+		Scenario: sc,
+		k8sC: fake.NewSimpleClientset(
+			inNS(vutils.K8sNS, testPod("octelium-rscserver-5f7d8-9xk2p",
+				map[string]string{"octelium.com/component": "rscserver"},
+				map[string]int32{"rscserver": 0}, "")),
+			inNS(scenario.StorageNamespace, testPod("octelium-redis-master-0",
+				map[string]string{"app.kubernetes.io/instance": sc.Storage.Redis.ReleaseName},
+				map[string]int32{"redis": 3}, "OOMKilled")),
+			inNS(scenario.StorageNamespace, testPod("octelium-pg-postgresql-0",
+				map[string]string{"app.kubernetes.io/instance": sc.Storage.Postgres.ReleaseName},
+				map[string]int32{"postgresql": 0}, "")),
+			inNS(scenario.StorageNamespace, testPod("unrelated-7d9c-x1",
+				map[string]string{"app.kubernetes.io/instance": "unrelated"},
+				map[string]int32{"main": 5}, "Error")),
+		),
+	}
+
+	got, err := h.Health(t.Context())
+	require.NoError(t, err)
+
+	assert.Len(t, got, 3)
+	require.Contains(t, got, "component/rscserver/rscserver")
+	require.Contains(t, got, "pod/octelium-pg/postgresql")
+	require.Contains(t, got, "pod/octelium-redis/redis")
+	assert.Equal(t, int32(3), got["pod/octelium-redis/redis"].Restarts)
+	assert.Equal(t, "OOMKilled", got["pod/octelium-redis/redis"].LastReason)
 }

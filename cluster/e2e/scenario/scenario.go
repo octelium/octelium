@@ -23,6 +23,8 @@ import (
 
 const TestNamespace = "e2e"
 
+const StorageNamespace = "default"
+
 type Capability string
 
 const (

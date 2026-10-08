@@ -24,6 +24,8 @@ import (
 	"strings"
 
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/e2e/scenario"
+	"go.uber.org/zap"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -83,13 +85,25 @@ func HealthOf(pods []k8scorev1.Pod) HealthSnapshot {
 	return ret
 }
 
+func (h *H) storageSelector() string {
+	return fmt.Sprintf("app.kubernetes.io/instance in (%s,%s)",
+		h.Scenario.Storage.Redis.ReleaseName, h.Scenario.Storage.Postgres.ReleaseName)
+}
+
 func (h *H) Health(ctx context.Context) (HealthSnapshot, error) {
 	pods, err := h.k8sC.CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	return HealthOf(pods.Items), nil
+	storagePods, err := h.k8sC.CoreV1().Pods(scenario.StorageNamespace).List(ctx, k8smetav1.ListOptions{
+		LabelSelector: h.storageSelector(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return HealthOf(append(pods.Items, storagePods.Items...)), nil
 }
 
 type RestartDelta struct {
@@ -186,5 +200,13 @@ func (h *H) TopContainers(ctx context.Context) ([]ContainerUsage, error) {
 		return nil, fmt.Errorf("kubectl top failed: %w: %s", err, out)
 	}
 
-	return ParseTopContainers(string(out)), nil
+	storageOut, err := h.Output(ctx, fmt.Sprintf(
+		"kubectl top pods -n %s -l '%s' --containers --no-headers",
+		scenario.StorageNamespace, h.storageSelector()))
+	if err != nil {
+		zap.L().Debug("Could not read the storage container usage", zap.Error(err))
+		storageOut = nil
+	}
+
+	return ParseTopContainers(string(out) + "\n" + string(storageOut)), nil
 }

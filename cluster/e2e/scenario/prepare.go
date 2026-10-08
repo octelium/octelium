@@ -163,7 +163,7 @@ func (r *Runner) stepRedis(ctx context.Context, _ *Runner) error {
 		args = append(args, fmt.Sprintf("--version %s", redis.ChartVersion))
 	}
 
-	return r.helmInstall(ctx, "default", redis.ReleaseName, redis.Chart, args, "")
+	return r.helmInstall(ctx, StorageNamespace, redis.ReleaseName, redis.Chart, args, "")
 }
 
 func (r *Runner) stepPostgres(ctx context.Context, _ *Runner) error {
@@ -193,7 +193,7 @@ func (r *Runner) stepPostgres(ctx context.Context, _ *Runner) error {
 		args = append(args, fmt.Sprintf("--version %s", pg.ChartVersion))
 	}
 
-	return r.helmInstall(ctx, "default", pg.ReleaseName, pg.Chart, args, "")
+	return r.helmInstall(ctx, StorageNamespace, pg.ReleaseName, pg.Chart, args, "")
 }
 
 func storageResourcesArgs(key string, res *StorageResources) []string {
