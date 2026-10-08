@@ -18,8 +18,10 @@ package user
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -1174,5 +1176,108 @@ func TestDisconnectReleaseAddresses(t *testing.T) {
 		assert.False(t, sess.Status.IsConnected)
 		assert.Nil(t, sess.Status.Connection)
 		assert.Equal(t, 0, len(getActiveIndexes()))
+	}
+}
+
+type fakeInitializeStream struct {
+	grpc.ServerStream
+	ctx   context.Context
+	msgCh chan *userv1.ConnectRequest
+	errCh chan error
+}
+
+func newFakeInitializeStream(ctx context.Context) *fakeInitializeStream {
+	return &fakeInitializeStream{
+		ctx:   ctx,
+		msgCh: make(chan *userv1.ConnectRequest, 1),
+		errCh: make(chan error, 1),
+	}
+}
+
+func (s *fakeInitializeStream) Context() context.Context {
+	return s.ctx
+}
+
+func (s *fakeInitializeStream) Send(msg *userv1.ConnectResponse) error {
+	return nil
+}
+
+func (s *fakeInitializeStream) Recv() (*userv1.ConnectRequest, error) {
+	select {
+	case msg := <-s.msgCh:
+		return msg, nil
+	case err := <-s.errCh:
+		return nil, err
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
+}
+
+func TestRecvConnectInitialize(t *testing.T) {
+
+	{
+		stream := newFakeInitializeStream(context.Background())
+		stream.msgCh <- &userv1.ConnectRequest{
+			Type: &userv1.ConnectRequest_Initialize_{
+				Initialize: &userv1.ConnectRequest_Initialize{
+					L3Mode: userv1.ConnectRequest_Initialize_V6,
+				},
+			},
+		}
+
+		msg, err := recvConnectInitialize(stream, time.Second)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, userv1.ConnectRequest_Initialize_V6, msg.GetInitialize().L3Mode)
+	}
+
+	{
+		stream := newFakeInitializeStream(context.Background())
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			stream.msgCh <- &userv1.ConnectRequest{
+				Type: &userv1.ConnectRequest_Initialize_{
+					Initialize: &userv1.ConnectRequest_Initialize{},
+				},
+			}
+		}()
+
+		msg, err := recvConnectInitialize(stream, 5*time.Second)
+		assert.Nil(t, err, "%+v", err)
+		assert.NotNil(t, msg.GetInitialize())
+	}
+
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stream := newFakeInitializeStream(ctx)
+
+		startedAt := time.Now()
+		_, err := recvConnectInitialize(stream, 100*time.Millisecond)
+		assert.NotNil(t, err)
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+		assert.True(t, time.Since(startedAt) < 5*time.Second)
+	}
+
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		stream := newFakeInitializeStream(ctx)
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+
+		_, err := recvConnectInitialize(stream, time.Minute)
+		assert.NotNil(t, err)
+		assert.Equal(t, codes.Canceled, status.Code(err))
+	}
+
+	{
+		stream := newFakeInitializeStream(context.Background())
+		stream.errCh <- io.EOF
+
+		_, err := recvConnectInitialize(stream, time.Minute)
+		assert.NotNil(t, err)
 	}
 }

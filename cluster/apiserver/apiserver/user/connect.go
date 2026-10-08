@@ -39,9 +39,14 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-const connectStateTimeout = 30 * time.Second
+const (
+	connectStateTimeout      = 30 * time.Second
+	connectInitializeTimeout = 30 * time.Second
+)
 
 func checkIfCanConnect(i *userctx.UserCtx) error {
 	switch {
@@ -64,9 +69,9 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		return err
 	}
 
-	initReq, err := stream.Recv()
+	initReq, err := recvConnectInitialize(stream, connectInitializeTimeout)
 	if err != nil {
-		return serr.InternalWithErr(err)
+		return err
 	}
 	req := initReq.GetInitialize()
 	if req == nil {
@@ -160,6 +165,40 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 			}
 
 		}
+	}
+}
+
+func recvConnectInitialize(stream userv1.MainService_ConnectServer,
+	timeout time.Duration) (*userv1.ConnectRequest, error) {
+
+	type recvResult struct {
+		msg *userv1.ConnectRequest
+		err error
+	}
+
+	resCh := make(chan recvResult, 1)
+	go func() {
+		msg, err := stream.Recv()
+		resCh <- recvResult{
+			msg: msg,
+			err: err,
+		}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			return nil, serr.InternalWithErr(res.err)
+		}
+		return res.msg, nil
+	case <-timer.C:
+		return nil, status.Errorf(codes.DeadlineExceeded,
+			"The initialize message has not been received within %s", timeout)
+	case <-stream.Context().Done():
+		return nil, status.FromContextError(stream.Context().Err()).Err()
 	}
 }
 
