@@ -80,6 +80,16 @@ func Build(spec Spec) (*Scenario, error) {
 		ret.Description += ", tuned for the chaos suite"
 		ret.Caps = append(ret.Caps, CapChaos)
 		ret.Budget += 90 * time.Minute
+		ret.Storage.Redis.Resources = &StorageResources{
+			CPURequest:    "500m",
+			MemoryRequest: "512Mi",
+			MemoryLimit:   "4Gi",
+		}
+		ret.Storage.Postgres.Resources = &StorageResources{
+			CPURequest:    "1",
+			MemoryRequest: "512Mi",
+			MemoryLimit:   "2Gi",
+		}
 	}
 
 	if err := applyCustomizers(ret); err != nil {

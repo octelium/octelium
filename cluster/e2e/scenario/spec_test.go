@@ -175,6 +175,14 @@ func TestBuildChaos(t *testing.T) {
 	baseP := base.Provisioner.(*K3s)
 	assert.False(t, baseP.Tuned, "the base scenario must not be tuned")
 	assert.NotContains(t, baseP.ServerArgs, "--kube-proxy-arg=conntrack-max-per-core=0")
+
+	require.NotNil(t, s.Storage.Redis.Resources, "the chaos load must not run against the chart's nano preset")
+	require.NotNil(t, s.Storage.Postgres.Resources, "the chaos load must not run against the chart's nano preset")
+	assert.NotEmpty(t, s.Storage.Redis.Resources.MemoryLimit)
+	assert.NotEmpty(t, s.Storage.Postgres.Resources.MemoryLimit)
+
+	assert.Nil(t, base.Storage.Redis.Resources, "the base scenario keeps the chart defaults")
+	assert.Nil(t, base.Storage.Postgres.Resources, "the base scenario keeps the chart defaults")
 }
 
 func TestK3sProvisionScheduleForAgents(t *testing.T) {

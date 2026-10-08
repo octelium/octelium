@@ -152,6 +152,7 @@ func (r *Runner) stepRedis(ctx context.Context, _ *Runner) error {
 	if redis.ImageRepository != "" {
 		args = append(args, fmt.Sprintf("--set image.repository=%s", redis.ImageRepository))
 	}
+	args = append(args, storageResourcesArgs("master", redis.Resources)...)
 	if r.isMultiNode() {
 		args = append(args, serverNodeSelectorArg("master.nodeSelector"))
 	}
@@ -178,6 +179,7 @@ func (r *Runner) stepPostgres(ctx context.Context, _ *Runner) error {
 	if pg.PVCName != "" {
 		args = append(args, fmt.Sprintf("--set primary.persistence.existingClaim=%s", pg.PVCName))
 	}
+	args = append(args, storageResourcesArgs("primary", pg.Resources)...)
 	if r.isMultiNode() {
 		args = append(args, serverNodeSelectorArg("primary.nodeSelector"))
 	}
@@ -192,6 +194,25 @@ func (r *Runner) stepPostgres(ctx context.Context, _ *Runner) error {
 	}
 
 	return r.helmInstall(ctx, "default", pg.ReleaseName, pg.Chart, args, "")
+}
+
+func storageResourcesArgs(key string, res *StorageResources) []string {
+	if res == nil {
+		return nil
+	}
+
+	var ret []string
+	if res.CPURequest != "" {
+		ret = append(ret, fmt.Sprintf("--set %s.resources.requests.cpu=%s", key, res.CPURequest))
+	}
+	if res.MemoryRequest != "" {
+		ret = append(ret, fmt.Sprintf("--set %s.resources.requests.memory=%s", key, res.MemoryRequest))
+	}
+	if res.MemoryLimit != "" {
+		ret = append(ret, fmt.Sprintf("--set %s.resources.limits.memory=%s", key, res.MemoryLimit))
+	}
+
+	return ret
 }
 
 func (r *Runner) helmInstall(ctx context.Context,

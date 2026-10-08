@@ -95,6 +95,8 @@ type PostgresOpts struct {
 
 	PVCName string
 	PVCSize string
+
+	Resources *StorageResources
 }
 
 type RedisOpts struct {
@@ -107,6 +109,14 @@ type RedisOpts struct {
 	SecretName  string
 	Host        string
 	Port        int32
+
+	Resources *StorageResources
+}
+
+type StorageResources struct {
+	CPURequest    string
+	MemoryRequest string
+	MemoryLimit   string
 }
 
 type StorageOpts struct {
