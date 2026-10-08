@@ -580,46 +580,56 @@ func testChaosDataPlane(t *testing.T, e *chaosEnv) {
 
 	t.Run("Routing", func(t *testing.T) {
 		var wrong []string
-		var checked int
+		var checked, failed int
+
+		checkRoute := func(s *chaosSample, a targetAddr) []string {
+			gw := s.dp.GatewayFor(a.addr)
+			if gw == nil {
+				return []string{fmt.Sprintf("%s: no Gateway routes %s", s.name(), a.addr)}
+			}
+			if gw.Id != a.gateway {
+				return []string{fmt.Sprintf("%s: %s is routed to %s, it lives behind %s",
+					s.name(), a.addr, gw.Id, a.gateway)}
+			}
+
+			var ret []string
+
+			beforeStats, err := s.dp.Stats()
+			require.NoError(t, err)
+
+			for range 3 {
+				if err := e.sampleGet(t.Context(), target, s, a, nextRequestID("route")); err != nil {
+					ret = append(ret, fmt.Sprintf("%s: %+v", s.name(), err))
+				}
+			}
+
+			afterStats, err := s.dp.Stats()
+			require.NoError(t, err)
+
+			if got := harness.DominantGateway(harness.StatsDelta(beforeStats, afterStats)); got != a.gateway {
+				ret = append(ret, fmt.Sprintf("%s: the traffic to %s went through %q, want %q",
+					s.name(), a.addr, got, a.gateway))
+			}
+
+			return ret
+		}
 
 		for _, s := range samples {
 			for _, v6 := range modeFamilies(s.vc.Opts().L3Mode) {
 				for _, a := range target.subset(v6, s.idx) {
-					gw := s.dp.GatewayFor(a.addr)
-					if gw == nil {
-						wrong = append(wrong, fmt.Sprintf("%s: no Gateway routes %s", s.name(), a.addr))
-						continue
-					}
-					if gw.Id != a.gateway {
-						wrong = append(wrong, fmt.Sprintf("%s: %s is routed to %s, it lives behind %s",
-							s.name(), a.addr, gw.Id, a.gateway))
-						continue
-					}
-
-					beforeStats, err := s.dp.Stats()
-					require.NoError(t, err)
-
-					for range 3 {
-						if err := e.sampleGet(t.Context(), target, s, a, nextRequestID("route")); err != nil {
-							wrong = append(wrong, fmt.Sprintf("%s: %+v", s.name(), err))
-						}
-					}
-
-					afterStats, err := s.dp.Stats()
-					require.NoError(t, err)
-
-					if got := harness.DominantGateway(harness.StatsDelta(beforeStats, afterStats)); got != a.gateway {
-						wrong = append(wrong, fmt.Sprintf("%s: the traffic to %s went through %q, want %q",
-							s.name(), a.addr, got, a.gateway))
-					}
 					checked++
+					if problems := checkRoute(s, a); len(problems) > 0 {
+						failed++
+						wrong = append(wrong, problems...)
+					}
 				}
 			}
 		}
 
 		e.set(t, "routesChecked", checked)
-		if len(wrong) > 0 {
-			e.failf(t, "%d of %d routes are wrong:\n  - %s", len(wrong), checked, joinLines(wrong))
+		e.set(t, "routesWrong", failed)
+		if failed > 0 {
+			e.failf(t, "%d of %d routes are wrong:\n  - %s", failed, checked, joinLines(wrong))
 		}
 	})
 
