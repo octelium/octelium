@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/upstream"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 )
 
@@ -100,10 +101,14 @@ func (c *Controller) deleteIndexes(sess *corev1.Session) {
 		return
 	}
 
+	c.deleteIndexesByUID(sess.Metadata.Uid)
+}
+
+func (c *Controller) deleteIndexesByUID(uid string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.indexes, sess.Metadata.Uid)
+	delete(c.indexes, uid)
 }
 
 func (c *Controller) Run(ctx context.Context) {
@@ -128,7 +133,7 @@ func (c *Controller) reconcile(ctx context.Context) error {
 		return err
 	}
 
-	owned := c.getOwnedIndexes(sessList)
+	owned := c.getOwnedIndexes(ctx, sessList)
 
 	released, err := upstream.ReleaseConnIndexes(ctx, c.octeliumC,
 		func(active []upstream.ConnIndex) []upstream.ConnIndex {
@@ -168,7 +173,8 @@ func (c *Controller) listSessions(ctx context.Context) ([]*corev1.Session, error
 	}
 }
 
-func (c *Controller) getOwnedIndexes(sessList []*corev1.Session) map[upstream.ConnIndex]bool {
+func (c *Controller) getOwnedIndexes(ctx context.Context,
+	sessList []*corev1.Session) map[upstream.ConnIndex]bool {
 	ret := make(map[upstream.ConnIndex]bool)
 
 	setOwned := func(itm upstream.ConnIndex) {
@@ -187,19 +193,46 @@ func (c *Controller) getOwnedIndexes(sessList []*corev1.Session) map[upstream.Co
 		}
 	}
 
+	listed := make(map[string]bool)
 	for _, sess := range sessList {
+		if sess.Metadata != nil {
+			listed[sess.Metadata.Uid] = true
+		}
+
 		for _, itm := range upstream.GetConnectionIndexes(sess) {
 			setOwned(itm)
 		}
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	for uid, indexes := range c.getWatchedIndexes() {
+		if !listed[uid] {
+			sess, err := c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uid})
+			switch {
+			case err == nil:
+				for _, itm := range upstream.GetConnectionIndexes(sess) {
+					setOwned(itm)
+				}
+			case grpcerr.IsNotFound(err):
+				c.deleteIndexesByUID(uid)
+				continue
+			}
+		}
 
-	for _, indexes := range c.indexes {
 		for _, itm := range indexes {
 			setOwned(itm)
 		}
+	}
+
+	return ret
+}
+
+func (c *Controller) getWatchedIndexes() map[string][]upstream.ConnIndex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ret := make(map[string][]upstream.ConnIndex, len(c.indexes))
+	for uid, indexes := range c.indexes {
+		ret[uid] = indexes
 	}
 
 	return ret
