@@ -121,6 +121,18 @@ func AddAddressToConnection(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session) error {
 
+	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	return AddAddressToConnectionWithClusterConfig(ctx, octeliumC, sess, cc)
+}
+
+func AddAddressToConnectionWithClusterConfig(ctx context.Context,
+	octeliumC octeliumc.ClientInterface,
+	sess *corev1.Session, cc *corev1.ClusterConfig) error {
+
 	conn := sess.Status.Connection
 	if conn == nil {
 		return errors.Errorf("Connection is not set in the Session")
@@ -130,11 +142,6 @@ func AddAddressToConnection(ctx context.Context,
 	case corev1.Session_Status_Connection_QUICV0, corev1.Session_Status_Connection_WIREGUARD:
 	default:
 		return errors.Errorf("Cannot adding addresses without knowing Connection type")
-	}
-
-	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-	if err != nil {
-		return err
 	}
 
 	leaseID, err := doLock(ctx, octeliumC)

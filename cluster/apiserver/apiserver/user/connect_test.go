@@ -1357,3 +1357,58 @@ func TestSetConnectionLastSeen(t *testing.T) {
 	assert.Nil(t, err, "%+v", err)
 	assert.False(t, isActive)
 }
+
+type countingCoreV1Utils struct {
+	octeliumc.CoreV1Utils
+
+	mu                    sync.Mutex
+	getClusterConfigCalls int
+}
+
+func (c *countingCoreV1Utils) GetClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {
+	c.mu.Lock()
+	c.getClusterConfigCalls++
+	c.mu.Unlock()
+
+	return c.CoreV1Utils.GetClusterConfig(ctx)
+}
+
+type countingOcteliumC struct {
+	octeliumc.ClientInterface
+	utils *countingCoreV1Utils
+}
+
+func (c *countingOcteliumC) CoreV1Utils() octeliumc.CoreV1Utils {
+	return c.utils
+}
+
+func TestDoInitConnectGetClusterConfig(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	utils := &countingCoreV1Utils{
+		CoreV1Utils: tst.C.OcteliumC.CoreV1Utils(),
+	}
+
+	usrSrv := NewServer(&countingOcteliumC{
+		ClientInterface: tst.C.OcteliumC,
+		utils:           utils,
+	})
+	_, adminSrv := newFakeServers(tst.C)
+
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err, "%+v", err)
+
+	resp, err := usrSrv.DoInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, 1, len(resp.GetState().Addresses))
+	assert.NotNil(t, resp.GetState().Dns)
+
+	utils.mu.Lock()
+	defer utils.mu.Unlock()
+	assert.Equal(t, 1, utils.getClusterConfigCalls)
+}

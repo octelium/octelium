@@ -21,6 +21,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	"sync"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -49,11 +50,37 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 
 	conn := sess.Status.Connection
 
-	dnsSvc, err := octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
-		Name: "dns.octelium",
-	})
-	if err != nil {
-		return nil, serr.InternalWithErr(err)
+	var dnsSvc *corev1.Service
+	var gws *corev1.GatewayList
+	var ca ssh.PublicKey
+	var dnsErr, gwsErr, caErr error
+
+	{
+		var wg sync.WaitGroup
+		wg.Add(3)
+
+		go func() {
+			defer wg.Done()
+			dnsSvc, dnsErr = octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "dns.octelium",
+			})
+		}()
+
+		go func() {
+			defer wg.Done()
+			gws, gwsErr = octeliumC.CoreC().ListGateway(ctx, &rmetav1.ListOptions{})
+		}()
+
+		go func() {
+			defer wg.Done()
+			ca, caErr = sshutils.GetCAPublicKey(ctx, octeliumC)
+		}()
+
+		wg.Wait()
+	}
+
+	if dnsErr != nil {
+		return nil, serr.InternalWithErr(dnsErr)
 	}
 
 	var dnsIPs []string
@@ -119,9 +146,8 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 		}(),
 	}
 
-	gws, err := octeliumC.CoreC().ListGateway(ctx, &rmetav1.ListOptions{})
-	if err != nil {
-		return nil, serr.InternalWithErr(err)
+	if gwsErr != nil {
+		return nil, serr.InternalWithErr(gwsErr)
 	}
 
 	gateways := []*userv1.Gateway{}
@@ -138,7 +164,7 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 		}
 	}
 
-	if ca, err := sshutils.GetCAPublicKey(ctx, octeliumC); err == nil {
+	if caErr == nil {
 
 		ret.ServiceConfigs = append(ret.ServiceConfigs, &userv1.ConnectionState_ServiceConfig{
 			Type: &userv1.ConnectionState_ServiceConfig_Ssh{
@@ -153,7 +179,7 @@ func getConnectionState(ctx context.Context, octeliumC octeliumc.ClientInterface
 			},
 		})
 	} else {
-		zap.L().Warn("Could not do GetCAPublicKey", zap.Error(err))
+		zap.L().Warn("Could not do GetCAPublicKey", zap.Error(caErr))
 		// return nil, serr.InternalWithErr(err)
 	}
 

@@ -18,6 +18,7 @@ package upstreamtests
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,4 +279,50 @@ func TestReleaseConnIndexes(t *testing.T) {
 	connInfo := getConnInfo()
 	assert.Equal(t, []uint32{upstream.GetConnectionIndexes(wg1)[0].Index}, connInfo.ActiveIndexesWG)
 	assert.Equal(t, 0, len(connInfo.ActiveIndexesQUIC))
+}
+
+func TestAddAddressToConnectionWithClusterConfig(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	fakeC := tst.C
+
+	cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+
+	cc.Status.Network.WgConnSubnet.V4 = "10.99.0.0/16"
+	cc.Status.Network.QuicConnSubnet.V4 = "10.98.0.0/16"
+
+	for _, typ := range []corev1.Session_Status_Connection_Type{
+		corev1.Session_Status_Connection_WIREGUARD,
+		corev1.Session_Status_Connection_QUICV0,
+	} {
+		sess := &corev1.Session{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Status: &corev1.Session_Status{
+				Connection: &corev1.Session_Status_Connection{
+					Type: typ,
+				},
+			},
+		}
+
+		err = upstream.AddAddressToConnectionWithClusterConfig(ctx, fakeC.OcteliumC, sess, cc)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(sess.Status.Connection.Addresses))
+
+		switch typ {
+		case corev1.Session_Status_Connection_WIREGUARD:
+			assert.True(t, strings.HasPrefix(sess.Status.Connection.Addresses[0].V4, "10.99."))
+		case corev1.Session_Status_Connection_QUICV0:
+			assert.True(t, strings.HasPrefix(sess.Status.Connection.Addresses[0].V4, "10.98."))
+		}
+	}
 }

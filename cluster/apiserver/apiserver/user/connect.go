@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -236,14 +237,33 @@ func (s *Server) doInitConnect(ctx context.Context,
 		return nil, nil, err
 	}
 
-	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: i.Session.Metadata.Uid})
-	if err != nil {
-		return nil, nil, serr.InternalWithErr(err)
+	var sess *corev1.Session
+	var cc *corev1.ClusterConfig
+	var sessErr, ccErr error
+
+	{
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			sess, sessErr = s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: i.Session.Metadata.Uid})
+		}()
+
+		go func() {
+			defer wg.Done()
+			cc, ccErr = s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		}()
+
+		wg.Wait()
 	}
 
-	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
-	if err != nil {
-		return nil, nil, serr.InternalWithErr(err)
+	if sessErr != nil {
+		return nil, nil, serr.InternalWithErr(sessErr)
+	}
+
+	if ccErr != nil {
+		return nil, nil, serr.InternalWithErr(ccErr)
 	}
 
 	hasV4 := req.L3Mode == userv1.ConnectRequest_Initialize_V4 || req.L3Mode == userv1.ConnectRequest_Initialize_BOTH
@@ -477,7 +497,7 @@ func (s *Server) doInitConnect(ctx context.Context,
 
 	sess.Status.TotalConnections = sess.Status.TotalConnections + 1
 
-	if err := upstream.AddAddressToConnection(ctx, s.octeliumC, sess); err != nil {
+	if err := upstream.AddAddressToConnectionWithClusterConfig(ctx, s.octeliumC, sess, cc); err != nil {
 		return nil, nil, serr.InternalWithErr(err)
 	}
 
