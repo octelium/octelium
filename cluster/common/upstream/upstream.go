@@ -208,11 +208,6 @@ func AddAddressToConnection(ctx context.Context,
 		Attrs: attrs,
 	}
 
-	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
-	if err != nil {
-		return err
-	}
-
 	var connSubnet *metav1.DualStackNetwork
 
 	switch conn.Type {
@@ -229,6 +224,11 @@ func AddAddressToConnection(ctx context.Context,
 	}
 
 	connIP, err := vutils.GetDualStackIPByIndex(connSubnet, int(idx))
+	if err != nil {
+		return err
+	}
+
+	_, err = octeliumC.CoreC().UpdateConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}

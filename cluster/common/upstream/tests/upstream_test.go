@@ -100,6 +100,50 @@ func TestAddressToConnection(t *testing.T) {
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
 
+func TestAddressToConnectionInvalidSubnet(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	fakeC := tst.C
+
+	getConnInfo := func() *cclusterv1.ClusterConnInfo {
+		cfg, err := fakeC.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+		assert.Nil(t, err)
+		ret := &cclusterv1.ClusterConnInfo{}
+		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
+		assert.Nil(t, err)
+		return ret
+	}
+
+	cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	assert.Nil(t, err)
+	cc.Status.Network.WgConnSubnet.V4 = "invalid"
+	_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+	assert.Nil(t, err)
+
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Status: &corev1.Session_Status{
+			Connection: &corev1.Session_Status_Connection{
+				Type: corev1.Session_Status_Connection_WIREGUARD,
+			},
+		},
+	}
+
+	err = upstream.AddAddressToConnection(ctx, fakeC.OcteliumC, sess)
+	assert.NotNil(t, err)
+	assert.Equal(t, 0, len(sess.Status.Connection.Addresses))
+	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
+}
+
 func TestAddressToConnectionConcurrent(t *testing.T) {
 
 	ctx := context.Background()

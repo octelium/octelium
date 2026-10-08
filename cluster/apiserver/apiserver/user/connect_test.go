@@ -18,17 +18,25 @@ package user
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/userctx"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestConnect(t *testing.T) {
@@ -895,4 +903,205 @@ func TestDoDisconnectConnection(t *testing.T) {
 	sess = getSess()
 	assert.False(t, sess.Status.IsConnected)
 	assert.Nil(t, sess.Status.Connection)
+}
+
+type failingCoreC struct {
+	rcorev1.ResourceServiceClient
+
+	mu               sync.Mutex
+	updateSessionErr error
+	getServiceFn     func() error
+}
+
+func (c *failingCoreC) setErrs(updateSessionErr, getServiceErr error) {
+	c.setHooks(updateSessionErr, func() error {
+		return getServiceErr
+	})
+}
+
+func (c *failingCoreC) setHooks(updateSessionErr error, getServiceFn func() error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateSessionErr = updateSessionErr
+	c.getServiceFn = getServiceFn
+}
+
+func (c *failingCoreC) UpdateSession(ctx context.Context,
+	in *corev1.Session, opts ...grpc.CallOption) (*corev1.Session, error) {
+	c.mu.Lock()
+	err := c.updateSessionErr
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return c.ResourceServiceClient.UpdateSession(ctx, in, opts...)
+}
+
+func (c *failingCoreC) GetService(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Service, error) {
+	c.mu.Lock()
+	fn := c.getServiceFn
+	c.mu.Unlock()
+	if fn != nil && in.Name == "dns.octelium" {
+		if err := fn(); err != nil {
+			return nil, err
+		}
+	}
+
+	return c.ResourceServiceClient.GetService(ctx, in, opts...)
+}
+
+type failingOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC *failingCoreC
+}
+
+func (c *failingOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+func TestDoInitConnectReleaseAddresses(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	coreC := &failingCoreC{
+		ResourceServiceClient: tst.C.OcteliumC.CoreC(),
+	}
+	octeliumC := &failingOcteliumC{
+		ClientInterface: tst.C.OcteliumC,
+		coreC:           coreC,
+	}
+
+	usrSrv := NewServer(octeliumC)
+	_, adminSrv := newFakeServers(tst.C)
+
+	getActiveIndexes := func() []uint32 {
+		cfg, err := tst.C.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+		assert.Nil(t, err, "%+v", err)
+
+		ret := &cclusterv1.ClusterConnInfo{}
+		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
+		assert.Nil(t, err, "%+v", err)
+		return append(ret.ActiveIndexesWG, ret.ActiveIndexesQUIC...)
+	}
+
+	tcs := []struct {
+		name             string
+		updateSessionErr error
+		getServiceErr    error
+		isReleased       bool
+	}{
+		{
+			name:             "resource-changed",
+			updateSessionErr: status.Error(codes.OutOfRange, "changed"),
+			isReleased:       true,
+		},
+		{
+			name:             "not-found",
+			updateSessionErr: status.Error(codes.NotFound, "removed"),
+			isReleased:       true,
+		},
+		{
+			name:          "connection-state",
+			getServiceErr: status.Error(codes.Internal, "internal"),
+			isReleased:    true,
+		},
+		{
+			name:             "unavailable",
+			updateSessionErr: status.Error(codes.Unavailable, "unavailable"),
+			isReleased:       false,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+				corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			assert.Nil(t, err, "%+v", err)
+
+			before := getActiveIndexes()
+
+			coreC.setErrs(tc.updateSessionErr, tc.getServiceErr)
+			_, err = usrSrv.DoInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+			coreC.setErrs(nil, nil)
+			assert.NotNil(t, err)
+
+			after := getActiveIndexes()
+			if tc.isReleased {
+				assert.ElementsMatch(t, before, after)
+			} else {
+				assert.Equal(t, len(before)+1, len(after))
+			}
+
+			sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx,
+				&rmetav1.GetOptions{Uid: usrT.Session.Metadata.Uid})
+			assert.Nil(t, err, "%+v", err)
+			assert.False(t, sess.Status.IsConnected)
+			assert.Nil(t, sess.Status.Connection)
+		})
+	}
+
+	{
+		usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err, "%+v", err)
+
+		before := getActiveIndexes()
+
+		_, conn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(conn.Addresses))
+		assert.Equal(t, len(before)+1, len(getActiveIndexes()))
+	}
+}
+
+func TestDoInitConnectCanceledContext(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	coreC := &failingCoreC{
+		ResourceServiceClient: tst.C.OcteliumC.CoreC(),
+	}
+	octeliumC := &failingOcteliumC{
+		ClientInterface: tst.C.OcteliumC,
+		coreC:           coreC,
+	}
+
+	usrSrv := NewServer(octeliumC)
+	_, adminSrv := newFakeServers(tst.C)
+
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err, "%+v", err)
+
+	reqCtx, cancel := context.WithCancel(usrT.Ctx())
+	defer cancel()
+
+	coreC.setHooks(nil, func() error {
+		cancel()
+		return status.Error(codes.Canceled, "canceled")
+	})
+	_, err = usrSrv.DoInitConnect(reqCtx, &userv1.ConnectRequest_Initialize{})
+	coreC.setErrs(nil, nil)
+	assert.NotNil(t, err)
+	assert.NotNil(t, reqCtx.Err())
+
+	cfg, err := tst.C.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+	assert.Nil(t, err, "%+v", err)
+
+	connInfo := &cclusterv1.ClusterConnInfo{}
+	err = pbutils.StructToMessage(cfg.Data.GetAttrs(), connInfo)
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, 0, len(connInfo.ActiveIndexesWG))
 }

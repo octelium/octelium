@@ -41,6 +41,8 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+const connectStateTimeout = 30 * time.Second
+
 func checkIfCanConnect(i *userctx.UserCtx) error {
 	switch {
 	case ucorev1.ToSession(i.Session).IsClient():
@@ -421,6 +423,9 @@ func (s *Server) doInitConnect(ctx context.Context,
 		return nil, nil, serr.InternalWithErr(err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connectStateTimeout)
+	defer cancel()
+
 	if req.ServiceOptions != nil {
 		svcOpts := req.ServiceOptions
 
@@ -432,6 +437,7 @@ func (s *Server) doInitConnect(ctx context.Context,
 				},
 			})
 			if err != nil {
+				s.releaseConnectionAddresses(ctx, sess)
 				return nil, nil, serr.InternalWithErr(err)
 			}
 			zap.L().Debug("Found candidate Services to serve by User",
@@ -440,6 +446,7 @@ func (s *Server) doInitConnect(ctx context.Context,
 			for _, svc := range svcs.Items {
 				if upstream.ServeService(svc, sess) {
 					if err := upstream.SetConnectionUpstreams(ctx, s.octeliumC, sess, svc); err != nil {
+						s.releaseConnectionAddresses(ctx, sess)
 						return nil, nil, serr.InternalWithErr(err)
 					}
 				}
@@ -450,15 +457,26 @@ func (s *Server) doInitConnect(ctx context.Context,
 
 	connState, err := getConnectionState(ctx, s.octeliumC, sess, cc, privateKey, ed25519Priv)
 	if err != nil {
+		s.releaseConnectionAddresses(ctx, sess)
 		return nil, nil, err
 	}
 
 	_, err = s.octeliumC.CoreC().UpdateSession(ctx, sess)
 	if err != nil {
+		if grpcerr.IsNotFound(err) || grpcerr.IsResourceChanged(err) {
+			s.releaseConnectionAddresses(ctx, sess)
+		}
 		return nil, nil, serr.InternalWithErr(err)
 	}
 
 	return connState, sess.Status.Connection, nil
+}
+
+func (s *Server) releaseConnectionAddresses(ctx context.Context, sess *corev1.Session) {
+	if err := upstream.RemoveAllAddressFromConnection(ctx, s.octeliumC, sess); err != nil {
+		zap.L().Warn("Could not release the addresses of the Connection",
+			zap.String("sess", sess.Metadata.Name), zap.Error(err))
+	}
 }
 
 func (s *Server) Disconnect(ctx context.Context, req *userv1.DisconnectRequest) (*userv1.DisconnectResponse, error) {
