@@ -37,6 +37,7 @@ const (
 	capHostPortIngress = scenario.CapHostPortIngress
 	capHeavyUpstreams  = scenario.CapHeavyUpstreams
 	capUpgrade         = scenario.CapUpgrade
+	capChaos           = scenario.CapChaos
 )
 
 const propagationBudget = 10 * time.Second

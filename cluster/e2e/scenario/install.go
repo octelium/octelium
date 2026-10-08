@@ -139,8 +139,13 @@ helm repo update open-telemetry
 		return err
 	}
 
+	values := collectorValues
+	if r.isMultiNode() {
+		values += collectorServerNodeSelector
+	}
+
 	return r.helmInstall(ctx, vutils.K8sNS, "my-otel",
-		"open-telemetry/opentelemetry-collector", nil, collectorValues)
+		"open-telemetry/opentelemetry-collector", nil, values)
 }
 
 func (r *Runner) stepWaitDeployments(ctx context.Context, _ *Runner) error {
@@ -294,7 +299,7 @@ if reachable 127.0.0.1 "$PORT"; then
   exit 0
 fi
 
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+NODE_IP=$(kubectl get nodes -l node-role.kubernetes.io/control-plane=true -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
 if [ -z "$NODE_IP" ]; then
   echo "could not determine the node address" >&2
   exit 1
@@ -398,7 +403,7 @@ func (r *Runner) ingressDiagnostics(ctx context.Context) string {
 func diagScript(ns, netDir string) string {
 	return fmt.Sprintf(`
 SVC=octelium-ingress-dataplane
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+NODE_IP=$(kubectl get nodes -l node-role.kubernetes.io/control-plane=true -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
 NODE_PORT=$(kubectl get svc -n %[1]s "$SVC" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)
 CLUSTER_IP=$(kubectl get svc -n %[1]s "$SVC" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 
@@ -514,6 +519,11 @@ sudo update-ca-certificates
 	return r.Bash(ctx, fmt.Sprintf(`octops cert %s --key %s --cert %s --kubeconfig %s`,
 		domain, keyPath, certPath, r.State.KubeconfigPath))
 }
+
+const collectorServerNodeSelector = `
+nodeSelector:
+  node-role.kubernetes.io/control-plane: "true"
+`
 
 const collectorValues = `
 mode: deployment

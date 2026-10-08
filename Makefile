@@ -87,10 +87,16 @@ e2e-list: build-e2e
 e2e: build-e2e install-cli
 	./bin/octelium-e2e all --scenario=$(E2E_SCENARIO)
 
+# The suites e2e-test runs: base, chaos or all. The chaos suite is meant for
+# the tuned scenarios, e.g. E2E_SCENARIO=k3s-flannel-chaos.
+E2E_SUITE ?= base
+E2E_CHAOS_SCALE ?= medium
+
 # Re-run only the suite against a Cluster that is already installed.
 # Pass E2E_RUN to filter, e.g. `make e2e-test E2E_RUN=TestE2E/Apply`.
 e2e-test: build-e2e
-	./bin/octelium-e2e test --scenario=$(E2E_SCENARIO) $(if $(E2E_RUN),--run=$(E2E_RUN),)
+	./bin/octelium-e2e test --scenario=$(E2E_SCENARIO) --suite=$(E2E_SUITE) \
+		--chaos-scale=$(E2E_CHAOS_SCALE) $(if $(E2E_RUN),--run=$(E2E_RUN),)
 
 e2e-teardown: build-e2e
 	./bin/octelium-e2e teardown --scenario=$(E2E_SCENARIO)

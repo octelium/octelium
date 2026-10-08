@@ -152,6 +152,9 @@ func (r *Runner) stepRedis(ctx context.Context, _ *Runner) error {
 	if redis.ImageRepository != "" {
 		args = append(args, fmt.Sprintf("--set image.repository=%s", redis.ImageRepository))
 	}
+	if r.isMultiNode() {
+		args = append(args, serverNodeSelectorArg("master.nodeSelector"))
+	}
 	if redis.AllowInsecure {
 		args = append(args, "--set global.security.allowInsecureImages=true")
 	}
@@ -174,6 +177,9 @@ func (r *Runner) stepPostgres(ctx context.Context, _ *Runner) error {
 	}
 	if pg.PVCName != "" {
 		args = append(args, fmt.Sprintf("--set primary.persistence.existingClaim=%s", pg.PVCName))
+	}
+	if r.isMultiNode() {
+		args = append(args, serverNodeSelectorArg("primary.nodeSelector"))
 	}
 	if pg.ImageRepository != "" {
 		args = append(args, fmt.Sprintf("--set image.repository=%s", pg.ImageRepository))
@@ -202,6 +208,15 @@ func (r *Runner) helmInstall(ctx context.Context,
 	}
 
 	return r.Bash(ctx, script)
+}
+
+func (r *Runner) isMultiNode() bool {
+	return r.Scenario.Topology.Nodes > 1
+}
+
+func serverNodeSelectorArg(key string) string {
+	return fmt.Sprintf("--set-json %s",
+		shellQuote(fmt.Sprintf(`%s={"node-role.kubernetes.io/control-plane":"true"}`, key)))
 }
 
 func shellQuote(arg string) string {

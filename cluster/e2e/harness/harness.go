@@ -18,7 +18,9 @@ package harness
 
 import (
 	"context"
+	"database/sql"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +56,12 @@ type H struct {
 	artifacts *ArtifactCollector
 	rootCtx   context.Context
 	dbOpened  bool
+
+	ingressOnce sync.Once
+	ingressAddr string
+
+	dbMu      sync.Mutex
+	clusterDB *sql.DB
 }
 
 type Opts struct {
@@ -148,6 +156,9 @@ func (h *H) initK8s() error {
 func (h *H) Close() error {
 	if h.conn != nil {
 		h.conn.Close()
+	}
+	if h.clusterDB != nil {
+		h.clusterDB.Close()
 	}
 	if h.dbOpened {
 		cliutils.CloseDB()

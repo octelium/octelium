@@ -18,6 +18,7 @@ package suite
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -54,10 +55,18 @@ func Bootstrap(m *testing.M) int {
 }
 
 func Run(t *testing.T, phases []Phase) {
+	if !harness.SuiteSelected(harness.SuiteBase) {
+		t.Skipf("The base suite is not selected by %s=%q", harness.SuiteEnv, os.Getenv(harness.SuiteEnv))
+	}
+
 	if initErr != nil {
 		t.Fatalf("Could not initialize the e2e harness: %+v", initErr)
 	}
 
+	runPhases(t, phases)
+}
+
+func runPhases(t *testing.T, phases []Phase) {
 	if err := Validate(phases); err != nil {
 		t.Fatalf("Invalid phase list: %+v", err)
 	}

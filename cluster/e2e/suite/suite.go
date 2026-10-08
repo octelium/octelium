@@ -78,6 +78,7 @@ func Phases() []Phase {
 		{"IngressCertificateRotation", testIngressCertificateRotation},
 		{"GatewayResource", testGatewayResource},
 		{"GatewayConnection", testGatewayConnection},
+		{"MultiNodeGateways", testMultiNodeGateways},
 		{"OcteliumCommands", testOcteliumCommands},
 		{"Connect", testConnect},
 		{"ConnectServiceLifecycle", testConnectServiceLifecycle},

@@ -17,7 +17,9 @@
 package scenario
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -36,20 +38,40 @@ const (
 	DefaultCNI    = CNIFlannel
 )
 
-const spiffeSuffix = "spiffe"
+const (
+	spiffeSuffix = "spiffe"
+	chaosSuffix  = "chaos"
+	nodesPrefix  = "nodes"
+)
+
+const MaxNodes = 32
+
+var multiNodeSizes = []int{2, 4, 8, 16, 32}
 
 type Spec struct {
 	Distro Distro
 	CNI    CNI
+	Nodes  int
 	SPIFFE bool
+	Chaos  bool
 }
 
 func (s Spec) ID() string {
 	parts := []string{string(s.Distro), string(s.CNI)}
+	if s.IsMultiNode() {
+		parts = append(parts, fmt.Sprintf("%s%d", nodesPrefix, s.Nodes))
+	}
 	if s.SPIFFE {
 		parts = append(parts, spiffeSuffix)
 	}
+	if s.Chaos {
+		parts = append(parts, chaosSuffix)
+	}
 	return strings.Join(parts, "-")
+}
+
+func (s Spec) IsMultiNode() bool {
+	return s.Nodes > 1
 }
 
 var distros = []Distro{DistroK3s, DistroRKE2, DistroK8s}
@@ -69,11 +91,26 @@ func Specs() []Spec {
 	for _, d := range distros {
 		for _, c := range cnisByDistro[d] {
 			for _, spiffe := range []bool{false, true} {
-				ret = append(ret, Spec{Distro: d, CNI: c, SPIFFE: spiffe})
+				for _, chaos := range []bool{false, true} {
+					ret = append(ret, Spec{Distro: d, CNI: c, SPIFFE: spiffe, Chaos: chaos})
+				}
 			}
 		}
 	}
+
+	for _, nodes := range multiNodeSizes {
+		for _, chaos := range []bool{false, true} {
+			ret = append(ret, Spec{Distro: DistroK3s, CNI: CNIFlannel, Nodes: nodes, Chaos: chaos})
+		}
+	}
+
 	return ret
+}
+
+func errMalformedSpec(id string) error {
+	return errors.Errorf(
+		"Malformed scenario %q. Expected <distro>-<cni>[-nodes<N>][-spiffe][-chaos], "+
+			"for example k3s-flannel or k3s-flannel-nodes4-chaos", id)
 }
 
 func ParseSpec(id string) (Spec, error) {
@@ -81,22 +118,30 @@ func ParseSpec(id string) (Spec, error) {
 
 	parts := strings.Split(id, "-")
 	if len(parts) < 2 {
-		return ret, errors.Errorf(
-			"Malformed scenario %q. Expected <distro>-<cni>[-spiffe], for example k3s-flannel", id)
-	}
-
-	if last := parts[len(parts)-1]; last == spiffeSuffix {
-		ret.SPIFFE = true
-		parts = parts[:len(parts)-1]
-	}
-
-	if len(parts) != 2 {
-		return ret, errors.Errorf(
-			"Malformed scenario %q. Expected <distro>-<cni>[-spiffe], for example k3s-flannel", id)
+		return ret, errMalformedSpec(id)
 	}
 
 	ret.Distro = Distro(parts[0])
 	ret.CNI = CNI(parts[1])
+
+	var hasNodes bool
+	for _, mod := range parts[2:] {
+		switch {
+		case mod == spiffeSuffix && !ret.SPIFFE:
+			ret.SPIFFE = true
+		case mod == chaosSuffix && !ret.Chaos:
+			ret.Chaos = true
+		case strings.HasPrefix(mod, nodesPrefix) && !hasNodes:
+			nodes, err := strconv.Atoi(strings.TrimPrefix(mod, nodesPrefix))
+			if err != nil {
+				return ret, errMalformedSpec(id)
+			}
+			hasNodes = true
+			ret.Nodes = nodes
+		default:
+			return ret, errMalformedSpec(id)
+		}
+	}
 
 	if err := ret.Validate(); err != nil {
 		return ret, err
@@ -119,6 +164,17 @@ func (s Spec) Validate() error {
 	if !slices.Contains(supported, s.CNI) {
 		return errors.Errorf("The distro %q does not support the CNI %q. One of: %s",
 			s.Distro, s.CNI, joinAny(supported))
+	}
+
+	if s.Nodes < 0 || s.Nodes > MaxNodes {
+		return errors.Errorf("Invalid node count %d. A scenario runs between 1 and %d nodes",
+			s.Nodes, MaxNodes)
+	}
+
+	if s.IsMultiNode() && (s.Distro != DistroK3s || s.CNI != CNIFlannel) {
+		return errors.Errorf(
+			"Multi-node scenarios currently run on %s with %s only, not %s with %s",
+			DistroK3s, CNIFlannel, s.Distro, s.CNI)
 	}
 
 	return nil

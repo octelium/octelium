@@ -56,9 +56,11 @@ func testGatewayResource(t *testing.T, h *harness.H) {
 		assert.True(t, gw.Status.Wireguard.Port > 0)
 		assert.NotEmpty(t, gw.Status.Wireguard.PublicKey)
 
-		assert.True(t, slices.Contains(gw.Status.PublicIPs, h.ExternalIP),
-			"the Gateway %s publishes %v, want it to contain the Region address %s",
-			gw.Metadata.Name, gw.Status.PublicIPs, h.ExternalIP)
+		if !h.Scenario.Caps.Has(capMultiNode) {
+			assert.True(t, slices.Contains(gw.Status.PublicIPs, h.ExternalIP),
+				"the Gateway %s publishes %v, want it to contain the Region address %s",
+				gw.Metadata.Name, gw.Status.PublicIPs, h.ExternalIP)
+		}
 
 		if h.Scenario.Caps.Has(capQUICv0) {
 			require.NotNil(t, gw.Status.Quicv0,

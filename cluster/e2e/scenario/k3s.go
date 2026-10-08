@@ -19,6 +19,7 @@ package scenario
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -73,6 +74,38 @@ type K3s struct {
 	Packages    []string
 	Paths       CNIPaths
 	DBHostPath  string
+
+	Agents       int
+	AgentDataDir string
+	AgentArgs    []string
+	Tuned        bool
+}
+
+func (p *K3s) withAgents(n int) {
+	p.Agents = n
+	p.addPackages("wireguard-tools")
+}
+
+func (p *K3s) tune() {
+	p.Tuned = true
+
+	args := []string{"--kube-proxy-arg=conntrack-max-per-core=0"}
+	p.ServerArgs = append(p.ServerArgs, args...)
+	p.InstallExec = append(p.InstallExec, args...)
+
+	p.addPackages("wireguard-tools")
+}
+
+func (p *K3s) addPackages(pkgs ...string) {
+	for _, pkg := range pkgs {
+		if !slices.Contains(p.Packages, pkg) {
+			p.Packages = append(p.Packages, pkg)
+		}
+	}
+}
+
+func (p *K3s) hasAgents() bool {
+	return p.Agents > 0
 }
 
 func (p *K3s) Name() string { return "k3s" }
@@ -91,14 +124,25 @@ func (p *K3s) Provision(ctx context.Context, r *Runner) error {
 }
 
 func (p *K3s) provisionSteps() []Step {
+	noAgents := func(*Runner) bool { return !p.hasAgents() }
+
 	return []Step{
 		{Name: "host/sysctls", Run: p.stepSysctls},
 		{Name: "host/packages", Run: p.stepPackages},
+		{
+			Name: "host/tuning",
+			Skip: func(*Runner) bool { return !p.Tuned },
+			Run:  p.stepTuning,
+		},
 		{Name: "host/storage-dir", Run: p.stepStorageDir},
 		{Name: "host/kubectl", Run: p.stepKubectl},
 		{Name: "host/helm", Run: p.stepHelm},
 		{Name: "k3s/install", Run: p.stepInstallK3s},
 		{Name: "k3s/start", Run: p.stepStartK3s},
+		{Name: "k3s/server-ready", Skip: noAgents, Run: p.stepWaitServerReady},
+		{Name: "agents/network", Skip: noAgents, Run: p.stepAgentNetwork},
+		{Name: "agents/mirrors", Skip: noAgents, Run: p.stepAgentMirrors},
+		{Name: "agents/start", Skip: noAgents, Run: p.stepStartAgents},
 		{Name: "k3s/nodes-registered", Run: p.stepWaitNodesRegistered},
 		{
 			Name: "cni/install",
@@ -117,6 +161,12 @@ func (p *K3s) provisionSteps() []Step {
 }
 
 func (p *K3s) Teardown(ctx context.Context, r *Runner) error {
+	if p.hasAgents() {
+		if err := p.teardownAgents(ctx, r); err != nil {
+			zap.L().Warn("Could not fully remove the agent nodes", zap.Error(err))
+		}
+	}
+
 	return r.Bash(ctx, fmt.Sprintf(`
 if [ -x /usr/local/bin/k3s-killall.sh ]; then
   sudo /usr/local/bin/k3s-killall.sh || true
@@ -161,6 +211,60 @@ sudo mount --make-rshared /
 sudo mkdir -p /usr/local/bin
 `)
 }
+
+func (p *K3s) stepTuning(ctx context.Context, r *Runner) error {
+	return r.Bash(ctx, hostTuningScript)
+}
+
+const hostTuningScript = `
+sudo modprobe nf_conntrack || true
+
+sudo sysctl -w fs.file-max=4194304
+sudo sysctl -w fs.nr_open=4194304
+sudo sysctl -w vm.max_map_count=1048576
+sudo sysctl -w kernel.threads-max=4194303
+
+sudo sysctl -w net.core.somaxconn=65535
+sudo sysctl -w net.core.netdev_max_backlog=65536
+sudo sysctl -w net.ipv4.tcp_max_syn_backlog=65535
+sudo sysctl -w net.ipv4.ip_local_port_range="10240 65535"
+sudo sysctl -w net.ipv4.ip_local_reserved_ports="22022,30000-32767"
+sudo sysctl -w net.ipv4.tcp_tw_reuse=1
+sudo sysctl -w net.ipv4.tcp_fin_timeout=15
+sudo sysctl -w net.ipv4.tcp_max_tw_buckets=2000000
+sudo sysctl -w net.ipv4.tcp_syncookies=1
+sudo sysctl -w net.ipv4.neigh.default.gc_thresh1=4096
+sudo sysctl -w net.ipv4.neigh.default.gc_thresh2=8192
+sudo sysctl -w net.ipv4.neigh.default.gc_thresh3=16384
+sudo sysctl -w net.ipv6.neigh.default.gc_thresh1=4096
+sudo sysctl -w net.ipv6.neigh.default.gc_thresh2=8192
+sudo sysctl -w net.ipv6.neigh.default.gc_thresh3=16384
+sudo sysctl -w net.netfilter.nf_conntrack_max=1048576 || true
+echo 262144 | sudo tee /sys/module/nf_conntrack/parameters/hashsize >/dev/null || true
+
+for unit in docker containerd; do
+  sudo mkdir -p "/etc/systemd/system/${unit}.service.d"
+  printf '[Service]\nLimitNOFILE=1048576\nLimitNPROC=infinity\nTasksMax=infinity\n' \
+    | sudo tee "/etc/systemd/system/${unit}.service.d/octelium-e2e.conf" >/dev/null
+done
+
+sudo mkdir -p /etc/docker
+CURRENT='{}'
+if sudo test -s /etc/docker/daemon.json; then
+  CURRENT=$(sudo cat /etc/docker/daemon.json)
+fi
+echo "$CURRENT" | jq '. + {"default-ulimits": {"nofile": {"Name": "nofile", "Hard": 1048576, "Soft": 1048576}}}' \
+  | sudo tee /etc/docker/daemon.json.octelium-e2e >/dev/null
+sudo mv /etc/docker/daemon.json.octelium-e2e /etc/docker/daemon.json
+
+sudo systemctl daemon-reload
+sudo systemctl restart containerd || true
+sudo systemctl restart docker
+timeout 120 bash -c 'until sudo docker info >/dev/null 2>&1; do sleep 1; done'
+
+echo "host limits: file-max=$(cat /proc/sys/fs/file-max) nr_open=$(cat /proc/sys/fs/nr_open)"
+sudo docker info --format 'docker default ulimits: {{json .DefaultUlimits}}' 2>/dev/null || true
+`
 
 func (p *K3s) stepPackages(ctx context.Context, r *Runner) error {
 	pkgs := p.Packages
@@ -310,7 +414,8 @@ func (p *K3s) stepWaitNodesRegistered(ctx context.Context, r *Runner) error {
 			return nil
 		})
 	if err != nil {
-		return errors.Errorf("%+v\nk3s log:\n%s", err, p.logTail(ctx, r))
+		return errors.Errorf("%+v\nk3s log:\n%s\n%s", err, p.logTail(ctx, r),
+			p.agentDiagnostics(ctx, r))
 	}
 
 	return nil
@@ -369,7 +474,7 @@ func nodeNotReady(node *k8scorev1.Node) string {
 
 func (p *K3s) notReadyDiagnostics(ctx context.Context, r *Runner) string {
 	if p.CNI == "" || p.CNI == CNIFlannel {
-		return fmt.Sprintf("k3s log:\n%s", p.logTail(ctx, r))
+		return fmt.Sprintf("k3s log:\n%s\n%s", p.logTail(ctx, r), p.agentDiagnostics(ctx, r))
 	}
 
 	out, err := r.BashOutput(ctx, fmt.Sprintf(`
@@ -388,16 +493,34 @@ kubectl get pods -A -o wide 2>&1 | head -n 40
 		p.CNI, out, p.logTail(ctx, r))
 }
 
+const (
+	nodeSelectorServer = "node-role.kubernetes.io/control-plane=true"
+	nodeSelectorAgents = "!node-role.kubernetes.io/control-plane"
+)
+
+func labelNodesScript(selector string, labels []string) string {
+	var b strings.Builder
+	for _, label := range labels {
+		fmt.Fprintf(&b, "kubectl label nodes %s --overwrite %s=\n", selector, label)
+	}
+	return b.String()
+}
+
 func (p *K3s) stepLabelNodes(ctx context.Context, r *Runner) error {
-	labels := r.Scenario.Topology.Labels
-	if len(labels) == 0 {
+	topology := r.Scenario.Topology
+
+	var b strings.Builder
+	if p.hasAgents() {
+		b.WriteString(labelNodesScript(fmt.Sprintf("-l '%s'", nodeSelectorServer), topology.Labels))
+		b.WriteString(labelNodesScript(fmt.Sprintf("-l '%s'", nodeSelectorAgents), topology.AgentLabels))
+	} else {
+		b.WriteString(labelNodesScript("--all", topology.Labels))
+	}
+
+	if b.Len() == 0 {
 		return nil
 	}
 
-	var b strings.Builder
-	for _, label := range labels {
-		fmt.Fprintf(&b, "kubectl label nodes --all --overwrite %s=\n", label)
-	}
 	b.WriteString("kubectl wait --for=condition=Ready nodes --all --timeout=600s\n")
 
 	return r.Bash(ctx, b.String())
@@ -411,8 +534,52 @@ func (p *K3s) stepAnnotatePublicIP(ctx context.Context, r *Runner) error {
 
 	zap.L().Debug("Annotating nodes with the test public IP", zap.String("addr", externalIP))
 
-	return r.Bash(ctx, fmt.Sprintf(
-		`kubectl annotate nodes --all --overwrite octelium.com/public-ip-test=%s`, externalIP))
+	if !p.hasAgents() {
+		return r.Bash(ctx, fmt.Sprintf(
+			`kubectl annotate nodes --all --overwrite octelium.com/public-ip-test=%s`, externalIP))
+	}
+
+	k8sC, err := r.K8sC()
+	if err != nil {
+		return err
+	}
+
+	nodes, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	for i := range nodes.Items {
+		addr := nodePublicIP(&nodes.Items[i], externalIP)
+		if addr == "" {
+			return errors.Errorf("The node %s has no InternalIP to publish its Gateway on",
+				nodes.Items[i].Name)
+		}
+
+		fmt.Fprintf(&b, "kubectl annotate node %s --overwrite octelium.com/public-ip-test=%s\n",
+			shellQuote(nodes.Items[i].Name), addr)
+	}
+
+	return r.Bash(ctx, b.String())
+}
+
+func isServerNode(node *k8scorev1.Node) bool {
+	return node.Labels["node-role.kubernetes.io/control-plane"] == "true"
+}
+
+func nodePublicIP(node *k8scorev1.Node, serverIP string) string {
+	if isServerNode(node) {
+		return serverIP
+	}
+
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == k8scorev1.NodeInternalIP && govalidator.IsIPv4(addr.Address) {
+			return addr.Address
+		}
+	}
+
+	return ""
 }
 
 func (p *K3s) skipCNIInstall(r *Runner) bool {

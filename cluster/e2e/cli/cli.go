@@ -69,11 +69,14 @@ type globalArgs struct {
 }
 
 type testArgs struct {
-	Run         string
-	Timeout     string
-	Verbose     bool
-	ArtifactDir string
-	Parallel    int
+	Run          string
+	Timeout      string
+	Verbose      bool
+	ArtifactDir  string
+	Parallel     int
+	Suite        string
+	ChaosScale   string
+	ChaosClients int
 }
 
 type app struct {
@@ -124,6 +127,14 @@ func (a *app) rootCmd() *cobra.Command {
 		"Directory to write failure diagnostics into")
 	testCmd.Flags().IntVar(&a.tArgs.Parallel, "parallel", 0,
 		"Maximum number of tests to run concurrently. 0 leaves the go test default")
+	testCmd.Flags().StringVar(&a.tArgs.Suite, "suite", harness.SuiteBase,
+		fmt.Sprintf("The suites to run, comma separated. One of: %s, %s, %s",
+			harness.SuiteBase, harness.SuiteChaos, harness.SuiteAll))
+	testCmd.Flags().StringVar(&a.tArgs.ChaosScale, "chaos-scale", "",
+		fmt.Sprintf("The load of the chaos suite. One of: %s. Defaults to %s",
+			strings.Join(harness.ChaosScales, ", "), harness.ChaosScaleDefault))
+	testCmd.Flags().IntVar(&a.tArgs.ChaosClients, "chaos-clients", 0,
+		"Override the number of concurrently connected clients of the chaos suite")
 
 	ret.AddCommand(a.listCmd(), a.provisionCmd(), a.prepareCmd(),
 		a.installCmd(), testCmd, a.teardownCmd(), a.allCmd())
@@ -242,7 +253,39 @@ func (a *app) allCmd() *cobra.Command {
 		})
 }
 
+func (a *app) suiteEnv(r *scenario.Runner) ([]string, error) {
+	suites, err := harness.ParseSuites(a.tArgs.Suite)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := harness.ValidateChaosScale(a.tArgs.ChaosScale); err != nil {
+		return nil, err
+	}
+
+	if slices.Contains(suites, harness.SuiteChaos) && !r.Scenario.Caps.Has(scenario.CapChaos) {
+		zap.L().Warn("The chaos suite runs on a scenario that is not tuned for it",
+			zap.String("scenario", r.Scenario.ID),
+			zap.String("tuned", r.Scenario.ID+"-chaos"))
+	}
+
+	ret := []string{fmt.Sprintf("%s=%s", harness.SuiteEnv, strings.Join(suites, ","))}
+	if a.tArgs.ChaosScale != "" {
+		ret = append(ret, fmt.Sprintf("%s=%s", harness.ChaosScaleEnv, a.tArgs.ChaosScale))
+	}
+	if a.tArgs.ChaosClients > 0 {
+		ret = append(ret, fmt.Sprintf("%s=%d", harness.ChaosClientsEnv, a.tArgs.ChaosClients))
+	}
+
+	return ret, nil
+}
+
 func (a *app) runSuite(ctx context.Context, r *scenario.Runner) error {
+	suiteEnv, err := a.suiteEnv(r)
+	if err != nil {
+		return err
+	}
+
 	cmdArgs := []string{"test", "-tags", "e2e", "-count=1"}
 	if a.tArgs.Verbose {
 		cmdArgs = append(cmdArgs, "-v")
@@ -264,6 +307,7 @@ func (a *app) runSuite(ctx context.Context, r *scenario.Runner) error {
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("%s=%s", scenario.StatePathEnv, r.StatePath()))
+	cmd.Env = append(cmd.Env, suiteEnv...)
 
 	if a.tArgs.ArtifactDir != "" {
 		cmd.Env = append(cmd.Env,
@@ -273,6 +317,7 @@ func (a *app) runSuite(ctx context.Context, r *scenario.Runner) error {
 	zap.L().Info("Running the e2e suite",
 		zap.String("scenario", r.Scenario.ID),
 		zap.Strings("args", cmdArgs),
+		zap.Strings("env", suiteEnv),
 		zap.String("dir", cmd.Dir))
 
 	return cmd.Run()

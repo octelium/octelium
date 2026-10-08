@@ -34,6 +34,7 @@ const (
 	CapHostPortIngress Capability = "host-port-ingress"
 	CapHeavyUpstreams  Capability = "heavy-upstreams"
 	CapUpgrade         Capability = "upgrade"
+	CapChaos           Capability = "chaos"
 )
 
 type Capabilities []Capability
@@ -65,8 +66,9 @@ type CNIPaths struct {
 }
 
 type Topology struct {
-	Nodes  int
-	Labels []string
+	Nodes       int
+	Labels      []string
+	AgentLabels []string
 }
 
 type MultusOpts struct {

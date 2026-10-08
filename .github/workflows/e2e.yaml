@@ -31,21 +31,52 @@ on:
         description: "Only run tests matching this regular expression (go test -run)"
         required: false
         default: ""
+      gateways:
+        description: "Number of k3s nodes, each running an Octelium Gateway. More than 1 runs the extra nodes as k3s agents in docker (k3s with flannel only). 16 and 32 usually need a larger runner"
+        required: false
+        type: choice
+        default: "1"
+        options: ["1", "2", "4", "8", "16", "32"]
+      chaos:
+        description: "Also run the chaos/load suite after the base suite. It tunes the host kernel and container limits during provisioning"
+        required: false
+        type: boolean
+        default: false
+      chaos_scale:
+        description: "Load of the chaos suite: small (200 connected clients), medium (1000), large (2500), xlarge (10000)"
+        required: false
+        type: choice
+        default: medium
+        options: [small, medium, large, xlarge]
+      chaos_clients:
+        description: "Override the number of concurrently connected clients of the chaos suite (empty keeps the scale default)"
+        required: false
+        default: ""
+      base:
+        description: "Run the base suite. Disable it to only run the chaos suite"
+        required: false
+        type: boolean
+        default: true
+      runner:
+        description: "Run on this runner label instead of the arch matrix, e.g. a larger runner for many gateways"
+        required: false
+        default: ""
 env:
   GO_VERSION: "1.26.8"
   SCENARIO: >-
-    ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ inputs.spiffe && '-spiffe' || '' }}
+    ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.spiffe && '-spiffe' || '' }}${{ inputs.chaos && '-chaos' || '' }}
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ inputs.arch == 'amd64' && fromJSON('["ubuntu-24.04"]')
+        runner: ${{ inputs.runner != '' && fromJSON(format('["{0}"]', inputs.runner))
+          || inputs.arch == 'amd64' && fromJSON('["ubuntu-24.04"]')
           || inputs.arch == 'arm64' && fromJSON('["ubuntu-24.04-arm"]')
           || fromJSON('["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     runs-on: ${{ matrix.runner }}
-    name: ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}-${{ matrix.runner }}
-    timeout-minutes: 120
+    name: ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.chaos && format('-chaos-{0}', inputs.chaos_scale) || '' }}-${{ matrix.runner }}
+    timeout-minutes: ${{ (inputs.chaos || (inputs.gateways && inputs.gateways != '1')) && 330 || 120 }}
     steps:
       - name: Install deps
         run: |
@@ -73,12 +104,30 @@ jobs:
         run: ./bin/octelium-e2e prepare --scenario=${{ env.SCENARIO }}
 
       - name: Install
+        id: install
         run: ./bin/octelium-e2e install --scenario=${{ env.SCENARIO }}
 
       - name: Test
+        if: ${{ inputs.base }}
         run: |
           ./bin/octelium-e2e test \
             --scenario=${{ env.SCENARIO }} \
+            --suite=base \
+            --artifacts="${{ runner.temp }}/e2e-artifacts" \
+            ${{ inputs.run && format('--run={0}', inputs.run) || '' }}
+
+      - name: Test chaos
+        if: ${{ !cancelled() && inputs.chaos && steps.install.outcome == 'success' }}
+        run: |
+          sudo prlimit --pid $$ --nofile=1048576:1048576
+          echo "open files: $(ulimit -Sn)/$(ulimit -Hn)"
+
+          ./bin/octelium-e2e test \
+            --scenario=${{ env.SCENARIO }} \
+            --suite=chaos \
+            --chaos-scale=${{ inputs.chaos_scale }} \
+            ${{ inputs.chaos_clients && format('--chaos-clients={0}', inputs.chaos_clients) || '' }} \
+            --timeout=200m \
             --artifacts="${{ runner.temp }}/e2e-artifacts" \
             ${{ inputs.run && format('--run={0}', inputs.run) || '' }}
 
@@ -116,6 +165,15 @@ jobs:
             done
           fi
 
+          if sudo docker network inspect octelium-e2e >/dev/null 2>&1; then
+            sudo docker ps -a > "$OUT/docker-ps.txt" 2>&1 || true
+            for c in $(sudo docker ps -a --filter name=^octelium-e2e- --format '{{.Names}}'); do
+              sudo docker logs --tail 300 "$c" > "$OUT/node-$c.txt" 2>&1 || true
+            done
+            kubectl get nodes -o wide > "$OUT/nodes.txt" 2>&1 || true
+            kubectl describe nodes > "$OUT/describe-nodes.txt" 2>&1 || true
+          fi
+
           cp /tmp/octelium-e2e-k3s.log "$OUT/" 2>/dev/null || true
         env:
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
@@ -124,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-${{ env.SCENARIO }}-${{ matrix.runner }}
+          name: e2e-${{ env.SCENARIO }}${{ inputs.chaos && format('-{0}', inputs.chaos_scale) || '' }}-${{ matrix.runner }}
           path: ${{ runner.temp }}/e2e-artifacts
           if-no-files-found: ignore
           retention-days: 7

@@ -32,3 +32,7 @@ func TestMain(m *testing.M) {
 func TestE2E(t *testing.T) {
 	suite.Run(t, suite.Phases())
 }
+
+func TestChaos(t *testing.T) {
+	suite.RunChaos(t)
+}

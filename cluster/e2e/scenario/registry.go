@@ -36,7 +36,14 @@ func Build(spec Spec) (*Scenario, error) {
 
 	switch spec.Distro {
 	case DistroK3s:
-		ret.Provisioner = k3sProvisioner(spec.CNI)
+		p := k3sProvisioner(spec.CNI)
+		if spec.IsMultiNode() {
+			p.withAgents(spec.Nodes - 1)
+		}
+		if spec.Chaos {
+			p.tune()
+		}
+		ret.Provisioner = p
 	default:
 		return nil, errors.Errorf(
 			"The distro %q is not implemented yet. Currently supported: %s",
@@ -45,6 +52,21 @@ func Build(spec Spec) (*Scenario, error) {
 
 	ret.Description = fmt.Sprintf("Single-node %s with %s", spec.Distro, spec.CNI)
 
+	if spec.IsMultiNode() {
+		ret.Description = fmt.Sprintf("%d-node %s with %s, one Gateway per node",
+			spec.Nodes, spec.Distro, spec.CNI)
+		ret.Topology.Nodes = spec.Nodes
+		ret.Topology.AgentLabels = []string{
+			"octelium.com/node",
+			vutils.NodeLabelDataPlane,
+		}
+		ret.Caps = append(ret.Caps, CapMultiNode)
+		ret.Budget += time.Duration(spec.Nodes) * 2 * time.Minute
+		ret.Install.WaitTimeout += time.Duration(spec.Nodes) * 30 * time.Second
+		ret.Hooks.PostInstall = append(ret.Hooks.PostInstall,
+			Step{Name: "octelium/gateway-hosts", Run: stepGatewayHosts})
+	}
+
 	if spec.SPIFFE {
 		ret.Description += " and SPIRE"
 		ret.Install.EnableSPIFFECSI = true
@@ -52,6 +74,12 @@ func Build(spec Spec) (*Scenario, error) {
 		ret.Caps = append(ret.Caps, CapSPIFFE)
 		ret.Hooks.PostPrepare = append(ret.Hooks.PostPrepare,
 			Step{Name: "spiffe/spire", Run: stepSPIRE})
+	}
+
+	if spec.Chaos {
+		ret.Description += ", tuned for the chaos suite"
+		ret.Caps = append(ret.Caps, CapChaos)
+		ret.Budget += 90 * time.Minute
 	}
 
 	if err := applyCustomizers(ret); err != nil {
