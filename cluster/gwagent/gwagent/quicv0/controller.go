@@ -148,6 +148,10 @@ func (c *QUICController) Run(ctx context.Context) error {
 		return errors.Errorf("Could not create tundev: %+v", err)
 	}
 
+	if err := setFirewall(gw, cc); err != nil {
+		return errors.Errorf("Could not set the QUICv0 firewall rules: %+v", err)
+	}
+
 	if err := c.runTunDev(ctx); err != nil {
 		return errors.Errorf("Could not run tundev: %+v", err)
 	}
@@ -416,6 +420,8 @@ func (c *QUICController) Close() error {
 	if c.tundev != nil {
 		c.tundev.Close()
 	}
+
+	unsetFirewall()
 
 	zap.L().Debug("QUIC controller closed")
 
