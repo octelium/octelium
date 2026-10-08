@@ -210,3 +210,72 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 }
+
+func TestReleaseConnIndexes(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	fakeC := tst.C
+
+	getConnInfo := func() *cclusterv1.ClusterConnInfo {
+		cfg, err := fakeC.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+		assert.Nil(t, err)
+		ret := &cclusterv1.ClusterConnInfo{}
+		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
+		assert.Nil(t, err)
+		return ret
+	}
+
+	newSess := func(typ corev1.Session_Status_Connection_Type) *corev1.Session {
+		sess := &corev1.Session{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Status: &corev1.Session_Status{
+				Connection: &corev1.Session_Status_Connection{
+					Type: typ,
+				},
+			},
+		}
+		err := upstream.AddAddressToConnection(ctx, fakeC.OcteliumC, sess)
+		assert.Nil(t, err, "%+v", err)
+		return sess
+	}
+
+	wg1 := newSess(corev1.Session_Status_Connection_WIREGUARD)
+	wg2 := newSess(corev1.Session_Status_Connection_WIREGUARD)
+	quic1 := newSess(corev1.Session_Status_Connection_QUICV0)
+
+	var active []upstream.ConnIndex
+	released, err := upstream.ReleaseConnIndexes(ctx, fakeC.OcteliumC,
+		func(arg []upstream.ConnIndex) []upstream.ConnIndex {
+			active = arg
+			return nil
+		})
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, 0, len(released))
+
+	var expected []upstream.ConnIndex
+	for _, sess := range []*corev1.Session{wg1, wg2, quic1} {
+		expected = append(expected, upstream.GetConnectionIndexes(sess)...)
+	}
+	assert.ElementsMatch(t, expected, active)
+
+	toRelease := append(upstream.GetConnectionIndexes(wg2), upstream.GetConnectionIndexes(quic1)...)
+	released, err = upstream.ReleaseConnIndexes(ctx, fakeC.OcteliumC,
+		func(arg []upstream.ConnIndex) []upstream.ConnIndex {
+			return toRelease
+		})
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, toRelease, released)
+
+	connInfo := getConnInfo()
+	assert.Equal(t, []uint32{upstream.GetConnectionIndexes(wg1)[0].Index}, connInfo.ActiveIndexesWG)
+	assert.Equal(t, 0, len(connInfo.ActiveIndexesQUIC))
+}

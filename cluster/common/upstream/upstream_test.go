@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -121,4 +123,37 @@ func TestDoUnlockExpiredContext(t *testing.T) {
 
 	assert.Equal(t, 1, len(lockC.unlockReqs))
 	assert.Nil(t, lockC.unlockErrs[0])
+}
+
+func TestGetConnectionIndexes(t *testing.T) {
+	assert.Nil(t, GetConnectionIndexes(&corev1.Session{}))
+	assert.Nil(t, GetConnectionIndexes(&corev1.Session{
+		Status: &corev1.Session_Status{},
+	}))
+
+	assert.Equal(t, []ConnIndex{
+		{
+			Type:  corev1.Session_Status_Connection_QUICV0,
+			Index: 0x0a0b,
+		},
+		{
+			Type:  corev1.Session_Status_Connection_QUICV0,
+			Index: 0x0c,
+		},
+	}, GetConnectionIndexes(&corev1.Session{
+		Status: &corev1.Session_Status{
+			Connection: &corev1.Session_Status_Connection{
+				Type: corev1.Session_Status_Connection_QUICV0,
+				Addresses: []*metav1.DualStackNetwork{
+					{
+						V4: "10.11.10.11/32",
+						V6: "fdee::2:a0b/128",
+					},
+					{
+						V6: "fdee::2:c/128",
+					},
+				},
+			},
+		},
+	}))
 }

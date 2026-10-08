@@ -376,6 +376,89 @@ func RemoveAllAddressFromConnection(ctx context.Context, octeliumC octeliumc.Cli
 	return nil
 }
 
+type ConnIndex struct {
+	Type  corev1.Session_Status_Connection_Type
+	Index uint32
+}
+
+func GetConnectionIndexes(sess *corev1.Session) []ConnIndex {
+	if sess.Status == nil || sess.Status.Connection == nil {
+		return nil
+	}
+
+	var ret []ConnIndex
+	for _, addr := range sess.Status.Connection.Addresses {
+		ret = append(ret, ConnIndex{
+			Type:  sess.Status.Connection.Type,
+			Index: uint32(umetav1.ToDualStackIP(umetav1.ToDualStackNetwork(addr).ToIP()).GetIndex()),
+		})
+	}
+
+	return ret
+}
+
+func ReleaseConnIndexes(ctx context.Context, octeliumC octeliumc.ClientInterface,
+	selectFn func(active []ConnIndex) []ConnIndex) ([]ConnIndex, error) {
+
+	leaseID, err := doLock(ctx, octeliumC)
+	if err != nil {
+		return nil, err
+	}
+
+	defer doUnlock(ctx, octeliumC, leaseID)
+
+	ctx, cancel := context.WithTimeout(ctx, lockSectionTimeout)
+	defer cancel()
+
+	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+	if err != nil {
+		return nil, err
+	}
+
+	networkInfo := &cclusterv1.ClusterConnInfo{}
+	if err := pbutils.StructToMessage(cfg.Data.GetAttrs(), networkInfo); err != nil {
+		return nil, err
+	}
+
+	var active []ConnIndex
+	for _, idx := range networkInfo.ActiveIndexesWG {
+		active = append(active, ConnIndex{
+			Type:  corev1.Session_Status_Connection_WIREGUARD,
+			Index: idx,
+		})
+	}
+	for _, idx := range networkInfo.ActiveIndexesQUIC {
+		active = append(active, ConnIndex{
+			Type:  corev1.Session_Status_Connection_QUICV0,
+			Index: idx,
+		})
+	}
+
+	released := selectFn(active)
+	if len(released) == 0 {
+		return nil, nil
+	}
+
+	for _, itm := range released {
+		removeConnIndex(networkInfo, itm.Index, itm.Type)
+	}
+
+	attrs, err := pbutils.MessageToStruct(networkInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.Data.Type = &corev1.Config_Data_Attrs{
+		Attrs: attrs,
+	}
+
+	if _, err := octeliumC.CoreC().UpdateConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+
+	return released, nil
+}
+
 func removeConnIndex(network *cclusterv1.ClusterConnInfo, arg uint32, typ corev1.Session_Status_Connection_Type) {
 
 	switch typ {

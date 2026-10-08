@@ -94,7 +94,7 @@ func Run(ctx context.Context) error {
 			return err
 		}
 
-		if err := watcher.Session(ctx, nil, nil, nil, sessCtl.OnDelete); err != nil {
+		if err := watcher.Session(ctx, nil, sessCtl.OnAdd, sessCtl.OnUpdate, sessCtl.OnDelete); err != nil {
 			return err
 		}
 
@@ -108,6 +108,7 @@ func Run(ctx context.Context) error {
 	kubeInformerFactory.Start(stopCh)
 
 	go podCtl.Run(ctx, 2)
+	go sessCtl.Run(ctx)
 
 	healthcheck.Run(vutils.HealthCheckPortMain)
 	zap.L().Info("Nocturne is now running...")
