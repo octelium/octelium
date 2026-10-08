@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -120,13 +121,6 @@ func AddAddressToConnection(ctx context.Context,
 	octeliumC octeliumc.ClientInterface,
 	sess *corev1.Session) error {
 
-	leaseID, err := doLock(ctx, octeliumC)
-	if err != nil {
-		return err
-	}
-
-	defer doUnlock(ctx, octeliumC, leaseID)
-
 	conn := sess.Status.Connection
 	if conn == nil {
 		return errors.Errorf("Connection is not set in the Session")
@@ -138,11 +132,22 @@ func AddAddressToConnection(ctx context.Context,
 		return errors.Errorf("Cannot adding addresses without knowing Connection type")
 	}
 
-	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return err
 	}
-	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+
+	leaseID, err := doLock(ctx, octeliumC)
+	if err != nil {
+		return err
+	}
+
+	defer doUnlock(ctx, octeliumC, leaseID)
+
+	ctx, cancel := context.WithTimeout(ctx, lockSectionTimeout)
+	defer cancel()
+
+	cfg, err := octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
 	if err != nil {
 		return err
 	}
@@ -248,6 +253,13 @@ func AddAddressToConnection(ctx context.Context,
 	return nil
 }
 
+const (
+	lockTTL            = 30 * time.Second
+	lockWait           = 10 * time.Second
+	lockSectionTimeout = 15 * time.Second
+	unlockTimeout      = 5 * time.Second
+)
+
 func getLockKey() []byte {
 	return []byte("sys-conn-addr")
 }
@@ -257,12 +269,12 @@ func doLock(ctx context.Context, octeliumC octeliumc.ClientInterface) ([]byte, e
 		Key: getLockKey(),
 		Ttl: &metav1.Duration{
 			Type: &metav1.Duration_Seconds{
-				Seconds: 5,
+				Seconds: uint32(lockTTL / time.Second),
 			},
 		},
 		Wait: &metav1.Duration{
 			Type: &metav1.Duration_Seconds{
-				Seconds: 10,
+				Seconds: uint32(lockWait / time.Second),
 			},
 		},
 	})
@@ -278,6 +290,8 @@ func doLock(ctx context.Context, octeliumC octeliumc.ClientInterface) ([]byte, e
 }
 
 func doUnlock(ctx context.Context, octeliumC octeliumc.ClientInterface, leaseID []byte) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+	defer cancel()
 
 	if _, err := octeliumC.LockC().Unlock(ctx, &rlockv1.UnlockRequest{
 		Key:     getLockKey(),
@@ -300,6 +314,9 @@ func removeAddressFromConnection(ctx context.Context, octeliumC octeliumc.Client
 	}
 
 	defer doUnlock(ctx, octeliumC, leaseID)
+
+	ctx, cancel := context.WithTimeout(ctx, lockSectionTimeout)
+	defer cancel()
 
 	/*
 		zap.L().Debug("Removing an address from Session",
