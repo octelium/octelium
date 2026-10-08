@@ -710,6 +710,14 @@ func (e *chaosEnv) baselineLeaks(r *harness.AddressReport) (wg, quic []uint32) {
 	return harness.NewLeaks(e.baselineLeakWG, r.LeakedWG), harness.NewLeaks(e.baselineLeakQUIC, r.LeakedQUIC)
 }
 
+func (e *chaosEnv) setBaselineLeaks(r *harness.AddressReport) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.baselineLeakWG = r.LeakedWG
+	e.baselineLeakQUIC = r.LeakedQUIC
+}
+
 func (e *chaosEnv) evalInvariants(ctx context.Context, o invariantsOpts) (*harness.AddressReport, []string, error) {
 	inv, err := e.h.ConnInventory(ctx)
 	if err != nil {
@@ -825,6 +833,7 @@ func (e *chaosEnv) checkInvariants(t *testing.T, what string, budget time.Durati
 				zap.Duration("settled", time.Since(started)))
 			e.set(t, "invariants", r)
 			e.set(t, "invariantsSettled", time.Since(started).String())
+			e.setBaselineLeaks(r)
 			return r
 		}
 
@@ -844,6 +853,7 @@ func (e *chaosEnv) checkInvariants(t *testing.T, what string, budget time.Durati
 
 	if last != nil {
 		e.set(t, "invariants", last)
+		e.setBaselineLeaks(last)
 	}
 
 	e.failf(t, "The Connection invariants do not hold %s after %s (%v):\n  - %s",

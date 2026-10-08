@@ -158,3 +158,28 @@ func TestModeMapping(t *testing.T) {
 	assert.Equal(t, []bool{false, true}, modeFamilies(userv1.ConnectRequest_Initialize_BOTH))
 	assert.Equal(t, []bool{true}, modeFamilies(userv1.ConnectRequest_Initialize_V6))
 }
+
+func TestChaosLeaksAreReportedOnce(t *testing.T) {
+	e := &chaosEnv{}
+	e.setBaselineLeaks(&harness.AddressReport{LeakedWG: []uint32{1}})
+
+	leaked := &harness.AddressReport{LeakedWG: []uint32{1, 2}, LeakedQUIC: []uint32{7}}
+	wg, quic := e.baselineLeaks(leaked)
+	assert.Equal(t, []uint32{2}, wg, "only the leaks since the previous check are new")
+	assert.Equal(t, []uint32{7}, quic)
+
+	e.setBaselineLeaks(leaked)
+	wg, quic = e.baselineLeaks(leaked)
+	assert.Empty(t, wg, "a reported leak must not fail the next phases again")
+	assert.Empty(t, quic)
+
+	released := &harness.AddressReport{LeakedWG: []uint32{2}}
+	wg, quic = e.baselineLeaks(released)
+	assert.Empty(t, wg)
+	assert.Empty(t, quic)
+
+	e.setBaselineLeaks(released)
+	wg, quic = e.baselineLeaks(leaked)
+	assert.Equal(t, []uint32{1}, wg, "a released index that leaks again is a new leak")
+	assert.Equal(t, []uint32{7}, quic)
+}
