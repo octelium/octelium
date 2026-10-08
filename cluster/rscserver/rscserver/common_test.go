@@ -19,6 +19,7 @@ package rscserver
 import (
 	"context"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -1056,4 +1057,202 @@ func TestDoListAfterID(t *testing.T) {
 		assert.Equal(t, 0, len(itms))
 		assert.False(t, hasMore)
 	}
+}
+
+func TestUpdateConflict(t *testing.T) {
+
+	tst, err := initTest()
+	assert.Nil(t, err)
+
+	ctx := context.Background()
+
+	srv, err := NewServer(ctx, nil)
+	assert.Nil(t, err)
+
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	api := "core"
+	version := "v1"
+	kind := ucorev1.KindService
+
+	newObj := func() umetav1.ResourceObjectI {
+		obj := newTestResource(kind)
+		obj.GetMetadata().Name = utilrand.GetRandomStringLowercase(8)
+		ret, err := srv.doCreate(ctx, obj, api, version, kind)
+		assert.Nil(t, err)
+		return ret
+	}
+
+	getObj := func(uid string) umetav1.ResourceObjectI {
+		ret, err := srv.doGet(ctx, &rmetav1.GetOptions{Uid: uid}, api, version, kind)
+		assert.Nil(t, err)
+		return ret
+	}
+
+	t.Run("stale", func(t *testing.T) {
+		obj := newObj()
+		uid := obj.GetMetadata().Uid
+
+		first := getObj(uid)
+		stale := getObj(uid)
+
+		first.GetMetadata().Labels = map[string]string{"key": "first"}
+		updated, _, err := srv.doUpdate(ctx, first, api, version, kind)
+		assert.Nil(t, err)
+
+		stale.GetMetadata().Labels = map[string]string{"key": "stale"}
+		_, _, err = srv.doUpdate(ctx, stale, api, version, kind)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsResourceChanged(err), "%+v", err)
+
+		cur := getObj(uid)
+		assert.True(t, proto.Equal(updated, cur))
+		assert.Equal(t, "first", cur.GetMetadata().Labels["key"])
+	})
+
+	t.Run("concurrent", func(t *testing.T) {
+		obj := newObj()
+		uid := obj.GetMetadata().Uid
+
+		racers := 32
+
+		var objs []umetav1.ResourceObjectI
+		for i := range racers {
+			itm := getObj(uid)
+			itm.GetMetadata().Labels = map[string]string{"racer": fmt.Sprintf("%d", i)}
+			objs = append(objs, itm)
+		}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var winners []umetav1.ResourceObjectI
+		var conflicts int
+
+		start := make(chan struct{})
+		for _, itm := range objs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+
+				ret, _, err := srv.doUpdate(ctx, itm, api, version, kind)
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				switch {
+				case err == nil:
+					winners = append(winners, ret)
+				case grpcerr.IsResourceChanged(err):
+					conflicts++
+				default:
+					t.Errorf("Unexpected error: %+v", err)
+				}
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+
+		assert.Equal(t, 1, len(winners), "only one of the racing updates of the same version can win")
+		assert.Equal(t, racers-1, conflicts)
+
+		if len(winners) == 1 {
+			cur := getObj(uid)
+			assert.True(t, proto.Equal(winners[0], cur))
+			assert.Equal(t, obj.GetMetadata().ResourceVersion, cur.GetMetadata().LastResourceVersion)
+		}
+	})
+
+	t.Run("deleted", func(t *testing.T) {
+		obj := newObj()
+		uid := obj.GetMetadata().Uid
+
+		itm := getObj(uid)
+
+		_, err := srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uid}, api, version, kind)
+		assert.Nil(t, err)
+
+		itm.GetMetadata().Labels = map[string]string{"key": "val"}
+		_, _, err = srv.doUpdate(ctx, itm, api, version, kind)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+
+		err = srv.getUpdateConflictErr(ctx, itm, api, version, kind)
+		assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+
+		exists, err := srv.doExistsByUID(ctx, uid)
+		assert.Nil(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("conflict-err", func(t *testing.T) {
+		obj := newObj()
+
+		err := srv.getUpdateConflictErr(ctx, obj, api, version, kind)
+		assert.True(t, grpcerr.IsResourceChanged(err), "%+v", err)
+
+		exists, err := srv.doExistsByUID(ctx, obj.GetMetadata().Uid)
+		assert.Nil(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("stale-cache", func(t *testing.T) {
+		obj := newObj()
+		uid := obj.GetMetadata().Uid
+
+		stale := getObj(uid)
+
+		cur := getObj(uid)
+		cur.GetMetadata().Labels = map[string]string{"key": "cur"}
+		_, _, err := srv.doUpdate(ctx, cur, api, version, kind)
+		assert.Nil(t, err)
+
+		srv.doSetCache(ctx, stale, api, version, kind)
+		_, found, err := srv.doGetCache(ctx, &rmetav1.GetOptions{Uid: uid}, api, version, kind)
+		assert.Nil(t, err)
+		assert.True(t, found)
+
+		stale.GetMetadata().Labels = map[string]string{"key": "stale"}
+		_, _, err = srv.doUpdate(ctx, stale, api, version, kind)
+		assert.True(t, grpcerr.IsResourceChanged(err), "%+v", err)
+
+		_, found, err = srv.doGetCache(ctx, &rmetav1.GetOptions{Uid: uid}, api, version, kind)
+		assert.Nil(t, err)
+		assert.False(t, found, "a conflict must drop the cached object so that the retry reads the store")
+
+		_, found, err = srv.doGetCache(ctx, &rmetav1.GetOptions{Name: stale.GetMetadata().Name}, api, version, kind)
+		assert.Nil(t, err)
+		assert.False(t, found)
+
+		srv.doSetCache(ctx, stale, api, version, kind)
+		err = srv.getUpdateConflictErr(ctx, stale, api, version, kind)
+		assert.True(t, grpcerr.IsResourceChanged(err), "%+v", err)
+
+		_, found, err = srv.doGetCache(ctx, &rmetav1.GetOptions{Uid: uid}, api, version, kind)
+		assert.Nil(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("no-resource-version", func(t *testing.T) {
+		obj := newObj()
+		uid := obj.GetMetadata().Uid
+
+		_, err := srv.db.ExecContext(ctx,
+			`UPDATE octelium_resources SET resource = resource #- '{metadata,resourceVersion}' WHERE uid = $1`, uid)
+		assert.Nil(t, err)
+
+		itm := getObj(uid)
+		assert.Equal(t, "", itm.GetMetadata().ResourceVersion)
+
+		itm.GetMetadata().Labels = map[string]string{"key": "val"}
+		updated, _, err := srv.doUpdate(ctx, itm, api, version, kind)
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, len(updated.GetMetadata().ResourceVersion) > 0)
+
+		cur := getObj(uid)
+		assert.True(t, proto.Equal(updated, cur))
+	})
 }

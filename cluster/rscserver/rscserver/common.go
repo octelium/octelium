@@ -301,14 +301,15 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 	}
 
 	if old.GetMetadata().ResourceVersion != mdNew.ResourceVersion {
-		return nil, nil, rerr.ResourceChanged(
-			errors.Errorf("Cannot Update. %s.%s.%s %s has already changed",
-				api, version, kind, old.GetMetadata().Name))
+		s.doInvalidateCache(ctx, old, api, version, kind)
+		return nil, nil, getResourceChangedErr(old, api, version, kind)
 	}
 
 	if pbutils.IsEqual(req, old) {
 		return req, old, nil
 	}
+
+	curResourceVersion := mdNew.ResourceVersion
 
 	mdNew.LastResourceVersion = mdNew.ResourceVersion
 	mdNew.ResourceVersion = vutils.UUIDv7()
@@ -326,7 +327,10 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 		return nil, nil, rerr.InternalWithErr(err)
 	}
 
-	ds := goqu.Update(tableName).Where(goqu.C("uid").Eq(mdNew.Uid)).Set(
+	ds := goqu.Update(tableName).Where(
+		goqu.C("uid").Eq(mdNew.Uid),
+		goqu.L(`COALESCE(resource->'metadata'->>'resourceVersion', '')`).Eq(curResourceVersion),
+	).Set(
 		goqu.Record{"resource": string(reqJSONBytes)},
 	)
 
@@ -341,8 +345,18 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 		}
 	}
 
-	if _, err := s.db.ExecContext(ctx, sqln, sqlargs...); err != nil {
+	res, err := s.db.ExecContext(ctx, sqln, sqlargs...)
+	if err != nil {
 		return nil, nil, rerr.InternalWithErr(err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, nil, rerr.InternalWithErr(err)
+	}
+
+	if rowsAffected == 0 {
+		return nil, nil, s.getUpdateConflictErr(ctx, old, api, version, kind)
 	}
 
 	if s.isTypeSecret(kind) {
@@ -365,6 +379,56 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 	}
 
 	return req, old, nil
+}
+
+func getResourceChangedErr(old umetav1.ResourceObjectI, api, version, kind string) error {
+	return rerr.ResourceChanged(
+		errors.Errorf("Cannot Update. %s.%s.%s %s has already changed",
+			api, version, kind, old.GetMetadata().Name))
+}
+
+func (s *Server) getUpdateConflictErr(ctx context.Context,
+	old umetav1.ResourceObjectI, api, version, kind string) error {
+	s.doInvalidateCache(ctx, old, api, version, kind)
+
+	exists, err := s.doExistsByUID(ctx, old.GetMetadata().Uid)
+	if err != nil {
+		zap.L().Warn("Could not check whether the updated resource still exists",
+			zap.String("uid", old.GetMetadata().Uid), zap.Error(err))
+		return getResourceChangedErr(old, api, version, kind)
+	}
+
+	if !exists {
+		return rerr.NotFound("%s.%s.%s %s does not exist", api, version, kind, old.GetMetadata().Uid)
+	}
+
+	return getResourceChangedErr(old, api, version, kind)
+}
+
+func (s *Server) doInvalidateCache(ctx context.Context,
+	itm umetav1.ResourceObjectI, api, version, kind string) {
+	ctx, cancel := getPostCommitContext(ctx)
+	defer cancel()
+
+	s.doDeleteCache(ctx, itm, api, version, kind)
+}
+
+func (s *Server) doExistsByUID(ctx context.Context, uid string) (bool, error) {
+	ds := goqu.From(tableName).Where(goqu.C("uid").Eq(uid)).Select(goqu.L("1"))
+	sqln, sqlargs, err := ds.ToSQL()
+	if err != nil {
+		return false, err
+	}
+
+	var one int
+	if err := s.db.QueryRowContext(ctx, sqln, sqlargs...).Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 const specLabelsPath = `resource->'metadata'->'specLabels'->>?`
