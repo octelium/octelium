@@ -87,6 +87,11 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 			return nil, err
 		}
 
+		if isAPIServer(svc) {
+			clstr.CircuitBreakers.Thresholds = append(clstr.CircuitBreakers.Thresholds,
+				getCircuitBreakerThresholds(core.RoutingPriority_HIGH, maxRequestsAPIServerConnect))
+		}
+
 		// zap.L().Debug("Adding Envoy cluster for Service", zap.String("name", svc.Metadata.Name))
 		ret = append(ret, clstr)
 	}
@@ -132,12 +137,7 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 		LoadAssignment: getClusterLoadAssignment(name, host, port),
 		CircuitBreakers: &clusterv3.CircuitBreakers{
 			Thresholds: []*clusterv3.CircuitBreakers_Thresholds{
-				{
-					MaxConnections:     &wrapperspb.UInt32Value{Value: 3000},
-					MaxPendingRequests: &wrapperspb.UInt32Value{Value: 3000},
-					MaxRequests:        &wrapperspb.UInt32Value{Value: 3000},
-					MaxRetries:         &wrapperspb.UInt32Value{Value: 3},
-				},
+				getCircuitBreakerThresholds(core.RoutingPriority_DEFAULT, maxRequestsDefault),
 			},
 		},
 	}
@@ -173,6 +173,21 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 	}
 
 	return cluster, nil
+}
+
+const (
+	maxRequestsDefault          = 3000
+	maxRequestsAPIServerConnect = 10000
+)
+
+func getCircuitBreakerThresholds(priority core.RoutingPriority, maxRequests uint32) *clusterv3.CircuitBreakers_Thresholds {
+	return &clusterv3.CircuitBreakers_Thresholds{
+		Priority:           priority,
+		MaxConnections:     &wrapperspb.UInt32Value{Value: maxRequests},
+		MaxPendingRequests: &wrapperspb.UInt32Value{Value: maxRequests},
+		MaxRequests:        &wrapperspb.UInt32Value{Value: maxRequests},
+		MaxRetries:         &wrapperspb.UInt32Value{Value: 3},
+	}
 }
 
 func getClusterLoadAssignment(cluster, host string, port int) *endpoint.ClusterLoadAssignment {

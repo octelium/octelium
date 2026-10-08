@@ -146,8 +146,11 @@ func getAPIAllowedOriginMatchers(domain string, services []*corev1.Service) []*e
 	return ret
 }
 
+const userConnectPath = "/octelium.api.main.user.v1.MainService/Connect"
+
 func getRoutesMain(domain string, svcList []*corev1.Service) ([]*routev3.Route, error) {
 	routes := []*routev3.Route{}
+	connectRoutes := []*routev3.Route{}
 
 	var apiServerSvcs []*corev1.Service
 	for _, svc := range svcList {
@@ -171,6 +174,14 @@ func getRoutesMain(domain string, svcList []*corev1.Service) ([]*routev3.Route, 
 						zap.Any("service", svc.Metadata.Name),
 						zap.String("path", strings.TrimSpace(path)))
 				*/
+				if path := strings.TrimSpace(path); path != "" && strings.HasPrefix(userConnectPath, path) {
+					routeConnect, err := getRouteAPIServerConnect(getClusterNameFromService(svc))
+					if err != nil {
+						return nil, err
+					}
+					connectRoutes = append(connectRoutes, routeConnect)
+				}
+
 				routeAPIServer, err := getRouteAPIServer(
 					strings.TrimSpace(path), getClusterNameFromService(svc))
 				if err != nil {
@@ -181,7 +192,7 @@ func getRoutesMain(domain string, svcList []*corev1.Service) ([]*routev3.Route, 
 		}
 	}
 
-	return routes, nil
+	return append(connectRoutes, routes...), nil
 }
 
 func isAPIServer(svc *corev1.Service) bool {
@@ -234,6 +245,20 @@ func getRouteAPIServer(prefix string, cluster string) (*routev3.Route, error) {
 			},
 		},
 	}
+
+	return route, nil
+}
+
+func getRouteAPIServerConnect(cluster string) (*routev3.Route, error) {
+	route, err := getRouteAPIServer(userConnectPath, cluster)
+	if err != nil {
+		return nil, err
+	}
+
+	route.Match.PathSpecifier = &routev3.RouteMatch_Path{
+		Path: userConnectPath,
+	}
+	route.GetRoute().Priority = corev3.RoutingPriority_HIGH
 
 	return route, nil
 }

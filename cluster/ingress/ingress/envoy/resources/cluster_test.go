@@ -20,7 +20,10 @@ import (
 	"context"
 	"testing"
 
+	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -81,4 +84,63 @@ func TestGetClusters(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = GetClusters("example.com", svcList)
 	assert.Nil(t, err)
+}
+
+func TestGetClustersCircuitBreakers(t *testing.T) {
+	apiSvc := newAPIServerService("default.octelium-api", "/octelium.api.main.core, /octelium.api.main.user")
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: "svc1.default",
+		},
+		Spec: &corev1.Service_Spec{
+			Port:     8080,
+			IsPublic: true,
+			Mode:     corev1.Service_Spec_HTTP,
+		},
+		Status: &corev1.Service_Status{
+			NamespaceRef: &metav1.ObjectReference{Name: "default"},
+		},
+	}
+
+	resources, err := GetClusters("example.com", []*corev1.Service{apiSvc, svc})
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, 3, len(resources))
+
+	clusters := make(map[string]*clusterv3.Cluster)
+	for _, rsc := range resources {
+		clstr := rsc.(*clusterv3.Cluster)
+		assert.Nil(t, clstr.ValidateAll())
+		clusters[clstr.Name] = clstr
+	}
+
+	assertThresholds := func(thresholds *clusterv3.CircuitBreakers_Thresholds,
+		priority core.RoutingPriority, maxRequests uint32) {
+		assert.Equal(t, priority, thresholds.Priority)
+		assert.Equal(t, maxRequests, thresholds.MaxRequests.GetValue())
+		assert.Equal(t, maxRequests, thresholds.MaxPendingRequests.GetValue())
+		assert.Equal(t, maxRequests, thresholds.MaxConnections.GetValue())
+		assert.Equal(t, uint32(3), thresholds.MaxRetries.GetValue())
+	}
+
+	{
+		clstr := clusters[getClusterNameFromService(apiSvc)]
+		assert.NotNil(t, clstr)
+		assert.Equal(t, 2, len(clstr.CircuitBreakers.Thresholds))
+		assertThresholds(clstr.CircuitBreakers.Thresholds[0], core.RoutingPriority_DEFAULT, maxRequestsDefault)
+		assertThresholds(clstr.CircuitBreakers.Thresholds[1], core.RoutingPriority_HIGH, maxRequestsAPIServerConnect)
+	}
+
+	{
+		clstr := clusters[getClusterNameFromService(svc)]
+		assert.NotNil(t, clstr)
+		assert.Equal(t, 1, len(clstr.CircuitBreakers.Thresholds))
+		assertThresholds(clstr.CircuitBreakers.Thresholds[0], core.RoutingPriority_DEFAULT, maxRequestsDefault)
+	}
+
+	{
+		clstr := clusters[healthCheckCluster]
+		assert.NotNil(t, clstr)
+		assert.Equal(t, 1, len(clstr.CircuitBreakers.Thresholds))
+		assertThresholds(clstr.CircuitBreakers.Thresholds[0], core.RoutingPriority_DEFAULT, maxRequestsDefault)
+	}
 }
