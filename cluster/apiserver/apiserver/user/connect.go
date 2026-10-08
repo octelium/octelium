@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc/codes"
@@ -46,6 +47,9 @@ import (
 const (
 	connectStateTimeout      = 30 * time.Second
 	connectInitializeTimeout = 30 * time.Second
+
+	lastSeenUpdateInterval = 15 * time.Minute
+	lastSeenUpdateJitter   = 5 * time.Minute
 )
 
 func checkIfCanConnect(i *userctx.UserCtx) error {
@@ -102,8 +106,8 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 
 	zap.L().Debug("Starting the connect loop", zap.String("sessionName", i.Session.Metadata.Name))
 
-	tickerCh := time.NewTicker(5 * time.Minute)
-	defer tickerCh.Stop()
+	lastSeenTimer := time.NewTimer(getLastSeenUpdateInterval())
+	defer lastSeenTimer.Stop()
 
 	cs := s.connServer.addConnectedSess(stream.Context(), i.Session, stream)
 	defer s.connServer.removeConnectedSess(cs)
@@ -136,36 +140,51 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 		case err := <-recvErrCh:
 			zap.L().Debug("Client stream closed", zap.Error(err))
 			return nil
-		case <-tickerCh.C:
-			if sess, err := s.octeliumC.CoreC().GetSession(ctx,
-				&rmetav1.GetOptions{Uid: i.Session.Metadata.Uid}); err == nil {
-
-				if sess.Status.Connection != nil {
-					sess.Status.Connection.LastSeenAt = pbutils.Now()
-					if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-						if grpcerr.IsNotFound(err) {
-							return nil
-						}
-
-						zap.L().Warn("Could not update Session after updating lastSeen",
-							zap.String("name", i.Session.Metadata.Name), zap.Error(err))
-					}
-				} else {
-					zap.L().Debug("Session's Connection is nil. Exiting the loop")
-					return nil
-				}
-
-			} else {
-				if grpcerr.IsNotFound(err) {
-					return nil
-				}
-
-				zap.L().Warn("Could not get Session to update lastSeen",
+		case <-lastSeenTimer.C:
+			isActive, err := s.setConnectionLastSeen(ctx, i.Session.Metadata.Uid, curConn)
+			if err != nil {
+				zap.L().Warn("Could not update the lastSeen of the Connection",
 					zap.String("name", i.Session.Metadata.Name), zap.Error(err))
 			}
+			if !isActive {
+				zap.L().Debug("The Connection is no longer active. Exiting the loop",
+					zap.String("name", i.Session.Metadata.Name))
+				return nil
+			}
 
+			lastSeenTimer.Reset(getLastSeenUpdateInterval())
 		}
 	}
+}
+
+func getLastSeenUpdateInterval() time.Duration {
+	return lastSeenUpdateInterval +
+		time.Duration(utilrand.GetRandomRangeMath(0, int(lastSeenUpdateJitter)))
+}
+
+func (s *Server) setConnectionLastSeen(ctx context.Context,
+	sessUID string, curConn *corev1.Session_Status_Connection) (bool, error) {
+	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: sessUID})
+	if err != nil {
+		if grpcerr.IsNotFound(err) {
+			return false, nil
+		}
+		return true, err
+	}
+
+	if !isSameConnection(sess.Status.Connection, curConn) {
+		return false, nil
+	}
+
+	sess.Status.Connection.LastSeenAt = pbutils.Now()
+	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+		if grpcerr.IsNotFound(err) {
+			return false, nil
+		}
+		return true, err
+	}
+
+	return true, nil
 }
 
 func recvConnectInitialize(stream userv1.MainService_ConnectServer,

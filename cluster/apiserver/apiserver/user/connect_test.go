@@ -1281,3 +1281,79 @@ func TestRecvConnectInitialize(t *testing.T) {
 		assert.NotNil(t, err)
 	}
 }
+
+func TestGetLastSeenUpdateInterval(t *testing.T) {
+	intervals := make(map[time.Duration]bool)
+	for range 1000 {
+		interval := getLastSeenUpdateInterval()
+		assert.True(t, interval >= lastSeenUpdateInterval)
+		assert.True(t, interval <= lastSeenUpdateInterval+lastSeenUpdateJitter)
+		intervals[interval] = true
+	}
+
+	assert.True(t, len(intervals) > 1)
+}
+
+func TestSetConnectionLastSeen(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	usrSrv, adminSrv := newFakeServers(tst.C)
+
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err, "%+v", err)
+
+	getSess := func() *corev1.Session {
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx,
+			&rmetav1.GetOptions{Uid: usrT.Session.Metadata.Uid})
+		assert.Nil(t, err, "%+v", err)
+		return sess
+	}
+
+	_, oldConn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+	assert.Nil(t, getSess().Status.Connection.LastSeenAt)
+
+	isActive, err := usrSrv.setConnectionLastSeen(ctx, usrT.Session.Metadata.Uid, oldConn)
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, isActive)
+	assert.NotNil(t, getSess().Status.Connection.LastSeenAt)
+
+	usrT.Resync()
+	_, err = usrSrv.Disconnect(usrT.Ctx(), &userv1.DisconnectRequest{})
+	assert.Nil(t, err, "%+v", err)
+
+	isActive, err = usrSrv.setConnectionLastSeen(ctx, usrT.Session.Metadata.Uid, oldConn)
+	assert.Nil(t, err, "%+v", err)
+	assert.False(t, isActive)
+
+	usrT.Resync()
+	_, newConn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+
+	resourceVersion := getSess().Metadata.ResourceVersion
+
+	isActive, err = usrSrv.setConnectionLastSeen(ctx, usrT.Session.Metadata.Uid, oldConn)
+	assert.Nil(t, err, "%+v", err)
+	assert.False(t, isActive)
+	assert.Equal(t, resourceVersion, getSess().Metadata.ResourceVersion)
+
+	isActive, err = usrSrv.setConnectionLastSeen(ctx, usrT.Session.Metadata.Uid, newConn)
+	assert.Nil(t, err, "%+v", err)
+	assert.True(t, isActive)
+	assert.NotEqual(t, resourceVersion, getSess().Metadata.ResourceVersion)
+
+	_, err = tst.C.OcteliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
+		Uid: usrT.Session.Metadata.Uid,
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	isActive, err = usrSrv.setConnectionLastSeen(ctx, usrT.Session.Metadata.Uid, newConn)
+	assert.Nil(t, err, "%+v", err)
+	assert.False(t, isActive)
+}
