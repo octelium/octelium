@@ -36,6 +36,7 @@ import (
 	nodecontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/nodes"
 	podcontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/pods"
 	svccontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/services"
+	sesscontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/sessions"
 	usrcontroller "github.com/octelium/octelium/cluster/nocturne/nocturne/controllers/users"
 	"github.com/octelium/octelium/cluster/nocturne/nocturne/watcher"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -75,7 +76,7 @@ func Run(ctx context.Context) error {
 
 	usrCtl := usrcontroller.NewController(octeliumC)
 	svcCtl := svccontroller.NewController(octeliumC, k8sC)
-	// sessCtl := sesscontroller.NewController(octeliumC)
+	sessCtl := sesscontroller.NewController(octeliumC)
 	devCtl := devcontroller.NewController(octeliumC)
 
 	{
@@ -90,6 +91,10 @@ func Run(ctx context.Context) error {
 		}
 
 		if err := watcher.Service(ctx, nil, svcCtl.OnAdd, svcCtl.OnUpdate, svcCtl.OnDelete); err != nil {
+			return err
+		}
+
+		if err := watcher.Session(ctx, nil, nil, nil, sessCtl.OnDelete); err != nil {
 			return err
 		}
 
