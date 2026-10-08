@@ -110,7 +110,7 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 	lastSeenTimer := time.NewTimer(getLastSeenUpdateInterval())
 	defer lastSeenTimer.Stop()
 
-	cs := s.connServer.addConnectedSess(stream.Context(), i.Session, stream)
+	cs := s.connServer.addConnectedSess(stream.Context(), i.Session, curConn, stream)
 	defer s.connServer.removeConnectedSess(cs)
 
 	recvErrCh := make(chan error, 1)

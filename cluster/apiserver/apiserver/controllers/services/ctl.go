@@ -33,6 +33,7 @@ type Controller struct {
 
 type CtlI interface {
 	BroadcastMessage(msg *userv1.ConnectResponse) error
+	BroadcastMessageByL3Mode(fn func(l3Mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse) error
 	SendMessage(msg *userv1.ConnectResponse, sessUID string) error
 }
 

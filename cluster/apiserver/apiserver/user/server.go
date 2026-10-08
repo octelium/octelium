@@ -56,11 +56,13 @@ func (s *Server) ConnServer() ConnServerI {
 
 type ConnServerI interface {
 	BroadcastMessage(msg *userv1.ConnectResponse) error
+	BroadcastMessageByL3Mode(fn func(l3Mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse) error
 	SendMessage(msg *userv1.ConnectResponse, sessUID string) error
 }
 
 type connectedSession struct {
 	sess   *corev1.Session
+	l3Mode corev1.Session_Status_Connection_L3Mode
 	stream userv1.MainService_ConnectServer
 
 	sendCh chan *userv1.ConnectResponse
@@ -125,12 +127,14 @@ type connServer struct {
 func (s *connServer) addConnectedSess(
 	streamCtx context.Context,
 	sess *corev1.Session,
+	conn *corev1.Session_Status_Connection,
 	stream userv1.MainService_ConnectServer,
 ) *connectedSession {
 	ctx, cancel := context.WithCancel(streamCtx)
 
 	cs := &connectedSession{
 		sess:   sess,
+		l3Mode: conn.GetL3Mode(),
 		stream: stream,
 		sendCh: make(chan *userv1.ConnectResponse, sessionSendQueueSize),
 		ctx:    ctx,
@@ -176,6 +180,42 @@ func (s *connServer) BroadcastMessage(msg *userv1.ConnectResponse) error {
 	s.RUnlock()
 
 	for _, conn := range conns {
+		if !conn.enqueue(msg) {
+			zap.L().Warn("Session send queue is full",
+				zap.String("sessUID", conn.sess.Metadata.Uid))
+			conn.cancel()
+		}
+	}
+
+	return nil
+}
+
+func (s *connServer) BroadcastMessageByL3Mode(
+	fn func(l3Mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse) error {
+
+	s.RLock()
+	conns := make([]*connectedSession, 0, len(s.connectedSessMap))
+	for _, conn := range s.connectedSessMap {
+		conns = append(conns, conn)
+	}
+	s.RUnlock()
+
+	msgs := make(map[corev1.Session_Status_Connection_L3Mode]*userv1.ConnectResponse)
+
+	for _, conn := range conns {
+		msg, ok := msgs[conn.l3Mode]
+		if !ok {
+			msg = fn(conn.l3Mode)
+			if msg != nil && msg.CreatedAt == nil {
+				msg.CreatedAt = pbutils.Now()
+			}
+			msgs[conn.l3Mode] = msg
+		}
+
+		if msg == nil {
+			continue
+		}
+
 		if !conn.enqueue(msg) {
 			zap.L().Warn("Session send queue is full",
 				zap.String("sessUID", conn.sess.Metadata.Uid))
