@@ -77,10 +77,11 @@ type fakeConnect struct {
 type fakeUserServer struct {
 	userv1.UnimplementedMainServiceServer
 
-	withholdState atomic.Bool
-	failNext      atomic.Int32
-	keepAlives    atomic.Int32
-	disconnects   atomic.Int32
+	withholdState   atomic.Bool
+	failNext        atomic.Int32
+	keepAlives      atomic.Int32
+	disconnects     atomic.Int32
+	disconnectDelay atomic.Int64
 
 	mu     sync.Mutex
 	active map[string]*fakeConnect
@@ -190,6 +191,10 @@ func (s *fakeUserServer) Disconnect(ctx context.Context, _ *userv1.DisconnectReq
 		fc.stream.Send(&userv1.ConnectResponse{
 			Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}},
 		})
+	}
+
+	if delay := time.Duration(s.disconnectDelay.Load()); delay > 0 {
+		time.Sleep(delay)
 	}
 
 	return &userv1.DisconnectResponse{}, nil
@@ -449,6 +454,29 @@ func TestVClientIgnoresStaleEvents(t *testing.T) {
 		"a Disconnect of a previous Connection must not end the current one")
 	assert.Equal(t, 1, c.StaleEvents())
 	assert.Zero(t, c.EventCount(EventDisconnect))
+}
+
+func TestVClientDisconnectOutlivesTheStream(t *testing.T) {
+	api := newFakeAPI(t)
+	api.srv.disconnectDelay.Store(int64(500 * time.Millisecond))
+	pool := newTestPool(t, api, 1)
+
+	sess := testSession("outlived")
+	c := NewVClient(sess, pool, VClientOpts{})
+	require.NoError(t, c.Connect(t.Context()))
+
+	require.NoError(t, c.Disconnect(t.Context()),
+		"the Disconnect call must not fail when the server ends the stream before it answers")
+	assert.Equal(t, int32(1), api.srv.disconnects.Load())
+	assert.False(t, c.IsConnected())
+	assert.True(t, c.DisconnectedByServer())
+
+	waitFor(t, "the dedicated connection to be released", 5*time.Second, func() bool {
+		return pool.Len() == 0
+	})
+
+	require.NoError(t, c.Disconnect(t.Context()), "a disconnected client has nothing to disconnect")
+	assert.Equal(t, int32(1), api.srv.disconnects.Load())
 }
 
 func TestVClientDropIsNotAGracefulDisconnect(t *testing.T) {

@@ -455,9 +455,10 @@ func (c *VClient) Disconnect(ctx context.Context) error {
 	connected := c.connected
 	c.mu.Unlock()
 
-	if !connected || conn == nil {
+	if !connected || conn == nil || !conn.retain() {
 		return nil
 	}
+	defer conn.Release()
 
 	ctx, cancel := context.WithTimeout(ctx, vclientDisconnectGrace)
 	defer cancel()

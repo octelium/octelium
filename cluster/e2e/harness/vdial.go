@@ -208,6 +208,10 @@ func (c *VConn) Release() {
 	c.pool.release(c)
 }
 
+func (c *VConn) retain() bool {
+	return c.pool.retain(c)
+}
+
 func (c *VConn) close() {
 	c.cancel()
 	c.cc.Close()
@@ -270,6 +274,18 @@ func (p *VConnPool) Acquire() (*VConn, error) {
 	p.total++
 
 	return ret, nil
+}
+
+func (p *VConnPool) retain(c *VConn) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if c.refs <= 0 {
+		return false
+	}
+
+	c.refs++
+	return true
 }
 
 func (p *VConnPool) release(c *VConn) {
