@@ -530,9 +530,7 @@ func (s *Server) doDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
 		return &userv1.DisconnectResponse{}, nil
 	}
 
-	if err := upstream.RemoveAllAddressFromConnection(ctx, s.octeliumC, sess); err != nil {
-		zap.L().Warn("Could not remove addresses from connection", zap.Error(err))
-	}
+	conn := sess.Status.Connection
 
 	{
 		maxLen := 100
@@ -554,6 +552,18 @@ func (s *Server) doDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
 
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, serr.InternalWithErr(err)
+	}
+
+	{
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connectStateTimeout)
+		defer cancel()
+
+		s.releaseConnectionAddresses(ctx, &corev1.Session{
+			Metadata: sess.Metadata,
+			Status: &corev1.Session_Status{
+				Connection: conn,
+			},
+		})
 	}
 
 	zap.L().Debug("Successfully disconnected Session", zap.String("sess", i.Session.Metadata.Name))

@@ -1105,3 +1105,74 @@ func TestDoInitConnectCanceledContext(t *testing.T) {
 	assert.Nil(t, err, "%+v", err)
 	assert.Equal(t, 0, len(connInfo.ActiveIndexesWG))
 }
+
+func TestDisconnectReleaseAddresses(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	coreC := &failingCoreC{
+		ResourceServiceClient: tst.C.OcteliumC.CoreC(),
+	}
+	octeliumC := &failingOcteliumC{
+		ClientInterface: tst.C.OcteliumC,
+		coreC:           coreC,
+	}
+
+	usrSrv := NewServer(octeliumC)
+	_, adminSrv := newFakeServers(tst.C)
+
+	getActiveIndexes := func() []uint32 {
+		cfg, err := tst.C.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+		assert.Nil(t, err, "%+v", err)
+
+		ret := &cclusterv1.ClusterConnInfo{}
+		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
+		assert.Nil(t, err, "%+v", err)
+		return append(ret.ActiveIndexesWG, ret.ActiveIndexesQUIC...)
+	}
+
+	getSess := func(uid string) *corev1.Session {
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uid})
+		assert.Nil(t, err, "%+v", err)
+		return sess
+	}
+
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+		corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	assert.Nil(t, err, "%+v", err)
+
+	_, err = usrSrv.DoInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+	assert.Nil(t, err, "%+v", err)
+	assert.Equal(t, 1, len(getActiveIndexes()))
+
+	{
+		usrT.Resync()
+		coreC.setErrs(status.Error(codes.OutOfRange, "changed"), nil)
+		_, err = usrSrv.Disconnect(usrT.Ctx(), &userv1.DisconnectRequest{})
+		coreC.setErrs(nil, nil)
+		assert.NotNil(t, err)
+
+		sess := getSess(usrT.Session.Metadata.Uid)
+		assert.True(t, sess.Status.IsConnected)
+		assert.Equal(t, 1, len(sess.Status.Connection.Addresses))
+		assert.Equal(t, 1, len(getActiveIndexes()))
+	}
+
+	{
+		usrT.Resync()
+		reqCtx, cancel := context.WithCancel(usrT.Ctx())
+		_, err = usrSrv.Disconnect(reqCtx, &userv1.DisconnectRequest{})
+		cancel()
+		assert.Nil(t, err, "%+v", err)
+
+		sess := getSess(usrT.Session.Metadata.Uid)
+		assert.False(t, sess.Status.IsConnected)
+		assert.Nil(t, sess.Status.Connection)
+		assert.Equal(t, 0, len(getActiveIndexes()))
+	}
+}
