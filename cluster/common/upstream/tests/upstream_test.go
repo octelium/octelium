@@ -168,10 +168,10 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 	assert.Equal(t, 0, len(getConnInfo().ActiveIndexesWG))
 
 	var wg sync.WaitGroup
-	var sessList []*corev1.Session
 
 	sessLen := 20
-	for range sessLen {
+	sessList := make([]*corev1.Session, sessLen)
+	for i := range sessLen {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -185,8 +185,8 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 					},
 				},
 			}
-			sessList = append(sessList, sess)
-			err = upstream.AddAddressToConnection(ctx, fakeC.OcteliumC, sess)
+			sessList[i] = sess
+			err := upstream.AddAddressToConnection(ctx, fakeC.OcteliumC, sess)
 			assert.Nil(t, err, "%+v", err)
 
 		}()
@@ -201,7 +201,7 @@ func TestAddressToConnectionConcurrent(t *testing.T) {
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			err = upstream.RemoveAllAddressFromConnection(ctx, fakeC.OcteliumC, sess)
+			err := upstream.RemoveAllAddressFromConnection(ctx, fakeC.OcteliumC, sess)
 			assert.Nil(t, err, "%+v", err)
 		}()
 	}

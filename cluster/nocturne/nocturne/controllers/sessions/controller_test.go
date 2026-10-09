@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -178,7 +179,7 @@ func TestOnDeleteNoConnection(t *testing.T) {
 func newConnectedSession(typ corev1.Session_Status_Connection_Type, addrs ...*metav1.DualStackNetwork) *corev1.Session {
 	return &corev1.Session{
 		Metadata: &metav1.Metadata{
-			Uid:  utilrand.GetRandomStringCanonical(8),
+			Uid:  uuid.New().String(),
 			Name: utilrand.GetRandomStringCanonical(8),
 		},
 		Status: &corev1.Session_Status{

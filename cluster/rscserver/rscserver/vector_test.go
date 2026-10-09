@@ -78,6 +78,116 @@ func runTestVectorBackends(t *testing.T, fn func(t *testing.T, srv *srvVector)) 
 	})
 }
 
+type fakeVectorSearchIndexHook struct {
+	process redis.ProcessHook
+}
+
+func (h *fakeVectorSearchIndexHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *fakeVectorSearchIndexHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return h.process
+}
+
+func (h *fakeVectorSearchIndexHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestVectorSearchIndexReady(t *testing.T) {
+	redisC := redisutils.NewClient()
+	t.Cleanup(func() {
+		redisC.Close()
+	})
+
+	var gets int
+	redisC.AddHook(&fakeVectorSearchIndexHook{
+		process: func(ctx context.Context, cmd redis.Cmder) error {
+			switch cmd := cmd.(type) {
+			case *redis.StatusCmd:
+				assert.Equal(t, "ft.create", cmd.Name())
+				cmd.SetVal("OK")
+			case *redis.FTInfoCmd:
+				gets = gets + 1
+				var indexing int
+				if gets < 3 {
+					indexing = 1
+				}
+				cmd.SetVal(redis.FTInfoResult{Indexing: indexing})
+			}
+			return nil
+		},
+	})
+
+	b := newVectorBackendSearch(redisC)
+	assert.Nil(t, b.setIndex(context.Background(), 2))
+	assert.Equal(t, 3, gets)
+	assert.Contains(t, b.indexes, 2)
+
+	assert.Nil(t, b.setIndex(context.Background(), 2))
+	assert.Equal(t, 3, gets)
+}
+
+func TestVectorSearchIndexCanceled(t *testing.T) {
+	redisC := redisutils.NewClient()
+	t.Cleanup(func() {
+		redisC.Close()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	indexing := 1
+	redisC.AddHook(&fakeVectorSearchIndexHook{
+		process: func(ctx context.Context, cmd redis.Cmder) error {
+			switch cmd := cmd.(type) {
+			case *redis.StatusCmd:
+				assert.Equal(t, "ft.create", cmd.Name())
+				cmd.SetVal("OK")
+			case *redis.FTInfoCmd:
+				cmd.SetVal(redis.FTInfoResult{Indexing: indexing})
+				if indexing != 0 {
+					cancel()
+				}
+			}
+			return nil
+		},
+	})
+
+	b := newVectorBackendSearch(redisC)
+	assert.ErrorIs(t, b.setIndex(ctx, 2), context.Canceled)
+	assert.NotContains(t, b.indexes, 2)
+
+	indexing = 0
+	assert.Nil(t, b.setIndex(context.Background(), 2))
+	assert.Contains(t, b.indexes, 2)
+}
+
+func TestVectorSearchIndexFailure(t *testing.T) {
+	redisC := redisutils.NewClient()
+	t.Cleanup(func() {
+		redisC.Close()
+	})
+
+	errInfo := fmt.Errorf("Could not get index info")
+	redisC.AddHook(&fakeVectorSearchIndexHook{
+		process: func(ctx context.Context, cmd redis.Cmder) error {
+			switch cmd := cmd.(type) {
+			case *redis.StatusCmd:
+				assert.Equal(t, "ft.create", cmd.Name())
+				cmd.SetVal("OK")
+			case *redis.FTInfoCmd:
+				return errInfo
+			}
+			return nil
+		},
+	})
+
+	b := newVectorBackendSearch(redisC)
+	assert.ErrorIs(t, b.setIndex(context.Background(), 2), errInfo)
+	assert.NotContains(t, b.indexes, 2)
+}
+
 func TestVector(t *testing.T) {
 	runTestVectorBackends(t, doTestVector)
 }
@@ -194,7 +304,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Vector:     []float32{1, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 	}
 
@@ -204,7 +316,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-1")},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 	}
 
@@ -230,7 +344,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 				},
 			},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 	}
 
 	{
@@ -239,8 +355,12 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-2"), []byte("id-9")},
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 1, len(resp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 1, len(resp.Results)) {
+			return
+		}
 		assert.Equal(t, []byte("id-2"), resp.Results[0].Id)
 		assert.Equal(t, []byte("data-2"), resp.Results[0].Data)
 		assert.Zero(t, resp.Results[0].Similarity)
@@ -252,8 +372,12 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Vector:     []float32{2, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 3, len(resp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 3, len(resp.Results)) {
+			return
+		}
 
 		assert.Equal(t, []byte("id-1"), resp.Results[0].Id)
 		assert.Equal(t, []byte("data-1"), resp.Results[0].Data)
@@ -271,8 +395,12 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Vector:        []float32{1, 0},
 			MinSimilarity: 0.9,
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 2, len(resp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 2, len(resp.Results)) {
+			return
+		}
 		assert.Equal(t, []byte("id-1"), resp.Results[0].Id)
 		assert.Equal(t, []byte("id-2"), resp.Results[1].Id)
 	}
@@ -284,8 +412,12 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Vector:     []float32{1, 0},
 			Limit:      1,
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 1, len(resp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 1, len(resp.Results)) {
+			return
+		}
 		assert.Equal(t, []byte("id-1"), resp.Results[0].Id)
 	}
 
@@ -295,7 +427,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Vector:     []float32{1, 0, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 	}
 
@@ -305,7 +439,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  []byte(utilrand.GetRandomString(8)),
 			Vector:     []float32{1, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 	}
 
@@ -321,7 +457,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 				},
 			},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 
 		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
 			Collection:    collection,
@@ -329,16 +467,24 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Vector:        []float32{0, 1},
 			MinSimilarity: 0.99,
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 2, len(resp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 2, len(resp.Results)) {
+			return
+		}
 
 		getResp, err := srv.GetVectors(ctx, &rvectorv1.GetVectorsRequest{
 			Collection: collection,
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-1")},
 		})
-		assert.Nil(t, err, "%+v", err)
-		assert.Equal(t, 1, len(getResp.Results))
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
+		if !assert.Equal(t, 1, len(getResp.Results)) {
+			return
+		}
 		assert.Equal(t, []byte("data-1-updated"), getResp.Results[0].Data)
 	}
 
@@ -348,14 +494,18 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-1"), []byte("id-9")},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 
 		resp, err := srv.GetVectors(ctx, &rvectorv1.GetVectorsRequest{
 			Collection: collection,
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-1")},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 
 		searchResp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
@@ -363,7 +513,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Vector:     []float32{1, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Equal(t, 2, len(searchResp.Results))
 	}
 
@@ -371,14 +523,18 @@ func doTestVector(t *testing.T, srv *srvVector) {
 		_, err := srv.DeleteCollection(ctx, &rvectorv1.DeleteCollectionRequest{
 			Collection: collection,
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 
 		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
 			Collection: collection,
 			Partition:  partition,
 			Vector:     []float32{1, 0},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, resp.Results)
 
 		getResp, err := srv.GetVectors(ctx, &rvectorv1.GetVectorsRequest{
@@ -386,7 +542,9 @@ func doTestVector(t *testing.T, srv *srvVector) {
 			Partition:  partition,
 			Ids:        [][]byte{[]byte("id-2")},
 		})
-		assert.Nil(t, err, "%+v", err)
+		if !assert.Nil(t, err, "%+v", err) {
+			return
+		}
 		assert.Empty(t, getResp.Results)
 	}
 }
@@ -1027,24 +1185,20 @@ func TestVectorSearchIndexLoss(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 	}
 
-	var results []*rvectorv1.Result
-	for range 30 {
-		resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
-			Collection: collection,
-			Partition:  partition,
-			Vector:     vector,
-		})
-		assert.Nil(t, err, "%+v", err)
-
-		results = resp.Results
-		if len(results) == 2 {
-			break
-		}
-
-		time.Sleep(100 * time.Millisecond)
+	resp, err := srv.SearchVectors(ctx, &rvectorv1.SearchVectorsRequest{
+		Collection: collection,
+		Partition:  partition,
+		Vector:     vector,
+	})
+	if !assert.Nil(t, err, "%+v", err) {
+		return
 	}
 
-	assert.Equal(t, 2, len(results))
+	var ids [][]byte
+	for _, itm := range resp.Results {
+		ids = append(ids, itm.Id)
+	}
+	assert.ElementsMatch(t, [][]byte{[]byte("id-1"), []byte("id-2")}, ids)
 }
 
 func TestVectorSearchIsolatedFromFallback(t *testing.T) {

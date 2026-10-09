@@ -52,6 +52,8 @@ const (
 	vectorSearchDialect       = 2
 	vectorSearchPageSize      = 256
 	vectorSearchEntryKeyParts = 7
+	vectorSearchIndexTimeout  = 30 * time.Second
+	vectorSearchIndexPoll     = 10 * time.Millisecond
 )
 
 type vectorBackendSearch struct {
@@ -213,11 +215,39 @@ func (b *vectorBackendSearch) setIndex(ctx context.Context, dimension int) error
 		return err
 	}
 
+	if err := b.waitIndex(ctx, dimension); err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	b.indexes[dimension] = struct{}{}
 	b.mu.Unlock()
 
 	return nil
+}
+
+func (b *vectorBackendSearch) waitIndex(ctx context.Context, dimension int) error {
+	ctx, cancel := context.WithTimeout(ctx, vectorSearchIndexTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(vectorSearchIndexPoll)
+	defer ticker.Stop()
+
+	for {
+		itm, err := b.redisC.FTInfo(ctx, getVectorSearchIndex(dimension)).Result()
+		if err != nil {
+			return err
+		}
+		if itm.Indexing == 0 {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (b *vectorBackendSearch) forgetIndex(dimension int) {

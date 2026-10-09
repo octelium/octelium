@@ -26,7 +26,7 @@ jobs:
         env:
           MARIADB_ROOT_PASSWORD: password
       redis:
-        image: redis
+        image: redis:8.10.2
         ports:
           - 6379:6379
       minio:
