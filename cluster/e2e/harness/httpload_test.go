@@ -156,6 +156,37 @@ func TestHTTPLoadForADuration(t *testing.T) {
 	assert.LessOrEqual(t, ing.upstream.PeakInFlight(), int64(4))
 }
 
+func TestHTTPLoadAbandonedAtTheEnd(t *testing.T) {
+	ing := newTestIngress(t, 5*time.Second)
+
+	res, err := ing.h.HTTPLoad(t.Context(), HTTPLoadOpts{
+		URL:      "https://svc.example.com/",
+		Workers:  4,
+		Duration: 300 * time.Millisecond,
+		Request: func(worker, iteration int) HTTPRequestSpec {
+			return HTTPRequestSpec{
+				Token: "good",
+				Class: "good",
+				ID:    fmt.Sprintf("hold-%d-%d", worker, iteration),
+				Path:  "/?holdMs=200",
+			}
+		},
+	})
+	require.NoError(t, err)
+
+	abandoned := res.Abandoned("good")
+	assert.Len(t, abandoned, 4, "every worker has a request in flight when the run ends")
+	assert.Zero(t, res.Errors.Total(), "a request interrupted by the end of the run is not an error")
+
+	var abandonedSeen int
+	for _, id := range abandoned {
+		abandonedSeen += ing.upstream.Seen(id)
+	}
+
+	assert.Equal(t, ing.upstream.SeenWithPrefix("hold-"), res.Count("good", http.StatusOK)+abandonedSeen)
+	assert.Empty(t, res.Abandoned("other"))
+}
+
 func TestSlowClients(t *testing.T) {
 	ing := newTestIngress(t, time.Second)
 

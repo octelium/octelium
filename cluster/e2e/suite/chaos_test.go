@@ -183,3 +183,22 @@ func TestChaosLeaksAreReportedOnce(t *testing.T) {
 	assert.Equal(t, []uint32{1}, wg, "a released index that leaks again is a new leak")
 	assert.Equal(t, []uint32{7}, quic)
 }
+
+func TestChaosStalePeersAreReportedOnce(t *testing.T) {
+	e := &chaosEnv{}
+	assert.Equal(t, []string{"a"}, e.newStalePeers("gw-1", []string{"a"}))
+
+	e.setBaselineStale(map[string][]string{"gw-1": {"a"}})
+	assert.Empty(t, e.newStalePeers("gw-1", []string{"a"}), "a reported stale peer must not fail the next phases again")
+	assert.Equal(t, []string{"b"}, e.newStalePeers("gw-1", []string{"a", "b"}), "only the stale peers since the previous check are new")
+	assert.Equal(t, []string{"a"}, e.newStalePeers("gw-2", []string{"a"}), "the baseline is per Gateway")
+
+	e.setBaselineStale(nil)
+	assert.Empty(t, e.newStalePeers("gw-1", []string{"a"}), "a check that could not inspect the peers keeps the baseline")
+
+	e.setBaselineStale(map[string][]string{"gw-2": {"c"}})
+	assert.Empty(t, e.newStalePeers("gw-1", []string{"a"}), "the baseline of a Gateway missing from a check is kept")
+
+	e.setBaselineStale(map[string][]string{"gw-1": nil})
+	assert.Equal(t, []string{"a"}, e.newStalePeers("gw-1", []string{"a"}), "a removed peer that becomes stale again is new")
+}

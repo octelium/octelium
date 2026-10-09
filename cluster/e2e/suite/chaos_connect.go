@@ -33,7 +33,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
-	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1031,14 +1031,18 @@ func testChaosUserDeletion(t *testing.T, e *chaosEnv, population []*harness.VCli
 
 	h.Eventually(t, "the Sessions of the deleted User to be removed", 3*time.Minute,
 		func(ctx context.Context) error {
-			list, err := h.CoreC().ListSession(ctx, &corev1.ListSessionOptions{
-				UserRef: umetav1.GetObjectReference(fleet.Users[0]),
-			})
-			if err != nil {
-				return err
+			var remain int
+			for _, sess := range fleet.Sessions {
+				_, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Uid: sess.UID})
+				switch {
+				case err == nil:
+					remain++
+				case !grpcerr.IsNotFound(err):
+					return err
+				}
 			}
-			if n := len(list.Items); n > 0 {
-				return errors.Errorf("%d Sessions of the deleted User remain", n)
+			if remain > 0 {
+				return errors.Errorf("%d Sessions of the deleted User remain", remain)
 			}
 			return nil
 		})

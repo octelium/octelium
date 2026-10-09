@@ -177,9 +177,15 @@ func testChaosClientless(t *testing.T, e *chaosEnv) {
 			e.failf(t, "The upstream received %d requests more than once, e.g. %v",
 				len(dupes), firstN(dupes, 5))
 		}
-		if got := c.upstream.SeenWithPrefix("storm-"); got != res.Count("allowed", http.StatusOK) {
-			e.failf(t, "The upstream received %d storm requests but %d were answered with 200",
-				got, res.Count("allowed", http.StatusOK))
+		var abandonedSeen int
+		for _, id := range res.Abandoned("allowed") {
+			abandonedSeen += c.upstream.Seen(id)
+		}
+		e.set(t, "abandonedAtTheEnd", abandonedSeen)
+
+		if got := c.upstream.SeenWithPrefix("storm-"); got != res.Count("allowed", http.StatusOK)+abandonedSeen {
+			e.failf(t, "The upstream received %d storm requests but %d were answered with 200 and %d were abandoned at the end of the storm after reaching it",
+				got, res.Count("allowed", http.StatusOK), abandonedSeen)
 		}
 	})
 

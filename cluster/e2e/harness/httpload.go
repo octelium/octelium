@@ -194,9 +194,10 @@ type HTTPLoadOpts struct {
 type HTTPLoadResult struct {
 	*PoolResult
 
-	mu       sync.Mutex
-	byClass  map[string]map[int]int
-	classLat map[string]*Latencies
+	mu        sync.Mutex
+	byClass   map[string]map[int]int
+	classLat  map[string]*Latencies
+	abandoned map[string][]string
 }
 
 func (r *HTTPLoadResult) record(class string, code int, d time.Duration) {
@@ -209,6 +210,20 @@ func (r *HTTPLoadResult) record(class string, code int, d time.Duration) {
 	}
 	r.byClass[class][code]++
 	r.classLat[class].Add(d)
+}
+
+func (r *HTTPLoadResult) abandon(class, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.abandoned[class] = append(r.abandoned[class], id)
+}
+
+func (r *HTTPLoadResult) Abandoned(class string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]string(nil), r.abandoned[class]...)
 }
 
 func (r *HTTPLoadResult) Status(class string) map[int]int {
@@ -374,8 +389,9 @@ func (h *H) HTTPLoad(ctx context.Context, o HTTPLoadOpts) (*HTTPLoadResult, erro
 	}()
 
 	ret := &HTTPLoadResult{
-		byClass:  map[string]map[int]int{},
-		classLat: map[string]*Latencies{},
+		byClass:   map[string]map[int]int{},
+		classLat:  map[string]*Latencies{},
+		abandoned: map[string][]string{},
 	}
 
 	do := func(ctx context.Context, worker, iteration int) error {
@@ -403,12 +419,14 @@ func (h *H) HTTPLoad(ctx context.Context, o HTTPLoadOpts) (*HTTPLoadResult, erro
 
 		started := time.Now()
 		res, err := clients[worker].Do(req)
-		if err != nil {
-			return err
+		if err == nil {
+			_, err = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
 		}
-		_, err = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
 		if err != nil {
+			if ctx.Err() != nil {
+				ret.abandon(spec.Class, spec.ID)
+			}
 			return err
 		}
 

@@ -223,6 +223,7 @@ type chaosEnv struct {
 	baselineHealth   harness.HealthSnapshot
 	baselineLeakWG   []uint32
 	baselineLeakQUIC []uint32
+	baselineStale    map[string][]string
 	restarted        []string
 }
 
@@ -718,10 +719,41 @@ func (e *chaosEnv) setBaselineLeaks(r *harness.AddressReport) {
 	e.baselineLeakQUIC = r.LeakedQUIC
 }
 
-func (e *chaosEnv) evalInvariants(ctx context.Context, o invariantsOpts) (*harness.AddressReport, []string, error) {
+func (e *chaosEnv) newStalePeers(gateway string, stale []string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	prev := map[string]bool{}
+	for _, key := range e.baselineStale[gateway] {
+		prev[key] = true
+	}
+
+	var ret []string
+	for _, key := range stale {
+		if !prev[key] {
+			ret = append(ret, key)
+		}
+	}
+	return ret
+}
+
+func (e *chaosEnv) setBaselineStale(stale map[string][]string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.baselineStale == nil {
+		e.baselineStale = map[string][]string{}
+	}
+	for gateway, keys := range stale {
+		e.baselineStale[gateway] = keys
+	}
+}
+
+func (e *chaosEnv) evalInvariants(ctx context.Context, o invariantsOpts) (*harness.AddressReport,
+	map[string][]string, []string, error) {
 	inv, err := e.h.ConnInventory(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	r := harness.CheckConnAddresses(inv)
@@ -779,10 +811,12 @@ func (e *chaosEnv) evalInvariants(ctx context.Context, o invariantsOpts) (*harne
 			len(zombies), firstN(zombies, 5)))
 	}
 
+	stale := map[string][]string{}
+
 	if !o.skipPeers && e.wgInspect {
 		gws, err := e.h.ListGateways(ctx)
 		if err != nil {
-			return r, violations, err
+			return r, nil, violations, err
 		}
 
 		for _, gw := range gws {
@@ -791,13 +825,18 @@ func (e *chaosEnv) evalInvariants(ctx context.Context, o invariantsOpts) (*harne
 				violations = append(violations, err.Error())
 				continue
 			}
-			if err := harness.CheckGatewayPeers(gw.Metadata.Name, peers, inv.Connected()).Err(); err != nil {
+
+			report := harness.CheckGatewayPeers(gw.Metadata.Name, peers, inv.Connected())
+			stale[gw.Metadata.Name] = report.Stale
+			report.Stale = e.newStalePeers(gw.Metadata.Name, report.Stale)
+
+			if err := report.Err(); err != nil {
 				violations = append(violations, err.Error())
 			}
 		}
 	}
 
-	return r, violations, nil
+	return r, stale, violations, nil
 }
 
 func firstN[T any](vals []T, n int) []T {
@@ -814,16 +853,20 @@ func (e *chaosEnv) checkInvariants(t *testing.T, what string, budget time.Durati
 	started := time.Now()
 
 	var last *harness.AddressReport
+	var lastStale map[string][]string
 	var lastViolations []string
 	var lastErr error
 
 	for {
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		r, violations, err := e.evalInvariants(ctx, o)
+		r, stale, violations, err := e.evalInvariants(ctx, o)
 		cancel()
 
 		if r != nil {
 			last = r
+		}
+		if stale != nil {
+			lastStale = stale
 		}
 		lastViolations, lastErr = violations, err
 
@@ -834,6 +877,7 @@ func (e *chaosEnv) checkInvariants(t *testing.T, what string, budget time.Durati
 			e.set(t, "invariants", r)
 			e.set(t, "invariantsSettled", time.Since(started).String())
 			e.setBaselineLeaks(r)
+			e.setBaselineStale(stale)
 			return r
 		}
 
@@ -855,6 +899,7 @@ func (e *chaosEnv) checkInvariants(t *testing.T, what string, budget time.Durati
 		e.set(t, "invariants", last)
 		e.setBaselineLeaks(last)
 	}
+	e.setBaselineStale(lastStale)
 
 	e.failf(t, "The Connection invariants do not hold %s after %s (%v):\n  - %s",
 		what, budget, last, strings.Join(lastViolations, "\n  - "))
