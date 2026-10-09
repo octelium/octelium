@@ -189,6 +189,21 @@ func TestProbeConnection(t *testing.T) {
 		assert.Equal(t, int32(1), srv.calls.Load())
 	})
 
+	t.Run("DeadlineExceeded", func(t *testing.T) {
+		srv := &testUserServer{
+			getStatusFn: func(ctx context.Context) (*userv1.GetStatusResponse, error) {
+				return nil, status.Error(codes.DeadlineExceeded, "deadline exceeded")
+			},
+		}
+		cl, _ := newTestUserClient(t, srv)
+
+		err := probeConnection(ctx, cl)
+		assert.NotNil(t, err)
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+		assert.Nil(t, ctx.Err())
+		assert.Equal(t, int32(1), srv.calls.Load())
+	})
+
 	t.Run("NoResponse", func(t *testing.T) {
 		srv := &testUserServer{
 			getStatusFn: func(ctx context.Context) (*userv1.GetStatusResponse, error) {

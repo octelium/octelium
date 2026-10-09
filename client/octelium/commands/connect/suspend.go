@@ -75,7 +75,7 @@ func probeConnection(ctx context.Context, cl userv1.MainServiceClient) error {
 	switch {
 	case err == nil:
 		return nil
-	case ctx.Err() != nil, grpcerr.IsUnavailable(err):
+	case ctx.Err() != nil, grpcerr.IsUnavailable(err), grpcerr.IsDeadlineExceeded(err):
 		return errors.Wrap(err, "The Cluster did not respond")
 	default:
 		zap.L().Debug("The Cluster responded to the probe with an error", zap.Error(err))
