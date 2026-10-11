@@ -79,8 +79,7 @@ const ServiceTypeTile = (props: { info: ServiceTypeInfo }) => (
   <div
     className={twMerge(
       "flex h-11 w-11 flex-none items-center justify-center rounded-full",
-      "shadow-xs ring-1 transition-transform duration-200",
-      "group-hover/item:scale-[1.04]",
+      "shadow-xs ring-1",
       props.info.tile,
     )}
     role="img"
@@ -230,15 +229,6 @@ const ServiceItem = (props: {
               </ResourceListLabel>
             )}
           </div>
-        </div>
-
-        <div
-          className="hidden max-w-[24rem] min-w-0 flex-none items-center xl:flex"
-          title={`Private FQDN: ${privateFQDN}`}
-        >
-          <span className="truncate rounded-lg bg-surface-muted px-2.5 py-1.5 font-mono text-xs text-fg-subtle ring-1 ring-line/70 transition-colors group-hover/item:bg-surface group-hover/item:text-fg-muted">
-            {privateFQDN}
-          </span>
         </div>
 
         <div className="flex flex-none items-center justify-end gap-2 xl:min-w-[7.75rem]">
