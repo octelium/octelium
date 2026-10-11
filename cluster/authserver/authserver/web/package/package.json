@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "test": "playwright test",
     "preview": "vite preview",
     "build-dev": "tsc && vite build --mode development",
     "build-staging": "tsc && vite build --mode staging"
@@ -40,6 +41,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.5",
     "globals": "^17.11.0",
+    "playwright": "~1.63.0",
     "postcss": "^8.5.26",
     "rollup-plugin-visualizer": "^7.1.1",
     "tailwindcss": "^4.3.3",
