@@ -170,6 +170,14 @@ func peerHandshakes(t *testing.T, h *harness.H, gws map[string]*corev1.Gateway, 
 	return ret
 }
 
+func multiNodeRoutingFleetOpts(tunnels []userv1.ConnectRequest_Initialize_ConnectionType,
+	spread []targetAddr) harness.FleetOpts {
+	return harness.FleetOpts{
+		Sessions: len(tunnels) + len(firstN(spread, maxIsolationNodes)),
+		Users:    1,
+	}
+}
+
 func testMultiNodeRouting(t *testing.T, h *harness.H, byNode map[string]*corev1.Gateway) {
 	target, spread := multiNodeTarget(t, h, len(byNode))
 
@@ -189,7 +197,12 @@ func testMultiNodeRouting(t *testing.T, h *harness.H, byNode map[string]*corev1.
 
 	inspect := h.CanInspectWireGuard(t.Context()) == nil
 
-	fleet, err := h.NewFleet(t.Context(), harness.FleetOpts{Sessions: maxIsolationNodes + 1, Users: 1})
+	tunnels := []userv1.ConnectRequest_Initialize_ConnectionType{userv1.ConnectRequest_Initialize_WIREGUARD}
+	if h.Scenario.Caps.Has(capQUICv0) {
+		tunnels = append(tunnels, userv1.ConnectRequest_Initialize_QUICV0)
+	}
+
+	fleet, err := h.NewFleet(t.Context(), multiNodeRoutingFleetOpts(tunnels, spread))
 	require.NoError(t, err)
 	t.Cleanup(func() { fleet.Close(context.Background()) })
 
@@ -221,11 +234,6 @@ func testMultiNodeRouting(t *testing.T, h *harness.H, byNode map[string]*corev1.
 		t.Cleanup(s.dp.Close)
 
 		return s
-	}
-
-	tunnels := []userv1.ConnectRequest_Initialize_ConnectionType{userv1.ConnectRequest_Initialize_WIREGUARD}
-	if h.Scenario.Caps.Has(capQUICv0) {
-		tunnels = append(tunnels, userv1.ConnectRequest_Initialize_QUICV0)
 	}
 
 	t.Run("ClientSide", func(t *testing.T) {

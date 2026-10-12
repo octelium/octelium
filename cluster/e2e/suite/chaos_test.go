@@ -17,6 +17,7 @@
 package suite
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,6 +27,54 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMultiNodeRoutingFleetOpts(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		gateways int
+		quic     bool
+		sessions int
+	}{
+		{"TwoGateways/WireGuard", 2, false, 3},
+		{"TwoGateways/QUIC", 2, true, 4},
+		{"DedicatedControlPlane/WireGuard", 3, false, 4},
+		{"DedicatedControlPlane/QUIC", 3, true, 5},
+		{"FourGateways/WireGuard", 4, false, 5},
+		{"FourGateways/QUIC", 4, true, 6},
+		{"EightGateways/QUIC", 8, true, 6},
+		{"SixteenGateways/QUIC", 16, true, 6},
+		{"ThirtyTwoGateways/QUIC", 32, true, 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tunnels := []userv1.ConnectRequest_Initialize_ConnectionType{userv1.ConnectRequest_Initialize_WIREGUARD}
+			if tt.quic {
+				tunnels = append(tunnels, userv1.ConnectRequest_Initialize_QUICV0)
+			}
+
+			spread := make([]targetAddr, tt.gateways)
+			for i := range spread {
+				spread[i].node = fmt.Sprintf("node-%d", i)
+			}
+
+			opts := multiNodeRoutingFleetOpts(tunnels, spread)
+			require.Equal(t, tt.sessions, opts.Sessions)
+			assert.Equal(t, 1, opts.Users)
+
+			sessions := make([]string, opts.Sessions)
+			for i, tunnel := range tunnels {
+				sessions[i] = tunnel.String()
+			}
+			for i, a := range firstN(spread, maxIsolationNodes) {
+				idx := len(tunnels) + i
+				require.Empty(t, sessions[idx], "every routing check needs its own Session")
+				sessions[idx] = a.node
+			}
+			for _, session := range sessions {
+				assert.NotEmpty(t, session, "every Session must be used by a routing check")
+			}
+		})
+	}
+}
 
 func TestChaosScales(t *testing.T) {
 	t.Setenv(harness.ChaosClientsEnv, "")
