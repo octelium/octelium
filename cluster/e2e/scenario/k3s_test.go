@@ -87,7 +87,61 @@ esac
 		assert.Contains(t, args, "rancher/k3s:v1.34.1-k3s1")
 		assert.Contains(t, args, "K3S_URL=https://192.0.2.10:6443")
 		assert.Contains(t, args, "K3S_TOKEN=test-token")
+		assert.Equal(t, "/bin/sh", args[slices.Index(args, "--entrypoint")+1])
+		assert.Equal(t, agentEntrypointScript(p.Paths.BinDir, "/bin"), args[slices.Index(args, "-c")+1])
 	}
+}
+
+func TestAgentEntrypointRestoresCNIPlugins(t *testing.T) {
+	r, logPath := shellRunner(t, nil)
+	binDir := filepath.Join(t.TempDir(), "image bin")
+	cniDir := filepath.Join(t.TempDir(), "node data", "cni")
+	require.NoError(t, os.MkdirAll(binDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "cni"), []byte("#!/bin/sh\necho \"${0##*/}\"\n"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "k3s"), []byte(`#!/bin/sh
+set -e
+test "$(command -v host-local)" = "$OCTELIUM_E2E_CNI_DIR/host-local"
+test "$(host-local)" = host-local
+printf '%s\n' "$@" >> "$OCTELIUM_E2E_COMMAND_LOG"
+`), 0755))
+	plugins := []string{"bandwidth", "bridge", "firewall", "flannel", "host-local", "loopback", "portmap"}
+	for _, plugin := range plugins {
+		require.NoError(t, os.Symlink("cni", filepath.Join(binDir, plugin)))
+	}
+	require.NoError(t, os.Symlink("k3s", filepath.Join(binDir, "kubectl")))
+	r.extraEnv["PATH"] = binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	r.extraEnv["OCTELIUM_E2E_CNI_DIR"] = cniDir
+
+	before, err := r.BashOutput(t.Context(), "command -v host-local")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(binDir, "host-local"), before,
+		"an empty data-directory bind mount makes k3s discover plugins in the image bin directory")
+
+	script := agentEntrypointScript(cniDir, binDir) + "\n"
+	cmd := r.bashCmd(t.Context(), script)
+	cmd.Args = append(cmd.Args, "k3s", "agent", "--node-name", AgentName(1))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	for _, plugin := range append(plugins, "cni") {
+		target, err := os.Readlink(filepath.Join(cniDir, plugin))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(binDir, "cni"), target)
+	}
+	_, err = os.Lstat(filepath.Join(cniDir, "kubectl"))
+	assert.True(t, os.IsNotExist(err), "only CNI plugins belong in the CNI directory")
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.Equal(t, "agent\n--node-name\n"+AgentName(1)+"\n", string(data))
+
+	require.NoError(t, os.WriteFile(filepath.Join(cniDir, "multus"), []byte("installed plugin"), 0755))
+	cmd = r.bashCmd(t.Context(), script)
+	cmd.Args = append(cmd.Args, "k3s", "agent")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	data, err = os.ReadFile(filepath.Join(cniDir, "multus"))
+	require.NoError(t, err)
+	assert.Equal(t, "installed plugin", string(data), "restarting an agent must preserve installed plugins")
 }
 
 func TestDedicatedControlPlaneNodeLabels(t *testing.T) {

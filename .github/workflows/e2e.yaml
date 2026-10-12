@@ -188,6 +188,10 @@ jobs:
             for c in $(sudo docker ps -a --filter name=^octelium-e2e-agent- --format '{{.Names}}'); do
               sudo docker inspect "$c" --format '{{json .Mounts}}' > "$OUT/mounts-$c.json" 2>&1 || true
               sudo docker exec "$c" cat /proc/self/mountinfo > "$OUT/mountinfo-$c.txt" 2>&1 || true
+              sudo docker exec "$c" cat /var/lib/rancher/k3s/agent/etc/containerd/config.toml \
+                > "$OUT/containerd-$c.toml" 2>&1 || true
+              sudo docker exec "$c" ls -la /var/lib/rancher/k3s/data/cni \
+                > "$OUT/cni-binaries-$c.txt" 2>&1 || true
             done
             kubectl get nodes -o wide > "$OUT/nodes.txt" 2>&1 || true
             kubectl describe nodes > "$OUT/describe-nodes.txt" 2>&1 || true

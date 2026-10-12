@@ -232,6 +232,7 @@ start_agent() {
   sudo mkdir -p %[1]s/"$NAME"
   sudo docker run -d --name "$NAME" --hostname "$NAME" \
     --privileged \
+    --entrypoint /bin/sh \
     --network %[2]s \
     --tmpfs /run --tmpfs /var/run \
     --ulimit nofile=1048576:1048576 \
@@ -240,9 +241,10 @@ start_agent() {
     -v %[1]s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro \
     -e K3S_URL=https://%[3]s:6443 \
     -e K3S_TOKEN="$TOKEN" \
-    "$IMAGE" agent --node-name "$NAME" %[4]s
+    "$IMAGE" -c %[5]s k3s agent --node-name "$NAME" %[4]s
 }
-`, shellQuote(p.agentDataDir()), agentNetwork, serverIP, strings.Join(args, " "))
+`, shellQuote(p.agentDataDir()), agentNetwork, serverIP, strings.Join(args, " "),
+		shellQuote(agentEntrypointScript(p.Paths.BinDir, "/bin")))
 
 	for i := 1; i <= p.Agents; i++ {
 		fmt.Fprintf(&b, "start_agent %s\n", AgentName(i))
@@ -252,6 +254,25 @@ start_agent() {
 		` --format '{{.Names}} {{.Status}} {{.Networks}}'` + "\n")
 
 	return b.String()
+}
+
+func agentEntrypointScript(cniDir, binDir string) string {
+	return fmt.Sprintf(`
+set -e
+BIN_DIR=%[1]s
+CNI_BIN_DIR=%[2]s
+test -x "$BIN_DIR/cni"
+mkdir -p "$CNI_BIN_DIR"
+ln -sf "$BIN_DIR/cni" "$CNI_BIN_DIR/cni"
+for plugin in "$BIN_DIR"/*; do
+  if [ -L "$plugin" ] && [ "$(readlink "$plugin")" = cni ]; then
+    ln -sf "$BIN_DIR/cni" "$CNI_BIN_DIR/${plugin##*/}"
+  fi
+done
+test -x "$CNI_BIN_DIR/host-local"
+export PATH="$CNI_BIN_DIR:$PATH"
+exec "$BIN_DIR/k3s" "$@"
+`, shellQuote(binDir), shellQuote(cniDir))
 }
 
 func (p *K3s) agentDiagnostics(ctx context.Context, r *Runner) string {

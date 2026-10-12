@@ -40,6 +40,7 @@ func (r *Runner) prepareSteps() []Step {
 			Skip: func(r *Runner) bool { return !r.Scenario.Multus.Enabled },
 			Run:  r.stepMultus,
 		},
+		{Name: "cni/readiness", Run: r.stepCNIReadiness},
 		{Name: "storage/redis", Run: r.stepRedis},
 		{Name: "storage/postgres", Run: r.stepPostgres},
 	}
@@ -143,6 +144,47 @@ func (r *Runner) stepMultus(ctx context.Context, _ *Runner) error {
 	return r.Bash(ctx,
 		`kubectl rollout status daemonset -n kube-system -l app.kubernetes.io/instance=octelium-multus --timeout=10m`)
 }
+
+func (r *Runner) stepCNIReadiness(ctx context.Context, _ *Runner) error {
+	if err := r.BashInput(ctx, "kubectl apply -f -", cniReadinessManifest); err != nil {
+		return err
+	}
+
+	if err := r.Bash(ctx,
+		`kubectl rollout status daemonset/octelium-e2e-cni -n kube-system --timeout=5m`); err != nil {
+		_ = r.Bash(ctx,
+			`kubectl describe pods -n kube-system -l app.kubernetes.io/name=octelium-e2e-cni`)
+		return errors.Wrap(err, "The CNI could not create a pod sandbox on every node")
+	}
+
+	return r.Bash(ctx,
+		`kubectl delete daemonset/octelium-e2e-cni -n kube-system --wait=true --timeout=60s`)
+}
+
+const cniReadinessManifest = `
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: octelium-e2e-cni
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: octelium-e2e-cni
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: octelium-e2e-cni
+    spec:
+      automountServiceAccountToken: false
+      tolerations:
+        - key: octelium.com/gateway-init
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: pause
+          image: rancher/mirrored-pause:3.10.2
+`
 
 func (r *Runner) stepRedis(ctx context.Context, _ *Runner) error {
 	redis := r.Scenario.Storage.Redis

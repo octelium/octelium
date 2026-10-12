@@ -18,12 +18,89 @@ package scenario
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/yaml"
 )
+
+func TestCNIReadiness(t *testing.T) {
+	for _, fail := range []string{"", "apply", "rollout"} {
+		t.Run("failure="+fail, func(t *testing.T) {
+			r, logPath := shellRunner(t, map[string]string{
+				"kubectl": `
+printf '%s\n' "$*" >> "$OCTELIUM_E2E_COMMAND_LOG"
+if [ "$1" = apply ]; then
+  cat > "$OCTELIUM_E2E_COMMAND_LOG-manifest"
+fi
+if [ "$1" = "$OCTELIUM_E2E_FAIL_COMMAND" ]; then
+  exit 1
+fi
+`,
+			})
+			r.extraEnv["OCTELIUM_E2E_FAIL_COMMAND"] = fail
+
+			err := r.stepCNIReadiness(t.Context(), r)
+			if fail == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+
+			data, err := os.ReadFile(logPath + "-manifest")
+			require.NoError(t, err)
+			ds := &appsv1.DaemonSet{}
+			require.NoError(t, yaml.Unmarshal(data, ds))
+			assert.Equal(t, "octelium-e2e-cni", ds.Name)
+			assert.Equal(t, "kube-system", ds.Namespace)
+			assert.False(t, ds.Spec.Template.Spec.HostNetwork,
+				"the readiness check must exercise the CNI instead of bypassing it")
+			assert.Empty(t, ds.Spec.Template.Spec.NodeSelector, "the check must cover every node")
+			assert.Empty(t, ds.Spec.Template.Spec.Affinity)
+			assert.Equal(t, ds.Spec.Selector.MatchLabels, ds.Spec.Template.Labels)
+
+			data, err = os.ReadFile(logPath)
+			require.NoError(t, err)
+			calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if fail == "apply" {
+				assert.Equal(t, []string{"apply -f -"}, calls)
+				return
+			}
+			want := []string{
+				"apply -f -",
+				"rollout status daemonset/octelium-e2e-cni -n kube-system --timeout=5m",
+			}
+			if fail == "rollout" {
+				want = append(want, "describe pods -n kube-system -l app.kubernetes.io/name=octelium-e2e-cni")
+			} else {
+				want = append(want, "delete daemonset/octelium-e2e-cni -n kube-system --wait=true --timeout=60s")
+			}
+			assert.Equal(t, want, calls, "failed networking checks must keep the pods for diagnostics")
+		})
+	}
+}
+
+func TestPrepareChecksCNIBeforeStorage(t *testing.T) {
+	r := &Runner{}
+	var names []string
+	for _, step := range r.prepareSteps() {
+		names = append(names, step.Name)
+	}
+	multus := slices.Index(names, "cni/multus")
+	readiness := slices.Index(names, "cni/readiness")
+	redis := slices.Index(names, "storage/redis")
+	postgres := slices.Index(names, "storage/postgres")
+	for _, idx := range []int{multus, readiness, redis, postgres} {
+		require.NotEqual(t, -1, idx)
+	}
+	assert.Less(t, multus, readiness)
+	assert.Less(t, readiness, redis)
+	assert.Less(t, readiness, postgres)
+}
 
 func TestMultusReadiness(t *testing.T) {
 	for _, fail := range []string{"", "helm", "kubectl"} {
