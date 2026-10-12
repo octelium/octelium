@@ -431,9 +431,9 @@ func testChaosMultiNode(t *testing.T, e *chaosEnv) {
 	t.Run("Placement", func(t *testing.T) {
 		gws := target.gateways()
 		e.set(t, "gatewaysHostingTheTarget", len(gws))
-		e.set(t, "gateways", h.Scenario.Topology.Nodes)
+		e.set(t, "gateways", h.Scenario.Topology.DataPlaneNodes())
 
-		if len(gws) < min(2, h.Scenario.Topology.Nodes) {
+		if len(gws) < min(2, h.Scenario.Topology.DataPlaneNodes()) {
 			e.failf(t, "The %d replicas of the target Service all run behind %d Gateway(s)",
 				len(target.addrs), len(gws))
 		}

@@ -38,11 +38,29 @@ func TestParseSpec(t *testing.T) {
 			"k8s-calico-spiffe":  {Distro: DistroK8s, CNI: CNICalico, SPIFFE: true},
 			"k3s-calico-chaos":   {Distro: DistroK3s, CNI: CNICalico, Chaos: true},
 			"k3s-flannel-nodes4": {Distro: DistroK3s, CNI: CNIFlannel, Nodes: 4},
+			"k3s-flannel-nodes4-dedicated": {
+				Distro: DistroK3s, CNI: CNIFlannel, Nodes: 4, DedicatedControlPlane: true,
+			},
 		} {
 			got, err := ParseSpec(id)
 			require.NoError(t, err, id)
 			assert.Equal(t, want, got, id)
 			assert.Equal(t, id, got.ID(), "the ID must round-trip")
+		}
+	})
+
+	t.Run("dedicated control planes compose with the other modifiers", func(t *testing.T) {
+		for _, id := range []string{
+			"k3s-flannel-nodes4-dedicated-spiffe-chaos",
+			"k3s-flannel-chaos-dedicated-spiffe-nodes4",
+		} {
+			got, err := ParseSpec(id)
+			require.NoError(t, err, id)
+			assert.Equal(t, Spec{
+				Distro: DistroK3s, CNI: CNIFlannel, Nodes: 4,
+				DedicatedControlPlane: true, SPIFFE: true, Chaos: true,
+			}, got, id)
+			assert.Equal(t, "k3s-flannel-nodes4-dedicated-spiffe-chaos", got.ID(), id)
 		}
 	})
 
@@ -78,6 +96,7 @@ func TestParseSpec(t *testing.T) {
 			"k3s-flannel-nodesx",
 			"k3s-flannel-nodes2-nodes4",
 			"k3s-flannel-gpu",
+			"k3s-flannel-nodes4-dedicated-dedicated",
 		} {
 			_, err := ParseSpec(id)
 			require.Error(t, err, id)
@@ -92,6 +111,9 @@ func TestParseSpec(t *testing.T) {
 			"k3s-cilium-nodes4",
 			"k3s-calico-nodes2",
 			"rke2-canal-nodes2",
+			"k3s-flannel-dedicated",
+			"k3s-flannel-nodes1-dedicated",
+			"k3s-cilium-nodes4-dedicated",
 		} {
 			_, err := ParseSpec(id)
 			require.Error(t, err, id)
@@ -113,6 +135,8 @@ func TestSpecsListsTheChaosAndMultiNodeVariants(t *testing.T) {
 		"k3s-flannel-spiffe-chaos",
 		"k3s-flannel-nodes2",
 		"k3s-flannel-nodes32-chaos",
+		"k3s-flannel-nodes2-dedicated",
+		"k3s-flannel-nodes32-dedicated-chaos",
 	} {
 		assert.True(t, ids[id], id)
 	}
@@ -126,11 +150,13 @@ func TestBuildMultiNode(t *testing.T) {
 
 	assert.Equal(t, "k3s-flannel-nodes4", s.ID)
 	assert.Equal(t, 4, s.Topology.Nodes)
+	assert.Equal(t, 4, s.Topology.DataPlaneNodes())
 	assert.True(t, s.Caps.Has(CapMultiNode))
 	assert.False(t, s.Caps.Has(CapChaos))
 
 	assert.Contains(t, s.Topology.Labels, vutils.NodeLabelControlPlane,
 		"the server node keeps the control plane")
+	assert.Contains(t, s.Topology.Labels, vutils.NodeLabelDataPlane)
 	assert.Contains(t, s.Topology.AgentLabels, vutils.NodeLabelDataPlane)
 	assert.NotContains(t, s.Topology.AgentLabels, vutils.NodeLabelControlPlane,
 		"the agent nodes only run Gateways and Services")
@@ -150,6 +176,35 @@ func TestBuildMultiNode(t *testing.T) {
 	single, err := Get("k3s-flannel")
 	require.NoError(t, err)
 	assert.Greater(t, s.Install.WaitTimeout, single.Install.WaitTimeout)
+}
+
+func TestBuildDedicatedControlPlane(t *testing.T) {
+	withCustomizers(t)
+
+	for _, nodes := range []int{2, 4, 32} {
+		s, err := Build(Spec{
+			Distro: DistroK3s, CNI: CNIFlannel, Nodes: nodes,
+			DedicatedControlPlane: true, SPIFFE: true, Chaos: true,
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, nodes, s.Topology.Nodes)
+		assert.Equal(t, nodes-1, s.Topology.DataPlaneNodes())
+		assert.Equal(t, []string{"octelium.com/node", vutils.NodeLabelControlPlane}, s.Topology.Labels)
+		assert.Equal(t, []string{"octelium.com/node", vutils.NodeLabelDataPlane}, s.Topology.AgentLabels)
+		assert.True(t, s.Caps.Has(CapMultiNode))
+		assert.True(t, s.Caps.Has(CapSPIFFE))
+		assert.True(t, s.Caps.Has(CapChaos))
+
+		p, ok := s.Provisioner.(*K3s)
+		require.True(t, ok)
+		assert.Equal(t, nodes-1, p.Agents)
+		assert.True(t, p.Tuned)
+	}
+
+	single, err := Get("k3s-flannel")
+	require.NoError(t, err)
+	assert.Equal(t, 1, single.Topology.DataPlaneNodes())
 }
 
 func TestBuildChaos(t *testing.T) {

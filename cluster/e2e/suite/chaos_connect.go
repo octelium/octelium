@@ -105,7 +105,7 @@ func testChaosPreflight(t *testing.T, e *chaosEnv) {
 	require.NoError(t, err)
 	e.set(t, "gateways", len(gws))
 
-	if want := h.Scenario.Topology.Nodes; want > 1 {
+	if want := h.Scenario.Topology.DataPlaneNodes(); want > 0 {
 		require.Len(t, gws, want, "every data-plane node must run a Gateway")
 	}
 

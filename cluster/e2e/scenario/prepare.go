@@ -125,6 +125,7 @@ func (r *Runner) stepMultus(ctx context.Context, _ *Runner) error {
 	var args []string
 	args = append(args, fmt.Sprintf("--set hostCNIBinDir=%s", paths.BinDir))
 	args = append(args, fmt.Sprintf("--set hostCNINetDir=%s", paths.NetDir))
+	args = append(args, `--set-json 'tolerations=[{"key":"octelium.com/gateway-init","operator":"Exists","effect":"NoSchedule"}]'`)
 	if m.ImageRepository != "" {
 		args = append(args, fmt.Sprintf("--set image.repository=%s", m.ImageRepository))
 	}
@@ -135,7 +136,12 @@ func (r *Runner) stepMultus(ctx context.Context, _ *Runner) error {
 		args = append(args, fmt.Sprintf("--version %s", m.ChartVersion))
 	}
 
-	return r.helmInstall(ctx, "kube-system", "octelium-multus", m.Chart, args, "")
+	if err := r.helmInstall(ctx, "kube-system", "octelium-multus", m.Chart, args, ""); err != nil {
+		return err
+	}
+
+	return r.Bash(ctx,
+		`kubectl rollout status daemonset -n kube-system -l app.kubernetes.io/instance=octelium-multus --timeout=10m`)
 }
 
 func (r *Runner) stepRedis(ctx context.Context, _ *Runner) error {

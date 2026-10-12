@@ -17,14 +17,98 @@
 package scenario
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func shellRunner(t *testing.T, commands map[string]string) (*Runner, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	for name, script := range commands {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/bash\nset -e\n"+script), 0755))
+	}
+
+	logPath := filepath.Join(dir, "commands")
+	return &Runner{extraEnv: map[string]string{
+		"PATH":                     dir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"OCTELIUM_E2E_COMMAND_LOG": logPath,
+	}}, logPath
+}
+
+func TestStartAgentsScript(t *testing.T) {
+	r, logPath := shellRunner(t, map[string]string{
+		"k3s": `echo 'k3s version v1.34.1+k3s1 (test)'`,
+		"sudo": `
+case "$1" in
+  cat) echo test-token; exit 0 ;;
+  mkdir) exit 0 ;;
+  docker) shift ;;
+  *) exit 1 ;;
+esac
+case "$1" in
+  image|ps) exit 0 ;;
+  inspect) exit 1 ;;
+  run)
+    printf '%s\0' "$@" >> "$OCTELIUM_E2E_COMMAND_LOG"
+    printf '\0' >> "$OCTELIUM_E2E_COMMAND_LOG"
+    ;;
+  *) exit 1 ;;
+esac
+`,
+	})
+
+	p := k3sProvisioner(CNIFlannel)
+	p.withAgents(3)
+	p.AgentDataDir = filepath.Join(t.TempDir(), "agent data")
+
+	require.NoError(t, r.Bash(t.Context(), p.startAgentsScript("192.0.2.10")))
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	runs := strings.Split(strings.TrimSuffix(string(data), "\x00\x00"), "\x00\x00")
+	require.Len(t, runs, 3)
+
+	for i, run := range runs {
+		args := strings.Split(run, "\x00")
+		name := AgentName(i + 1)
+		assert.Contains(t, args, p.AgentDataDir+"/"+name+":/var/lib/rancher/k3s:rshared",
+			"the CNI directory must support Multus bidirectional mount propagation")
+		assert.Equal(t, name, args[slices.Index(args, "--name")+1])
+		assert.Equal(t, name, args[slices.Index(args, "--hostname")+1])
+		assert.Contains(t, args, "rancher/k3s:v1.34.1-k3s1")
+		assert.Contains(t, args, "K3S_URL=https://192.0.2.10:6443")
+		assert.Contains(t, args, "K3S_TOKEN=test-token")
+	}
+}
+
+func TestDedicatedControlPlaneNodeLabels(t *testing.T) {
+	s, err := Get("k3s-flannel-nodes4-dedicated")
+	require.NoError(t, err)
+	r, logPath := shellRunner(t, map[string]string{
+		"kubectl": `printf '%s\n' "$*" >> "$OCTELIUM_E2E_COMMAND_LOG"`,
+	})
+	r.Scenario = s
+
+	require.NoError(t, s.Provisioner.(*K3s).stepLabelNodes(t.Context(), r))
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	got := string(data)
+
+	assert.Contains(t, got, "label nodes -l "+nodeSelectorServer+" --overwrite "+vutils.NodeLabelControlPlane+"=\n")
+	assert.Contains(t, got, "label nodes -l "+nodeSelectorServer+" --overwrite "+vutils.NodeLabelDataPlane+"-\n",
+		"a previously shared server must lose its data-plane role")
+	assert.Contains(t, got, "label nodes -l "+nodeSelectorAgents+" --overwrite "+vutils.NodeLabelDataPlane+"=\n")
+	assert.NotContains(t, got, "label nodes -l "+nodeSelectorServer+" --overwrite "+vutils.NodeLabelDataPlane+"=\n")
+}
 
 func node(name string, status k8scorev1.ConditionStatus, reason, msg string) *k8scorev1.Node {
 	return &k8scorev1.Node{

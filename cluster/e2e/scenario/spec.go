@@ -39,9 +39,10 @@ const (
 )
 
 const (
-	spiffeSuffix = "spiffe"
-	chaosSuffix  = "chaos"
-	nodesPrefix  = "nodes"
+	spiffeSuffix    = "spiffe"
+	chaosSuffix     = "chaos"
+	dedicatedSuffix = "dedicated"
+	nodesPrefix     = "nodes"
 )
 
 const MaxNodes = 32
@@ -49,17 +50,21 @@ const MaxNodes = 32
 var multiNodeSizes = []int{2, 4, 8, 16, 32}
 
 type Spec struct {
-	Distro Distro
-	CNI    CNI
-	Nodes  int
-	SPIFFE bool
-	Chaos  bool
+	Distro                Distro
+	CNI                   CNI
+	Nodes                 int
+	DedicatedControlPlane bool
+	SPIFFE                bool
+	Chaos                 bool
 }
 
 func (s Spec) ID() string {
 	parts := []string{string(s.Distro), string(s.CNI)}
 	if s.IsMultiNode() {
 		parts = append(parts, fmt.Sprintf("%s%d", nodesPrefix, s.Nodes))
+	}
+	if s.DedicatedControlPlane {
+		parts = append(parts, dedicatedSuffix)
 	}
 	if s.SPIFFE {
 		parts = append(parts, spiffeSuffix)
@@ -99,8 +104,13 @@ func Specs() []Spec {
 	}
 
 	for _, nodes := range multiNodeSizes {
-		for _, chaos := range []bool{false, true} {
-			ret = append(ret, Spec{Distro: DistroK3s, CNI: CNIFlannel, Nodes: nodes, Chaos: chaos})
+		for _, dedicated := range []bool{false, true} {
+			for _, chaos := range []bool{false, true} {
+				ret = append(ret, Spec{
+					Distro: DistroK3s, CNI: CNIFlannel, Nodes: nodes,
+					DedicatedControlPlane: dedicated, Chaos: chaos,
+				})
+			}
 		}
 	}
 
@@ -109,7 +119,7 @@ func Specs() []Spec {
 
 func errMalformedSpec(id string) error {
 	return errors.Errorf(
-		"Malformed scenario %q. Expected <distro>-<cni>[-nodes<N>][-spiffe][-chaos], "+
+		"Malformed scenario %q. Expected <distro>-<cni>[-nodes<N>][-dedicated][-spiffe][-chaos], "+
 			"for example k3s-flannel or k3s-flannel-nodes4-chaos", id)
 }
 
@@ -131,6 +141,8 @@ func ParseSpec(id string) (Spec, error) {
 			ret.SPIFFE = true
 		case mod == chaosSuffix && !ret.Chaos:
 			ret.Chaos = true
+		case mod == dedicatedSuffix && !ret.DedicatedControlPlane:
+			ret.DedicatedControlPlane = true
 		case strings.HasPrefix(mod, nodesPrefix) && !hasNodes:
 			nodes, err := strconv.Atoi(strings.TrimPrefix(mod, nodesPrefix))
 			if err != nil {
@@ -175,6 +187,10 @@ func (s Spec) Validate() error {
 		return errors.Errorf(
 			"Multi-node scenarios currently run on %s with %s only, not %s with %s",
 			DistroK3s, CNIFlannel, s.Distro, s.CNI)
+	}
+
+	if s.DedicatedControlPlane && !s.IsMultiNode() {
+		return errors.Errorf("A dedicated control-plane node requires at least 2 nodes")
 	}
 
 	return nil

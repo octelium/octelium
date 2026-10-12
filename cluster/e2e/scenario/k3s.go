@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -500,6 +501,11 @@ const (
 
 func labelNodesScript(selector string, labels []string) string {
 	var b strings.Builder
+	for _, label := range []string{vutils.NodeLabelControlPlane, vutils.NodeLabelDataPlane} {
+		if !slices.Contains(labels, label) {
+			fmt.Fprintf(&b, "kubectl label nodes %s --overwrite %s-\n", selector, label)
+		}
+	}
 	for _, label := range labels {
 		fmt.Fprintf(&b, "kubectl label nodes %s --overwrite %s=\n", selector, label)
 	}

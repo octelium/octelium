@@ -32,11 +32,16 @@ on:
         required: false
         default: ""
       gateways:
-        description: "Number of k3s nodes, each running an Octelium Gateway. More than 1 runs the extra nodes as k3s agents in docker (k3s with flannel only). 16 and 32 usually need a larger runner"
+        description: "Total k3s nodes. Each runs a Gateway unless dedicated_control_plane is enabled. Extra nodes run as docker agents (k3s with flannel only). 16 and 32 usually need a larger runner"
         required: false
         type: choice
         default: "1"
         options: ["1", "2", "4", "8", "16", "32"]
+      dedicated_control_plane:
+        description: "Reserve the k3s server for the Octelium control plane; the remaining nodes run the data plane. Requires gateways >= 2"
+        required: false
+        type: boolean
+        default: false
       chaos:
         description: "Also run the chaos/load suite after the base suite. It tunes the host kernel and container limits during provisioning"
         required: false
@@ -64,7 +69,7 @@ on:
 env:
   GO_VERSION: "1.26.8"
   SCENARIO: >-
-    ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.spiffe && '-spiffe' || '' }}${{ inputs.chaos && '-chaos' || '' }}
+    ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.dedicated_control_plane && '-dedicated' || '' }}${{ inputs.spiffe && '-spiffe' || '' }}${{ inputs.chaos && '-chaos' || '' }}
 jobs:
   test:
     strategy:
@@ -75,7 +80,7 @@ jobs:
           || inputs.arch == 'arm64' && fromJSON('["ubuntu-24.04-arm"]')
           || fromJSON('["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     runs-on: ${{ matrix.runner }}
-    name: ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.chaos && format('-chaos-{0}', inputs.chaos_scale) || '' }}-${{ matrix.runner }}
+    name: ${{ inputs.distro || 'k3s' }}-${{ inputs.cni || 'flannel' }}${{ (inputs.gateways && inputs.gateways != '1') && format('-nodes{0}', inputs.gateways) || '' }}${{ inputs.dedicated_control_plane && '-dedicated' || '' }}${{ inputs.chaos && format('-chaos-{0}', inputs.chaos_scale) || '' }}-${{ matrix.runner }}
     timeout-minutes: ${{ (inputs.chaos || (inputs.gateways && inputs.gateways != '1')) && 330 || 120 }}
     steps:
       - name: Install deps
@@ -140,6 +145,8 @@ jobs:
           kubectl get all -A -o wide > "$OUT/get-all.txt" 2>&1 || true
           kubectl get events -A --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
           kubectl describe pods -n octelium > "$OUT/describe-pods.txt" 2>&1 || true
+          kubectl describe pods -n kube-system > "$OUT/describe-kube-system-pods.txt" 2>&1 || true
+          kubectl get daemonsets -n kube-system -o yaml > "$OUT/kube-system-daemonsets.yaml" 2>&1 || true
           kubectl get pods -n octelium \
             -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,IMAGE:.spec.containers[*].image \
             > "$OUT/pod-images.txt" 2>&1 || true
@@ -152,6 +159,14 @@ jobs:
               > "$OUT/logs-${name}-previous.txt" 2>&1 || true
           done
           find "$OUT" -name 'logs-*-previous.txt' -size -1c -delete || true
+
+          for pod in $(kubectl get pods -n kube-system -l app.kubernetes.io/instance=octelium-multus -o name 2>/dev/null); do
+            name=$(basename "$pod")
+            kubectl logs "$pod" -n kube-system --all-containers --tail=200 \
+              > "$OUT/logs-${name}.txt" 2>&1 || true
+            kubectl logs "$pod" -n kube-system --all-containers --tail=200 --previous \
+              > "$OUT/logs-${name}-previous.txt" 2>&1 || true
+          done
 
           if kubectl get namespace spire >/dev/null 2>&1; then
             kubectl get csidriver -o wide > "$OUT/spire-csidrivers.txt" 2>&1 || true
@@ -169,6 +184,10 @@ jobs:
             sudo docker ps -a > "$OUT/docker-ps.txt" 2>&1 || true
             for c in $(sudo docker ps -a --filter name=^octelium-e2e- --format '{{.Names}}'); do
               sudo docker logs --tail 300 "$c" > "$OUT/node-$c.txt" 2>&1 || true
+            done
+            for c in $(sudo docker ps -a --filter name=^octelium-e2e-agent- --format '{{.Names}}'); do
+              sudo docker inspect "$c" --format '{{json .Mounts}}' > "$OUT/mounts-$c.json" 2>&1 || true
+              sudo docker exec "$c" cat /proc/self/mountinfo > "$OUT/mountinfo-$c.txt" 2>&1 || true
             done
             kubectl get nodes -o wide > "$OUT/nodes.txt" 2>&1 || true
             kubectl describe nodes > "$OUT/describe-nodes.txt" 2>&1 || true

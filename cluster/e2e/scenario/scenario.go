@@ -19,6 +19,8 @@ package scenario
 import (
 	"slices"
 	"time"
+
+	"github.com/octelium/octelium/cluster/common/vutils"
 )
 
 const TestNamespace = "e2e"
@@ -71,6 +73,17 @@ type Topology struct {
 	Nodes       int
 	Labels      []string
 	AgentLabels []string
+}
+
+func (t Topology) DataPlaneNodes() int {
+	var ret int
+	if slices.Contains(t.Labels, vutils.NodeLabelDataPlane) {
+		ret++
+	}
+	if t.Nodes > 1 && slices.Contains(t.AgentLabels, vutils.NodeLabelDataPlane) {
+		ret += t.Nodes - 1
+	}
+	return ret
 }
 
 type MultusOpts struct {

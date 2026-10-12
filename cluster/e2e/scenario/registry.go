@@ -67,6 +67,12 @@ func Build(spec Spec) (*Scenario, error) {
 			Step{Name: "octelium/gateway-hosts", Run: stepGatewayHosts})
 	}
 
+	if spec.DedicatedControlPlane {
+		ret.Topology.Labels = []string{"octelium.com/node", vutils.NodeLabelControlPlane}
+		ret.Description = fmt.Sprintf("%d-node %s with %s, one control-plane node and %d data-plane nodes",
+			spec.Nodes, spec.Distro, spec.CNI, ret.Topology.DataPlaneNodes())
+	}
+
 	if spec.SPIFFE {
 		ret.Description += " and SPIRE"
 		ret.Install.EnableSPIFFECSI = true

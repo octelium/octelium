@@ -17,10 +17,58 @@
 package scenario
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMultusReadiness(t *testing.T) {
+	for _, fail := range []string{"", "helm", "kubectl"} {
+		t.Run("failure="+fail, func(t *testing.T) {
+			commands := map[string]string{}
+			for _, name := range []string{"helm", "kubectl"} {
+				commands[name] = `
+printf '%s\0' "${0##*/}" "$@" >> "$OCTELIUM_E2E_COMMAND_LOG"
+printf '\0' >> "$OCTELIUM_E2E_COMMAND_LOG"
+`
+				if name == fail {
+					commands[name] += "exit 1\n"
+				}
+			}
+			r, logPath := shellRunner(t, commands)
+			r.Scenario = MustGet("k3s-flannel-nodes4-dedicated")
+
+			err := r.stepMultus(t.Context(), r)
+			if fail == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+
+			data, err := os.ReadFile(logPath)
+			require.NoError(t, err)
+			calls := strings.Split(strings.TrimSuffix(string(data), "\x00\x00"), "\x00\x00")
+			helmArgs := strings.Split(calls[0], "\x00")
+			assert.Equal(t, "helm", helmArgs[0])
+			assert.Contains(t, helmArgs, "hostCNIBinDir="+k3sFlannelBinDir)
+			assert.Contains(t, helmArgs, "hostCNINetDir="+k3sFlannelNetDir)
+			assert.Contains(t, helmArgs, `tolerations=[{"key":"octelium.com/gateway-init","operator":"Exists","effect":"NoSchedule"}]`)
+
+			if fail == "helm" {
+				require.Len(t, calls, 1, "a failed chart installation must stop preparation")
+				return
+			}
+			require.Len(t, calls, 2)
+			assert.Equal(t, []string{
+				"kubectl", "rollout", "status", "daemonset", "-n", "kube-system",
+				"-l", "app.kubernetes.io/instance=octelium-multus", "--timeout=10m",
+			}, strings.Split(calls[1], "\x00"), "all Multus pods must be ready before preparation continues")
+		})
+	}
+}
 
 func TestStorageResourcesArgs(t *testing.T) {
 	t.Run("no resources keep the chart preset", func(t *testing.T) {

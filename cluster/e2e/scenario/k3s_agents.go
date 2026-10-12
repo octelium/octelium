@@ -190,8 +190,17 @@ func (p *K3s) stepStartAgents(ctx context.Context, r *Runner) error {
 		return err
 	}
 
-	dataDir := p.agentDataDir()
+	if err := r.Bash(ctx, p.startAgentsScript(serverIP)); err != nil {
+		return errors.Errorf("%+v\n%s", err, p.agentDiagnostics(ctx, r))
+	}
 
+	zap.L().Info("Started the k3s agent nodes",
+		zap.Int("agents", p.Agents), zap.String("server", serverIP))
+
+	return nil
+}
+
+func (p *K3s) startAgentsScript(serverIP string) string {
 	var args []string
 	for _, arg := range p.agentArgs() {
 		args = append(args, shellQuote(arg))
@@ -227,13 +236,13 @@ start_agent() {
     --tmpfs /run --tmpfs /var/run \
     --ulimit nofile=1048576:1048576 \
     -v /lib/modules:/lib/modules:ro \
-    -v %[1]s/"$NAME":/var/lib/rancher/k3s \
+    -v %[1]s/"$NAME":/var/lib/rancher/k3s:rshared \
     -v %[1]s/registries.yaml:/etc/rancher/k3s/registries.yaml:ro \
     -e K3S_URL=https://%[3]s:6443 \
     -e K3S_TOKEN="$TOKEN" \
     "$IMAGE" agent --node-name "$NAME" %[4]s
 }
-`, dataDir, agentNetwork, serverIP, strings.Join(args, " "))
+`, shellQuote(p.agentDataDir()), agentNetwork, serverIP, strings.Join(args, " "))
 
 	for i := 1; i <= p.Agents; i++ {
 		fmt.Fprintf(&b, "start_agent %s\n", AgentName(i))
@@ -242,14 +251,7 @@ start_agent() {
 	b.WriteString(`sudo docker ps --filter name=^` + AgentNamePrefix +
 		` --format '{{.Names}} {{.Status}} {{.Networks}}'` + "\n")
 
-	if err := r.Bash(ctx, b.String()); err != nil {
-		return errors.Errorf("%+v\n%s", err, p.agentDiagnostics(ctx, r))
-	}
-
-	zap.L().Info("Started the k3s agent nodes",
-		zap.Int("agents", p.Agents), zap.String("server", serverIP))
-
-	return nil
+	return b.String()
 }
 
 func (p *K3s) agentDiagnostics(ctx context.Context, r *Runner) string {

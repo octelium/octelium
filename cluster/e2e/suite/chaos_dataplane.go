@@ -210,7 +210,7 @@ func (e *chaosEnv) ensureTarget(t *testing.T) *chaosTarget {
 	upstream, err := harness.NewCountingUpstream(net.JoinHostPort(host, "0"), chaosUpstreamBody)
 	require.NoError(t, err)
 
-	replicas := max(1, h.Scenario.Topology.Nodes)
+	replicas := max(1, h.Scenario.Topology.DataPlaneNodes())
 
 	svc, err := h.CoreC().CreateService(t.Context(), &corev1.Service{
 		Metadata: &metav1.Metadata{Name: fmt.Sprintf("chaos-%s", utilrand.GetRandomStringCanonical(6))},
