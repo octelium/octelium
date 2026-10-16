@@ -30,7 +30,7 @@ func (a *awsFixture) direct(service string, key aws.Credentials) *awsClient {
 
 func (c *awsClient) waitRequest(t *testing.T, h *harness.H, method, path string, want int) {
 	t.Helper()
-	h.Eventually(t, fmt.Sprintf("%s %s to return %d through the public Service", method, path, want),
+	h.Eventually(t, fmt.Sprintf("%s %s to return %d", method, path, want),
 		harness.DecisionBudget, func(ctx context.Context) error {
 			res, err := c.request(ctx, method, path, nil, nil)
 			if err != nil {

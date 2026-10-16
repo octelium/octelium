@@ -200,7 +200,7 @@ func k3sProvisioner(cni CNI) *K3s {
 		InstallExec: []string{"--disable", "traefik"},
 		Packages: []string{
 			"iputils-ping", "postgresql", "jq", "curl",
-			"ssh", "postgresql-client", "mysql-client",
+			"ssh", "postgresql-client", "mysql-client", "socat",
 		},
 		DBHostPath: "/mnt/octelium/db",
 		Paths:      k3sCNIPaths(cni),

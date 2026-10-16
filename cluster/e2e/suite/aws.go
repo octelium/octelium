@@ -84,7 +84,7 @@ func (c *awsClient) mustRequest(t *testing.T, method, path string, body []byte,
 	headers http.Header, status int) *awsResponse {
 	t.Helper()
 	res, err := c.request(t.Context(), method, path, body, headers)
-	require.Nil(t, err)
+	require.Nil(t, err, "%s %s: %v", method, path, err)
 	require.Equal(t, status, res.status, "%s %s: %s", method, path, res.body)
 	return res
 }
@@ -232,13 +232,12 @@ func newAWSFixture(t *testing.T, h *harness.H) *awsFixture {
 		})
 	port := h.Port()
 	h.StartBackground(t, fmt.Sprintf("exec kubectl -n %s port-forward --address 127.0.0.1 svc/fakecloud %d:4566", namespace, port))
-	require.Nil(t, harness.WaitPortOpen(port, harness.DecisionBudget))
 	client := h.HTTPNoRetry().GetClient()
 	t.Cleanup(client.CloseIdleConnections)
-	return &awsFixture{h: h, namespace: namespace, upstream: upstream,
-		admin: &awsClient{endpoint: fmt.Sprintf("http://127.0.0.1:%d", port), service: "iam",
-			client: client, credentials: &aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}},
-	}
+	admin := &awsClient{endpoint: fmt.Sprintf("http://127.0.0.1:%d", port), service: "iam",
+		client: client, credentials: &aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}}
+	admin.waitRequest(t, h, http.MethodGet, "/?Action=ListUsers&Version=2010-05-08", http.StatusOK)
+	return &awsFixture{h: h, namespace: namespace, upstream: upstream, admin: admin}
 }
 
 func (a *awsFixture) identity(t *testing.T, policy string) aws.Credentials {

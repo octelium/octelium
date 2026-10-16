@@ -45,6 +45,39 @@ func shellRunner(t *testing.T, commands map[string]string) (*Runner, string) {
 	}}, logPath
 }
 
+func TestK3sPortForwardDependencies(t *testing.T) {
+	for _, name := range []string{"k3s-flannel", "k3s-cilium", "k3s-calico", "k3s-flannel-nodes4-dedicated", "k3s-flannel-chaos"} {
+		t.Run(name, func(t *testing.T) {
+			r, logPath := shellRunner(t, map[string]string{
+				"sudo": `
+printf '%s\0' "$@" >> "$OCTELIUM_E2E_COMMAND_LOG"
+printf '\0' >> "$OCTELIUM_E2E_COMMAND_LOG"
+`,
+			})
+			r.Scenario = MustGet(name)
+			p := r.Scenario.Provisioner.(*K3s)
+			require.NoError(t, p.stepPackages(t.Context(), r))
+			data, err := os.ReadFile(logPath)
+			require.NoError(t, err)
+			calls := strings.Split(strings.TrimSuffix(string(data), "\x00\x00"), "\x00\x00")
+			require.Len(t, calls, 2)
+			args := strings.Split(calls[1], "\x00")
+			require.GreaterOrEqual(t, len(args), 4)
+			assert.Equal(t, []string{"apt-get", "install", "-y"}, args[:3])
+			assert.Contains(t, args[3:], "socat", "the Docker runtime needs socat on the node for pod port-forwarding")
+			var steps []string
+			for _, step := range p.provisionSteps() {
+				steps = append(steps, step.Name)
+			}
+			packages := slices.Index(steps, "host/packages")
+			start := slices.Index(steps, "k3s/start")
+			require.NotEqual(t, -1, packages)
+			require.NotEqual(t, -1, start)
+			assert.Less(t, packages, start, "runtime dependencies must be installed before k3s starts")
+		})
+	}
+}
+
 func TestStartAgentsScript(t *testing.T) {
 	r, logPath := shellRunner(t, map[string]string{
 		"k3s": `echo 'k3s version v1.34.1+k3s1 (test)'`,
