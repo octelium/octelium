@@ -5,6 +5,7 @@ go 1.26.8
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
+	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/descope/virtualwebauthn v1.0.4
 	github.com/elastic/go-elasticsearch/v9 v9.1.0
 	github.com/go-jose/go-jose/v4 v4.1.4
@@ -46,6 +47,7 @@ require (
 	filippo.io/edwards25519 v1.1.1 // indirect
 	github.com/ClickHouse/ch-go v0.68.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/boombuler/barcode v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chzyer/readline v1.5.0 // indirect

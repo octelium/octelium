@@ -255,7 +255,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 					return
 				}
 
-				signer := sigv4.NewSigner()
+				signer := sigv4.NewSigner(func(o *sigv4.SignerOptions) {
+					o.DisableURIPathEscaping = sigv4Opts.Service == "s3"
+				})
 
 				payloadHash := fmt.Sprintf(
 					"%x",

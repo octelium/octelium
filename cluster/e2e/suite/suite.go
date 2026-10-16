@@ -56,6 +56,7 @@ func Phases() []Phase {
 		{"VigilServiceState", testVigilServiceState},
 		{"VigilSecretManager", testVigilSecretManager},
 		{"VigilSecretLifecycle", testVigilSecretLifecycle},
+		{"VigilAWS", testVigilAWS},
 		{"VigilLoadBalancer", testVigilLoadBalancer},
 		{"VigilLoadBalancerUpdates", testVigilLoadBalancerUpdates},
 		{"VigilDNS", testVigilDNS},
