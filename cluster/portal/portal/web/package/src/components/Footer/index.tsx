@@ -1,47 +1,17 @@
-import { BsGithub } from "react-icons/bs";
-import { twMerge } from "tailwind-merge";
-
-const Footer = () => {
-  return (
-    <div className="w-full mb-12 mt-6 pt-8 bg-inherit">
-      <div className="w-full px-6 flex flex-col items-center">
-        <div className="flex flex-wrap items-center justify-center">
-          <span className="text-sm text-fg-muted font-bold">
-            Octelium is Free and Open Source Software
-          </span>
-
-          <a
-            target="_blank"
-            aria-label="Octelium on GitHub"
-            className={twMerge(
-              "font-extrabold text-sm md:text-xl",
-              "mx-4 my-1",
-              "transition-all duration-500",
-              "text-fg-subtle hover:text-fg",
-            )}
-            href="https://github.com/octelium/octelium"
-          >
-            <BsGithub aria-hidden />
-          </a>
-        </div>
-
-        <div className="flex flex-col lg:flex-row items-center justify-center gap-x-3">
-          <a href="https://octelium.com" target="_blank">
-            <span className="flex items-center text-sm font-semibold transition-all duration-300 text-fg-subtle hover:text-fg-muted">
-              © {new Date().getUTCFullYear()}{" "}
-              <span className="ml-1">octelium.com</span>
-            </span>
-          </a>
-          <span className="text-fg-subtle text-sm font-bold">
-            Octelium Labs, LLC
-          </span>
-          <span className="text-fg-subtle text-sm font-bold">
-            All rights reserved
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};
+const Footer = () => (
+  <footer className="mt-auto flex w-full flex-col items-center justify-center gap-x-1.5 gap-y-1 pb-6 pt-10 text-xs font-normal text-slate-500 sm:flex-row">
+    <span>Octelium is free and open source software</span>
+    <span aria-hidden className="hidden text-slate-300 sm:inline">
+      ·
+    </span>
+    <a
+      href="https://octelium.com"
+      target="_blank"
+      className="rounded transition-colors duration-150 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    >
+      © {new Date().getFullYear()} Octelium Labs, LLC
+    </a>
+  </footer>
+);
 
 export default Footer;

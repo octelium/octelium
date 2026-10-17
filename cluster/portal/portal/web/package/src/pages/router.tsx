@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
-import { RouteObject } from "react-router-dom";
-import Home from "./Home";
+import { NotFoundPage, RouteError } from "@/components/RouteError";
+import { Navigate, RouteObject } from "react-router-dom";
 import Root from "./index";
 import routerNamespaces from "./Namespaces/router";
 import routerServices from "./Services/router";
@@ -13,12 +13,21 @@ export default (): RouteObject => {
     element: <Root />,
     children: [
       {
-        path: "",
-        element: <Home />,
+        errorElement: <RouteError />,
+        children: [
+          {
+            index: true,
+            element: <Navigate to="/services" replace />,
+          },
+          routerServices(),
+          routerNamespaces(),
+          routerSettings(),
+          {
+            path: "*",
+            element: <NotFoundPage />,
+          },
+        ],
       },
-      routerServices(),
-      routerNamespaces(),
-      routerSettings(),
     ],
   };
 };

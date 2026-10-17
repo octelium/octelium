@@ -11,7 +11,7 @@ export const useFilterParams = () => {
   const location = useLocation();
   const [searchParams] = useSearchParams();
 
-  const setParams = useCallback(
+  const buildURL = useCallback(
     (updates: Record<string, string | null>) => {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("common.page");
@@ -25,10 +25,23 @@ export const useFilterParams = () => {
       }
 
       const query = nextParams.toString();
-      navigate(`${location.pathname}${query ? `?${query}` : ""}`);
+      return `${location.pathname}${query ? `?${query}` : ""}`;
     },
-    [location.pathname, navigate, searchParams],
+    [location.pathname, searchParams],
   );
 
-  return { searchParams, setParams };
+  const setParams = useCallback(
+    (
+      updates: Record<string, string | null>,
+      options?: { replace?: boolean },
+    ) => {
+      navigate(buildURL(updates), {
+        replace: options?.replace,
+        preventScrollReset: true,
+      });
+    },
+    [buildURL, navigate],
+  );
+
+  return { searchParams, setParams, buildURL };
 };

@@ -1,21 +1,28 @@
-import {
-  EmptyState,
-  ErrorState,
-  ResourceListSkeleton,
-} from "@/components/AsyncState";
-import CopyText from "@/components/CopyText";
 import HighlightText from "@/components/HighlightText";
-import InfoItem from "@/components/InfoItem";
-import PageHeader from "@/components/PageHeader";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
 import {
-  ResourceListItem,
   ResourceListLabel,
-  ResourceListWrapper,
+  ResourceListLabelWrap,
 } from "@/components/ResourceList";
-import ResourceName from "@/components/ResourceName";
 import SearchField from "@/components/SearchField";
+import { twMerge } from "@/lib/utils";
+import {
+  Card,
+  CopyButton,
+  CopyValue,
+  CountPill,
+  DocumentTitle,
+  EmptyState,
+  ErrorState,
+  IconTile,
+  InfoGrid,
+  KeyValue,
+  Note,
+  PageHeader,
+  RefreshButton,
+  SkeletonRows,
+} from "@/ui";
 import {
   getDomain,
   matchesAllTokens,
@@ -28,14 +35,14 @@ import {
   getServiceHostname,
   getServicePrivateFQDN,
   getServicePublicFQDN,
+  getServicePublicURL,
 } from "@/utils/octelium";
 import {
   getServiceTypeByKey,
   getServiceTypeInfo,
   SERVICE_TYPE_OPTIONS,
-  type ServiceTypeInfo,
 } from "@/utils/octelium/serviceTypes";
-import { Button, Collapse, Select } from "@mantine/core";
+import { ActionIcon, Button, Collapse, Select } from "@mantine/core";
 import {
   CommonListOptions_OrderBy_Mode,
   CommonListOptions_OrderBy_Type,
@@ -49,15 +56,17 @@ import {
 } from "@octelium/apis/main/userv1";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowUpRight,
   ChevronDown,
+  FilterX,
   Globe,
+  Lock,
+  PanelTop,
   SearchX,
-  ShieldCheck,
   X,
 } from "lucide-react";
 import * as React from "react";
-import { twMerge } from "tailwind-merge";
 import ConnectCommand from "./ConnectCommand";
 
 const SEARCH_FETCH_LIMIT = 500;
@@ -71,149 +80,238 @@ const namespaceOptions = ListNamespaceOptions.create({
   common: { page: 0, itemsPerPage: 500, orderBy: ORDER_BY_NAME },
 });
 
-const Mono = (props: { children?: React.ReactNode }) => (
-  <span className="font-mono text-[13px] break-all">{props.children}</span>
+const typeOptionIcons = new Map(
+  SERVICE_TYPE_OPTIONS.map((option) => [
+    option.value,
+    getServiceTypeByKey(option.value)!.icon,
+  ]),
 );
 
-const ServiceTypeTile = (props: { info: ServiceTypeInfo }) => (
-  <div
-    className={twMerge(
-      "flex h-11 w-11 flex-none items-center justify-center rounded-full",
-      "shadow-xs ring-1",
-      props.info.tile,
-    )}
-    role="img"
-    aria-label={`${props.info.label} service`}
-    title={props.info.label}
-  >
-    <props.info.icon size={22} className="text-accent-fg" aria-hidden />
-  </div>
-);
-
-const ItemDetails = (props: { item: Service; domain: string }) => {
+const ServiceDetails = (props: { item: Service; domain: string }) => {
   const { item, domain } = props;
-  const metadata = item.metadata;
   const addresses = item.status?.addresses ?? [];
+  const publicURL = item.spec?.isPublic
+    ? getServicePublicURL(item, domain)
+    : undefined;
 
   return (
-    <div className="mt-4 rounded-xl border border-line bg-surface-muted/80 p-4">
-      {metadata?.description && (
-        <p className="mb-4 text-sm font-medium text-fg-muted">
-          {metadata.description}
-        </p>
-      )}
-      <dl className="grid gap-4 sm:grid-cols-2">
-        <InfoItem title="Private FQDN">
-          <Mono>
-            <CopyText value={getServicePrivateFQDN(item, domain)} />
-          </Mono>
-        </InfoItem>
-        {item.spec?.isPublic && (
-          <InfoItem title="Public FQDN">
-            <Mono>
-              <CopyText value={getServicePublicFQDN(item, domain)} />
-            </Mono>
-          </InfoItem>
+    <div className="@container border-t border-slate-100 px-4 pb-4 pt-3.5 sm:pl-16">
+      <InfoGrid>
+        <KeyValue label="Private hostname">
+          <CopyValue
+            value={getServicePrivateFQDN(item, domain)}
+            copyLabel="Copy private hostname"
+          />
+        </KeyValue>
+        {publicURL && (
+          <KeyValue label="Public URL">
+            <span className="inline-flex min-w-0 items-center gap-1">
+              <a
+                href={publicURL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded font-mono text-xs font-medium text-blue-700 underline-offset-2 outline-none [overflow-wrap:anywhere] hover:underline focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                {publicURL}
+              </a>
+              <CopyButton value={publicURL} label="Copy public URL" />
+            </span>
+          </KeyValue>
         )}
-        <InfoItem title="Resource name">
-          <Mono>
-            <CopyText value={metadata?.name} />
-          </Mono>
-        </InfoItem>
+        <KeyValue label="Resource name">
+          <CopyValue
+            value={item.metadata?.name ?? ""}
+            copyLabel="Copy resource name"
+          />
+        </KeyValue>
         {addresses.length > 0 && (
-          <InfoItem title="Private addresses" className="sm:col-span-2">
-            <div className="flex flex-wrap gap-x-8 gap-y-1">
-              {addresses.map((address) => (
-                <Mono key={address}>
-                  <CopyText value={address} />
-                </Mono>
-              ))}
-            </div>
-          </InfoItem>
+          <KeyValue label="Private addresses" full>
+            {addresses.map((address) => (
+              <CopyValue
+                key={address}
+                value={address}
+                copyLabel={`Copy ${address}`}
+              />
+            ))}
+          </KeyValue>
         )}
-      </dl>
-      <ConnectCommand service={item} domain={domain} />
+      </InfoGrid>
+      <ConnectCommand service={item} domain={domain} className="mt-4" />
     </div>
   );
 };
 
-const ServiceItem = (props: {
+const ServiceRow = (props: {
   item: Service;
   domain: string;
   tokens: string[];
+  namespaceFilter: string;
+  typeFilter?: string;
+  buildURL: (updates: Record<string, string | null>) => string;
 }) => {
   const { item, domain, tokens } = props;
   const metadata = item.metadata;
   const [expanded, setExpanded] = React.useState(false);
+  const detailsId = React.useId();
   const typeInfo = getServiceTypeInfo(item);
   const hostname = getServiceHostname(item);
-  const subtitle = metadata?.displayName || metadata?.description || "";
-  const detailsId = `service-details-${metadata?.uid ?? hostname}`;
+  const separatorIndex = hostname.indexOf(".");
+  const name =
+    separatorIndex > 0 ? hostname.slice(0, separatorIndex) : hostname;
+  const suffix = separatorIndex > 0 ? hostname.slice(separatorIndex) : "";
+  const displayName = metadata?.displayName;
+  const description = metadata?.description;
   const namespace = item.status?.namespace;
-  const privateFQDN = getServicePrivateFQDN(item, domain);
   const canVisit =
     item.spec?.isPublic &&
     (item.spec.type === Service_Spec_Type.WEB ||
       item.spec.type === Service_Spec_Type.RDP_WEB);
 
-  const toggleExpandedFromRow = (event: React.MouseEvent<HTMLElement>) => {
+  const toggleFromRow = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
-    if (target.closest("a, button, input, select, textarea, [role='button']")) {
+    if (
+      target.closest("a, button, input, select, textarea, [role='button']") ||
+      window.getSelection()?.toString()
+    ) {
       return;
     }
     setExpanded((value) => !value);
   };
 
   return (
-    <ResourceListItem
-      className={
-        expanded ? "border-line-strong shadow-md shadow-slate-900/5" : undefined
-      }
-    >
-      <div
-        className="flex cursor-pointer items-start gap-3 sm:gap-4"
-        onClick={toggleExpandedFromRow}
+    <li>
+      <Card
+        interactive
+        className={twMerge(
+          "group/row",
+          expanded && "border-slate-300 shadow-raised",
+        )}
       >
-        <ServiceTypeTile info={typeInfo} />
+        <div
+          className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 px-4 py-3.5"
+          onClick={toggleFromRow}
+        >
+          <IconTile className="sm:row-span-2">
+            <typeInfo.icon size={16} strokeWidth={1.9} aria-hidden />
+          </IconTile>
 
-        <div className="min-w-0 flex-1">
-          <ResourceName
-            name={hostname}
-            splitNamespace
-            copyValue={privateFQDN}
-            highlight={tokens}
-          />
-          {subtitle && (
-            <p className="mt-0.5 truncate text-sm font-medium text-fg-subtle">
-              <HighlightText text={subtitle} tokens={tokens} />
-            </p>
-          )}
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 truncate text-sm font-semibold text-slate-900">
+                <HighlightText text={name} tokens={tokens} />
+                {suffix && (
+                  <span className="font-normal text-slate-400">
+                    <HighlightText text={suffix} tokens={tokens} />
+                  </span>
+                )}
+              </span>
+              <CopyButton
+                value={getServicePrivateFQDN(item, domain)}
+                label="Copy private hostname"
+                className="shrink-0"
+              />
+              {displayName && (
+                <span className="hidden min-w-0 truncate text-sm font-normal text-slate-500 sm:inline">
+                  <HighlightText text={displayName} tokens={tokens} />
+                </span>
+              )}
+            </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <ResourceListLabel
-              className={typeInfo.chip}
-              title={`Service type: ${typeInfo.label}`}
+            {(description || displayName) && (
+              <p
+                className={twMerge(
+                  "truncate text-xs font-normal leading-5 text-slate-500",
+                  !description && "sm:hidden",
+                )}
+              >
+                {displayName && (
+                  <span className="sm:hidden">
+                    <HighlightText text={displayName} tokens={tokens} />
+                    {description && (
+                      <span aria-hidden className="mx-1.5 text-slate-300">
+                        ·
+                      </span>
+                    )}
+                  </span>
+                )}
+                {description && (
+                  <HighlightText text={description} tokens={tokens} />
+                )}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1 sm:row-span-2">
+            {canVisit && (
+              <Button
+                component="a"
+                href={`https://${getServicePublicFQDN(item, domain)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="default"
+                size="xs"
+                rightSection={<ArrowUpRight size={13} strokeWidth={2.25} />}
+                aria-label={`Open ${hostname} in a new tab`}
+              >
+                Open
+              </Button>
+            )}
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size={30}
+              aria-controls={detailsId}
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Hide" : "Show"} details of ${hostname}`}
+              onClick={() => setExpanded((value) => !value)}
             >
-              {typeInfo.label}
-            </ResourceListLabel>
+              <ChevronDown
+                size={16}
+                strokeWidth={2.25}
+                className={twMerge(
+                  "text-slate-500 transition-transform duration-200",
+                  expanded && "rotate-180",
+                )}
+                aria-hidden
+              />
+            </ActionIcon>
+          </div>
+
+          <ResourceListLabelWrap className="col-span-3 mt-2 sm:col-span-1 sm:col-start-2">
+            {typeInfo.key !== "UNSET" && (
+              <ResourceListLabel
+                label="Type"
+                title={`Show only ${typeInfo.label} Services`}
+                to={
+                  props.typeFilter === typeInfo.key
+                    ? undefined
+                    : props.buildURL({ type: typeInfo.key })
+                }
+              >
+                <HighlightText text={typeInfo.label} tokens={tokens} />
+              </ResourceListLabel>
+            )}
             {namespace && (
               <ResourceListLabel
-                label="ns"
-                to={`/services?namespace=${encodeURIComponent(namespace)}`}
-                title={`Show every Service in the ${namespace} Namespace`}
+                label="Namespace"
+                title={`Show only the Services of the ${namespace} Namespace`}
+                to={
+                  props.namespaceFilter === namespace
+                    ? undefined
+                    : props.buildURL({ namespace })
+                }
               >
                 <HighlightText text={namespace} tokens={tokens} />
               </ResourceListLabel>
             )}
             {item.spec?.port ? (
-              <ResourceListLabel label="port" title="Service port">
-                {item.spec.port}
+              <ResourceListLabel label="Port">
+                <span className="tabular-nums">{item.spec.port}</span>
               </ResourceListLabel>
             ) : null}
             {item.spec?.isTLS && (
               <ResourceListLabel
-                tone="emerald"
-                icon={<ShieldCheck size={12} aria-hidden />}
+                icon={<Lock aria-hidden />}
                 title="This Service is served over TLS"
               >
                 TLS
@@ -221,60 +319,25 @@ const ServiceItem = (props: {
             )}
             {item.spec?.isPublic && (
               <ResourceListLabel
-                tone="sky"
-                icon={<Globe size={12} aria-hidden />}
+                icon={<Globe aria-hidden />}
                 title="This Service is publicly accessible without the Octelium client"
               >
                 Public
               </ResourceListLabel>
             )}
-          </div>
+          </ResourceListLabelWrap>
         </div>
 
-        <div className="flex flex-none items-center justify-end gap-2 xl:min-w-[7.75rem]">
-          {canVisit && (
-            <a
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 text-[13px] font-bold text-accent-fg shadow-sm transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              href={`https://${getServicePublicFQDN(item, domain)}`}
-              target="_blank"
-              title="Open this Service in a new tab"
-            >
-              <span className="hidden sm:inline">Open</span>
-              <ArrowUpRight size={15} aria-hidden />
-            </a>
-          )}
-          <button
-            type="button"
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface text-fg-subtle transition-colors hover:border-line-strong hover:bg-surface-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            aria-controls={detailsId}
-            aria-expanded={expanded}
-            aria-label={
-              expanded ? "Hide service details" : "Show service details"
-            }
-            title={expanded ? "Hide details" : "Show details"}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            <ChevronDown
-              size={18}
-              className={twMerge(
-                "transition-transform duration-200",
-                expanded && "rotate-180",
-              )}
-              aria-hidden
-            />
-          </button>
-        </div>
-      </div>
-
-      <Collapse
-        id={detailsId}
-        expanded={expanded}
-        transitionDuration={200}
-        keepMounted={false}
-      >
-        <ItemDetails item={item} domain={domain} />
-      </Collapse>
-    </ResourceListItem>
+        <Collapse
+          id={detailsId}
+          expanded={expanded}
+          transitionDuration={200}
+          keepMounted={false}
+        >
+          <ServiceDetails item={item} domain={domain} />
+        </Collapse>
+      </Card>
+    </li>
   );
 };
 
@@ -283,16 +346,19 @@ const FilterChip = (props: {
   value: string;
   onClear: () => void;
 }) => (
-  <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-strong py-1 pr-1 pl-2 text-xs font-semibold text-fg-muted ring-1 ring-line">
-    <span className="font-medium text-fg-faint">{props.label}</span>
-    <span className="max-w-[14rem] truncate">{props.value}</span>
+  <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white py-0.5 pl-2 pr-0.5 text-micro font-medium leading-4 text-slate-600 shadow-card">
+    <span className="shrink-0 font-semibold text-slate-500">
+      {props.label}:
+    </span>
+    <span className="min-w-0 truncate">{props.value}</span>
     <button
       type="button"
-      aria-label={`Clear the ${props.label} filter`}
-      className="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-fg-faint transition-colors hover:bg-line-strong/60 hover:text-fg"
+      aria-label={`Remove the ${props.label} filter`}
+      title={`Remove the ${props.label} filter`}
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
       onClick={props.onClear}
     >
-      <X size={12} aria-hidden />
+      <X size={10} strokeWidth={2.5} aria-hidden />
     </button>
   </span>
 );
@@ -327,7 +393,7 @@ const Page = () => {
   const itemsPerPage = useAppSelector(
     (state) => state.settings.itemsPerPage ?? 10,
   );
-  const { searchParams, setParams } = useFilterParams();
+  const { searchParams, setParams, buildURL } = useFilterParams();
   const domain = getDomain();
 
   const namespace = searchParams.get("namespace") ?? "";
@@ -371,7 +437,7 @@ const Page = () => {
   });
 
   const onSearchChange = React.useCallback(
-    (value: string) => setParams({ q: value }),
+    (value: string) => setParams({ q: value }, { replace: true }),
     [setParams],
   );
 
@@ -409,169 +475,237 @@ const Page = () => {
         label: printResourceNameWithDisplay(item.metadata!),
       })) ?? [];
 
+  if (namespace && !namespaceData.some((item) => item.value === namespace)) {
+    namespaceData.unshift({ value: namespace, label: namespace });
+  }
+
   const hasFilters = isSearching || namespace !== "" || typeInfo !== undefined;
   const isTruncatedSearch = isSearching && totalCount > items.length;
+  const clearFilters = () =>
+    setParams({ q: null, namespace: null, type: null });
 
   return (
-    <>
-      <title>Services - Octelium Portal</title>
+    <div className="w-full">
+      <DocumentTitle title="Services" />
       <PageHeader
         title="Services"
-        description="Discover and connect to the Services available in the Cluster."
-        actions={<PageSizeSelect />}
+        addon={
+          query.isSuccess ? (
+            <CountPill count={totalCount} label="Services" />
+          ) : undefined
+        }
+        description="Discover the Services available to you and how to connect to them."
+        actions={
+          <RefreshButton
+            label="Refresh Services"
+            onClick={() => query.refetch()}
+            loading={query.isFetching && !query.isPending}
+          />
+        }
       />
 
-      <div className="mb-4 rounded-xl border border-line bg-surface p-3 shadow-xs sm:p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+      <div className="z-20 -mx-1 mb-4 flex flex-col gap-2.5 border-b border-slate-200 bg-canvas px-1 pb-3 sm:sticky sm:top-[60px] sm:pt-3 sm:supports-[backdrop-filter]:bg-canvas/85 sm:supports-[backdrop-filter]:backdrop-blur">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <SearchField
             className="min-w-0 flex-1"
             label="Search Services"
-            placeholder="Search by name, Namespace, type, port or address…"
+            placeholder="Search by name, Namespace, type, port or address"
             value={search}
             onChange={onSearchChange}
           />
-          <Select
-            className="md:w-56"
-            clearable
-            searchable
-            label="Namespace"
-            placeholder="All Namespaces"
-            data={namespaceData}
-            value={namespace || null}
-            onChange={(value) => setParams({ namespace: value })}
-          />
-          <Select
-            className="md:w-48"
-            clearable
-            label="Type"
-            placeholder="All types"
-            data={SERVICE_TYPE_OPTIONS}
-            value={typeInfo?.key ?? null}
-            onChange={(value) => setParams({ type: value })}
-          />
+          <div className="grid grid-cols-2 gap-2 lg:flex lg:shrink-0">
+            <Select
+              className="min-w-0 lg:w-52"
+              aria-label="Filter by Namespace"
+              placeholder="All Namespaces"
+              searchable
+              clearable
+              clearSectionMode="clear"
+              nothingFoundMessage="No matching Namespaces"
+              data={namespaceData}
+              value={namespace || null}
+              onChange={(value) => setParams({ namespace: value })}
+            />
+            <Select
+              className="min-w-0 lg:w-44"
+              aria-label="Filter by type"
+              placeholder="All types"
+              clearable
+              clearSectionMode="clear"
+              data={SERVICE_TYPE_OPTIONS}
+              value={typeInfo?.key ?? null}
+              onChange={(value) => setParams({ type: value })}
+              renderOption={({ option }) => {
+                const Icon = typeOptionIcons.get(option.value);
+                return (
+                  <span className="flex items-center gap-2">
+                    {Icon && (
+                      <Icon
+                        size={14}
+                        strokeWidth={2}
+                        className="shrink-0 opacity-70"
+                      />
+                    )}
+                    {option.label}
+                  </span>
+                );
+              }}
+            />
+          </div>
         </div>
 
         {hasFilters && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line-soft pt-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-0.5 text-micro font-semibold uppercase tracking-[0.06em] text-slate-500">
+              Filters
+            </span>
             {isSearching && (
               <FilterChip
-                label="search"
+                label="Search"
                 value={search}
                 onClear={() => setParams({ q: null })}
               />
             )}
             {namespace && (
               <FilterChip
-                label="ns"
+                label="Namespace"
                 value={namespace}
                 onClear={() => setParams({ namespace: null })}
               />
             )}
             {typeInfo && (
               <FilterChip
-                label="type"
+                label="Type"
                 value={typeInfo.label}
                 onClear={() => setParams({ type: null })}
               />
             )}
             <button
               type="button"
-              className="ml-auto cursor-pointer text-xs font-bold text-fg-subtle underline-offset-4 transition-colors hover:text-fg hover:underline"
-              onClick={() =>
-                setParams({ q: null, namespace: null, type: null })
-              }
+              className="ml-1.5 rounded text-xs font-semibold text-slate-600 transition-colors hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              onClick={clearFilters}
             >
-              Clear all
+              Clear filters
             </button>
           </div>
         )}
       </div>
 
-      {query.isPending && <ResourceListSkeleton />}
-      {query.isError && (
+      {query.isError && query.data && (
+        <Note
+          tone="amber"
+          icon={<AlertTriangle size={14} aria-hidden />}
+          className="mb-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span role="alert">
+              Refreshing failed. Showing the last loaded Services.
+            </span>
+            <button
+              type="button"
+              className="rounded font-semibold underline-offset-2 hover:underline"
+              onClick={() => query.refetch()}
+            >
+              Retry
+            </button>
+          </div>
+        </Note>
+      )}
+
+      {isTruncatedSearch && (
+        <Note icon={<AlertTriangle size={14} aria-hidden />} className="mb-3">
+          Search covers the first {SEARCH_FETCH_LIMIT.toLocaleString()} of{" "}
+          {totalCount.toLocaleString()} Services. Narrow it down with the
+          Namespace or type filters.
+        </Note>
+      )}
+
+      {query.isPending ? (
+        <SkeletonRows rows={6} label="Loading Services" />
+      ) : query.isError && !query.data ? (
         <ErrorState
-          message="We could not load Services right now."
+          title="Could not load Services"
+          error={query.error}
           onRetry={() => query.refetch()}
         />
-      )}
-      {query.isSuccess && (
+      ) : (
         <div
           className={twMerge(
             "transition-opacity duration-200",
             query.isPlaceholderData && "opacity-60",
           )}
+          aria-busy={query.isPlaceholderData || undefined}
         >
-          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-0.5">
-            <p className="text-xs font-bold text-fg-subtle">
-              {isSearching
-                ? `${visibleItems.length} of ${totalCount} ${
-                    totalCount === 1 ? "Service" : "Services"
-                  } ${visibleItems.length === 1 ? "matches" : "match"}`
-                : `${totalCount} ${totalCount === 1 ? "Service" : "Services"}`}
-            </p>
-            {isTruncatedSearch && (
-              <p className="text-xs font-semibold text-amber-600">
-                Only the first {SEARCH_FETCH_LIMIT} Services are searched
-              </p>
-            )}
-          </div>
-
           {visibleItems.length === 0 ? (
-            isSearching ? (
+            <Card>
               <EmptyState
-                icon={<SearchX size={22} aria-hidden />}
-                title="No Services match your search"
-                message={`Nothing matched “${search}”. Try another name, Namespace or type.`}
-                action={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setParams({ q: null })}
-                  >
-                    Clear search
-                  </Button>
+                icon={
+                  hasFilters ? (
+                    isSearching ? (
+                      <SearchX size={18} strokeWidth={2} />
+                    ) : (
+                      <FilterX size={18} strokeWidth={2} />
+                    )
+                  ) : (
+                    <PanelTop size={18} strokeWidth={2} />
+                  )
                 }
-              />
-            ) : (
-              <EmptyState
-                title="No Services found"
-                message={
-                  hasFilters
-                    ? "No Service matches the current filters."
-                    : "There are no Services available to your account yet."
+                title={
+                  hasFilters ? "No matching Services" : "No Services available"
+                }
+                description={
+                  isSearching
+                    ? `Nothing matched “${search}”. Try another name, Namespace or type.`
+                    : hasFilters
+                      ? "No Service matches the current filters."
+                      : "There are no Services available to your account yet."
                 }
                 action={
                   hasFilters ? (
                     <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setParams({ q: null, namespace: null, type: null })
-                      }
+                      variant="default"
+                      leftSection={<FilterX size={14} strokeWidth={2.25} />}
+                      onClick={clearFilters}
                     >
                       Clear filters
                     </Button>
                   ) : undefined
                 }
               />
-            )
+            </Card>
           ) : (
-            <ResourceListWrapper>
+            <ul aria-label="Services" className="flex flex-col gap-2">
               {visibleItems.map((item, index) => (
-                <ServiceItem
+                <ServiceRow
                   item={item}
                   domain={domain}
                   tokens={tokens}
+                  namespaceFilter={namespace}
+                  typeFilter={typeInfo?.key}
+                  buildURL={buildURL}
                   key={item.metadata?.uid || item.metadata?.name || index}
                 />
               ))}
-            </ResourceListWrapper>
+            </ul>
           )}
 
-          {!isSearching && <Paginator meta={meta} />}
+          {isSearching ? (
+            visibleItems.length > 0 && (
+              <p className="mt-5 text-xs font-normal tabular-nums text-slate-600">
+                {visibleItems.length.toLocaleString()} of{" "}
+                {items.length.toLocaleString()}{" "}
+                {items.length === 1 ? "Service" : "Services"}{" "}
+                {visibleItems.length === 1 ? "matches" : "match"}
+              </p>
+            )
+          ) : (
+            <Paginator meta={meta}>
+              <PageSizeSelect />
+            </Paginator>
+          )}
         </div>
       )}
-    </>
+    </div>
   );
 };
 

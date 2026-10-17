@@ -7,7 +7,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", ".eslintrc.cjs"],
+    ignores: ["dist/**", "node_modules/**", "tmp/**", ".eslintrc.cjs"],
   },
   eslint.configs.recommended,
   {
@@ -31,6 +31,12 @@ export default [
         "warn",
         { allowConstantExport: true },
       ],
+    },
+  },
+  {
+    files: ["tests/**/*.mjs"],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
     },
   },
 ];

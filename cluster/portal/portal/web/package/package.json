@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "test": "node --test tests/*.test.mjs",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "build-dev": "tsc && vite build --mode development",
     "build-staging": "tsc && vite build --mode staging"
@@ -19,8 +20,6 @@
     "@protobuf-ts/grpcweb-transport": "^2.11.1",
     "@reduxjs/toolkit": "^2.12.0",
     "@tanstack/react-query": "^5.102.4",
-    "dayjs": "^1.11.23",
-    "framer-motion": "^13.1.1",
     "lucide-react": "^1.34.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -43,6 +42,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.11.0",
+    "playwright": "1.63.0",
     "postcss": "^8.5.26",
     "rollup-plugin-visualizer": "^7.1.1",
     "tailwindcss": "^4.3.3",

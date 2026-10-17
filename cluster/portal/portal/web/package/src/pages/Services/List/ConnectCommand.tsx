@@ -1,8 +1,10 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Check, Copy } from "lucide-react";
+import { useReducedMotion } from "@mantine/hooks";
+import { Check, Copy, SquareTerminal, X } from "lucide-react";
 import * as React from "react";
 import { match } from "ts-pattern";
 
+import { twMerge } from "@/lib/utils";
+import { useCopy } from "@/ui/copy";
 import { getServicePrivateFQDN } from "@/utils/octelium";
 import { Service, Service_Spec_Type } from "@octelium/apis/main/userv1";
 
@@ -57,144 +59,209 @@ const buildConnectCommand = (
     .otherwise(() => null);
 };
 
-const Cursor = (props: { blink: boolean }) =>
-  props.blink ? (
-    <motion.span
-      className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-terminal-accent"
-      animate={{ opacity: [1, 1, 0, 0] }}
-      transition={{
-        duration: 1.1,
-        repeat: Infinity,
-        ease: "linear",
-        times: [0, 0.5, 0.5, 1],
-      }}
-    />
-  ) : (
-    <span className="ml-0.5 inline-block h-[1.05em] w-[0.5ch] translate-y-[0.15em] bg-terminal-accent" />
-  );
+type TokenKind = "program" | "flag" | "target" | "arg";
 
-const ConnectCommand = (props: { service: Service; domain: string }) => {
-  const reduced = useReducedMotion();
+const TOKEN_CLASSES: Record<TokenKind, string> = {
+  program: "font-semibold text-terminal-bright",
+  flag: "text-terminal-flag",
+  target: "text-terminal-target",
+  arg: "text-terminal-text",
+};
+
+const TYPING_DELAY = 240;
+const TYPING_DURATION = 720;
+
+const getTokenKind = (text: string, index: number): TokenKind | undefined => {
+  if (/^\s+$/.test(text)) {
+    return undefined;
+  }
+  if (index === 0) {
+    return "program";
+  }
+  if (text.startsWith("-")) {
+    return "flag";
+  }
+  return /[.:/@]/.test(text) ? "target" : "arg";
+};
+
+const renderTokens = (command: string, limit: number) => {
+  let offset = 0;
+
+  return command
+    .split(/(\s+)/)
+    .filter(Boolean)
+    .map((token, index) => {
+      const text = token.slice(0, Math.max(limit - offset, 0));
+      const kind = getTokenKind(token, index);
+      offset += token.length;
+
+      return text ? (
+        <span key={index} className={kind && TOKEN_CLASSES[kind]}>
+          {text}
+        </span>
+      ) : null;
+    });
+};
+
+const useTypedLength = (length: number, enabled: boolean) => {
+  const [typed, setTyped] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const step = Math.min(Math.max(TYPING_DURATION / length, 14), 32);
+    let start: number | undefined;
+    let frame = window.requestAnimationFrame(function tick(now) {
+      start ??= now;
+      const next = Math.min(
+        Math.floor(Math.max(now - start - TYPING_DELAY, 0) / step),
+        length,
+      );
+      setTyped(next);
+      if (next < length) {
+        frame = window.requestAnimationFrame(tick);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [enabled, length]);
+
+  return enabled ? typed : length;
+};
+
+const Caret = (props: { blink: boolean }) => (
+  <span
+    aria-hidden
+    className={twMerge(
+      "ml-px -mr-[calc(0.55em+1px)] inline-block h-[1.15em] w-[0.55em] rounded-[1px] bg-terminal-text/85 align-[-0.2em]",
+      props.blink && "animate-terminal-caret",
+    )}
+  />
+);
+
+const ConnectCommand = (props: {
+  service: Service;
+  domain: string;
+  className?: string;
+}) => {
+  const { state, copy } = useCopy();
+  const reduceMotion = useReducedMotion(undefined, {
+    getInitialValueInEffect: false,
+  });
 
   const info = React.useMemo(
     () => buildConnectCommand(props.service, props.domain),
     [props.service, props.domain],
   );
 
-  const full = info ? info.commands.join("\n") : "";
-  const [typed, setTyped] = React.useState(0);
-  const [copied, setCopied] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!info || reduced) {
-      return;
-    }
-
-    let i = 0;
-    const id = window.setInterval(() => {
-      i += 1;
-      setTyped(i);
-      if (i >= full.length) {
-        window.clearInterval(id);
-      }
-    }, 20);
-
-    return () => window.clearInterval(id);
-  }, [full, info, reduced]);
-
-  React.useEffect(() => {
-    if (!copied) {
-      return;
-    }
-    const id = window.setTimeout(() => setCopied(false), 1600);
-    return () => window.clearTimeout(id);
-  }, [copied]);
+  const total = info?.commands.join("").length ?? 0;
+  const typed = useTypedLength(total, !reduceMotion && total > 0);
 
   if (!info) {
     return null;
   }
 
-  const visibleLength = reduced ? full.length : typed;
-  const done = visibleLength >= full.length;
-  const lines = full.slice(0, visibleLength).split("\n");
+  const done = typed >= total;
+  const label =
+    state === "copied"
+      ? "Copied"
+      : state === "failed"
+        ? "Copy failed"
+        : "Copy command";
 
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(full);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
+  const starts = info.commands.map(
+    (_, index) => info.commands.slice(0, index).join("").length,
+  );
 
   return (
-    <motion.div
-      initial={reduced ? false : { opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: "easeOut" }}
-      className="mt-3 overflow-hidden rounded-xl bg-terminal shadow-lg ring-1 ring-terminal-line/70"
+    <div
+      role="group"
+      aria-label={`Connect with ${info.tool}`}
+      className={twMerge(
+        "overflow-hidden rounded-lg border border-terminal-line bg-terminal shadow-[0_1px_2px_rgb(0_0_0/0.06),0_12px_32px_-16px_rgb(0_0_0/0.5)] motion-safe:animate-terminal-enter",
+        props.className,
+      )}
     >
-      <div className="flex items-center justify-between border-b border-terminal-line/50 bg-terminal-panel px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-rose-400/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-400/60" />
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/60" />
-        </div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-terminal-muted">
-          {info.tool}
+      <div className="flex h-10 items-center gap-2 border-b border-terminal-line bg-terminal-panel pl-3.5 pr-1.5 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]">
+        <SquareTerminal
+          size={14}
+          strokeWidth={2}
+          className="shrink-0 text-terminal-muted"
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-terminal-muted">
+          Connect with{" "}
+          <span className="font-mono text-terminal-text">{info.tool}</span>
         </span>
-      </div>
-
-      <div className="flex items-start gap-3 px-3.5 py-3">
-        <code className="min-w-0 flex-1 font-mono text-sm leading-relaxed text-terminal-text">
-          <span className="sr-only">{full}</span>
-          <span aria-hidden className="flex flex-col gap-1">
-            {lines.map((line, idx) => (
-              <span key={idx} className="flex items-start">
-                <span className="select-none pr-2 text-terminal-accent">❯</span>
-                <span className="break-all">
-                  {line}
-                  {idx === lines.length - 1 && !reduced && (
-                    <Cursor blink={done} />
-                  )}
-                </span>
-              </span>
-            ))}
-          </span>
-        </code>
-
         <button
           type="button"
-          onClick={onCopy}
-          aria-label={copied ? "Copied" : "Copy command"}
-          className="-mr-1 flex h-7 w-7 flex-none items-center justify-center rounded-md text-terminal-muted transition-colors hover:bg-terminal-line/40 hover:text-terminal-text"
+          aria-label={label}
+          onClick={(event) => {
+            event.stopPropagation();
+            copy(info.commands.join("\n"));
+          }}
+          className={twMerge(
+            "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium outline-none transition-colors hover:bg-terminal-hover focus-visible:ring-2 focus-visible:ring-terminal-muted/60",
+            state === "idle"
+              ? "text-terminal-muted hover:text-terminal-text"
+              : "text-terminal-text",
+          )}
         >
-          <AnimatePresence mode="wait" initial={false}>
-            {copied ? (
-              <motion.span
-                key="check"
-                initial={{ opacity: 0, scale: 0.6 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.6 }}
-                transition={{ duration: 0.15 }}
-              >
-                <Check className="h-4 w-4 text-emerald-400" />
-              </motion.span>
+          <span
+            key={state}
+            className="flex motion-safe:animate-terminal-pop"
+            aria-hidden
+          >
+            {state === "copied" ? (
+              <Check
+                size={14}
+                strokeWidth={2.5}
+                className="text-terminal-success"
+              />
+            ) : state === "failed" ? (
+              <X size={14} strokeWidth={2.5} className="text-terminal-error" />
             ) : (
-              <motion.span
-                key="copy"
-                initial={{ opacity: 0, scale: 0.6 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.6 }}
-                transition={{ duration: 0.15 }}
-              >
-                <Copy className="h-4 w-4" />
-              </motion.span>
+              <Copy size={14} strokeWidth={2} />
             )}
-          </AnimatePresence>
+          </span>
+          <span aria-hidden>
+            {state === "copied"
+              ? "Copied"
+              : state === "failed"
+                ? "Failed"
+                : "Copy"}
+          </span>
         </button>
       </div>
-    </motion.div>
+      <pre className="whitespace-pre-wrap px-4 py-3.5 font-mono text-body leading-6 text-terminal-text [overflow-wrap:anywhere]">
+        {info.commands.map((command, index) => {
+          const start = starts[index];
+          const shown = Math.min(Math.max(typed - start, 0), command.length);
+          const active = done
+            ? index === info.commands.length - 1
+            : typed >= start && typed < start + command.length;
+
+          return (
+            <div
+              key={index}
+              className={twMerge(
+                "transition-opacity",
+                shown === 0 && !active && "opacity-0",
+              )}
+            >
+              <span className="select-none text-terminal-dim">$ </span>
+              {renderTokens(command, shown)}
+              {active && <Caret blink={done} />}
+              {shown < command.length && (
+                <span className="opacity-0">{command.slice(shown)}</span>
+              )}
+            </div>
+          );
+        })}
+      </pre>
+    </div>
   );
 };
 

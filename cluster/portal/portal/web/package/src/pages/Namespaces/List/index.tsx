@@ -1,14 +1,19 @@
-import {
-  EmptyState,
-  ErrorState,
-  ResourceListSkeleton,
-} from "@/components/AsyncState";
 import HighlightText from "@/components/HighlightText";
-import Label from "@/components/Label";
-import PageHeader from "@/components/PageHeader";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
 import SearchField from "@/components/SearchField";
+import { twMerge } from "@/lib/utils";
+import {
+  Badge,
+  Card,
+  CountPill,
+  DocumentTitle,
+  EmptyState,
+  ErrorState,
+  IconTile,
+  PageHeader,
+  RefreshButton,
+} from "@/ui";
 import { matchesAllTokens, tokenizeQuery } from "@/utils";
 import { getClientUser } from "@/utils/client";
 import { useAppSelector, useFilterParams } from "@/utils/hooks";
@@ -23,10 +28,9 @@ import {
   Namespace,
 } from "@octelium/apis/main/userv1";
 import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
-import { ArrowRight, Boxes, PanelTop, SearchX } from "lucide-react";
+import { Boxes, ChevronRight, PanelTop, SearchX } from "lucide-react";
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
 
 const SEARCH_FETCH_LIMIT = 500;
 
@@ -42,65 +46,95 @@ const NamespaceCard = (props: {
 }) => {
   const { item, serviceCount, tokens } = props;
   const metadata = item.metadata;
-  const name = metadata?.name ?? "Unnamed namespace";
+  const name = metadata?.name ?? "";
 
   return (
-    <Link
-      to={`/services?namespace=${encodeURIComponent(name)}`}
-      title={`Show every Service in the ${name} Namespace`}
-      className={twMerge(
-        "group/item flex h-full flex-col gap-3 rounded-xl border border-line bg-surface p-4",
-        "shadow-xs transition-all duration-500",
-        "hover:border-line-strong hover:bg-surface-muted/70 hover:shadow-md hover:shadow-slate-900/5",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-zinc-900 text-white shadow-sm ring-1 ring-slate-900/10">
-          <Boxes size={21} aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-[15px] font-bold tracking-tight text-fg sm:text-base">
-            <HighlightText text={name} tokens={tokens} />
-          </h2>
-          {metadata?.displayName && (
-            <p className="mt-0.5 truncate text-sm font-medium text-fg-subtle">
-              <HighlightText text={metadata.displayName} tokens={tokens} />
-            </p>
-          )}
-        </div>
-        <ArrowRight
-          size={16}
-          className="mt-1 flex-none text-fg-ghost transition-all duration-200 group-hover/item:translate-x-0.5 group-hover/item:text-fg"
-          aria-hidden
-        />
-      </div>
-
-      {metadata?.description && (
-        <p className="line-clamp-2 text-sm font-medium text-fg-subtle">
-          {metadata.description}
-        </p>
-      )}
-
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-3">
-        {serviceCount === undefined ? (
-          <span
-            className="block h-[22px] w-24 animate-pulse rounded-md bg-surface-strong"
+    <li className="flex">
+      <Link
+        to={`/services?namespace=${encodeURIComponent(name)}`}
+        aria-label={`${name}: show its Services`}
+        className="group/card flex w-full flex-col rounded-xl border border-slate-200 bg-white outline-none transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-raised focus-visible:ring-2 focus-visible:ring-slate-400"
+      >
+        <div className="flex items-start gap-3 px-4 pt-3.5">
+          <IconTile>
+            <Boxes size={16} strokeWidth={1.9} aria-hidden />
+          </IconTile>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-semibold text-slate-900">
+                <HighlightText text={name} tokens={tokens} />
+              </span>
+              {metadata?.isSystem && <Badge tone="blue">System</Badge>}
+            </div>
+            {metadata?.displayName && (
+              <p className="truncate text-xs font-normal leading-5 text-slate-500">
+                <HighlightText text={metadata.displayName} tokens={tokens} />
+              </p>
+            )}
+          </div>
+          <ChevronRight
+            size={16}
+            className="mt-2 shrink-0 text-slate-400 transition-[color,transform] duration-150 group-hover/card:translate-x-0.5 group-hover/card:text-slate-700"
             aria-hidden
           />
-        ) : (
-          <Label tone="slate">
-            <PanelTop size={12} className="opacity-70" aria-hidden />
-            {serviceCount} {serviceCount === 1 ? "Service" : "Services"}
-          </Label>
+        </div>
+
+        {metadata?.description && (
+          <p className="mt-2.5 line-clamp-2 px-4 text-xs font-normal leading-5 text-slate-600">
+            <HighlightText text={metadata.description} tokens={tokens} />
+          </p>
         )}
-        <span className="text-xs font-bold text-fg-faint transition-colors group-hover/item:text-fg">
-          Browse
-        </span>
-      </div>
-    </Link>
+
+        <div className="mt-auto pt-3.5">
+          <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5">
+            {serviceCount === undefined ? (
+              <span
+                className="block h-4 w-20 rounded bg-slate-100 motion-safe:animate-pulse"
+                aria-hidden
+              />
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-xs font-normal text-slate-600">
+                <PanelTop size={13} strokeWidth={2} aria-hidden />
+                <span>
+                  <span className="tabular-nums">
+                    {serviceCount.toLocaleString()}
+                  </span>{" "}
+                  {serviceCount === 1 ? "Service" : "Services"}
+                </span>
+              </span>
+            )}
+            <span className="text-xs font-semibold text-slate-500 transition-colors group-hover/card:text-slate-900">
+              View Services
+            </span>
+          </div>
+        </div>
+      </Link>
+    </li>
   );
 };
+
+const NamespaceGridSkeleton = () => (
+  <div
+    role="status"
+    aria-label="Loading Namespaces"
+    className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+  >
+    {Array.from({ length: 6 }).map((_, index) => (
+      <div
+        key={index}
+        className="h-[132px] rounded-xl border border-slate-200 bg-white px-4 pt-3.5"
+      >
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-lg bg-slate-100 motion-safe:animate-pulse" />
+          <div className="flex-1 space-y-2 pt-1">
+            <div className="h-3 w-1/3 rounded bg-slate-100 motion-safe:animate-pulse" />
+            <div className="h-2.5 w-1/2 rounded bg-slate-50 motion-safe:animate-pulse" />
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 const Page = () => {
   const itemsPerPage = useAppSelector(
@@ -133,7 +167,7 @@ const Page = () => {
   });
 
   const onSearchChange = React.useCallback(
-    (value: string) => setParams({ q: value }),
+    (value: string) => setParams({ q: value }, { replace: true }),
     [setParams],
   );
 
@@ -186,76 +220,87 @@ const Page = () => {
   });
 
   return (
-    <>
-      <title>Namespaces - Octelium Portal</title>
+    <div className="w-full">
+      <DocumentTitle title="Namespaces" />
       <PageHeader
         title="Namespaces"
-        description="Browse the Namespaces and jump into their Services."
-        actions={<PageSizeSelect />}
+        addon={
+          query.isSuccess ? (
+            <CountPill count={totalCount} label="Namespaces" />
+          ) : undefined
+        }
+        description="Browse the Namespaces that group your Services."
+        actions={
+          <RefreshButton
+            label="Refresh Namespaces"
+            onClick={() => query.refetch()}
+            loading={query.isFetching && !query.isPending}
+          />
+        }
       />
 
-      <div className="mb-4 rounded-xl border border-line bg-surface p-3 shadow-xs sm:p-4">
+      <div className="z-20 -mx-1 mb-4 border-b border-slate-200 bg-canvas px-1 pb-3 sm:sticky sm:top-[60px] sm:pt-3 sm:supports-[backdrop-filter]:bg-canvas/85 sm:supports-[backdrop-filter]:backdrop-blur">
         <SearchField
           label="Search Namespaces"
-          placeholder="Search by name or description…"
+          placeholder="Search by name or description"
           value={search}
           onChange={onSearchChange}
         />
       </div>
 
-      {query.isPending && <ResourceListSkeleton count={4} />}
-      {query.isError && (
+      {query.isPending ? (
+        <NamespaceGridSkeleton />
+      ) : query.isError && !query.data ? (
         <ErrorState
-          message="We could not load Namespaces right now."
+          title="Could not load Namespaces"
+          error={query.error}
           onRetry={() => query.refetch()}
         />
-      )}
-      {query.isSuccess && (
+      ) : (
         <div
           className={twMerge(
             "transition-opacity duration-200",
             query.isPlaceholderData && "opacity-60",
           )}
+          aria-busy={query.isPlaceholderData || undefined}
         >
-          <div className="mb-3 px-0.5">
-            <p className="text-xs font-bold text-fg-subtle">
-              {isSearching
-                ? `${visibleItems.length} of ${totalCount} ${
-                    totalCount === 1 ? "Namespace" : "Namespaces"
-                  } ${visibleItems.length === 1 ? "matches" : "match"}`
-                : `${totalCount} ${
-                    totalCount === 1 ? "Namespace" : "Namespaces"
-                  }`}
-            </p>
-          </div>
-
           {visibleItems.length === 0 ? (
-            <EmptyState
-              icon={isSearching ? <SearchX size={22} aria-hidden /> : undefined}
-              title={
-                isSearching
-                  ? "No Namespaces match your search"
-                  : "No Namespaces found"
-              }
-              message={
-                isSearching
-                  ? `Nothing matched “${search}”.`
-                  : "There are no Namespaces available to your account."
-              }
-              action={
-                isSearching ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setParams({ q: null })}
-                  >
-                    Clear search
-                  </Button>
-                ) : undefined
-              }
-            />
+            <Card>
+              <EmptyState
+                icon={
+                  isSearching ? (
+                    <SearchX size={18} strokeWidth={2} />
+                  ) : (
+                    <Boxes size={18} strokeWidth={2} />
+                  )
+                }
+                title={
+                  isSearching
+                    ? "No matching Namespaces"
+                    : "No Namespaces available"
+                }
+                description={
+                  isSearching
+                    ? `Nothing matched “${search}”.`
+                    : "There are no Namespaces available to your account yet."
+                }
+                action={
+                  isSearching ? (
+                    <Button
+                      variant="default"
+                      onClick={() => setParams({ q: null })}
+                    >
+                      Clear search
+                    </Button>
+                  ) : undefined
+                }
+              />
+            </Card>
           ) : (
-            <div className="grid w-full gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <ul
+              aria-label="Namespaces"
+              className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+            >
               {visibleItems.map((item, index) => (
                 <NamespaceCard
                   item={item}
@@ -264,13 +309,26 @@ const Page = () => {
                   key={item.metadata?.uid || item.metadata?.name || index}
                 />
               ))}
-            </div>
+            </ul>
           )}
 
-          {!isSearching && <Paginator meta={meta} />}
+          {isSearching ? (
+            visibleItems.length > 0 && (
+              <p className="mt-5 text-xs font-normal tabular-nums text-slate-600">
+                {visibleItems.length.toLocaleString()} of{" "}
+                {items.length.toLocaleString()}{" "}
+                {items.length === 1 ? "Namespace" : "Namespaces"}{" "}
+                {visibleItems.length === 1 ? "matches" : "match"}
+              </p>
+            )
+          ) : (
+            <Paginator meta={meta}>
+              <PageSizeSelect />
+            </Paginator>
+          )}
         </div>
       )}
-    </>
+    </div>
   );
 };
 
