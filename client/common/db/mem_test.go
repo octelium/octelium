@@ -46,13 +46,15 @@ func TestMemDB(t *testing.T) {
 		sessTkn := &authv1.SessionToken{
 			AccessToken: utilrand.GetRandomString(32),
 		}
+		setAt := time.Now()
 		err = db.set(context.Background(), domain, sessTkn)
 		assert.Nil(t, err)
 
 		state, err := db.get(context.Background(), domain)
 		assert.Nil(t, err)
 		assert.True(t, state.SessionTokenSetAt.IsValid())
-		assert.True(t, time.Now().After(state.SessionTokenSetAt.AsTime()))
+		assert.False(t, state.SessionTokenSetAt.AsTime().Before(setAt))
+		assert.False(t, time.Now().Before(state.SessionTokenSetAt.AsTime()))
 
 		assert.True(t, pbutils.IsEqual(sessTkn, state.SessionToken))
 

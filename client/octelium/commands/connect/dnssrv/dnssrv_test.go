@@ -152,7 +152,7 @@ func TestNewDNSServerInvalidOpts(t *testing.T) {
 func TestServerNoClusterDNSServers(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain: "example.com",
-		ListenAddr:    "127.0.0.100:18054",
+		ListenAddr:    "127.0.0.1:18054",
 		HasV4:         true,
 		DNSGetter:     &tstEmptyDNSGetter{},
 	})
@@ -168,7 +168,7 @@ func TestServerNoClusterDNSServers(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
-		r, _, err := c.ExchangeContext(ctx, &m, "127.0.0.100:18054")
+		r, _, err := c.ExchangeContext(ctx, &m, "127.0.0.1:18054")
 		cancel()
 
 		assert.Nil(t, err)
@@ -182,7 +182,7 @@ func TestServer(t *testing.T) {
 
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain: "example.com",
-		ListenAddr:    "127.0.0.100:18053",
+		ListenAddr:    "127.0.0.1:18053",
 		HasV4:         true,
 		DNSGetter:     &tstDNSGetter{},
 	})
@@ -204,13 +204,13 @@ func TestServer(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		_, _, err := c.ExchangeContext(ctx, &m, "127.0.0.100:18053")
+		_, _, err := c.ExchangeContext(ctx, &m, "127.0.0.1:18053")
 		assert.Nil(t, err)
 
 	}
 
 	{
-		assert.Equal(t, "127.0.0.100", srv.ListenHost())
+		assert.Equal(t, "127.0.0.1", srv.ListenHost())
 	}
 
 	{
@@ -235,7 +235,7 @@ func TestServer(t *testing.T) {
 }
 
 func TestServerRunReportsBindFailure(t *testing.T) {
-	addr := "127.0.0.100:18055"
+	addr := "127.0.0.1:18055"
 
 	blocker, err := net.ListenPacket("udp", addr)
 	assert.Nil(t, err)
@@ -254,7 +254,7 @@ func TestServerRunReportsBindFailure(t *testing.T) {
 }
 
 func TestServerRunIsListeningWhenItReturns(t *testing.T) {
-	addr := "127.0.0.100:18056"
+	addr := "127.0.0.1:18056"
 
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain: "example.com",
@@ -280,7 +280,7 @@ type tstResponseWriter struct {
 }
 
 func (w *tstResponseWriter) LocalAddr() net.Addr {
-	return &net.UDPAddr{IP: net.ParseIP("127.0.0.100"), Port: 53}
+	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 53}
 }
 
 func (w *tstResponseWriter) RemoteAddr() net.Addr {
@@ -461,7 +461,7 @@ func newTestFullDNSServer(t *testing.T, listenAddr string, getter DNSGetter) *Se
 }
 
 func TestServerBootstrapAnswersWithoutClusterDNSServers(t *testing.T) {
-	addr := "127.0.0.100:18057"
+	addr := "127.0.0.1:18057"
 
 	srv := newTestFullDNSServer(t, addr, &tstEmptyDNSGetter{})
 	assert.Nil(t, srv.Run())
@@ -513,7 +513,7 @@ func TestServerBootstrapAnswersWithoutClusterDNSServers(t *testing.T) {
 }
 
 func TestServerBootstrapAnswersOnUpstreamFailure(t *testing.T) {
-	srv := newTestFullDNSServer(t, "127.0.0.100:18058", &tstDNSGetter{})
+	srv := newTestFullDNSServer(t, "127.0.0.1:18058", &tstDNSGetter{})
 	srv.setBootstrapAnswers(context.Background())
 
 	unreachable := []string{"127.0.0.1:1"}
@@ -541,7 +541,7 @@ func TestServerBootstrapAnswersOnUpstreamFailure(t *testing.T) {
 func TestServerSkipsBootstrapAnswersInSplitDNSMode(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain: "example.com",
-		ListenAddr:    "127.0.0.100:18059",
+		ListenAddr:    "127.0.0.1:18059",
 		HasV4:         true,
 		DNSGetter:     &tstEmptyDNSGetter{},
 		LookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
@@ -569,7 +569,7 @@ func (h *tstFailingHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func TestServerBootstrapAnswersOnUnsuccessfulClusterReply(t *testing.T) {
-	addr := "127.0.0.100:18060"
+	addr := "127.0.0.1:18060"
 
 	startedCh := make(chan struct{})
 	upstream := &dns.Server{
@@ -582,7 +582,7 @@ func TestServerBootstrapAnswersOnUnsuccessfulClusterReply(t *testing.T) {
 	<-startedCh
 	defer upstream.Shutdown()
 
-	srv := newTestFullDNSServer(t, "127.0.0.100:18061", &tstDNSGetter{})
+	srv := newTestFullDNSServer(t, "127.0.0.1:18061", &tstDNSGetter{})
 	srv.setBootstrapAnswers(context.Background())
 
 	{
@@ -650,23 +650,23 @@ func (s *tstAddrDNSGetter) GetClusterDNSServers() []string {
 }
 
 func TestGetFallbackServerAddrs(t *testing.T) {
-	assert.Nil(t, getFallbackServerAddrs(nil, "127.0.0.100:53"))
+	assert.Nil(t, getFallbackServerAddrs(nil, "127.0.0.1:53"))
 
 	assert.Equal(t, []string{"10.96.0.10:53"},
-		getFallbackServerAddrs([]string{" 10.96.0.10 "}, "127.0.0.100:53"))
+		getFallbackServerAddrs([]string{" 10.96.0.10 "}, "127.0.0.1:53"))
 
 	assert.Equal(t, []string{"10.96.0.10:5353"},
-		getFallbackServerAddrs([]string{"10.96.0.10:5353"}, "127.0.0.100:53"))
+		getFallbackServerAddrs([]string{"10.96.0.10:5353"}, "127.0.0.1:53"))
 
 	assert.Equal(t, []string{"[::1]:53"},
-		getFallbackServerAddrs([]string{"::1"}, "127.0.0.100:53"))
+		getFallbackServerAddrs([]string{"::1"}, "127.0.0.1:53"))
 
-	assert.Nil(t, getFallbackServerAddrs([]string{"127.0.0.100"}, "127.0.0.100:53"))
+	assert.Nil(t, getFallbackServerAddrs([]string{"127.0.0.1"}, "127.0.0.1:53"))
 
-	assert.Nil(t, getFallbackServerAddrs([]string{"", "not an addr"}, "127.0.0.100:53"))
+	assert.Nil(t, getFallbackServerAddrs([]string{"", "not an addr"}, "127.0.0.1:53"))
 
 	assert.Equal(t, []string{"1.1.1.1:53"},
-		getFallbackServerAddrs([]string{"1.1.1.1", "1.1.1.1"}, "127.0.0.100:53"))
+		getFallbackServerAddrs([]string{"1.1.1.1", "1.1.1.1"}, "127.0.0.1:53"))
 }
 
 func TestGetFallbackDomains(t *testing.T) {
@@ -684,7 +684,7 @@ func TestGetFallbackDomains(t *testing.T) {
 func TestIsFallbackName(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain:   "example.com",
-		ListenAddr:      "127.0.0.100:18062",
+		ListenAddr:      "127.0.0.1:18062",
 		HasV4:           true,
 		DNSGetter:       &tstDNSGetter{},
 		FallbackServers: []string{"10.96.0.10"},
@@ -706,7 +706,7 @@ func TestIsFallbackName(t *testing.T) {
 func TestGetQueryRouteWithoutFallback(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain: "example.com",
-		ListenAddr:    "127.0.0.100:18063",
+		ListenAddr:    "127.0.0.1:18063",
 		HasV4:         true,
 		DNSGetter:     &tstDNSGetter{},
 	})
@@ -722,7 +722,7 @@ func TestGetQueryRouteWithoutFallback(t *testing.T) {
 func TestGetQueryRoute(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain:   "example.com",
-		ListenAddr:      "127.0.0.100:18064",
+		ListenAddr:      "127.0.0.1:18064",
 		HasV4:           true,
 		DNSGetter:       &tstDNSGetter{},
 		FallbackServers: []string{"10.96.0.10"},
@@ -752,7 +752,7 @@ func TestGetQueryRoute(t *testing.T) {
 func TestGetQueryRouteFullDNS(t *testing.T) {
 	srv, err := NewDNSServer(&Opts{
 		ClusterDomain:   "example.com",
-		ListenAddr:      "127.0.0.100:18065",
+		ListenAddr:      "127.0.0.1:18065",
 		HasV4:           true,
 		DNSGetter:       &tstDNSGetter{},
 		IsFullDNS:       true,
@@ -769,8 +769,8 @@ func TestGetQueryRouteFullDNS(t *testing.T) {
 }
 
 func TestServerSplitDNSInContainerMode(t *testing.T) {
-	fallbackAddr := "127.0.0.100:18067"
-	listenAddr := "127.0.0.100:18068"
+	fallbackAddr := "127.0.0.1:18067"
+	listenAddr := "127.0.0.1:18068"
 
 	newTestUpstream(t, fallbackAddr, map[string]string{
 		"nginx.default.svc.cluster.local.": "10.96.0.20",
@@ -835,8 +835,8 @@ func TestServerSplitDNSInContainerMode(t *testing.T) {
 }
 
 func TestServerSingleLabelFallsBackOnClusterFailure(t *testing.T) {
-	fallbackAddr := "127.0.0.100:18069"
-	listenAddr := "127.0.0.100:18070"
+	fallbackAddr := "127.0.0.1:18069"
+	listenAddr := "127.0.0.1:18070"
 
 	newTestUpstream(t, fallbackAddr, map[string]string{
 		"db.": "172.18.0.3",
@@ -864,8 +864,8 @@ func TestServerSingleLabelFallsBackOnClusterFailure(t *testing.T) {
 }
 
 func TestServerSingleLabelUsesFallbackOnUnsupportedQtype(t *testing.T) {
-	fallbackAddr := "127.0.0.100:18071"
-	listenAddr := "127.0.0.100:18072"
+	fallbackAddr := "127.0.0.1:18071"
+	listenAddr := "127.0.0.1:18072"
 
 	newTestUpstream(t, fallbackAddr, map[string]string{
 		"db.": "172.18.0.3",

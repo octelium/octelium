@@ -432,7 +432,7 @@ func TestUnsetResolvConfIsRetryableAfterFailure(t *testing.T) {
 	assert.Nil(t, c.setResolvConf())
 	assert.True(t, c.resolvConf.written)
 
-	c.resolvConf.linkTarget = ""
+	c.resolvConf.linkTarget = "\x00"
 	assert.NotNil(t, c.unsetResolvConf())
 	assert.True(t, c.resolvConf.written)
 	b, err := os.ReadFile(filePath)
@@ -637,12 +637,13 @@ func TestSetDNSContainerModeWithLocalDNSServer(t *testing.T) {
 }
 
 func TestStartLocalDNSServerBindFailureInContainerMode(t *testing.T) {
-	listenAddr := "127.0.0.100:18073"
-
-	blocker, err := net.ListenPacket("udp", listenAddr)
-	assert.Nil(t, err)
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if !assert.Nil(t, err) {
+		return
+	}
 	defer blocker.Close()
 
+	listenAddr := blocker.LocalAddr().String()
 	c, filePath := newTestContainerCtl(t, listenAddr)
 	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
 

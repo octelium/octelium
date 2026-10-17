@@ -243,7 +243,7 @@ func TestWebAuthenticatorServeHTTP(t *testing.T) {
 }
 
 func TestGetAccessTokenRenewAt(t *testing.T) {
-	setAt := time.Now().Add(-10 * time.Minute)
+	setAt := time.Now().Add(-11 * time.Minute)
 
 	{
 		assert.True(t, GetAccessTokenRenewAt(nil).IsZero())

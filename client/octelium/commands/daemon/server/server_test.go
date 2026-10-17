@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,13 +54,29 @@ func newTestServer(t *testing.T) *testServer {
 	return newTestServerWithDir(t, t.TempDir())
 }
 
+func newTestSocketPath(t *testing.T) string {
+	dir, err := os.MkdirTemp("/tmp", "octelium-daemon-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(dir)
+	})
+
+	return path.Join(dir, "daemon.sock")
+}
+
 func newTestServerWithDir(t *testing.T, dir string) *testServer {
 	srv, err := New(&Opts{
-		ListenAddress: path.Join(dir, "daemon.sock"),
+		ListenAddress: newTestSocketPath(t),
 		StateDir:      path.Join(dir, "state"),
 	})
-	assert.Nil(t, err)
-	assert.Nil(t, srv.Run(context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	conn, err := grpc.NewClient(fmt.Sprintf("passthrough:///%s", srv.opts.ListenAddress),
 		grpc.WithTransportCredentials(ipc.NewTransportCredentials()),
@@ -83,6 +100,19 @@ func newTestServerWithDir(t *testing.T, dir string) *testServer {
 func (s *testServer) close() {
 	s.conn.Close()
 	s.srv.Close()
+}
+
+func TestServerWithLongStateDir(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	srv := newTestServerWithDir(t, path.Join(t.TempDir(), strings.Repeat("a", 100)))
+
+	resp, err := srv.c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Equal(t, srv.srv.instanceID, resp.InstanceID)
 }
 
 func TestGetInfo(t *testing.T) {
@@ -563,7 +593,7 @@ func TestOwnerBinding(t *testing.T) {
 	dir := t.TempDir()
 
 	srv, err := New(&Opts{
-		ListenAddress: path.Join(dir, "daemon.sock"),
+		ListenAddress: newTestSocketPath(t),
 		StateDir:      path.Join(dir, "state"),
 		OwnerID:       rootPrincipalID,
 	})
