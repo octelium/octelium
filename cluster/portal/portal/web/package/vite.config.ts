@@ -4,10 +4,32 @@ import path from "path";
 import svgr from "vite-plugin-svgr";
 import { visualizer } from "rollup-plugin-visualizer";
 
+import { readFile } from "fs/promises";
+
 const __dirname = path.resolve();
+
+const mantineShadowDomFix = () => ({
+  name: "mantine-shadow-dom-fix",
+  enforce: "pre" as const,
+  async load(id: string) {
+    if (
+      id.includes("@mantine/core/") &&
+      id.endsWith("/find-element-in-shadow-dom.mjs")
+    ) {
+      return readFile(
+        path.resolve(
+          __dirname,
+          "src/utils/mantine/find-element-in-shadow-dom.js",
+        ),
+        "utf8",
+      );
+    }
+  },
+});
 
 export default defineConfig({
   plugins: [
+    mantineShadowDomFix(),
     react(),
     svgr(),
     ...(process.env.ANALYZE === "true"
@@ -19,6 +41,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  optimizeDeps: {
+    rolldownOptions: { plugins: [mantineShadowDomFix()] },
+  },
+
   build: {
     manifest: true,
   },

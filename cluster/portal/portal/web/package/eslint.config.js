@@ -34,6 +34,10 @@ export default [
     },
   },
   {
+    files: ["src/**/*.js"],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: ["tests/**/*.mjs"],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },

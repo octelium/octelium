@@ -208,6 +208,89 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.equal(await search.inputValue(), "");
     });
 
+    it("keeps the filters usable when an element denies access to its shadowRoot", async () => {
+      await load();
+      await waitForRows(10);
+      await page.evaluate(() => {
+        const forbidden = document.createElement("div");
+        Object.defineProperty(forbidden, "shadowRoot", {
+          get() {
+            throw new Error(
+              'Permission denied to access property "shadowRoot"',
+            );
+          },
+        });
+        document.body.append(forbidden);
+      });
+
+      const namespace = page.getByRole("combobox", {
+        name: "Filter by Namespace",
+        exact: true,
+      });
+      await namespace.fill("missing");
+      await namespace.fill("prod");
+      await page
+        .getByRole("option", { name: "production (Production)", exact: true })
+        .click();
+      await page.waitForURL(
+        (url) => url.searchParams.get("namespace") === "production",
+      );
+      await waitForRows(5);
+
+      await page
+        .getByRole("combobox", { name: "Filter by type", exact: true })
+        .click();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((url) => url.searchParams.has("type"));
+
+      await page
+        .getByRole("button", { name: "Clear filters", exact: true })
+        .click();
+      await waitForRows(10);
+      await page
+        .getByRole("combobox", { name: "Per page", exact: true })
+        .click();
+      await page.getByRole("option", { name: "20", exact: true }).click();
+      await waitForRows(16);
+      await page
+        .getByRole("heading", { name: "Services", exact: true })
+        .waitFor();
+    });
+
+    it("searches shadow roots while skipping inaccessible hosts", async () => {
+      await load();
+      const result = await page.evaluate(async () => {
+        const {
+          findElementBySelector,
+          findElementsBySelector,
+          getRootElement,
+        } = await import("/src/utils/mantine/find-element-in-shadow-dom.js");
+        const host = document.createElement("div");
+        const shadow = host.attachShadow({ mode: "open" });
+        const forbidden = document.createElement("div");
+        Object.defineProperty(forbidden, "shadowRoot", {
+          get() {
+            throw new Error("Denied");
+          },
+        });
+        shadow.append(forbidden);
+        const nested = document.createElement("div");
+        const child = nested.attachShadow({ mode: "open" });
+        child.innerHTML = '<span class="target">Found</span>';
+        shadow.append(nested);
+        document.body.append(host);
+        return [
+          findElementBySelector(".target", shadow)?.textContent,
+          findElementsBySelector(".target", shadow).length,
+          getRootElement(child.querySelector("span")) === child,
+          findElementBySelector(".missing"),
+          findElementsBySelector(".missing").length,
+        ];
+      });
+      assert.deepEqual(result, ["Found", 1, true, null, 0]);
+    });
+
     it("filters by Namespace and type and clears filters", async () => {
       await load();
       await waitForRows(10);
