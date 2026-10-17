@@ -94,6 +94,9 @@ func genConnectionConfig(t *testing.T, domain string) *cliconfigv1.Connection {
 }
 
 func TestController(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("This test needs the Linux WireGuard netstack configuration")
+	}
 	ctx := context.Background()
 
 	{

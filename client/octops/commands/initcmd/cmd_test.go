@@ -17,6 +17,7 @@ package initcmd
 import (
 	"os"
 	"path"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,6 +51,9 @@ func TestGetKubeConfigFilePath(t *testing.T) {
 	})
 
 	t.Run("an unreadable explicit path does not fall back", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows does not support Unix directory permissions")
+		}
 		if os.Geteuid() == 0 {
 			t.Skip("the root User can stat files inside an unreadable directory")
 		}
@@ -83,6 +87,7 @@ func TestGetKubeConfigFilePath(t *testing.T) {
 	t.Run("no path at all is an error", func(t *testing.T) {
 		t.Setenv("KUBECONFIG", "")
 		t.Setenv("HOME", t.TempDir())
+		t.Setenv("USERPROFILE", t.TempDir())
 
 		ret, err := getKubeConfigFilePath("")
 		assert.NotNil(t, err)

@@ -20,25 +20,20 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
 	k8scorev1 "k8s.io/api/core/v1"
+	fakek8s "k8s.io/client-go/kubernetes/fake"
 )
 
 func TestCreateGenesis(t *testing.T) {
 
 	ctx := context.Background()
 
-	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
-	fakeC := tst.C
+	fakeC := fakek8s.NewSimpleClientset()
 
-	err = createGenesis(ctx, &Opts{
+	err := createGenesis(ctx, &Opts{
 		ClusterDomain: "example.com",
-		K8sC:          fakeC.K8sC,
+		K8sC:          fakeC,
 		Region: &corev1.Region{
 			Metadata: &metav1.Metadata{
 				Name: "default",
@@ -49,7 +44,7 @@ func TestCreateGenesis(t *testing.T) {
 
 	err = createGenesis(ctx, &Opts{
 		ClusterDomain: "example.com",
-		K8sC:          fakeC.K8sC,
+		K8sC:          fakeC,
 		Region: &corev1.Region{
 			Metadata: &metav1.Metadata{
 				Name: "default",

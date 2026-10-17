@@ -29,24 +29,20 @@ jobs:
         image: redis:8.10.2
         ports:
           - 6379:6379
-      minio:
-        env:
-          AWS_ACCESS_KEY_ID: minioadmin
-          AWS_SECRET_ACCESS_KEY: minioadmin
-        image: fclairamb/minio-github-actions
-        ports:
-          - 9000:9000
     steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
       - name: Set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "${{env.GO_VERSION}}"
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
       - name: Install psql
         run: |
           sudo apt-get update
@@ -63,3 +59,25 @@ jobs:
           gocmd=$(which go)
           sudo -E $gocmd version
           sudo -E $gocmd test github.com/octelium/octelium/...
+
+  test-client:
+    name: test-client-${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, windows-latest]
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+      - name: Run client tests
+        run: |
+          go version
+          go test github.com/octelium/octelium/client/...

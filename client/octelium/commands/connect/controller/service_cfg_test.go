@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -233,6 +234,9 @@ func TestServiceConfigSSHRejectsMultiLineEntry(t *testing.T) {
 }
 
 func TestServiceConfigSSHPreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix file permissions")
+	}
 	c, sshDir := newTestSSHCtl(t, "example.com", true)
 	authorizedKeysPath := path.Join(sshDir, "authorized_keys")
 
@@ -247,6 +251,9 @@ func TestServiceConfigSSHPreservesFileMode(t *testing.T) {
 }
 
 func TestServiceConfigSSHCreatesFileNotWorldReadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix file permissions")
+	}
 	c, sshDir := newTestSSHCtl(t, "example.com", true)
 
 	assert.Nil(t, c.setServiceConfigs())

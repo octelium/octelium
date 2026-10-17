@@ -20,12 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -420,6 +419,9 @@ func TestFSDBSymlinkedDBFile(t *testing.T) {
 }
 
 func TestFSDBOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix file ownership")
+	}
 	dbDir := filepath.Join(t.TempDir(), "home", ".config", "octelium")
 
 	db, err := newFSDB(&Opts{
@@ -455,50 +457,6 @@ func TestFSDBOwner(t *testing.T) {
 	itm, err := db.get(context.Background(), domain)
 	assert.Nil(t, err)
 	assert.NotNil(t, itm.SessionToken)
-}
-
-func TestFSDBOwnerAsRoot(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("This test needs to run as root")
-	}
-
-	const uid = 1000
-	const gid = 1000
-
-	if _, err := user.LookupId(fmt.Sprintf("%d", uid)); err != nil {
-		t.Skip("This test needs an unprivileged OS user")
-	}
-
-	usrHome := filepath.Join(t.TempDir(), "home")
-	assert.Nil(t, os.Mkdir(usrHome, 0700))
-	assert.Nil(t, os.Chown(usrHome, uid, gid))
-
-	dbDir := filepath.Join(usrHome, ".config", "octelium")
-
-	db, err := newFSDB(&Opts{
-		Path: dbDir,
-		Owner: &Owner{
-			UID: uid,
-			GID: gid,
-		},
-	})
-	assert.Nil(t, err)
-	assert.Nil(t, db.migrate(context.Background()))
-	assert.Nil(t, db.set(context.Background(), "example.com", &authv1.SessionToken{
-		AccessToken: utilrand.GetRandomString(8),
-	}))
-
-	for _, filePath := range []string{
-		filepath.Join(usrHome, ".config"),
-		dbDir,
-		filepath.Join(dbDir, "octelium.db"),
-		filepath.Join(dbDir, "octelium.db.lock"),
-	} {
-		info, err := os.Stat(filePath)
-		assert.Nil(t, err)
-		assert.Equal(t, uint32(uid), info.Sys().(*syscall.Stat_t).Uid, "path=%s", filePath)
-		assert.Equal(t, uint32(gid), info.Sys().(*syscall.Stat_t).Gid, "path=%s", filePath)
-	}
 }
 
 func TestGetMissingDirs(t *testing.T) {
@@ -684,7 +642,9 @@ func TestFSDBEncryptedAtomicWrite(t *testing.T) {
 
 	fi, err := os.Stat(dbPath)
 	assert.Nil(t, err)
-	assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
+	}
 
 	entries, err := os.ReadDir(tmpDir)
 	assert.Nil(t, err)
@@ -696,6 +656,9 @@ func TestFSDBEncryptedAtomicWrite(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 10, len(domainMap))
 
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix directory permissions")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("Skipping the read-only directory check as root")
 	}

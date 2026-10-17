@@ -31,6 +31,50 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestFSDBOwnerAsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("This test needs to run as root")
+	}
+
+	const uid = 1000
+	const gid = 1000
+
+	if _, err := user.LookupId(fmt.Sprintf("%d", uid)); err != nil {
+		t.Skip("This test needs an unprivileged OS user")
+	}
+
+	usrHome := filepath.Join(t.TempDir(), "home")
+	assert.Nil(t, os.Mkdir(usrHome, 0700))
+	assert.Nil(t, os.Chown(usrHome, uid, gid))
+
+	dbDir := filepath.Join(usrHome, ".config", "octelium")
+
+	db, err := newFSDB(&Opts{
+		Path: dbDir,
+		Owner: &Owner{
+			UID: uid,
+			GID: gid,
+		},
+	})
+	assert.Nil(t, err)
+	assert.Nil(t, db.migrate(context.Background()))
+	assert.Nil(t, db.set(context.Background(), "example.com", &authv1.SessionToken{
+		AccessToken: utilrand.GetRandomString(8),
+	}))
+
+	for _, filePath := range []string{
+		filepath.Join(usrHome, ".config"),
+		dbDir,
+		filepath.Join(dbDir, "octelium.db"),
+		filepath.Join(dbDir, "octelium.db.lock"),
+	} {
+		info, err := os.Stat(filePath)
+		assert.Nil(t, err)
+		assert.Equal(t, uint32(uid), info.Sys().(*syscall.Stat_t).Uid, "path=%s", filePath)
+		assert.Equal(t, uint32(gid), info.Sys().(*syscall.Stat_t).Gid, "path=%s", filePath)
+	}
+}
+
 func newTestSessionToken() *authv1.SessionToken {
 	return &authv1.SessionToken{
 		AccessToken: utilrand.GetRandomString(32),
