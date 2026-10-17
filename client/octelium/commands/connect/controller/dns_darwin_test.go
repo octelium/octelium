@@ -15,10 +15,14 @@
 package controller
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/asaskevich/govalidator"
 	pbconfig "github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
@@ -163,4 +167,132 @@ func TestGetNetworkSetupSearchDomains(t *testing.T) {
 
 	assert.Nil(t, getNetworkSetupSearchDomains(nil, nil))
 	assert.Nil(t, getNetworkSetupSearchDomains(nil, svcCfg(networkSetupEmpty)))
+}
+
+func TestDarwinScutilDNSByIPMode(t *testing.T) {
+	for _, tt := range testControllerIPModes {
+		t.Run(tt.name, func(t *testing.T) {
+			commands := newTestOSCommands(t, map[string]string{
+				"scutil": "/bin/cat > \"$OCTELIUM_TEST_COMMAND_LOG.stdin\"",
+			})
+			c := newTestPlatformController(t, tt.mode)
+			assert.Nil(t, c.doSetDNSScutil())
+			input, err := os.ReadFile(commands.log + ".stdin")
+			assert.Nil(t, err)
+			assert.Equal(t, fmt.Sprintf("\nopen\nd.init\nd.add ServerAddresses * %s\nd.add SearchDomains * local.example.com\nd.add SupplementalMatchDomains * local.example.com\nd.add InterfaceName octelium-test\nset State:/Network/Service/octelium-example-com/DNS\nquit\n", strings.Join(c.getClusterDNSServers(), " ")), string(input))
+			assert.Equal(t, pbconfig.Connection_Preferences_MacOS_SCUTIL, c.c.Preferences.MacosPrefs.DnsMode)
+			assert.Nil(t, c.doUnsetDNSScutil())
+			input, err = os.ReadFile(commands.log + ".stdin")
+			assert.Nil(t, err)
+			assert.Equal(t, "\nopen\nremove State:/Network/Service/octelium-example-com/DNS\nquit\n", string(input))
+			assert.Len(t, commands.calls(t), 2)
+		})
+	}
+}
+
+func TestDarwinScutilKeyAndCommandFailure(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Info.Cluster.Domain = "Example.COM/cluster"
+	assert.Equal(t, "State:/Network/Service/octelium-Example-COM-cluster/DNS", c.getScutilServiceKey())
+	c.c.Info = nil
+	assert.Equal(t, "State:/Network/Service/octelium-default/DNS", c.getScutilServiceKey())
+	c = newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	newTestOSCommands(t, map[string]string{"scutil": "printf 'scutil failure'; exit 1"})
+	err := c.doSetDNSScutil()
+	if assert.NotNil(t, err) {
+		assert.Contains(t, err.Error(), "scutil failure")
+	}
+	assert.Equal(t, pbconfig.Connection_Preferences_MacOS_RESOLVCONF, c.c.Preferences.MacosPrefs.DnsMode)
+	assert.NotNil(t, c.doUnsetDNSScutil())
+}
+
+const testDarwinNetworkSetup = `case "$1" in
+-listallnetworkservices) printf 'An asterisk (*) denotes a disabled service.\nWi-Fi\n*Disabled\nEthernet\n' ;;
+-getdnsservers) printf '192.0.2.53\n' ;;
+-getsearchdomains) printf 'corp.example\n' ;;
+esac`
+
+func TestDarwinNetworkSetupSavesAndRestoresDNS(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{"networksetup": testDarwinNetworkSetup})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	assert.Nil(t, c.doSetDNSNetworkSetup())
+	assert.True(t, c.dnsConfigSaved)
+	assert.Equal(t, pbconfig.Connection_Preferences_MacOS_NETWORKSETUP, c.c.Preferences.MacosPrefs.DnsMode)
+	c.c.Connection.Dns.Servers = []string{"fd00::54"}
+	assert.Nil(t, c.doSetDNSNetworkSetup())
+	assert.Nil(t, c.doUnsetDNS())
+	assert.False(t, c.dnsConfigSaved)
+	calls := commands.calls(t)
+	assert.Equal(t, [][]string{
+		{"networksetup", "-setdnsservers", "Wi-Fi", "192.0.2.53"},
+		{"networksetup", "-setsearchdomains", "Wi-Fi", "corp.example"},
+		{"networksetup", "-setdnsservers", "Ethernet", "192.0.2.53"},
+		{"networksetup", "-setsearchdomains", "Ethernet", "corp.example"},
+	}, calls[len(calls)-4:])
+	var reads int
+	for _, call := range calls {
+		assert.NotContains(t, call, "*Disabled")
+		if call[1] == "-getdnsservers" {
+			reads++
+		}
+	}
+	assert.Equal(t, 2, reads)
+	before := len(calls)
+	assert.Nil(t, c.doUnSetDNSNetworkSetup())
+	assert.Len(t, commands.calls(t), before)
+}
+
+func TestDarwinNetworkSetupRestoreContinuesAndCanRetry(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"networksetup": "if [ \"$2\" = Wi-Fi ]; then printf 'restore failure'; exit 1; fi",
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.dnsConfigSaved = true
+	c.c.Preferences.MacosPrefs.NetworkSetupConfig = &pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig{
+		Services: []*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service{
+			{Name: "Wi-Fi", DnsServers: []string{"Empty"}, DnsDomains: []string{"Empty"}},
+			{Name: "Ethernet", DnsServers: []string{"192.0.2.53"}, DnsDomains: []string{"corp.example"}},
+		},
+	}
+	assert.NotNil(t, c.doUnSetDNSNetworkSetup())
+	assert.True(t, c.dnsConfigSaved)
+	assert.Len(t, commands.calls(t), 3)
+	assert.Equal(t, []string{"networksetup", "-setsearchdomains", "Ethernet", "corp.example"}, commands.calls(t)[2])
+	assert.Nil(t, os.WriteFile(commands.dir+"/networksetup", []byte("#!/bin/sh\nexit 0\n"), 0755))
+	assert.Nil(t, c.doUnSetDNSNetworkSetup())
+	assert.False(t, c.dnsConfigSaved)
+}
+
+func TestDarwinDNSFallbackToResolvConf(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"scutil": "exit 1", "networksetup": "exit 1",
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_V6)
+	original := []byte("nameserver 192.0.2.53\n")
+	assert.Nil(t, os.WriteFile(c.resolvConf.path, original, 0600))
+	assert.Nil(t, c.doSetDNS())
+	assert.Equal(t, pbconfig.Connection_Preferences_MacOS_RESOLVCONF, c.c.Preferences.MacosPrefs.DnsMode)
+	content, err := os.ReadFile(c.resolvConf.path)
+	assert.Nil(t, err)
+	assert.Contains(t, string(content), "nameserver fd00::53\n")
+	assert.NotContains(t, string(content), "nameserver 100.64.0.53")
+	assert.Len(t, commands.calls(t), 2)
+	assert.Nil(t, c.doUnsetDNS())
+	content, err = os.ReadFile(c.resolvConf.path)
+	assert.Nil(t, err)
+	assert.Equal(t, original, content)
+}
+
+func TestDarwinFullDNSUsesNetworkSetup(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"scutil": "exit 1", "networksetup": testDarwinNetworkSetup,
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Preferences.FullDNS = true
+	assert.Nil(t, c.doSetDNS())
+	assert.Equal(t, pbconfig.Connection_Preferences_MacOS_NETWORKSETUP, c.c.Preferences.MacosPrefs.DnsMode)
+	for _, call := range commands.calls(t) {
+		assert.Equal(t, "networksetup", call[0])
+	}
+	assert.Nil(t, c.doUnsetDNS())
 }

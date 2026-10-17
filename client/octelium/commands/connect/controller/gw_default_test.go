@@ -18,6 +18,7 @@
 package controller
 
 import (
+	"net"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -39,4 +40,33 @@ func TestSetGatewayWGPeerRejectsGatewayWithoutWireGuard(t *testing.T) {
 
 	assert.Nil(t, c.UnsetGatewayWGPeer(nil))
 	assert.Nil(t, c.UnsetGatewayWGPeer(&userv1.Gateway{Id: "no-wireguard"}))
+}
+
+func TestWireGuardAllowedIPsByIPMode(t *testing.T) {
+	for _, tt := range testControllerIPModes {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestPlatformController(t, tt.mode)
+			gw := &userv1.Gateway{CIDRs: []string{"100.64.9.1/16", "fd00::9/64"}}
+			allowed, err := c.getWGPeerAllowedIPs(gw)
+			assert.Nil(t, err)
+			var want []net.IPNet
+			if tt.v4 {
+				_, cidr, _ := net.ParseCIDR("100.64.0.0/16")
+				want = append(want, *cidr)
+			}
+			if tt.v6 {
+				_, cidr, _ := net.ParseCIDR("fd00::/64")
+				want = append(want, *cidr)
+			}
+			assert.Equal(t, want, allowed)
+			gw.CIDRs = nil
+			allowed, err = c.getWGPeerAllowedIPs(gw)
+			assert.Nil(t, err)
+			assert.Empty(t, allowed)
+			gw.CIDRs = []string{"invalid"}
+			allowed, err = c.getWGPeerAllowedIPs(gw)
+			assert.NotNil(t, err)
+			assert.Nil(t, allowed)
+		})
+	}
 }

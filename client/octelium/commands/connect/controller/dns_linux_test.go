@@ -15,8 +15,11 @@
 package controller
 
 import (
+	"os"
 	"testing"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -98,4 +101,114 @@ func TestGetResolvctlRevertArgs(t *testing.T) {
 		getResolvctlRevertArgs(true, "octelium0"))
 	assert.Equal(t, []string{"--interface", "octelium0", "--revert"},
 		getResolvctlRevertArgs(false, "octelium0"))
+}
+
+func TestLinuxResolverCommandsByIPMode(t *testing.T) {
+	for _, tt := range testControllerIPModes {
+		t.Run(tt.name, func(t *testing.T) {
+			commands := newTestOSCommands(t, map[string]string{"resolvectl": "exit 0"})
+			c := newTestPlatformController(t, tt.mode)
+			c.isNetstack = false
+			c.c.Preferences.IgnoreDNS = false
+			assert.Nil(t, c.doSetDNSResolvctl())
+			wantDNS := append([]string{"resolvectl", "dns", "octelium-test"}, c.getClusterDNSServers()...)
+			assert.Equal(t, [][]string{
+				wantDNS,
+				{"resolvectl", "domain", "octelium-test", "local.example.com"},
+				{"resolvectl", "default-route", "octelium-test", "no"},
+			}, commands.calls(t))
+			assert.Equal(t, cliconfigv1.Connection_Preferences_Linux_RESOLVECTL_BIN, c.c.Preferences.LinuxPrefs.DnsMode)
+			assert.Nil(t, c.doUnsetDNS())
+			assert.Equal(t, []string{"resolvectl", "revert", "octelium-test"}, commands.calls(t)[3])
+		})
+	}
+}
+
+func TestLinuxLegacyResolverCommands(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{"systemd-resolve": "exit 0"})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Preferences.FullDNS = true
+	assert.Nil(t, c.doSetDNSResolvctl())
+	assert.Nil(t, c.doUnsetDNSResolvctl())
+	assert.Equal(t, [][]string{
+		{"systemd-resolve", "--interface", "octelium-test", "--set-dns", "100.64.0.53", "--set-dns", "fd00::53"},
+		{"systemd-resolve", "--interface", "octelium-test", "--set-domain", "local.example.com", "--set-domain", "~."},
+		{"systemd-resolve", "--interface", "octelium-test", "--revert"},
+	}, commands.calls(t))
+}
+
+func TestLinuxResolverPartialFailureRevertsConfig(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"resolvectl": "if [ \"$1\" = domain ]; then printf 'domain failure'; exit 1; fi",
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	assert.NotNil(t, c.doSetDNSResolvctl())
+	assert.Equal(t, cliconfigv1.Connection_Preferences_Linux_NO_DNS, c.c.Preferences.LinuxPrefs.DnsMode)
+	assert.Equal(t, [][]string{
+		{"resolvectl", "dns", "octelium-test", "100.64.0.53", "fd00::53"},
+		{"resolvectl", "domain", "octelium-test", "local.example.com"},
+		{"resolvectl", "revert", "octelium-test"},
+	}, commands.calls(t))
+}
+
+func TestLinuxResolverDNSFailureStopsBeforeDomains(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{"resolvectl": "exit 1"})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	assert.NotNil(t, c.doSetDNSResolvctl())
+	assert.Equal(t, [][]string{{"resolvectl", "dns", "octelium-test", "100.64.0.53", "fd00::53"}}, commands.calls(t))
+	assert.Equal(t, cliconfigv1.Connection_Preferences_Linux_NO_DNS, c.c.Preferences.LinuxPrefs.DnsMode)
+	err := c.doUnsetDNSResolvctl()
+	if assert.NotNil(t, err) {
+		assert.Contains(t, err.Error(), "Could not revert")
+	}
+}
+
+func TestLinuxResolverFullDNSDefaultRouteFailureIsNonFatal(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"resolvectl": "if [ \"$1\" = default-route ]; then exit 1; fi",
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Preferences.FullDNS = true
+	assert.Nil(t, c.doSetDNSResolvctl())
+	assert.Equal(t, []string{"resolvectl", "domain", "octelium-test", "local.example.com", "~."}, commands.calls(t)[1])
+	assert.Equal(t, []string{"resolvectl", "default-route", "octelium-test", "yes"}, commands.calls(t)[2])
+	assert.Equal(t, cliconfigv1.Connection_Preferences_Linux_RESOLVECTL_BIN, c.c.Preferences.LinuxPrefs.DnsMode)
+}
+
+func TestLinuxResolverMissingToolsAndServers(t *testing.T) {
+	commands := newTestOSCommands(t, nil)
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	assert.NotNil(t, c.doSetDNSResolvctl())
+	assert.NotNil(t, c.doUnsetDNSResolvctl())
+	assert.Nil(t, os.WriteFile(commands.dir+"/resolvectl", []byte("#!/bin/sh\nexit 0\n"), 0755))
+	c.c.Connection.Dns = nil
+	assert.EqualError(t, c.doSetDNSResolvctl(), "Could not find any DNS server to set")
+	assert.Empty(t, commands.calls(t))
+}
+
+func TestLinuxDNSFallbackAndRestore(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		name := "inactive"
+		body := "exit 1"
+		if active {
+			name = "active-but-resolver-fails"
+			body = "exit 0"
+		}
+		t.Run(name, func(t *testing.T) {
+			commands := newTestOSCommands(t, map[string]string{"systemctl": body, "resolvectl": "exit 1"})
+			c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+			original := []byte("nameserver 192.0.2.53\nsearch corp.example\n")
+			assert.Nil(t, os.WriteFile(c.resolvConf.path, original, 0600))
+			assert.Nil(t, c.doSetDNS())
+			assert.Equal(t, cliconfigv1.Connection_Preferences_Linux_RESOLVCONF, c.c.Preferences.LinuxPrefs.DnsMode)
+			content, err := os.ReadFile(c.resolvConf.path)
+			assert.Nil(t, err)
+			assert.Contains(t, string(content), "nameserver 100.64.0.53\nnameserver fd00::53\n")
+			assert.Equal(t, []string{"systemctl", "is-active", "--quiet", "systemd-resolved"}, commands.calls(t)[0])
+			assert.Nil(t, c.doUnsetDNS())
+			content, err = os.ReadFile(c.resolvConf.path)
+			assert.Nil(t, err)
+			assert.Equal(t, original, content)
+		})
+	}
 }
