@@ -39,8 +39,9 @@ const devName = "octelium-quic"
 const tunPacketOffset = 0
 
 const (
-	IPv4offsetSrc = 12
-	IPv4offsetDst = IPv4offsetSrc + net.IPv4len
+	IPv4offsetProtocol = 9
+	IPv4offsetSrc      = 12
+	IPv4offsetDst      = IPv4offsetSrc + net.IPv4len
 )
 
 const (

@@ -22,10 +22,13 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
+
+	osuser "os/user"
 )
 
-func TestGetFWRules(t *testing.T) {
-	cc := &corev1.ClusterConfig{
+func newTstFWCC() *corev1.ClusterConfig {
+	return &corev1.ClusterConfig{
 		Status: &corev1.ClusterConfig_Status{
 			Network: &corev1.ClusterConfig_Status_Network{
 				QuicConnSubnet: &metav1.DualStackNetwork{
@@ -35,72 +38,133 @@ func TestGetFWRules(t *testing.T) {
 			},
 		},
 	}
+}
 
-	newGW := func(v4, v6 string) *corev1.Gateway {
-		return &corev1.Gateway{
-			Status: &corev1.Gateway_Status{
-				Cidr: &metav1.DualStackNetwork{
-					V4: v4,
-					V6: v6,
-				},
+func newTstFWGW(v4, v6 string) *corev1.Gateway {
+	return &corev1.Gateway{
+		Status: &corev1.Gateway_Status{
+			Cidr: &metav1.DualStackNetwork{
+				V4: v4,
+				V6: v6,
 			},
+		},
+	}
+}
+
+func TestGetFWRules(t *testing.T) {
+	cc := newTstFWCC()
+
+	assert.Equal(t, []fwRule{
+		{
+			spec: []string{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/24", "-j", "ACCEPT"},
+		},
+		{
+			isV6: true,
+			spec: []string{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/112", "-j", "ACCEPT"},
+		},
+	}, getFWRules(newTstFWGW("100.64.1.0/24", "fdee::100:0/112"), cc))
+
+	assert.Equal(t, []fwRule{
+		{
+			spec: []string{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/24", "-j", "ACCEPT"},
+		},
+	}, getFWRules(newTstFWGW("100.64.1.0/24", ""), cc))
+
+	assert.Equal(t, []fwRule{
+		{
+			isV6: true,
+			spec: []string{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/112", "-j", "ACCEPT"},
+		},
+	}, getFWRules(newTstFWGW("", "fdee::100:0/112"), cc))
+}
+
+func TestSetFirewall(t *testing.T) {
+	{
+		usr, err := osuser.Current()
+		assert.Nil(t, err)
+		if usr.Uid != "0" {
+			zap.L().Warn("Skipping this test since the running user is not root")
+			return
 		}
 	}
 
-	byChain := func(rules []fwRule, isV6 bool, chain string) [][]string {
-		var ret [][]string
-		for _, rule := range rules {
-			if rule.isV6 == isV6 && rule.chain == chain {
-				ret = append(ret, rule.spec)
+	rules := getFWRules(newTstFWGW("100.64.1.0/24", "fdee::100:0/112"), newTstFWCC())
+	assert.Equal(t, 2, len(rules))
+
+	ipt, err := newIPTables()
+	assert.Nil(t, err)
+
+	unsetFirewall(rules)
+	t.Cleanup(func() {
+		unsetFirewall(rules)
+	})
+
+	assertRuleExists := func(rule fwRule, expected bool) {
+		exists, err := ipt.get(rule.isV6).Exists(tableFilter, chainForward, rule.spec...)
+		assert.Nil(t, err)
+		assert.Equal(t, expected, exists)
+	}
+
+	assertNoLegacyChains := func() {
+		for _, isV6 := range []bool{false, true} {
+			for _, legacy := range legacyChains {
+				exists, err := ipt.get(isV6).ChainExists(tableFilter, legacy.chain)
+				assert.Nil(t, err)
+				assert.False(t, exists)
 			}
 		}
-		return ret
 	}
 
-	{
-		rules := getFWRules(newGW("100.64.1.0/24", "fdee::100:0/112"), cc)
-		assert.Equal(t, 14, len(rules))
+	for _, isV6 := range []bool{false, true} {
+		for _, legacy := range legacyChains {
+			err = ipt.get(isV6).NewChain(tableFilter, legacy.chain)
+			assert.Nil(t, err)
+			err = ipt.get(isV6).Append(tableFilter, legacy.chain, "-i", devName, "-j", "DROP")
+			assert.Nil(t, err)
 
-		assert.Equal(t, [][]string{
-			{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/24", "-p", "icmp", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/28", "-j", "DROP"},
-			{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/24", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "100.66.0.0/16", "-j", "DROP"},
-		}, byChain(rules, false, fwChain))
-
-		assert.Equal(t, [][]string{
-			{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/24", "-p", "icmp", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "100.66.0.0/16", "-d", "100.64.1.0/28", "-j", "DROP"},
-			{"-i", devName, "-s", "100.66.0.0/16", "-j", "DROP"},
-		}, byChain(rules, false, inputChain))
-
-		assert.Equal(t, [][]string{
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/112", "-p", "icmp", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/124", "-j", "DROP"},
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/112", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-j", "DROP"},
-		}, byChain(rules, true, fwChain))
-
-		assert.Equal(t, [][]string{
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/112", "-p", "icmp", "-j", "ACCEPT"},
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-d", "fdee::100:0/124", "-j", "DROP"},
-			{"-i", devName, "-s", "fdee::2:0:0:0/80", "-j", "DROP"},
-		}, byChain(rules, true, inputChain))
-	}
-
-	{
-		rules := getFWRules(newGW("100.64.1.0/24", ""), cc)
-		assert.Equal(t, 7, len(rules))
-		for _, rule := range rules {
-			assert.False(t, rule.isV6)
+			if !isV6 {
+				for range 2 {
+					err = ipt.get(isV6).Insert(tableFilter, legacy.parent, 1, "-j", legacy.chain)
+					assert.Nil(t, err)
+				}
+			}
 		}
 	}
 
-	{
-		rules := getFWRules(newGW("", "fdee::100:0/112"), cc)
-		assert.Equal(t, 7, len(rules))
-		for _, rule := range rules {
-			assert.True(t, rule.isV6)
+	for _, rule := range rules {
+		for range 2 {
+			err = ipt.get(rule.isV6).Insert(tableFilter, chainForward, 1, rule.spec...)
+			assert.Nil(t, err)
 		}
 	}
+
+	err = setFirewall(rules)
+	assert.Nil(t, err)
+
+	err = setFirewall(rules)
+	assert.Nil(t, err)
+
+	assertNoLegacyChains()
+
+	for _, rule := range rules {
+		assertRuleExists(rule, true)
+
+		err = ipt.get(rule.isV6).Delete(tableFilter, chainForward, rule.spec...)
+		assert.Nil(t, err)
+		assertRuleExists(rule, false)
+	}
+
+	err = setFirewall(rules)
+	assert.Nil(t, err)
+
+	for _, rule := range rules {
+		assertRuleExists(rule, true)
+	}
+
+	unsetFirewall(rules)
+
+	for _, rule := range rules {
+		assertRuleExists(rule, false)
+	}
+	assertNoLegacyChains()
 }

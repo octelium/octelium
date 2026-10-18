@@ -18,6 +18,7 @@ package quicv0
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"net/netip"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+	"golang.org/x/sys/unix"
 )
 
 type dctx struct {
@@ -163,6 +165,7 @@ func (d *dctx) isPacketValid(buf []byte) bool {
 
 	var src netip.Addr
 	var dst netip.Addr
+	var proto uint8
 
 	switch buf[0] >> 4 {
 	case ipv4.Version:
@@ -173,6 +176,7 @@ func (d *dctx) isPacketValid(buf []byte) bool {
 
 		src = netip.AddrFrom4(srcBytes)
 		dst = netip.AddrFrom4(dstBytes)
+		proto = buf[IPv4offsetProtocol]
 	case ipv6.Version:
 		if lenBuf < ipv6.HeaderLen {
 			return false
@@ -193,7 +197,7 @@ func (d *dctx) isPacketValid(buf []byte) bool {
 		return false
 	}
 
-	if !d.isDstValid(dst) {
+	if !d.isDstValid(dst, proto) {
 		return false
 	}
 
@@ -209,13 +213,42 @@ func (d *dctx) isSrcValid(src netip.Addr) bool {
 	return false
 }
 
-func (d *dctx) isDstValid(dst netip.Addr) bool {
-	for _, addr := range d.svcCIDRs {
-		if addr.Contains(dst) {
+const (
+	gwReservedBitsV4 = 28
+	gwReservedBitsV6 = 124
+)
+
+func (d *dctx) isDstValid(dst netip.Addr, proto uint8) bool {
+	for _, cidr := range d.svcCIDRs {
+		if !cidr.Contains(dst) {
+			continue
+		}
+
+		if dst.Is4() && proto == unix.IPPROTO_ICMP {
 			return true
 		}
+
+		return !isGWReservedAddr(cidr, dst)
 	}
 	return false
+}
+
+func isGWReservedAddr(cidr netip.Prefix, addr netip.Addr) bool {
+	if addr.Is4() {
+		if netip.PrefixFrom(cidr.Masked().Addr(), gwReservedBitsV4).Contains(addr) {
+			return true
+		}
+
+		return addr == getBroadcastAddrV4(cidr)
+	}
+
+	return netip.PrefixFrom(cidr.Masked().Addr(), gwReservedBitsV6).Contains(addr)
+}
+
+func getBroadcastAddrV4(cidr netip.Prefix) netip.Addr {
+	addr := cidr.Masked().Addr().As4()
+	binary.BigEndian.PutUint32(addr[:], binary.BigEndian.Uint32(addr[:])|^uint32(0)>>cidr.Bits())
+	return netip.AddrFrom4(addr)
 }
 
 func (d *dctx) startReceiveLoop(ctx context.Context) {

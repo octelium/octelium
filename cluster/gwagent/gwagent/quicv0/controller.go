@@ -68,6 +68,8 @@ type QUICController struct {
 
 	svcCIDRs []netip.Prefix
 
+	fwRules []fwRule
+
 	mtu int
 }
 
@@ -148,8 +150,9 @@ func (c *QUICController) Run(ctx context.Context) error {
 		return errors.Errorf("Could not create tundev: %+v", err)
 	}
 
-	if err := setFirewall(gw, cc); err != nil {
-		return errors.Errorf("Could not set the QUICv0 firewall rules: %+v", err)
+	c.fwRules = getFWRules(gw, cc)
+	if err := setFirewall(c.fwRules); err != nil {
+		zap.L().Warn("Could not set the QUICv0 firewall rules", zap.Error(err))
 	}
 
 	if err := c.runTunDev(ctx); err != nil {
@@ -421,7 +424,7 @@ func (c *QUICController) Close() error {
 		c.tundev.Close()
 	}
 
-	unsetFirewall()
+	unsetFirewall(c.fwRules)
 
 	zap.L().Debug("QUIC controller closed")
 

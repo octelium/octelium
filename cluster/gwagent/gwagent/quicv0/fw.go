@@ -17,51 +17,25 @@
 package quicv0
 
 import (
-	"net"
-
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/octelium/octelium/apis/main/corev1"
-	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
 const (
-	fwChain     = "octelium-quic-fw"
-	inputChain  = "octelium-quic-in"
-	tableFilter = "filter"
+	tableFilter  = "filter"
+	chainForward = "FORWARD"
 )
 
 type fwRule struct {
-	isV6  bool
-	chain string
-	spec  []string
+	isV6 bool
+	spec []string
 }
 
 func getFWRules(gw *corev1.Gateway, cc *corev1.ClusterConfig) []fwRule {
 	connSubnet := cc.Status.Network.QuicConnSubnet
 	gwSubnet := gw.Status.Cidr
-
-	hasV4 := gwSubnet.V4 != ""
-	hasV6 := gwSubnet.V6 != ""
-
-	ruleICMP := func(connSubnet, svcSubnet string) []string {
-		return []string{
-			"-i", devName,
-			"-s", connSubnet,
-			"-d", svcSubnet,
-			"-p", "icmp",
-			"-j", "ACCEPT",
-		}
-	}
-
-	ruleBlockGWOut := func(connSubnet, gwIPRange string) []string {
-		return []string{
-			"-i", devName,
-			"-s", connSubnet,
-			"-d", gwIPRange,
-			"-j", "DROP",
-		}
-	}
 
 	ruleAllowSvc := func(connSubnet, svcSubnet string) []string {
 		return []string{
@@ -72,51 +46,27 @@ func getFWRules(gw *corev1.Gateway, cc *corev1.ClusterConfig) []fwRule {
 		}
 	}
 
-	defaultRule := func(connSubnet string) []string {
-		return []string{
-			"-i", devName,
-			"-s", connSubnet,
-			"-j", "DROP",
-		}
-	}
-
 	var ret []fwRule
 
-	if hasV4 {
-		gwRange := &net.IPNet{
-			IP:   umetav1.ToDualStackNetwork(gwSubnet).ToGo().V4.IP,
-			Mask: net.CIDRMask(28, 32),
-		}
-
-		ret = append(ret,
-			fwRule{chain: fwChain, spec: ruleICMP(connSubnet.V4, gwSubnet.V4)},
-			fwRule{chain: fwChain, spec: ruleBlockGWOut(connSubnet.V4, gwRange.String())},
-			fwRule{chain: fwChain, spec: ruleAllowSvc(connSubnet.V4, gwSubnet.V4)},
-			fwRule{chain: fwChain, spec: defaultRule(connSubnet.V4)},
-			fwRule{chain: inputChain, spec: ruleICMP(connSubnet.V4, gwSubnet.V4)},
-			fwRule{chain: inputChain, spec: ruleBlockGWOut(connSubnet.V4, gwRange.String())},
-			fwRule{chain: inputChain, spec: defaultRule(connSubnet.V4)},
-		)
+	if gwSubnet.V4 != "" {
+		ret = append(ret, fwRule{spec: ruleAllowSvc(connSubnet.V4, gwSubnet.V4)})
 	}
 
-	if hasV6 {
-		gwRange := &net.IPNet{
-			IP:   umetav1.ToDualStackNetwork(gwSubnet).ToGo().V6.IP,
-			Mask: net.CIDRMask(124, 128),
-		}
-
-		ret = append(ret,
-			fwRule{isV6: true, chain: fwChain, spec: ruleICMP(connSubnet.V6, gwSubnet.V6)},
-			fwRule{isV6: true, chain: fwChain, spec: ruleBlockGWOut(connSubnet.V6, gwRange.String())},
-			fwRule{isV6: true, chain: fwChain, spec: ruleAllowSvc(connSubnet.V6, gwSubnet.V6)},
-			fwRule{isV6: true, chain: fwChain, spec: defaultRule(connSubnet.V6)},
-			fwRule{isV6: true, chain: inputChain, spec: ruleICMP(connSubnet.V6, gwSubnet.V6)},
-			fwRule{isV6: true, chain: inputChain, spec: ruleBlockGWOut(connSubnet.V6, gwRange.String())},
-			fwRule{isV6: true, chain: inputChain, spec: defaultRule(connSubnet.V6)},
-		)
+	if gwSubnet.V6 != "" {
+		ret = append(ret, fwRule{isV6: true, spec: ruleAllowSvc(connSubnet.V6, gwSubnet.V6)})
 	}
 
 	return ret
+}
+
+type legacyChain struct {
+	parent string
+	chain  string
+}
+
+var legacyChains = []legacyChain{
+	{parent: chainForward, chain: "octelium-quic-fw"},
+	{parent: "INPUT", chain: "octelium-quic-in"},
 }
 
 type iptablesCtl struct {
@@ -145,38 +95,12 @@ func (i *iptablesCtl) get(isV6 bool) *iptables.IPTables {
 	return i.iptv4
 }
 
-func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
-	hasV4 := gw.Status.Cidr.V4 != ""
-	hasV6 := gw.Status.Cidr.V6 != ""
-
-	var families []bool
-	if hasV4 {
-		families = append(families, false)
-	}
-	if hasV6 {
-		families = append(families, true)
-	}
-
-	for _, isV6 := range families {
-		if err := i.get(isV6).NewChain(tableFilter, fwChain); err != nil {
+func (i *iptablesCtl) OnAdd(rules []fwRule) error {
+	for _, rule := range rules {
+		if err := deleteRules(i.get(rule.isV6), chainForward, rule.spec...); err != nil {
 			return err
 		}
-		if err := i.get(isV6).NewChain(tableFilter, inputChain); err != nil {
-			return err
-		}
-	}
-
-	for _, rule := range getFWRules(gw, cc) {
-		if err := i.get(rule.isV6).Append(tableFilter, rule.chain, rule.spec...); err != nil {
-			return err
-		}
-	}
-
-	for _, isV6 := range families {
-		if err := i.get(isV6).Insert(tableFilter, "FORWARD", 1, "-j", fwChain); err != nil {
-			return err
-		}
-		if err := i.get(isV6).Insert(tableFilter, "INPUT", 1, "-j", inputChain); err != nil {
+		if err := i.get(rule.isV6).Insert(tableFilter, chainForward, 1, rule.spec...); err != nil {
 			return err
 		}
 	}
@@ -184,41 +108,78 @@ func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 	return nil
 }
 
-func (i *iptablesCtl) OnDelete() {
+func (i *iptablesCtl) OnDelete(rules []fwRule) {
+	for _, rule := range rules {
+		if err := deleteRules(i.get(rule.isV6), chainForward, rule.spec...); err != nil {
+			zap.L().Warn("Could not delete the QUICv0 firewall rule",
+				zap.Strings("spec", rule.spec), zap.Error(err))
+		}
+	}
+}
+
+func (i *iptablesCtl) deleteLegacyChains() {
 	for _, isV6 := range []bool{false, true} {
 		ipt := i.get(isV6)
 
-		ipt.DeleteIfExists(tableFilter, "FORWARD", "-j", fwChain)
-		ipt.DeleteIfExists(tableFilter, "INPUT", "-j", inputChain)
-
-		for _, chain := range []string{fwChain, inputChain} {
-			if exists, err := ipt.ChainExists(tableFilter, chain); err != nil || !exists {
+		for _, legacy := range legacyChains {
+			if exists, err := ipt.ChainExists(tableFilter, legacy.chain); err != nil || !exists {
 				continue
 			}
-			if err := ipt.ClearAndDeleteChain(tableFilter, chain); err != nil {
-				zap.L().Debug("Could not delete the QUICv0 chain", zap.String("chain", chain), zap.Error(err))
+
+			zap.L().Debug("Deleting the legacy QUICv0 chain",
+				zap.String("chain", legacy.chain), zap.Bool("isV6", isV6))
+
+			if err := deleteRules(ipt, legacy.parent, "-j", legacy.chain); err != nil {
+				zap.L().Warn("Could not delete the jump rules to the legacy QUICv0 chain",
+					zap.String("chain", legacy.chain), zap.Error(err))
+				continue
+			}
+
+			if err := ipt.ClearAndDeleteChain(tableFilter, legacy.chain); err != nil {
+				zap.L().Warn("Could not delete the legacy QUICv0 chain",
+					zap.String("chain", legacy.chain), zap.Error(err))
 			}
 		}
 	}
 }
 
-func setFirewall(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
+const maxDuplicateRules = 64
+
+func deleteRules(ipt *iptables.IPTables, chain string, spec ...string) error {
+	for range maxDuplicateRules {
+		exists, err := ipt.Exists(tableFilter, chain, spec...)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+		if err := ipt.Delete(tableFilter, chain, spec...); err != nil {
+			return err
+		}
+	}
+
+	return errors.Errorf("Could not delete all the duplicate rules of the %s chain", chain)
+}
+
+func setFirewall(rules []fwRule) error {
 	ipt, err := newIPTables()
 	if err != nil {
 		return err
 	}
 
-	ipt.OnDelete()
+	ipt.deleteLegacyChains()
 
-	return ipt.OnAdd(gw, cc)
+	return ipt.OnAdd(rules)
 }
 
-func unsetFirewall() {
+func unsetFirewall(rules []fwRule) {
 	ipt, err := newIPTables()
 	if err != nil {
 		zap.L().Debug("Could not create the iptables client", zap.Error(err))
 		return
 	}
 
-	ipt.OnDelete()
+	ipt.OnDelete(rules)
+	ipt.deleteLegacyChains()
 }

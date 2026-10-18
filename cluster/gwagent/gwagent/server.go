@@ -147,7 +147,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 
 		if err := s.quicCtl.Run(ctx); err != nil {
-			zap.L().Debug("Could not run QUICv0 controller", zap.Error(err))
+			zap.L().Warn("Could not run QUICv0 controller", zap.Error(err))
 		} else {
 			zap.L().Debug("QUICv0 controller is now running")
 		}
