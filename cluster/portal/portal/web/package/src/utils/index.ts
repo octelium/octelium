@@ -29,12 +29,12 @@ export const getDomain = (): string => {
     return __domain;
   }
 
-  __domain =
-    ("; " + window.document.cookie)
-      .split("; octelium_domain=")
-      .pop()
-      ?.split(";")
-      .shift() ?? "";
+  const domain = window.__OCTELIUM_GLOBALS__?.cluster?.domain;
+  if (typeof domain !== "string" || domain.length === 0) {
+    throw new Error("The cluster domain is unavailable");
+  }
+
+  __domain = domain;
 
   return __domain;
 };

@@ -178,20 +178,8 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 		return
 	}
 
-	s.setDomainCookie(w)
 	s.setSecurityHeaders(w, nonce)
 	w.Write(out.Bytes())
-}
-
-func (s *server) setDomainCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "octelium_domain",
-		Value:    s.domain,
-		Secure:   true,
-		Domain:   s.domain,
-		Path:     "/",
-		SameSite: http.SameSiteNoneMode,
-	})
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
