@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const ExitCodeRejected = 3
+
 type args struct {
 	L3Mode    string
 	IgnoreDNS bool
@@ -235,6 +237,12 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := doConnect(ctx, c); err != nil {
+		if isRejectedErr(err) {
+			return &cliutils.ExitError{
+				Code: ExitCodeRejected,
+				Err:  err,
+			}
+		}
 		return err
 	}
 

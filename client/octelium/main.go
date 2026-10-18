@@ -37,6 +37,6 @@ func main() {
 
 	if err := commands.Cmd.ExecuteContext(ctx); err != nil {
 		color.New(color.FgRed, color.Bold).Printf("%s\n", cliutils.GrpcErr(err))
-		os.Exit(1)
+		os.Exit(cliutils.GetExitCode(err))
 	}
 }

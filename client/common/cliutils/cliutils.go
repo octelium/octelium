@@ -301,6 +301,8 @@ func getFlagBoolean(cmd *cobra.Command, arg string) bool {
 }
 
 func GrpcErr(err error) error {
+	err = unwrapExitError(err)
+
 	st, ok := status.FromError(err)
 	if !ok {
 		return err

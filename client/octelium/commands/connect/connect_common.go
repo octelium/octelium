@@ -587,7 +587,13 @@ func (c *Connector) Run(ctx context.Context) error {
 				})
 				return ret.cleanupErr
 			}
-			if !ret.needsReconnect {
+
+			if ret.isConnected {
+				isConnected = true
+				attempt = 0
+			}
+
+			if !shouldReconnect(ret, isConnected) {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
 
 				c.setEvent(&Event{
@@ -596,11 +602,6 @@ func (c *Connector) Run(ctx context.Context) error {
 				})
 
 				return ret.err
-			}
-
-			if ret.isConnected {
-				isConnected = true
-				attempt = 0
 			}
 
 			c.setEvent(&Event{
@@ -614,17 +615,7 @@ func (c *Connector) Run(ctx context.Context) error {
 			})
 
 			if ret.err != nil {
-				err := ret.err
-
-				switch {
-				case grpcerr.IsInvalidArg(err):
-					c.setEvent(&Event{
-						Type: EventTypeDisconnected,
-						Err:  err,
-					})
-					return err
-				}
-				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", err.Error())
+				cliutils.LineWarn("Could not connect due to err: %s. Reconnecting...\n", ret.err.Error())
 			}
 
 			if ret.isResumed {
@@ -664,22 +655,26 @@ type tryConnectRet struct {
 	isResumed      bool
 }
 
-func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
+func isRejectedErr(err error) bool {
+	return grpcerr.IsInvalidArg(err) ||
+		grpcerr.IsPermissionDenied(err) ||
+		grpcerr.IsNotFound(err)
+}
 
-	doNeedReconnect := func(err error) bool {
-		if grpcerr.IsInvalidArg(err) ||
-			grpcerr.IsUnauthorized(err) ||
-			grpcerr.IsNotFound(err) {
-			return false
-		}
-
-		return true
+func shouldReconnect(ret tryConnectRet, wasConnected bool) bool {
+	if !ret.needsReconnect {
+		return false
 	}
+
+	return wasConnected || !isRejectedErr(ret.err)
+}
+
+func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	conn, err := client.GetGRPCClientConn(ctx, c.domain)
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
-			needsReconnect: doNeedReconnect(err),
+			needsReconnect: true,
 		}
 	}
 	defer conn.Close()
@@ -693,7 +688,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		if err != nil {
 			return tryConnectRet{
 				err:            err,
-				needsReconnect: doNeedReconnect(err),
+				needsReconnect: true,
 			}
 		}
 	}
@@ -703,14 +698,14 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	if err != nil {
 		return tryConnectRet{
 			err:            errors.Wrap(err, "Could not connect to API Server"),
-			needsReconnect: doNeedReconnect(err),
+			needsReconnect: true,
 		}
 	}
 
 	if err := c.sendInitializeRequest(streamC, publishedServices); err != nil {
 		return tryConnectRet{
 			err:            errors.Wrap(err, "Could not send init request to API Server"),
-			needsReconnect: doNeedReconnect(err),
+			needsReconnect: true,
 		}
 	}
 
@@ -718,7 +713,7 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 	if err != nil {
 		return tryConnectRet{
 			err:            err,
-			needsReconnect: doNeedReconnect(err),
+			needsReconnect: true,
 		}
 	}
 
