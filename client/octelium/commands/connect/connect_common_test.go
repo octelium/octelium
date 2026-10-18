@@ -17,7 +17,9 @@ package connect
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -227,7 +229,13 @@ func runFakeConnect(t *testing.T, errs ...error) (*fakeConnectServer, *Connector
 	t.Setenv("OCTELIUM_DEV", "false")
 	t.Setenv("OCTELIUM_PRODUCTION", "true")
 
-	socketPath := filepath.Join(t.TempDir(), "proxy.sock")
+	dir, err := os.MkdirTemp("", "octelium-connect-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(dir))
+	})
+
+	socketPath := filepath.Join(dir, "proxy.sock")
 	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", socketPath)
 
 	lis, err := net.Listen("unix", socketPath)
@@ -274,6 +282,19 @@ func TestRunStopsOnRejectionBeforeConnecting(t *testing.T) {
 			assert.Equal(t, code, status.Code(last.Err))
 		})
 	}
+}
+
+func TestRunStopsOnRejectionWithLongTestName(t *testing.T) {
+	t.Setenv("GOTMPDIR", t.TempDir())
+
+	t.Run(strings.Repeat("long", 32), func(t *testing.T) {
+		_, c, _ := runFakeConnect(t, status.Error(codes.NotFound, "rejected"))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+
+		assert.Equal(t, codes.NotFound, status.Code(c.Run(ctx)))
+	})
 }
 
 func TestRunRetriesBeforeConnecting(t *testing.T) {
