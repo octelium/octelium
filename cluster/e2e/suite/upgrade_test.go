@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/cluster/e2e/scenario"
@@ -91,7 +93,8 @@ func TestUpgradeClientOpts(t *testing.T) {
 }
 
 func TestUpgradeDisruptions(t *testing.T) {
-	assert.LessOrEqual(t, upgradeClients+upgradeChurnClients, upgradeFleetSessions)
+	assert.LessOrEqual(t, upgradeClients+upgradeChurnClients+upgradeAbandonedClients, upgradeFleetSessions)
+	assert.Positive(t, upgradeAbandonedClients)
 
 	seen := map[string]bool{}
 	for _, d := range upgradeDisruptions() {
@@ -105,4 +108,38 @@ func TestUpgradeDisruptions(t *testing.T) {
 	}
 
 	assert.True(t, seen["GenesisUpgrade"])
+}
+
+func TestConnectedSessionNames(t *testing.T) {
+	assert.Empty(t, connectedSessionNames(nil))
+
+	assert.Equal(t, []string{"connected", "inconsistent-flag", "inconsistent-conn"},
+		connectedSessionNames([]*corev1.Session{
+			{
+				Metadata: &metav1.Metadata{Name: "connected"},
+				Status: &corev1.Session_Status{
+					IsConnected: true,
+					Connection:  &corev1.Session_Status_Connection{},
+				},
+			},
+			{
+				Metadata: &metav1.Metadata{Name: "disconnected"},
+				Status:   &corev1.Session_Status{},
+			},
+			{
+				Metadata: &metav1.Metadata{Name: "inconsistent-flag"},
+				Status: &corev1.Session_Status{
+					IsConnected: true,
+				},
+			},
+			{
+				Metadata: &metav1.Metadata{Name: "inconsistent-conn"},
+				Status: &corev1.Session_Status{
+					Connection: &corev1.Session_Status_Connection{},
+				},
+			},
+			{
+				Metadata: &metav1.Metadata{Name: "no-status"},
+			},
+		}))
 }

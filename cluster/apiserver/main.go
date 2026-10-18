@@ -27,5 +27,7 @@ func init() {
 }
 
 func main() {
-	components.RunComponent(apiserver.Run, nil)
+	components.RunComponent(apiserver.Run, &components.RunComponentOpts{
+		CancelOnSIGTERM: true,
+	})
 }

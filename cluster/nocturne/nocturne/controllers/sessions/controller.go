@@ -42,6 +42,8 @@ type Controller struct {
 	indexes map[string][]upstream.ConnIndex
 
 	orphans map[upstream.ConnIndex]int
+
+	lastSeen map[string]lastSeenObservation
 }
 
 func NewController(
@@ -51,6 +53,7 @@ func NewController(
 		octeliumC: octeliumC,
 		indexes:   make(map[string][]upstream.ConnIndex),
 		orphans:   make(map[upstream.ConnIndex]int),
+		lastSeen:  make(map[string]lastSeenObservation),
 	}
 }
 
@@ -132,6 +135,8 @@ func (c *Controller) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	c.disconnectStaleConnections(ctx, sessList, time.Now())
 
 	owned := c.getOwnedIndexes(ctx, sessList)
 

@@ -24,7 +24,30 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+const maxLastConnections = 100
+
+func SetDisconnected(sess *corev1.Session, endedAt *timestamppb.Timestamp) {
+	if sess.Status.Connection != nil {
+		lastConnections := append([]*corev1.Session_Status_LastConnection{
+			{
+				StartedAt: sess.Status.Connection.StartedAt,
+				EndedAt:   endedAt,
+			},
+		}, sess.Status.LastConnections...)
+
+		if len(lastConnections) > maxLastConnections {
+			lastConnections = lastConnections[:maxLastConnections]
+		}
+
+		sess.Status.LastConnections = lastConnections
+	}
+
+	sess.Status.IsConnected = false
+	sess.Status.Connection = nil
+}
 
 func SetConnectionUpstreams(ctx context.Context, octeliumC octeliumc.ClientInterface, sess *corev1.Session, svc *corev1.Service) error {
 	if err := setConnectionUpstreamsListener(ctx, octeliumC, sess, svc); err != nil {

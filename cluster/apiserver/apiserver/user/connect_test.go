@@ -34,7 +34,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/userctx"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -912,7 +914,14 @@ type failingCoreC struct {
 
 	mu               sync.Mutex
 	updateSessionErr error
+	updateSessionFn  func(in *corev1.Session)
 	getServiceFn     func() error
+}
+
+func (c *failingCoreC) setUpdateSessionFn(fn func(in *corev1.Session)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateSessionFn = fn
 }
 
 func (c *failingCoreC) setErrs(updateSessionErr, getServiceErr error) {
@@ -932,9 +941,14 @@ func (c *failingCoreC) UpdateSession(ctx context.Context,
 	in *corev1.Session, opts ...grpc.CallOption) (*corev1.Session, error) {
 	c.mu.Lock()
 	err := c.updateSessionErr
+	fn := c.updateSessionFn
 	c.mu.Unlock()
 	if err != nil {
 		return nil, err
+	}
+
+	if fn != nil {
+		fn(in)
 	}
 
 	return c.ResourceServiceClient.UpdateSession(ctx, in, opts...)
@@ -1177,6 +1191,159 @@ func TestDisconnectReleaseAddresses(t *testing.T) {
 		assert.Nil(t, sess.Status.Connection)
 		assert.Equal(t, 0, len(getActiveIndexes()))
 	}
+}
+
+func TestDoDisconnectConnectionConflict(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	coreC := &failingCoreC{
+		ResourceServiceClient: tst.C.OcteliumC.CoreC(),
+	}
+	octeliumC := &failingOcteliumC{
+		ClientInterface: tst.C.OcteliumC,
+		coreC:           coreC,
+	}
+
+	usrSrv := NewServer(octeliumC)
+	otherSrv, adminSrv := newFakeServers(tst.C)
+
+	getActiveIndexes := func() []uint32 {
+		cfg, err := tst.C.OcteliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{Name: "sys:conn-info"})
+		assert.Nil(t, err, "%+v", err)
+
+		ret := &cclusterv1.ClusterConnInfo{}
+		err = pbutils.StructToMessage(cfg.Data.GetAttrs(), ret)
+		assert.Nil(t, err, "%+v", err)
+		return append(ret.ActiveIndexesWG, ret.ActiveIndexesQUIC...)
+	}
+
+	getSess := func(uid string) *corev1.Session {
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uid})
+		assert.Nil(t, err, "%+v", err)
+		return sess
+	}
+
+	touchSess := func(uid string) {
+		sess := getSess(uid)
+		sess.Status.TotalAuthentications = sess.Status.TotalAuthentications + 1
+		_, err := tst.C.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	connect := func() (*tstuser.User, *userctx.UserCtx, *corev1.Session_Status_Connection) {
+		usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err, "%+v", err)
+
+		_, conn, err := usrSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+		assert.Nil(t, err, "%+v", err)
+
+		usrT.Resync()
+		i, err := userctx.GetUserCtx(usrT.Ctx())
+		assert.Nil(t, err, "%+v", err)
+
+		return usrT, i, conn
+	}
+
+	t.Run("transient", func(t *testing.T) {
+		usrT, i, conn := connect()
+		uid := usrT.Session.Metadata.Uid
+		totalAuthentications := getSess(uid).Status.TotalAuthentications
+		assert.Equal(t, 1, len(getActiveIndexes()))
+
+		var updates int
+		coreC.setUpdateSessionFn(func(in *corev1.Session) {
+			updates++
+			if updates < disconnectMaxAttempts {
+				touchSess(in.Metadata.Uid)
+			}
+		})
+		_, err := usrSrv.doDisconnectConnection(ctx, i, conn)
+		coreC.setUpdateSessionFn(nil)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, disconnectMaxAttempts, updates)
+
+		sess := getSess(uid)
+		assert.False(t, sess.Status.IsConnected)
+		assert.Nil(t, sess.Status.Connection)
+		assert.Equal(t, 1, len(sess.Status.LastConnections))
+		assert.Equal(t, totalAuthentications+uint32(disconnectMaxAttempts-1), sess.Status.TotalAuthentications)
+		assert.Equal(t, 0, len(getActiveIndexes()))
+	})
+
+	t.Run("persistent", func(t *testing.T) {
+		usrT, i, conn := connect()
+		uid := usrT.Session.Metadata.Uid
+
+		var updates int
+		coreC.setUpdateSessionFn(func(in *corev1.Session) {
+			updates++
+			touchSess(in.Metadata.Uid)
+		})
+		_, err := usrSrv.doDisconnectConnection(ctx, i, conn)
+		coreC.setUpdateSessionFn(nil)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsResourceChanged(err), "%+v", err)
+		assert.Equal(t, disconnectMaxAttempts, updates)
+
+		sess := getSess(uid)
+		assert.True(t, sess.Status.IsConnected)
+		assert.True(t, isSameConnection(sess.Status.Connection, conn))
+		assert.Equal(t, 1, len(getActiveIndexes()))
+
+		_, err = usrSrv.doDisconnectConnection(ctx, i, conn)
+		assert.Nil(t, err, "%+v", err)
+		assert.False(t, getSess(uid).Status.IsConnected)
+		assert.Equal(t, 0, len(getActiveIndexes()))
+	})
+
+	t.Run("takeover", func(t *testing.T) {
+		usrT, i, oldConn := connect()
+		uid := usrT.Session.Metadata.Uid
+
+		var newConn *corev1.Session_Status_Connection
+		var updates int
+		coreC.setUpdateSessionFn(func(in *corev1.Session) {
+			updates++
+			if updates > 1 {
+				return
+			}
+
+			_, err := otherSrv.doDisconnect(usrT.Ctx(), i)
+			assert.Nil(t, err, "%+v", err)
+
+			_, newConn, err = otherSrv.doInitConnect(usrT.Ctx(), &userv1.ConnectRequest_Initialize{})
+			assert.Nil(t, err, "%+v", err)
+		})
+		_, err := usrSrv.doDisconnectConnection(ctx, i, oldConn)
+		coreC.setUpdateSessionFn(nil)
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, updates)
+
+		sess := getSess(uid)
+		assert.True(t, sess.Status.IsConnected)
+		assert.True(t, isSameConnection(sess.Status.Connection, newConn))
+		assert.Equal(t, 1, len(sess.Status.LastConnections))
+		assert.Equal(t, 1, len(getActiveIndexes()))
+	})
+}
+
+func TestGetNextLastSeenUpdateInterval(t *testing.T) {
+	assert.Equal(t, lastSeenRetryInterval, getNextLastSeenUpdateInterval(errors.New("err")))
+
+	for range 100 {
+		interval := getNextLastSeenUpdateInterval(nil)
+		assert.True(t, interval >= lastSeenUpdateInterval)
+		assert.True(t, interval <= lastSeenUpdateInterval+lastSeenUpdateJitter)
+	}
+
+	assert.True(t, lastSeenRetryInterval < lastSeenUpdateInterval)
 }
 
 type fakeInitializeStream struct {

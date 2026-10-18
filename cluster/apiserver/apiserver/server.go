@@ -90,8 +90,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	s := grpc.NewServer(
-		grpc.ReadBufferSize(32*1024),
+	s := newGRPCServer(
 		grpc.ChainStreamInterceptor(mdlwr.StreamServerInterceptor()),
 		grpc.ChainUnaryInterceptor(mdlwr.UnaryServerInterceptor()),
 	)
@@ -112,4 +111,11 @@ func Run(ctx context.Context) error {
 	s.Stop()
 
 	return nil
+}
+
+func newGRPCServer(opts ...grpc.ServerOption) *grpc.Server {
+	return grpc.NewServer(append([]grpc.ServerOption{
+		grpc.ReadBufferSize(32 * 1024),
+		grpc.WaitForHandlers(true),
+	}, opts...)...)
 }

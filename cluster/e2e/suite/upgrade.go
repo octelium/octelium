@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
@@ -38,10 +39,11 @@ import (
 )
 
 const (
-	upgradeFleetSessions = 32
-	upgradeFleetUsers    = 4
-	upgradeClients       = 8
-	upgradeChurnClients  = 2
+	upgradeFleetSessions    = 32
+	upgradeFleetUsers       = 4
+	upgradeClients          = 8
+	upgradeChurnClients     = 2
+	upgradeAbandonedClients = 4
 
 	upgradeProbeWorkers  = 8
 	upgradeProbeInterval = 50 * time.Millisecond
@@ -191,11 +193,12 @@ func (p *sessionProbe) stop() {
 type upgradeEnv struct {
 	h *harness.H
 
-	conn    *grpc.ClientConn
-	pool    *harness.VConnPool
-	fleet   *harness.Fleet
-	clients []*harness.VClient
-	churn   []*harness.FleetSession
+	conn      *grpc.ClientConn
+	pool      *harness.VConnPool
+	fleet     *harness.Fleet
+	clients   []*harness.VClient
+	churn     []*harness.FleetSession
+	abandoned []*harness.FleetSession
 
 	connectErrs *errorLog
 }
@@ -237,12 +240,15 @@ func newUpgradeEnv(t *testing.T, h *harness.H) *upgradeEnv {
 	require.NoError(t, err)
 	t.Cleanup(func() { fleet.Close(context.Background()) })
 
+	abandonedFrom := upgradeClients + upgradeChurnClients
+
 	ret := &upgradeEnv{
 		h:           h,
 		conn:        conn,
 		pool:        pool,
 		fleet:       fleet,
 		churn:       fleet.Sessions[upgradeClients : upgradeClients+upgradeChurnClients],
+		abandoned:   fleet.Sessions[abandonedFrom : abandonedFrom+upgradeAbandonedClients],
 		connectErrs: &errorLog{},
 	}
 
@@ -286,6 +292,65 @@ func newUpgradeEnv(t *testing.T, h *harness.H) *upgradeEnv {
 	return ret
 }
 
+func (e *upgradeEnv) connectAbandoned(t *testing.T) []*harness.VClient {
+	t.Helper()
+
+	var ret []*harness.VClient
+	for i, sess := range e.abandoned {
+		c := harness.NewVClient(sess, e.pool, upgradeClientOpts(e.h, i))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*harness.VClientInitBudget)
+		_, err := connectWithRetry(ctx, c, 5)
+		cancel()
+		require.NoError(t, err)
+
+		t.Cleanup(func() { c.Disconnect(context.Background()) })
+
+		ret = append(ret, c)
+	}
+
+	return ret
+}
+
+func connectedSessionNames(sessions []*corev1.Session) []string {
+	var ret []string
+	for _, sess := range sessions {
+		if sess.Status != nil && (sess.Status.IsConnected || sess.Status.Connection != nil) {
+			ret = append(ret, sess.Metadata.Name)
+		}
+	}
+
+	return ret
+}
+
+func (e *upgradeEnv) waitAbandonedDisconnected(t *testing.T,
+	clients []*harness.VClient, what string) time.Duration {
+	t.Helper()
+
+	return e.h.Within(t, "the Sessions of the clients that never reconnected after "+what+
+		" to be disconnected", upgradeRecoverBudget, func(ctx context.Context) error {
+		var sessions []*corev1.Session
+		for _, c := range clients {
+			if c.IsConnected() {
+				return errors.Errorf("the client of the Session %s still has its API stream", c.Session.UID)
+			}
+
+			sess, err := e.h.CoreC().GetSession(ctx, &metav1.GetOptions{Uid: c.Session.UID})
+			if err != nil {
+				return err
+			}
+			sessions = append(sessions, sess)
+		}
+
+		if connected := connectedSessionNames(sessions); len(connected) > 0 {
+			return errors.Errorf("%d of %d Sessions are still connected although their client is gone: %v",
+				len(connected), len(sessions), connected)
+		}
+
+		return nil
+	})
+}
+
 type upgradeDisruption struct {
 	name  string
 	drops bool
@@ -327,6 +392,8 @@ func (e *upgradeEnv) runDisruption(t *testing.T, d upgradeDisruption) {
 			}
 			return nil
 		})
+
+	abandoned := e.connectAbandoned(t)
 
 	since := time.Now()
 
@@ -374,6 +441,11 @@ func (e *upgradeEnv) runDisruption(t *testing.T, d upgradeDisruption) {
 	h.WaitConnected(t)
 	h.WaitGetStatus(t, h.HTTP(), conn.URL("demo-nginx"), http.StatusOK)
 
+	var abandonedDisconnected time.Duration
+	if d.drops {
+		abandonedDisconnected = e.waitAbandonedDisconnected(t, abandoned, d.name)
+	}
+
 	require.NoError(t, harness.Sleep(t.Context(), upgradeSettle))
 	probe.stop()
 
@@ -381,6 +453,7 @@ func (e *upgradeEnv) runDisruption(t *testing.T, d upgradeDisruption) {
 		zap.String("disruption", d.name),
 		zap.Duration("disrupted", disrupted),
 		zap.Duration("recovered", recovered),
+		zap.Duration("abandonedDisconnected", abandonedDisconnected),
 		zap.Int64("requests", probe.requests.Load()),
 		zap.Int64("connects", probe.connects.Load()),
 		zap.Any("errors", probe.errs.Classes()))

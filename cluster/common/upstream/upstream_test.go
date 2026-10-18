@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 )
@@ -156,4 +157,70 @@ func TestGetConnectionIndexes(t *testing.T) {
 			},
 		},
 	}))
+}
+
+func TestSetDisconnected(t *testing.T) {
+	{
+		sess := &corev1.Session{
+			Status: &corev1.Session_Status{},
+		}
+
+		SetDisconnected(sess, pbutils.Now())
+		assert.False(t, sess.Status.IsConnected)
+		assert.Nil(t, sess.Status.Connection)
+		assert.Equal(t, 0, len(sess.Status.LastConnections))
+	}
+
+	{
+		startedAt := pbutils.Timestamp(time.Now().Add(-2 * time.Hour))
+		endedAt := pbutils.Timestamp(time.Now().Add(-1 * time.Hour))
+		prev := &corev1.Session_Status_LastConnection{
+			StartedAt: pbutils.Timestamp(time.Now().Add(-4 * time.Hour)),
+			EndedAt:   pbutils.Timestamp(time.Now().Add(-3 * time.Hour)),
+		}
+
+		sess := &corev1.Session{
+			Status: &corev1.Session_Status{
+				IsConnected: true,
+				Connection: &corev1.Session_Status_Connection{
+					StartedAt: startedAt,
+				},
+				LastConnections: []*corev1.Session_Status_LastConnection{prev},
+			},
+		}
+
+		SetDisconnected(sess, endedAt)
+		assert.False(t, sess.Status.IsConnected)
+		assert.Nil(t, sess.Status.Connection)
+		assert.Equal(t, 2, len(sess.Status.LastConnections))
+		assert.True(t, pbutils.IsEqual(startedAt, sess.Status.LastConnections[0].StartedAt))
+		assert.True(t, pbutils.IsEqual(endedAt, sess.Status.LastConnections[0].EndedAt))
+		assert.Equal(t, prev, sess.Status.LastConnections[1])
+	}
+
+	{
+		var lastConnections []*corev1.Session_Status_LastConnection
+		for range maxLastConnections {
+			lastConnections = append(lastConnections, &corev1.Session_Status_LastConnection{
+				StartedAt: pbutils.Now(),
+				EndedAt:   pbutils.Now(),
+			})
+		}
+
+		startedAt := pbutils.Now()
+		sess := &corev1.Session{
+			Status: &corev1.Session_Status{
+				IsConnected: true,
+				Connection: &corev1.Session_Status_Connection{
+					StartedAt: startedAt,
+				},
+				LastConnections: lastConnections,
+			},
+		}
+
+		SetDisconnected(sess, pbutils.Now())
+		assert.Equal(t, maxLastConnections, len(sess.Status.LastConnections))
+		assert.True(t, pbutils.IsEqual(startedAt, sess.Status.LastConnections[0].StartedAt))
+		assert.Equal(t, lastConnections[maxLastConnections-2], sess.Status.LastConnections[maxLastConnections-1])
+	}
 }

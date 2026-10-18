@@ -51,6 +51,10 @@ const (
 
 	lastSeenUpdateInterval = 15 * time.Minute
 	lastSeenUpdateJitter   = 5 * time.Minute
+	lastSeenRetryInterval  = 1 * time.Minute
+	lastSeenUpdateTimeout  = 30 * time.Second
+
+	disconnectMaxAttempts = 5
 )
 
 func checkIfCanConnect(i *userctx.UserCtx) error {
@@ -153,7 +157,7 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 				return nil
 			}
 
-			lastSeenTimer.Reset(getLastSeenUpdateInterval())
+			lastSeenTimer.Reset(getNextLastSeenUpdateInterval(err))
 		}
 	}
 }
@@ -163,8 +167,19 @@ func getLastSeenUpdateInterval() time.Duration {
 		time.Duration(utilrand.GetRandomRangeMath(0, int(lastSeenUpdateJitter)))
 }
 
+func getNextLastSeenUpdateInterval(err error) time.Duration {
+	if err != nil {
+		return lastSeenRetryInterval
+	}
+
+	return getLastSeenUpdateInterval()
+}
+
 func (s *Server) setConnectionLastSeen(ctx context.Context,
 	sessUID string, curConn *corev1.Session_Status_Connection) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, lastSeenUpdateTimeout)
+	defer cancel()
+
 	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: sessUID})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
@@ -583,6 +598,21 @@ func (s *Server) doDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
 		return nil, err
 	}
 	zap.L().Debug("Starting disconnecting Session", zap.String("uid", i.Session.Metadata.Uid))
+
+	for attempt := 1; ; attempt++ {
+		resp, err := s.tryDisconnectConnection(ctx, i, curConn)
+		if err == nil || !grpcerr.IsResourceChanged(err) || attempt >= disconnectMaxAttempts {
+			return resp, err
+		}
+
+		zap.L().Debug("The Session has changed while disconnecting it. Retrying...",
+			zap.String("uid", i.Session.Metadata.Uid), zap.Int("attempt", attempt))
+	}
+}
+
+func (s *Server) tryDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
+	curConn *corev1.Session_Status_Connection) (*userv1.DisconnectResponse, error) {
+
 	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: i.Session.Metadata.Uid})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
@@ -610,23 +640,7 @@ func (s *Server) doDisconnectConnection(ctx context.Context, i *userctx.UserCtx,
 
 	conn := sess.Status.Connection
 
-	{
-		maxLen := 100
-
-		if len(sess.Status.LastConnections) >= maxLen {
-			sess.Status.LastConnections = sess.Status.LastConnections[:maxLen-1]
-		}
-
-		sess.Status.LastConnections = append([]*corev1.Session_Status_LastConnection{
-			{
-				StartedAt: sess.Status.Connection.StartedAt,
-				EndedAt:   pbutils.Now(),
-			},
-		}, sess.Status.LastConnections...)
-	}
-
-	sess.Status.IsConnected = false
-	sess.Status.Connection = nil
+	upstream.SetDisconnected(sess, pbutils.Now())
 
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, serr.InternalWithErr(err)

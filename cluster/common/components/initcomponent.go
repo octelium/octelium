@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -122,6 +123,15 @@ func initComponent(_ context.Context, _ *initComponentOpts) error {
 }
 
 type RunComponentOpts struct {
+	CancelOnSIGTERM bool
+}
+
+func getShutdownSignals(o *RunComponentOpts) []os.Signal {
+	if o != nil && o.CancelOnSIGTERM {
+		return []os.Signal{os.Interrupt, syscall.SIGTERM}
+	}
+
+	return []os.Signal{os.Interrupt}
 }
 
 func RunComponent(runFn func(ctx context.Context) error, o *RunComponentOpts) {
@@ -129,7 +139,7 @@ func RunComponent(runFn func(ctx context.Context) error, o *RunComponentOpts) {
 		zap.L().Fatal("No runFunc")
 	}
 
-	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancelFn := signal.NotifyContext(context.Background(), getShutdownSignals(o)...)
 	defer cancelFn()
 
 	if err := initComponent(context.Background(), nil); err != nil {
