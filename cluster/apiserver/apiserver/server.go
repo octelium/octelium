@@ -19,6 +19,7 @@ package apiserver
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -37,6 +38,8 @@ import (
 	svccontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/services"
 	sesscontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/sessions"
 )
+
+const shutdownTimeout = 5 * time.Second
 
 func Run(ctx context.Context) error {
 
@@ -108,7 +111,9 @@ func Run(ctx context.Context) error {
 	zap.L().Info("API Server is now running")
 	<-ctx.Done()
 	zap.L().Debug("Shutting down gRPC server")
-	s.Stop()
+	if err := stopGRPCServer(s, shutdownTimeout); err != nil {
+		zap.L().Warn("Timed out waiting for gRPC server to stop", zap.Error(err))
+	}
 
 	return nil
 }
@@ -118,4 +123,22 @@ func newGRPCServer(opts ...grpc.ServerOption) *grpc.Server {
 		grpc.ReadBufferSize(32 * 1024),
 		grpc.WaitForHandlers(true),
 	}, opts...)...)
+}
+
+func stopGRPCServer(s *grpc.Server, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	doneCh := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(doneCh)
+	}()
+
+	select {
+	case <-doneCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
