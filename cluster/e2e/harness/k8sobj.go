@@ -19,6 +19,8 @@ package harness
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,6 +198,33 @@ func (h *H) RestartService(t *testing.T, service string) time.Duration {
 	return h.restartPods(t, fmt.Sprintf("Service %s", service),
 		func(ctx context.Context) ([]k8scorev1.Pod, error) {
 			return h.ServicePods(ctx, service)
+		})
+}
+
+func (h *H) RestartWorkloads(t *testing.T, components []string, services []string) time.Duration {
+	t.Helper()
+
+	return h.restartPods(t, strings.Join(append(slices.Clone(components), services...), ", "),
+		func(ctx context.Context) ([]k8scorev1.Pod, error) {
+			var ret []k8scorev1.Pod
+
+			for _, component := range components {
+				pods, err := h.ComponentPods(ctx, component)
+				if err != nil {
+					return nil, err
+				}
+				ret = append(ret, pods...)
+			}
+
+			for _, service := range services {
+				pods, err := h.ServicePods(ctx, service)
+				if err != nil {
+					return nil, err
+				}
+				ret = append(ret, pods...)
+			}
+
+			return ret, nil
 		})
 }
 

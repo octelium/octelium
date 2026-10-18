@@ -79,6 +79,7 @@ type fakeUserServer struct {
 
 	withholdState   atomic.Bool
 	failNext        atomic.Int32
+	failCode        atomic.Uint32
 	keepAlives      atomic.Int32
 	disconnects     atomic.Int32
 	disconnectDelay atomic.Int64
@@ -105,6 +106,9 @@ func (s *fakeUserServer) Connect(stream userv1.MainService_ConnectServer) error 
 
 	if s.failNext.Load() > 0 {
 		s.failNext.Add(-1)
+		if code := codes.Code(s.failCode.Load()); code != codes.OK {
+			return status.Error(code, "Session UID not Found")
+		}
 		return status.Error(codes.Unavailable, "upstream connect error or disconnect/reset before headers. reset reason: overflow")
 	}
 
@@ -423,6 +427,80 @@ func TestVClientSuperviseReconnects(t *testing.T) {
 	case <-superviseDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Supervise must stop once the Cluster disconnects the client")
+	}
+}
+
+func TestVClientSuperviseOnConnectError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		code      codes.Code
+		retryable bool
+	}{
+		{name: "retryable", code: codes.Unavailable, retryable: true},
+		{name: "fatal", code: codes.NotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newFakeAPI(t)
+			pool := newTestPool(t, api, 1)
+
+			sess := testSession("supervised-" + tc.name)
+			c := NewVClient(sess, pool, VClientOpts{})
+
+			require.NoError(t, c.Connect(t.Context()))
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			var mu sync.Mutex
+			var got []codes.Code
+
+			superviseDone := make(chan struct{})
+			go func() {
+				defer close(superviseDone)
+				c.Supervise(ctx, SuperviseOpts{
+					BackoffMin: 20 * time.Millisecond,
+					BackoffMax: 50 * time.Millisecond,
+					OnConnectError: func(err error) bool {
+						mu.Lock()
+						got = append(got, status.Code(err))
+						mu.Unlock()
+						return status.Code(err) != codes.NotFound
+					},
+				})
+			}()
+
+			api.srv.failCode.Store(uint32(tc.code))
+			api.srv.failNext.Store(2)
+			close(api.srv.get(sess.AccessToken).done)
+
+			if tc.retryable {
+				waitFor(t, "the client to reconnect after the retryable errors", 10*time.Second, func() bool {
+					return c.Connects() == 2 && c.IsConnected()
+				})
+
+				mu.Lock()
+				assert.Equal(t, []codes.Code{codes.Unavailable, codes.Unavailable}, got)
+				mu.Unlock()
+
+				require.NoError(t, c.Disconnect(t.Context()))
+			}
+
+			select {
+			case <-superviseDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Supervise must stop")
+			}
+
+			if !tc.retryable {
+				mu.Lock()
+				assert.Equal(t, []codes.Code{codes.NotFound}, got)
+				mu.Unlock()
+
+				assert.False(t, c.IsConnected())
+				assert.Equal(t, 1, c.Connects())
+				assert.Equal(t, int32(1), api.srv.failNext.Load(), "no attempt is made after a fatal error")
+			}
+		})
 	}
 }
 

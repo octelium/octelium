@@ -630,6 +630,7 @@ type SuperviseOpts struct {
 	ReconnectAfterServerDisconnect bool
 	BackoffMin                     time.Duration
 	BackoffMax                     time.Duration
+	OnConnectError                 func(err error) bool
 }
 
 func ReconnectBackoff(attempt int, lo, hi time.Duration) time.Duration {
@@ -670,6 +671,10 @@ func (c *VClient) Supervise(ctx context.Context, o SuperviseOpts) {
 			cancel()
 			if err == nil {
 				break
+			}
+
+			if o.OnConnectError != nil && ctx.Err() == nil && !o.OnConnectError(err) {
+				return
 			}
 		}
 	}

@@ -309,6 +309,11 @@ func (c *Cache) GetDownstreamInfoBySessionIdentifier(arg string) (*DownstreamInf
 		return nil, err
 	}
 
+	return c.GetDownstreamInfo(sess)
+}
+
+func (c *Cache) GetDownstreamInfo(sess *corev1.Session) (*DownstreamInfo, error) {
+	var err error
 	var usr *corev1.User
 	if sess.Status.UserRef != nil {
 		usr, err = c.GetUser(sess.Status.UserRef.Uid)

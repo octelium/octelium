@@ -122,7 +122,7 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 
 func (c *Client) Authorize(ctx context.Context, req *coctovigilv1.AuthorizeRequest) (*coctovigilv1.AuthorizeResponse, error) {
 	if c.isEmbedded {
-		di, err := c.embeddedSrv.GetCache().GetDownstreamInfoBySessionIdentifier(req.SessionUID)
+		di, err := c.embeddedSrv.GetDownstreamInfo(ctx, req.SessionUID)
 		if err != nil {
 			return nil, err
 		}

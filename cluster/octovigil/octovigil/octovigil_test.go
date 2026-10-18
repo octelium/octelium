@@ -30,8 +30,10 @@ import (
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -1542,6 +1544,149 @@ func TestAuthenticate(t *testing.T) {
 		}
 	}
 
+}
+
+func TestAuthenticateCacheMiss(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(tst.C.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, tests.GenService(""))
+	assert.Nil(t, err)
+	svc.Spec.IsPublic = true
+
+	getReq := func(accessToken string) *coctovigilv1.DoAuthenticateAndAuthorizeRequest {
+		return &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: svc,
+			Request: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{
+					Address: "1.2.3.4",
+				},
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Headers: map[string]string{
+								"x-octelium-auth": accessToken,
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	{
+		// Session, User and Device are not cached yet
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+
+		usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+
+		accessToken, err := srv.jwkCtl.CreateAccessToken(usr.Session)
+		assert.Nil(t, err)
+
+		res, err := srv.Authenticate(ctx, getReq(accessToken))
+		assert.Nil(t, err)
+
+		assert.Equal(t, res.Session.Metadata.Uid, usr.Session.Metadata.Uid)
+		assert.Equal(t, res.User.Metadata.Uid, usr.Usr.Metadata.Uid)
+		assert.Equal(t, res.Device.Metadata.Uid, usr.Device.Metadata.Uid)
+
+		_, err = srv.cache.GetSession(usr.Session.Metadata.Uid)
+		assert.True(t, srv.cache.IsErrNotFound(err))
+		_, err = srv.cache.GetUser(usr.Usr.Metadata.Uid)
+		assert.True(t, srv.cache.IsErrNotFound(err))
+
+		_, err = tst.C.OcteliumC.CoreC().DeleteSession(ctx, &rmetav1.DeleteOptions{
+			Uid: usr.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+
+		_, err = srv.Authenticate(ctx, getReq(accessToken))
+		assert.True(t, errors.Is(err, UnauthenticatedErr))
+	}
+
+	{
+		// The cached Session is stale after the access token is refreshed
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+
+		usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+		assert.Nil(t, err)
+		srv.cache.SetUser(usr.Usr)
+		srv.cache.SetSession(usr.Session)
+
+		oldAccessToken, err := srv.jwkCtl.CreateAccessToken(usr.Session)
+		assert.Nil(t, err)
+
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+			Uid: usr.Session.Metadata.Uid,
+		})
+		assert.Nil(t, err)
+		sess.Status.Authentication.TokenID = vutils.UUIDv4()
+		sess, err = tst.C.OcteliumC.CoreC().UpdateSession(ctx, sess)
+		assert.Nil(t, err)
+
+		accessToken, err := srv.jwkCtl.CreateAccessToken(sess)
+		assert.Nil(t, err)
+
+		res, err := srv.Authenticate(ctx, getReq(accessToken))
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Status.Authentication.TokenID, res.Session.Status.Authentication.TokenID)
+		assert.Equal(t, res.User.Metadata.Uid, usr.Usr.Metadata.Uid)
+
+		cachedSess, err := srv.cache.GetSession(usr.Session.Metadata.Uid)
+		assert.Nil(t, err)
+		assert.Equal(t, usr.Session.Status.Authentication.TokenID, cachedSess.Status.Authentication.TokenID)
+
+		srv.cache.SetSession(sess)
+
+		_, err = srv.Authenticate(ctx, getReq(oldAccessToken))
+		assert.True(t, errors.Is(err, UnauthenticatedErr))
+
+		res, err = srv.Authenticate(ctx, getReq(accessToken))
+		assert.Nil(t, err)
+		assert.Equal(t, sess.Status.Authentication.TokenID, res.Session.Status.Authentication.TokenID)
+	}
+
+	{
+		// Client addresses are only resolved from the cache
+		srv, err := New(ctx, tst.C.OcteliumC)
+		assert.Nil(t, err)
+
+		usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		err = usr.Connect()
+		assert.Nil(t, err, "%+v", err)
+		usr.Resync()
+
+		_, err = srv.Authenticate(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: svc,
+			Request: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{
+					Address: umetav1.ToDualStackNetwork(usr.Session.Status.Connection.Addresses[0]).ToIP().Ipv4,
+				},
+			},
+		})
+		assert.True(t, errors.Is(err, UnauthenticatedErr))
+	}
 }
 
 func TestServiceConfig(t *testing.T) {

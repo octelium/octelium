@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -45,6 +46,7 @@ import (
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
@@ -338,7 +340,7 @@ func (s *Server) authenticate(ctx context.Context, req *coctovigilv1.DoAuthentic
 		return nil, errors.Wrap(UnauthenticatedErr, fmt.Sprintf("Could not get connection identifier: %+v", err))
 	}
 
-	di, err := s.cache.GetDownstreamInfoBySessionIdentifier(sessID)
+	di, err := s.getDownstreamInfo(ctx, sessID)
 	if err != nil {
 		if errors.Is(err, acache.SessionNotFound) {
 			return nil, UnauthenticatedErr
@@ -346,59 +348,119 @@ func (s *Server) authenticate(ctx context.Context, req *coctovigilv1.DoAuthentic
 		return nil, errors.Errorf("Could not get downstream info from identifier: %+v", err)
 	}
 
+	if tknClaims != nil && !isValidTokenClaims(tknClaims, di.Session) {
+		di, err = s.getDownstreamInfoFromSessionUID(ctx, tknClaims.SessionUID)
+		if err != nil {
+			if errors.Is(err, acache.SessionNotFound) {
+				return nil, UnauthenticatedErr
+			}
+			return nil, errors.Errorf("Could not get downstream info from Session UID: %+v", err)
+		}
+
+		if !isValidTokenClaims(tknClaims, di.Session) {
+			return nil, errors.Wrap(UnauthenticatedErr, "Token claims are not valid")
+		}
+	}
+
 	if ucorev1.ToSession(di.Session).IsExpired() {
 		return nil, errors.Wrap(UnauthenticatedErr, "The Session is expired")
 	}
 
-	if di.User == nil {
-		usr, err := s.octeliumC.CoreC().GetUser(ctx,
-			&rmetav1.GetOptions{Uid: di.Session.Status.UserRef.Uid})
-		if err != nil {
+	return di, nil
+}
+
+func (s *Server) GetDownstreamInfo(ctx context.Context, identifier string) (*acache.DownstreamInfo, error) {
+	return s.getDownstreamInfo(ctx, identifier)
+}
+
+func isValidTokenClaims(claims *jwkctl.AccessTokenClaims, sess *corev1.Session) bool {
+	return claims.SessionUID == sess.Metadata.Uid &&
+		sess.Status.Authentication != nil &&
+		claims.TokenID == sess.Status.Authentication.TokenID
+}
+
+func (s *Server) getDownstreamInfo(ctx context.Context, identifier string) (*acache.DownstreamInfo, error) {
+	di, err := s.cache.GetDownstreamInfoBySessionIdentifier(identifier)
+	if err != nil {
+		if !errors.Is(err, acache.SessionNotFound) || !govalidator.IsUUIDv4(identifier) {
 			return nil, err
 		}
 
-		s.cache.SetUser(usr)
-
-		di.User = usr
+		return s.getDownstreamInfoFromSessionUID(ctx, identifier)
 	}
 
-	if di.Device == nil && di.Session.Status.DeviceRef != nil {
-		device, err := s.octeliumC.CoreC().GetDevice(ctx,
-			&rmetav1.GetOptions{
-				Uid: di.Session.Status.DeviceRef.Uid,
-			})
-		if err != nil {
-			return nil, err
-		}
-
-		s.cache.SetDevice(device)
-
-		di.Device = device
-	}
-
-	if di.Groups == nil {
-		for _, g := range di.User.Spec.Groups {
-			grpV, err := s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{
-				Name: g,
-			})
-			if err != nil {
-				return nil, err
-			}
-			s.cache.SetGroup(grpV)
-			di.Groups = append(di.Groups, grpV)
-		}
-	}
-
-	if tknClaims != nil {
-		if tknClaims.SessionUID != di.Session.Metadata.Uid {
-			return nil, errors.Wrap(UnauthenticatedErr, "Token claims are not valid")
-		}
-		if tknClaims.TokenID != di.Session.Status.Authentication.TokenID {
-			return nil, errors.Wrap(UnauthenticatedErr, "Token claims are not valid")
-		}
+	if err := s.setDownstreamInfoDependencies(ctx, di); err != nil {
+		return nil, err
 	}
 
 	return di, nil
+}
+
+func (s *Server) getDownstreamInfoFromSessionUID(ctx context.Context, uid string) (*acache.DownstreamInfo, error) {
+	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uid})
+	if err != nil {
+		if grpcerr.IsNotFound(err) {
+			return nil, acache.SessionNotFound
+		}
+		return nil, err
+	}
+
+	di, err := s.cache.GetDownstreamInfo(sess)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.setDownstreamInfoDependencies(ctx, di); err != nil {
+		return nil, err
+	}
+
+	return di, nil
+}
+
+func (s *Server) setDownstreamInfoDependencies(ctx context.Context, di *acache.DownstreamInfo) error {
+	var err error
+
+	if di.User == nil && di.Session.Status.UserRef != nil {
+		di.User, err = s.octeliumC.CoreC().GetUser(ctx,
+			&rmetav1.GetOptions{Uid: di.Session.Status.UserRef.Uid})
+		if err != nil {
+			return err
+		}
+	}
+
+	if di.Device == nil && di.Session.Status.DeviceRef != nil {
+		di.Device, err = s.octeliumC.CoreC().GetDevice(ctx,
+			&rmetav1.GetOptions{Uid: di.Session.Status.DeviceRef.Uid})
+		if err != nil {
+			return err
+		}
+	}
+
+	if di.User == nil || len(di.Groups) == len(di.User.Spec.Groups) {
+		return nil
+	}
+
+	di.Groups = nil
+	for _, name := range di.User.Spec.Groups {
+		grp, err := s.cache.GetGroup(name)
+		if err != nil {
+			if !s.cache.IsErrNotFound(err) {
+				return err
+			}
+
+			grp, err = s.octeliumC.CoreC().GetGroup(ctx, &rmetav1.GetOptions{Name: name})
+			if err != nil {
+				if grpcerr.IsNotFound(err) {
+					continue
+				}
+				return err
+			}
+		}
+
+		di.Groups = append(di.Groups, grp)
+	}
+
+	return nil
 }
 
 type AuthenticateAndAuthorizeRequest struct {

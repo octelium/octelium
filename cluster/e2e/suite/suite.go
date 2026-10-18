@@ -100,6 +100,7 @@ func Phases() []Phase {
 		{"CredentialAccessToken", testCredentialAccessToken},
 		{"CredentialOAuth2", testCredentialOAuth2},
 		{"CredentialAuthToken", testCredentialAuthToken},
+		{"ClusterUpgrade", testClusterUpgrade},
 		{"ComponentHealth", testComponentHealth},
 		{"RscServerResilience", testRscServerResilience},
 	}

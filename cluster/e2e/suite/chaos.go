@@ -214,6 +214,7 @@ type chaosEnv struct {
 	popRun     *connectRun
 	supervised map[*harness.VClient]bool
 	superWG    sync.WaitGroup
+	superErrs  *errorLog
 	extra      []*harness.VClient
 	samples    []*chaosSample
 	target     *chaosTarget
@@ -244,6 +245,7 @@ func newChaosEnv(t *testing.T, h *harness.H) (*chaosEnv, error) {
 		quic:       h.Scenario.Caps.Has(capQUICv0),
 		multiNode:  h.Scenario.Caps.Has(capMultiNode),
 		supervised: map[*harness.VClient]bool{},
+		superErrs:  &errorLog{},
 		report: &chaosReport{
 			Scenario:  h.Scenario.ID,
 			Scale:     scale,
@@ -536,7 +538,12 @@ func (e *chaosEnv) supervise(clients ...*harness.VClient) {
 		e.superWG.Add(1)
 		go func() {
 			defer e.superWG.Done()
-			c.Supervise(e.ctx, harness.SuperviseOpts{})
+			c.Supervise(e.ctx, harness.SuperviseOpts{
+				OnConnectError: func(err error) bool {
+					e.superErrs.add(err)
+					return true
+				},
+			})
 		}()
 	}
 }
@@ -1014,6 +1021,7 @@ func ChaosPhases(e *chaosEnv) []Phase {
 		{"ChaosGatewayAgentRestart", bind(testChaosGatewayAgentRestart)},
 		{"ChaosAPIServerRestart", bind(testChaosAPIServerRestart)},
 		{"ChaosComponentRestarts", bind(testChaosComponentRestarts)},
+		{"ChaosClusterUpgrade", bind(testChaosClusterUpgrade)},
 		{"ChaosChurn", bind(testChaosChurn)},
 		{"ChaosTakeoverRace", bind(testChaosTakeoverRace)},
 		{"ChaosAbruptCancel", bind(testChaosAbruptCancel)},

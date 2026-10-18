@@ -74,12 +74,12 @@ func (s *internalService) GetDownstreamFromSessionUID(
 	*coctovigilv1.GetDownstreamFromSessionUIDResponse, error) {
 
 	// startedAt := time.Now()
-	di, err := s.s.cache.GetDownstreamInfoBySessionIdentifier(req.SessionUID)
+	di, err := s.s.getDownstreamInfo(ctx, req.SessionUID)
 	if err != nil {
 		if errors.Is(err, acache.SessionNotFound) {
 			return nil, grpcutils.NotFound("Session UID not Found")
 		}
-		return nil, grpcutils.InternalWithErr(err)
+		return nil, err
 	}
 
 	/*
@@ -114,7 +114,7 @@ func (s *internalService) Authorize(
 		s.s.cache.SetService(svc)
 	}
 
-	di, err := s.s.cache.GetDownstreamInfoBySessionIdentifier(req.SessionUID)
+	di, err := s.s.getDownstreamInfo(ctx, req.SessionUID)
 	if err != nil {
 		return nil, err
 	}
