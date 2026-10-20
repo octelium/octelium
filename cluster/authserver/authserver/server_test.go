@@ -18,9 +18,15 @@ package authserver
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -32,7 +38,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
@@ -40,6 +48,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	grpcmetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestUnaryServerInterceptor(t *testing.T) {
@@ -710,4 +720,272 @@ func TestGetAuthenticatorAction(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.Equal(t, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, ret)
 	}
+}
+
+func TestHTTPConcurrentInvalidRequests(t *testing.T) {
+	srv := &server{rootURL: "https://example.com"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /begin", srv.handleAuth)
+	mux.HandleFunc("POST /oauth2/token", srv.handleOAuth2Token)
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", srv.handleOAuth2Metadata)
+	httpSrv := httptest.NewServer(mux)
+	t.Cleanup(httpSrv.Close)
+	c := httpSrv.Client()
+	c.Timeout = 10 * time.Second
+	t.Cleanup(c.CloseIdleConnections)
+
+	const workers = 32
+	const attempts = 16
+	errs := make(chan error, workers*attempts)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := range attempts {
+				path, body, contentType := "/begin", `{"uid":`, "application/json"
+				if (worker+i)%2 == 0 {
+					path, body, contentType = "/oauth2/token", "grant_type=%zz", "application/x-www-form-urlencoded"
+				}
+				req, err := http.NewRequest(http.MethodPost, httpSrv.URL+path, strings.NewReader(body))
+				if err != nil {
+					errs <- err
+					continue
+				}
+				req.Header.Set("Content-Type", contentType)
+				req.Header.Set("X-Octelium-Origin", srv.rootURL)
+				res, err := c.Do(req)
+				if err != nil {
+					errs <- err
+					continue
+				}
+				_, err = io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				if err == nil && res.StatusCode != http.StatusBadRequest {
+					err = errors.Errorf("Unexpected status: %d", res.StatusCode)
+				}
+				if err == nil && len(res.Cookies()) != 0 {
+					err = errors.Errorf("Invalid request received authentication cookies")
+				}
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		assert.Nil(t, err)
+	}
+
+	res, err := c.Get(httpSrv.URL + "/.well-known/oauth-authorization-server")
+	assert.Nil(t, err)
+	defer res.Body.Close()
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	var info oauth2Metadata
+	assert.Nil(t, json.NewDecoder(res.Body).Decode(&info))
+	assert.Equal(t, srv.rootURL, info.Issuer)
+	assert.Equal(t, srv.rootURL+"/oauth2/token", info.TokenEndpoint)
+}
+
+func newAuthGRPCTestClient(t *testing.T, srv *server) *grpc.ClientConn {
+	t.Helper()
+
+	lis := bufconn.Listen(1024 * 1024)
+	grpcSrv := grpc.NewServer(
+		grpc.MaxRecvMsgSize(200*1024),
+		grpc.UnaryInterceptor(srv.unaryServerInterceptor),
+	)
+	authv1.RegisterMainServiceServer(grpcSrv, &authMainSvc{s: srv})
+	go func() {
+		grpcSrv.Serve(lis)
+	}()
+
+	conn, err := grpc.NewClient("passthrough:///authserver",
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		conn.Close()
+		grpcSrv.Stop()
+		lis.Close()
+	})
+
+	return conn
+}
+
+func TestGRPCEndpointsUnauthenticated(t *testing.T) {
+	srv, _, _ := newWebAuthnTestEnv(t)
+	conn := newAuthGRPCTestClient(t, srv)
+
+	tests := []struct {
+		name string
+		req  proto.Message
+		code codes.Code
+	}{
+		{"AuthenticateWithAuthenticationToken", &authv1.AuthenticateWithAuthenticationTokenRequest{}, codes.Unauthenticated},
+		{"AuthenticateWithAssertion", &authv1.AuthenticateWithAssertionRequest{}, codes.Unauthenticated},
+		{"AuthenticateWithRefreshToken", &authv1.AuthenticateWithRefreshTokenRequest{}, codes.Unauthenticated},
+		{"AuthenticateWithAuthenticator", &authv1.AuthenticateWithAuthenticatorRequest{}, codes.Unauthenticated},
+		{"Logout", &authv1.LogoutRequest{}, codes.Unauthenticated},
+		{"RegisterDevice", &authv1.RegisterDeviceRequest{Info: &authv1.RegisterDeviceRequest_Info{
+			Id: strings.Repeat("a", 64), OsType: authv1.RegisterDeviceRequest_Info_LINUX,
+		}}, codes.Unauthenticated},
+		{"RegisterDeviceBegin", &authv1.RegisterDeviceBeginRequest{Info: &authv1.RegisterDeviceRequest_Info{
+			Id: strings.Repeat("a", 64), OsType: authv1.RegisterDeviceRequest_Info_LINUX,
+		}}, codes.Unauthenticated},
+		{"RegisterDeviceFinish", &authv1.RegisterDeviceFinishRequest{Uid: "abcdefghij"}, codes.Unauthenticated},
+		{"GetAuthenticator", &metav1.GetOptions{}, codes.Unauthenticated},
+		{"CreateAuthenticator", &authv1.CreateAuthenticatorRequest{}, codes.Unauthenticated},
+		{"UpdateAuthenticator", &authv1.Authenticator{}, codes.Unauthenticated},
+		{"ListAuthenticator", &authv1.ListAuthenticatorOptions{}, codes.Unauthenticated},
+		{"DeleteAuthenticator", &metav1.DeleteOptions{}, codes.Unauthenticated},
+		{"RegisterAuthenticatorBegin", &authv1.RegisterAuthenticatorBeginRequest{}, codes.Unauthenticated},
+		{"RegisterAuthenticatorFinish", &authv1.RegisterAuthenticatorFinishRequest{
+			ChallengeResponse: fidoChallengeResponse("response"),
+		}, codes.Unauthenticated},
+		{"AuthenticateAuthenticatorBegin", &authv1.AuthenticateAuthenticatorBeginRequest{}, codes.Unauthenticated},
+		{"GetAvailableAuthenticator", &authv1.GetAvailableAuthenticatorRequest{}, codes.Unauthenticated},
+		{"AuthenticateWithPasskeyBegin", &authv1.AuthenticateWithPasskeyBeginRequest{}, codes.InvalidArgument},
+		{"AuthenticateWithPasskey", &authv1.AuthenticateWithPasskeyRequest{}, codes.InvalidArgument},
+		{"RunDeviceProbeBegin", &authv1.RunDeviceProbeBeginRequest{}, codes.Unauthenticated},
+		{"RunDeviceProbeFinish", &authv1.RunDeviceProbeFinishRequest{
+			AttemptUID: strings.Repeat("a", 32),
+			Results: []*authv1.DeviceProbeResult{
+				{ProbeID: "probe-1", Status: authv1.DeviceProbeResult_NOT_FOUND},
+			},
+		}, codes.Unauthenticated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			resp := &authv1.SessionToken{}
+			err := conn.Invoke(ctx, "/octelium.api.main.auth.v1.MainService/"+tt.name, tt.req, resp)
+			assert.Equal(t, tt.code, status.Code(err), "%+v", err)
+			assert.Empty(t, resp.AccessToken)
+			assert.Empty(t, resp.RefreshToken)
+		})
+	}
+}
+
+func TestGRPCCookieOriginMaliciousInputs(t *testing.T) {
+	srv := &server{
+		domain:   "example.com",
+		genCache: cache.New(cache.NoExpiration, 0),
+	}
+	srv.genCache.SetDefault(systemServiceHostsCacheKey, []browserorigin.Host{
+		{Name: "example.com"},
+	})
+
+	origins := []string{
+		"",
+		"null",
+		"http://example.com",
+		"https://example.com.evil.test",
+		"https://evil-example.com",
+		"https://evil.test@example.com",
+		"https://example.com@evil.test",
+		"https://example.com/path",
+		"https://example.com?query=value",
+		"https://example.com#fragment",
+		"https://example.com:443",
+		"https://example.com, https://evil.test",
+		"https://example.com\r\nX-Header: value",
+	}
+
+	for _, origin := range origins {
+		t.Run(origin, func(t *testing.T) {
+			called := false
+			ctx := grpcmetadata.NewIncomingContext(context.Background(), grpcmetadata.Pairs(
+				"cookie", "octelium_rt=refresh",
+				"x-octelium-origin", origin,
+			))
+			resp, err := srv.unaryServerInterceptor(ctx, &metav1.DeleteOptions{},
+				&grpc.UnaryServerInfo{FullMethod: "/octelium.api.main.auth.v1.MainService/DeleteAuthenticator"},
+				func(ctx context.Context, req any) (any, error) {
+					called = true
+					return &metav1.OperationResult{}, nil
+				})
+			assert.False(t, called)
+			assert.Nil(t, resp)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
+}
+
+func TestGRPCConcurrentAuthenticationFailures(t *testing.T) {
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	conn := newAuthGRPCTestClient(t, srv)
+	c := authv1.NewMainServiceClient(conn)
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+	before := pbutils.Clone(usrT.Session)
+	beforeSessions, err := srv.octeliumC.CoreC().ListSession(context.Background(), &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+
+	const workers = 32
+	const attempts = 16
+	start := make(chan struct{})
+	type result struct {
+		err  error
+		code codes.Code
+	}
+	results := make(chan result, workers*attempts)
+	var wg sync.WaitGroup
+
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := range attempts {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				var err error
+				code := codes.Unauthenticated
+				switch (worker + i) % 4 {
+				case 0:
+					_, err = c.AuthenticateWithAuthenticationToken(ctx,
+						&authv1.AuthenticateWithAuthenticationTokenRequest{AuthenticationToken: "invalid.token"})
+				case 1:
+					ctx = grpcmetadata.AppendToOutgoingContext(ctx, "x-octelium-refresh-token", "invalid.token")
+					_, err = c.AuthenticateWithRefreshToken(ctx, &authv1.AuthenticateWithRefreshTokenRequest{})
+				case 2:
+					_, err = c.AuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{Assertion: "invalid.token"})
+				case 3:
+					ctx = grpcmetadata.AppendToOutgoingContext(ctx, "x-octelium-refresh-token", usrT.GetAccessToken().RefreshToken)
+					_, err = c.ListAuthenticator(ctx, &authv1.ListAuthenticatorOptions{})
+					code = codes.OK
+				}
+				cancel()
+				results <- result{err: err, code: code}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+	for res := range results {
+		assert.Equal(t, res.code, status.Code(res.err), "%+v", res.err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ctx = grpcmetadata.AppendToOutgoingContext(ctx, "x-octelium-refresh-token", usrT.GetAccessToken().RefreshToken)
+	res, err := c.ListAuthenticator(ctx, &authv1.ListAuthenticatorOptions{})
+	assert.Nil(t, err)
+	assert.Empty(t, res.Items)
+	sess, err := srv.getSessionFromRefreshToken(context.Background(), usrT.GetAccessToken().RefreshToken)
+	assert.Nil(t, err)
+	assert.True(t, pbutils.IsEqual(before, sess))
+	afterSessions, err := srv.octeliumC.CoreC().ListSession(context.Background(), &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, len(beforeSessions.Items), len(afterSessions.Items))
 }

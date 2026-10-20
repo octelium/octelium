@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -45,6 +46,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -1238,5 +1240,38 @@ func TestOAuth2CredentialSessionReuse(t *testing.T) {
 		res := doOAuth2TokenReq(t, srv, data)
 		assert.Equal(t, http.StatusBadRequest, res.statusCode)
 		assert.Equal(t, "invalid_client", res.errResp.Error)
+	}
+}
+
+func TestHandleOAuth2MalformedForm(t *testing.T) {
+	srv := &server{}
+
+	tests := []struct {
+		name string
+		body io.Reader
+	}{
+		{name: "InvalidEscape", body: strings.NewReader("grant_type=%zz")},
+		{name: "InvalidSeparator", body: strings.NewReader("grant_type=client_credentials;client_id=client")},
+		{name: "OversizedBody", body: strings.NewReader("grant_type=" + strings.Repeat("a", 100*1024))},
+		{name: "ReadError", body: iotest.ErrReader(errors.New("read error"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "https://example.com/oauth2/token", tt.body)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.handleOAuth2Token(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			assert.Equal(t, "no-cache", w.Header().Get("Pragma"))
+			var resp oauth2ErrorResponse
+			assert.Nil(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "invalid_request", resp.Error)
+			assert.NotEmpty(t, resp.ErrorDescription)
+			assert.Empty(t, w.Result().Cookies())
+		})
 	}
 }

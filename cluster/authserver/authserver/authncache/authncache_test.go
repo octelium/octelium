@@ -17,6 +17,8 @@
 package authncache
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -24,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -130,4 +133,96 @@ func TestCache(t *testing.T) {
 		assert.Equal(t, err, ErrNotFound)
 	}
 
+}
+
+func TestCacheConcurrentIsolation(t *testing.T) {
+	c, err := NewCache()
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		assert.Nil(t, c.Close())
+	})
+
+	const workers = 32
+	errs := make(chan error, workers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			id := []byte(fmt.Sprintf("credential-%d", worker))
+			authn := &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{DisplayName: string(id)},
+				Status: &corev1.Authenticator_Status{
+					IsRegistered: true,
+					Type:         corev1.Authenticator_Status_FIDO,
+					Info: &corev1.Authenticator_Status_Info{
+						Type: &corev1.Authenticator_Status_Info_Fido{
+							Fido: &corev1.Authenticator_Status_Info_FIDO{Id: id, IdHash: vutils.Sha256Sum(id)},
+						},
+					},
+				},
+			}
+			if err := c.SetAuthenticator(authn); err != nil {
+				errs <- err
+				return
+			}
+			original := pbutils.Clone(authn)
+			authn.Spec.DisplayName = "changed by caller"
+			for range 20 {
+				got, err := c.GetAuthenticatorByCredID(id)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if !pbutils.IsEqual(original, got) {
+					errs <- errors.New("Cached Authenticator was modified by a caller")
+					return
+				}
+				got.Spec.DisplayName = "changed by reader"
+				got.Status.GetInfo().GetFido().SignCount++
+			}
+			if err := c.DeleteAuthenticator(authn); err != nil {
+				errs <- err
+				return
+			}
+			_, err := c.GetAuthenticatorByCredID(id)
+			if !c.IsErrNotFound(err) {
+				errs <- errors.Errorf("Deleted Authenticator returned unexpected error: %v", err)
+				return
+			}
+			errs <- nil
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		assert.Nil(t, err)
+	}
+}
+
+func TestCacheInvalidAuthenticators(t *testing.T) {
+	c, err := NewCache()
+	assert.Nil(t, err)
+	assert.False(t, c.IsErrNotFound(nil))
+	assert.False(t, c.IsErrNotFound(errors.New("unrelated")))
+	assert.True(t, c.IsErrNotFound(errors.Wrap(ErrNotFound, "lookup")))
+
+	for _, authn := range []*corev1.Authenticator{
+		{Status: &corev1.Authenticator_Status{IsRegistered: true, Type: corev1.Authenticator_Status_TOTP}},
+		{Status: &corev1.Authenticator_Status{IsRegistered: true, Type: corev1.Authenticator_Status_FIDO}},
+		{Status: &corev1.Authenticator_Status{IsRegistered: true, Type: corev1.Authenticator_Status_FIDO, Info: &corev1.Authenticator_Status_Info{}}},
+		{Status: &corev1.Authenticator_Status{
+			IsRegistered: true, Type: corev1.Authenticator_Status_FIDO,
+			Info: &corev1.Authenticator_Status_Info{Type: &corev1.Authenticator_Status_Info_Fido{
+				Fido: &corev1.Authenticator_Status_Info_FIDO{IdHash: make([]byte, 31)},
+			}},
+		}},
+	} {
+		assert.Nil(t, c.SetAuthenticator(authn))
+		assert.Nil(t, c.DeleteAuthenticator(authn))
+		assert.Empty(t, c.cMap)
+	}
 }

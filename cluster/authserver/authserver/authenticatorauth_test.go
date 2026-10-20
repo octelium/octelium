@@ -19,6 +19,7 @@ package authserver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,8 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHandleBeginAuthenticator(t *testing.T) {
@@ -626,4 +629,238 @@ func TestValidatePreChallenge(t *testing.T) {
 
 		assert.NotNil(t, s.validatePreChallenge(getPreChallenge(intermediates)))
 	}
+}
+
+func TestValidateChallengeResponse(t *testing.T) {
+	srv := &server{}
+
+	tests := []struct {
+		name string
+		req  *authv1.ChallengeResponse
+		code codes.Code
+	}{
+		{name: "Nil", code: codes.InvalidArgument},
+		{name: "Empty", req: &authv1.ChallengeResponse{}, code: codes.InvalidArgument},
+		{
+			name: "EmptyTOTP",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+				Totp: &authv1.ChallengeResponse_TOTP{},
+			}},
+			code: codes.InvalidArgument,
+		},
+		{
+			name: "TOTP",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+				Totp: &authv1.ChallengeResponse_TOTP{Response: "123456"},
+			}},
+		},
+		{
+			name: "PaddedTOTP",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+				Totp: &authv1.ChallengeResponse_TOTP{Response: " \t123456\r\n"},
+			}},
+		},
+		{
+			name: "MaxTOTP",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+				Totp: &authv1.ChallengeResponse_TOTP{Response: strings.Repeat("1", 16)},
+			}},
+		},
+		{
+			name: "OversizedTOTP",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+				Totp: &authv1.ChallengeResponse_TOTP{Response: strings.Repeat("1", 17)},
+			}},
+			code: codes.InvalidArgument,
+		},
+		{
+			name: "EmptyFIDO",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Fido{
+				Fido: &authv1.ChallengeResponse_FIDO{},
+			}},
+			code: codes.InvalidArgument,
+		},
+		{
+			name: "MaxFIDO",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Fido{
+				Fido: &authv1.ChallengeResponse_FIDO{Response: strings.Repeat("a", 30000)},
+			}},
+		},
+		{
+			name: "OversizedFIDO",
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Fido{
+				Fido: &authv1.ChallengeResponse_FIDO{Response: strings.Repeat("a", 30001)},
+			}},
+			code: codes.InvalidArgument,
+		},
+	}
+
+	for _, n := range []int{0, 7, 8, 256, 257} {
+		code := codes.OK
+		if n < 8 || n > 256 {
+			code = codes.InvalidArgument
+		}
+		tests = append(tests, struct {
+			name string
+			req  *authv1.ChallengeResponse
+			code codes.Code
+		}{
+			name: fmt.Sprintf("TPM%d", n),
+			req: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Tpm{
+				Tpm: &authv1.ChallengeResponse_TPM{Response: make([]byte, n)},
+			}},
+			code: code,
+		})
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.code, status.Code(srv.validateChallengeResponse(tt.req)))
+		})
+	}
+}
+
+func TestValidatePreChallengeFields(t *testing.T) {
+	srv := &server{}
+
+	newReq := func() *authv1.RegisterAuthenticatorBeginRequest_PreChallenge {
+		return &authv1.RegisterAuthenticatorBeginRequest_PreChallenge{
+			Type: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_Tpm{
+				Tpm: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM{
+					AkBytes: []byte("ak"),
+					EkType: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_EkCertificateDER{
+						EkCertificateDER: []byte("certificate"),
+					},
+					AttestationParameters: &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_AttestationParameters{
+						Public:            []byte("public"),
+						CreateData:        []byte("data"),
+						CreateAttestation: []byte("attestation"),
+						CreateSignature:   []byte("signature"),
+					},
+				},
+			},
+		}
+	}
+
+	fields := []struct {
+		name string
+		set  func(*authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, []byte)
+	}{
+		{"AK", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) { req.AkBytes = val }},
+		{"EKCertificate", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.EkType = &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_EkCertificateDER{EkCertificateDER: val}
+		}},
+		{"EKPublicKey", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.EkType = &authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM_EkPublicKey{EkPublicKey: val}
+		}},
+		{"Public", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.AttestationParameters.Public = val
+		}},
+		{"CreateData", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.AttestationParameters.CreateData = val
+		}},
+		{"CreateAttestation", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.AttestationParameters.CreateAttestation = val
+		}},
+		{"CreateSignature", func(req *authv1.RegisterAuthenticatorBeginRequest_PreChallenge_TPM, val []byte) {
+			req.AttestationParameters.CreateSignature = val
+		}},
+	}
+
+	for _, field := range fields {
+		t.Run(field.name, func(t *testing.T) {
+			for _, n := range []int{0, 1, 3000, 3001} {
+				req := newReq()
+				field.set(req.GetTpm(), make([]byte, n))
+				err := srv.validatePreChallenge(req)
+				if n == 0 || n > 3000 {
+					assert.Equal(t, codes.InvalidArgument, status.Code(err), "len: %d", n)
+				} else {
+					assert.Nil(t, err, "len: %d", n)
+				}
+			}
+		})
+	}
+
+	{
+		req := newReq()
+		req.GetTpm().EkType = nil
+		assert.Equal(t, codes.InvalidArgument, status.Code(srv.validatePreChallenge(req)))
+	}
+	{
+		req := newReq()
+		req.GetTpm().AttestationParameters = nil
+		assert.Equal(t, codes.InvalidArgument, status.Code(srv.validatePreChallenge(req)))
+	}
+}
+
+func TestPrependToLastAttempts(t *testing.T) {
+	srv := &server{}
+
+	for _, n := range []int{0, 1, 9, 10, 20} {
+		authn := &corev1.Authenticator{
+			Status: &corev1.Authenticator_Status{
+				AuthenticationAttempt: &corev1.Authenticator_Status_AuthenticationAttempt{
+					CreatedAt:                 pbutils.Now(),
+					DataMap:                   map[string][]byte{"secret": []byte("secret")},
+					EncryptedChallengeRequest: &corev1.Authenticator_Status_EncryptedData{},
+					EncryptedDataMap: map[string]*corev1.Authenticator_Status_EncryptedData{
+						"secret": {},
+					},
+				},
+			},
+		}
+		for range n {
+			authn.Status.LastAuthenticationAttempts = append(authn.Status.LastAuthenticationAttempts,
+				pbutils.Clone(authn.Status.AuthenticationAttempt).(*corev1.Authenticator_Status_AuthenticationAttempt))
+		}
+
+		attempt := authn.Status.AuthenticationAttempt
+		srv.prependToLastAttempts(authn)
+		assert.Nil(t, authn.Status.AuthenticationAttempt)
+		assert.Equal(t, min(n+1, 10), len(authn.Status.LastAuthenticationAttempts))
+		assert.Same(t, attempt, authn.Status.LastAuthenticationAttempts[0])
+		assert.True(t, attempt.CompletedAt.IsValid())
+		for _, itm := range authn.Status.LastAuthenticationAttempts {
+			assert.Nil(t, itm.DataMap)
+			assert.Nil(t, itm.EncryptedDataMap)
+			assert.Nil(t, itm.EncryptedChallengeRequest)
+		}
+
+		srv.prependToLastAttempts(authn)
+		assert.Equal(t, min(n+1, 10), len(authn.Status.LastAuthenticationAttempts))
+	}
+}
+
+func TestRegisterAuthenticatorFinishRequiresMFA(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+	authn, err := srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{Type: authv1.Authenticator_Status_TOTP})
+	assert.Nil(t, err)
+	begin, err := srv.doRegisterAuthenticatorBegin(getCtxRT(usrT), &authv1.RegisterAuthenticatorBeginRequest{
+		AuthenticatorRef: umetav1.GetObjectReference(authn),
+	})
+	assert.Nil(t, err)
+	key, err := otp.NewKeyFromURL(begin.ChallengeRequest.GetTotp().Url)
+	assert.Nil(t, err)
+	code, err := totp.GenerateCode(key.Secret(), time.Now())
+	assert.Nil(t, err)
+	usrT.Session.Status.AuthenticatorAction = corev1.Session_Status_AUTHENTICATION_REQUIRED
+	_, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+	assert.Nil(t, err)
+
+	res, err := srv.doRegisterAuthenticatorFinish(getCtxRT(usrT), &authv1.RegisterAuthenticatorFinishRequest{
+		AuthenticatorRef: umetav1.GetObjectReference(authn),
+		ChallengeResponse: &authv1.ChallengeResponse{Type: &authv1.ChallengeResponse_Totp{
+			Totp: &authv1.ChallengeResponse_TOTP{Response: code},
+		}},
+	})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	stored, err := srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
+	assert.Nil(t, err)
+	assert.False(t, stored.Status.IsRegistered)
+	assert.NotNil(t, stored.Status.AuthenticationAttempt)
 }

@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -35,9 +36,11 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/octovigilc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -45,6 +48,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/opkce"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -2297,4 +2301,315 @@ func decodeLoginResp(t *testing.T, u *url.URL) *authv1.ClientLoginResponse {
 	ret := &authv1.ClientLoginResponse{}
 	assert.Nil(t, pbutils.Unmarshal(respBytes, ret))
 	return ret
+}
+
+func TestHandleAuthMalformedRequests(t *testing.T) {
+	srv := &server{rootURL: "https://example.com"}
+	ua := "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
+
+	valid := &postAuthReq{
+		UID:       "00000000-0000-4000-8000-000000000001",
+		UserAgent: ua,
+	}
+	validBytes, err := json.Marshal(valid)
+	assert.Nil(t, err)
+
+	tests := []struct {
+		name   string
+		body   io.Reader
+		origin string
+		ua     string
+	}{
+		{name: "Empty", body: strings.NewReader(""), origin: srv.rootURL, ua: ua},
+		{name: "Null", body: strings.NewReader("null"), origin: srv.rootURL, ua: ua},
+		{name: "Array", body: strings.NewReader("[]"), origin: srv.rootURL, ua: ua},
+		{name: "TruncatedJSON", body: strings.NewReader(`{"uid":`), origin: srv.rootURL, ua: ua},
+		{name: "TrailingJSON", body: strings.NewReader(string(validBytes) + "{}"), origin: srv.rootURL, ua: ua},
+		{name: "OversizedBody", body: strings.NewReader(string(validBytes) + strings.Repeat(" ", 513)), origin: srv.rootURL, ua: ua},
+		{name: "ReadError", body: iotest.ErrReader(errors.New("read error")), origin: srv.rootURL, ua: ua},
+		{name: "MissingOrigin", body: bytes.NewReader(validBytes), ua: ua},
+		{name: "ForeignOrigin", body: bytes.NewReader(validBytes), origin: "https://evil.example.com", ua: ua},
+		{name: "NullOrigin", body: bytes.NewReader(validBytes), origin: "null", ua: ua},
+		{name: "UserAgentMismatch", body: bytes.NewReader(validBytes), origin: srv.rootURL, ua: ua + " other"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "https://example.com/begin", tt.body)
+			req.Header.Set("X-Octelium-Origin", tt.origin)
+			req.Header.Set("User-Agent", tt.ua)
+			w := httptest.NewRecorder()
+			srv.handleAuth(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Empty(t, w.Header().Get("Location"))
+			assert.Empty(t, w.Result().Cookies())
+		})
+	}
+}
+
+func TestHandleClientApprovalMalformedBody(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	before, err := srv.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+
+	tests := []struct {
+		name string
+		body io.Reader
+	}{
+		{name: "Empty", body: strings.NewReader("")},
+		{name: "Array", body: strings.NewReader("[]")},
+		{name: "InvalidType", body: strings.NewReader(`{"isApproved":"true"}`)},
+		{name: "TruncatedJSON", body: strings.NewReader(`{"isApproved":`)},
+		{name: "TrailingJSON", body: strings.NewReader(`{"isApproved":true}{}`)},
+		{name: "OversizedBody", body: strings.NewReader(`{"isApproved":true}` + strings.Repeat(" ", 513))},
+		{name: "ReadError", body: iotest.ErrReader(errors.New("read error"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &pendingClientAuth{
+				CallbackURL:   "http://localhost:12345/callback/success/abcd",
+				CodeChallenge: utilrand.GetRandomBytesMust(32),
+			}
+			assert.Nil(t, srv.savePendingClientAuth(ctx, usrT.Session, state))
+
+			req := httptest.NewRequest(http.MethodPost,
+				"https://example.com/callback/success/approval", tt.body)
+			req.Header.Set("X-Octelium-Origin", srv.rootURL)
+			req.AddCookie(&http.Cookie{
+				Name:  "octelium_rt",
+				Value: usrT.GetAccessToken().RefreshToken,
+			})
+			w := httptest.NewRecorder()
+			srv.handleClientApprovalDecision(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Empty(t, w.Header().Get("Location"))
+			assert.Empty(t, w.Body.String())
+			got, err := srv.loadPendingClientAuth(ctx, usrT.Session)
+			assert.Nil(t, err)
+			assert.Equal(t, state, got)
+		})
+	}
+
+	after, err := srv.octeliumC.CoreC().ListCredential(ctx, &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, len(before.Items), len(after.Items))
+}
+
+type callbackProvider interface {
+	utils.Provider
+}
+
+type callbackTestProvider struct {
+	callbackProvider
+	idp    *corev1.IdentityProvider
+	info   *corev1.Session_Status_Authentication_Info
+	err    error
+	called bool
+}
+
+func (p *callbackTestProvider) Provider() *corev1.IdentityProvider {
+	return p.idp
+}
+
+func (p *callbackTestProvider) HandleCallback(r *http.Request,
+	login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
+	p.called = true
+	return p.info, p.err
+}
+
+func TestHandleAuthCallback(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+
+	tests := []struct {
+		name   string
+		mutate func(*callbackTestProvider, *corev1.User, *loginState)
+		valid  bool
+		called bool
+	}{
+		{name: "Valid", valid: true, called: true},
+		{name: "DisabledProvider", mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			p.idp.Spec.IsDisabled = true
+		}},
+		{name: "LockedProvider", mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			p.idp.Status.IsLocked = true
+		}},
+		{name: "RemovedProvider", mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			state.UID = "removed"
+		}},
+		{name: "ProviderError", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			p.err = errors.New("invalid authorization code")
+		}},
+		{name: "EmptyIdentifier", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			p.info.GetIdentityProvider().Identifier = ""
+		}},
+		{name: "UnknownUser", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			p.info.GetIdentityProvider().Email = "unknown@example.com"
+		}},
+		{name: "DisabledUser", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			usr.Spec.IsDisabled = true
+		}},
+		{name: "LockedUser", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			usr.Status.IsLocked = true
+		}},
+		{name: "WorkloadUser", called: true, mutate: func(p *callbackTestProvider, usr *corev1.User, state *loginState) {
+			usr.Spec.Type = corev1.User_Spec_WORKLOAD
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usrReq := tstuser.GenUserHuman(nil)
+			usrReq.Spec.Email = fmt.Sprintf("%s@example.com", usrReq.Metadata.Name)
+			usr, err := adminSrv.CreateUser(ctx, usrReq)
+			assert.Nil(t, err)
+			p := &callbackTestProvider{
+				idp: &corev1.IdentityProvider{
+					Metadata: &metav1.Metadata{Name: "test-idp", Uid: utilrand.GetRandomStringCanonical(36)},
+					Spec:     &corev1.IdentityProvider_Spec{},
+					Status:   &corev1.IdentityProvider_Status{Type: corev1.IdentityProvider_Status_OIDC},
+				},
+			}
+			p.info = &corev1.Session_Status_Authentication_Info{
+				Type: corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER,
+				Details: &corev1.Session_Status_Authentication_Info_IdentityProvider_{
+					IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
+						IdentityProviderRef: umetav1.GetObjectReference(p.idp),
+						Identifier:          usr.Metadata.Name,
+						Email:               usr.Spec.Email,
+						Type:                corev1.IdentityProvider_Status_OIDC,
+					},
+				},
+			}
+			state := &loginState{
+				ID:          newStateID(),
+				UID:         p.idp.Metadata.Uid,
+				CallbackURL: "https://portal.example.com/home",
+				Login:       &utils.GetLoginResponse{},
+			}
+			if tt.mutate != nil {
+				tt.mutate(p, usr, state)
+				_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr)
+				assert.Nil(t, err)
+			}
+			srv.webProvidersC.Lock()
+			srv.webProvidersC.connectors = []utils.Provider{p}
+			srv.webProvidersC.Unlock()
+			assert.Nil(t, srv.saveLoginState(ctx, state))
+
+			newReq := func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "https://example.com/callback?state="+state.ID, nil)
+				req.AddCookie(&http.Cookie{Name: "octelium_login_state", Value: state.ID})
+				return req
+			}
+			w := httptest.NewRecorder()
+			srv.handleAuthCallback(w, newReq())
+			assert.Equal(t, http.StatusSeeOther, w.Code)
+			assert.Equal(t, tt.called, p.called)
+
+			sessions, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{
+				Filters: []*rmetav1.ListOptions_Filter{urscsrv.FilterStatusUserUID(usr.Metadata.Uid)},
+			})
+			assert.Nil(t, err)
+			if tt.valid {
+				assert.Equal(t, 1, len(sessions.Items))
+				u, err := url.Parse(w.Header().Get("Location"))
+				assert.Nil(t, err)
+				assert.Equal(t, "/callback/success", u.Path)
+				assert.Equal(t, state.CallbackURL, u.Query().Get("redirect"))
+				cookies := w.Result().Cookies()
+				assert.Equal(t, 3, len(cookies))
+				for _, cookie := range cookies {
+					assert.True(t, cookie.Secure)
+					if cookie.Name == "octelium_rt" {
+						assert.True(t, cookie.HttpOnly)
+						sess, err := srv.getSessionFromRefreshToken(ctx, cookie.Value)
+						assert.Nil(t, err)
+						assert.Equal(t, usr.Metadata.Uid, sess.Status.UserRef.Uid)
+						assert.True(t, sess.Status.IsBrowser)
+					}
+				}
+			} else {
+				assert.Empty(t, sessions.Items)
+				assert.Empty(t, w.Result().Cookies())
+				assert.Equal(t, srv.rootURL, w.Header().Get("Location"))
+			}
+
+			p.called = false
+			w = httptest.NewRecorder()
+			srv.handleAuthCallback(w, newReq())
+			assert.Equal(t, http.StatusSeeOther, w.Code)
+			assert.Equal(t, srv.rootURL, w.Header().Get("Location"))
+			assert.False(t, p.called)
+			assert.Empty(t, w.Result().Cookies())
+		})
+	}
+}
+
+func TestSetAuthCallbackResponse(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	tests := []struct {
+		name   string
+		action corev1.Session_Status_AuthenticatorAction
+		state  *loginState
+		path   string
+	}{
+		{name: "NoState", path: "/callback/success"},
+		{name: "EmptyState", state: &loginState{}, path: "/callback/success"},
+		{name: "WebRedirect", state: &loginState{CallbackURL: "https://portal.example.com/path"}, path: "/callback/success"},
+		{name: "ClientApproval", state: &loginState{IsApp: true, CallbackURL: "http://localhost:12345/callback/success/abcd", CodeChallenge: utilrand.GetRandomBytesMust(32)}, path: "/callback/success"},
+		{name: "AuthenticationRequired", action: corev1.Session_Status_AUTHENTICATION_REQUIRED, state: &loginState{}, path: "/authenticators/authenticate"},
+		{name: "AuthenticationRecommended", action: corev1.Session_Status_AUTHENTICATION_RECOMMENDED, state: &loginState{}, path: "/authenticators/authenticate"},
+		{name: "RegistrationRequired", action: corev1.Session_Status_REGISTRATION_REQUIRED, state: &loginState{}, path: "/authenticators/register"},
+		{name: "RegistrationRecommended", action: corev1.Session_Status_REGISTRATION_RECOMMENDED, state: &loginState{}, path: "/authenticators/register"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess := pbutils.Clone(usrT.Session).(*corev1.Session)
+			sess.Status.AuthenticatorAction = tt.action
+			req := httptest.NewRequest(http.MethodGet, "https://example.com/callback", nil)
+			w := httptest.NewRecorder()
+			assert.Nil(t, srv.setAuthCallbackResponse(req, w, tt.state, sess))
+			assert.Equal(t, http.StatusSeeOther, w.Code)
+			u, err := url.Parse(w.Header().Get("Location"))
+			assert.Nil(t, err)
+			assert.Equal(t, "https", u.Scheme)
+			assert.Equal(t, srv.domain, u.Host)
+			assert.Equal(t, tt.path, u.Path)
+			assert.NotContains(t, u.RawQuery, "octelium_response")
+			assert.Equal(t, 3, len(w.Result().Cookies()))
+
+			if tt.state != nil && tt.state.IsApp {
+				pending, err := srv.loadPendingClientAuth(ctx, sess)
+				assert.Nil(t, err)
+				assert.Equal(t, tt.state.CallbackURL, pending.CallbackURL)
+				assert.Equal(t, tt.state.CodeChallenge, pending.CodeChallenge)
+				assert.Empty(t, u.RawQuery)
+			}
+			if tt.action != corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET {
+				state, err := srv.loadAuthenticatorCallbackState(ctx, sess)
+				assert.Nil(t, err)
+				assert.Equal(t, tt.state.CallbackURL, state.CallbackURL)
+			}
+		})
+	}
+
+	sess := pbutils.Clone(usrT.Session).(*corev1.Session)
+	sess.Status.AuthenticatorAction = corev1.Session_Status_AuthenticatorAction(100)
+	w := httptest.NewRecorder()
+	assert.NotNil(t, srv.setAuthCallbackResponse(httptest.NewRequest(http.MethodGet, "/callback", nil), w, nil, sess))
+	assert.Empty(t, w.Result().Cookies())
+	assert.Empty(t, w.Header().Get("Location"))
 }

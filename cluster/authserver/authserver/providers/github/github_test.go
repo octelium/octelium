@@ -19,10 +19,12 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
+	"github.com/google/go-github/v88/github"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
@@ -254,5 +256,40 @@ func TestHandleCallbackError(t *testing.T) {
 
 		_, err := c.HandleCallback(req, nil)
 		assert.NotNil(t, err)
+	}
+}
+
+func TestGetVerifiedPrimaryEmail(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		email  string
+	}{
+		{name: "Empty", status: http.StatusOK, body: `[]`},
+		{name: "UnverifiedPrimary", status: http.StatusOK, body: `[{"email":"unverified@example.com","primary":true,"verified":false}]`},
+		{name: "VerifiedPrimary", status: http.StatusOK, body: `[{"email":"secondary@example.com","verified":true},{"email":"primary@example.com","primary":true,"verified":true}]`, email: "primary@example.com"},
+		{name: "VerifiedFallback", status: http.StatusOK, body: `[{"email":"unverified@example.com","primary":true},{"email":"first@example.com","verified":true},{"email":"second@example.com","verified":true}]`, email: "first@example.com"},
+		{name: "MissingFields", status: http.StatusOK, body: `[{}]`},
+		{name: "Unauthorized", status: http.StatusUnauthorized, body: `{"message":"Bad credentials"}`},
+		{name: "RateLimited", status: http.StatusForbidden, body: `{"message":"API rate limit exceeded"}`},
+		{name: "MalformedJSON", status: http.StatusOK, body: `[{`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/user/emails", r.URL.Path)
+				assert.Equal(t, "100", r.URL.Query().Get("per_page"))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				w.Write([]byte(tt.body))
+			}))
+			t.Cleanup(srv.Close)
+			baseURL := srv.URL + "/"
+			c, err := github.NewClient(github.WithHTTPClient(srv.Client()), github.WithURLs(&baseURL, &baseURL))
+			assert.Nil(t, err)
+			assert.Equal(t, tt.email, getVerifiedPrimaryEmail(context.Background(), c))
+		})
 	}
 }

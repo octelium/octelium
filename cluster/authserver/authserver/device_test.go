@@ -1860,3 +1860,93 @@ func TestHandleDeviceAuthenticate(t *testing.T) {
 	}
 }
 */
+
+func TestValidateDeviceInfoBoundaries(t *testing.T) {
+	srv := &server{}
+	newInfo := func() *authv1.RegisterDeviceRequest_Info {
+		return &authv1.RegisterDeviceRequest_Info{
+			Id: strings.Repeat("a", 64), OsType: authv1.RegisterDeviceRequest_Info_LINUX,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*authv1.RegisterDeviceRequest_Info)
+	}{
+		{"ShortID", func(info *authv1.RegisterDeviceRequest_Info) { info.Id = strings.Repeat("a", 63) }},
+		{"LongID", func(info *authv1.RegisterDeviceRequest_Info) { info.Id = strings.Repeat("a", 65) }},
+		{"NonHexID", func(info *authv1.RegisterDeviceRequest_Info) { info.Id = strings.Repeat("g", 64) }},
+		{"IDNewline", func(info *authv1.RegisterDeviceRequest_Info) { info.Id += "\n" }},
+		{"LongHostname", func(info *authv1.RegisterDeviceRequest_Info) { info.Hostname = strings.Repeat("a", 33) }},
+		{"ShortSerialNumber", func(info *authv1.RegisterDeviceRequest_Info) { info.SerialNumber = "abcde" }},
+		{"LongSerialNumber", func(info *authv1.RegisterDeviceRequest_Info) { info.SerialNumber = strings.Repeat("a", 129) }},
+		{"PlaceholderSerialNumber", func(info *authv1.RegisterDeviceRequest_Info) { info.SerialNumber = "DEFAULT STRING" }},
+		{"TooManyMACAddresses", func(info *authv1.RegisterDeviceRequest_Info) {
+			for range 17 {
+				info.MacAddresses = append(info.MacAddresses, "00:1a:2b:3c:4d:5e")
+			}
+		}},
+		{"InvalidMACAddress", func(info *authv1.RegisterDeviceRequest_Info) {
+			info.MacAddresses = []string{"00:1a:2b:3c:4d:5e", "invalid"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := newInfo()
+			tt.mutate(info)
+			assert.NotNil(t, srv.validateDeviceInfo(info))
+			assert.NotNil(t, srv.validateRegisterDeviceRequest(&authv1.RegisterDeviceRequest{Info: info}))
+			assert.NotNil(t, srv.validateRegisterDeviceBeginRequest(&authv1.RegisterDeviceBeginRequest{Info: info}))
+		})
+	}
+
+	info := newInfo()
+	info.Hostname = strings.Repeat("a", 32)
+	info.SerialNumber = strings.Repeat("a", 128)
+	for range 16 {
+		info.MacAddresses = append(info.MacAddresses, "00:1a:2b:3c:4d:5e")
+	}
+	for _, osType := range []authv1.RegisterDeviceRequest_Info_OSType{
+		authv1.RegisterDeviceRequest_Info_LINUX,
+		authv1.RegisterDeviceRequest_Info_WINDOWS,
+		authv1.RegisterDeviceRequest_Info_MAC,
+		authv1.RegisterDeviceRequest_Info_ANDROID,
+		authv1.RegisterDeviceRequest_Info_IOS,
+		authv1.RegisterDeviceRequest_Info_CHROMEOS,
+	} {
+		info.OsType = osType
+		assert.Nil(t, srv.validateDeviceInfo(info))
+	}
+}
+
+func TestProbeResultsIdentityValidation(t *testing.T) {
+	attempt := &corev1.Device_Status_ProbeAttempt{
+		Probes: []*corev1.ClusterConfig_Status_Device_Probe{{Id: "probe-1"}, {Id: "probe-2"}},
+	}
+	for _, ids := range [][]string{
+		{"probe-1", "probe-1"},
+		{"probe-1", "unknown"},
+		{"probe-1"},
+		{"probe-1", "probe-2", "unknown"},
+	} {
+		var results []*authv1.DeviceProbeResult
+		for _, id := range ids {
+			results = append(results, &authv1.DeviceProbeResult{ProbeID: id, Status: authv1.DeviceProbeResult_NOT_FOUND})
+		}
+		res, err := getProbeAttemptResults(attempt, results)
+		assert.Nil(t, res)
+		assert.NotNil(t, err, "%v", ids)
+	}
+
+	res, err := getProbeAttemptResults(attempt, []*authv1.DeviceProbeResult{
+		{ProbeID: "probe-2", Status: authv1.DeviceProbeResult_PERMISSION_REQUIRED, Detail: "no permission"},
+		{ProbeID: "probe-1", Status: authv1.DeviceProbeResult_TIMEOUT, ExitCode: 1, IsTruncated: true},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, "probe-2", res[0].ProbeID)
+	assert.Equal(t, "no permission", res[0].Detail)
+	assert.Equal(t, corev1.Device_Status_ProbeAttempt_Result_PERMISSION_REQUIRED, res[0].Status)
+	assert.Equal(t, corev1.Device_Status_ProbeAttempt_Result_TIMEOUT, res[1].Status)
+	assert.Equal(t, int32(1), res[1].ExitCode)
+	assert.True(t, res[1].IsTruncated)
+}

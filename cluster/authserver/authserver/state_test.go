@@ -23,13 +23,20 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/opkce"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -500,4 +507,220 @@ func TestPendingClientAuth(t *testing.T) {
 		_, err = srv.loadPendingClientAuth(ctx, usrT.Session)
 		assert.NotNil(t, err)
 	}
+}
+
+func TestStateConcurrentConsumption(t *testing.T) {
+	ctx := context.Background()
+	srv, _, _ := newWebAuthnTestEnv(t)
+	sess := &corev1.Session{Metadata: &metav1.Metadata{Uid: utilrand.GetRandomStringCanonical(36)}}
+	stateID := newStateID()
+	challenge := utilrand.GetRandomStringCanonical(43)
+	callbackURL := "http://localhost:12345/callback/success/abcd"
+	codeChallenge := utilrand.GetRandomBytesMust(32)
+
+	tests := []struct {
+		name          string
+		save          func() error
+		consume       func(context.Context) (string, []byte, error)
+		wantChallenge []byte
+	}{
+		{
+			name: "Login",
+			save: func() error {
+				return srv.saveLoginState(ctx, &loginState{
+					ID: stateID, CallbackURL: callbackURL, CodeChallenge: codeChallenge,
+				})
+			},
+			consume: func(ctx context.Context) (string, []byte, error) {
+				res, err := srv.getLoginStateFromStateID(ctx, stateID)
+				if err != nil {
+					return "", nil, err
+				}
+				return res.CallbackURL, res.CodeChallenge, nil
+			},
+		},
+		{
+			name: "AuthenticatorCallback",
+			save: func() error {
+				return srv.saveAuthenticatorCallbackState(ctx, sess, &loginState{
+					CallbackURL: callbackURL, CodeChallenge: codeChallenge,
+				})
+			},
+			consume: func(ctx context.Context) (string, []byte, error) {
+				res, err := srv.loadAuthenticatorCallbackState(ctx, sess)
+				if err != nil {
+					return "", nil, err
+				}
+				return res.CallbackURL, res.CodeChallenge, nil
+			},
+		},
+		{
+			name: "PendingClientApproval",
+			save: func() error {
+				return srv.savePendingClientAuth(ctx, sess, &pendingClientAuth{
+					CallbackURL: callbackURL, CodeChallenge: codeChallenge,
+				})
+			},
+			consume: func(ctx context.Context) (string, []byte, error) {
+				res, err := srv.consumePendingClientAuth(ctx, sess)
+				if err != nil {
+					return "", nil, err
+				}
+				return res.CallbackURL, res.CodeChallenge, nil
+			},
+		},
+		{
+			name:          "Passkey",
+			wantChallenge: []byte(challenge),
+			save: func() error {
+				return srv.savePasskeyState(ctx, &passkeyState{
+					Session: &webauthn.SessionData{Challenge: challenge}, Query: callbackURL,
+				})
+			},
+			consume: func(ctx context.Context) (string, []byte, error) {
+				res, err := srv.loadPasskeyState(ctx, challenge)
+				if err != nil {
+					return "", nil, err
+				}
+				return res.Query, []byte(res.Session.Challenge), nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Nil(t, tt.save())
+			const workers = 64
+			type result struct {
+				url       string
+				challenge []byte
+				err       error
+			}
+			results := make(chan result, workers)
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for range workers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					defer cancel()
+					u, challenge, err := tt.consume(ctx)
+					results <- result{url: u, challenge: challenge, err: err}
+				}()
+			}
+			close(start)
+			wg.Wait()
+			close(results)
+
+			succeeded := 0
+			wantChallenge := codeChallenge
+			if tt.wantChallenge != nil {
+				wantChallenge = tt.wantChallenge
+			}
+			for res := range results {
+				if res.err == nil {
+					succeeded++
+					assert.Equal(t, callbackURL, res.url)
+					assert.Equal(t, wantChallenge, res.challenge)
+				} else {
+					assert.True(t, grpcerr.IsNotFound(res.err), "%+v", res.err)
+				}
+			}
+			assert.Equal(t, 1, succeeded)
+		})
+	}
+}
+
+func TestStateCorruptedCache(t *testing.T) {
+	ctx := context.Background()
+	srv, _, _ := newWebAuthnTestEnv(t)
+	sess := &corev1.Session{Metadata: &metav1.Metadata{Uid: utilrand.GetRandomStringCanonical(36)}}
+	stateID := newStateID()
+	challenge := utilrand.GetRandomStringCanonical(43)
+
+	tests := []struct {
+		name string
+		key  string
+		load func() error
+	}{
+		{"Login", getAuthKey(stateID), func() error {
+			res, err := srv.getLoginStateFromStateID(ctx, stateID)
+			assert.Nil(t, res)
+			return err
+		}},
+		{"AuthenticatorCallback", getAuthenticatorCallbackKey(sess), func() error {
+			res, err := srv.loadAuthenticatorCallbackState(ctx, sess)
+			assert.Nil(t, res)
+			return err
+		}},
+		{"PendingClientApproval", getPendingClientAuthKey(sess), func() error {
+			res, err := srv.consumePendingClientAuth(ctx, sess)
+			assert.Nil(t, res)
+			return err
+		}},
+		{"Passkey", getPasskeyKey(challenge), func() error {
+			res, err := srv.loadPasskeyState(ctx, challenge)
+			assert.Nil(t, res)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := srv.octeliumC.CacheC().SetCache(ctx, &rcachev1.SetCacheRequest{
+				Key: []byte(tt.key), Data: []byte(`{"broken":`),
+				Duration: &metav1.Duration{Type: &metav1.Duration_Minutes{Minutes: 1}},
+			})
+			assert.Nil(t, err)
+			assert.NotNil(t, tt.load())
+			assert.True(t, grpcerr.IsNotFound(tt.load()))
+		})
+	}
+
+	assert.Nil(t, srv.savePendingClientAuth(ctx, sess, &pendingClientAuth{}))
+	res, err := srv.loadPendingClientAuth(ctx, sess)
+	assert.Nil(t, res)
+	assert.NotNil(t, err)
+}
+
+func TestLoginCallbackInvalidStateDoesNotConsume(t *testing.T) {
+	ctx := context.Background()
+	srv, _, _ := newWebAuthnTestEnv(t)
+	stateID := newStateID()
+	state := &loginState{ID: stateID, CallbackURL: "https://portal.example.com"}
+	assert.Nil(t, srv.saveLoginState(ctx, state))
+
+	tests := []struct {
+		name   string
+		method string
+		query  string
+		cookie string
+		body   string
+	}{
+		{name: "MissingCookie", method: http.MethodGet, query: "state=" + stateID},
+		{name: "MalformedCookie", method: http.MethodGet, query: "state=" + stateID, cookie: strings.Repeat("a", 35)},
+		{name: "WrongCookie", method: http.MethodGet, query: "state=" + stateID, cookie: newStateID()},
+		{name: "ProviderError", method: http.MethodGet, query: "state=" + stateID + "&error=access_denied", cookie: stateID},
+		{name: "SAMLQueryOnly", method: http.MethodPost, query: "RelayState=" + stateID, cookie: stateID},
+		{name: "SAMLWrongCookie", method: http.MethodPost, cookie: newStateID(), body: url.Values{"RelayState": {stateID}}.Encode()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "https://example.com/callback?"+tt.query, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: "octelium_login_state", Value: tt.cookie})
+			}
+			res, err := srv.getLoginStateFromCallback(req)
+			assert.Nil(t, res)
+			assert.NotNil(t, err)
+		})
+	}
+
+	res, err := srv.getLoginStateFromStateID(ctx, stateID)
+	assert.Nil(t, err)
+	assert.Equal(t, state, res)
 }

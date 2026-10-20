@@ -22,6 +22,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -44,6 +46,9 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestAuthenticateWithAuthenticationToken(t *testing.T) {
@@ -987,4 +992,177 @@ func TestAuthenticateWithAuthenticationTokenPKCE(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.NotEmpty(t, resp.AccessToken)
 	})
+}
+
+func TestAuthenticateWithRefreshTokenRestrictions(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+
+	tests := []struct {
+		name   string
+		mutate func(*tstuser.User)
+		code   codes.Code
+	}{
+		{
+			name: "Browser",
+			mutate: func(usrT *tstuser.User) {
+				usrT.Session.Status.IsBrowser = true
+			},
+			code: codes.PermissionDenied,
+		},
+		{
+			name: "RequiredAuthenticator",
+			mutate: func(usrT *tstuser.User) {
+				usrT.Session.Status.RequiredAuthenticatorRef = &metav1.ObjectReference{Uid: "required"}
+			},
+			code: codes.PermissionDenied,
+		},
+		{
+			name: "DisabledUser",
+			mutate: func(usrT *tstuser.User) {
+				usrT.Usr.Spec.IsDisabled = true
+			},
+			code: codes.PermissionDenied,
+		},
+		{
+			name: "LockedUser",
+			mutate: func(usrT *tstuser.User) {
+				usrT.Usr.Status.IsLocked = true
+			},
+			code: codes.PermissionDenied,
+		},
+		{
+			name: "RateLimited",
+			mutate: func(usrT *tstuser.User) {
+				for range maxAuthenticationsPerHour {
+					usrT.Session.Status.LastAuthentications = append(usrT.Session.Status.LastAuthentications,
+						&corev1.Session_Status_Authentication{SetAt: pbutils.Now()})
+				}
+			},
+			code: codes.AlreadyExists,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+			assert.Nil(t, err)
+			tt.mutate(usrT)
+			_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usrT.Usr)
+			assert.Nil(t, err)
+			usrT.Session, err = srv.octeliumC.CoreC().UpdateSession(ctx, usrT.Session)
+			assert.Nil(t, err)
+			before := pbutils.Clone(usrT.Session)
+
+			res, err := srv.doAuthenticateWithRefreshToken(getCtxRT(usrT), &authv1.AuthenticateWithRefreshTokenRequest{})
+			assert.Nil(t, res)
+			assert.Equal(t, tt.code, status.Code(err))
+			after, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: usrT.Session.Metadata.Uid})
+			assert.Nil(t, err)
+			assert.True(t, pbutils.IsEqual(before, after))
+		})
+	}
+
+	usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+	_, err = srv.octeliumC.CoreC().DeleteUser(ctx, apivalidation.ObjectToRDeleteOptions(usrT.Usr))
+	assert.Nil(t, err)
+	res, err := srv.doAuthenticateWithRefreshToken(getCtxRT(usrT), &authv1.AuthenticateWithRefreshTokenRequest{})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestGetSessionFromGRPCCtxTokenPrecedence(t *testing.T) {
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+	otherT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+	assert.Nil(t, err)
+
+	tests := []struct {
+		name string
+		md   metadata.MD
+		uid  string
+	}{
+		{
+			name: "MultipleCookieHeaders",
+			md:   metadata.Pairs("cookie", "unrelated=value", "cookie", "octelium_rt="+usrT.GetAccessToken().RefreshToken),
+			uid:  usrT.Session.Metadata.Uid,
+		},
+		{
+			name: "HeaderOverridesCookie",
+			md: metadata.Pairs("cookie", "octelium_rt="+otherT.GetAccessToken().RefreshToken,
+				"x-octelium-refresh-token", usrT.GetAccessToken().RefreshToken),
+			uid: usrT.Session.Metadata.Uid,
+		},
+		{
+			name: "InvalidHeaderDoesNotFallBack",
+			md: metadata.Pairs("cookie", "octelium_rt="+usrT.GetAccessToken().RefreshToken,
+				"x-octelium-refresh-token", "invalid"),
+		},
+		{
+			name: "AccessCookieIsNotRefreshToken",
+			md:   metadata.Pairs("cookie", "octelium_auth="+usrT.GetAccessToken().AccessToken),
+		},
+		{
+			name: "AccessTokenIsNotRefreshToken",
+			md:   metadata.Pairs("x-octelium-refresh-token", usrT.GetAccessToken().AccessToken),
+		},
+		{
+			name: "EmptyRefreshCookie",
+			md:   metadata.Pairs("cookie", "octelium_rt="),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(context.Background(), tt.md)
+			sess, err := srv.getSessionFromGRPCCtx(ctx)
+			if tt.uid == "" {
+				assert.Nil(t, sess)
+				assert.Equal(t, codes.Unauthenticated, status.Code(err))
+			} else {
+				assert.Nil(t, err)
+				assert.Equal(t, tt.uid, sess.Metadata.Uid)
+			}
+		})
+	}
+}
+
+func TestGRPCMalformedAuthenticationInputs(t *testing.T) {
+	srv, _, _ := newWebAuthnTestEnv(t)
+	conn := newAuthGRPCTestClient(t, srv)
+	c := authv1.NewMainServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, scopes := range [][]string{
+		{""},
+		{"api:*", "api:*"},
+		{" api:*"},
+		{"service:日"},
+		{"service:" + strings.Repeat("a", 256)},
+		make([]string, 129),
+	} {
+		res, err := c.AuthenticateWithAuthenticationToken(ctx, &authv1.AuthenticateWithAuthenticationTokenRequest{
+			AuthenticationToken: "invalid", Scopes: scopes,
+		})
+		assert.Nil(t, res)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "%v", scopes)
+	}
+
+	for _, assertion := range []string{"", "日", "a.b", "e30.e30.", strings.Repeat("a", 5000)} {
+		res, err := c.AuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{Assertion: assertion})
+		assert.Nil(t, res)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	}
+	res, err := c.AuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{Assertion: strings.Repeat("a", 5001)})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	res, err = c.AuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{Assertion: strings.Repeat("a", 201*1024)})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	res, err = c.AuthenticateWithAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }

@@ -448,3 +448,91 @@ func TestProvider(t *testing.T) {
 		}
 	*/
 }
+
+func TestAuthenticateAssertionInvalidTokens(t *testing.T) {
+	ctx := context.Background()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.Nil(t, err)
+	jwks, err := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &priv.PublicKey, Algorithm: string(jose.RS256)}}})
+	assert.Nil(t, err)
+
+	newConnector := func() *Connector {
+		c, err := NewConnector(ctx, &utils.ProviderOpts{
+			ClusterConfig: &corev1.ClusterConfig{Status: &corev1.ClusterConfig_Status{Domain: "example.com"}},
+			Provider: &corev1.IdentityProvider{
+				Metadata: &metav1.Metadata{Name: "oidc", Uid: "provider-uid"},
+				Status:   &corev1.IdentityProvider_Status{Type: corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN},
+				Spec: &corev1.IdentityProvider_Spec{
+					Type: &corev1.IdentityProvider_Spec_OidcIdentityToken{
+						OidcIdentityToken: &corev1.IdentityProvider_Spec_OIDCIdentityToken{
+							Issuer: "https://issuer.example.com",
+							Type:   &corev1.IdentityProvider_Spec_OIDCIdentityToken_JwksContent{JwksContent: string(jwks)},
+						},
+					},
+				},
+			},
+		})
+		assert.Nil(t, err)
+		return c
+	}
+
+	tests := []struct {
+		name   string
+		method jwt.SigningMethod
+		key    any
+		mutate func(*jwt.RegisteredClaims)
+	}{
+		{name: "Unsigned", method: jwt.SigningMethodNone, key: jwt.UnsafeAllowNoneSignatureType},
+		{name: "HMAC", method: jwt.SigningMethodHS256, key: []byte("malicious-shared-secret")},
+		{name: "UnsupportedRSAAlgorithm", method: jwt.SigningMethodRS512, key: priv},
+		{name: "Expired", method: jwt.SigningMethodRS256, key: priv, mutate: func(claims *jwt.RegisteredClaims) {
+			claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Hour))
+		}},
+		{name: "MissingExpiry", method: jwt.SigningMethodRS256, key: priv, mutate: func(claims *jwt.RegisteredClaims) {
+			claims.ExpiresAt = nil
+		}},
+		{name: "ForeignIssuer", method: jwt.SigningMethodRS256, key: priv, mutate: func(claims *jwt.RegisteredClaims) {
+			claims.Issuer = "https://evil.example.com"
+		}},
+		{name: "ForeignAudience", method: jwt.SigningMethodRS256, key: priv, mutate: func(claims *jwt.RegisteredClaims) {
+			claims.Audience = jwt.ClaimStrings{"https://evil.example.com"}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claims := &jwt.RegisteredClaims{
+				Issuer:    "https://issuer.example.com",
+				Subject:   "workload",
+				Audience:  jwt.ClaimStrings{"https://example.com"},
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			}
+			if tt.mutate != nil {
+				tt.mutate(claims)
+			}
+			token, err := jwt.NewWithClaims(tt.method, claims).SignedString(tt.key)
+			assert.Nil(t, err)
+			usr, info, err := newConnector().AuthenticateAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{
+				IdentityProviderRef: &metav1.ObjectReference{Name: "oidc"}, Assertion: token,
+			})
+			assert.Nil(t, usr)
+			assert.Nil(t, info)
+			assert.NotNil(t, err)
+		})
+	}
+
+	for _, ref := range []*metav1.ObjectReference{{Name: "foreign"}, {Uid: "foreign"}} {
+		usr, info, err := newConnector().AuthenticateAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{
+			IdentityProviderRef: ref, Assertion: "invalid",
+		})
+		assert.Nil(t, usr)
+		assert.Nil(t, info)
+		assert.NotNil(t, err)
+	}
+	for _, token := range []string{"", "a.b.c", "e30.e30.", "日"} {
+		usr, info, err := newConnector().AuthenticateAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{Assertion: token})
+		assert.Nil(t, usr)
+		assert.Nil(t, info)
+		assert.NotNil(t, err)
+	}
+}
