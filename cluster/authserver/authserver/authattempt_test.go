@@ -145,11 +145,11 @@ func TestAuthFailureRefreshToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonRevokedCredential, failure.Reason)
-		assert.Equal(t, corev1.Session_Status_Authentication_Info_REFRESH_TOKEN, failure.Info.Type)
-		assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.Uid)
-		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
-		assert.Equal(t, "octelium-cli/1.2.3 linux", failure.Info.Downstream.UserAgent)
-		assert.Equal(t, "1.2.3", failure.Info.Downstream.ClientVersion)
+		assert.Equal(t, corev1.Session_Status_Authentication_Info_REFRESH_TOKEN, failure.Info.GetType())
+		assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.GetUid())
+		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
+		assert.Equal(t, "octelium-cli/1.2.3 linux", failure.Info.GetDownstream().GetUserAgent())
+		assert.Equal(t, "1.2.3", failure.Info.GetDownstream().GetClientVersion())
 		assert.True(t, time.Since(failure.CreatedAt) < time.Minute)
 
 		sess, err := srv.getSessionFromRefreshToken(ctx, resp.RefreshToken)
@@ -164,7 +164,7 @@ func TestAuthFailureRefreshToken(t *testing.T) {
 
 		failure = sub.next(t)
 		assert.Equal(t, authevents.ReasonRevokedCredential, failure.Reason)
-		assert.Equal(t, sess.Metadata.Uid, failure.SessionRef.Uid)
+		assert.Equal(t, sess.Metadata.Uid, failure.SessionRef.GetUid())
 	}
 
 	{
@@ -181,7 +181,7 @@ func TestAuthFailureRefreshToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonUserDeactivated, failure.Reason)
-		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
+		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
 	}
 
 	{
@@ -201,7 +201,7 @@ func TestAuthFailureRefreshToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonLimitExceeded, failure.Reason)
-		assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.Uid)
+		assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.GetUid())
 	}
 }
 
@@ -273,12 +273,12 @@ func TestAuthFailureAuthenticationToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonExpiredCredential, failure.Reason)
-		assert.Equal(t, corev1.Session_Status_Authentication_Info_CREDENTIAL, failure.Info.Type)
-		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().CredentialRef.Uid)
-		assert.Equal(t, cred.Metadata.Name, failure.Info.GetCredential().CredentialRef.Name)
-		assert.Equal(t, corev1.Credential_Spec_AUTH_TOKEN, failure.Info.GetCredential().Type)
-		assert.Equal(t, "", failure.Info.GetCredential().TokenID)
-		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
+		assert.Equal(t, corev1.Session_Status_Authentication_Info_CREDENTIAL, failure.Info.GetType())
+		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().GetCredentialRef().GetUid())
+		assert.Equal(t, cred.Metadata.Name, failure.Info.GetCredential().GetCredentialRef().GetName())
+		assert.Equal(t, corev1.Credential_Spec_AUTH_TOKEN, failure.Info.GetCredential().GetType())
+		assert.Equal(t, "", failure.Info.GetCredential().GetTokenID())
+		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
 		assert.Nil(t, failure.SessionRef)
 	}
 
@@ -293,7 +293,7 @@ func TestAuthFailureAuthenticationToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonRevokedCredential, failure.Reason)
-		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().CredentialRef.Uid)
+		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().GetCredentialRef().GetUid())
 	}
 
 	{
@@ -308,7 +308,7 @@ func TestAuthFailureAuthenticationToken(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonRevokedCredential, failure.Reason)
-		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().CredentialRef.Uid)
+		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().GetCredentialRef().GetUid())
 		assert.Nil(t, failure.UserRef)
 	}
 }
@@ -351,13 +351,13 @@ func TestAuthFailureAuthenticator(t *testing.T) {
 
 	failure := sub.next(t)
 	assert.Equal(t, authevents.ReasonNotAllowed, failure.Reason)
-	assert.Equal(t, corev1.Session_Status_Authentication_Info_AUTHENTICATOR, failure.Info.Type)
-	assert.Equal(t, authn.Metadata.Uid, failure.Info.GetAuthenticator().AuthenticatorRef.Uid)
-	assert.Equal(t, corev1.Authenticator_Status_TOTP, failure.Info.GetAuthenticator().Type)
+	assert.Equal(t, corev1.Session_Status_Authentication_Info_AUTHENTICATOR, failure.Info.GetType())
+	assert.Equal(t, authn.Metadata.Uid, failure.Info.GetAuthenticator().GetAuthenticatorRef().GetUid())
+	assert.Equal(t, corev1.Authenticator_Status_TOTP, failure.Info.GetAuthenticator().GetType())
 	assert.Equal(t, corev1.Session_Status_Authentication_Info_Authenticator_DEFAULT,
-		failure.Info.GetAuthenticator().Mode)
-	assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.Uid)
-	assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
+		failure.Info.GetAuthenticator().GetMode())
+	assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.GetUid())
+	assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
 
 	_, err = authSrv.AuthenticateWithAuthenticator(getAuthFailureCtx(usrT.GetAccessToken().RefreshToken),
 		&authv1.AuthenticateWithAuthenticatorRequest{
@@ -367,7 +367,7 @@ func TestAuthFailureAuthenticator(t *testing.T) {
 
 	failure = sub.next(t)
 	assert.Equal(t, authevents.ReasonInvalidCredential, failure.Reason)
-	assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.Uid)
+	assert.Equal(t, usrT.Session.Metadata.Uid, failure.SessionRef.GetUid())
 }
 
 func TestAuthFailureCallback(t *testing.T) {
@@ -389,10 +389,6 @@ func TestAuthFailureCallback(t *testing.T) {
 			Status:     &corev1.IdentityProvider_Status{Type: corev1.IdentityProvider_Status_OIDC},
 		},
 	}
-	srv.webProvidersC.Lock()
-	srv.webProvidersC.connectors = []utils.Provider{p}
-	srv.webProvidersC.Unlock()
-
 	newState := func() *loginState {
 		state := &loginState{
 			ID:    newStateID(),
@@ -408,6 +404,9 @@ func TestAuthFailureCallback(t *testing.T) {
 		req.AddCookie(&http.Cookie{Name: "octelium_login_state", Value: state.ID})
 		req.Header.Set("User-Agent", "Mozilla/5.0")
 		w := httptest.NewRecorder()
+		srv.webProvidersC.Lock()
+		srv.webProvidersC.connectors = []utils.Provider{p}
+		srv.webProvidersC.Unlock()
 		srv.handleAuthCallback(w, req)
 		assert.Equal(t, http.StatusSeeOther, w.Code)
 	}
@@ -440,11 +439,11 @@ func TestAuthFailureCallback(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonInvalidCredential, failure.Reason)
-		assert.Equal(t, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER, failure.Info.Type)
-		assert.Equal(t, p.idp.Metadata.Uid, failure.Info.GetIdentityProvider().IdentityProviderRef.Uid)
-		assert.Equal(t, corev1.IdentityProvider_Status_OIDC, failure.Info.GetIdentityProvider().Type)
-		assert.Equal(t, "", failure.Info.GetIdentityProvider().Identifier)
-		assert.Equal(t, "Mozilla/5.0", failure.Info.Downstream.UserAgent)
+		assert.Equal(t, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER, failure.Info.GetType())
+		assert.Equal(t, p.idp.Metadata.Uid, failure.Info.GetIdentityProvider().GetIdentityProviderRef().GetUid())
+		assert.Equal(t, corev1.IdentityProvider_Status_OIDC, failure.Info.GetIdentityProvider().GetType())
+		assert.Equal(t, "", failure.Info.GetIdentityProvider().GetIdentifier())
+		assert.Equal(t, "Mozilla/5.0", failure.Info.GetDownstream().GetUserAgent())
 		assert.Nil(t, failure.UserRef)
 
 		doCallback(state, "state="+state.ID)
@@ -458,8 +457,8 @@ func TestAuthFailureCallback(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonUserNotFound, failure.Reason)
-		assert.Equal(t, "unknown", failure.Info.GetIdentityProvider().Identifier)
-		assert.Equal(t, "unknown@example.com", failure.Info.GetIdentityProvider().Email)
+		assert.Equal(t, "unknown", failure.Info.GetIdentityProvider().GetIdentifier())
+		assert.Equal(t, "unknown@example.com", failure.Info.GetIdentityProvider().GetEmail())
 		assert.Nil(t, failure.UserRef)
 	}
 
@@ -474,7 +473,7 @@ func TestAuthFailureCallback(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonUserDeactivated, failure.Reason)
-		assert.Equal(t, usr.Metadata.Uid, failure.UserRef.Uid)
+		assert.Equal(t, usr.Metadata.Uid, failure.UserRef.GetUid())
 
 		usr.Spec.IsDisabled = false
 		usr, err = srv.octeliumC.CoreC().UpdateUser(ctx, usr)
@@ -491,7 +490,7 @@ func TestAuthFailureCallback(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonIdentityProviderError, failure.Reason)
-		assert.Equal(t, p.idp.Metadata.Uid, failure.Info.GetIdentityProvider().IdentityProviderRef.Uid)
+		assert.Equal(t, p.idp.Metadata.Uid, failure.Info.GetIdentityProvider().GetIdentityProviderRef().GetUid())
 
 		res, err := srv.getLoginStateFromStateID(ctx, state.ID)
 		assert.Nil(t, err)
@@ -545,10 +544,10 @@ func TestAuthFailureOAuth2(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonInvalidCredential, failure.Reason)
-		assert.Equal(t, corev1.Session_Status_Authentication_Info_CREDENTIAL, failure.Info.Type)
-		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().CredentialRef.Uid)
-		assert.Equal(t, corev1.Credential_Spec_OAUTH2, failure.Info.GetCredential().Type)
-		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
+		assert.Equal(t, corev1.Session_Status_Authentication_Info_CREDENTIAL, failure.Info.GetType())
+		assert.Equal(t, cred.Metadata.Uid, failure.Info.GetCredential().GetCredentialRef().GetUid())
+		assert.Equal(t, corev1.Credential_Spec_OAUTH2, failure.Info.GetCredential().GetType())
+		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
 	}
 
 	{
@@ -575,6 +574,6 @@ func TestAuthFailureOAuth2(t *testing.T) {
 
 		failure := sub.next(t)
 		assert.Equal(t, authevents.ReasonUserLocked, failure.Reason)
-		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.Uid)
+		assert.Equal(t, usrT.Usr.Metadata.Uid, failure.UserRef.GetUid())
 	}
 }

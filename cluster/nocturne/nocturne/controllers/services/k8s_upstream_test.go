@@ -1483,3 +1483,108 @@ func TestK8sUpstreamEnvironmentSecretWatcherRetry(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "updated", mirror.StringData["data"])
 }
+
+func TestK8sUpstreamCredentialRegistry(t *testing.T) {
+	ctx := context.Background()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		name   string
+		image  string
+		server string
+		domain string
+	}{
+		{"TaggedImage", "nginx:latest", "", "docker.io"},
+		{"VersionedImage", "nginx:1.27", "", "docker.io"},
+		{"DottedImage", "my.app", "", "docker.io"},
+		{"DottedTaggedImage", "my.app:1.0", "", "docker.io"},
+		{"Digest", "nginx@" + digest, "", "docker.io"},
+		{"TaggedDigest", "nginx:latest@" + digest, "", "docker.io"},
+		{"LocalhostImage", "localhost", "", "docker.io"},
+		{"LocalhostTaggedImage", "localhost:latest", "", "docker.io"},
+		{"Namespace", "team/image:latest", "", "docker.io"},
+		{"NamespaceDottedImage", "team/my.app:1.0", "", "docker.io"},
+		{"NamespaceDigest", "team/image@" + digest, "", "docker.io"},
+		{"ShortNamespace", "registry/image:latest", "", "docker.io"},
+		{"LocalhostRegistry", "localhost/image:latest", "", "localhost"},
+		{"LocalhostRegistryDigest", "localhost/team/image@" + digest, "", "localhost"},
+		{"LocalhostRegistryPort", "localhost:5000/team/image:latest", "", "localhost:5000"},
+		{"RegistryPort", "registry:5000/team/image:latest", "", "registry:5000"},
+		{"RegistryHostname", "registry.example.com/team/image:latest", "", "registry.example.com"},
+		{"RegistryHostnamePort", "registry.example.com:5000/team/image@" + digest, "", "registry.example.com:5000"},
+		{"IPv4Registry", "192.0.2.1/image:latest", "", "192.0.2.1"},
+		{"IPv4RegistryPort", "192.0.2.1:5000/team/image@" + digest, "", "192.0.2.1:5000"},
+		{"IPv6Registry", "[::1]/image:latest", "", "[::1]"},
+		{"IPv6RegistryPort", "[2001:db8::1]:5000/team/image@" + digest, "", "[2001:db8::1]:5000"},
+		{"UppercaseRegistry", "REGISTRY/image:latest", "", "REGISTRY"},
+		{"ExplicitDockerHub", "docker.io/library/nginx:latest", "", "docker.io"},
+		{"LegacyDockerHub", "index.docker.io/library/nginx:latest", "", "index.docker.io"},
+		{"ServerOverride", "nginx:latest", "registry.example.com", "registry.example.com"},
+		{"ServerOverrideDigest", "nginx@" + digest, "registry.example.com:5000", "registry.example.com:5000"},
+		{"ServerOverrideRegistry", "localhost/image:latest", "registry.example.com", "registry.example.com"},
+		{"EmptyImage", "", "", "docker.io"},
+	} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Existing%t", tc.name, existing), func(t *testing.T) {
+				c, svc, owner, k8sC := newTstUpstreamController(t)
+				cfg := newTstContainerConfig("default")
+				spec := cfg.Upstream.GetContainer()
+				spec.Image = tc.image
+				spec.Credentials = &corev1.Service_Spec_Config_Upstream_Container_Credentials{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_{
+						UsernamePassword: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword{
+							Username: "user", Server: tc.server,
+							Password: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password{
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password_FromSecret{FromSecret: "password"},
+							},
+						},
+					},
+				}
+				name := fmt.Sprintf("regcred-%s-password-uid", svc.Metadata.Uid)
+				var original *k8scorev1.Secret
+				if existing {
+					var err error
+					original, err = k8sC.CoreV1().Secrets(ns).Create(ctx, &k8scorev1.Secret{
+						ObjectMeta: k8smetav1.ObjectMeta{Name: name, Namespace: ns},
+						Type:       k8scorev1.SecretTypeDockerConfigJson,
+						StringData: map[string]string{
+							".dockerconfigjson": `{"auths":{"obsolete.invalid":{"auth":"b2xkOnBhc3N3b3Jk"}}}`,
+						},
+					}, k8smetav1.CreateOptions{})
+					assert.Nil(t, err)
+				}
+				for range 2 {
+					password, err := c.setK8sUpstreamCredSecret(ctx, svc, cfg, owner)
+					if !assert.Nil(t, err) {
+						return
+					}
+					assert.Equal(t, "password-uid", password.Metadata.Uid)
+					secret, err := k8sC.CoreV1().Secrets(ns).Get(ctx, name, k8smetav1.GetOptions{})
+					if !assert.Nil(t, err) {
+						return
+					}
+					assert.Equal(t, k8scorev1.SecretTypeDockerConfigJson, secret.Type)
+					assert.Equal(t, owner.UID, secret.OwnerReferences[0].UID)
+					if existing {
+						assert.Equal(t, original.UID, secret.UID)
+					}
+					var config struct {
+						Auths map[string]struct{ Auth string } `json:"auths"`
+					}
+					assert.Nil(t, json.Unmarshal([]byte(secret.StringData[".dockerconfigjson"]), &config))
+					assert.Len(t, config.Auths, 1)
+					entry, ok := config.Auths[tc.domain]
+					assert.True(t, ok, "credentials for %s are missing: %v", tc.domain, config.Auths)
+					auth, err := base64.StdEncoding.DecodeString(entry.Auth)
+					assert.Nil(t, err)
+					assert.Equal(t, "user:value", string(auth))
+					dep, err := c.getK8sUpstreamDeployment(ctx, svc, cfg, password, owner)
+					if !assert.Nil(t, err) {
+						return
+					}
+					assert.Equal(t, tc.image, dep.Spec.Template.Spec.Containers[0].Image)
+					assert.Equal(t, []k8scorev1.LocalObjectReference{{Name: name}}, dep.Spec.Template.Spec.ImagePullSecrets)
+				}
+			})
+		}
+	}
+}

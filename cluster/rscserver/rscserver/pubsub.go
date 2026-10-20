@@ -255,7 +255,6 @@ func (s *srvPubSub) Publish(ctx context.Context, req *rpubsubv1.PublishRequest) 
 			Stream:     key,
 			NoMkStream: req.IfExists,
 			MaxLen:     maxLength,
-			Approx:     true,
 			Values: map[string]any{
 				pubSubFieldData: payload,
 			},
@@ -284,7 +283,7 @@ func (s *srvPubSub) Publish(ctx context.Context, req *rpubsubv1.PublishRequest) 
 	}
 
 	minID := fmt.Sprintf("%d-0", now.Add(-maxAge).UnixMilli())
-	if err := s.redisC.XTrimMinIDApprox(ctx, key, minID, 0).Err(); err != nil {
+	if err := s.redisC.XTrimMinID(ctx, key, minID).Err(); err != nil {
 		return nil, s.toGRPCErr(ctx, err)
 	}
 

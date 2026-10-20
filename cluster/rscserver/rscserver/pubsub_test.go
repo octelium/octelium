@@ -372,16 +372,15 @@ func TestPubSubPublish(t *testing.T) {
 
 		length, err := srv.redisC.XLen(ctx, key).Result()
 		assert.Nil(t, err)
-		assert.True(t, length >= 5 && length < 20, length)
+		assert.Equal(t, int64(5), length)
 
 		sub := startTestPubSubSubscription(t, srv, &rpubsubv1.SubscribeRequest{
 			Topic:    topic,
 			Position: rpubsubv1.SubscribeRequest_EARLIEST,
 		})
 
-		msgs := sub.receive(int(length), 5*time.Second)
-		assert.Equal(t, int(length), len(msgs))
-		assert.Equal(t, "19", string(msgs[len(msgs)-1].GetData()))
+		msgs := sub.receive(5, 5*time.Second)
+		assert.Equal(t, []string{"15", "16", "17", "18", "19"}, getTestPubSubData(msgs))
 		assert.Nil(t, sub.stop())
 	}
 

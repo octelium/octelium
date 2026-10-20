@@ -208,8 +208,7 @@ type PublishRequest struct {
 	Messages []*Message `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`
 	// MaxLength is the maximum number of the Messages that the Topic retains.
 	// The oldest Messages are trimmed once it is exceeded. Zero uses an internal
-	// default. Note that an implementation is allowed to trim approximately, so
-	// the Topic can briefly retain slightly more Messages than this number.
+	// default.
 	MaxLength uint32 `protobuf:"varint,3,opt,name=maxLength,proto3" json:"maxLength,omitempty"`
 	// MaxAge is the maximum age of the Messages that the Topic retains. The
 	// Messages that are older are trimmed and a Topic that is neither published
