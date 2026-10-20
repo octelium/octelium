@@ -30,14 +30,20 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type virtualFIDO struct {
@@ -1386,5 +1392,235 @@ func TestFIDOUserVerification(t *testing.T) {
 		_, err := authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+	}
+}
+
+func TestPasskeyLoginCurrentAuthenticator(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		state      corev1.Authenticator_Spec_State
+		isDeleted  bool
+		reactivate bool
+		allowed    bool
+	}{
+		{name: "Pending", state: corev1.Authenticator_Spec_PENDING},
+		{name: "Rejected", state: corev1.Authenticator_Spec_REJECTED},
+		{name: "Deleted", isDeleted: true},
+		{name: "Reactivated", state: corev1.Authenticator_Spec_ACTIVE, reactivate: true, allowed: true},
+	}
+
+	for _, tt := range tests {
+		for _, counter := range []uint32{0, 3} {
+			t.Run(fmt.Sprintf("%s/Counter%d", tt.name, counter), func(t *testing.T) {
+				srv, _, _, dev := newPasskeyEnv(t, nil)
+				adminSrv := admin.NewServer(&admin.Opts{OcteliumC: srv.octeliumC, IsEmbedded: true})
+				items, err := srv.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+				assert.Nil(t, err)
+				authn := items.Items[0]
+
+				if tt.reactivate {
+					authn.Spec.State = corev1.Authenticator_Spec_PENDING
+					authn, err = adminSrv.UpdateAuthenticator(ctx, authn)
+					assert.Nil(t, err)
+					assert.Nil(t, srv.authnCache.SetAuthenticator(authn))
+				}
+				if tt.isDeleted {
+					_, err = adminSrv.DeleteAuthenticator(ctx, &metav1.DeleteOptions{Uid: authn.Metadata.Uid})
+				} else {
+					authn.Spec.State = tt.state
+					_, err = adminSrv.UpdateAuthenticator(ctx, authn)
+				}
+				assert.Nil(t, err)
+				before, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+				assert.Nil(t, err)
+
+				dev.cred.Counter = counter
+				res, err := passkeyLogin(t, srv, dev)
+				if tt.allowed {
+					assert.Nil(t, err, "%+v", err)
+					assert.NotNil(t, res)
+				} else {
+					assert.Nil(t, res)
+					assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+				}
+				after, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+				assert.Nil(t, err)
+				if tt.allowed {
+					assert.Equal(t, len(before.Items)+1, len(after.Items))
+				} else {
+					assert.Equal(t, len(before.Items), len(after.Items))
+				}
+			})
+		}
+	}
+}
+
+func TestPasskeyLoginCurrentAuthenticatorPolicy(t *testing.T) {
+	ctx := context.Background()
+
+	for _, counter := range []uint32{0, 3} {
+		t.Run(fmt.Sprintf("Counter%d", counter), func(t *testing.T) {
+			srv, _, _, dev := newPasskeyEnv(t, []*corev1.ClusterConfig_Spec_Authenticator_Rule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{Match: `ctx.authenticator.spec.displayName == "blocked"`},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
+				},
+			})
+			adminSrv := admin.NewServer(&admin.Opts{OcteliumC: srv.octeliumC, IsEmbedded: true})
+			items, err := srv.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+			assert.Nil(t, err)
+			authn := items.Items[0]
+			authn.Spec.DisplayName = "blocked"
+			_, err = adminSrv.UpdateAuthenticator(ctx, authn)
+			assert.Nil(t, err)
+			before, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+			assert.Nil(t, err)
+
+			dev.cred.Counter = counter
+			res, err := passkeyLogin(t, srv, dev)
+			assert.Nil(t, res)
+			assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+			after, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+			assert.Nil(t, err)
+			assert.Equal(t, len(before.Items), len(after.Items))
+		})
+	}
+}
+
+func TestPasskeyLoginCurrentSignCount(t *testing.T) {
+	ctx := context.Background()
+	srv, tst, _, dev := newPasskeyEnv(t, nil)
+	items, err := srv.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+	other := newWebAuthnServer(t, tst)
+	assert.Nil(t, other.authnCache.SetAuthenticator(items.Items[0]))
+
+	dev.cred.Counter = 10
+	_, err = passkeyLogin(t, other, dev)
+	assert.Nil(t, err)
+	before, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+
+	dev.cred.Counter = 5
+	res, err := passkeyLogin(t, srv, dev)
+	assert.Nil(t, res)
+	assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+	current := srv.mustGetAuthenticator(t, items.Items[0])
+	assert.Equal(t, uint32(10), current.Status.GetInfo().GetFido().SignCount)
+	after, err := srv.octeliumC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, len(before.Items), len(after.Items))
+}
+
+type passkeyTestClient struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *passkeyTestClient) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type passkeyTestCoreClient struct {
+	rcorev1.ResourceServiceClient
+	getAuthenticatorErr   error
+	getAuthenticatorCalls int
+	getAuthenticatorReq   *rmetav1.GetOptions
+}
+
+func (c *passkeyTestCoreClient) GetAuthenticator(ctx context.Context,
+	req *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Authenticator, error) {
+	c.getAuthenticatorCalls++
+	c.getAuthenticatorReq = req
+	if c.getAuthenticatorErr != nil {
+		return nil, c.getAuthenticatorErr
+	}
+	return c.ResourceServiceClient.GetAuthenticator(ctx, req, opts...)
+}
+
+func TestPasskeyLoginAuthenticatorLookupFallback(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name        string
+		err         error
+		allowed     bool
+		cachedState corev1.Authenticator_Spec_State
+	}{
+		{name: "Success", allowed: true},
+		{name: "NotFound", err: status.Error(codes.NotFound, "not found")},
+		{name: "PermissionDenied", err: status.Error(codes.PermissionDenied, "permission denied")},
+		{name: "Unauthenticated", err: status.Error(codes.Unauthenticated, "unauthenticated")},
+		{name: "InvalidArgument", err: status.Error(codes.InvalidArgument, "invalid argument")},
+		{name: "Unknown", err: errors.New("unknown error")},
+		{name: "Unimplemented", err: status.Error(codes.Unimplemented, "unimplemented")},
+		{name: "FailedPrecondition", err: status.Error(codes.FailedPrecondition, "failed precondition")},
+		{name: "DataLoss", err: status.Error(codes.DataLoss, "data loss")},
+		{name: "Internal", err: status.Error(codes.Internal, "internal"), allowed: true},
+		{name: "Unavailable", err: status.Error(codes.Unavailable, "unavailable"), allowed: true},
+		{name: "ResourceExhausted", err: status.Error(codes.ResourceExhausted, "resource exhausted"), allowed: true},
+		{name: "Canceled", err: status.Error(codes.Canceled, "canceled"), allowed: true},
+		{name: "DeadlineExceeded", err: status.Error(codes.DeadlineExceeded, "deadline exceeded"), allowed: true},
+		{name: "ContextCanceled", err: context.Canceled, allowed: true},
+		{name: "ContextDeadlineExceeded", err: context.DeadlineExceeded, allowed: true},
+		{name: "WrappedContextCanceled", err: errors.Wrap(context.Canceled, "lookup"), allowed: true},
+		{name: "WrappedContextDeadlineExceeded", err: errors.Wrap(context.DeadlineExceeded, "lookup"), allowed: true},
+		{name: "CachedInactive", err: status.Error(codes.Internal, "internal"), cachedState: corev1.Authenticator_Spec_PENDING},
+	}
+
+	for _, counter := range []uint32{0, 3} {
+		t.Run(fmt.Sprintf("Counter%d", counter), func(t *testing.T) {
+			initial, _, _, dev := newPasskeyEnv(t, nil)
+			baseC := initial.octeliumC
+			coreC := &passkeyTestCoreClient{ResourceServiceClient: baseC.CoreC()}
+			cc, err := baseC.CoreV1Utils().GetClusterConfig(ctx)
+			assert.Nil(t, err)
+			srv, err := initServer(ctx, &passkeyTestClient{ClientInterface: baseC, coreC: coreC}, cc)
+			assert.Nil(t, err)
+			items, err := baseC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+			assert.Nil(t, err)
+			authn := items.Items[0]
+
+			for i, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					current, err := baseC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
+					assert.Nil(t, err)
+					if tt.cachedState != corev1.Authenticator_Spec_STATE_UNKNOWN {
+						current.Spec.State = tt.cachedState
+					}
+					assert.Nil(t, srv.authnCache.SetAuthenticator(current))
+					coreC.getAuthenticatorErr = tt.err
+					coreC.getAuthenticatorCalls = 0
+					before, err := baseC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+					assert.Nil(t, err)
+
+					dev.cred.Counter = counter
+					if counter > 0 {
+						dev.cred.Counter += uint32(i)
+					}
+					res, err := passkeyLogin(t, srv, dev)
+					if tt.allowed {
+						assert.Nil(t, err, "%+v", err)
+						assert.NotNil(t, res)
+					} else {
+						assert.Nil(t, res)
+						assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+					}
+					assert.Equal(t, 1, coreC.getAuthenticatorCalls)
+					assert.Equal(t, authn.Metadata.Uid, coreC.getAuthenticatorReq.Uid)
+					assert.Empty(t, coreC.getAuthenticatorReq.Name)
+					after, err := baseC.CoreC().ListSession(ctx, &rmetav1.ListOptions{})
+					assert.Nil(t, err)
+					if tt.allowed {
+						assert.Equal(t, len(before.Items)+1, len(after.Items))
+					} else {
+						assert.Equal(t, len(before.Items), len(after.Items))
+					}
+				})
+			}
+		})
 	}
 }

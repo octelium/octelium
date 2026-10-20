@@ -29,11 +29,13 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -58,10 +60,6 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	}
 
 	if cred.Authenticator.SignCount > 0 {
-		authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.ObjectToRGetOptions(authn))
-		if err != nil {
-			return nil, s.errInternalErr(err)
-		}
 		if fido := authn.Status.GetInfo().GetFido(); fido != nil &&
 			cred.Authenticator.SignCount > fido.SignCount {
 			fido.SignCount = cred.Authenticator.SignCount
@@ -210,6 +208,22 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		authn, err = s.authnCache.GetAuthenticatorByCredID(rawID)
 		if err != nil {
 			return nil, err
+		}
+
+		current, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
+		if err != nil {
+			switch {
+			case grpcerr.IsInternal(err), grpcerr.IsUnavailable(err),
+				grpcerr.IsResourceExhausted(err), grpcerr.IsCanceled(err),
+				grpcerr.IsDeadlineExceeded(err), errors.Is(err, context.Canceled),
+				errors.Is(err, context.DeadlineExceeded):
+				zap.L().Debug("Could not get current Authenticator. Using cached version",
+					zap.String("authn", authn.Metadata.Name), zap.Error(err))
+			default:
+				return nil, err
+			}
+		} else {
+			authn = current
 		}
 
 		usr, err = s.octeliumC.CoreC().GetUser(ctx,
