@@ -18,7 +18,6 @@ package svccontroller
 
 import (
 	"context"
-	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -27,6 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const sessionUpstreamMaxAttempts = 3
+
 func (c *Controller) handleUpdateSessionUpstream(ctx context.Context, svc *corev1.Service) error {
 	sessL, err := upstream.SetServiceUpstreams(ctx, c.octeliumC, svc)
 	if err != nil {
@@ -34,14 +35,41 @@ func (c *Controller) handleUpdateSessionUpstream(ctx context.Context, svc *corev
 	}
 
 	for _, sess := range sessL {
-		_, err := c.octeliumC.CoreC().UpdateSession(ctx, sess)
-		if err != nil {
-			if grpcerr.IsNotFound(err) {
-				continue
+		for attempt := 1; ; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 
-			zap.L().Warn("Could not updateSession after setting Connection upstream",
-				zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
+			if attempt > 1 {
+				sess, err = c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: sess.Metadata.Uid})
+				if grpcerr.IsNotFound(err) {
+					break
+				}
+				if err != nil {
+					return err
+				}
+
+				if sess.Status.Type != corev1.Session_Status_CLIENT || !upstream.ServeService(svc, sess) {
+					break
+				}
+
+				if err := upstream.SetConnectionUpstreams(ctx, c.octeliumC, sess, svc); err != nil {
+					return err
+				}
+			}
+
+			if _, err := c.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+				switch {
+				case grpcerr.IsNotFound(err):
+				case grpcerr.IsResourceChanged(err) && attempt < sessionUpstreamMaxAttempts:
+					continue
+				default:
+					zap.L().Warn("Could not updateSession after setting Connection upstream",
+						zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name), zap.Error(err))
+					return err
+				}
+			}
+			break
 		}
 	}
 
@@ -56,33 +84,39 @@ func (c *Controller) handleDeleteSessionUpstream(ctx context.Context, svc *corev
 	}
 
 	for _, uConn := range hostConns {
-	doDelUpstream:
-		sess, err := c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uConn.Metadata.Uid})
-		if err != nil {
-			if grpcerr.IsNotFound(err) {
-				continue
+		for attempt := 1; ; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			zap.L().Warn("Could not get Session to update upstreams after Service deletion",
-				zap.String("sess", uConn.Metadata.Name), zap.String("svc", svc.Metadata.Name))
-			return err
-		}
 
-		if err := upstream.RemoveConnectionUpstreams(ctx, c.octeliumC, sess, svc); err != nil {
-			zap.L().Warn("Could not remove Session upstreams after Service deletion",
-				zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
-			return err
-		}
-
-		if _, err := c.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-			switch {
-			case grpcerr.IsNotFound(err):
-			case grpcerr.IsResourceChanged(err):
-				time.Sleep(100 * time.Millisecond)
-				goto doDelUpstream
-			default:
-				zap.L().Warn("Could not update Session after removing upstreams on Service deletion",
-					zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name))
+			sess, err := c.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: uConn.Metadata.Uid})
+			if err != nil {
+				if grpcerr.IsNotFound(err) {
+					break
+				}
+				zap.L().Warn("Could not get Session to update upstreams after Service deletion",
+					zap.String("sess", uConn.Metadata.Name), zap.String("svc", svc.Metadata.Name), zap.Error(err))
+				return err
 			}
+
+			if err := upstream.RemoveConnectionUpstreams(ctx, c.octeliumC, sess, svc); err != nil {
+				zap.L().Warn("Could not remove Session upstreams after Service deletion",
+					zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name), zap.Error(err))
+				return err
+			}
+
+			if _, err := c.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+				switch {
+				case grpcerr.IsNotFound(err):
+				case grpcerr.IsResourceChanged(err) && attempt < sessionUpstreamMaxAttempts:
+					continue
+				default:
+					zap.L().Warn("Could not update Session after removing upstreams on Service deletion",
+						zap.String("sess", sess.Metadata.Name), zap.String("svc", svc.Metadata.Name), zap.Error(err))
+					return err
+				}
+			}
+			break
 		}
 
 	}

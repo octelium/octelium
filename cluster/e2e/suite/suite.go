@@ -73,6 +73,7 @@ func Phases() []Phase {
 		{"NocturneUpstreamReadiness", testNocturneUpstreamReadiness},
 		{"NocturneReconciliationLoad", testNocturneReconciliationLoad},
 		{"NocturneUpstreamCleanup", testNocturneUpstreamCleanup},
+		{"NocturneSessionUpstreamLoad", testNocturneSessionUpstreamLoad},
 		{"NocturneUserDeletion", testNocturneUserDeletion},
 		{"NocturneDeviceDeletion", testNocturneDeviceDeletion},
 		{"NocturnePodAddresses", testNocturnePodAddresses},

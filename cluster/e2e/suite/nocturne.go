@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
@@ -905,5 +907,188 @@ func testNocturneUpstreamCleanup(t *testing.T, h *harness.H) {
 		require.Nil(t, err)
 		assert.NotEqual(t, sharedK8s.UID, current.UID)
 		checkPreserved(t)
+	})
+}
+
+func testNocturneSessionUpstreamLoad(t *testing.T, h *harness.H) {
+	first := h.StartHTTPUpstream(t, nil)
+	first.SetServeFn(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("first"))
+	})
+	second := h.StartHTTPUpstream(t, nil)
+	second.SetServeFn(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("second"))
+	})
+
+	var services []*corev1.Service
+	publish := make(map[string]int)
+	for range 8 {
+		svc := h.CreateService(t, &corev1.Service{
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{
+							Url: fmt.Sprintf("http://localhost:%d", first.Port),
+						},
+					},
+				},
+			},
+		})
+		h.MustWaitService(t, svc.Metadata.Name)
+		services = append(services, svc)
+		publish[svc.Metadata.Name] = h.Port()
+	}
+
+	conn := h.Connect(t, harness.ConnectOpts{ServeAll: true, Publish: publish})
+	sessName := h.Status(t).Session.Metadata.Name
+	sess := h.GetSession(t, sessName)
+	require.NotNil(t, sess.Status.Connection)
+	initial := sess.Status.Connection
+	listenerPorts := make(map[string]int32)
+	removed := make(map[string]bool)
+	clients := make(map[string]*resty.Client)
+	for _, svc := range services {
+		c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+		t.Cleanup(c.GetClient().CloseIdleConnections)
+		clients[svc.Metadata.Uid] = c
+	}
+
+	waitUpstreams := func(t *testing.T, port int, body string) {
+		t.Helper()
+		h.Eventually(t, "all Session upstreams to match the current Services",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				current, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: sessName})
+				if err != nil {
+					return err
+				}
+				if !current.Status.IsConnected || current.Status.Connection == nil {
+					return errors.Errorf("the Session is no longer connected")
+				}
+				c := current.Status.Connection
+				if !proto.Equal(initial.StartedAt, c.StartedAt) || c.Type != initial.Type ||
+					!proto.Equal(initial.ServiceOptions, c.ServiceOptions) ||
+					!slices.Equal(initial.X25519PublicKey, c.X25519PublicKey) ||
+					!slices.EqualFunc(initial.Addresses, c.Addresses,
+						func(a, b *metav1.DualStackNetwork) bool { return proto.Equal(a, b) }) {
+					return errors.Errorf("the Session connection changed during upstream reconciliation")
+				}
+				ports := make(map[int32]bool)
+				for _, u := range c.Upstreams {
+					if ports[u.Port] {
+						return errors.Errorf("multiple upstreams use listener port %d", u.Port)
+					}
+					ports[u.Port] = true
+				}
+				for _, svc := range services {
+					u := connectionUpstream(c, svc)
+					if removed[svc.Metadata.Uid] {
+						if u != nil {
+							return errors.Errorf("the deleted Service %s is still served", svc.Metadata.Name)
+						}
+						continue
+					}
+					if u == nil || u.Backend == nil || u.Backend.Host != "localhost" ||
+						u.Backend.Port != int32(port) || u.Port == 0 {
+						return errors.Errorf("the Service %s has not received its current backend", svc.Metadata.Name)
+					}
+					if old, ok := listenerPorts[svc.Metadata.Uid]; ok && old != u.Port {
+						return errors.Errorf("the Service %s listener port changed", svc.Metadata.Name)
+					}
+					listenerPorts[svc.Metadata.Uid] = u.Port
+				}
+				return nil
+			})
+
+		h.Eventually(t, "every retained Service to reach its current client backend",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				for _, svc := range services {
+					if removed[svc.Metadata.Uid] {
+						continue
+					}
+					res, err := clients[svc.Metadata.Uid].R().SetContext(ctx).Get("/")
+					if err != nil {
+						return err
+					}
+					if res.StatusCode() != http.StatusOK || res.String() != body {
+						return errors.Errorf("the Service %s returned status %d and body %q, want %q",
+							svc.Metadata.Name, res.StatusCode(), res.String(), body)
+					}
+				}
+				return nil
+			})
+	}
+
+	for _, tc := range []struct {
+		name string
+		port int
+		body string
+	}{
+		{"AddHosts", first.Port, "first"},
+		{"ChangeBackends", second.Port, "second"},
+		{"RestoreBackends", first.Port, "first"},
+	} {
+		if !t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), harness.DecisionBudget)
+			defer cancel()
+			start := make(chan struct{})
+			errs := make(chan error, len(services))
+			for i, svc := range services {
+				svc.Spec.Config.Upstream.User = "root"
+				svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
+					Url: fmt.Sprintf("http://localhost:%d", tc.port),
+				}
+				go func() {
+					<-start
+					res, err := h.CoreC().UpdateService(ctx, svc)
+					if err == nil {
+						services[i] = res
+					}
+					errs <- err
+				}()
+			}
+			close(start)
+			var failed bool
+			for range len(services) {
+				if !assert.Nil(t, <-errs) {
+					failed = true
+				}
+			}
+			if failed {
+				return
+			}
+			waitUpstreams(t, tc.port, tc.body)
+		}) {
+			return
+		}
+	}
+
+	t.Run("DeleteHosts", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), harness.DecisionBudget)
+		defer cancel()
+		start := make(chan struct{})
+		errs := make(chan error, len(services)/2)
+		for i, svc := range services {
+			if i%2 != 0 {
+				continue
+			}
+			removed[svc.Metadata.Uid] = true
+			go func() {
+				<-start
+				_, err := h.CoreC().DeleteService(ctx, &metav1.DeleteOptions{Uid: svc.Metadata.Uid})
+				errs <- err
+			}()
+		}
+		close(start)
+		var failed bool
+		for range len(services) / 2 {
+			if !assert.Nil(t, <-errs) {
+				failed = true
+			}
+		}
+		if failed {
+			return
+		}
+		waitUpstreams(t, first.Port, "first")
 	})
 }
