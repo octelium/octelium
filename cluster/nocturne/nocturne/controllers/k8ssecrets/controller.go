@@ -143,6 +143,10 @@ func doSetCert(ctx context.Context, octeliumC octeliumc.ClientInterface, secret 
 
 func doSetCertNS(ctx context.Context, octeliumC octeliumc.ClientInterface, secret *k8scorev1.Secret) error {
 
+	if _, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"]); err != nil {
+		return errors.Errorf("Could not load TLS certificate: %+v", err)
+	}
+
 	secName := strings.Replace(secret.Name, "cert-ns", "crt-ns", 1)
 	crt, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: secName})
 	if err == nil {

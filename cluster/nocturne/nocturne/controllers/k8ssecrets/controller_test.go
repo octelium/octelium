@@ -18,11 +18,15 @@ package k8ssecretcontroller
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -36,6 +40,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -379,6 +384,241 @@ func TestCertificateErrors(t *testing.T) {
 			} {
 				assert.ErrorIs(t, setCert(ctx, &fakeOcteliumC{coreC: coreC}, secret), errTst)
 			}
+		})
+	}
+}
+
+type countingCoreC struct {
+	rcorev1.ResourceServiceClient
+	gets int
+}
+
+func (c *countingCoreC) GetSecret(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	c.gets++
+	return c.ResourceServiceClient.GetSecret(ctx, in, opts...)
+}
+
+func TestNamespaceCertificateValidation(t *testing.T) {
+	ctx := context.Background()
+	valid := newTstCertificate(t)
+	other := newTstCertificate(t)
+	cert := valid.Data["tls.crt"]
+	key := valid.Data["tls.key"]
+
+	for _, tc := range []struct {
+		name string
+		data map[string][]byte
+	}{
+		{"NilData", nil},
+		{"EmptyData", map[string][]byte{}},
+		{"MissingCertificate", map[string][]byte{"tls.key": key}},
+		{"MissingPrivateKey", map[string][]byte{"tls.crt": cert}},
+		{"EmptyCertificate", map[string][]byte{"tls.crt": {}, "tls.key": key}},
+		{"EmptyPrivateKey", map[string][]byte{"tls.crt": cert, "tls.key": {}}},
+		{"InvalidCertificate", map[string][]byte{"tls.crt": []byte("not a certificate"), "tls.key": key}},
+		{"InvalidPrivateKey", map[string][]byte{"tls.crt": cert, "tls.key": []byte("not a private key")}},
+		{"InvalidCertificateDER", map[string][]byte{
+			"tls.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid")}),
+			"tls.key": key,
+		}},
+		{"InvalidPrivateKeyDER", map[string][]byte{
+			"tls.crt": cert,
+			"tls.key": pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("invalid")}),
+		}},
+		{"CertificateAsPrivateKey", map[string][]byte{"tls.crt": cert, "tls.key": cert}},
+		{"Swapped", map[string][]byte{"tls.crt": key, "tls.key": cert}},
+		{"MismatchedPair", map[string][]byte{"tls.crt": cert, "tls.key": other.Data["tls.key"]}},
+		{"MismatchedLeaf", map[string][]byte{
+			"tls.crt": append(append([]byte{}, other.Data["tls.crt"]...), cert...),
+			"tls.key": key,
+		}},
+	} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Existing%t", tc.name, existing), func(t *testing.T) {
+				coreC := &fakeCoreC{}
+				if existing {
+					coreC.secret = &corev1.Secret{
+						Metadata: &metav1.Metadata{Name: "crt-ns-custom", Uid: "secret-uid", ResourceVersion: "1"},
+						Spec:     &corev1.Secret_Spec{},
+						Status:   &corev1.Secret_Status{},
+					}
+					ucorev1.ToSecret(coreC.secret).SetCertificate(string(cert), string(key))
+				}
+				var original *corev1.Secret
+				if existing {
+					original = proto.Clone(coreC.secret).(*corev1.Secret)
+				}
+				countingC := &countingCoreC{ResourceServiceClient: coreC}
+				secret := &k8scorev1.Secret{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: "cert-ns-custom", Namespace: vutils.K8sNS},
+					Data:       tc.data,
+				}
+				err := setCert(ctx, &fakeOcteliumC{coreC: countingC}, secret)
+				assert.ErrorContains(t, err, "Could not load TLS certificate")
+				assert.Zero(t, countingC.gets)
+				assert.Zero(t, coreC.creates)
+				assert.Zero(t, coreC.updates)
+				if existing {
+					assert.True(t, proto.Equal(original, coreC.secret))
+				} else {
+					assert.Nil(t, coreC.secret)
+				}
+			})
+		}
+	}
+}
+
+func TestNamespaceCertificateInvalidEvents(t *testing.T) {
+	coreC := &fakeCoreC{}
+	countingC := &countingCoreC{ResourceServiceClient: coreC}
+	informer := &fakeSecretInformer{informer: &fakeInformer{}}
+	NewController(nil, &fakeOcteliumC{coreC: countingC}, informer)
+	handler := informer.informer.handler
+
+	invalid := newTstCertificate(t)
+	invalid.Name = "cert-ns-custom"
+	invalid.Data["tls.key"] = []byte("not a private key")
+	handler.OnAdd(invalid, false)
+	assert.Nil(t, coreC.secret)
+	assert.Zero(t, countingC.gets)
+	assert.Zero(t, coreC.creates)
+	assert.Zero(t, coreC.updates)
+
+	valid := newTstCertificate(t)
+	valid.Name = invalid.Name
+	valid.ResourceVersion = "2"
+	handler.OnUpdate(invalid, valid)
+	assert.Equal(t, 1, coreC.creates)
+	original := proto.Clone(coreC.secret).(*corev1.Secret)
+	invalid = valid.DeepCopy()
+	invalid.ResourceVersion = "3"
+	invalid.Data["tls.key"] = newTstCertificate(t).Data["tls.key"]
+	handler.OnUpdate(valid, invalid)
+	assert.Equal(t, 1, countingC.gets)
+	assert.Equal(t, 1, coreC.creates)
+	assert.Zero(t, coreC.updates)
+	assert.True(t, proto.Equal(original, coreC.secret))
+
+	rotated := newTstCertificate(t)
+	rotated.Name = valid.Name
+	rotated.ResourceVersion = "4"
+	handler.OnUpdate(invalid, rotated)
+	assert.Equal(t, 2, countingC.gets)
+	assert.Equal(t, 1, coreC.creates)
+	assert.Equal(t, 1, coreC.updates)
+	chain, key, err := ucorev1.ToSecret(coreC.secret).GetCertificateChainAndKey()
+	assert.Nil(t, err)
+	assert.Equal(t, rotated.Data["tls.crt"], chain)
+	assert.Equal(t, rotated.Data["tls.key"], key)
+}
+
+func TestNamespaceCertificateValidationPersisted(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() { tst.Destroy() })
+	octeliumC := tst.C.OcteliumC
+	coreC := octeliumC.CoreC()
+
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Existing%t", existing), func(t *testing.T) {
+			secret := newTstCertificate(t)
+			ns := utilrand.GetRandomStringCanonical(8)
+			secret.Name = "cert-ns-" + ns
+			name := "crt-ns-" + ns
+			var original *corev1.Secret
+			if existing {
+				assert.Nil(t, setCert(ctx, octeliumC, secret))
+				original, err = coreC.GetSecret(ctx, &rmetav1.GetOptions{Name: name})
+				if !assert.Nil(t, err, "%+v", err) {
+					return
+				}
+			}
+
+			for _, data := range []map[string][]byte{
+				nil,
+				{"tls.crt": secret.Data["tls.crt"], "tls.key": []byte("not a private key")},
+				{"tls.crt": secret.Data["tls.crt"], "tls.key": newTstCertificate(t).Data["tls.key"]},
+			} {
+				invalid := secret.DeepCopy()
+				invalid.Data = data
+				assert.NotNil(t, setCert(ctx, octeliumC, invalid))
+				current, err := coreC.GetSecret(ctx, &rmetav1.GetOptions{Name: name})
+				if existing {
+					assert.Nil(t, err, "%+v", err)
+					assert.True(t, proto.Equal(original, current))
+				} else {
+					assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+				}
+			}
+
+			rotated := newTstCertificate(t)
+			rotated.Name = secret.Name
+			assert.Nil(t, setCert(ctx, octeliumC, rotated))
+			current, err := coreC.GetSecret(ctx, &rmetav1.GetOptions{Name: name})
+			if !assert.Nil(t, err, "%+v", err) {
+				return
+			}
+			chain, key, err := ucorev1.ToSecret(current).GetCertificateChainAndKey()
+			assert.Nil(t, err)
+			assert.Equal(t, rotated.Data["tls.crt"], chain)
+			assert.Equal(t, rotated.Data["tls.key"], key)
+			_, err = tls.X509KeyPair(chain, key)
+			assert.Nil(t, err)
+			if existing {
+				assert.Equal(t, original.Metadata.Uid, current.Metadata.Uid)
+				assert.NotEqual(t, original.Metadata.ResourceVersion, current.Metadata.ResourceVersion)
+			}
+		})
+	}
+}
+
+func TestNamespaceCertificateChain(t *testing.T) {
+	ctx := context.Background()
+	ca, err := utils_cert.GenerateCARoot()
+	if !assert.Nil(t, err) {
+		return
+	}
+	coreC := &fakeCoreC{}
+	for i, tc := range []struct {
+		name  string
+		isRSA bool
+		pkcs8 bool
+	}{
+		{"ECDSA", false, false},
+		{"RSA", true, false},
+		{"PKCS8", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leaf, err := utils_cert.GenerateCertificateTmp("service.custom.example.com", ca, tc.isRSA)
+			if !assert.Nil(t, err) {
+				return
+			}
+			cert := append(leaf.MustGetCertPEM(), ca.MustGetCertPEM()...)
+			key := leaf.MustGetPrivateKeyPEM()
+			if tc.pkcs8 {
+				der, err := x509.MarshalPKCS8PrivateKey(leaf.PrivateKey)
+				if !assert.Nil(t, err) {
+					return
+				}
+				key = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+			}
+			secret := &k8scorev1.Secret{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "cert-ns-custom", Namespace: vutils.K8sNS},
+				Type:       k8scorev1.SecretTypeTLS,
+				Data:       map[string][]byte{"tls.crt": cert, "tls.key": key},
+			}
+			assert.Nil(t, setCert(ctx, &fakeOcteliumC{coreC: coreC}, secret))
+			assert.Equal(t, 1, coreC.creates)
+			assert.Equal(t, i, coreC.updates)
+			chain, storedKey, err := ucorev1.ToSecret(coreC.secret).GetCertificateChainAndKey()
+			assert.Nil(t, err)
+			assert.Equal(t, cert, chain)
+			assert.Equal(t, key, storedKey)
+			pair, err := tls.X509KeyPair(chain, storedKey)
+			assert.Nil(t, err)
+			assert.Len(t, pair.Certificate, 2)
 		})
 	}
 }
