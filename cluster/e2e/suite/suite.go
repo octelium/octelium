@@ -70,6 +70,7 @@ func Phases() []Phase {
 		{"RscServerList", testRscServerList},
 		{"Nocturne", testNocturne},
 		{"NocturneKubernetesSecret", testNocturneKubernetesSecret},
+		{"NocturneEnvironmentSecretFailure", testNocturneEnvironmentSecretFailure},
 		{"NocturneUpstreamReadiness", testNocturneUpstreamReadiness},
 		{"NocturneReconciliationLoad", testNocturneReconciliationLoad},
 		{"NocturneUpstreamCleanup", testNocturneUpstreamCleanup},

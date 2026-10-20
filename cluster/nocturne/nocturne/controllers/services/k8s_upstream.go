@@ -620,33 +620,35 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 				sec, err := c.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
 					Name: e.GetFromSecret(),
 				})
-				if err == nil {
-					k8sSecName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid)
-					req := &k8scorev1.Secret{
-						ObjectMeta: k8smetav1.ObjectMeta{
-							Name:      k8sSecName,
-							Namespace: ns,
-							OwnerReferences: []k8smetav1.OwnerReference{
-								*k8smetav1.NewControllerRef(ownerCM, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap")),
-							},
+				if err != nil {
+					return nil, err
+				}
+				k8sSecName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, sec.Metadata.Uid)
+				req := &k8scorev1.Secret{
+					ObjectMeta: k8smetav1.ObjectMeta{
+						Name:      k8sSecName,
+						Namespace: ns,
+						OwnerReferences: []k8smetav1.OwnerReference{
+							*k8smetav1.NewControllerRef(ownerCM, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap")),
 						},
-						StringData: map[string]string{
-							"data": ucorev1.ToSecret(sec).GetValueStr(),
+					},
+					StringData: map[string]string{
+						"data": ucorev1.ToSecret(sec).GetValueStr(),
+					},
+
+					Type: k8scorev1.SecretTypeOpaque,
+				}
+
+				if _, err := k8sutils.CreateOrUpdateSecret(ctx, c.k8sC, req); err != nil {
+					return nil, err
+				}
+				env.ValueFrom = &k8scorev1.EnvVarSource{
+					SecretKeyRef: &k8scorev1.SecretKeySelector{
+						LocalObjectReference: k8scorev1.LocalObjectReference{
+							Name: k8sSecName,
 						},
-
-						Type: k8scorev1.SecretTypeOpaque,
-					}
-
-					if _, err := k8sutils.CreateOrUpdateSecret(ctx, c.k8sC, req); err == nil {
-						env.ValueFrom = &k8scorev1.EnvVarSource{
-							SecretKeyRef: &k8scorev1.SecretKeySelector{
-								LocalObjectReference: k8scorev1.LocalObjectReference{
-									Name: k8sSecName,
-								},
-								Key: "data",
-							},
-						}
-					}
+						Key: "data",
+					},
 				}
 			case *corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_:
 				secretRef := e.GetKubernetesSecretRef()

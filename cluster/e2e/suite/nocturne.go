@@ -1092,3 +1092,129 @@ func testNocturneSessionUpstreamLoad(t *testing.T, h *harness.H) {
 		waitUpstreams(t, first.Port, "first")
 	})
 }
+
+func testNocturneEnvironmentSecretFailure(t *testing.T, h *harness.H) {
+	value := h.Name()
+	source := h.CreateSecret(t, "", value)
+	svc := newManagedHTTPService(t, h,
+		[]*corev1.Service_Spec_Config_Upstream_Container_Env{
+			{
+				Name: "OCTELIUM_E2E_RESPONSE",
+				Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: source.Metadata.Name},
+			},
+			{
+				Name: "OCTELIUM_E2E_REVISION",
+				Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: "original"},
+			},
+		}, 2)
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+	h.MustWaitService(t, svc.Metadata.Name)
+	upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{svc.Metadata.Name: h.Port()},
+	})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	check := func(ctx context.Context, want string) error {
+		res, err := c.R().SetContext(ctx).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != want {
+			return errors.Errorf("the upstream returned %q, want %q", res.String(), want)
+		}
+		return nil
+	}
+	h.Eventually(t, "both initial replicas to serve the Secret value",
+		harness.DeploymentBudget, func(ctx context.Context) error {
+			dep, err := h.K8sDeployment(ctx, upstream)
+			if err != nil {
+				return err
+			}
+			if dep.Status.ObservedGeneration != dep.Generation ||
+				dep.Status.UpdatedReplicas != 2 || dep.Status.ReadyReplicas != 2 || dep.Status.Replicas != 2 {
+				return errors.Errorf("the initial upstream rollout is not complete")
+			}
+			return check(ctx, value)
+		})
+	original := h.MustK8sDeployment(t, upstream)
+	mirrors := h.K8sC().CoreV1().Secrets(vutils.K8sNS)
+	mirrorName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, source.Metadata.Uid)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	mirror, err := mirrors.Get(ctx, mirrorName, k8smetav1.GetOptions{})
+	cancel()
+	require.Nil(t, err)
+	require.Equal(t, value, string(mirror.Data["data"]))
+	mirror.Immutable = new(true)
+	ctx, cancel = context.WithTimeout(t.Context(), 30*time.Second)
+	mirror, err = mirrors.Update(ctx, mirror, k8smetav1.UpdateOptions{})
+	cancel()
+	require.Nil(t, err)
+
+	updated := h.Name()
+	h.UpdateSecret(t, source.Metadata.Name, updated)
+	svc = h.GetService(t, svc.Metadata.Name)
+	svc.Spec.Config.Upstream.GetContainer().Env[1].Type = &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: "updated"}
+	svc = h.UpdateService(t, svc)
+
+	if !t.Run("FailedMirrorUpdate", func(t *testing.T) {
+		h.Consistently(t, "a failed Secret update to preserve the working Deployment and responses",
+			3*decisionSettle, func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, upstream)
+				if err != nil {
+					return err
+				}
+				if dep.UID != original.UID || dep.Generation != original.Generation || dep.Status.ReadyReplicas != 2 {
+					return errors.Errorf("the failed Secret update changed the working Deployment")
+				}
+				current, err := mirrors.Get(ctx, mirrorName, k8smetav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				if current.UID != mirror.UID || string(current.Data["data"]) != value {
+					return errors.Errorf("the failed Secret update changed the existing mirror")
+				}
+				return check(ctx, value)
+			})
+	}) {
+		return
+	}
+
+	t.Run("Recovery", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		err := mirrors.Delete(ctx, mirrorName, k8smetav1.DeleteOptions{
+			Preconditions: &k8smetav1.Preconditions{UID: new(mirror.UID)},
+		})
+		cancel()
+		require.Nil(t, err)
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Metadata.DisplayName = h.Name()
+		svc = h.UpdateService(t, svc)
+
+		h.Eventually(t, "the recovered Secret mirror to allow the replacement replicas to serve requests",
+			harness.DeploymentBudget, func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, upstream)
+				if err != nil {
+					return err
+				}
+				if dep.UID != original.UID || dep.Generation <= original.Generation ||
+					dep.Status.ObservedGeneration != dep.Generation || dep.Status.UpdatedReplicas != 2 ||
+					dep.Status.ReadyReplicas != 2 || dep.Status.Replicas != 2 {
+					return errors.Errorf("the recovered upstream rollout is not complete")
+				}
+				current, err := mirrors.Get(ctx, mirrorName, k8smetav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				if current.UID == mirror.UID || string(current.Data["data"]) != updated {
+					return errors.Errorf("the Secret mirror has not been replaced with the updated value")
+				}
+				return check(ctx, updated)
+			})
+		h.Consistently(t, "every request to use the recovered Secret value", decisionSettle,
+			func(ctx context.Context) error { return check(ctx, updated) })
+	})
+}

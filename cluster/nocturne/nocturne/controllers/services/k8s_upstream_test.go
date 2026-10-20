@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -33,6 +35,8 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
@@ -1167,4 +1171,315 @@ func TestK8sUpstreamCleanupDeleteConflict(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, types.UID("replacement-uid"), dep.UID)
 	assert.Equal(t, 1, deletes)
+}
+
+func TestK8sUpstreamEnvironmentSecretErrors(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		lookup error
+		verb   string
+	}{
+		{"NotFound", status.Error(codes.NotFound, "not found"), ""},
+		{"Unavailable", status.Error(codes.Unavailable, "unavailable"), ""},
+		{"Internal", status.Error(codes.Internal, "internal"), ""},
+		{"PermissionDenied", status.Error(codes.PermissionDenied, "permission denied"), ""},
+		{"Cancelled", context.Canceled, ""},
+		{"DeadlineExceeded", context.DeadlineExceeded, ""},
+		{"CreateMirror", nil, "create"},
+		{"GetMirror", nil, "get"},
+		{"UpdateMirror", nil, "update"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			cfg := newTstContainerConfig("default")
+			cfg.Upstream.GetContainer().Env = []*corev1.Service_Spec_Config_Upstream_Container_Env{
+				{Name: "MODE", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: "production"}},
+				{Name: "TOKEN", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: "token"}},
+			}
+			name := fmt.Sprintf("svc-env-%s-token-uid", svc.Metadata.Uid)
+			if tc.verb == "get" || tc.verb == "update" {
+				_, err := c.getK8sUpstreamPod(ctx, cfg, svc, nil, owner)
+				assert.Nil(t, err)
+			}
+			errTst := tc.lookup
+			if tc.verb != "" {
+				errTst = k8serr.NewForbidden(schema.GroupResource{Resource: "secrets"}, name, errors.New("forbidden"))
+			}
+			fail := true
+			secretC := c.octeliumC.CoreC()
+			c.octeliumC = &fakeOcteliumC{coreC: &fakeSecretCoreC{
+				getSecret: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Secret, error) {
+					assert.Equal(t, "token", in.Name)
+					if fail && tc.lookup != nil {
+						return nil, tc.lookup
+					}
+					return secretC.GetSecret(ctx, in)
+				},
+			}}
+			if tc.verb != "" {
+				k8sC.PrependReactor(tc.verb, "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return fail, nil, errTst
+				})
+			}
+			k8sC.ClearActions()
+			pod, err := c.getK8sUpstreamPod(ctx, cfg, svc, nil, owner)
+			assert.ErrorIs(t, err, errTst)
+			assert.Nil(t, pod)
+			if tc.lookup != nil {
+				assert.Empty(t, k8sC.Actions())
+			}
+
+			fail = false
+			pod, err = c.getK8sUpstreamPod(ctx, cfg, svc, nil, owner)
+			if !assert.Nil(t, err) {
+				return
+			}
+			env := pod.Containers[0].Env
+			if !assert.Len(t, env, 2) {
+				return
+			}
+			assert.Equal(t, "production", env[0].Value)
+			assert.Equal(t, "TOKEN", env[1].Name)
+			assert.Empty(t, env[1].Value)
+			if assert.NotNil(t, env[1].ValueFrom) && assert.NotNil(t, env[1].ValueFrom.SecretKeyRef) {
+				assert.Equal(t, name, env[1].ValueFrom.SecretKeyRef.Name)
+				assert.Equal(t, "data", env[1].ValueFrom.SecretKeyRef.Key)
+				assert.Nil(t, env[1].ValueFrom.SecretKeyRef.Optional)
+			}
+			secret, err := k8sC.CoreV1().Secrets(ns).Get(ctx, name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			assert.Equal(t, "value", secret.StringData["data"])
+		})
+	}
+}
+
+func TestK8sUpstreamEnvironmentSecretReconciliation(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	for _, dynamic := range []bool{false, true} {
+		for _, existing := range []bool{false, true} {
+			for _, stage := range []string{"lookup", "create", "get", "update"} {
+				t.Run(fmt.Sprintf("Dynamic%t/Existing%t/%s", dynamic, existing, stage), func(t *testing.T) {
+					c, svc, owner, k8sC := newTstUpstreamController(t)
+					cfg := newTstContainerConfig("default")
+					if dynamic {
+						cfg.Name = "named"
+						svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+					} else {
+						svc.Spec.Config = cfg
+					}
+					cfg.Upstream.GetContainer().Env = []*corev1.Service_Spec_Config_Upstream_Container_Env{
+						{Name: "TOKEN", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: "token"}},
+					}
+					secretC := c.octeliumC.CoreC()
+					var fail bool
+					lookupErr := status.Error(codes.Unavailable, "could not get Secret")
+					c.octeliumC = &fakeOcteliumC{coreC: &fakeSecretCoreC{
+						ResourceServiceClient: &fakeCoreC{
+							getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+								return proto.Clone(svc).(*corev1.Service), nil
+							},
+						},
+						getSecret: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Secret, error) {
+							if fail && stage == "lookup" {
+								return nil, lookupErr
+							}
+							return secretC.GetSecret(ctx, in)
+						},
+					}}
+					var original, proxy *appsv1.Deployment
+					var service *k8scorev1.Service
+					name := k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name)
+					if existing {
+						assert.Nil(t, c.OnAdd(ctx, svc))
+						var err error
+						original, err = k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
+						assert.Nil(t, err)
+						proxy, err = k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(svc), k8smetav1.GetOptions{})
+						assert.Nil(t, err)
+						service, err = k8sC.CoreV1().Services(ns).Get(ctx, name, k8smetav1.GetOptions{})
+						assert.Nil(t, err)
+					} else if stage == "get" || stage == "update" {
+						_, err := c.getK8sUpstreamPod(ctx, cfg, svc, nil, owner)
+						assert.Nil(t, err)
+					}
+					old := proto.Clone(svc).(*corev1.Service)
+					cfg.Upstream.GetContainer().Image = "nginx:replacement"
+					if stage == "create" {
+						cfg.Upstream.GetContainer().Env[0].Type = &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: "replacement"}
+					}
+					errTst := error(lookupErr)
+					if stage != "lookup" {
+						errTst = k8serr.NewForbidden(schema.GroupResource{Resource: "secrets"}, "token", errors.New("forbidden"))
+						k8sC.PrependReactor(stage, "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+							return fail, nil, errTst
+						})
+					}
+					fail = true
+					k8sC.ClearActions()
+					assert.ErrorIs(t, c.setK8sUpstream(ctx, svc, owner), errTst)
+					assert.ErrorIs(t, c.OnAdd(ctx, old), errTst)
+					assert.ErrorIs(t, c.OnUpdate(ctx, svc, old), errTst)
+					for _, action := range k8sC.Actions() {
+						assert.NotEqual(t, "delete", action.GetVerb())
+						if action.GetResource().Resource == "deployments" || action.GetResource().Resource == "services" {
+							assert.NotContains(t, []string{"create", "update"}, action.GetVerb())
+						}
+					}
+					current, err := k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
+					if existing {
+						assert.Nil(t, err)
+						assert.Equal(t, original, current)
+						currentProxy, err := k8sC.AppsV1().Deployments(ns).Get(ctx, proxy.Name, k8smetav1.GetOptions{})
+						assert.Nil(t, err)
+						assert.Equal(t, proxy, currentProxy)
+						currentService, err := k8sC.CoreV1().Services(ns).Get(ctx, name, k8smetav1.GetOptions{})
+						assert.Nil(t, err)
+						assert.Equal(t, service, currentService)
+					} else {
+						assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+						deployments, err := k8sC.AppsV1().Deployments(ns).List(ctx, k8smetav1.ListOptions{})
+						assert.Nil(t, err)
+						assert.Empty(t, deployments.Items)
+						services, err := k8sC.CoreV1().Services(ns).List(ctx, k8smetav1.ListOptions{})
+						assert.Nil(t, err)
+						assert.Empty(t, services.Items)
+					}
+					assert.Empty(t, c.serviceLocks)
+
+					fail = false
+					assert.Nil(t, c.OnUpdate(ctx, svc, old))
+					current, err = k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
+					if !assert.Nil(t, err) {
+						return
+					}
+					assert.Equal(t, "nginx:replacement", current.Spec.Template.Spec.Containers[0].Image)
+					env := current.Spec.Template.Spec.Containers[0].Env[0]
+					if assert.NotNil(t, env.ValueFrom) {
+						assert.Equal(t, fmt.Sprintf("svc-env-%s-%s-uid", svc.Metadata.Uid, cfg.Upstream.GetContainer().Env[0].GetFromSecret()), env.ValueFrom.SecretKeyRef.Name)
+						assert.Equal(t, "data", env.ValueFrom.SecretKeyRef.Key)
+					}
+					assert.Empty(t, c.serviceLocks)
+				})
+			}
+		}
+	}
+}
+
+func TestK8sUpstreamEnvironmentSecretWatcherRetry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	tst, err := tests.Initialize(nil)
+	if !assert.Nil(t, err, "%+v", err) {
+		return
+	}
+	t.Cleanup(func() { tst.Destroy() })
+	realC := tst.C.OcteliumC.CoreC()
+	secret, err := realC.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec:     &corev1.Secret_Spec{},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "original"}},
+	})
+	if !assert.Nil(t, err, "%+v", err) {
+		return
+	}
+	svc := newTstService()
+	svc.Metadata = &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8) + ".default"}
+	svc.Spec.Config = newTstContainerConfig("default")
+	svc.Spec.Config.Upstream.GetContainer().Env = []*corev1.Service_Spec_Config_Upstream_Container_Env{
+		{Name: "TOKEN", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: secret.Metadata.Name}},
+	}
+	svc, err = realC.CreateService(ctx, svc)
+	if !assert.Nil(t, err, "%+v", err) {
+		return
+	}
+	var failLookup atomic.Bool
+	failLookup.Store(true)
+	var lookups atomic.Int32
+	coreC := &fakeSecretCoreC{
+		ResourceServiceClient: realC,
+		getSecret: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Secret, error) {
+			lookups.Add(1)
+			if failLookup.Swap(false) {
+				return nil, status.Error(codes.Unavailable, "could not get Secret")
+			}
+			return realC.GetSecret(ctx, in)
+		},
+	}
+	c := NewController(&fakeOcteliumC{coreC: coreC}, tst.C.K8sC)
+	created := make(chan struct{}, 1)
+	updated := make(chan struct{}, 1)
+	var updateFailures atomic.Int32
+	watcher, err := watchers.NewWatcher("core", "v1", "Service",
+		func(ctx context.Context, item umetav1.ResourceObjectI) error {
+			if item.GetMetadata().Uid != svc.Metadata.Uid {
+				return nil
+			}
+			if err := c.OnAdd(ctx, item.(*corev1.Service)); err != nil {
+				return err
+			}
+			created <- struct{}{}
+			return nil
+		},
+		func(ctx context.Context, new, old umetav1.ResourceObjectI) error {
+			if new.GetMetadata().Uid != svc.Metadata.Uid {
+				return nil
+			}
+			if err := c.OnUpdate(ctx, new.(*corev1.Service), old.(*corev1.Service)); err != nil {
+				updateFailures.Add(1)
+				return err
+			}
+			updated <- struct{}{}
+			return nil
+		}, nil, realC,
+		func() (umetav1.ResourceObjectI, error) { return &corev1.Service{}, nil })
+	if !assert.Nil(t, err, "%+v", err) {
+		return
+	}
+	defer watcher.Close()
+	assert.Nil(t, watcher.Run(ctx))
+	select {
+	case <-created:
+	case <-ctx.Done():
+		assert.Fail(t, "the watcher did not retry the Secret lookup", "%+v", ctx.Err())
+		return
+	}
+	assert.Equal(t, int32(2), lookups.Load())
+
+	var mirrorWrites atomic.Int32
+	tst.C.K8sC.(*fakek8s.Clientset).PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if mirrorWrites.Add(1) == 1 {
+			return true, nil, k8serr.NewForbidden(schema.GroupResource{Resource: "secrets"}, "token", errors.New("forbidden"))
+		}
+		return false, nil, nil
+	})
+	secret.Data.Type = &corev1.Secret_Data_Value{Value: "updated"}
+	_, err = realC.UpdateSecret(ctx, secret)
+	assert.Nil(t, err, "%+v", err)
+	svc.Spec.Config.Upstream.GetContainer().Image = "nginx:replacement"
+	_, err = realC.UpdateService(ctx, svc)
+	assert.Nil(t, err, "%+v", err)
+	select {
+	case <-updated:
+	case <-ctx.Done():
+		assert.Fail(t, "the watcher did not retry the Secret mirror update", "%+v", ctx.Err())
+		return
+	}
+	assert.Equal(t, int32(1), updateFailures.Load())
+	assert.Equal(t, int32(2), mirrorWrites.Load())
+	dep, err := tst.C.K8sC.AppsV1().Deployments(ns).Get(ctx,
+		k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Equal(t, "nginx:replacement", dep.Spec.Template.Spec.Containers[0].Image)
+	env := dep.Spec.Template.Spec.Containers[0].Env[0]
+	if !assert.NotNil(t, env.ValueFrom) {
+		return
+	}
+	mirror, err := tst.C.K8sC.CoreV1().Secrets(ns).Get(ctx, env.ValueFrom.SecretKeyRef.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, "updated", mirror.StringData["data"])
 }
