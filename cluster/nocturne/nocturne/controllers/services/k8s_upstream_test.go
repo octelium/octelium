@@ -38,10 +38,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -686,4 +691,480 @@ func TestK8sUpstreamErrors(t *testing.T) {
 			})
 		}
 	}
+}
+
+func newTstUpstreamController(t *testing.T) (*Controller, *corev1.Service, *k8scorev1.ConfigMap, *fakek8s.Clientset) {
+	t.Helper()
+	k8sC := fakek8s.NewSimpleClientset()
+	k8sC.PrependReactor("create", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		obj := action.(k8stesting.CreateAction).GetObject().(k8smetav1.Object)
+		if obj.GetUID() == "" {
+			obj.SetUID(types.UID(obj.GetName() + "-uid"))
+		}
+		if obj.GetResourceVersion() == "" {
+			obj.SetResourceVersion("1")
+		}
+		return false, nil, nil
+	})
+	coreC := &fakeSecretCoreC{
+		getSecret: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Secret, error) {
+			return &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: in.Name, Uid: in.Name + "-uid"},
+				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "value"}},
+			}, nil
+		},
+	}
+	c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+	svc := newTstService()
+	owner, err := k8sC.CoreV1().ConfigMaps(ns).Create(context.Background(), c.getOwnerConfigMap(svc), k8smetav1.CreateOptions{})
+	assert.Nil(t, err)
+	return c, svc, owner, k8sC
+}
+
+func setTstUpstreamSecret(cfg *corev1.Service_Spec_Config, name string) {
+	spec := cfg.Upstream.GetContainer()
+	spec.Env = []*corev1.Service_Spec_Config_Upstream_Container_Env{
+		{Name: "TOKEN", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: name}},
+	}
+	spec.Credentials = &corev1.Service_Spec_Config_Upstream_Container_Credentials{
+		Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_{
+			UsernamePassword: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword{
+				Username: "user", Server: "docker.io",
+				Password: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password_FromSecret{FromSecret: name},
+				},
+			},
+		},
+	}
+}
+
+func TestK8sUpstreamRemoval(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		update  func(*corev1.Service)
+		configs []string
+		secrets []string
+	}{
+		{"DefaultToURL", func(svc *corev1.Service) {
+			svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{Url: "http://example.com"}
+		}, []string{"first", "second"}, []string{"first", "second"}},
+		{"DefaultRemoved", func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+		}, []string{"first", "second"}, []string{"first", "second"}},
+		{"DefaultUpstreamRemoved", func(svc *corev1.Service) {
+			svc.Spec.Config.Upstream = nil
+		}, []string{"first", "second"}, []string{"first", "second"}},
+		{"NamedRemoved", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[1:]
+		}, []string{"default", "second"}, []string{"default", "second"}},
+		{"NamedToURL", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Configs[0].Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{Url: "http://example.com"}
+		}, []string{"default", "second"}, []string{"default", "second"}},
+		{"NamedRenamed", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Configs[0].Name = "renamed"
+		}, []string{"default", "renamed", "second"}, []string{"default", "first", "second"}},
+		{"DynamicRemoved", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig = nil
+		}, []string{"default"}, []string{"default"}},
+		{"AllRemoved", func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig = nil
+		}, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			svc.Spec.Config = newTstContainerConfig("")
+			setTstUpstreamSecret(svc.Spec.Config, "default")
+			svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{newTstContainerConfig("first"), newTstContainerConfig("second")},
+			}
+			for _, cfg := range svc.Spec.DynamicConfig.Configs {
+				setTstUpstreamSecret(cfg, cfg.Name)
+			}
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			_, err := k8sC.AppsV1().Deployments(ns).Create(ctx, c.newDeployment(svc, owner), k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+			_, err = k8sC.CoreV1().Services(ns).Create(ctx, c.getK8sService(svc, owner), k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+			tc.update(svc)
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			want := []string{k8sutils.GetSvcHostname(svc)}
+			for _, name := range tc.configs {
+				want = append(want, k8sutils.GetSvcK8sUpstreamHostname(svc, name))
+			}
+			deps, err := k8sC.AppsV1().Deployments(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			var got []string
+			for _, dep := range deps.Items {
+				got = append(got, dep.Name)
+			}
+			assert.ElementsMatch(t, want, got)
+			services, err := k8sC.CoreV1().Services(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			got = nil
+			for _, itm := range services.Items {
+				got = append(got, itm.Name)
+			}
+			assert.ElementsMatch(t, want, got)
+			want = nil
+			for _, name := range tc.secrets {
+				want = append(want, fmt.Sprintf("svc-env-%s-%s-uid", svc.Metadata.Uid, name),
+					fmt.Sprintf("regcred-%s-%s-uid", svc.Metadata.Uid, name))
+			}
+			secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			got = nil
+			for _, secret := range secrets.Items {
+				got = append(got, secret.Name)
+			}
+			assert.ElementsMatch(t, want, got)
+			for _, action := range k8sC.Actions() {
+				if action.GetVerb() == "delete" {
+					del := action.(k8stesting.DeleteAction)
+					assert.Equal(t, types.UID(del.GetName()+"-uid"), *del.GetDeleteOptions().Preconditions.UID)
+					assert.Equal(t, "1", *del.GetDeleteOptions().Preconditions.ResourceVersion)
+					if action.GetResource().Resource == "deployments" {
+						assert.Equal(t, k8smetav1.DeletePropagationBackground, *del.GetDeleteOptions().PropagationPolicy)
+					}
+				}
+			}
+			cm, err := k8sC.CoreV1().ConfigMaps(ns).Get(ctx, owner.Name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			assert.Equal(t, owner.UID, cm.UID)
+		})
+	}
+}
+
+func TestK8sUpstreamSharedSecrets(t *testing.T) {
+	ctx := context.Background()
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	svc.Spec.Config = newTstContainerConfig("default")
+	setTstUpstreamSecret(svc.Spec.Config, "shared")
+	cfg := newTstContainerConfig("named")
+	setTstUpstreamSecret(cfg, "shared")
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, secrets.Items, 2)
+	svc.Spec.Config = nil
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	for _, secret := range secrets.Items {
+		current, err := k8sC.CoreV1().Secrets(ns).Get(ctx, secret.Name, k8smetav1.GetOptions{})
+		assert.Nil(t, err)
+		assert.Equal(t, secret.UID, current.UID)
+	}
+	svc.Spec.DynamicConfig = nil
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	secrets, err = k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Empty(t, secrets.Items)
+}
+
+func TestK8sUpstreamCleanupOwnership(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		modify func(*k8smetav1.ObjectMeta)
+	}{
+		{"other-owner", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences[0].UID = "other-uid" }},
+		{"other-name", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences[0].Name = "other-owner" }},
+		{"other-kind", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences[0].Kind = "Secret" }},
+		{"other-api", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences[0].APIVersion = "other/v1" }},
+		{"not-controller", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences[0].Controller = new(false) }},
+		{"no-owner", func(md *k8smetav1.ObjectMeta) { md.OwnerReferences = nil }},
+		{"other-prefix", func(md *k8smetav1.ObjectMeta) { md.Name = "manual-" + md.Name }},
+		{"other-namespace", func(md *k8smetav1.ObjectMeta) { md.Namespace = "other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			cfg := newTstContainerConfig("obsolete")
+			dep, err := c.getK8sUpstreamDeployment(ctx, svc, cfg, nil, owner)
+			assert.Nil(t, err)
+			tc.modify(&dep.ObjectMeta)
+			_, err = k8sC.AppsV1().Deployments(dep.Namespace).Create(ctx, dep, k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+			upstreamSvc := c.getK8sUpstreamService(svc, cfg, owner)
+			tc.modify(&upstreamSvc.ObjectMeta)
+			_, err = k8sC.CoreV1().Services(upstreamSvc.Namespace).Create(ctx, upstreamSvc, k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+			secret := &k8scorev1.Secret{
+				ObjectMeta: k8smetav1.ObjectMeta{
+					Name: fmt.Sprintf("svc-env-%s-obsolete", svc.Metadata.Uid), Namespace: ns,
+					OwnerReferences: []k8smetav1.OwnerReference{*k8smetav1.NewControllerRef(owner, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap"))},
+				},
+			}
+			tc.modify(&secret.ObjectMeta)
+			_, err = k8sC.CoreV1().Secrets(secret.Namespace).Create(ctx, secret, k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			_, err = k8sC.AppsV1().Deployments(dep.Namespace).Get(ctx, dep.Name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			_, err = k8sC.CoreV1().Services(upstreamSvc.Namespace).Get(ctx, upstreamSvc.Name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			_, err = k8sC.CoreV1().Secrets(secret.Namespace).Get(ctx, secret.Name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+		})
+	}
+
+	{
+		c, svc, owner, k8sC := newTstUpstreamController(t)
+		other := proto.Clone(svc).(*corev1.Service)
+		other.Metadata.Uid = "other-service-uid"
+		cfg := newTstContainerConfig("obsolete")
+		dep, err := c.getK8sUpstreamDeployment(ctx, other, cfg, nil, owner)
+		assert.Nil(t, err)
+		_, err = k8sC.AppsV1().Deployments(ns).Create(ctx, dep, k8smetav1.CreateOptions{})
+		assert.Nil(t, err)
+		upstreamSvc := c.getK8sUpstreamService(other, cfg, owner)
+		_, err = k8sC.CoreV1().Services(ns).Create(ctx, upstreamSvc, k8smetav1.CreateOptions{})
+		assert.Nil(t, err)
+		assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+		_, err = k8sC.AppsV1().Deployments(ns).Get(ctx, dep.Name, k8smetav1.GetOptions{})
+		assert.Nil(t, err)
+		_, err = k8sC.CoreV1().Services(ns).Get(ctx, upstreamSvc.Name, k8smetav1.GetOptions{})
+		assert.Nil(t, err)
+	}
+
+	{
+		c, svc, owner, k8sC := newTstUpstreamController(t)
+		svc.Spec.Config = newTstContainerConfig("default")
+		assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+		svc.Spec.Config = nil
+		owner.UID = ""
+		k8sC.ClearActions()
+		assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+		assert.Empty(t, k8sC.Actions())
+	}
+}
+
+func TestK8sUpstreamSecretsInUse(t *testing.T) {
+	ctx := context.Background()
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	svc.Spec.Config = newTstContainerConfig("default")
+	name := func(arg string) string { return fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, arg) }
+	for _, key := range []string{"desired", "env", "pull", "init", "env-from", "volume", "projected", "managed", "removed"} {
+		_, err := k8sC.CoreV1().Secrets(ns).Create(ctx, &k8scorev1.Secret{
+			ObjectMeta: k8smetav1.ObjectMeta{
+				Name: name(key), Namespace: ns,
+				OwnerReferences: []k8smetav1.OwnerReference{*k8smetav1.NewControllerRef(owner, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap"))},
+			},
+		}, k8smetav1.CreateOptions{})
+		assert.Nil(t, err)
+	}
+	svc.Spec.Config.Upstream.GetContainer().Env = []*corev1.Service_Spec_Config_Upstream_Container_Env{
+		{
+			Name: "TOKEN",
+			Type: &corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef_{
+				KubernetesSecretRef: &corev1.Service_Spec_Config_Upstream_Container_Env_KubernetesSecretRef{Name: name("desired"), Key: "data"},
+			},
+		},
+	}
+	svc.Status.ManagedService = &corev1.Service_Status_ManagedService{ImagePullSecret: name("managed")}
+	env := func(key string) k8scorev1.EnvVar {
+		return k8scorev1.EnvVar{Name: "TOKEN", ValueFrom: &k8scorev1.EnvVarSource{
+			SecretKeyRef: &k8scorev1.SecretKeySelector{LocalObjectReference: k8scorev1.LocalObjectReference{Name: name(key)}, Key: "data"},
+		}}
+	}
+	pod := &k8scorev1.Pod{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "active", Namespace: ns, Labels: c.getK8sUpstreamLabels(svc, "default")},
+		Spec: k8scorev1.PodSpec{
+			ImagePullSecrets: []k8scorev1.LocalObjectReference{{Name: name("pull")}},
+			Containers: []k8scorev1.Container{{
+				Env: []k8scorev1.EnvVar{env("env"), {Name: "LITERAL", Value: "value"}, {Name: "FIELD", ValueFrom: &k8scorev1.EnvVarSource{}}},
+				EnvFrom: []k8scorev1.EnvFromSource{
+					{SecretRef: &k8scorev1.SecretEnvSource{LocalObjectReference: k8scorev1.LocalObjectReference{Name: name("env-from")}}},
+					{ConfigMapRef: &k8scorev1.ConfigMapEnvSource{}},
+				},
+			}},
+			InitContainers: []k8scorev1.Container{{Env: []k8scorev1.EnvVar{env("init")}}},
+			Volumes: []k8scorev1.Volume{
+				{VolumeSource: k8scorev1.VolumeSource{Secret: &k8scorev1.SecretVolumeSource{SecretName: name("volume")}}},
+				{VolumeSource: k8scorev1.VolumeSource{Projected: &k8scorev1.ProjectedVolumeSource{Sources: []k8scorev1.VolumeProjection{
+					{Secret: &k8scorev1.SecretProjection{LocalObjectReference: k8scorev1.LocalObjectReference{Name: name("projected")}}},
+					{ConfigMap: &k8scorev1.ConfigMapProjection{}},
+				}}}},
+				{},
+			},
+		},
+	}
+	_, err := k8sC.CoreV1().Pods(ns).Create(ctx, pod, k8smetav1.CreateOptions{})
+	assert.Nil(t, err)
+	removed := pod.DeepCopy()
+	removed.Name = "removed"
+	removed.UID = ""
+	removed.Labels = c.getK8sUpstreamLabels(svc, "removed")
+	removed.Spec = k8scorev1.PodSpec{Containers: []k8scorev1.Container{{Env: []k8scorev1.EnvVar{env("removed")}}}}
+	_, err = k8sC.CoreV1().Pods(ns).Create(ctx, removed, k8smetav1.CreateOptions{})
+	assert.Nil(t, err)
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, secrets.Items, 8)
+	_, err = k8sC.CoreV1().Secrets(ns).Get(ctx, name("removed"), k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+	assert.Nil(t, k8sC.CoreV1().Pods(ns).Delete(ctx, pod.Name, k8smetav1.DeleteOptions{}))
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	secrets, err = k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	var got []string
+	for _, secret := range secrets.Items {
+		got = append(got, secret.Name)
+	}
+	assert.ElementsMatch(t, []string{name("desired"), name("managed")}, got)
+}
+
+func TestK8sUpstreamCleanupErrors(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		verb string
+		rsc  string
+	}{
+		{"list", "deployments"}, {"list", "services"}, {"list", "secrets"}, {"list", "pods"},
+		{"delete", "deployments"}, {"delete", "services"}, {"delete", "secrets"},
+	} {
+		t.Run(tc.verb+"/"+tc.rsc, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			svc.Spec.Config = newTstContainerConfig("default")
+			setTstUpstreamSecret(svc.Spec.Config, "obsolete")
+			svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{newTstContainerConfig("keep")}}
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			svc.Spec.Config = nil
+			errTst := errors.New("could not reconcile upstream resources")
+			fail := true
+			k8sC.PrependReactor(tc.verb, tc.rsc, func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return fail, nil, errTst
+			})
+			k8sC.ClearActions()
+			assert.ErrorIs(t, c.setK8sUpstream(ctx, svc, owner), errTst)
+			if tc.verb == "list" {
+				for _, action := range k8sC.Actions() {
+					assert.NotEqual(t, "delete", action.GetVerb())
+				}
+			}
+			fail = false
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			_, err := k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err))
+			_, err = k8sC.CoreV1().Services(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err))
+			_, err = k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "keep"), k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			assert.Empty(t, secrets.Items)
+		})
+	}
+}
+
+func TestK8sUpstreamCleanupAlreadyDeleted(t *testing.T) {
+	ctx := context.Background()
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	svc.Spec.Config = newTstContainerConfig("default")
+	setTstUpstreamSecret(svc.Spec.Config, "obsolete")
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	svc.Spec.Config = nil
+	var deleted int
+	k8sC.PrependReactor("delete", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		del := action.(k8stesting.DeleteAction)
+		assert.Nil(t, k8sC.Tracker().Delete(action.GetResource(), action.GetNamespace(), del.GetName()))
+		deleted++
+		return true, nil, k8serr.NewNotFound(schema.GroupResource{Resource: action.GetResource().Resource}, del.GetName())
+	})
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	assert.Equal(t, 4, deleted)
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	assert.Equal(t, 4, deleted)
+}
+
+func TestK8sUpstreamFailedReplacement(t *testing.T) {
+	ctx := context.Background()
+	for _, rsc := range []string{"secrets", "deployments", "services"} {
+		t.Run(rsc, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			svc.Spec.Config = newTstContainerConfig("default")
+			setTstUpstreamSecret(svc.Spec.Config, "obsolete")
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			svc.Spec.Config = nil
+			cfg := newTstContainerConfig("replacement")
+			setTstUpstreamSecret(cfg, "replacement")
+			svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+			fail := true
+			k8sC.PrependReactor("create", rsc, func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return fail, nil, errors.New("could not create replacement")
+			})
+			k8sC.ClearActions()
+			assert.ErrorContains(t, c.setK8sUpstream(ctx, svc, owner), "could not create replacement")
+			for _, action := range k8sC.Actions() {
+				assert.NotEqual(t, "delete", action.GetVerb())
+			}
+			_, err := k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			fail = false
+			assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+			_, err = k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err))
+		})
+	}
+}
+
+func TestK8sUpstreamCleanupSnapshots(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	svc.Spec.Config = newTstContainerConfig("default")
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{newTstContainerConfig("obsolete")}}
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	old := proto.Clone(svc).(*corev1.Service)
+	svc.Spec.Config = newTstService().Spec.Config
+	svc.Spec.DynamicConfig = nil
+	c.octeliumC = &fakeOcteliumC{coreC: &fakeCoreC{
+		ResourceServiceClient: c.octeliumC.CoreC(),
+		getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+			assert.Equal(t, svc.Metadata.Uid, in.Uid)
+			return proto.Clone(svc).(*corev1.Service), nil
+		},
+	}}
+	assert.Nil(t, c.OnAdd(ctx, old))
+	for _, name := range []string{"default", "obsolete"} {
+		_, err := k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, name), k8smetav1.GetOptions{})
+		assert.True(t, k8serr.IsNotFound(err))
+	}
+	svc.Spec.Config = newTstContainerConfig("default")
+	assert.Nil(t, c.OnUpdate(ctx, old, old))
+	_, err := k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	_, err = k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcHostname(svc), k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+}
+
+func TestK8sUpstreamCleanupDeleteConflict(t *testing.T) {
+	ctx := context.Background()
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	svc.Spec.Config = newTstContainerConfig("default")
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	svc.Spec.Config = nil
+	var deletes int
+	k8sC.PrependReactor("delete", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		del := action.(k8stesting.DeleteAction)
+		obj, err := k8sC.Tracker().Get(action.GetResource(), ns, del.GetName())
+		assert.Nil(t, err)
+		dep := obj.(*appsv1.Deployment).DeepCopy()
+		assert.Equal(t, dep.UID, *del.GetDeleteOptions().Preconditions.UID)
+		assert.Equal(t, dep.ResourceVersion, *del.GetDeleteOptions().Preconditions.ResourceVersion)
+		dep.UID = "replacement-uid"
+		dep.ResourceVersion = "2"
+		dep.OwnerReferences[0].UID = "other-owner-uid"
+		assert.Nil(t, k8sC.Tracker().Update(action.GetResource(), dep, ns))
+		deletes++
+		return true, nil, k8serr.NewConflict(schema.GroupResource{Resource: "deployments"}, dep.Name, errors.New("resource changed"))
+	})
+	assert.True(t, k8serr.IsConflict(c.setK8sUpstream(ctx, svc, owner)))
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, types.UID("replacement-uid"), dep.UID)
+	assert.Equal(t, 1, deletes)
 }

@@ -72,6 +72,7 @@ func Phases() []Phase {
 		{"NocturneKubernetesSecret", testNocturneKubernetesSecret},
 		{"NocturneUpstreamReadiness", testNocturneUpstreamReadiness},
 		{"NocturneReconciliationLoad", testNocturneReconciliationLoad},
+		{"NocturneUpstreamCleanup", testNocturneUpstreamCleanup},
 		{"NocturneUserDeletion", testNocturneUserDeletion},
 		{"NocturneDeviceDeletion", testNocturneDeviceDeletion},
 		{"NocturnePodAddresses", testNocturnePodAddresses},

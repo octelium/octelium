@@ -32,12 +32,15 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) error {
+	desired := make(map[string]*appsv1.Deployment)
 
 	if svc.Spec.Config != nil && svc.Spec.Config.Upstream != nil && svc.Spec.Config.Upstream.GetContainer() != nil {
 		cfg := svc.Spec.Config
@@ -63,6 +66,7 @@ func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ow
 			c.getK8sUpstreamService(svc, cfg, ownerCM)); err != nil {
 			return err
 		}
+		desired[dep.Name] = dep
 	}
 
 	if svc.Spec.DynamicConfig != nil {
@@ -91,11 +95,136 @@ func (c *Controller) setK8sUpstream(ctx context.Context, svc *corev1.Service, ow
 					c.getK8sUpstreamService(svc, cfg, ownerCM)); err != nil {
 					return err
 				}
+				desired[dep.Name] = dep
 			}
 		}
 	}
 
+	return c.deleteUnusedK8sUpstreams(ctx, svc, ownerCM, desired)
+}
+
+func (c *Controller) deleteUnusedK8sUpstreams(ctx context.Context, svc *corev1.Service,
+	ownerCM *k8scorev1.ConfigMap, desired map[string]*appsv1.Deployment) error {
+	if ownerCM.UID == "" {
+		return nil
+	}
+
+	deployments, err := c.k8sC.AppsV1().Deployments(ns).List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	services, err := c.k8sC.CoreV1().Services(ns).List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	secrets, err := c.k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	wantedSecrets := make(map[string]bool)
+	for _, dep := range desired {
+		setK8sUpstreamSecretNames(&dep.Spec.Template.Spec, wantedSecrets)
+	}
+	if svc.Status.ManagedService != nil {
+		wantedSecrets[svc.Status.ManagedService.ImagePullSecret] = true
+	}
+	if len(desired) > 0 {
+		pods, err := c.k8sC.CoreV1().Pods(ns).List(ctx, k8smetav1.ListOptions{
+			LabelSelector: labels.Set{
+				"octelium.com/svc-uid":   svc.Metadata.Uid,
+				"octelium.com/component": "svc-k8s-upstream",
+			}.AsSelector().String(),
+		})
+		if err != nil {
+			return err
+		}
+		for _, pod := range pods.Items {
+			name := k8sutils.GetSvcK8sUpstreamHostname(svc, pod.Labels["octelium.com/svc-upstream-cfg"])
+			if desired[name] != nil {
+				setK8sUpstreamSecretNames(&pod.Spec, wantedSecrets)
+			}
+		}
+	}
+
+	isOwned := func(obj k8smetav1.Object) bool {
+		owner := k8smetav1.GetControllerOf(obj)
+		return owner != nil && owner.APIVersion == "v1" && owner.Kind == "ConfigMap" &&
+			owner.Name == ownerCM.Name && owner.UID == ownerCM.UID
+	}
+	deleteOpts := func(obj k8smetav1.Object) k8smetav1.DeleteOptions {
+		return k8smetav1.DeleteOptions{
+			Preconditions: &k8smetav1.Preconditions{
+				UID:             new(obj.GetUID()),
+				ResourceVersion: new(obj.GetResourceVersion()),
+			},
+		}
+	}
+	prefix := fmt.Sprintf("upstream-%s-", k8sutils.GetSvcHostname(svc))
+	for _, dep := range deployments.Items {
+		if desired[dep.Name] != nil || dep.Spec.Template.Labels["octelium.com/svc-uid"] != svc.Metadata.Uid ||
+			!strings.HasPrefix(dep.Name, prefix) || !isOwned(&dep) {
+			continue
+		}
+		opts := deleteOpts(&dep)
+		opts.PropagationPolicy = new(k8smetav1.DeletePropagationBackground)
+		if err := c.k8sC.AppsV1().Deployments(ns).Delete(ctx, dep.Name, opts); err != nil && !k8serr.IsNotFound(err) {
+			return err
+		}
+	}
+	for _, itm := range services.Items {
+		if desired[itm.Name] != nil || itm.Spec.Selector["octelium.com/svc-uid"] != svc.Metadata.Uid ||
+			!strings.HasPrefix(itm.Name, prefix) || !isOwned(&itm) {
+			continue
+		}
+		if err := c.k8sC.CoreV1().Services(ns).Delete(ctx, itm.Name, deleteOpts(&itm)); err != nil && !k8serr.IsNotFound(err) {
+			return err
+		}
+	}
+	for _, secret := range secrets.Items {
+		if wantedSecrets[secret.Name] || !isOwned(&secret) ||
+			!strings.HasPrefix(secret.Name, fmt.Sprintf("svc-env-%s-", svc.Metadata.Uid)) &&
+				!strings.HasPrefix(secret.Name, fmt.Sprintf("regcred-%s-", svc.Metadata.Uid)) {
+			continue
+		}
+		if err := c.k8sC.CoreV1().Secrets(ns).Delete(ctx, secret.Name, deleteOpts(&secret)); err != nil && !k8serr.IsNotFound(err) {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func setK8sUpstreamSecretNames(spec *k8scorev1.PodSpec, secrets map[string]bool) {
+	for _, ref := range spec.ImagePullSecrets {
+		secrets[ref.Name] = true
+	}
+	for _, containers := range [][]k8scorev1.Container{spec.Containers, spec.InitContainers} {
+		for _, container := range containers {
+			for _, env := range container.Env {
+				if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+					secrets[env.ValueFrom.SecretKeyRef.Name] = true
+				}
+			}
+			for _, env := range container.EnvFrom {
+				if env.SecretRef != nil {
+					secrets[env.SecretRef.Name] = true
+				}
+			}
+		}
+	}
+	for _, volume := range spec.Volumes {
+		if volume.Secret != nil {
+			secrets[volume.Secret.SecretName] = true
+		}
+		if volume.Projected != nil {
+			for _, source := range volume.Projected.Sources {
+				if source.Secret != nil {
+					secrets[source.Secret.Name] = true
+				}
+			}
+		}
+	}
 }
 
 func (c *Controller) getK8sUpstreamLabels(svc *corev1.Service, name string) map[string]string {

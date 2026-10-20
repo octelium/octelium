@@ -36,7 +36,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -705,4 +707,203 @@ func testNocturneReconciliationLoad(t *testing.T, h *harness.H) {
 	assert.Positive(t, result.Succeeded)
 	assert.Zero(t, misroutes.Load(), "requests must never reach another Service's upstream")
 	harness.LogPool("Nocturne reconciliation under HTTP load", result)
+}
+
+func testNocturneUpstreamCleanup(t *testing.T, h *harness.H) {
+	sharedValue := h.Name()
+	removedValue := h.Name()
+	otherValue := h.Name()
+	shared := h.CreateSecret(t, "", sharedValue)
+	removed := h.CreateSecret(t, "", removedValue)
+	env := func(name string) []*corev1.Service_Spec_Config_Upstream_Container_Env {
+		return []*corev1.Service_Spec_Config_Upstream_Container_Env{
+			{
+				Name: "OCTELIUM_E2E_RESPONSE",
+				Type: &corev1.Service_Spec_Config_Upstream_Container_Env_FromSecret{FromSecret: name},
+			},
+		}
+	}
+	svc := newManagedHTTPService(t, h, env(shared.Metadata.Name), 1)
+	other := newManagedHTTPService(t, h,
+		[]*corev1.Service_Spec_Config_Upstream_Container_Env{
+			{Name: "OCTELIUM_E2E_RESPONSE", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: otherValue}},
+		}, 1)
+	defaultConfig := proto.Clone(svc.Spec.Config).(*corev1.Service_Spec_Config)
+	keep := proto.Clone(defaultConfig).(*corev1.Service_Spec_Config)
+	keep.Name = "keep"
+	remove := proto.Clone(defaultConfig).(*corev1.Service_Spec_Config)
+	remove.Name = "remove"
+	remove.Upstream.GetContainer().Env = env(removed.Metadata.Name)
+	rule := func(name string) *corev1.Service_Spec_DynamicConfig_Rule {
+		return &corev1.Service_Spec_DynamicConfig_Rule{
+			Condition: &corev1.Condition{Type: &corev1.Condition_Match{
+				Match: fmt.Sprintf(`"x-e2e-config" in ctx.request.http.headers && ctx.request.http.headers["x-e2e-config"] == %q`, name),
+			}},
+			Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: name},
+		}
+	}
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+		Configs: []*corev1.Service_Spec_Config{keep, remove},
+		Rules:   []*corev1.Service_Spec_DynamicConfig_Rule{rule("keep"), rule("remove")},
+	}
+	svc = h.UpdateService(t, svc)
+	h.MustWaitService(t, svc.Metadata.Name, other.Metadata.Name)
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name, other.Metadata.Name)
+	for _, name := range []string{"keep", "remove"} {
+		h.MustWaitDeployment(t, k8sutils.GetSvcK8sUpstreamHostname(svc, name))
+	}
+	proxy := h.MustK8sDeployment(t, h.SvcHostname(svc))
+	otherUpstream := h.MustK8sDeployment(t, k8sutils.GetSvcK8sUpstreamHostname(other, ""))
+	sharedName := fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, shared.Metadata.Uid)
+	sharedK8s, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), sharedName, k8smetav1.GetOptions{})
+	require.Nil(t, err)
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{svc.Metadata.Name: h.Port(), other.Metadata.Name: h.Port()},
+	})
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	check := func(t *testing.T, name, config, want string) {
+		t.Helper()
+		h.Eventually(t, "the Service to serve its retained upstream", harness.DeploymentBudget,
+			func(ctx context.Context) error {
+				req := c.R().SetContext(ctx)
+				if config != "" {
+					req.SetHeader("X-E2E-Config", config)
+				}
+				res, err := req.Get(conn.URL(name))
+				if err != nil {
+					return err
+				}
+				if res.StatusCode() != http.StatusOK {
+					return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+				}
+				if res.String() != want {
+					return errors.Errorf("the Service returned %q, want %q", res.String(), want)
+				}
+				return nil
+			})
+	}
+	waitGone := func(t *testing.T, config string) {
+		t.Helper()
+		h.WaitK8sObjectsGone(t, k8sutils.GetSvcK8sUpstreamHostname(svc, config))
+		if config == "default" {
+			config = defaultConfig.Name
+		}
+		h.Eventually(t, "the removed upstream Pods and ReplicaSets to be collected", harness.K8sGCBudget,
+			func(ctx context.Context) error {
+				opts := k8smetav1.ListOptions{LabelSelector: fmt.Sprintf(
+					"octelium.com/svc-uid=%s,octelium.com/component=svc-k8s-upstream,octelium.com/svc-upstream-cfg=%s",
+					svc.Metadata.Uid, config)}
+				pods, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).List(ctx, opts)
+				if err != nil {
+					return err
+				}
+				sets, err := h.K8sC().AppsV1().ReplicaSets(vutils.K8sNS).List(ctx, opts)
+				if err != nil {
+					return err
+				}
+				if len(pods.Items) != 0 || len(sets.Items) != 0 {
+					return errors.Errorf("the removed upstream still has %d Pods and %d ReplicaSets", len(pods.Items), len(sets.Items))
+				}
+				return nil
+			})
+	}
+	waitSecretGone := func(t *testing.T, name string) {
+		t.Helper()
+		h.Eventually(t, "the unused upstream Secret to be removed", harness.DecisionBudget,
+			func(ctx context.Context) error {
+				_, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				if k8serr.IsNotFound(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				return errors.Errorf("the unused upstream Secret still exists")
+			})
+	}
+	checkPreserved := func(t *testing.T) {
+		t.Helper()
+		assert.Equal(t, proxy.UID, h.MustK8sDeployment(t, proxy.Name).UID)
+		assert.Equal(t, otherUpstream.UID, h.MustK8sDeployment(t, otherUpstream.Name).UID)
+		for _, secret := range []*corev1.Secret{shared, removed} {
+			current, err := h.CoreC().GetSecret(t.Context(), &metav1.GetOptions{Uid: secret.Metadata.Uid})
+			require.Nil(t, err)
+			assert.Equal(t, secret.Metadata.Uid, current.Metadata.Uid)
+		}
+		check(t, other.Metadata.Name, "", otherValue)
+	}
+	checkShared := func(t *testing.T) {
+		t.Helper()
+		current, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), sharedName, k8smetav1.GetOptions{})
+		require.Nil(t, err)
+		assert.Equal(t, sharedK8s.UID, current.UID)
+	}
+	check(t, svc.Metadata.Name, "", sharedValue)
+	check(t, svc.Metadata.Name, "keep", sharedValue)
+	check(t, svc.Metadata.Name, "remove", removedValue)
+
+	if !t.Run("RemoveNamed", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[:1]
+		svc.Spec.DynamicConfig.Rules = svc.Spec.DynamicConfig.Rules[:1]
+		svc = h.UpdateService(t, svc)
+		waitGone(t, "remove")
+		waitSecretGone(t, fmt.Sprintf("svc-env-%s-%s", svc.Metadata.Uid, removed.Metadata.Uid))
+		checkShared(t)
+		check(t, svc.Metadata.Name, "", sharedValue)
+		check(t, svc.Metadata.Name, "keep", sharedValue)
+		checkPreserved(t)
+	}) {
+		return
+	}
+	if !t.Run("RenameNamed", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.DynamicConfig.Configs[0].Name = "renamed"
+		svc.Spec.DynamicConfig.Rules = []*corev1.Service_Spec_DynamicConfig_Rule{rule("renamed")}
+		svc = h.UpdateService(t, svc)
+		h.MustWaitDeployment(t, k8sutils.GetSvcK8sUpstreamHostname(svc, "renamed"))
+		waitGone(t, "keep")
+		checkShared(t)
+		check(t, svc.Metadata.Name, "renamed", sharedValue)
+		checkPreserved(t)
+	}) {
+		return
+	}
+	if !t.Run("DefaultToURL", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.Config.Upstream = &corev1.Service_Spec_Config_Upstream{
+			Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://" + k8sutils.GetSvcK8sUpstreamFQDN(other, "")},
+		}
+		svc = h.UpdateService(t, svc)
+		waitGone(t, "default")
+		checkShared(t)
+		check(t, svc.Metadata.Name, "", otherValue)
+		check(t, svc.Metadata.Name, "renamed", sharedValue)
+		checkPreserved(t)
+	}) {
+		return
+	}
+	if !t.Run("RemoveAllNamed", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.DynamicConfig = nil
+		svc = h.UpdateService(t, svc)
+		waitGone(t, "renamed")
+		waitSecretGone(t, sharedName)
+		check(t, svc.Metadata.Name, "", otherValue)
+		checkPreserved(t)
+	}) {
+		return
+	}
+	t.Run("RestoreContainer", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.Config = proto.Clone(defaultConfig).(*corev1.Service_Spec_Config)
+		svc = h.UpdateService(t, svc)
+		h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+		check(t, svc.Metadata.Name, "", sharedValue)
+		current, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), sharedName, k8smetav1.GetOptions{})
+		require.Nil(t, err)
+		assert.NotEqual(t, sharedK8s.UID, current.UID)
+		checkPreserved(t)
+	})
 }
