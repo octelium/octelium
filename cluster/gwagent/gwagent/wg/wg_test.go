@@ -18,6 +18,8 @@ package wg
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -26,16 +28,22 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/gwagent/gwagent/gw"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/grpc"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -550,4 +558,218 @@ func TestWg(t *testing.T) {
 		err = wgC.RemoveConnection(usr.Session)
 		assert.NotNil(t, err)
 	})
+}
+
+func TestWgOperationErrors(t *testing.T) {
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{Name: "session"},
+		Status: &corev1.Session_Status{Connection: &corev1.Session_Status_Connection{
+			Type: corev1.Session_Status_Connection_WIREGUARD,
+		}},
+	}
+	ctl := &Wg{opCh: make(chan *op, 16), doneCh: make(chan struct{})}
+	assert.NotNil(t, ctl.doOp(&op{typ: opType(99)}))
+	for _, size := range []int{0, 1, 31, 33, 64} {
+		sess.Status.Connection.X25519PublicKey = make([]byte, size)
+		for _, typ := range []opType{opTypeAdd, opTypeUpdate, opTypeRemove} {
+			assert.NotNil(t, ctl.doOp(&op{typ: typ, sess: sess}))
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	require.Nil(t, ctl.Run(ctx))
+	var wg sync.WaitGroup
+	for range 64 {
+		wg.Go(func() {
+			assert.NotNil(t, ctl.AddConnection(sess))
+			assert.NotNil(t, ctl.UpdateConnection(sess))
+			assert.NotNil(t, ctl.RemoveConnection(sess))
+		})
+	}
+	wg.Wait()
+	cancel()
+	select {
+	case <-ctl.doneCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("The WireGuard operation loop did not stop")
+	}
+	assert.NotNil(t, ctl.AddConnection(sess))
+}
+
+func TestWgEnqueueClosed(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		t.Run(fmt.Sprint(waiting), func(t *testing.T) {
+			ctl := &Wg{opCh: make(chan *op), doneCh: make(chan struct{})}
+			done := make(chan error, 1)
+			go func() { done <- ctl.enqueue(opTypeAdd, nil) }()
+			if waiting {
+				select {
+				case <-ctl.opCh:
+				case <-time.After(5 * time.Second):
+					t.Fatal("The operation was not enqueued")
+				}
+			}
+			close(ctl.doneCh)
+			select {
+			case err := <-done:
+				require.NotNil(t, err)
+				assert.Contains(t, err.Error(), "controller is closed")
+			case <-time.After(5 * time.Second):
+				t.Fatal("The operation did not stop when the controller closed")
+			}
+		})
+	}
+}
+
+type tstWGClient struct {
+	octeliumc.ClientInterface
+	core  rcorev1.ResourceServiceClient
+	utils octeliumc.CoreV1Utils
+}
+
+func (c *tstWGClient) CoreC() rcorev1.ResourceServiceClient {
+	return c.core
+}
+
+func (c *tstWGClient) CoreV1Utils() octeliumc.CoreV1Utils {
+	if c.utils != nil {
+		return c.utils
+	}
+	return c.ClientInterface.CoreV1Utils()
+}
+
+type tstWGCoreClient struct {
+	rcorev1.ResourceServiceClient
+	getErr    error
+	updateErr error
+}
+
+func (c *tstWGCoreClient) GetGateway(ctx context.Context, opts *rmetav1.GetOptions,
+	_ ...grpc.CallOption) (*corev1.Gateway, error) {
+	if c.getErr != nil {
+		return nil, c.getErr
+	}
+	return c.ResourceServiceClient.GetGateway(ctx, opts)
+}
+
+func (c *tstWGCoreClient) UpdateGateway(ctx context.Context, gw *corev1.Gateway,
+	_ ...grpc.CallOption) (*corev1.Gateway, error) {
+	return nil, c.updateErr
+}
+
+type tstWGUtils struct {
+	cc  *corev1.ClusterConfig
+	err error
+}
+
+func (c *tstWGUtils) GetClusterConfig(context.Context) (*corev1.ClusterConfig, error) {
+	return c.cc, c.err
+}
+
+func TestWgKeyRotation(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("The WireGuard device requires root")
+	}
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	t.Setenv(vutils.MultusConfDirEnv, t.TempDir())
+	ctx := t.Context()
+	client := tst.C.OcteliumC
+	node := fakeNode("node-rotation")
+	key, err := wgtypes.GeneratePrivateKey()
+	require.Nil(t, err)
+	require.Nil(t, gw.InitGateway(ctx, []string{"1.2.3.4"}, node, client, 0,
+		&metav1.ObjectReference{Name: "default", Uid: vutils.UUIDv4()}, key))
+	ctl, err := New(ctx, node, client, key)
+	require.Nil(t, err)
+	t.Cleanup(func() { ctl.Cleanup() })
+	cc, err := client.CoreV1Utils().GetClusterConfig(ctx)
+	require.Nil(t, err)
+	peerKey, err := wgtypes.GeneratePrivateKey()
+	require.Nil(t, err)
+	pubKey := peerKey.PublicKey()
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{Name: "session"},
+		Status: &corev1.Session_Status{Connection: &corev1.Session_Status_Connection{
+			Type: corev1.Session_Status_Connection_WIREGUARD, X25519PublicKey: pubKey[:],
+			Addresses: []*metav1.DualStackNetwork{{V4: "100.65.0.10/32", V6: "fd00::10/128"}},
+		}},
+	}
+	require.Nil(t, ctl.doAddConnection(sess))
+
+	for _, tc := range []struct {
+		name     string
+		seconds  uint32
+		age      time.Duration
+		expected bool
+	}{
+		{name: "defaultFresh", age: time.Hour},
+		{name: "defaultExpired", age: 13 * time.Hour, expected: true},
+		{name: "customFresh", seconds: 600, age: time.Minute},
+		{name: "customExpired", seconds: 600, age: time.Hour, expected: true},
+		{name: "tooShortUsesDefault", seconds: 29, age: time.Hour},
+		{name: "minimumDuration", seconds: 30, age: time.Minute, expected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := pbutils.Clone(cc).(*corev1.ClusterConfig)
+			config.Spec.Gateway = nil
+			if tc.seconds != 0 {
+				config.Spec.Gateway = &corev1.ClusterConfig_Spec_Gateway{
+					WireguardKeyRotationDuration: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: tc.seconds}},
+				}
+			}
+			gw, err := client.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ctl.gwName})
+			require.Nil(t, err)
+			rotatedAt := pbutils.Timestamp(time.Now().Add(-tc.age))
+			gw.Status.Wireguard.KeyRotatedAt = rotatedAt
+			_, err = client.CoreC().UpdateGateway(ctx, gw)
+			require.Nil(t, err)
+			before, err := ctl.client.Device(devName)
+			require.Nil(t, err)
+			ctl.octeliumC = &tstWGClient{ClientInterface: client, core: client.CoreC(), utils: &tstWGUtils{cc: config}}
+			require.Nil(t, ctl.doUpdateGatewayKey(ctx))
+			after, err := ctl.client.Device(devName)
+			require.Nil(t, err)
+			updated, err := client.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ctl.gwName})
+			require.Nil(t, err)
+			assert.Equal(t, tc.expected, before.PrivateKey != after.PrivateKey)
+			assert.Equal(t, after.PublicKey.String(), updated.Status.Wireguard.PublicKey)
+			assert.Equal(t, before.ListenPort, after.ListenPort)
+			assert.Equal(t, before.Peers, after.Peers)
+			assert.Equal(t, tc.expected, updated.Status.Wireguard.KeyRotatedAt.AsTime().After(rotatedAt.AsTime()))
+		})
+	}
+
+	t.Run("rollback", func(t *testing.T) {
+		gw, err := client.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ctl.gwName})
+		require.Nil(t, err)
+		before, err := ctl.client.Device(devName)
+		require.Nil(t, err)
+		expected := fmt.Errorf("gateway update failed")
+		ctl.octeliumC = &tstWGClient{ClientInterface: client, core: &tstWGCoreClient{updateErr: expected}}
+		assert.ErrorIs(t, ctl.doRotateKey(ctx, gw), expected)
+		after, err := ctl.client.Device(devName)
+		require.Nil(t, err)
+		assert.Equal(t, before.PrivateKey, after.PrivateKey)
+		assert.Equal(t, before.ListenPort, after.ListenPort)
+		assert.Equal(t, before.Peers, after.Peers)
+		stored, err := client.CoreC().GetGateway(ctx, &rmetav1.GetOptions{Name: ctl.gwName})
+		require.Nil(t, err)
+		assert.Equal(t, before.PublicKey.String(), stored.Status.Wireguard.PublicKey)
+	})
+
+	t.Run("lookupErrors", func(t *testing.T) {
+		expected := fmt.Errorf("gateway unavailable")
+		ctl.octeliumC = &tstWGClient{core: &tstWGCoreClient{getErr: expected}}
+		assert.ErrorIs(t, ctl.doUpdateGatewayKey(ctx), expected)
+		ctl.octeliumC = &tstWGClient{core: client.CoreC(), utils: &tstWGUtils{err: expected}}
+		assert.ErrorIs(t, ctl.doUpdateGatewayKey(ctx), expected)
+	})
+
+	require.Nil(t, ctl.Cleanup())
+	require.Nil(t, ctl.Cleanup())
+	_, err = ctl.client.Device(devName)
+	assert.NotNil(t, err)
 }

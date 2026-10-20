@@ -18,6 +18,8 @@ package suite
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,9 +30,12 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/main/quicv0"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/cluster/e2e/scenario"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
+	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -274,4 +279,106 @@ func testGatewayL3(t *testing.T, h *harness.H) {
 			"no route via the %s tunnel device was installed on the host. Routes:\n%s",
 			tun, string(out))
 	})
+}
+
+func testGatewayQUICInvalidInit(t *testing.T, h *harness.H) {
+	h.Require(t, capQUICv0)
+	svc := h.NewPublicService(t, "default")
+	conn := h.Connect(t, harness.ConnectOpts{
+		TunnelMode: "quicv0",
+		Publish:    map[string]int{svc.Metadata.Name: h.Port()},
+	})
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+	roots, err := h.TLSRoots()
+	require.Nil(t, err)
+	payload, err := pbutils.Marshal(&quicv0.InitRequest{AccessToken: "invalid-token"})
+	require.Nil(t, err)
+	frame := func(size, typ uint32, payload []byte) []byte {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint32(buf[:4], size)
+		binary.BigEndian.PutUint32(buf[4:], typ)
+		return append(buf, payload...)
+	}
+	frames := [][]byte{
+		frame(1, 0, []byte{1}),
+		frame(0, 1, nil),
+		frame(4097, 1, nil),
+		frame(^uint32(0), 1, nil),
+		{0, 0, 0, 1},
+		frame(4, 1, []byte{1}),
+		frame(1, 1, []byte{0xff}),
+		frame(2, 1, []byte{0x0a, 0}),
+		frame(uint32(len(payload)), 1, payload),
+		frame(uint32(len(payload)), 2, payload),
+	}
+	gateways := h.Gateways(t)
+	require.NotEmpty(t, gateways)
+	for _, gw := range gateways {
+		t.Run(gw.Metadata.Name, func(t *testing.T) {
+			require.NotNil(t, gw.Status.Quicv0)
+			require.NotEmpty(t, gw.Status.PublicIPs)
+			addr := net.JoinHostPort(gw.Status.PublicIPs[0], fmt.Sprint(gw.Status.Quicv0.Port))
+			tlsCfg := &tls.Config{
+				RootCAs: roots, ServerName: gw.Status.Hostname, NextProtos: []string{"h3"},
+				MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			done := make(chan *harness.PoolResult, 1)
+			go func() {
+				done <- harness.ForEach(ctx, 160, 16, func(ctx context.Context, i int) error {
+					callCtx, callCancel := context.WithTimeout(ctx, 8*time.Second)
+					defer callCancel()
+					qconn, err := quic.DialAddr(callCtx, addr, tlsCfg, &quic.Config{
+						EnableDatagrams: true, HandshakeIdleTimeout: 5 * time.Second,
+					})
+					if err != nil {
+						return err
+					}
+					defer qconn.CloseWithError(0, "")
+					isRejected := func(err error) bool {
+						var appErr *quic.ApplicationError
+						return errors.As(err, &appErr) && appErr.ErrorCode == 8 && appErr.Remote
+					}
+					stream, err := qconn.OpenStreamSync(callCtx)
+					if err != nil {
+						return err
+					}
+					if _, err := stream.Write(frames[i%len(frames)]); err != nil && !isRejected(err) {
+						return err
+					}
+					if err := stream.Close(); err != nil && !isRejected(err) {
+						return err
+					}
+					select {
+					case <-qconn.Context().Done():
+						if !isRejected(context.Cause(qconn.Context())) {
+							return errors.Errorf("the invalid initialization was not rejected: %+v", context.Cause(qconn.Context()))
+						}
+						return nil
+					case <-callCtx.Done():
+						return errors.Errorf("the invalid initialization remained open: %+v", callCtx.Err())
+					}
+				})
+			}()
+			client := h.HTTPNoRetry()
+			healthy := harness.RunFor(ctx, 10*time.Second, 4, func(ctx context.Context, worker, iteration int) error {
+				resp, err := client.R().SetContext(ctx).Get(conn.URL(svc.Metadata.Name))
+				if err != nil {
+					return err
+				}
+				if resp.StatusCode() != http.StatusOK {
+					return errUnexpectedStatus(resp.StatusCode(), http.StatusOK)
+				}
+				return nil
+			})
+			rejected := <-done
+			assert.Zero(t, rejected.Failed(), "%s", rejected)
+			assert.True(t, healthy.Succeeded > 0, "no legitimate request completed")
+			assert.Zero(t, healthy.Failed(), "%s", healthy)
+			zap.L().Info("Gateway QUICv0 invalid initialization pressure",
+				zap.String("gateway", gw.Metadata.Name), zap.String("rejected", rejected.String()),
+				zap.String("traffic", healthy.String()))
+		})
+	}
 }
