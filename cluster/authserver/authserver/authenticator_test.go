@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -36,6 +37,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -581,4 +583,91 @@ func TestCreateAuthenticatorLimit(t *testing.T) {
 	items, err := srv.octeliumC.CoreC().ListAuthenticator(ctx, urscsrv.FilterByUser(usrT.Usr))
 	assert.Nil(t, err)
 	assert.Equal(t, maxAuthenticatorPerUser, len(items.Items))
+}
+
+func TestAuthenticatorUserState(t *testing.T) {
+	ctx := context.Background()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	c := authv1.NewMainServiceClient(newAuthGRPCTestClient(t, srv))
+
+	tests := []struct {
+		name       string
+		isDisabled bool
+		isLocked   bool
+		isDeleted  bool
+		code       codes.Code
+	}{
+		{name: "Disabled", isDisabled: true, code: codes.PermissionDenied},
+		{name: "Locked", isLocked: true, code: codes.PermissionDenied},
+		{name: "DisabledAndLocked", isDisabled: true, isLocked: true, code: codes.PermissionDenied},
+		{name: "Deleted", isDeleted: true, code: codes.Unauthenticated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usrT, err := tstuser.NewUserWeb(srv.octeliumC, adminSrv, nil, nil)
+			assert.Nil(t, err)
+			authn, err := srv.doCreateAuthenticator(getCtxRT(usrT), &authv1.CreateAuthenticatorRequest{
+				Type:        authv1.Authenticator_Status_TOTP,
+				DisplayName: "original",
+			})
+			assert.Nil(t, err)
+			before, err := srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
+			assert.Nil(t, err)
+
+			if tt.isDeleted {
+				_, err = srv.octeliumC.CoreC().DeleteUser(ctx, &rmetav1.DeleteOptions{Uid: usrT.Usr.Metadata.Uid})
+			} else {
+				usrT.Usr.Spec.IsDisabled = tt.isDisabled
+				usrT.Usr.Status.IsLocked = tt.isLocked
+				usrT.Usr, err = srv.octeliumC.CoreC().UpdateUser(ctx, usrT.Usr)
+			}
+			assert.Nil(t, err)
+
+			rpcCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			rpcCtx = metadata.NewOutgoingContext(rpcCtx, metadata.Pairs(
+				"x-octelium-refresh-token", usrT.GetAccessToken().RefreshToken,
+			))
+
+			got, err := c.GetAuthenticator(rpcCtx, &metav1.GetOptions{Uid: authn.Metadata.Uid})
+			assert.Nil(t, got)
+			assert.Equal(t, tt.code, status.Code(err))
+			updated, err := c.UpdateAuthenticator(rpcCtx, &authv1.Authenticator{
+				Metadata: authn.Metadata,
+				Spec:     &authv1.Authenticator_Spec{DisplayName: "changed"},
+			})
+			assert.Nil(t, updated)
+			assert.Equal(t, tt.code, status.Code(err))
+			deleted, err := c.DeleteAuthenticator(rpcCtx, &metav1.DeleteOptions{Uid: authn.Metadata.Uid})
+			assert.Nil(t, deleted)
+			assert.Equal(t, tt.code, status.Code(err))
+
+			after, err := srv.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
+			if !assert.Nil(t, err) {
+				return
+			}
+			assert.True(t, pbutils.IsEqual(before, after))
+
+			if tt.isDeleted {
+				return
+			}
+
+			usrT.Usr.Spec.IsDisabled = false
+			usrT.Usr.Status.IsLocked = false
+			_, err = srv.octeliumC.CoreC().UpdateUser(ctx, usrT.Usr)
+			assert.Nil(t, err)
+			got, err = c.GetAuthenticator(rpcCtx, &metav1.GetOptions{Uid: authn.Metadata.Uid})
+			assert.Nil(t, err)
+			assert.Equal(t, "original", got.Spec.DisplayName)
+			updated, err = c.UpdateAuthenticator(rpcCtx, &authv1.Authenticator{
+				Metadata: authn.Metadata,
+				Spec:     &authv1.Authenticator_Spec{DisplayName: "allowed"},
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, "allowed", updated.Spec.DisplayName)
+			_, err = c.DeleteAuthenticator(rpcCtx, &metav1.DeleteOptions{Uid: authn.Metadata.Uid})
+			assert.Nil(t, err)
+		})
+	}
 }

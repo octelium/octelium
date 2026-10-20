@@ -204,6 +204,10 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
+	if _, err := s.getUserFromSession(ctx, sess); err != nil {
+		return nil, err
+	}
+
 	if err := s.checkSessionValid(sess); err != nil {
 		return nil, err
 	}
@@ -239,6 +243,10 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 func (s *server) doGetAuthenticator(ctx context.Context, req *metav1.GetOptions) (*authv1.Authenticator, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.getUserFromSession(ctx, sess); err != nil {
 		return nil, err
 	}
 
@@ -287,6 +295,10 @@ func (s *server) doUpdateAuthenticator(ctx context.Context,
 	req *authv1.Authenticator) (*authv1.Authenticator, error) {
 	sess, err := s.getSessionFromGRPCCtx(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.getUserFromSession(ctx, sess); err != nil {
 		return nil, err
 	}
 
