@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -57,31 +59,53 @@ func (s *server) getCredentialFromToken(ctx context.Context, authTokenStr string
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
+	attempt := authevents.GetAttempt(ctx).For(corev1.Session_Status_Authentication_Info_CREDENTIAL)
+	attempt.SetVerified()
+	attempt.SetCredential(&corev1.Session_Status_Authentication_Info_Credential{
+		CredentialRef: &metav1.ObjectReference{
+			ApiVersion: ucorev1.APIVersion,
+			Kind:       ucorev1.KindCredential,
+			Uid:        claims.UID,
+		},
+	})
+
 	tkn, err := s.octeliumC.CoreC().GetCredential(ctx, &rmetav1.GetOptions{Uid: claims.UID})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
+			attempt.SetReason(authevents.ReasonRevokedCredential)
 			return nil, s.errUnauthenticated("The Credential no longer exists")
 		}
 		return nil, s.errInternalErr(err)
 	}
 
+	attempt.SetCredential(&corev1.Session_Status_Authentication_Info_Credential{
+		CredentialRef: umetav1.GetObjectReference(tkn),
+		Type:          tkn.Spec.Type,
+	})
+	attempt.SetUserRef(tkn.Status.UserRef)
+
 	if tkn.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Credential is disabled")
 	}
 
 	if tkn.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Credential is locked")
 	}
 
 	if !utils.SecureStringEqual(claims.TokenID, tkn.Status.TokenID) {
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Token name does not match")
 	}
 
 	if tkn.Spec.ExpiresAt.IsValid() && time.Now().After(tkn.Spec.ExpiresAt.AsTime()) {
+		attempt.SetReason(authevents.ReasonExpiredCredential)
 		return nil, s.errUnauthenticated("Authentication token expired")
 	}
 
 	if tkn.Spec.MaxAuthentications > 0 && tkn.Status.TotalAuthentications >= tkn.Spec.MaxAuthentications {
+		attempt.SetReason(authevents.ReasonExpiredCredential)
 		return nil, s.errUnauthenticated("Authentications for this Credential have been exceeded the max ")
 	}
 
@@ -98,37 +122,56 @@ func (s *server) getSessionFromRefreshToken(ctx context.Context, refreshToken st
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
+	attempt := authevents.GetAttempt(ctx).For(
+		corev1.Session_Status_Authentication_Info_REFRESH_TOKEN,
+		corev1.Session_Status_Authentication_Info_AUTHENTICATOR)
+	attempt.SetVerified()
+	attempt.SetSessionRef(&metav1.ObjectReference{
+		ApiVersion: ucorev1.APIVersion,
+		Kind:       ucorev1.KindSession,
+		Uid:        claims.SessionUID,
+	})
+
 	sess, err := s.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: claims.SessionUID})
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
 			zap.L().Debug("Could not find Session from refresh token")
+			attempt.SetReason(authevents.ReasonRevokedCredential)
 			return nil, s.errUnauthenticated("Session no longer exists")
 		}
 		return nil, s.errInternalErr(err)
 	}
 
+	attempt.SetSession(sess)
+
 	if claims.SessionUID != sess.Metadata.Uid {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errUnauthenticated("Invalid Session UID")
 	}
 
 	if sess.Status.Authentication.TokenID != claims.TokenID {
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Invalid Session tokenID")
 	}
 
 	if ucorev1.ToSession(sess).IsExpired() {
+		attempt.SetReason(authevents.ReasonExpiredCredential)
 		return nil, s.errUnauthenticated("Session expired")
 	}
 
 	if !ucorev1.ToSession(sess).HasValidRefreshToken() {
+		attempt.SetReason(authevents.ReasonExpiredCredential)
 		return nil, s.errUnauthenticated("Invalid refresh token")
 	}
 
 	switch sess.Spec.State {
 	case corev1.Session_Spec_REJECTED:
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Session is rejected")
 	}
 
 	if sess.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonRevokedCredential)
 		return nil, s.errUnauthenticated("Session is locked")
 	}
 

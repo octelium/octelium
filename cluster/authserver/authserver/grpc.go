@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/browserorigin"
@@ -118,17 +119,26 @@ func (s *server) getSystemServiceBrowserHosts(ctx context.Context) ([]browserori
 
 func (s *authMainSvc) AuthenticateWithAuthenticationToken(ctx context.Context,
 	req *authv1.AuthenticateWithAuthenticationTokenRequest) (*authv1.SessionToken, error) {
-	return s.s.doAuthenticateWithAuthenticationToken(ctx, req)
+	ctx, attempt := s.s.newAuthAttemptGRPC(ctx, corev1.Session_Status_Authentication_Info_CREDENTIAL)
+	ret, err := s.s.doAuthenticateWithAuthenticationToken(ctx, req)
+	s.s.finishAuthAttempt(attempt, err)
+	return ret, err
 }
 
 func (s *authMainSvc) AuthenticateWithAssertion(ctx context.Context,
 	req *authv1.AuthenticateWithAssertionRequest) (*authv1.SessionToken, error) {
-	return s.s.doAuthenticateWithAssertion(ctx, req)
+	ctx, attempt := s.s.newAuthAttemptGRPC(ctx, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER)
+	ret, err := s.s.doAuthenticateWithAssertion(ctx, req)
+	s.s.finishAuthAttempt(attempt, err)
+	return ret, err
 }
 
 func (s *authMainSvc) AuthenticateWithRefreshToken(ctx context.Context,
 	req *authv1.AuthenticateWithRefreshTokenRequest) (*authv1.SessionToken, error) {
-	return s.s.doAuthenticateWithRefreshToken(ctx, req)
+	ctx, attempt := s.s.newAuthAttemptGRPC(ctx, corev1.Session_Status_Authentication_Info_REFRESH_TOKEN)
+	ret, err := s.s.doAuthenticateWithRefreshToken(ctx, req)
+	s.s.finishAuthAttempt(attempt, err)
+	return ret, err
 }
 
 func (s *authMainSvc) Logout(ctx context.Context, req *authv1.LogoutRequest) (*authv1.LogoutResponse, error) {
@@ -153,7 +163,10 @@ func (s *authMainSvc) RegisterDeviceFinish(ctx context.Context,
 func (s *authMainSvc) AuthenticateWithAuthenticator(ctx context.Context,
 	req *authv1.AuthenticateWithAuthenticatorRequest) (*authv1.SessionToken, error) {
 
-	return s.s.doAuthenticateWithAuthenticator(ctx, req)
+	ctx, attempt := s.s.newAuthAttemptGRPC(ctx, corev1.Session_Status_Authentication_Info_AUTHENTICATOR)
+	ret, err := s.s.doAuthenticateWithAuthenticator(ctx, req)
+	s.s.finishAuthAttempt(attempt, err)
+	return ret, err
 }
 
 func (s *authMainSvc) CreateAuthenticator(ctx context.Context,
@@ -219,7 +232,10 @@ func (s *authMainSvc) AuthenticateWithPasskeyBegin(ctx context.Context,
 func (s *authMainSvc) AuthenticateWithPasskey(ctx context.Context,
 	req *authv1.AuthenticateWithPasskeyRequest) (*authv1.SessionToken, error) {
 
-	return s.s.doAuthenticateWithPasskey(ctx, req)
+	ctx, attempt := s.s.newAuthAttemptGRPC(ctx, corev1.Session_Status_Authentication_Info_AUTHENTICATOR)
+	ret, err := s.s.doAuthenticateWithPasskey(ctx, req)
+	s.s.finishAuthAttempt(attempt, err)
+	return ret, err
 }
 
 func (s *authMainSvc) RunDeviceProbeBegin(ctx context.Context,

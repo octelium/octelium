@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -170,6 +171,14 @@ func (c *Connector) AuthenticateAssertion(ctx context.Context, req *authv1.Authe
 	if !slices.Contains(idTkn.Audience, audience) {
 		return nil, nil, errors.Errorf("Audience not found in the id token")
 	}
+
+	attempt := authevents.GetAttempt(ctx)
+	attempt.SetVerified()
+	attempt.SetIdentityProvider(&corev1.Session_Status_Authentication_Info_IdentityProvider{
+		IdentityProviderRef: umetav1.GetObjectReference(c.c),
+		Identifier:          idTkn.Subject,
+		Type:                corev1.IdentityProvider_Status_OIDC_IDENTITY_TOKEN,
+	})
 
 	var claims map[string]any
 	if err := idTkn.Claims(&claims); err != nil {

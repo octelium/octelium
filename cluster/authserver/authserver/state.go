@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	idputils "github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -87,6 +88,7 @@ func (s *server) getLoginStateFromCallback(r *http.Request) (*loginState, error)
 	switch r.Method {
 	case http.MethodGet:
 		if errMsg := r.FormValue("error"); errMsg != "" {
+			s.setLoginStateProviderError(r)
 			return nil, errors.Errorf("%s", r.FormValue("error_description"))
 		}
 
@@ -117,6 +119,41 @@ func (s *server) getLoginStateFromCallback(r *http.Request) (*loginState, error)
 	}
 
 	return s.getLoginStateFromStateID(r.Context(), stateID)
+}
+
+func (s *server) setLoginStateProviderError(r *http.Request) {
+	attempt := authevents.GetAttempt(r.Context())
+	if attempt == nil {
+		return
+	}
+
+	stateID := r.FormValue("state")
+	if !rgxStateID.MatchString(stateID) {
+		return
+	}
+
+	stateIDCookie, err := getStateIDFromCookie(r)
+	if err != nil || !utils.SecureStringEqual(stateID, stateIDCookie) {
+		return
+	}
+
+	res, err := s.octeliumC.CacheC().GetCache(r.Context(), &rcachev1.GetCacheRequest{
+		Key: []byte(getAuthKey(stateID)),
+	})
+	if err != nil {
+		return
+	}
+
+	var state loginState
+	if err := json.Unmarshal(res.Data, &state); err != nil {
+		return
+	}
+
+	attempt.SetEligible()
+	attempt.SetReason(authevents.ReasonIdentityProviderError)
+	if provider, err := s.getWebProviderFromUID(state.UID); err == nil {
+		attempt.SetIdentityProvider(getAttemptIdentityProvider(provider.Provider()))
+	}
 }
 
 func getStateIDFromCookie(r *http.Request) (string, error) {

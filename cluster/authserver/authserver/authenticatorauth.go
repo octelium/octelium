@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/totp"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/tpm"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -46,8 +47,10 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	resp *authv1.AuthenticateWithAuthenticatorRequest,
 	usr *corev1.User, sess *corev1.Session) (*corev1.Session_Status_Authentication_Info, error) {
 	var err error
+	attempt := authevents.GetAttempt(ctx)
 
 	if resp == nil || resp.ChallengeResponse == nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errInvalidArg("Nil Authenticator response")
 	}
 
@@ -56,12 +59,20 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
+	attempt.SetAuthenticator(&corev1.Session_Status_Authentication_Info_Authenticator{
+		AuthenticatorRef: umetav1.GetObjectReference(authn),
+		Type:             authn.Status.Type,
+		Mode:             getSessionAuthenticatorMode(sess),
+	})
+
 	if !authn.Status.IsRegistered {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("Authenticator is not registered")
 	}
 	switch authn.Spec.State {
 	case corev1.Authenticator_Spec_ACTIVE:
 	default:
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("Authenticator is not ACTIVE")
 	}
 
@@ -84,14 +95,17 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		authn.Status.AuthenticationAttempt.CreatedAt == nil ||
 		!authn.Status.AuthenticationAttempt.CreatedAt.IsValid() ||
 		authn.Status.AuthenticationAttempt.EncryptedChallengeRequest == nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errPermissionDenied("No valid current authentication attempt...")
 	}
 
 	if authn.Status.AuthenticationAttempt.SessionRef.Uid != sess.Metadata.Uid {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errPermissionDenied("No valid current authentication attempt")
 	}
 
 	if s.isAuthenticationAttemptTimeoutExceeded(authn) {
+		attempt.SetReason(authevents.ReasonExpiredCredential)
 		if err := nullifyCurrAndUpdate(); err != nil {
 			return nil, err
 		}
@@ -116,27 +130,34 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 
 	case *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Fido:
 		if resp.ChallengeResponse.GetFido() == nil {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Mismatch auth factor type")
 		}
 		if authn.Status.Type != corev1.Authenticator_Status_FIDO {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Invalid Authenticator type")
 		}
 
 	case *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Totp:
 		if resp.ChallengeResponse.GetTotp() == nil {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Mismatch auth factor type")
 		}
 		if authn.Status.Type != corev1.Authenticator_Status_TOTP {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Invalid Authenticator type")
 		}
 	case *authv1.AuthenticateAuthenticatorBeginResponse_ChallengeRequest_Tpm:
 		if resp.ChallengeResponse.GetTpm() == nil {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Mismatch auth factor type")
 		}
 		if authn.Status.Type != corev1.Authenticator_Status_TPM {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errInvalidArg("Invalid Authenticator type")
 		}
 	default:
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errInvalidArg("Invalid challengeRequest type")
 	}
 
@@ -155,6 +176,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 		authn.Status.FailedAuthentications = authn.Status.FailedAuthentications + 1
 		nullifyCurrAndUpdate()
 		if authenticators.IsErrInvalidAuth(err) {
+			attempt.SetReason(authevents.ReasonInvalidCredential)
 			return nil, s.errPermissionDenied("Invalid authentication: %+v", err)
 		}
 		return nil, s.errInternalErr(err)
@@ -168,15 +190,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 			Authenticator: &corev1.Session_Status_Authentication_Info_Authenticator{
 				AuthenticatorRef: umetav1.GetObjectReference(authn),
 				Type:             authn.Status.Type,
-				Mode: func() corev1.Session_Status_Authentication_Info_Authenticator_Mode {
-					switch sess.Status.AuthenticatorAction {
-					case corev1.Session_Status_AUTHENTICATION_REQUIRED,
-						corev1.Session_Status_AUTHENTICATION_RECOMMENDED:
-						return corev1.Session_Status_Authentication_Info_Authenticator_MFA
-					default:
-						return corev1.Session_Status_Authentication_Info_Authenticator_DEFAULT
-					}
-				}(),
+				Mode:             getSessionAuthenticatorMode(sess),
 				Info: func() *corev1.Session_Status_Authentication_Info_Authenticator_Info {
 					if authn.Status.Type == corev1.Authenticator_Status_FIDO && finishResp.Cred != nil {
 						return &corev1.Session_Status_Authentication_Info_Authenticator_Info{
@@ -241,6 +255,7 @@ func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
 	for _, rule := range cc.Spec.Authenticator.PostAuthenticationRules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
+			authevents.GetAttempt(ctx).SetReason(authevents.ReasonInternalError)
 			return errors.Errorf("Could not evaluate authenticator post-authentication rule: %+v", err)
 		}
 
@@ -249,6 +264,7 @@ func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
 			case corev1.ClusterConfig_Spec_Authenticator_Rule_ALLOW:
 				return nil
 			case corev1.ClusterConfig_Spec_Authenticator_Rule_DENY:
+				authevents.GetAttempt(ctx).SetReason(authevents.ReasonDeniedByRule)
 				return errors.Errorf("Denied by postAuthentication rule")
 			}
 		}
@@ -260,12 +276,16 @@ func (s *server) doPostAuthenticatorAuthenticationRules(ctx context.Context,
 func (s *server) getAuthenticator(ctx context.Context,
 	authnRef *metav1.ObjectReference, sess *corev1.Session) (*corev1.Authenticator, error) {
 
+	attempt := authevents.GetAttempt(ctx)
+
 	if err := apivalidation.CheckObjectRef(authnRef, &apivalidation.CheckGetOptionsOpts{}); err != nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errInvalidArgErr(err)
 	}
 	authn, err := s.octeliumC.CoreC().GetAuthenticator(ctx, apivalidation.ObjectReferenceToRGetOptions(authnRef))
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
+			attempt.SetReason(authevents.ReasonNotAllowed)
 			return nil, s.errNotFoundErr(err)
 		}
 		return nil, s.errInternalErr(err)
@@ -275,6 +295,7 @@ func (s *server) getAuthenticator(ctx context.Context,
 		return nil, s.errInternal("Nil Authenticator UserRef")
 	}
 	if authn.Status.UserRef.Uid != sess.Status.UserRef.Uid {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("Authenticator does not belong to the User")
 	}
 
@@ -627,6 +648,7 @@ func (s *server) checkAuthenticatorRateLimit(ctx context.Context, authn *corev1.
 		}
 
 		if !res.IsAllowed {
+			authevents.GetAttempt(ctx).SetReason(authevents.ReasonLimitExceeded)
 			return s.errInvalidArg("Authenticator rate limit exceeded")
 		}
 	}

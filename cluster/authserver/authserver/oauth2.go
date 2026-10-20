@@ -27,6 +27,8 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/authevents"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
@@ -67,6 +69,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	}
 
 	var err error
+	r, attempt := s.newAuthAttemptHTTP(r, corev1.Session_Status_Authentication_Info_CREDENTIAL)
 	ctx := r.Context()
 	s.setOAuth2TokenHeaders(w)
 
@@ -82,12 +85,14 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 
 	if tkn.Spec.Type != corev1.Credential_Spec_OAUTH2 {
 		zap.L().Debug("Credential is not OAUTH2")
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
 	if tkn.Status.Id != clientID {
 		zap.L().Debug("oauth2 clientID mismatch", zap.Error(err))
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
@@ -95,6 +100,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	scopeStr := r.Form.Get("scope")
 	scopes, err := checkAndGetOAuthScopeStr(scopeStr)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		s.returnOAuth2Err(w, r, "invalid_scope", 400)
 		return
 	}
@@ -102,6 +108,7 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(tkn.Status.UserRef))
 	if err != nil {
 		if grpcerr.IsNotFound(err) {
+			attempt.SetReason(authevents.ReasonUserNotFound)
 			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
@@ -109,12 +116,16 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 		return
 	}
 
+	attempt.SetUser(usr)
+
 	if usr.Spec.Type != corev1.User_Spec_WORKLOAD {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	if usr.Spec.IsDisabled || usr.Status.IsLocked {
+		attempt.SetReason(getUserStateReason(usr))
 		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
@@ -147,13 +158,16 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 	}
 
 	if sess != nil {
+		attempt.SetSession(sess)
 
 		if sess.Status.IsLocked {
+			attempt.SetReason(authevents.ReasonRevokedCredential)
 			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
 
 		if sess.Spec.State == corev1.Session_Spec_REJECTED {
+			attempt.SetReason(authevents.ReasonRevokedCredential)
 			s.returnOAuth2Err(w, r, "invalid_client", 400)
 			return
 		}
@@ -174,6 +188,8 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			s.returnOAuth2Err(w, r, "server_error", 500)
 			return
 		}
+
+		attempt.Commit()
 	} else {
 
 		if err := s.checkMaxSessionsPerUser(ctx, usr, cc); err != nil {
@@ -214,6 +230,8 @@ func (s *server) handleOAuth2TokenClientCredentials(w http.ResponseWriter, r *ht
 			s.returnOAuth2Err(w, r, "server_error", 500)
 			return
 		}
+
+		attempt.Commit()
 	}
 
 	if err := s.updateAndAutoDeleteCredential(ctx, tkn); err != nil {
@@ -291,6 +309,12 @@ func (s *server) setOAuth2TokenHeaders(w http.ResponseWriter) {
 func (s *server) returnOAuth2Err(w http.ResponseWriter,
 	r *http.Request, errCode string, statusCode int) {
 
+	if statusCode == http.StatusInternalServerError {
+		s.finishAuthAttempt(authevents.GetAttempt(r.Context()), grpcutils.Internal("%s", errCode))
+	} else {
+		s.finishAuthAttempt(authevents.GetAttempt(r.Context()), grpcutils.Unauthenticated("%s", errCode))
+	}
+
 	resp := &oauth2ErrorResponse{
 		Error:            errCode,
 		ErrorDescription: getOAuth2ErrDescription(errCode),
@@ -343,6 +367,7 @@ func (s *server) handleOAuth2Metadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r *http.Request) {
+	r, attempt := s.newAuthAttemptHTTP(r, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER)
 	ctx := r.Context()
 	s.setOAuth2TokenHeaders(w)
 	assertion := r.Form.Get("client_assertion")
@@ -354,21 +379,31 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		return
 	}
 
+	attempt.SetEligible()
+	attempt.SetIdentityProvider(getAttemptIdentityProvider(provider.Provider()))
+
 	usr, info, err := provider.AuthenticateAssertion(ctx, &authv1.AuthenticateWithAssertionRequest{
 		Assertion: assertion,
 	})
 	if err != nil {
 		zap.L().Debug("Could not authenticateAssertion", zap.Error(err))
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		s.returnOAuth2Err(w, r, "invalid_client", 401)
 		return
 	}
 
+	attempt.SetVerified()
+	attempt.SetIdentityProvider(info.GetIdentityProvider())
+	attempt.SetUser(usr)
+
 	if usr.Spec.Type != corev1.User_Spec_WORKLOAD {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
 
 	if usr.Spec.IsDisabled || usr.Status.IsLocked {
+		attempt.SetReason(getUserStateReason(usr))
 		s.returnOAuth2Err(w, r, "invalid_request", 400)
 		return
 	}
@@ -376,6 +411,7 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 	scopeStr := r.Form.Get("scope")
 	scopes, err := checkAndGetOAuthScopeStr(scopeStr)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		s.returnOAuth2Err(w, r, "invalid_scope", 400)
 		return
 	}
@@ -411,6 +447,8 @@ func (s *server) handleOAuth2TokenClientCredentialsOIDC(w http.ResponseWriter, r
 		s.returnOAuth2Err(w, r, "server_error", 500)
 		return
 	}
+
+	attempt.Commit()
 
 	accessToken, err := s.generateAccessToken(sess)
 	if err != nil {

@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/oscope"
 	"github.com/octelium/octelium/cluster/common/sessionc"
@@ -110,11 +111,15 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 		return nil, err
 	}
 
+	attempt := authevents.GetAttempt(ctx)
+
 	if tkn.Spec.Type != corev1.Credential_Spec_AUTH_TOKEN {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errUnauthenticated("Not an AUTH TOKEN")
 	}
 
 	if err := checkCredentialPKCE(tkn, req.CodeVerifier); err != nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
@@ -183,6 +188,8 @@ func (s *server) doAuthenticateWithAuthenticationToken(ctx context.Context, req 
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
+
+	attempt.Commit()
 
 	ret, err := s.generateSessionTokenResponse(ctx, sess)
 	if err != nil {
@@ -277,20 +284,32 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		}
 	}
 
+	attempt := authevents.GetAttempt(ctx)
+	attempt.SetEligible()
+	attempt.SetIdentityProvider(getAttemptIdentityProvider(provider.Provider()))
+
 	usr, info, err := provider.AuthenticateAssertion(ctx, req)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
+	attempt.SetVerified()
+	attempt.SetIdentityProvider(info.GetIdentityProvider())
+	attempt.SetUser(usr)
+
 	if usr.Spec.Type != corev1.User_Spec_WORKLOAD {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("User is not WORKLOAD")
 	}
 
 	if usr.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonUserDeactivated)
 		return nil, s.errPermissionDenied("User is deactivated")
 	}
 
 	if usr.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonUserLocked)
 		return nil, s.errPermissionDenied("User is locked")
 	}
 
@@ -331,6 +350,8 @@ func (s *server) doAuthenticateWithAssertion(ctx context.Context, req *authv1.Au
 		return nil, s.errInternalErr(err)
 	}
 
+	attempt.Commit()
+
 	ret, err := s.generateSessionTokenResponse(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -345,18 +366,23 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 		return nil, err
 	}
 
+	attempt := authevents.GetAttempt(ctx)
+
 	if sess.Status.IsBrowser {
 		zap.L().Debug("refreshToken flow is not allowed for Browsers")
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("Invalid Session type")
 	}
 
 	zap.L().Debug("Got Session from creds", zap.Any("sess", sess))
 
 	if err := s.checkReauth(sess); err != nil {
+		attempt.SetReason(authevents.ReasonLimitExceeded)
 		return nil, err
 	}
 
 	if sess.Status.RequiredAuthenticatorRef != nil {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, s.errPermissionDenied("This Session has a required Authenticator")
 	}
 
@@ -377,6 +403,8 @@ func (s *server) doAuthenticateWithRefreshToken(ctx context.Context, _ *authv1.A
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, s.errInternalErr(err)
 	}
+
+	attempt.Commit()
 
 	ret, err := s.generateSessionTokenResponse(ctx, sess)
 	if err != nil {
@@ -438,19 +466,26 @@ func (s *server) getUserFromSession(ctx context.Context, sess *corev1.Session) (
 }
 
 func (s *server) getUserFromUserRef(ctx context.Context, usrRef *metav1.ObjectReference) (*corev1.User, error) {
+	attempt := authevents.GetAttempt(ctx)
+
 	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(usrRef))
 	if err != nil {
 		if !grpcerr.IsNotFound(err) {
 			return nil, s.errInternalErr(err)
 		}
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, s.errUnauthenticatedErr(err)
 	}
 
+	attempt.SetUser(usr)
+
 	if usr.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonUserDeactivated)
 		return nil, s.errPermissionDenied("User is deactivated")
 	}
 
 	if usr.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonUserLocked)
 		return nil, s.errPermissionDenied("User is locked")
 	}
 
@@ -543,11 +578,15 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
+	attempt := authevents.GetAttempt(ctx)
+
 	if err := s.validateChallengeResponse(req.ChallengeResponse); err != nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, err
 	}
 
 	if err := s.checkReauth(sess); err != nil {
+		attempt.SetReason(authevents.ReasonLimitExceeded)
 		return nil, err
 	}
 
@@ -577,6 +616,7 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		sess.Status.DeviceRef = authn.Status.DeviceRef
 	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef != nil:
 		if authn.Status.DeviceRef.Uid != sess.Status.DeviceRef.Uid {
+			attempt.SetReason(authevents.ReasonNotAllowed)
 			return nil, grpcutils.PermissionDenied("Invalid Device")
 		}
 	case authn.Status.DeviceRef == nil && sess.Status.DeviceRef != nil:
@@ -600,6 +640,8 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
+
+	attempt.Commit()
 
 	ret, err := s.generateSessionTokenResponse(ctx, sess)
 	if err != nil {

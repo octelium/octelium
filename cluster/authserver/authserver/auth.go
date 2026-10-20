@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -260,9 +261,12 @@ func (s *server) checkXOcteliumOrigin(r *http.Request) error {
 
 func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
+	r, attempt := s.newAuthAttemptHTTP(r, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER)
+
 	doRedirect := func(err error) {
 		zap.L().Debug("Auth callback error", zap.Error(err))
 
+		s.finishAuthAttempt(attempt, err)
 		http.Redirect(w, r, s.rootURL, http.StatusSeeOther)
 	}
 
@@ -277,6 +281,8 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	zap.L().Debug("Got login state", zap.Any("loginState", userState))
 
+	attempt.SetEligible()
+
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		doRedirect(err)
@@ -285,20 +291,26 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := s.getWebProviderFromUID(userState.UID)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		doRedirect(err)
 		return
 	}
 
 	idp := provider.Provider()
+	attempt.SetIdentityProvider(getAttemptIdentityProvider(idp))
 
 	authInfo, err := provider.HandleCallback(r, userState.Login)
 	if err != nil {
 		zap.L().Debug("Could not handleCallback", zap.Error(err))
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		doRedirect(err)
 		return
 	}
 
 	zap.L().Debug("Successful IdentityProvider authentication", zap.Any("authInfo", authInfo))
+
+	attempt.SetVerified()
+	attempt.SetIdentityProvider(authInfo.GetIdentityProvider())
 
 	usr, err := s.authenticateUser(ctx, authInfo, idp)
 	if err != nil {
@@ -319,6 +331,8 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		doRedirect(err)
 		return
 	}
+
+	attempt.Commit()
 
 	if err := s.setAuthCallbackResponse(r, w, userState, sess); err != nil {
 		zap.L().Debug("Could not setAuthCallbackResponse", zap.Error(err))
@@ -479,12 +493,14 @@ func (s *server) authenticateUser(ctx context.Context,
 	authInfo *corev1.Session_Status_Authentication_Info, idp *corev1.IdentityProvider) (*corev1.User, error) {
 
 	info := authInfo.GetIdentityProvider()
+	attempt := authevents.GetAttempt(ctx)
 
 	if info == nil {
 		return nil, errors.Errorf("Nil IdentityProvider details")
 	}
 
 	if info.Identifier == "" {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return nil, errors.Errorf("Empty identifier")
 	}
 
@@ -515,10 +531,12 @@ func (s *server) authenticateUser(ctx context.Context,
 		}()
 
 		if userAccount == nil {
+			attempt.SetReason(authevents.ReasonUserNotFound)
 			return nil, errors.Errorf("The User authentication account does not exist")
 		}
 
 		if !vutils.SecureStringEqual(userAccount.Identifier, info.Identifier) {
+			attempt.SetReason(authevents.ReasonUserNotFound)
 			return nil, errors.Errorf("The User identifier does not match the account")
 		}
 	case 0:
@@ -533,38 +551,48 @@ func (s *server) authenticateUser(ctx context.Context,
 				return nil, err
 			}
 			if len(usrs.Items) == 0 {
+				attempt.SetReason(authevents.ReasonUserNotFound)
 				return nil, errors.Errorf("This User does not exist")
 			}
 			if len(usrs.Items) != 1 {
 				zap.L().Warn("Multiple Users are assigned to the same email", zap.Any("usrList", (usrs)))
+				attempt.SetReason(authevents.ReasonUserNotFound)
 				return nil, errors.Errorf("This User does not exist")
 			}
 			usr = usrs.Items[0]
 
 			// Double check
 			if usr.Spec.Email != info.Email {
+				attempt.SetReason(authevents.ReasonUserNotFound)
 				return nil, errors.Errorf("The User email does not match the provider info")
 			}
 		}
 	default:
 		zap.L().Warn("Multiple Users are assigned to the same identifier",
 			zap.Any("usrList", (usrs)), zap.Any("idp", idp))
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, errors.Errorf("This User does not exist")
 	}
 
 	if usr == nil {
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, errors.Errorf("This User does not exist")
 	}
 
+	attempt.SetUser(usr)
+
 	if usr.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonUserDeactivated)
 		return nil, errors.Errorf("Deactivated User")
 	}
 
 	if usr.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonUserLocked)
 		return nil, errors.Errorf("User is locked")
 	}
 
 	if usr.Spec.Type != corev1.User_Spec_HUMAN {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, errors.Errorf("Invalid User type")
 	}
 
@@ -965,6 +993,7 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 	for _, rule := range idp.Spec.PostAuthenticationRules {
 		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
+			authevents.GetAttempt(ctx).SetReason(authevents.ReasonInternalError)
 			return errors.Errorf("Could not evaluate post-authentication rule: %+v", err)
 		}
 
@@ -973,6 +1002,7 @@ func (s *server) doPostAuthenticationRules(ctx context.Context,
 			case corev1.IdentityProvider_Spec_PostAuthenticationRule_ALLOW:
 				return nil
 			case corev1.IdentityProvider_Spec_PostAuthenticationRule_DENY:
+				authevents.GetAttempt(ctx).SetReason(authevents.ReasonDeniedByRule)
 				return errors.Errorf("Denied by postAuthentication rule")
 			}
 		}

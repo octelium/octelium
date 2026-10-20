@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	vutils "github.com/octelium/octelium/pkg/utils"
@@ -85,8 +86,11 @@ func GetUserFromIdentifier(ctx context.Context, opts *GetUserFromIdentifierOpts)
 		},
 	}
 
+	attempt := authevents.GetAttempt(ctx)
+
 	usrs, err := opts.OcteliumC.CoreC().ListUser(ctx, listOptions)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonInternalError)
 		return nil, errors.Errorf("Internal error")
 	}
 
@@ -97,6 +101,7 @@ func GetUserFromIdentifier(ctx context.Context, opts *GetUserFromIdentifierOpts)
 			zap.L().Warn("Multiple Users are assigned to the same identifier",
 				zap.Any("specLeabels", listOptions.SpecLabels))
 		}
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, errors.Errorf("This User does not exist")
 	}
 
@@ -106,15 +111,20 @@ func GetUserFromIdentifier(ctx context.Context, opts *GetUserFromIdentifierOpts)
 		zap.Any("user", usr), zap.String("identifier", opts.Identifier),
 		zap.String("idp", opts.IdentityProviderName))
 
+	attempt.SetUser(usr)
+
 	if usr.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonUserDeactivated)
 		return nil, errors.Errorf("Deactivated User")
 	}
 
 	if usr.Spec.Type != opts.UserType {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return nil, errors.Errorf("Invalid User type")
 	}
 
 	if usr.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonUserLocked)
 		return nil, errors.Errorf("User is locked")
 	}
 
@@ -131,10 +141,12 @@ func GetUserFromIdentifier(ctx context.Context, opts *GetUserFromIdentifierOpts)
 	}()
 
 	if userAccount == nil {
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, errors.Errorf("The User authentication account does not exist")
 	}
 
 	if !vutils.SecureStringEqual(userAccount.Identifier, opts.Identifier) {
+		attempt.SetReason(authevents.ReasonUserNotFound)
 		return nil, errors.Errorf("The User identifier does not match the account")
 	}
 

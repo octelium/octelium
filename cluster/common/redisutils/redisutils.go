@@ -28,7 +28,11 @@ import (
 )
 
 func NewClient() *redis.Client {
-	return redis.NewClient(&redis.Options{
+	return redis.NewClient(NewOptions())
+}
+
+func NewOptions() *redis.Options {
+	return &redis.Options{
 		Addr: func() string {
 			if ldflags.IsTest() {
 				return "localhost:6379"
@@ -67,5 +71,5 @@ func NewClient() *redis.Client {
 			}
 			return nil
 		}(),
-	})
+	}
 }

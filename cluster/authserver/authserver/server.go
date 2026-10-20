@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/oidcassertion"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/saml"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -89,6 +90,8 @@ type server struct {
 	mdsProvider metadata.Provider
 
 	geoipCtl *geoipctl.Controller
+
+	authEvents *authevents.Publisher
 
 	grpcSrv *grpc.Server
 	httpSrv *http.Server
@@ -236,6 +239,11 @@ func initServer(ctx context.Context,
 			zap.L().Warn("Could not set geoipCtl", zap.Error(err))
 		}
 	}
+
+	ret.authEvents = authevents.NewPublisher(&authevents.PublisherOpts{
+		OcteliumC: octeliumC,
+		GeoIPCtl:  ret.geoipCtl,
+	})
 
 	zap.L().Debug("initializing authServer completed")
 
@@ -385,6 +393,8 @@ func (s *server) run(ctx context.Context, grpcMode bool) error {
 	if err := s.geoipCtl.Run(ctx); err != nil {
 		return err
 	}
+
+	s.authEvents.Run(ctx)
 
 	if err := watchers.NewCoreV1(s.octeliumC).Authenticator(ctx, nil,
 		func(ctx context.Context, item *corev1.Authenticator) error {
@@ -652,6 +662,7 @@ func (s *server) checkMaxSessionsPerUser(ctx context.Context, usr *corev1.User, 
 		return s.errInternalErr(err)
 	}
 	if sessList.GetListResponseMeta().GetTotalCount() >= maxSess {
+		authevents.GetAttempt(ctx).SetReason(authevents.ReasonLimitExceeded)
 		return s.errPermissionDenied("Session per User limit exceeded")
 	}
 

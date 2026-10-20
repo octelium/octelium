@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/apis/rsc/rpubsubv1"
 	"github.com/octelium/octelium/apis/rsc/rratelimitv1"
 	"github.com/octelium/octelium/apis/rsc/rvectorv1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
@@ -58,6 +59,8 @@ type Server struct {
 	grpcSrv *grpc.Server
 
 	eventHub *eventHub
+
+	pubSubSrv *srvPubSub
 
 	opts          *Opts
 	commonMetrics *commonMetrics
@@ -218,6 +221,11 @@ func (s *Server) Run(ctx context.Context) error {
 		rvectorv1.RegisterMainServiceServer(s.grpcSrv, vectorSrv)
 	}
 
+	{
+		s.pubSubSrv = newSrvPubSub(s.redisC)
+		rpubsubv1.RegisterMainServiceServer(s.grpcSrv, s.pubSubSrv)
+	}
+
 	if s.opts.RegisterResourceFn != nil {
 		zap.L().Debug("Running RegisterResourceFn")
 		if err := s.opts.RegisterResourceFn(s.grpcSrv); err != nil {
@@ -265,6 +273,10 @@ func (s *Server) Stop() {
 
 	if s.grpcSrv != nil {
 		s.grpcSrv.Stop()
+	}
+
+	if s.pubSubSrv != nil {
+		s.pubSubSrv.close()
 	}
 
 	if s.redisC != nil {

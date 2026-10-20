@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/authevents"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -58,6 +59,8 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
 		return nil, grpcutils.Unauthorized("Invalid authentication")
 	}
+
+	attempt := authevents.GetAttempt(ctx)
 
 	if cred.Authenticator.SignCount > 0 {
 		if fido := authn.Status.GetInfo().GetFido(); fido != nil &&
@@ -100,6 +103,8 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 	if err != nil {
 		return nil, s.errInternalErr(err)
 	}
+
+	attempt.Commit()
 
 	if query != "" {
 		zap.L().Debug("Got query in doAuthenticateWithPasskey", zap.String("val", query))
@@ -204,11 +209,21 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 	var authn *corev1.Authenticator
 	var usr *corev1.User
 
+	attempt := authevents.GetAttempt(ctx)
+
 	getWebauthnUser := func(rawID, userHandle []byte) (user webauthn.User, err error) {
 		authn, err = s.authnCache.GetAuthenticatorByCredID(rawID)
 		if err != nil {
 			return nil, err
 		}
+
+		attempt.SetEligible()
+		attempt.SetAuthenticator(&corev1.Session_Status_Authentication_Info_Authenticator{
+			AuthenticatorRef: umetav1.GetObjectReference(authn),
+			Type:             corev1.Authenticator_Status_FIDO,
+			Mode:             corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY,
+		})
+		attempt.SetUserRef(authn.Status.UserRef)
 
 		current, err := s.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: authn.Metadata.Uid})
 		if err != nil {
@@ -220,6 +235,7 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 				zap.L().Debug("Could not get current Authenticator. Using cached version",
 					zap.String("authn", authn.Metadata.Name), zap.Error(err))
 			default:
+				attempt.SetReason(authevents.ReasonNotAllowed)
 				return nil, err
 			}
 		} else {
@@ -229,6 +245,9 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		usr, err = s.octeliumC.CoreC().GetUser(ctx,
 			apivalidation.ObjectReferenceToRGetOptions(authn.Status.UserRef))
 		if err != nil {
+			if grpcerr.IsNotFound(err) {
+				attempt.SetReason(authevents.ReasonUserNotFound)
+			}
 			return nil, err
 		}
 
@@ -243,14 +262,19 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 
 	cred, err := s.passkeyCtl.ValidateDiscoverableLogin(getWebauthnUser, *state.Session, parsedResponse)
 	if err != nil {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return retErr(err)
 	}
 
+	attempt.SetVerified()
+
 	if cred.Authenticator.CloneWarning {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return retErrStr("FIDO possible cloned Authenticator")
 	}
 
 	if !cred.Flags.UserVerified {
+		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return retErrStr("FIDO user verification failed")
 	}
 
@@ -262,27 +286,35 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		return retErrStr("Authenticator not set by getWebauthnUser")
 	}
 
+	attempt.SetUser(usr)
+
 	if usr.Spec.Type != corev1.User_Spec_HUMAN {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return retErrStr("Invalid User type")
 	}
 
 	if usr.Spec.IsDisabled {
+		attempt.SetReason(authevents.ReasonUserDeactivated)
 		return retErrStr("User is deactivated")
 	}
 
 	if usr.Status.IsLocked {
+		attempt.SetReason(authevents.ReasonUserLocked)
 		return retErrStr("User is locked")
 	}
 
 	if !authn.Status.IsRegistered {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return retErrStr("Authenticator is not registered")
 	}
 
 	if authn.Status.Type != corev1.Authenticator_Status_FIDO {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return retErrStr("Invalid Authenticator type")
 	}
 
 	if authn.Spec.State != corev1.Authenticator_Spec_ACTIVE {
+		attempt.SetReason(authevents.ReasonNotAllowed)
 		return retErrStr("Authenticator is not ACTIVE")
 	}
 
