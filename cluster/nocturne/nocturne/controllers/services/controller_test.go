@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +34,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -622,4 +626,225 @@ func TestConcurrentServiceReconciliation(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, cms.Items, 1)
 	assert.Empty(t, c.serviceLocks)
+}
+
+func TestServiceDeleteErrors(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	errConfigMap := k8serr.NewServiceUnavailable("could not delete ConfigMap")
+	errSession := status.Error(codes.Unavailable, "could not remove Session upstream")
+
+	for _, tc := range []struct {
+		name             string
+		configMapErr     error
+		missingConfigMap bool
+		sessionError     string
+	}{
+		{"Success", nil, false, ""},
+		{"ConfigMapNotFound", nil, true, ""},
+		{"ConfigMapUnavailable", errConfigMap, false, ""},
+		{"ConfigMapForbidden", k8serr.NewForbidden(k8scorev1.Resource("configmaps"), "svc", errors.New("forbidden")), false, ""},
+		{"ConfigMapCancelled", context.Canceled, false, ""},
+		{"ConfigMapDeadlineExceeded", context.DeadlineExceeded, false, ""},
+		{"ListSession", nil, false, "list"},
+		{"GetSession", nil, false, "get"},
+		{"UpdateSession", nil, false, "update"},
+		{"ConfigMapAndListSession", errConfigMap, false, "list"},
+		{"ConfigMapAndGetSession", errConfigMap, false, "get"},
+		{"ConfigMapAndUpdateSession", errConfigMap, false, "update"},
+		{"ConfigMapNotFoundAndSessionError", nil, true, "update"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, sess := newTstUpstreamSession()
+			sess.Status.Connection.Upstreams = append(sess.Status.Connection.Upstreams,
+				&corev1.Session_Status_Connection_Upstream{
+					ServiceRef: &metav1.ObjectReference{Uid: svc.Metadata.Uid}, Port: 20001,
+				})
+			other := proto.Clone(sess.Status.Connection.Upstreams[0]).(*corev1.Session_Status_Connection_Upstream)
+			fail := true
+			var lists int
+			coreC := &fakeSessionCoreC{
+				listSession: func(in *rmetav1.ListOptions) (*corev1.SessionList, error) {
+					lists++
+					if fail && tc.sessionError == "list" {
+						return nil, errSession
+					}
+					return &corev1.SessionList{Items: []*corev1.Session{proto.Clone(sess).(*corev1.Session)}}, nil
+				},
+				getSession: func(in *rmetav1.GetOptions) (*corev1.Session, error) {
+					assert.Equal(t, sess.Metadata.Uid, in.Uid)
+					if fail && tc.sessionError == "get" {
+						return nil, errSession
+					}
+					return proto.Clone(sess).(*corev1.Session), nil
+				},
+				updateSession: func(in *corev1.Session) (*corev1.Session, error) {
+					if fail && tc.sessionError == "update" {
+						return nil, errSession
+					}
+					sess = proto.Clone(in).(*corev1.Session)
+					return in, nil
+				},
+			}
+			unrelated := &k8scorev1.ConfigMap{ObjectMeta: k8smetav1.ObjectMeta{Name: "other", Namespace: ns}}
+			k8sC := fakek8s.NewSimpleClientset(unrelated)
+			c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+			cm := c.getOwnerConfigMap(svc)
+			if !tc.missingConfigMap {
+				_, err := k8sC.CoreV1().ConfigMaps(ns).Create(ctx, cm, k8smetav1.CreateOptions{})
+				assert.Nil(t, err)
+			}
+			k8sC.PrependReactor("delete", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				assert.Equal(t, ns, action.GetNamespace())
+				assert.Equal(t, cm.Name, action.(k8stesting.DeleteAction).GetName())
+				if fail && tc.configMapErr != nil {
+					return true, nil, tc.configMapErr
+				}
+				return false, nil, nil
+			})
+
+			err := c.OnDelete(ctx, svc)
+			if tc.configMapErr == nil && tc.sessionError == "" {
+				assert.Nil(t, err)
+			}
+			if tc.configMapErr != nil {
+				assert.ErrorIs(t, err, tc.configMapErr)
+			}
+			if tc.sessionError != "" {
+				assert.ErrorIs(t, err, errSession)
+			}
+			assert.Equal(t, 1, lists)
+			assert.Equal(t, tc.sessionError != "", sessionHasUpstreamForSvc(sess, svc))
+			_, err = k8sC.CoreV1().ConfigMaps(ns).Get(ctx, cm.Name, k8smetav1.GetOptions{})
+			if tc.configMapErr != nil {
+				assert.Nil(t, err)
+			} else {
+				assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+			}
+			assert.Empty(t, c.serviceLocks)
+
+			fail = false
+			assert.Nil(t, c.OnDelete(ctx, svc))
+			assert.Nil(t, c.OnDelete(ctx, svc))
+			assert.Equal(t, 3, lists)
+			assert.False(t, sessionHasUpstreamForSvc(sess, svc))
+			if assert.Len(t, sess.Status.Connection.Upstreams, 1) {
+				assert.True(t, proto.Equal(other, sess.Status.Connection.Upstreams[0]))
+			}
+			_, err = k8sC.CoreV1().ConfigMaps(ns).Get(ctx, cm.Name, k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+			ret, err := k8sC.CoreV1().ConfigMaps(ns).Get(ctx, unrelated.Name, k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			assert.Equal(t, unrelated, ret)
+			assert.Empty(t, c.serviceLocks)
+		})
+	}
+}
+
+func TestServiceDeleteWatcherRetry(t *testing.T) {
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() { tst.Destroy() })
+	realC := tst.C.OcteliumC.CoreC()
+
+	for _, tc := range []struct {
+		name    string
+		deleted bool
+	}{
+		{"Unavailable", false},
+		{"DeletedBeforeError", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			svc, sess := newTstUpstreamSession()
+			svc.Metadata.Name = utilrand.GetRandomStringCanonical(8) + ".default"
+			svc.Metadata.Uid = ""
+			svc, err := realC.CreateService(ctx, svc)
+			if !assert.Nil(t, err, "%+v", err) {
+				return
+			}
+			sess.Metadata = &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)}
+			sess, err = realC.CreateSession(ctx, sess)
+			if !assert.Nil(t, err, "%+v", err) {
+				return
+			}
+			defer realC.DeleteSession(ctx, &rmetav1.DeleteOptions{Uid: sess.Metadata.Uid})
+			k8sC := fakek8s.NewSimpleClientset()
+			c := NewController(tst.C.OcteliumC, k8sC)
+			if !assert.Nil(t, c.OnAdd(ctx, svc)) {
+				return
+			}
+			current, err := realC.GetSession(ctx, &rmetav1.GetOptions{Uid: sess.Metadata.Uid})
+			assert.Nil(t, err, "%+v", err)
+			assert.True(t, sessionHasUpstreamForSvc(current, svc))
+
+			cm := c.getOwnerConfigMap(svc)
+			var attempts atomic.Int32
+			k8sC.PrependReactor("delete", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				assert.Equal(t, cm.Name, action.(k8stesting.DeleteAction).GetName())
+				if attempts.Add(1) == 1 {
+					if tc.deleted {
+						err := k8sC.Tracker().Delete(k8scorev1.SchemeGroupVersion.WithResource("configmaps"), ns, cm.Name)
+						assert.Nil(t, err)
+					}
+					return true, nil, k8serr.NewServiceUnavailable("could not delete ConfigMap")
+				}
+				return false, nil, nil
+			})
+			ready := make(chan struct{}, 1)
+			done := make(chan struct{}, 1)
+			watcher, err := watchers.NewWatcher("core", "v1", "Service",
+				func(ctx context.Context, item umetav1.ResourceObjectI) error {
+					if item.GetMetadata().Uid == svc.Metadata.Uid {
+						select {
+						case ready <- struct{}{}:
+						default:
+						}
+					}
+					return nil
+				}, nil,
+				func(ctx context.Context, item umetav1.ResourceObjectI) error {
+					if item.GetMetadata().Uid != svc.Metadata.Uid {
+						return nil
+					}
+					if err := c.OnDelete(ctx, item.(*corev1.Service)); err != nil {
+						return err
+					}
+					done <- struct{}{}
+					return nil
+				}, realC,
+				func() (umetav1.ResourceObjectI, error) { return &corev1.Service{}, nil })
+			if !assert.Nil(t, err, "%+v", err) {
+				return
+			}
+			defer watcher.Close()
+			assert.Nil(t, watcher.Run(ctx))
+			select {
+			case <-ready:
+			case <-ctx.Done():
+				assert.Fail(t, "the watcher did not observe the Service", "%+v", ctx.Err())
+				return
+			}
+
+			_, err = realC.DeleteService(ctx, &rmetav1.DeleteOptions{Uid: svc.Metadata.Uid})
+			assert.Nil(t, err, "%+v", err)
+			select {
+			case <-done:
+			case <-ctx.Done():
+				assert.Fail(t, "the watcher did not retry the failed Service deletion", "%+v", ctx.Err())
+				return
+			}
+			assert.Equal(t, int32(2), attempts.Load())
+			_, err = k8sC.CoreV1().ConfigMaps(ns).Get(ctx, cm.Name, k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+			current, err = realC.GetSession(ctx, &rmetav1.GetOptions{Uid: sess.Metadata.Uid})
+			assert.Nil(t, err, "%+v", err)
+			assert.False(t, sessionHasUpstreamForSvc(current, svc))
+			if assert.Len(t, current.Status.Connection.Upstreams, 1) {
+				assert.True(t, proto.Equal(sess.Status.Connection.Upstreams[0], current.Status.Connection.Upstreams[0]))
+			}
+		})
+	}
 }

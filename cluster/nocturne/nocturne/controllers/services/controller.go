@@ -19,6 +19,7 @@ package svccontroller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -572,19 +573,21 @@ func (c *Controller) OnDelete(ctx context.Context, svc *corev1.Service) error {
 		return nil
 	}
 
+	var deleteErr error
 	if err := c.k8sC.CoreV1().ConfigMaps(ns).Delete(ctx,
 		k8sutils.GetSvcHostname(svc), k8smetav1.DeleteOptions{}); err != nil {
 		if !k8serr.IsNotFound(err) {
 			zap.L().Warn("Could not delete svc configMap",
 				zap.String("svc", svc.Metadata.Name), zap.Error(err))
+			deleteErr = err
 		}
 	}
 
 	if err := c.handleDeleteSessionUpstream(ctx, svc); err != nil {
-		return err
+		return errors.Join(deleteErr, err)
 	}
 
-	return nil
+	return deleteErr
 }
 
 func (c *Controller) getK8sService(svc *corev1.Service, ownerCM *k8scorev1.ConfigMap) *k8scorev1.Service {
