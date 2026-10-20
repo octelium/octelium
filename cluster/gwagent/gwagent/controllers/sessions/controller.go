@@ -17,6 +17,7 @@
 package membercontroller
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -75,6 +76,14 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 		if err := c.wgC.AddConnection(new); err != nil {
 			return err
 		}
+	case newConn != nil && oldConn != nil &&
+		(newConn.Type != oldConn.Type ||
+			newConn.Type == corev1.Session_Status_Connection_WIREGUARD &&
+				!bytes.Equal(newConn.X25519PublicKey, oldConn.X25519PublicKey)):
+		if err := c.OnDelete(ctx, old); err != nil {
+			return err
+		}
+		return c.OnAdd(ctx, new)
 	case newConn != nil && oldConn != nil &&
 		!pbutils.IsEqual(&corev1.Session_Status_Connection{
 			X25519PublicKey: newConn.X25519PublicKey,

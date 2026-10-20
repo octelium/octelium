@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func testGatewayResource(t *testing.T, h *harness.H) {
@@ -379,6 +380,94 @@ func testGatewayQUICInvalidInit(t *testing.T, h *harness.H) {
 			zap.L().Info("Gateway QUICv0 invalid initialization pressure",
 				zap.String("gateway", gw.Metadata.Name), zap.String("rejected", rejected.String()),
 				zap.String("traffic", healthy.String()))
+		})
+	}
+}
+
+func testGatewayReconnect(t *testing.T, h *harness.H) {
+	if err := h.CanInspectWireGuard(t.Context()); err != nil {
+		t.Skipf("The Gateway WireGuard peers cannot be inspected: %+v", err)
+	}
+	svc := h.NewPublicService(t, "default")
+	gateways := h.Gateways(t)
+	require.NotEmpty(t, gateways)
+	var previousKeys []string
+	var sessionUID string
+	checkPeers := func(t *testing.T, activeKey string) {
+		t.Helper()
+		h.Eventually(t, "the Gateways to reconcile the Session peers", harness.ConnectBudget,
+			func(ctx context.Context) error {
+				for _, gw := range gateways {
+					peers, err := h.GatewayWGPeers(ctx, gw)
+					if err != nil {
+						return err
+					}
+					found := false
+					for _, peer := range peers {
+						if slices.Contains(previousKeys, peer.PublicKey) {
+							return errors.Errorf("the Gateway %s still has a previous Connection peer", gw.Metadata.Name)
+						}
+						if peer.PublicKey == activeKey {
+							found = true
+						}
+					}
+					if activeKey != "" && !found {
+						return errors.Errorf("the Gateway %s has no current Connection peer", gw.Metadata.Name)
+					}
+				}
+				return nil
+			})
+	}
+	for _, tc := range []struct {
+		name string
+		mode string
+	}{
+		{name: "WireGuard"},
+		{name: "WireGuardReconnect"},
+		{name: "QUIC", mode: "quicv0"},
+		{name: "WireGuardAfterQUIC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.mode == "quicv0" {
+				h.Require(t, capQUICv0)
+			}
+			conn := h.Connect(t, harness.ConnectOpts{
+				TunnelMode: tc.mode,
+				Publish:    map[string]int{svc.Metadata.Name: h.Port()},
+			})
+			sessName := h.Status(t).Session.Metadata.Name
+			sess := h.GetSession(t, sessName)
+			require.NotNil(t, sess.Status.Connection)
+			if sessionUID == "" {
+				sessionUID = sess.Metadata.Uid
+			}
+			assert.Equal(t, sessionUID, sess.Metadata.Uid)
+			key, err := wgtypes.NewKey(sess.Status.Connection.X25519PublicKey)
+			require.Nil(t, err)
+			assert.NotContains(t, previousKeys, key.String())
+			activeKey := ""
+			if tc.mode == "" {
+				assert.Equal(t, corev1.Session_Status_Connection_WIREGUARD, sess.Status.Connection.Type)
+				activeKey = key.String()
+			} else {
+				assert.Equal(t, corev1.Session_Status_Connection_QUICV0, sess.Status.Connection.Type)
+			}
+			checkPeers(t, activeKey)
+			h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+			current := h.GetSession(t, sessName)
+			require.NotNil(t, current.Status.Connection)
+			assert.Equal(t, sess.Status.Connection.Type, current.Status.Connection.Type)
+			assert.Equal(t, sess.Status.Connection.X25519PublicKey, current.Status.Connection.X25519PublicKey)
+			assert.True(t, pbutils.IsEqual(sess.Status.Connection.StartedAt, current.Status.Connection.StartedAt))
+			require.Nil(t, conn.Disconnect())
+			waitConnectionState(t, h, sessName, func(c *corev1.Session_Status_Connection) error {
+				if c != nil {
+					return errors.Errorf("the Session is still connected")
+				}
+				return nil
+			})
+			previousKeys = append(previousKeys, key.String())
+			checkPeers(t, "")
 		})
 	}
 }
