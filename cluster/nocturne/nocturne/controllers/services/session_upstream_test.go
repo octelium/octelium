@@ -18,6 +18,7 @@ package svccontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -32,6 +34,11 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	fakek8s "k8s.io/client-go/kubernetes/fake"
 )
 
 func sessionHasUpstreamForSvc(sess *corev1.Session, svc *corev1.Service) bool {
@@ -150,4 +157,108 @@ func TestHandleSessionUpstreamNoUserListener(t *testing.T) {
 
 	assert.Nil(t, c.handleUpdateSessionUpstream(ctx, svc))
 	assert.Nil(t, c.handleDeleteSessionUpstream(ctx, svc))
+}
+
+type fakeSessionCoreC struct {
+	rcorev1.ResourceServiceClient
+	listSession   func(*rmetav1.ListOptions) (*corev1.SessionList, error)
+	getSession    func(*rmetav1.GetOptions) (*corev1.Session, error)
+	updateSession func(*corev1.Session) (*corev1.Session, error)
+}
+
+func (c *fakeSessionCoreC) ListSession(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.SessionList, error) {
+	return c.listSession(in)
+}
+
+func (c *fakeSessionCoreC) GetSession(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Session, error) {
+	return c.getSession(in)
+}
+
+func (c *fakeSessionCoreC) UpdateSession(ctx context.Context,
+	in *corev1.Session, opts ...grpc.CallOption) (*corev1.Session, error) {
+	return c.updateSession(in)
+}
+
+func TestSessionUpstreamListErrors(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	errTst := errors.New("could not list host Sessions")
+	svc := newTstService()
+	svc.Spec.Config.Upstream.User = "host"
+	svc.Metadata.SpecLabels = map[string]string{"host-user-host": "host-uid"}
+	coreC := &fakeSessionCoreC{
+		ResourceServiceClient: &fakeCoreC{
+			getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) { return svc, nil },
+		},
+		listSession: func(in *rmetav1.ListOptions) (*corev1.SessionList, error) { return nil, errTst },
+	}
+	c := NewController(&fakeOcteliumC{coreC: coreC}, fakek8s.NewSimpleClientset())
+	assert.ErrorIs(t, c.handleUpdateSessionUpstream(ctx, svc), errTst)
+	assert.ErrorIs(t, c.handleDeleteSessionUpstream(ctx, svc), errTst)
+	assert.ErrorIs(t, c.OnAdd(ctx, svc), errTst)
+	assert.ErrorIs(t, c.OnUpdate(ctx, svc, svc), errTst)
+	assert.ErrorIs(t, c.OnDelete(ctx, svc), errTst)
+}
+
+func TestSessionUpstreamDeletedSessions(t *testing.T) {
+	ctx := context.Background()
+	svc := newTstService()
+	svc.Spec.Config.Upstream.User = "host"
+	svc.Metadata.SpecLabels = map[string]string{"host-user-host": "host-uid"}
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{Uid: "session-uid"},
+		Status: &corev1.Session_Status{
+			Type:    corev1.Session_Status_CLIENT,
+			UserRef: &metav1.ObjectReference{Uid: "host-uid"},
+			Connection: &corev1.Session_Status_Connection{
+				ServiceOptions: &corev1.Session_Status_Connection_ServiceOptions{ServeAll: true},
+				Upstreams: []*corev1.Session_Status_Connection_Upstream{
+					{ServiceRef: &metav1.ObjectReference{Uid: svc.Metadata.Uid}},
+					{ServiceRef: &metav1.ObjectReference{Uid: "other-service"}},
+				},
+			},
+		},
+	}
+	var updates int
+	coreC := &fakeSessionCoreC{
+		listSession: func(in *rmetav1.ListOptions) (*corev1.SessionList, error) {
+			return &corev1.SessionList{Items: []*corev1.Session{proto.Clone(sess).(*corev1.Session)}}, nil
+		},
+		getSession: func(in *rmetav1.GetOptions) (*corev1.Session, error) {
+			assert.Equal(t, sess.Metadata.Uid, in.Uid)
+			return nil, status.Error(codes.NotFound, "not found")
+		},
+		updateSession: func(in *corev1.Session) (*corev1.Session, error) {
+			updates++
+			return nil, status.Error(codes.NotFound, "not found")
+		},
+	}
+	c := NewController(&fakeOcteliumC{coreC: coreC}, nil)
+	assert.Nil(t, c.handleUpdateSessionUpstream(ctx, svc))
+	assert.Equal(t, 1, updates)
+	assert.Nil(t, c.handleDeleteSessionUpstream(ctx, svc))
+	assert.Equal(t, 1, updates)
+
+	errTst := errors.New("could not get host Session")
+	coreC.getSession = func(in *rmetav1.GetOptions) (*corev1.Session, error) { return nil, errTst }
+	assert.ErrorIs(t, c.handleDeleteSessionUpstream(ctx, svc), errTst)
+
+	coreC.getSession = func(in *rmetav1.GetOptions) (*corev1.Session, error) {
+		return proto.Clone(sess).(*corev1.Session), nil
+	}
+	updates = 0
+	coreC.updateSession = func(in *corev1.Session) (*corev1.Session, error) {
+		updates++
+		assert.Len(t, in.Status.Connection.Upstreams, 1)
+		assert.Equal(t, "other-service", in.Status.Connection.Upstreams[0].ServiceRef.Uid)
+		if updates == 1 {
+			return nil, status.Error(codes.OutOfRange, "resource changed")
+		}
+		return in, nil
+	}
+	assert.Nil(t, c.handleDeleteSessionUpstream(ctx, svc))
+	assert.Equal(t, 2, updates)
+	assert.Len(t, sess.Status.Connection.Upstreams, 2)
 }

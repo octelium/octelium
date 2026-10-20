@@ -18,17 +18,22 @@ package usrcontroller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 func TestOnDelete(t *testing.T) {
@@ -157,4 +162,54 @@ func TestOnAddOnUpdateNoop(t *testing.T) {
 
 	assert.Nil(t, c.OnAdd(ctx, usr))
 	assert.Nil(t, c.OnUpdate(ctx, usr, usr))
+}
+
+type fakeOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *fakeOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type fakeCoreC struct {
+	rcorev1.ResourceServiceClient
+	err   error
+	errAt int
+	calls int
+}
+
+func (c *fakeCoreC) next() error {
+	c.calls++
+	if c.calls == c.errAt {
+		return c.err
+	}
+	return nil
+}
+
+func (c *fakeCoreC) ListAuthenticator(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.AuthenticatorList, error) {
+	return &corev1.AuthenticatorList{}, c.next()
+}
+
+func (c *fakeCoreC) ListDevice(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.DeviceList, error) {
+	return &corev1.DeviceList{}, c.next()
+}
+
+func (c *fakeCoreC) ListSession(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.SessionList, error) {
+	return &corev1.SessionList{}, c.next()
+}
+
+func TestOnDeleteListErrors(t *testing.T) {
+	errTst := errors.New("could not list owned resources")
+	usr := &corev1.User{Metadata: &metav1.Metadata{Uid: "user-uid"}}
+	for _, errAt := range []int{1, 2, 3} {
+		coreC := &fakeCoreC{err: errTst, errAt: errAt}
+		c := NewController(&fakeOcteliumC{coreC: coreC})
+		assert.ErrorIs(t, c.OnDelete(context.Background(), usr), errTst)
+		assert.Equal(t, errAt, coreC.calls)
+	}
 }

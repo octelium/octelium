@@ -19,22 +19,37 @@ package podcontroller
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 )
 
 func TestController(t *testing.T) {
@@ -549,4 +564,440 @@ func TestReconcileEvictedPod(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return len(getAddresses()) == 0
 	}, 10*time.Second, 100*time.Millisecond)
+}
+
+type fakeOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *fakeOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type fakeCoreC struct {
+	rcorev1.ResourceServiceClient
+	getService    func(context.Context, *rmetav1.GetOptions) (*corev1.Service, error)
+	updateService func(context.Context, *corev1.Service) (*corev1.Service, error)
+	listService   func(context.Context, *rmetav1.ListOptions) (*corev1.ServiceList, error)
+}
+
+func (c *fakeCoreC) GetService(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Service, error) {
+	return c.getService(ctx, in)
+}
+
+func (c *fakeCoreC) UpdateService(ctx context.Context,
+	in *corev1.Service, opts ...grpc.CallOption) (*corev1.Service, error) {
+	return c.updateService(ctx, in)
+}
+
+func (c *fakeCoreC) ListService(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.ServiceList, error) {
+	return c.listService(ctx, in)
+}
+
+type fakePodLister struct {
+	corelisters.PodLister
+	err error
+}
+
+func (l *fakePodLister) List(selector labels.Selector) ([]*k8scorev1.Pod, error) {
+	return nil, l.err
+}
+
+type fakePodInformer struct {
+	coreinformers.PodInformer
+	informer *fakeInformer
+}
+
+func (i *fakePodInformer) Informer() cache.SharedIndexInformer {
+	return i.informer
+}
+
+type fakeInformer struct {
+	cache.SharedIndexInformer
+	handler cache.ResourceEventHandler
+}
+
+func (i *fakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	i.handler = handler
+	return nil, nil
+}
+
+func (i *fakeInformer) HasSynced() bool {
+	return true
+}
+
+func newTstController(t *testing.T, coreC rcorev1.ResourceServiceClient, pods ...*k8scorev1.Pod) *Controller {
+	t.Helper()
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, pod := range pods {
+		assert.Nil(t, indexer.Add(pod))
+	}
+	c := &Controller{
+		podLister: corelisters.NewPodLister(indexer),
+		podSynced: func() bool { return true },
+		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		octeliumC: &fakeOcteliumC{coreC: coreC},
+		regionRef: &metav1.ObjectReference{Uid: "region-uid"},
+	}
+	t.Cleanup(c.queue.ShutDown)
+	return c
+}
+
+func newTstPod(uid, svc, annotation string) *k8scorev1.Pod {
+	return &k8scorev1.Pod{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name:            "pod-" + uid,
+			Namespace:       vutils.K8sNS,
+			UID:             types.UID(uid),
+			ResourceVersion: "1",
+			Labels:          map[string]string{"octelium.com/svc": svc},
+			Annotations: map[string]string{
+				"k8s.v1.cni.cncf.io/network-status": annotation,
+			},
+		},
+		Status: k8scorev1.PodStatus{Phase: k8scorev1.PodRunning},
+	}
+}
+
+func TestPodEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fn   func(cache.ResourceEventHandler, *k8scorev1.Pod)
+		want int
+	}{
+		{"Add", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnAdd(p, false) }, 1},
+		{"InvalidAdd", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnAdd("pod", false) }, 0},
+		{"NoLabel", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Labels = nil
+			h.OnAdd(p, false)
+		}, 0},
+		{"NoAnnotation", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Annotations = nil
+			h.OnAdd(p, false)
+		}, 0},
+		{"Update", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			old := p.DeepCopy()
+			p.ResourceVersion = "2"
+			h.OnUpdate(old, p)
+		}, 1},
+		{"Unchanged", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnUpdate(p, p) }, 0},
+		{"InvalidOld", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnUpdate("pod", p) }, 0},
+		{"InvalidNew", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnUpdate(p, "pod") }, 0},
+		{"Delete", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnDelete(p) }, 1},
+		{"DeleteWithoutAnnotation", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Annotations = nil
+			h.OnDelete(p)
+		}, 1},
+		{"DeleteWithoutLabel", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Labels = nil
+			h.OnDelete(p)
+		}, 0},
+		{"Tombstone", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			h.OnDelete(cache.DeletedFinalStateUnknown{Key: "octelium/pod", Obj: p})
+		}, 1},
+		{"InvalidTombstone", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			h.OnDelete(cache.DeletedFinalStateUnknown{Obj: "pod"})
+		}, 0},
+		{"InvalidDelete", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnDelete(nil) }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			informer := &fakePodInformer{
+				informer: &fakeInformer{},
+			}
+			factory := informers.NewSharedInformerFactory(nil, 0)
+			informer.PodInformer = factory.Core().V1().Pods()
+			c := NewController(informer, nil, &metav1.ObjectReference{})
+			c.podLister = corelisters.NewPodLister(indexer)
+			defer c.queue.ShutDown()
+			pod := newTstPod("uid", "svc.default", "[]")
+			tc.fn(informer.informer.handler, pod)
+			assert.Equal(t, tc.want, c.queue.Len())
+			if tc.want > 0 {
+				key, shutdown := c.queue.Get()
+				assert.False(t, shutdown)
+				assert.Equal(t, "svc.default", key)
+				c.queue.Done(key)
+			}
+		})
+	}
+}
+
+func TestReconcilePodAddresses(t *testing.T) {
+	ctx := context.Background()
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "svc.default", Uid: "svc-uid", DisplayName: "service"},
+		Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP},
+		Status: &corev1.Service_Status{
+			Port:      8080,
+			RegionRef: &metav1.ObjectReference{Uid: "region-uid"},
+			Addresses: []*corev1.Service_Status_Address{
+				{PodRef: &metav1.ObjectReference{Uid: "removed"}},
+			},
+		},
+	}
+	before := proto.Clone(svc).(*corev1.Service)
+	var updates int
+	coreC := &fakeCoreC{
+		getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+			assert.Equal(t, svc.Metadata.Name, in.Name)
+			return proto.Clone(svc).(*corev1.Service), nil
+		},
+		updateService: func(ctx context.Context, in *corev1.Service) (*corev1.Service, error) {
+			updates++
+			svc = proto.Clone(in).(*corev1.Service)
+			return in, nil
+		},
+	}
+	valid := `[{"name":"other/network","ips":["192.0.2.1"]},{"name":"octelium/octelium","ips":["invalid","100.64.0.2","fd00::2"]}]`
+	noAnnotation := newTstPod("missing", svc.Metadata.Name, "")
+	noAnnotation.Annotations = nil
+	failed := newTstPod("failed", svc.Metadata.Name, valid)
+	failed.Status.Phase = k8scorev1.PodFailed
+	terminating := newTstPod("terminating", svc.Metadata.Name, valid)
+	now := k8smetav1.Now()
+	terminating.DeletionTimestamp = &now
+	notStarted := newTstPod("not-started", svc.Metadata.Name, valid)
+	notStarted.Status.Conditions = []k8scorev1.PodCondition{
+		{Type: k8scorev1.PodReadyToStartContainers, Status: k8scorev1.ConditionFalse},
+	}
+	c := newTstController(t, coreC,
+		newTstPod("b", svc.Metadata.Name, valid),
+		newTstPod("a", svc.Metadata.Name, `[{"name":"octelium/octelium","ips":["fd00::1"]}]`),
+		newTstPod("other", "other.default", valid),
+		newTstPod("malformed", svc.Metadata.Name, `{`),
+		newTstPod("object", svc.Metadata.Name, `{}`),
+		newTstPod("null", svc.Metadata.Name, `null`),
+		newTstPod("network", svc.Metadata.Name, `[{"name":"other/network","ips":["192.0.2.1"]}]`),
+		noAnnotation, failed, terminating, notStarted,
+	)
+	assert.Nil(t, c.reconcile(ctx, svc.Metadata.Name))
+	assert.Equal(t, 1, updates)
+	assert.Len(t, svc.Status.Addresses, 2)
+	assert.Equal(t, "a", svc.Status.Addresses[0].PodRef.Uid)
+	assert.Equal(t, "b", svc.Status.Addresses[1].PodRef.Uid)
+	assert.Equal(t, &metav1.DualStackIP{Ipv6: "fd00::1"}, svc.Status.Addresses[0].DualStackIP)
+	assert.Equal(t, &metav1.DualStackIP{Ipv4: "100.64.0.2", Ipv6: "fd00::2"}, svc.Status.Addresses[1].DualStackIP)
+	assert.Equal(t, "k8s/core/v1", svc.Status.Addresses[0].PodRef.ApiVersion)
+	assert.Equal(t, "Pod", svc.Status.Addresses[0].PodRef.Kind)
+	assert.Equal(t, "pod-a", svc.Status.Addresses[0].PodRef.Name)
+	assert.True(t, proto.Equal(before.Spec, svc.Spec))
+	assert.True(t, proto.Equal(before.Metadata, svc.Metadata))
+	assert.Equal(t, before.Status.Port, svc.Status.Port)
+	assert.True(t, proto.Equal(before.Status.RegionRef, svc.Status.RegionRef))
+	assert.Nil(t, c.reconcile(ctx, svc.Metadata.Name))
+	assert.Equal(t, 1, updates)
+}
+
+func TestReconcileErrors(t *testing.T) {
+	ctx := context.Background()
+	errTst := errors.New("could not reconcile")
+	notFound := status.Error(codes.NotFound, "not found")
+
+	for _, tc := range []struct {
+		name      string
+		getErr    error
+		listErr   error
+		updateErr error
+		status    *corev1.Service_Status
+		wantErr   bool
+		updates   int
+	}{
+		{name: "Deleted", getErr: notFound},
+		{name: "GetError", getErr: errTst, wantErr: true},
+		{name: "OtherRegion", status: &corev1.Service_Status{RegionRef: &metav1.ObjectReference{Uid: "other"}}},
+		{name: "ListerError", listErr: errTst, wantErr: true},
+		{name: "UpdateDeleted", updateErr: notFound, updates: 1},
+		{name: "UpdateError", updateErr: errTst, wantErr: true, updates: 1},
+		{name: "NoStatus", updates: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var updates int
+			coreC := &fakeCoreC{
+				getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+					return &corev1.Service{
+						Metadata: &metav1.Metadata{Name: "svc.default"},
+						Status:   tc.status,
+					}, tc.getErr
+				},
+				updateService: func(ctx context.Context, in *corev1.Service) (*corev1.Service, error) {
+					updates++
+					assert.Len(t, in.Status.Addresses, 1)
+					return in, tc.updateErr
+				},
+			}
+			c := newTstController(t, coreC,
+				newTstPod("uid", "svc.default", `[{"name":"octelium/octelium","ips":["100.64.0.1"]}]`))
+			if tc.listErr != nil {
+				c.podLister = &fakePodLister{err: tc.listErr}
+			}
+			err := c.reconcile(ctx, "svc.default")
+			if tc.wantErr {
+				assert.ErrorIs(t, err, errTst)
+			} else {
+				assert.Nil(t, err)
+			}
+			assert.Equal(t, tc.updates, updates)
+		})
+	}
+}
+
+func TestPodResync(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		listErr bool
+		podErr  bool
+		noMeta  bool
+	}{
+		{name: "Paginated"},
+		{name: "NoMetadata", noMeta: true},
+		{name: "ServiceListError", listErr: true},
+		{name: "PodListError", podErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var pages []uint32
+			coreC := &fakeCoreC{
+				listService: func(ctx context.Context, in *rmetav1.ListOptions) (*corev1.ServiceList, error) {
+					pages = append(pages, in.Page)
+					assert.True(t, in.Paginate)
+					assert.Equal(t, uint32(resyncPageSize), in.ItemsPerPage)
+					assert.Len(t, in.Filters, 1)
+					assert.Equal(t, "status.regionRef.uid", in.Filters[0].Field)
+					if tc.listErr {
+						return nil, errors.New("could not list Services")
+					}
+					ret := &corev1.ServiceList{
+						Items: []*corev1.Service{{Metadata: &metav1.Metadata{Name: fmt.Sprintf("svc-%d", in.Page)}}},
+					}
+					if !tc.noMeta {
+						ret.ListResponseMeta = &metav1.ListResponseMeta{HasMore: in.Page == 0}
+					}
+					return ret, nil
+				},
+			}
+			c := newTstController(t, coreC,
+				newTstPod("a", "svc-0", "[]"),
+				newTstPod("b", "pod-only", "[]"),
+				&k8scorev1.Pod{ObjectMeta: k8smetav1.ObjectMeta{Name: "unlabelled"}},
+			)
+			if tc.podErr {
+				c.podLister = &fakePodLister{err: errors.New("could not list pods")}
+			}
+			c.enqueueAllServices(ctx)
+			want := []string{"svc-0", "pod-only"}
+			if !tc.noMeta && !tc.listErr {
+				want = append(want, "svc-1")
+			}
+			if tc.podErr {
+				want = []string{"svc-0", "svc-1"}
+			}
+			var got []string
+			for c.queue.Len() > 0 {
+				key, _ := c.queue.Get()
+				got = append(got, key)
+				c.queue.Done(key)
+			}
+			assert.ElementsMatch(t, want, got)
+			if tc.noMeta || tc.listErr {
+				assert.Equal(t, []uint32{0}, pages)
+			} else {
+				assert.Equal(t, []uint32{0, 1}, pages)
+			}
+		})
+	}
+}
+
+func TestPodWorkerRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var gets atomic.Int32
+		var updates atomic.Int32
+		coreC := &fakeCoreC{
+			getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+				assert.Nil(t, ctx.Err())
+				_, ok := ctx.Deadline()
+				assert.True(t, ok)
+				if gets.Add(1) == 1 {
+					return nil, errors.New("could not get Service")
+				}
+				return &corev1.Service{
+					Metadata: &metav1.Metadata{Name: in.Name},
+					Status:   &corev1.Service_Status{},
+				}, nil
+			},
+			updateService: func(ctx context.Context, in *corev1.Service) (*corev1.Service, error) {
+				if updates.Add(1) == 1 {
+					return nil, errors.New("could not update Service")
+				}
+				return in, nil
+			},
+		}
+		c := newTstController(t, coreC,
+			newTstPod("uid", "svc.default", `[{"name":"octelium/octelium","ips":["100.64.0.1"]}]`))
+		done := make(chan struct{})
+		go func() {
+			c.runWorker(ctx)
+			close(done)
+		}()
+		c.enqueue("svc.default")
+		time.Sleep(time.Second)
+		synctest.Wait()
+		assert.Equal(t, int32(3), gets.Load())
+		assert.Equal(t, int32(2), updates.Load())
+		assert.Zero(t, c.queue.NumRequeues("svc.default"))
+		assert.Zero(t, c.queue.Len())
+		c.queue.ShutDown()
+		<-done
+	})
+}
+
+func TestPodPeriodicResync(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		var calls atomic.Int32
+		coreC := &fakeCoreC{
+			listService: func(ctx context.Context, in *rmetav1.ListOptions) (*corev1.ServiceList, error) {
+				calls.Add(1)
+				return &corev1.ServiceList{}, nil
+			},
+		}
+		c := newTstController(t, coreC)
+		done := make(chan struct{})
+		go func() {
+			c.periodicResync(ctx, time.Minute)
+			close(done)
+		}()
+		synctest.Wait()
+		assert.Equal(t, int32(1), calls.Load())
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.Equal(t, int32(2), calls.Load())
+		cancel()
+		<-done
+	})
+}
+
+func TestPodRunCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := newTstController(t, nil)
+	c.podSynced = func() bool { return false }
+	c.Run(ctx, 2)
+	assert.True(t, c.queue.ShuttingDown())
+}
+
+func TestAddressEqualityMissingIP(t *testing.T) {
+	current := []*corev1.Service_Status_Address{
+		{PodRef: &metav1.ObjectReference{Uid: "uid"}},
+	}
+	desired := map[string]*corev1.Service_Status_Address{
+		"uid": {PodRef: &metav1.ObjectReference{Uid: "uid"}, DualStackIP: &metav1.DualStackIP{Ipv6: "fd00::1"}},
+	}
+	assert.False(t, addressesEqualMap(current, desired))
+	assert.False(t, addressesEqualMap([]*corev1.Service_Status_Address{desired["uid"]}, map[string]*corev1.Service_Status_Address{"uid": current[0]}))
 }

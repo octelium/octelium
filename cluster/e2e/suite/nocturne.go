@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -503,4 +504,205 @@ func testNocturne(t *testing.T, h *harness.H) {
 				return nil
 			})
 	})
+}
+
+func testNocturneUpstreamReadiness(t *testing.T, h *harness.H) {
+	value := h.Name()
+	svc := newManagedHTTPService(t, h,
+		[]*corev1.Service_Spec_Config_Upstream_Container_Env{
+			{
+				Name: "OCTELIUM_E2E_RESPONSE",
+				Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: value},
+			},
+		}, 2)
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+	h.MustWaitService(t, svc.Metadata.Name)
+	upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{svc.Metadata.Name: h.Port()},
+	})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	check := func(ctx context.Context, want string) error {
+		res, err := c.R().SetContext(ctx).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != want {
+			return errors.Errorf("the upstream returned %q, want %q", res.String(), want)
+		}
+		return nil
+	}
+	h.Eventually(t, "the initial upstream replicas to serve requests",
+		harness.DeploymentBudget, func(ctx context.Context) error { return check(ctx, value) })
+
+	updated := h.Name()
+	svc = h.GetService(t, svc.Metadata.Name)
+	container := svc.Spec.Config.Upstream.GetContainer()
+	container.Env[0].Type = &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: updated}
+	container.ReadinessProbe.GetHttpGet().Path = "/octelium-e2e-missing-readiness"
+	container.ReadinessProbe.PeriodSeconds = 1
+	container.ReadinessProbe.TimeoutSeconds = 1
+	container.ReadinessProbe.FailureThreshold = 1
+	svc = h.UpdateService(t, svc)
+
+	h.Eventually(t, "the unhealthy replacement to leave the healthy upstream replicas serving traffic",
+		harness.DeploymentBudget, func(ctx context.Context) error {
+			dep, err := h.K8sDeployment(ctx, upstream)
+			if err != nil {
+				return err
+			}
+			if dep.Status.ObservedGeneration != dep.Generation ||
+				dep.Status.UpdatedReplicas == 0 || dep.Status.ReadyReplicas != 2 {
+				return errors.Errorf("the upstream rollout has not reached the readiness gate")
+			}
+			pods, err := h.ServicePods(ctx, svc.Metadata.Name)
+			if err != nil {
+				return err
+			}
+			var blocked bool
+			for _, pod := range pods {
+				for _, spec := range pod.Spec.Containers {
+					if spec.Name != "backend" || spec.ReadinessProbe == nil ||
+						spec.ReadinessProbe.HTTPGet == nil ||
+						spec.ReadinessProbe.HTTPGet.Path != "/octelium-e2e-missing-readiness" {
+						continue
+					}
+					for _, cs := range pod.Status.ContainerStatuses {
+						if cs.Name == "backend" && cs.State.Running != nil && !cs.Ready {
+							blocked = true
+						}
+					}
+				}
+			}
+			if !blocked {
+				return errors.Errorf("no replacement upstream is waiting for its readiness probe")
+			}
+			return check(ctx, value)
+		})
+
+	h.Consistently(t, "requests to keep using the healthy upstream replicas", decisionSettle,
+		func(ctx context.Context) error { return check(ctx, value) })
+
+	svc = h.GetService(t, svc.Metadata.Name)
+	svc.Spec.Config.Upstream.GetContainer().ReadinessProbe.GetHttpGet().Path = "/"
+	svc = h.UpdateService(t, svc)
+	h.Eventually(t, "the corrected readiness probe to allow the replacement replicas to serve requests",
+		harness.DeploymentBudget, func(ctx context.Context) error {
+			dep, err := h.K8sDeployment(ctx, upstream)
+			if err != nil {
+				return err
+			}
+			if dep.Status.ObservedGeneration != dep.Generation ||
+				dep.Status.UpdatedReplicas != 2 || dep.Status.ReadyReplicas != 2 || dep.Status.Replicas != 2 {
+				return errors.Errorf("the upstream rollout is not complete")
+			}
+			return check(ctx, updated)
+		})
+	h.Consistently(t, "requests to use the replacement upstream replicas", decisionSettle,
+		func(ctx context.Context) error { return check(ctx, updated) })
+	waitServiceAddressesMatchPods(t, h, svc.Metadata.Name)
+}
+
+func testNocturneReconciliationLoad(t *testing.T, h *harness.H) {
+	values := []string{h.Name(), h.Name()}
+	var services []*corev1.Service
+	publish := map[string]int{}
+	for _, value := range values {
+		svc := newManagedHTTPService(t, h,
+			[]*corev1.Service_Spec_Config_Upstream_Container_Env{
+				{
+					Name: "OCTELIUM_E2E_RESPONSE",
+					Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: value},
+				},
+			}, 2)
+		svc.Spec.Deployment = &corev1.Service_Spec_Deployment{Replicas: 2}
+		svc = h.UpdateService(t, svc)
+		h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+		h.MustWaitService(t, svc.Metadata.Name)
+		services = append(services, svc)
+		publish[svc.Metadata.Name] = h.Port()
+	}
+	conn := h.Connect(t, harness.ConnectOpts{Publish: publish})
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	var misroutes atomic.Int64
+	succeeded := make([]atomic.Int64, len(services))
+	check := func(ctx context.Context, idx int) error {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		res, err := c.R().SetContext(ctx).Get(conn.URL(services[idx].Metadata.Name))
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != values[idx] {
+			misroutes.Add(1)
+			return errors.Errorf("the Service %s returned %q, want %q",
+				services[idx].Metadata.Name, res.String(), values[idx])
+		}
+		succeeded[idx].Add(1)
+		return nil
+	}
+	for idx := range services {
+		h.Eventually(t, "the Service to serve its own upstream response", harness.DeploymentBudget,
+			func(ctx context.Context) error { return check(ctx, idx) })
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan *harness.PoolResult, 1)
+	go func() {
+		defer close(done)
+		done <- harness.RunFor(ctx, 5*time.Minute, 16, func(ctx context.Context, worker, iteration int) error {
+			return check(ctx, (worker+iteration)%len(services))
+		})
+	}()
+	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	for _, replicas := range []uint32{3, 1, 2} {
+		for _, svc := range services {
+			current := h.GetService(t, svc.Metadata.Name)
+			current.Spec.Deployment.Replicas = replicas
+			h.UpdateService(t, current)
+		}
+		seen := map[string]string{}
+		for _, svc := range services {
+			h.MustWaitService(t, svc.Metadata.Name)
+			waitServiceAddresses(t, h, svc.Metadata.Name, int(replicas))
+			for _, addr := range waitServiceAddressesMatchPods(t, h, svc.Metadata.Name) {
+				assert.NotContains(t, seen, addr.PodRef.Uid,
+					"a Pod must not appear in the addresses of multiple Services")
+				seen[addr.PodRef.Uid] = svc.Metadata.Name
+			}
+		}
+	}
+
+	for _, svc := range services {
+		addresses := waitServiceAddresses(t, h, svc.Metadata.Name, 2)
+		victim := addresses[0].PodRef
+		err := h.K8sC().CoreV1().Pods(vutils.K8sNS).Delete(t.Context(), victim.Name, k8smetav1.DeleteOptions{})
+		require.Nil(t, err)
+		waitServiceDropsPod(t, h, svc.Metadata.Name, victim)
+		waitServiceAddresses(t, h, svc.Metadata.Name, 2)
+		waitServiceAddressesMatchPods(t, h, svc.Metadata.Name)
+	}
+	for idx := range services {
+		h.Eventually(t, "the Service to recover after Pod churn", harness.DeploymentBudget,
+			func(ctx context.Context) error { return check(ctx, idx) })
+		assert.Positive(t, succeeded[idx].Load())
+	}
+	cancel()
+	result := <-done
+	assert.Positive(t, result.Succeeded)
+	assert.Zero(t, misroutes.Load(), "requests must never reach another Service's upstream")
+	harness.LogPool("Nocturne reconciliation under HTTP load", result)
 }

@@ -18,16 +18,33 @@ package svccontroller
 
 import (
 	"context"
+	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	fakek8s "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestServiceLock(t *testing.T) {
@@ -117,4 +134,492 @@ func TestController(t *testing.T) {
 
 	err = c.OnDelete(ctx, svcV)
 	assert.Nil(t, err)
+}
+
+type fakeOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *fakeOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type fakeCoreC struct {
+	rcorev1.ResourceServiceClient
+	getService func(context.Context, *rmetav1.GetOptions) (*corev1.Service, error)
+}
+
+func (c *fakeCoreC) GetService(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Service, error) {
+	return c.getService(ctx, in)
+}
+
+func newTstService() *corev1.Service {
+	return &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: "svc.default",
+			Uid:  "svc-uid",
+		},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Name: "default",
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "http://example.com",
+					},
+				},
+			},
+		},
+		Status: &corev1.Service_Status{
+			Port: 80,
+			NamespaceRef: &metav1.ObjectReference{
+				Name: "default",
+				Uid:  "namespace-uid",
+			},
+		},
+	}
+}
+
+func TestServiceReconciliation(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	svc := newTstService()
+	k8sC := fakek8s.NewSimpleClientset()
+	coreC := &fakeCoreC{
+		getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+			assert.Equal(t, svc.Metadata.Uid, in.Uid)
+			return proto.Clone(svc).(*corev1.Service), nil
+		},
+	}
+	c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+	hostname := k8sutils.GetSvcHostname(svc)
+
+	assert.Nil(t, c.OnAdd(ctx, svc))
+	assert.Nil(t, c.OnAdd(ctx, svc))
+	cm, err := k8sC.CoreV1().ConfigMaps(ns).Get(ctx, hostname, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, map[string]string{"uid": svc.Metadata.Uid}, cm.Data)
+
+	oldSvc := proto.Clone(svc).(*corev1.Service)
+	svc.Spec.Mode = corev1.Service_Spec_UDP
+	svc.Spec.Deployment = &corev1.Service_Spec_Deployment{Replicas: 3}
+	svc.Status.Port = 5353
+
+	svcK8s, err := k8sC.CoreV1().Services(ns).Get(ctx, hostname, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	svcK8s.Spec.ClusterIP = "10.0.0.12"
+	_, err = k8sC.CoreV1().Services(ns).Update(ctx, svcK8s, k8smetav1.UpdateOptions{})
+	assert.Nil(t, err)
+
+	assert.Nil(t, c.OnUpdate(ctx, oldSvc, oldSvc))
+	dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, hostname, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, int32(3), *dep.Spec.Replicas)
+	assert.Equal(t, c.getPodLabels(svc), dep.Spec.Selector.MatchLabels)
+	assert.Equal(t, dep.Spec.Selector.MatchLabels, dep.Spec.Template.Labels)
+	assert.Equal(t, c.getPodAnnotations(svc), dep.Spec.Template.Annotations)
+	assert.Equal(t, "ConfigMap", dep.OwnerReferences[0].Kind)
+	assert.Equal(t, hostname, dep.OwnerReferences[0].Name)
+	assert.True(t, *dep.OwnerReferences[0].Controller)
+
+	svcK8s, err = k8sC.CoreV1().Services(ns).Get(ctx, hostname, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, "10.0.0.12", svcK8s.Spec.ClusterIP)
+	assert.Equal(t, k8scorev1.ProtocolUDP, svcK8s.Spec.Ports[0].Protocol)
+	assert.Equal(t, int32(5353), svcK8s.Spec.Ports[0].Port)
+	assert.Equal(t, int32(5353), svcK8s.Spec.Ports[0].TargetPort.IntVal)
+	assert.Equal(t, dep.Spec.Selector.MatchLabels, svcK8s.Spec.Selector)
+	assert.Equal(t, dep.OwnerReferences, svcK8s.OwnerReferences)
+	assert.Empty(t, c.serviceLocks)
+
+	assert.Nil(t, c.OnDelete(ctx, svc))
+	assert.Nil(t, c.OnDelete(ctx, svc))
+	_, err = k8sC.CoreV1().ConfigMaps(ns).Get(ctx, hostname, k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+}
+
+func TestServiceRegions(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	local := newTstService()
+	remote := proto.Clone(local).(*corev1.Service)
+	remote.Spec.Region = "other"
+
+	for _, tc := range []struct {
+		name string
+		old  *corev1.Service
+		new  *corev1.Service
+	}{
+		{"LocalToRemote", local, remote},
+		{"RemoteToLocal", remote, local},
+		{"RemoteToRemote", remote, remote},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k8sC := fakek8s.NewSimpleClientset()
+			current := tc.old
+			coreC := &fakeCoreC{
+				getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+					return proto.Clone(current).(*corev1.Service), nil
+				},
+			}
+			c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+			assert.Nil(t, c.OnAdd(ctx, tc.old))
+			current = tc.new
+			assert.Nil(t, c.OnUpdate(ctx, tc.new, tc.old))
+			cms, err := k8sC.CoreV1().ConfigMaps(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			if tc.new.Spec.Region == "other" {
+				assert.Empty(t, cms.Items)
+				assert.Nil(t, c.OnUpdate(ctx, tc.new, tc.old))
+				k8sC.ClearActions()
+				assert.Nil(t, c.OnDelete(ctx, tc.new))
+				assert.Empty(t, k8sC.Actions())
+			} else {
+				assert.Len(t, cms.Items, 1)
+			}
+			assert.Empty(t, c.serviceLocks)
+		})
+	}
+}
+
+func TestServiceReconciliationErrors(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	svc := newTstService()
+	errTst := errors.New("could not reconcile")
+
+	for _, errGet := range []error{status.Error(codes.NotFound, "not found"), errTst} {
+		coreC := &fakeCoreC{
+			getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+				return nil, errGet
+			},
+		}
+		k8sC := fakek8s.NewSimpleClientset()
+		c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+		for _, fn := range []func() error{
+			func() error { return c.OnAdd(ctx, svc) },
+			func() error { return c.OnUpdate(ctx, svc, svc) },
+		} {
+			if status.Code(errGet) == codes.NotFound {
+				assert.Nil(t, fn())
+			} else {
+				assert.ErrorIs(t, fn(), errTst)
+			}
+		}
+		assert.Empty(t, k8sC.Actions())
+		assert.Empty(t, c.serviceLocks)
+	}
+
+	for _, rsc := range []string{"configmaps", "deployments", "services"} {
+		t.Run(rsc, func(t *testing.T) {
+			k8sC := fakek8s.NewSimpleClientset()
+			fail := true
+			k8sC.PrependReactor("create", rsc, func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return fail, nil, errTst
+			})
+			coreC := &fakeCoreC{
+				getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+					return proto.Clone(svc).(*corev1.Service), nil
+				},
+			}
+			c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+			assert.ErrorIs(t, c.OnAdd(ctx, svc), errTst)
+			assert.ErrorIs(t, c.OnUpdate(ctx, svc, svc), errTst)
+			fail = false
+			assert.Nil(t, c.OnAdd(ctx, svc))
+			assert.Empty(t, c.serviceLocks)
+		})
+	}
+
+	{
+		k8sC := fakek8s.NewSimpleClientset()
+		k8sC.PrependReactor("delete", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, errTst
+		})
+		remote := proto.Clone(svc).(*corev1.Service)
+		remote.Spec.Region = "other"
+		coreC := &fakeCoreC{
+			getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+				return remote, nil
+			},
+		}
+		c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+		assert.ErrorIs(t, c.OnUpdate(ctx, remote, svc), errTst)
+	}
+}
+
+func TestServiceLockContention(t *testing.T) {
+	c := NewController(nil, nil)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	active := make(map[string]int)
+
+	for i := range 100 {
+		wg.Go(func() {
+			svc := newTstService()
+			if i%2 == 0 {
+				svc.Metadata.Uid = ""
+			}
+			unlock := c.lockService(svc)
+			defer unlock()
+			key := svc.Metadata.Uid
+			if key == "" {
+				key = svc.Metadata.Name
+			}
+			mu.Lock()
+			active[key]++
+			assert.Equal(t, 1, active[key])
+			mu.Unlock()
+			time.Sleep(time.Millisecond)
+			mu.Lock()
+			active[key]--
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	assert.Empty(t, c.serviceLocks)
+}
+
+func TestVigilPodSpec(t *testing.T) {
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	t.Setenv("OCTELIUM_REGION_UID", "region-uid")
+	svc := newTstService()
+
+	for _, tc := range []struct {
+		name   string
+		enable string
+		driver string
+		domain string
+	}{
+		{"Disabled", "false", "custom.csi", "example.com"},
+		{"Default", "true", "", ""},
+		{"Custom", "true", "custom.csi", "example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OCTELIUM_ENABLE_SPIFFE_CSI", tc.enable)
+			t.Setenv("OCTELIUM_SPIFFE_CSI_DRIVER", tc.driver)
+			t.Setenv("OCTELIUM_SPIFFE_TRUST_DOMAIN", tc.domain)
+			c := NewController(nil, nil)
+			pod := c.newPodSpec(svc)
+			assert.Equal(t, map[string]string{"octelium.com/node-mode-dataplane": ""}, pod.NodeSelector)
+			assert.Equal(t, "net.ipv4.ip_unprivileged_port_start", pod.SecurityContext.Sysctls[0].Name)
+			assert.Equal(t, "1", pod.SecurityContext.Sysctls[0].Value)
+			assert.Len(t, pod.Containers, 1)
+			container := pod.Containers[0]
+			assert.Equal(t, "vigil", container.Name)
+			assert.NotEmpty(t, container.Image)
+			assert.False(t, *container.SecurityContext.Privileged)
+			assert.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
+			assert.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
+			assert.Equal(t, []k8scorev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
+			assert.Equal(t, []k8scorev1.Capability{"NET_BIND_SERVICE"}, container.SecurityContext.Capabilities.Add)
+			assert.Equal(t, getDefaultRequests(), container.Resources.Requests)
+			assert.Equal(t, getDefaultLimits(), container.Resources.Limits)
+			assert.Equal(t, int32(vutils.HealthCheckPortVigil), container.LivenessProbe.GRPC.Port)
+			env := make(map[string]k8scorev1.EnvVar)
+			for _, e := range container.Env {
+				env[e.Name] = e
+			}
+			assert.Equal(t, svc.Metadata.Uid, env["OCTELIUM_SVC_UID"].Value)
+			assert.Equal(t, svc.Metadata.Name, env["OCTELIUM_SVC_NAME"].Value)
+			assert.Equal(t, "default", env["OCTELIUM_REGION_NAME"].Value)
+			assert.Equal(t, "region-uid", env["OCTELIUM_REGION_UID"].Value)
+			assert.Equal(t, "metadata.uid", env["OCTELIUM_POD_UID"].ValueFrom.FieldRef.FieldPath)
+			assert.Equal(t, "metadata.name", env["OCTELIUM_POD_NAME"].ValueFrom.FieldRef.FieldPath)
+			if tc.enable == "true" {
+				assert.Equal(t, "true", env["OCTELIUM_ENABLE_SPIFFE_CSI"].Value)
+				assert.Equal(t, tc.driver, env["OCTELIUM_SPIFFE_CSI_DRIVER"].Value)
+				assert.Equal(t, tc.domain, env["OCTELIUM_SPIFFE_TRUST_DOMAIN"].Value)
+				assert.Len(t, pod.Volumes, 1)
+				assert.Equal(t, k8sutils.GetSPIFFEVolume(tc.driver), pod.Volumes[0])
+				assert.Equal(t, []k8scorev1.VolumeMount{k8sutils.GetSPIFFEVolumeMount()}, container.VolumeMounts)
+			} else {
+				assert.Empty(t, pod.Volumes)
+				assert.Empty(t, container.VolumeMounts)
+				assert.NotContains(t, env, "OCTELIUM_ENABLE_SPIFFE_CSI")
+			}
+		})
+	}
+}
+
+func TestManagedServicePodSpec(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed *corev1.Service_Status_ManagedService
+		count   int
+		port    int32
+	}{
+		{"Vigil", &corev1.Service_Status_ManagedService{Type: "vigil", Image: "registry/vigil:v1"}, 1, int32(vutils.HealthCheckPortVigil)},
+		{"NoImage", &corev1.Service_Status_ManagedService{Type: "portal"}, 1, int32(vutils.HealthCheckPortVigil)},
+		{"API", &corev1.Service_Status_ManagedService{Type: "apiserver", Image: "registry/api:v1"}, 2, int32(vutils.HealthCheckPortManagedService)},
+		{"Auth", &corev1.Service_Status_ManagedService{Type: "authserver", Image: "registry/auth:v1"}, 2, int32(vutils.HealthCheckPortManagedService)},
+		{"DNS", &corev1.Service_Status_ManagedService{Type: "dnsserver", Image: "registry/dns:v1"}, 2, int32(vutils.HealthCheckPortManagedService)},
+		{"Portal", &corev1.Service_Status_ManagedService{Type: "portal", Image: "registry/portal:v1"}, 2, 0},
+		{"CustomProbe", &corev1.Service_Status_ManagedService{
+			Type: "custom", Image: "registry/custom:v1",
+			HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+				Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+					Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{Port: 12345},
+				},
+			},
+		}, 2, 12345},
+		{"DefaultProbe", &corev1.Service_Status_ManagedService{
+			Type: "custom", Image: "registry/custom:v1",
+			HealthCheck: &corev1.Service_Status_ManagedService_HealthCheck{
+				Type: &corev1.Service_Status_ManagedService_HealthCheck_Grpc{
+					Grpc: &corev1.Service_Status_ManagedService_HealthCheck_GRPC{},
+				},
+			},
+		}, 2, int32(vutils.HealthCheckPortManagedService)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewController(nil, nil)
+			svc := newTstService()
+			svc.Status.ManagedService = proto.Clone(tc.managed).(*corev1.Service_Status_ManagedService)
+			svc.Status.ManagedService.ImagePullSecret = "registry-secret"
+			svc.Status.ManagedService.Command = []string{"/bin/app"}
+			svc.Status.ManagedService.Args = []string{"--serve"}
+			svc.Status.ManagedService.ReadOnlyFileSystem = true
+			pod := c.newPodSpec(svc)
+			assert.Len(t, pod.Containers, tc.count)
+			assert.Equal(t, []k8scorev1.LocalObjectReference{{Name: "registry-secret"}}, pod.ImagePullSecrets)
+			container := pod.Containers[tc.count-1]
+			if tc.managed.Image != "" {
+				assert.Equal(t, tc.managed.Image, container.Image)
+			}
+			if tc.port > 0 {
+				assert.Equal(t, tc.port, container.LivenessProbe.GRPC.Port)
+			} else {
+				assert.Nil(t, container.LivenessProbe)
+			}
+			if tc.count == 2 {
+				assert.Equal(t, "managed", container.Name)
+				assert.Equal(t, svc.Status.ManagedService.Command, container.Command)
+				assert.Equal(t, svc.Status.ManagedService.Args, container.Args)
+				assert.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
+				assert.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
+				assert.Equal(t, k8sutils.GetDefaultLimits(), container.Resources.Limits)
+				svc.Status.ManagedService.ReadOnlyFileSystem = false
+				assert.Nil(t, c.newPodSpec(svc).Containers[1].SecurityContext.ReadOnlyRootFilesystem)
+			}
+		})
+	}
+}
+
+func TestManagedServiceResources(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		limits *corev1.Service_Status_ManagedService_ResourceLimit
+		memory int64
+		cpu    int64
+	}{
+		{"Empty", &corev1.Service_Status_ManagedService_ResourceLimit{}, int64(k8sutils.DefaultLimitMemoryMegabytes), int64(k8sutils.DefaultLimitCPUMillicores)},
+		{"Zero", &corev1.Service_Status_ManagedService_ResourceLimit{
+			Memory: &corev1.Service_Status_ManagedService_ResourceLimit_Memory{},
+			Cpu:    &corev1.Service_Status_ManagedService_ResourceLimit_CPU{},
+		}, int64(k8sutils.DefaultLimitMemoryMegabytes), int64(k8sutils.DefaultLimitCPUMillicores)},
+		{"Custom", &corev1.Service_Status_ManagedService_ResourceLimit{
+			Memory: &corev1.Service_Status_ManagedService_ResourceLimit_Memory{Megabytes: 256},
+			Cpu:    &corev1.Service_Status_ManagedService_ResourceLimit_CPU{Millicores: 500},
+		}, 256, 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OCTELIUM_ENABLE_SPIFFE_CSI", "true")
+			c := NewController(nil, nil)
+			svc := newTstService()
+			svc.Status.ManagedService = &corev1.Service_Status_ManagedService{
+				Image:         "registry/app:v1",
+				ResourceLimit: tc.limits,
+				K8SLabels:     map[string]string{"custom-label": "custom-value"},
+			}
+			container := c.newPodSpec(svc).Containers[1]
+			memory := container.Resources.Limits.Memory()
+			cpu := container.Resources.Limits.Cpu()
+			assert.Equal(t, tc.memory*1024*1024, memory.Value())
+			assert.Equal(t, tc.cpu, cpu.MilliValue())
+			assert.Equal(t, resource.MustParse("5Mi"), container.Resources.Requests[k8scorev1.ResourceMemory])
+			assert.Equal(t, []k8scorev1.VolumeMount{k8sutils.GetSPIFFEVolumeMount()}, container.VolumeMounts)
+			assert.Contains(t, container.Env, k8scorev1.EnvVar{Name: "OCTELIUM_ENABLE_SPIFFE_CSI", Value: "true"})
+			assert.Equal(t, "custom-value", c.getPodLabels(svc)["custom-label"])
+		})
+	}
+}
+
+func TestPodAnnotations(t *testing.T) {
+	c := NewController(nil, nil)
+	svc := newTstService()
+	before := c.getPodAnnotations(svc)
+	assert.Equal(t, "octelium/octelium", before["k8s.v1.cni.cncf.io/networks"])
+	assert.Empty(t, before["octelium.com/svc-upgrade-uid"])
+	assert.Equal(t, before, c.getPodAnnotations(svc))
+
+	for _, tc := range []struct {
+		name string
+		fn   func(*corev1.Service)
+	}{
+		{"Port", func(svc *corev1.Service) { svc.Status.Port = 8080 }},
+		{"Mode", func(svc *corev1.Service) { svc.Spec.Mode = corev1.Service_Spec_TCP }},
+		{"TLS", func(svc *corev1.Service) { svc.Spec.IsTLS = true }},
+		{"HTTP2", func(svc *corev1.Service) {
+			svc.Spec.Config.Type = &corev1.Service_Spec_Config_Http{
+				Http: &corev1.Service_Spec_Config_HTTP{ListenHTTP2: true},
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updated := proto.Clone(svc).(*corev1.Service)
+			tc.fn(updated)
+			assert.NotEqual(t, before["octelium.com/svc-deployment-id"], c.getPodAnnotations(updated)["octelium.com/svc-deployment-id"])
+		})
+	}
+
+	svc.Metadata.DisplayName = "new display name"
+	svc.Spec.IsDisabled = true
+	svc.Metadata.SystemLabels = map[string]string{vutils.UpgradeIDKey: "upgrade-uid"}
+	after := c.getPodAnnotations(svc)
+	assert.Equal(t, before["octelium.com/svc-deployment-id"], after["octelium.com/svc-deployment-id"])
+	assert.Equal(t, "upgrade-uid", after["octelium.com/svc-upgrade-uid"])
+}
+
+func TestConcurrentServiceReconciliation(t *testing.T) {
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	ctx := context.Background()
+	svc := newTstService()
+	svc.Spec.Deployment = &corev1.Service_Spec_Deployment{Replicas: 3}
+	svc.Status.Port = 8080
+	stale := proto.Clone(svc).(*corev1.Service)
+	stale.Spec.Deployment.Replicas = 1
+	stale.Status.Port = 80
+	coreC := &fakeCoreC{
+		getService: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Service, error) {
+			return proto.Clone(svc).(*corev1.Service), nil
+		},
+	}
+	k8sC := fakek8s.NewSimpleClientset()
+	c := NewController(&fakeOcteliumC{coreC: coreC}, k8sC)
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			if i%2 == 0 {
+				assert.Nil(t, c.OnAdd(ctx, stale))
+			} else {
+				assert.Nil(t, c.OnUpdate(ctx, stale, stale))
+			}
+		})
+	}
+	wg.Wait()
+	deps, err := k8sC.AppsV1().Deployments(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, deps.Items, 1)
+	assert.Equal(t, int32(3), *deps.Items[0].Spec.Replicas)
+	services, err := k8sC.CoreV1().Services(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, services.Items, 1)
+	assert.Equal(t, int32(8080), services.Items[0].Spec.Ports[0].Port)
+	cms, err := k8sC.CoreV1().ConfigMaps(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, cms.Items, 1)
+	assert.Empty(t, c.serviceLocks)
 }

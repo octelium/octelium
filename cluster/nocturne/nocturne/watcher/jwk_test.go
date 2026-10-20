@@ -18,15 +18,22 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/jwkctl/jwkutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestJWK(t *testing.T) {
@@ -181,4 +188,91 @@ func TestDoProcessJWKSecretDeletion(t *testing.T) {
 	cnt, err := listRootSecrets(ctx, w)
 	assert.Nil(t, err, "%+v", err)
 	assert.Equal(t, 1, cnt)
+}
+
+type fakeJWKCoreC struct {
+	rcorev1.ResourceServiceClient
+	createErr error
+	updateErr error
+	deleteErr error
+	creates   int
+	updates   int
+	deletes   int
+}
+
+func (c *fakeJWKCoreC) CreateSecret(ctx context.Context,
+	in *corev1.Secret, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	c.creates++
+	return in, c.createErr
+}
+
+func (c *fakeJWKCoreC) UpdateSecret(ctx context.Context,
+	in *corev1.Secret, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	c.updates++
+	return in, c.updateErr
+}
+
+func (c *fakeJWKCoreC) DeleteSecret(ctx context.Context,
+	in *rmetav1.DeleteOptions, opts ...grpc.CallOption) (*rmetav1.OperationResult, error) {
+	c.deletes++
+	return nil, c.deleteErr
+}
+
+func TestJWKSecretErrors(t *testing.T) {
+	errTst := errors.New("could not reconcile root Secret")
+	for _, tc := range []struct {
+		name      string
+		coreC     *fakeJWKCoreC
+		rotated   bool
+		wantErr   bool
+		wantCalls []int
+	}{
+		{"Create", &fakeJWKCoreC{createErr: errTst}, false, true, []int{1, 0, 0}},
+		{"Update", &fakeJWKCoreC{updateErr: errTst}, false, true, []int{1, 1, 0}},
+		{"Delete", &fakeJWKCoreC{deleteErr: errTst}, true, true, []int{0, 0, 1}},
+		{"AlreadyDeleted", &fakeJWKCoreC{deleteErr: status.Error(codes.NotFound, "not found")}, true, false, []int{0, 0, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			secret := &corev1.Secret{
+				Metadata: &metav1.Metadata{
+					Name: "sys:root-secret-test", Uid: "secret-uid",
+					CreatedAt:    pbutils.Timestamp(time.Now().Add(-2 * durationYear)),
+					SystemLabels: map[string]string{"octelium-root-secret": "true"},
+				},
+			}
+			if tc.rotated {
+				secret.Metadata.SystemLabels["key-rotated"] = "true"
+			}
+			w := InitWatcher(&fakeOcteliumC{coreC: tc.coreC})
+			err := w.doProcessJWKSecret(context.Background(), secret)
+			if tc.wantErr {
+				assert.ErrorIs(t, err, errTst)
+			} else {
+				assert.Nil(t, err)
+			}
+			assert.Equal(t, tc.wantCalls, []int{tc.coreC.creates, tc.coreC.updates, tc.coreC.deletes})
+		})
+	}
+
+	{
+		coreC := &fakeJWKCoreC{
+			createErr: errTst,
+			ResourceServiceClient: &fakeCoreC{
+				listSecret: func(in *rmetav1.ListOptions) (*corev1.SecretList, error) {
+					return &corev1.SecretList{
+						Items: []*corev1.Secret{
+							{Metadata: &metav1.Metadata{
+								CreatedAt:    pbutils.Timestamp(time.Now().Add(-2 * durationMonth)),
+								SystemLabels: map[string]string{"octelium-root-secret": "true"},
+							}},
+							{Metadata: &metav1.Metadata{}},
+						},
+					}, nil
+				},
+			},
+		}
+		w := InitWatcher(&fakeOcteliumC{coreC: coreC})
+		assert.Nil(t, w.doRunJWKSecret(context.Background()))
+		assert.Equal(t, 1, coreC.creates)
+	}
 }

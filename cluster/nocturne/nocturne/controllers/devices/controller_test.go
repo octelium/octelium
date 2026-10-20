@@ -18,12 +18,15 @@ package devcontroller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -31,6 +34,7 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 func TestOnDelete(t *testing.T) {
@@ -159,4 +163,30 @@ func TestOnAddOnUpdateNoop(t *testing.T) {
 
 	assert.Nil(t, c.OnAdd(ctx, dev))
 	assert.Nil(t, c.OnUpdate(ctx, dev, dev))
+}
+
+type fakeOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *fakeOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type fakeCoreC struct {
+	rcorev1.ResourceServiceClient
+	err error
+}
+
+func (c *fakeCoreC) ListSession(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.SessionList, error) {
+	return nil, c.err
+}
+
+func TestOnDeleteListError(t *testing.T) {
+	errTst := errors.New("could not list Sessions")
+	c := NewController(&fakeOcteliumC{coreC: &fakeCoreC{err: errTst}})
+	dev := &corev1.Device{Metadata: &metav1.Metadata{Uid: "device-uid"}}
+	assert.ErrorIs(t, c.OnDelete(context.Background(), dev), errTst)
 }

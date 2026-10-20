@@ -18,9 +18,13 @@ package sesscontroller
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
@@ -465,4 +469,116 @@ func TestReconcile(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = c.getWatchedIndexes()[skipped.Session.Metadata.Uid]
 	assert.True(t, ok)
+}
+
+type fakeListCoreC struct {
+	rcorev1.ResourceServiceClient
+	listSession func(*rmetav1.ListOptions) (*corev1.SessionList, error)
+}
+
+func (c *fakeListCoreC) ListSession(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*corev1.SessionList, error) {
+	return c.listSession(in)
+}
+
+func TestListSessions(t *testing.T) {
+	errTst := errors.New("could not list Sessions")
+	for _, tc := range []struct {
+		name   string
+		noMeta bool
+		err    error
+	}{
+		{name: "Paginated"},
+		{name: "NoMetadata", noMeta: true},
+		{name: "PageError", err: errTst},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var pages []uint32
+			coreC := &fakeListCoreC{
+				listSession: func(in *rmetav1.ListOptions) (*corev1.SessionList, error) {
+					pages = append(pages, in.Page)
+					assert.True(t, in.Paginate)
+					assert.Equal(t, uint32(listSessionsPageSize), in.ItemsPerPage)
+					if in.Page == 1 && tc.err != nil {
+						return nil, tc.err
+					}
+					ret := &corev1.SessionList{
+						Items: []*corev1.Session{{Metadata: &metav1.Metadata{Uid: string(rune('a' + in.Page))}}},
+					}
+					if !tc.noMeta {
+						ret.ListResponseMeta = &metav1.ListResponseMeta{HasMore: in.Page < 2}
+					}
+					return ret, nil
+				},
+			}
+			c := NewController(&fakeOcteliumC{coreC: coreC})
+			ret, err := c.listSessions(context.Background())
+			switch {
+			case tc.err != nil:
+				assert.ErrorIs(t, err, tc.err)
+				assert.Nil(t, ret)
+				assert.Equal(t, []uint32{0, 1}, pages)
+			case tc.noMeta:
+				assert.Nil(t, err)
+				assert.Len(t, ret, 1)
+				assert.Equal(t, []uint32{0}, pages)
+			default:
+				assert.Nil(t, err)
+				assert.Len(t, ret, 3)
+				assert.Equal(t, []uint32{0, 1, 2}, pages)
+			}
+		})
+	}
+}
+
+type fakeGetCoreC struct {
+	rcorev1.ResourceServiceClient
+	err error
+}
+
+func (c *fakeGetCoreC) GetSession(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Session, error) {
+	return nil, c.err
+}
+
+func TestOwnedIndexesTransientError(t *testing.T) {
+	coreC := &fakeGetCoreC{err: status.Error(codes.Unavailable, "unavailable")}
+	c := NewController(&fakeOcteliumC{coreC: coreC})
+	sess := newConnectedSession(corev1.Session_Status_Connection_WIREGUARD,
+		&metav1.DualStackNetwork{V4: "10.10.1.2/32"})
+	assert.Nil(t, c.OnAdd(context.Background(), sess))
+	owned := c.getOwnedIndexes(context.Background(), nil)
+	assert.Equal(t, map[upstream.ConnIndex]bool{
+		{Type: corev1.Session_Status_Connection_WIREGUARD, Index: 0x102}: true,
+	}, owned)
+	assert.Len(t, c.getWatchedIndexes(), 1)
+}
+
+func TestSessionPeriodicReconcile(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var calls atomic.Int32
+		errTst := errors.New("could not list Sessions")
+		coreC := &fakeListCoreC{
+			listSession: func(in *rmetav1.ListOptions) (*corev1.SessionList, error) {
+				calls.Add(1)
+				return nil, errTst
+			},
+		}
+		c := NewController(&fakeOcteliumC{coreC: coreC})
+		done := make(chan struct{})
+		go func() {
+			c.Run(ctx)
+			close(done)
+		}()
+		synctest.Wait()
+		assert.Zero(t, calls.Load())
+		time.Sleep(reconcileInterval)
+		synctest.Wait()
+		assert.Equal(t, int32(1), calls.Load())
+		cancel()
+		<-done
+		assert.ErrorIs(t, c.reconcile(context.Background()), errTst)
+	})
 }

@@ -18,6 +18,7 @@ package sesscontroller
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +35,8 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -484,4 +487,71 @@ func TestDisconnectStaleConnections(t *testing.T) {
 		assert.Equal(t, sess.Status.TotalAuthentications+1, cur.Status.TotalAuthentications)
 		assert.NotContains(t, getConnInfo().ActiveIndexesWG, getConnIndex(sess))
 	})
+}
+
+type fakeStaleCoreC struct {
+	rcorev1.ResourceServiceClient
+	sess      *corev1.Session
+	getErr    error
+	updateErr error
+	updates   int
+}
+
+func (c *fakeStaleCoreC) GetSession(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Session, error) {
+	if c.getErr != nil {
+		return nil, c.getErr
+	}
+	return proto.Clone(c.sess).(*corev1.Session), nil
+}
+
+func (c *fakeStaleCoreC) UpdateSession(ctx context.Context,
+	in *corev1.Session, opts ...grpc.CallOption) (*corev1.Session, error) {
+	c.updates++
+	return in, c.updateErr
+}
+
+func TestDisconnectStaleConnectionErrors(t *testing.T) {
+	ctx := context.Background()
+	errTst := errors.New("could not disconnect Session")
+	lastSeenAt := pbutils.Timestamp(time.Now().Add(-2 * staleConnectionDuration))
+	sess := newConnectedSession(corev1.Session_Status_Connection_WIREGUARD)
+	sess.Status.Connection.StartedAt = lastSeenAt
+	for _, tc := range []struct {
+		name      string
+		getErr    error
+		updateErr error
+		wantErr   error
+		updates   int
+	}{
+		{name: "Deleted", getErr: status.Error(codes.NotFound, "not found")},
+		{name: "GetError", getErr: errTst, wantErr: errTst},
+		{name: "DeletedOnUpdate", updateErr: status.Error(codes.NotFound, "not found"), updates: 1},
+		{name: "UpdateError", updateErr: errTst, wantErr: errTst, updates: 1},
+		{name: "ConflictLimit", updateErr: status.Error(codes.OutOfRange, "resource changed"), updates: disconnectMaxAttempts},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			coreC := &fakeStaleCoreC{sess: sess, getErr: tc.getErr, updateErr: tc.updateErr}
+			c := NewController(&fakeOcteliumC{coreC: coreC})
+			err := c.disconnectStaleConnection(ctx, sess.Metadata.Uid, lastSeenAt)
+			switch {
+			case tc.name == "ConflictLimit":
+				assert.Equal(t, codes.OutOfRange, status.Code(err))
+			case tc.wantErr != nil:
+				assert.ErrorIs(t, err, tc.wantErr)
+			default:
+				assert.Nil(t, err)
+			}
+			assert.Equal(t, tc.updates, coreC.updates)
+		})
+	}
+
+	coreC := &fakeStaleCoreC{getErr: errTst}
+	c := NewController(&fakeOcteliumC{coreC: coreC})
+	sessList := []*corev1.Session{sess, newConnectedSession(corev1.Session_Status_Connection_WIREGUARD)}
+	now := time.Now()
+	assert.Empty(t, c.selectStaleConnections(sessList, now))
+	assert.Len(t, c.lastSeen, 1)
+	c.disconnectStaleConnections(ctx, sessList, now.Add(staleConnectionGrace))
+	assert.Zero(t, coreC.updates)
 }

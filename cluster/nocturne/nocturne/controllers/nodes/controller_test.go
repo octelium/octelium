@@ -18,19 +18,32 @@ package nodecontroller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	octeliumcorev1 "github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	fakek8s "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
 )
 
 func hasGatewayInitTaint(n *corev1.Node) bool {
@@ -255,4 +268,184 @@ func TestDeleteGWs(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.Equal(t, gwOther.Metadata.Uid, res.Metadata.Uid)
 	}
+}
+
+type fakeOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *fakeOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+type fakeCoreC struct {
+	rcorev1.ResourceServiceClient
+	gateways  []*octeliumcorev1.Gateway
+	listErr   error
+	deleteErr error
+	deleted   []string
+}
+
+func (c *fakeCoreC) ListGateway(ctx context.Context,
+	in *rmetav1.ListOptions, opts ...grpc.CallOption) (*octeliumcorev1.GatewayList, error) {
+	return &octeliumcorev1.GatewayList{Items: c.gateways}, c.listErr
+}
+
+func (c *fakeCoreC) DeleteGateway(ctx context.Context,
+	in *rmetav1.DeleteOptions, opts ...grpc.CallOption) (*rmetav1.OperationResult, error) {
+	c.deleted = append(c.deleted, in.Uid)
+	return nil, c.deleteErr
+}
+
+type fakeNodeInformer struct {
+	coreinformers.NodeInformer
+	informer *fakeInformer
+}
+
+func (i *fakeNodeInformer) Informer() cache.SharedIndexInformer {
+	return i.informer
+}
+
+type fakeInformer struct {
+	cache.SharedIndexInformer
+	handler cache.ResourceEventHandler
+}
+
+func (i *fakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	i.handler = handler
+	return nil, nil
+}
+
+func TestNodeEvents(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name: "node", UID: "node-uid", ResourceVersion: "1",
+			Labels: map[string]string{vutils.NodeLabelDataPlane: ""},
+		},
+	}
+	k8sC := fakek8s.NewSimpleClientset(node.DeepCopy())
+	coreC := &fakeCoreC{}
+	informer := &fakeNodeInformer{informer: &fakeInformer{}}
+	NewController(k8sC, &fakeOcteliumC{coreC: coreC}, informer)
+	handler := informer.informer.handler
+	handler.OnAdd(node, false)
+	current, err := k8sC.CoreV1().Nodes().Get(ctx, node.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.True(t, hasGatewayInitTaint(current))
+
+	old := current.DeepCopy()
+	current.Labels[vutils.NodeLabelGatewayRegistered] = "true"
+	current.ResourceVersion = "2"
+	current.Spec.Taints = append(current.Spec.Taints, corev1.Taint{Key: "other", Effect: corev1.TaintEffectNoExecute})
+	current, err = k8sC.CoreV1().Nodes().Update(ctx, current, k8smetav1.UpdateOptions{})
+	assert.Nil(t, err)
+	handler.OnUpdate(old, current)
+	current, err = k8sC.CoreV1().Nodes().Get(ctx, node.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, []corev1.Taint{{Key: "other", Effect: corev1.TaintEffectNoExecute}}, current.Spec.Taints)
+
+	k8sC.ClearActions()
+	handler.OnAdd("node", false)
+	handler.OnUpdate("node", current)
+	handler.OnUpdate(current, "node")
+	handler.OnUpdate(current, current)
+	handler.OnDelete("node")
+	assert.Empty(t, k8sC.Actions())
+	coreC.gateways = []*octeliumcorev1.Gateway{{
+		Metadata: &metav1.Metadata{Uid: "gateway-uid"},
+		Status:   &octeliumcorev1.Gateway_Status{NodeRef: &metav1.ObjectReference{Uid: string(node.UID)}},
+	}}
+	handler.OnDelete(current)
+	assert.Equal(t, []string{"gateway-uid"}, coreC.deleted)
+
+	coreC.listErr = errors.New("could not list Gateways")
+	handler.OnAdd(node, false)
+	handler.OnUpdate(&corev1.Node{}, node)
+	handler.OnDelete(node)
+}
+
+func TestNodeErrors(t *testing.T) {
+	ctx := context.Background()
+	errTst := errors.New("could not update Node")
+	node := &corev1.Node{ObjectMeta: k8smetav1.ObjectMeta{
+		Name: "node", UID: "node-uid", Labels: map[string]string{vutils.NodeLabelDataPlane: ""},
+	}}
+	{
+		coreC := &fakeCoreC{listErr: errTst}
+		c := &fakeOcteliumC{coreC: coreC}
+		assert.ErrorIs(t, taintNode(ctx, fakek8s.NewSimpleClientset(), c, node), errTst)
+		assert.ErrorIs(t, deleteGWs(ctx, c, node), errTst)
+	}
+	for _, verb := range []string{"get", "update"} {
+		t.Run(verb, func(t *testing.T) {
+			k8sC := fakek8s.NewSimpleClientset(node.DeepCopy())
+			k8sC.PrependReactor(verb, "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errTst
+			})
+			assert.ErrorIs(t, taintNode(ctx, k8sC, &fakeOcteliumC{coreC: &fakeCoreC{}}, node), errTst)
+			registered := node.DeepCopy()
+			registered.Labels[vutils.NodeLabelGatewayRegistered] = "true"
+			registered.Spec.Taints = []corev1.Taint{{Key: vutils.NodeTaintGatewayInit}}
+			assert.Nil(t, k8sC.Tracker().Update(corev1.SchemeGroupVersion.WithResource("nodes"), registered, ""))
+			assert.ErrorIs(t, untaintNode(ctx, k8sC, registered), errTst)
+			informer := &fakeNodeInformer{informer: &fakeInformer{}}
+			NewController(k8sC, &fakeOcteliumC{coreC: &fakeCoreC{}}, informer)
+			registered.ResourceVersion = "2"
+			informer.informer.handler.OnAdd(registered, false)
+			informer.informer.handler.OnUpdate(node, registered)
+		})
+	}
+	for _, errDel := range []error{errTst, status.Error(codes.NotFound, "not found")} {
+		coreC := &fakeCoreC{
+			deleteErr: errDel,
+			gateways: []*octeliumcorev1.Gateway{
+				{Status: &octeliumcorev1.Gateway_Status{}},
+				{Metadata: &metav1.Metadata{Uid: "first"}, Status: &octeliumcorev1.Gateway_Status{NodeRef: &metav1.ObjectReference{Uid: "node-uid"}}},
+				{Metadata: &metav1.Metadata{Uid: "second"}, Status: &octeliumcorev1.Gateway_Status{NodeRef: &metav1.ObjectReference{Uid: "node-uid"}}},
+			},
+		}
+		err := deleteGWs(ctx, &fakeOcteliumC{coreC: coreC}, node)
+		if status.Code(errDel) == codes.NotFound {
+			assert.Nil(t, err)
+			assert.Equal(t, []string{"first", "second"}, coreC.deleted)
+		} else {
+			assert.ErrorIs(t, err, errTst)
+			assert.Equal(t, []string{"first"}, coreC.deleted)
+		}
+	}
+}
+
+func TestNodeTaintRetries(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{ObjectMeta: k8smetav1.ObjectMeta{
+		Name: "node", UID: "node-uid", Labels: map[string]string{vutils.NodeLabelDataPlane: ""},
+	}}
+	k8sC := fakek8s.NewSimpleClientset(node.DeepCopy())
+	var updates int
+	k8sC.PrependReactor("update", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		updates++
+		if updates == 1 {
+			return true, nil, k8serr.NewConflict(schema.GroupResource{Resource: "nodes"}, node.Name, errors.New("conflict"))
+		}
+		return false, nil, nil
+	})
+	c := &fakeOcteliumC{coreC: &fakeCoreC{}}
+	assert.Nil(t, taintNode(ctx, k8sC, c, node))
+	assert.Equal(t, 2, updates)
+	assert.Nil(t, taintNode(ctx, k8sC, c, node))
+	assert.Equal(t, 2, updates)
+	current, err := k8sC.CoreV1().Nodes().Get(ctx, node.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Nil(t, taintNode(ctx, k8sC, c, current))
+	current.Labels[vutils.NodeLabelGatewayRegistered] = "true"
+	assert.Nil(t, k8sC.Tracker().Update(corev1.SchemeGroupVersion.WithResource("nodes"), current, ""))
+	updates = 0
+	assert.Nil(t, untaintNode(ctx, k8sC, current))
+	assert.Equal(t, 2, updates)
+	assert.Nil(t, untaintNode(ctx, k8sC, current))
+	assert.Equal(t, 2, updates)
+	current.Spec.Taints = nil
+	assert.Nil(t, untaintNode(ctx, k8sC, current))
 }
