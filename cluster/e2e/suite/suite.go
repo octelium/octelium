@@ -41,6 +41,7 @@ func Phases() []Phase {
 		{"AuthorizationPolicyLookupCompatibility", testAuthorizationPolicyLookupCompatibility},
 		{"AuthorizationCommonEngineIsolation", testAuthorizationCommonEngineIsolation},
 		{"AuthorizationOPAQueryCache", testAuthorizationOPAQueryCache},
+		{"AuthorizationCELListLimits", testAuthorizationCELListLimits},
 		{"AuthorizationRevocationLoad", testAuthorizationRevocationLoad},
 		{"AuthenticationAssertion", testAuthenticationAssertion},
 		{"AuthenticationSession", testAuthenticationSession},

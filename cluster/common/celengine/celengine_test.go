@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEvalPolicyAny(t *testing.T) {
@@ -257,4 +258,124 @@ result := {"value": input.ctx.value}`, input)
 		})
 	}
 	wg.Wait()
+}
+
+func TestCELListPolicyLimits(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+	const size = 1200
+	for _, method := range []string{"hasAny", "hasAll"} {
+		t.Run(method, func(t *testing.T) {
+			list, args := make([]int64, size), make([]int64, size)
+			for i := range args {
+				args[i] = 1
+			}
+			if method == "hasAll" {
+				list[len(list)-1] = 1
+			}
+			input := map[string]any{"ctx": map[string]any{"list": list, "args": args}}
+			expr := "ctx.list." + method + "(ctx.args)"
+			require.Nil(t, srv.AddPolicy(ctx, expr))
+			res, err := srv.EvalPolicy(ctx, expr, input)
+			assert.ErrorContains(t, err, "cost limit")
+			assert.False(t, res)
+
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			res, err = srv.EvalPolicy(cancelled, expr, input)
+			assert.ErrorIs(t, err, context.Canceled)
+			assert.False(t, res)
+
+			input["ctx"] = map[string]any{"list": []int64{1, 2}, "args": []int64{2}}
+			res, err = srv.EvalPolicy(ctx, expr, input)
+			assert.Nil(t, err)
+			assert.True(t, res)
+		})
+	}
+}
+
+func TestCELListResultLimits(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+	const size = 1200
+	for _, method := range []string{"hasAny", "hasAll"} {
+		t.Run(method, func(t *testing.T) {
+			list, args := make([]int64, size), make([]int64, size)
+			for i := range args {
+				args[i] = 1
+			}
+			if method == "hasAll" {
+				list[len(list)-1] = 1
+			}
+			input := map[string]any{"ctx": map[string]any{"list": list, "args": args}}
+			expr := "ctx.list." + method + "(ctx.args)"
+			for _, tc := range []struct {
+				name string
+				eval func(context.Context) error
+			}{
+				{"String", func(ctx context.Context) error {
+					_, err := srv.EvalPolicyString(ctx, expr+` ? "allow" : "deny"`, input)
+					return err
+				}},
+				{"Map", func(ctx context.Context) error {
+					_, err := srv.EvalPolicyMapStrAny(ctx, `{"match": `+expr+`}`, input)
+					return err
+				}},
+				{"Match", func(ctx context.Context) error {
+					res, err := srv.EvalCondition(ctx, &corev1.Condition{Type: &corev1.Condition_Match{Match: expr}}, input)
+					assert.False(t, res)
+					return err
+				}},
+				{"Not", func(ctx context.Context) error {
+					res, err := srv.EvalCondition(ctx, &corev1.Condition{Type: &corev1.Condition_Not{Not: expr}}, input)
+					assert.False(t, res)
+					return err
+				}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assert.ErrorContains(t, tc.eval(ctx), "cost limit")
+					cancelled, cancel := context.WithCancel(ctx)
+					cancel()
+					assert.ErrorIs(t, tc.eval(cancelled), context.Canceled)
+				})
+			}
+		})
+	}
+}
+
+func TestCELListConcurrentLimits(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+	const size = 1200
+	for _, method := range []string{"hasAny", "hasAll"} {
+		list, args := make([]int64, size), make([]int64, size)
+		for i := range args {
+			args[i] = 1
+		}
+		if method == "hasAll" {
+			list[len(list)-1] = 1
+		}
+		large := map[string]any{"ctx": map[string]any{"list": list, "args": args}}
+		small := map[string]any{"ctx": map[string]any{"list": []int64{1, 2}, "args": []int64{2}}}
+		expr := "ctx.list." + method + "(ctx.args)"
+		require.Nil(t, srv.AddPolicy(ctx, expr))
+		for worker := range 4 {
+			t.Run(fmt.Sprintf("%s/%d", method, worker), func(t *testing.T) {
+				t.Parallel()
+				if worker%2 == 0 {
+					res, err := srv.EvalPolicy(ctx, expr, large)
+					assert.ErrorContains(t, err, "cost limit")
+					assert.False(t, res)
+				}
+				for range 8 {
+					res, err := srv.EvalPolicy(ctx, expr, small)
+					assert.Nil(t, err)
+					assert.True(t, res)
+				}
+			})
+		}
+	}
 }

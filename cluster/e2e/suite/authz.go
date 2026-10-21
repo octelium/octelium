@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -727,4 +728,81 @@ eval := {"result": {"parent": input.ctx.request.http.headers["x-e2e-config"]}}`
 	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
 	assert.Positive(t, result.Succeeded)
 	harness.LogPool("OPA condition and dynamic configuration query isolation", result)
+}
+
+func testAuthorizationCELListLimits(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	usr := h.CreateWorkloadUser(t, nil)
+	policy := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{
+		Rules: []*corev1.Policy_Spec_Rule{harness.MatchRule("allow-list-match", 0, corev1.Policy_Spec_Rule_ALLOW,
+			`ctx.request.http.headers["x-e2e-mode"] == "control" ||
+(ctx.request.http.headers["x-e2e-mode"] == "any"
+? !json.parse(ctx.request.http.headers["x-e2e-list"]).items.hasAny(json.parse(ctx.request.http.headers["x-e2e-args"]).items)
+: json.parse(ctx.request.http.headers["x-e2e-list"]).items.hasAll(json.parse(ctx.request.http.headers["x-e2e-args"]).items))`)},
+	}})
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{policy.Metadata.Name}}
+	svc = h.UpdateService(t, svc)
+	c := h.HTTPNoRetry().SetBaseURL(h.ServiceURL(svc)).SetAuthScheme("Bearer").SetAuthToken(h.AccessToken(t, usr))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	const size = 1200
+	zeros := "[" + strings.Repeat("0,", size-1) + "0]"
+	ones := "[" + strings.Repeat("1,", size-1) + "1]"
+	last := "[" + strings.Repeat("0,", size-1) + "1]"
+	cases := []struct {
+		mode, list, args string
+		status           int
+	}{
+		{"control", zeros, ones, http.StatusOK},
+		{"any", "[0]", "[1]", http.StatusOK},
+		{"all", "[1]", "[1]", http.StatusOK},
+		{"any", zeros, ones, http.StatusInternalServerError},
+		{"all", last, ones, http.StatusInternalServerError},
+		{"any", "[1]", "[1]", http.StatusForbidden},
+		{"all", "[0]", "[1]", http.StatusForbidden},
+	}
+	check := func(ctx context.Context, idx int) error {
+		tc := cases[idx]
+		resp, err := c.R().SetContext(ctx).SetHeader("X-E2E-Mode", tc.mode).
+			SetHeader("X-E2E-List", `{"items":`+tc.list+`}`).SetHeader("X-E2E-Args", `{"items":`+tc.args+`}`).Get("/")
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode() != tc.status {
+			return fmt.Errorf("scenario %d: %w", idx, errUnexpectedStatus(resp.StatusCode(), tc.status))
+		}
+		return nil
+	}
+	var stableAt time.Time
+	h.Eventually(t, "expensive CEL list scans to fail closed while normal requests are authorized", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			for i := range cases {
+				if err := check(ctx, i); err != nil {
+					stableAt = time.Time{}
+					return err
+				}
+			}
+			if stableAt.IsZero() {
+				stableAt = time.Now()
+			}
+			if time.Since(stableAt) < decisionSettle {
+				return fmt.Errorf("the CEL list authorization decisions are still settling")
+			}
+			return nil
+		})
+	completed := make([]atomic.Int64, len(cases))
+	result := harness.RunFor(t.Context(), 3*time.Second, 16, func(ctx context.Context, worker, iteration int) error {
+		idx := (worker + iteration) % len(cases)
+		if err := check(ctx, idx); err != nil {
+			return err
+		}
+		completed[idx].Add(1)
+		return nil
+	})
+	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
+	for i := range cases {
+		assert.Positive(t, completed[i].Load(), "scenario %d", i)
+	}
+	harness.LogPool("CEL list evaluation limits under authorization load", result)
 }

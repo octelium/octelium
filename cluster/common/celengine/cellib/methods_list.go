@@ -20,10 +20,14 @@ import (
 	"fmt"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common"
+	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/common/types/traits"
 	"cel.dev/cel-go/interpreter/functions"
+	"cel.dev/cel-go/parser"
 )
 
 type namedCELType struct {
@@ -64,24 +68,27 @@ type lstLib struct{}
 var listLib = &lstLib{}
 
 func (*lstLib) CompileOptions() []cel.EnvOption {
-	var options []cel.EnvOption
-
-	for _, typ := range comparableTypes {
-		options = append(options, cel.Function("hasAny",
-			cel.MemberOverload(fmt.Sprintf("lst_hasAny_%s", typ.typeName),
-				[]*cel.Type{cel.ListType(typ.celType), cel.ListType(typ.celType)},
-				cel.BoolType,
-				cel.BinaryBinding(methodListHasAny),
+	options := []cel.EnvOption{
+		cel.Macros(
+			cel.ReceiverMacro("hasAny", 1, methodListMembershipMacro(false)),
+			cel.ReceiverMacro("hasAll", 1, methodListMembershipMacro(true)),
+		),
+		cel.Function("@octelium_list_match",
+			cel.Overload("octelium_list_match", []*cel.Type{cel.BoolType}, cel.BoolType,
+				cel.UnaryBinding(func(value ref.Val) ref.Val {
+					return types.Bool(value == types.True)
+				}),
+				cel.OverloadIsNonStrict(),
 			),
-		))
+		),
 	}
 
 	for _, typ := range comparableTypes {
-		options = append(options, cel.Function("hasAll",
-			cel.MemberOverload(fmt.Sprintf("lst_hasAll_%s", typ.typeName),
+		options = append(options, cel.Function("@octelium_list_args",
+			cel.Overload(fmt.Sprintf("octelium_list_args_%s", typ.typeName),
 				[]*cel.Type{cel.ListType(typ.celType), cel.ListType(typ.celType)},
-				cel.BoolType,
-				cel.BinaryBinding(methodListHasAll),
+				cel.ListType(cel.ListType(typ.celType)),
+				cel.BinaryBinding(methodListMembershipArgs),
 			),
 		))
 	}
@@ -111,6 +118,46 @@ func (*lstLib) CompileOptions() []cel.EnvOption {
 
 func (*lstLib) ProgramOptions() []cel.ProgramOption {
 	return []cel.ProgramOption{}
+}
+
+func methodListMembershipMacro(all bool) cel.MacroFactory {
+	return func(eh cel.MacroExprFactory, target ast.Expr, args []ast.Expr) (ast.Expr, *common.Error) {
+		lists := fmt.Sprintf("@octelium_lists_%d", target.ID())
+		item := fmt.Sprintf("@octelium_item_%d", target.ID())
+		arg := fmt.Sprintf("@octelium_arg_%d", target.ID())
+		listAt := func(index types.Int) ast.Expr {
+			return eh.NewCall(operators.Index, eh.NewIdent(lists), eh.NewLiteral(index))
+		}
+		match := eh.NewCall("@octelium_list_match",
+			eh.NewCall(operators.Equals, eh.NewIdent(item), eh.NewIdent(arg)))
+		contains, err := parser.MakeExists(eh, listAt(0), []ast.Expr{eh.NewIdent(item), match})
+		if err != nil {
+			return nil, err
+		}
+		fold := parser.MakeExists
+		if all {
+			fold = parser.MakeAll
+		}
+		result, err := fold(eh, listAt(1), []ast.Expr{eh.NewIdent(arg), contains})
+		if err != nil {
+			return nil, err
+		}
+		return eh.NewComprehension(eh.NewList(), "@unused", lists,
+			eh.NewCall("@octelium_list_args", target, args[0]),
+			eh.NewLiteral(types.False), eh.NewIdent(lists), result), nil
+	}
+}
+
+func methodListMembershipArgs(listVal ref.Val, listArgVal ref.Val) ref.Val {
+	list, ok := listVal.(traits.Lister)
+	if !ok {
+		return types.MaybeNoSuchOverloadErr(listVal)
+	}
+	listArg, ok := listArgVal.(traits.Lister)
+	if !ok {
+		return types.MaybeNoSuchOverloadErr(listArgVal)
+	}
+	return types.NewRefValList(types.DefaultTypeAdapter, []ref.Val{list, listArg})
 }
 
 func methodListMin() functions.UnaryOp {
@@ -148,53 +195,4 @@ func methodListCmp(opName string, opPreferCmpResult ref.Val) functions.UnaryOp {
 		}
 		return result.(ref.Val)
 	}
-}
-
-func methodListHasAny(listVal ref.Val, listArgVal ref.Val) ref.Val {
-	list, ok := listVal.(traits.Lister)
-	if !ok {
-		return types.MaybeNoSuchOverloadErr(list)
-	}
-	listArg, ok := listArgVal.(traits.Lister)
-	if !ok {
-		return types.MaybeNoSuchOverloadErr(list)
-	}
-
-	sz := listArg.Size().(types.Int)
-	for i := types.Int(0); i < sz; i++ {
-		if isInList(list, listArg.Get(types.Int(i))) {
-			return types.Bool(true)
-		}
-	}
-	return types.Bool(false)
-}
-
-func methodListHasAll(listVal ref.Val, listArgVal ref.Val) ref.Val {
-	list, ok := listVal.(traits.Lister)
-	if !ok {
-		return types.MaybeNoSuchOverloadErr(list)
-	}
-	listArg, ok := listArgVal.(traits.Lister)
-	if !ok {
-		return types.MaybeNoSuchOverloadErr(list)
-	}
-
-	sz := listArg.Size().(types.Int)
-	for i := types.Int(0); i < sz; i++ {
-		if !isInList(list, listArg.Get(types.Int(i))) {
-			return types.Bool(false)
-		}
-	}
-	return types.Bool(true)
-}
-
-func isInList(list traits.Lister, item ref.Val) bool {
-
-	sz := list.Size().(types.Int)
-	for i := types.Int(0); i < sz; i++ {
-		if list.Get(types.Int(i)).Equal(item) == types.True {
-			return true
-		}
-	}
-	return false
 }
