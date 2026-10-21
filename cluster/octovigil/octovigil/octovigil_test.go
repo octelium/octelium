@@ -2848,3 +2848,36 @@ func TestPublicServiceMissingAuthentication(t *testing.T) {
 	assert.Nil(t, di)
 	assert.ErrorIs(t, err, UnauthenticatedErr)
 }
+
+func TestAuthenticateAndAuthorizeInvalidRequest(t *testing.T) {
+	for _, field := range []string{"Request", "Service"} {
+		t.Run(field, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			req := &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+				Service: proto.Clone(coreC.service).(*corev1.Service), Request: &coctovigilv1.DownstreamRequest{},
+			}
+			switch field {
+			case "Request":
+				req = nil
+			case "Service":
+				req.Service = nil
+			}
+			assert.NotPanics(t, func() {
+				resp, err := srv.s.AuthenticateAndAuthorize(t.Context(), req)
+				assert.Nil(t, resp)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			})
+			assert.Empty(t, coreC.calls)
+		})
+	}
+}
+
+func TestAuthorizeNilRequestContext(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	assert.NotPanics(t, func() {
+		resp, err := srv.s.DoAuthorize(t.Context(), nil, nil)
+		assert.Nil(t, resp)
+		assert.NotNil(t, err)
+	})
+	assert.Empty(t, coreC.calls)
+}

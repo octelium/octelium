@@ -691,6 +691,256 @@ func TestEvaluateInvalidContext(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
+func TestInternalRPCNilRequests(t *testing.T) {
+	for _, method := range []string{"AuthenticateAndAuthorize", "Authorize", "GetDownstreamFromSessionUID", "Evaluate"} {
+		t.Run(method, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			assert.NotPanics(t, func() {
+				var err error
+				switch method {
+				case "AuthenticateAndAuthorize":
+					var resp *coctovigilv1.AuthenticateAndAuthorizeResponse
+					resp, err = srv.AuthenticateAndAuthorize(t.Context(), nil)
+					assert.Nil(t, resp)
+				case "Authorize":
+					var resp *coctovigilv1.AuthorizeResponse
+					resp, err = srv.Authorize(t.Context(), nil)
+					assert.Nil(t, resp)
+				case "GetDownstreamFromSessionUID":
+					var resp *coctovigilv1.GetDownstreamFromSessionUIDResponse
+					resp, err = srv.GetDownstreamFromSessionUID(t.Context(), nil)
+					assert.Nil(t, resp)
+				case "Evaluate":
+					var resp *coctovigilv1.EvaluateResponse
+					resp, err = srv.Evaluate(t.Context(), nil)
+					assert.Nil(t, resp)
+				}
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			})
+			assert.Empty(t, coreC.calls)
+		})
+	}
+}
+
+func TestEvaluateMalformedInlinePolicies(t *testing.T) {
+	for idx, invalid := range []*coctovigilv1.EvaluateRequest_InlinePolicy{
+		nil, {}, {Policy: &corev1.InlinePolicy{}},
+	} {
+		for position := range 2 {
+			t.Run(fmt.Sprintf("Policy%d/Position%d", idx, position), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				policies := []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: coreC.service.Spec.Authorization.InlinePolicies[0]}}
+				if position == 0 {
+					policies = append([]*coctovigilv1.EvaluateRequest_InlinePolicy{invalid}, policies...)
+				} else {
+					policies = append(policies, invalid)
+				}
+				assert.NotPanics(t, func() {
+					resp, err := srv.Evaluate(t.Context(), &coctovigilv1.EvaluateRequest{InlinePolicies: policies})
+					assert.Nil(t, resp)
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				})
+				assert.Empty(t, coreC.calls)
+			})
+		}
+	}
+}
+
+func TestAuthorizationMalformedAdditionalPolicies(t *testing.T) {
+	for idx, invalid := range []*corev1.InlinePolicy{
+		nil, {},
+	} {
+		for _, anonymous := range []bool{false, true} {
+			t.Run(fmt.Sprintf("Policy%d/Anonymous%t", idx, anonymous), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				coreC.service.Spec.IsAnonymous = anonymous
+				coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+				additional := &coctovigilv1.Authorization{InlinePolicies: []*corev1.InlinePolicy{
+					coreC.service.Spec.Authorization.InlinePolicies[0], invalid,
+				}}
+				downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+				assert.NotPanics(t, func() {
+					resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+						ServiceUID: "service", Additional: additional,
+						Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+					})
+					assert.Nil(t, resp)
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				})
+				assert.NotPanics(t, func() {
+					resp, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{
+						ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid, Additional: additional,
+					})
+					assert.Nil(t, resp)
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				})
+				assert.Empty(t, coreC.calls)
+			})
+		}
+	}
+}
+
+func TestAuthenticateAndAuthorizeMissingDownstreamRequest(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		for _, cold := range []bool{false, true} {
+			t.Run(fmt.Sprintf("Anonymous%t/Cold%t", anonymous, cold), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				coreC.service.Spec.IsAnonymous = anonymous
+				coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+				if cold {
+					assert.Nil(t, srv.s.cache.DeleteService(coreC.service))
+				}
+				assert.NotPanics(t, func() {
+					resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{ServiceUID: "service"})
+					assert.Nil(t, err)
+					if assert.NotNil(t, resp) {
+						assert.False(t, resp.IsAuthenticated)
+						assert.False(t, resp.IsAuthorized)
+						assert.Nil(t, resp.RequestContext)
+						assert.Nil(t, resp.Config)
+						assert.Empty(t, resp.ServiceConfigName)
+					}
+				})
+				assert.NotPanics(t, func() {
+					resp, err := srv.s.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.DoAuthenticateAndAuthorizeRequest{Service: coreC.service})
+					assert.Nil(t, err)
+					if assert.NotNil(t, resp) {
+						assert.False(t, resp.IsAuthenticated)
+						assert.False(t, resp.IsAuthorized)
+						assert.Nil(t, resp.RequestContext)
+						assert.Nil(t, resp.Config)
+					}
+				})
+				if cold {
+					assert.Equal(t, []string{"service:service"}, coreC.calls)
+				} else {
+					assert.Empty(t, coreC.calls)
+				}
+			})
+		}
+	}
+}
+
+func TestEvaluateEmptyInlinePolicy(t *testing.T) {
+	for _, spec := range []*corev1.Policy_Spec{
+		{}, {IsDisabled: true},
+		{IsDisabled: true, Rules: []*corev1.Policy_Spec_Rule{nil}, EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{nil}},
+	} {
+		srv, coreC := newAuthorizationService(t)
+		policy := &corev1.InlinePolicy{Spec: spec}
+		resp, err := srv.Evaluate(t.Context(), &coctovigilv1.EvaluateRequest{
+			InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: policy}},
+		})
+		assert.Nil(t, err)
+		if assert.NotNil(t, resp) {
+			assert.Equal(t, corev1.Policy_Spec_Rule_DENY, resp.Effect)
+		}
+		authenticated, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+			ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+			Additional: &coctovigilv1.Authorization{InlinePolicies: []*corev1.InlinePolicy{policy}},
+		})
+		assert.Nil(t, err)
+		if assert.NotNil(t, authenticated) {
+			assert.True(t, authenticated.IsAuthenticated)
+			assert.True(t, authenticated.IsAuthorized)
+		}
+		assert.Empty(t, coreC.calls)
+	}
+}
+
+func TestInternalRPCMalformedRequests(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	coreC.service.Spec.IsAnonymous = true
+	coreC.service.Spec.Authorization.EnableAnonymous = true
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	srv.s.grpcSrv = server
+	coctovigilv1.RegisterInternalServiceServer(server, srv)
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	t.Cleanup(func() {
+		assert.Nil(t, srv.s.Close())
+		listener.Close()
+		select {
+		case err := <-done:
+			assert.Nil(t, err)
+		case <-time.After(3 * time.Second):
+			assert.Fail(t, "the internal RPC server did not stop")
+		}
+	})
+	conn, err := grpc.NewClient("passthrough:///octovigil",
+		grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if !assert.Nil(t, err) {
+		return
+	}
+	t.Cleanup(func() { conn.Close() })
+	client := coctovigilv1.NewInternalServiceClient(conn)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	allow := coreC.service.Spec.Authorization.InlinePolicies[0]
+	invalid := []*coctovigilv1.EvaluateRequest_InlinePolicy{nil, {}, {Policy: &corev1.InlinePolicy{}}}
+	policies := []*corev1.InlinePolicy{
+		{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{nil}}},
+		{Spec: &corev1.Policy_Spec{EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{nil}}},
+		{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{}}, EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{{}}}},
+	}
+	downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+	var wg sync.WaitGroup
+	for worker := range 16 {
+		wg.Go(func() {
+			for idx := range 8 {
+				evaluated, err := client.Evaluate(ctx, &coctovigilv1.EvaluateRequest{
+					InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: allow}, invalid[(worker+idx)%len(invalid)]},
+				})
+				assert.Nil(t, evaluated)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				additional := &coctovigilv1.Authorization{InlinePolicies: []*corev1.InlinePolicy{allow, nil}}
+				authenticated, err := client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+					ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{}, Additional: additional,
+				})
+				assert.Nil(t, authenticated)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				authorized, err := client.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
+					ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid, Additional: additional,
+				})
+				assert.Nil(t, authorized)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				authenticated, err = client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{ServiceUID: "service"})
+				if assert.Nil(t, err) && assert.NotNil(t, authenticated) {
+					assert.False(t, authenticated.IsAuthenticated)
+					assert.False(t, authenticated.IsAuthorized)
+					assert.Nil(t, authenticated.RequestContext)
+				}
+				evaluated, err = client.Evaluate(ctx, &coctovigilv1.EvaluateRequest{
+					InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: allow}, {Policy: policies[(worker+idx)%len(policies)]}},
+				})
+				if assert.Nil(t, err) && assert.NotNil(t, evaluated) {
+					assert.Equal(t, corev1.Policy_Spec_Rule_ALLOW, evaluated.Effect)
+				}
+				authenticated, err = client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+					ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{},
+					Additional: &coctovigilv1.Authorization{InlinePolicies: []*corev1.InlinePolicy{policies[(worker+idx)%len(policies)]}},
+				})
+				if assert.Nil(t, err) && assert.NotNil(t, authenticated) {
+					assert.True(t, authenticated.IsAuthorized)
+					assert.False(t, authenticated.IsAuthenticated)
+				}
+				authorized, err = client.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
+					ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid,
+					Additional: &coctovigilv1.Authorization{InlinePolicies: []*corev1.InlinePolicy{policies[(worker+idx)%len(policies)]}},
+				})
+				if assert.Nil(t, err) && assert.NotNil(t, authorized) {
+					assert.True(t, authorized.IsAuthorized)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	assert.Empty(t, coreC.calls)
+}
+
 func TestInternalRPCLookupFailures(t *testing.T) {
 	for _, resource := range []string{"policy", "namespace", "trigger"} {
 		t.Run(resource, func(t *testing.T) {

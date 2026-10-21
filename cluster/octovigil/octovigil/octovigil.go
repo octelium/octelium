@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -476,7 +477,16 @@ type AuthenticateAndAuthorizeResponse struct {
 }
 
 func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1.DoAuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+	if req.Service == nil {
+		return nil, grpcutils.InvalidArg("Nil Service")
+	}
 	ret := &coctovigilv1.AuthenticateAndAuthorizeResponse{}
+	if req.Request == nil {
+		return ret, nil
+	}
 
 	if s.isAnonymousAuthorizationEnabled(req.Service) {
 		ret.RequestContext = s.getReqCtx(nil, req.Request.Request, req.Service)
@@ -617,14 +627,14 @@ func (s *Server) isAuthorized(ctx context.Context,
 	req *corev1.RequestContext,
 	additional *coctovigilv1.Authorization) (bool, *corev1.AccessLog_Entry_Common_Reason, error) {
 
+	if req == nil {
+		return false, nil, errors.Errorf("Nil request")
+	}
 	if s.isAnonymousAuthorizationEnabled(req.Service) {
 		return s.isAuthorizedAnonymous(ctx, req, additional)
 	}
 
 	reason := &corev1.AccessLog_Entry_Common_Reason{}
-	if req == nil {
-		return false, nil, errors.Errorf("Nil request")
-	}
 	if req.User == nil {
 		return false, nil, errors.Errorf("Nil User")
 	}

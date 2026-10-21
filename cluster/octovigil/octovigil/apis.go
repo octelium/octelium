@@ -33,9 +33,27 @@ type internalService struct {
 	s *Server
 }
 
+func validateAuthorization(authorization *coctovigilv1.Authorization) error {
+	if authorization == nil {
+		return nil
+	}
+	for _, policy := range authorization.InlinePolicies {
+		if policy == nil || policy.Spec == nil {
+			return grpcutils.InvalidArg("Invalid inlinePolicy")
+		}
+	}
+	return nil
+}
+
 func (s *internalService) AuthenticateAndAuthorize(
 	ctx context.Context, req *coctovigilv1.AuthenticateAndAuthorizeRequest) (
 	*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+	if err := validateAuthorization(req.Additional); err != nil {
+		return nil, err
+	}
 	// zap.L().Debug("Received AuthenticateAndAuthorize request", zap.String("svcUID", req.ServiceUID))
 	// startedAt := time.Now()
 
@@ -72,6 +90,9 @@ func (s *internalService) AuthenticateAndAuthorize(
 func (s *internalService) GetDownstreamFromSessionUID(
 	ctx context.Context, req *coctovigilv1.GetDownstreamFromSessionUIDRequest) (
 	*coctovigilv1.GetDownstreamFromSessionUIDResponse, error) {
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
 
 	// startedAt := time.Now()
 	di, err := s.s.getDownstreamInfo(ctx, req.SessionUID)
@@ -97,6 +118,12 @@ func (s *internalService) GetDownstreamFromSessionUID(
 func (s *internalService) Authorize(
 	ctx context.Context, req *coctovigilv1.AuthorizeRequest) (
 	*coctovigilv1.AuthorizeResponse, error) {
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+	if err := validateAuthorization(req.Additional); err != nil {
+		return nil, err
+	}
 	// zap.L().Debug("Received AuthenticateAndAuthorize request", zap.String("svcUID", req.ServiceUID))
 	// startedAt := time.Now()
 
@@ -139,6 +166,14 @@ func (s *internalService) Authorize(
 func (s *internalService) Evaluate(
 	ctx context.Context, req *coctovigilv1.EvaluateRequest) (
 	*coctovigilv1.EvaluateResponse, error) {
+	if req == nil {
+		return nil, grpcutils.InvalidArg("Nil request")
+	}
+	for _, policy := range req.InlinePolicies {
+		if policy == nil || policy.Policy == nil || policy.Policy.Spec == nil {
+			return nil, grpcutils.InvalidArg("Invalid inlinePolicy")
+		}
+	}
 	reqCtxMap, err := pbutils.ConvertToMap(req.Ctx)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
