@@ -399,6 +399,133 @@ func TestReadiness(t *testing.T) {
 	assert.Nil(t, WaitForNodesReadiness(ctx, client))
 }
 
+func TestWaitForNodesReadiness(t *testing.T) {
+	previous := ldflags.TestMode
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ldflags.TestMode = "false"
+
+	node := func(name string, conditions ...k8scorev1.NodeCondition) *k8scorev1.Node {
+		return &k8scorev1.Node{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: name},
+			Status:     k8scorev1.NodeStatus{Conditions: conditions},
+		}
+	}
+	ready := k8scorev1.NodeCondition{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionTrue}
+	cordoned := node("cordoned", ready)
+	cordoned.Spec.Unschedulable = true
+	cordoned.Spec.Taints = []k8scorev1.Taint{{Key: "node-role.kubernetes.io/control-plane", Effect: k8scorev1.TaintEffectNoSchedule}}
+
+	for _, tc := range []struct {
+		name  string
+		nodes []*k8scorev1.Node
+		ready bool
+	}{
+		{"Ready", []*k8scorev1.Node{node("node", ready)}, true},
+		{"AllReady", []*k8scorev1.Node{node("first", ready), node("second", ready)}, true},
+		{"CordonedReady", []*k8scorev1.Node{cordoned}, true},
+		{"ReadyAmongOtherConditions", []*k8scorev1.Node{node("node",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeMemoryPressure, Status: k8scorev1.ConditionFalse}, ready,
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeDiskPressure, Status: k8scorev1.ConditionFalse})}, true},
+		{"NoNodes", nil, false},
+		{"NoConditions", []*k8scorev1.Node{node("node")}, false},
+		{"NoReadyCondition", []*k8scorev1.Node{node("node",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeMemoryPressure, Status: k8scorev1.ConditionFalse})}, false},
+		{"OtherConditionTrue", []*k8scorev1.Node{node("node",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeNetworkUnavailable, Status: k8scorev1.ConditionTrue})}, false},
+		{"False", []*k8scorev1.Node{node("node",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionFalse})}, false},
+		{"Unknown", []*k8scorev1.Node{node("node",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionUnknown})}, false},
+		{"EmptyStatus", []*k8scorev1.Node{node("node", k8scorev1.NodeCondition{Type: k8scorev1.NodeReady})}, false},
+		{"MixedMissingReady", []*k8scorev1.Node{node("first", ready), node("second")}, false},
+		{"MixedNotReady", []*k8scorev1.Node{node("first", ready), node("second",
+			k8scorev1.NodeCondition{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionFalse})}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objects := make([]runtime.Object, 0, len(tc.nodes))
+			for _, node := range tc.nodes {
+				objects = append(objects, node.DeepCopy())
+			}
+			client := fake.NewClientset(objects...)
+			timeout := 100 * time.Millisecond
+			if tc.ready {
+				timeout = 5 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+			client.PrependReactor("list", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				if err := ctx.Err(); err != nil {
+					return true, nil, err
+				}
+				return false, nil, nil
+			})
+
+			err := WaitForNodesReadiness(ctx, client)
+			if tc.ready {
+				assert.Nil(t, err)
+				assert.Len(t, client.Actions(), 1)
+			} else {
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+			}
+		})
+	}
+}
+
+func TestWaitForNodesReadinessTransition(t *testing.T) {
+	previous := ldflags.TestMode
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ldflags.TestMode = "false"
+
+	client := fake.NewClientset()
+	calls := 0
+	client.PrependReactor("list", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		calls++
+		node := k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "node"}}
+		if calls > 1 {
+			node.Status.Conditions = []k8scorev1.NodeCondition{{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionTrue}}
+		}
+		return true, &k8scorev1.NodeList{Items: []k8scorev1.Node{node}}, nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	assert.Nil(t, WaitForNodesReadiness(ctx, client))
+	assert.Equal(t, 2, calls)
+}
+
+func TestWaitForNodesReadinessCancellation(t *testing.T) {
+	previous := ldflags.TestMode
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ldflags.TestMode = "false"
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client := fake.NewClientset()
+	listed := make(chan struct{})
+	client.PrependReactor("list", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if err := ctx.Err(); err != nil {
+			return true, nil, err
+		}
+		close(listed)
+		return true, &k8scorev1.NodeList{}, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- WaitForNodesReadiness(ctx, client)
+	}()
+	select {
+	case <-listed:
+	case <-time.After(time.Second):
+		t.Fatal("Could not list nodes")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Node readiness did not stop after cancellation")
+	}
+}
+
 func TestKubeConfig(t *testing.T) {
 
 	tst, err := tests.Initialize(nil)

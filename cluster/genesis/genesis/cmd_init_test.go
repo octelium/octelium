@@ -138,6 +138,68 @@ func setClusterConfigRegion(ctx context.Context, k8sC kubernetes.Interface, regi
 	return nil
 }
 
+func TestRunInitNodesReadiness(t *testing.T) {
+	previous := ldflags.TestMode
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ldflags.TestMode = "false"
+
+	ready := k8scorev1.Node{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: "ready"},
+		Status: k8scorev1.NodeStatus{
+			Conditions: []k8scorev1.NodeCondition{{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionTrue}},
+		},
+	}
+	missing := k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "missing"}}
+	notReady := *ready.DeepCopy()
+	notReady.Status.Conditions[0].Status = k8scorev1.ConditionFalse
+	unknown := *ready.DeepCopy()
+	unknown.Status.Conditions[0].Status = k8scorev1.ConditionUnknown
+
+	for _, tc := range []struct {
+		name  string
+		nodes []k8scorev1.Node
+		ready bool
+	}{
+		{"Ready", []k8scorev1.Node{ready}, true},
+		{"NoNodes", nil, false},
+		{"MissingReady", []k8scorev1.Node{missing}, false},
+		{"NotReady", []k8scorev1.Node{notReady}, false},
+		{"Unknown", []k8scorev1.Node{unknown}, false},
+		{"MixedMissingReady", []k8scorev1.Node{ready, missing}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timeout := 100 * time.Millisecond
+			if tc.ready {
+				timeout = 5 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+			client := fakek8s.NewClientset()
+			wantErr := fmt.Errorf("Stopped after the readiness check")
+			progressed := false
+			client.PrependReactor("*", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				if action.Matches("list", "nodes") && action.(k8stesting.ListAction).GetListRestrictions().Labels.Empty() {
+					if err := ctx.Err(); err != nil {
+						return true, nil, err
+					}
+					return true, &k8scorev1.NodeList{Items: tc.nodes}, nil
+				}
+				progressed = true
+				return true, nil, wantErr
+			})
+			g := &Genesis{k8sC: client}
+			err := g.RunInit(ctx, nil)
+			if tc.ready {
+				assert.ErrorIs(t, err, wantErr)
+				assert.True(t, progressed)
+			} else {
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.False(t, progressed)
+			}
+		})
+	}
+}
+
 func TestRunInit(t *testing.T) {
 
 	ldflags.TestMode = "true"

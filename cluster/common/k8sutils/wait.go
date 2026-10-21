@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -147,11 +148,16 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 			return false, nil
 		}
 		for _, node := range nodes.Items {
+			isReady := false
 			for _, condition := range node.Status.Conditions {
-				if condition.Type == "Ready" && condition.Status != "True" {
-					zap.L().Info("Node is not ready yet...", zap.String("node", node.Name))
-					return false, nil
+				if condition.Type == k8scorev1.NodeReady {
+					isReady = condition.Status == k8scorev1.ConditionTrue
+					break
 				}
+			}
+			if !isReady {
+				zap.L().Info("Node is not ready yet...", zap.String("node", node.Name))
+				return false, nil
 			}
 		}
 
@@ -168,7 +174,11 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 			return nil
 		}
 
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
 	}
 
 	return errors.Errorf("Could not check of all Kubernetes node readiness")
