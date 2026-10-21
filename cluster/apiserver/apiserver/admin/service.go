@@ -770,10 +770,15 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 				return grpcutils.InvalidArg("Too many volumes")
 			}
 
+			var volumeNames []string
 			for _, vol := range typ.Volumes {
 				if err := apivalidation.ValidateName(vol.Name, 0, 0); err != nil {
 					return err
 				}
+				if slices.Contains(volumeNames, vol.Name) {
+					return grpcutils.InvalidArg("Duplicate volume name: %s", vol.Name)
+				}
+				volumeNames = append(volumeNames, vol.Name)
 
 				switch vol.Type.(type) {
 				case *corev1.Service_Spec_Config_Upstream_Container_Volume_PersistentVolumeClaim_:
@@ -790,23 +795,50 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 				return grpcutils.InvalidArg("Too many volumeMounts")
 			}
 
+			var mountPaths []string
 			for _, mount := range typ.VolumeMounts {
 				if err := apivalidation.ValidateName(mount.Name, 0, 0); err != nil {
 					return err
 				}
+				if !slices.Contains(volumeNames, mount.Name) {
+					return grpcutils.InvalidArg("Volume name: %s does not exist", mount.Name)
+				}
 
-				if !govalidator.IsUnixFilePath(mount.MountPath) {
+				if mount.MountPath == "" || !govalidator.IsUnixFilePath(mount.MountPath) {
 					return grpcutils.InvalidArg("Invalid mountPath: %s", mount.MountPath)
 				}
+				if slices.Contains(mountPaths, mount.MountPath) {
+					return grpcutils.InvalidArg("Duplicate mountPath: %s", mount.MountPath)
+				}
+				mountPaths = append(mountPaths, mount.MountPath)
 
 				if err := s.validateGenStr(mount.SubPath, false, "subPath"); err != nil {
 					return err
+				}
+				if mount.SubPath != "" && (!govalidator.IsUnixFilePath(mount.SubPath) ||
+					strings.HasPrefix(mount.SubPath, "/") || slices.Contains(strings.Split(mount.SubPath, "/"), "..")) {
+					return grpcutils.InvalidArg("Invalid subPath: %s", mount.SubPath)
 				}
 			}
 
 			validateProbe := func(p *corev1.Service_Spec_Config_Upstream_Container_Probe) error {
 				if p == nil {
 					return nil
+				}
+				if p.InitialDelaySeconds < 0 {
+					return grpcutils.InvalidArg("Probe initialDelaySeconds cannot be negative")
+				}
+				if p.TimeoutSeconds < 0 {
+					return grpcutils.InvalidArg("Probe timeoutSeconds cannot be negative")
+				}
+				if p.PeriodSeconds < 0 {
+					return grpcutils.InvalidArg("Probe periodSeconds cannot be negative")
+				}
+				if p.SuccessThreshold < 0 {
+					return grpcutils.InvalidArg("Probe successThreshold cannot be negative")
+				}
+				if p.FailureThreshold < 0 {
+					return grpcutils.InvalidArg("Probe failureThreshold cannot be negative")
 				}
 
 				switch p.Type.(type) {
@@ -842,6 +874,9 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 
 			if err := validateProbe(typ.LivenessProbe); err != nil {
 				return err
+			}
+			if typ.LivenessProbe != nil && typ.LivenessProbe.SuccessThreshold > 1 {
+				return grpcutils.InvalidArg("Liveness Probe successThreshold must be 1 when set")
 			}
 		default:
 			return serr.InvalidArg("Invalid upstream type")

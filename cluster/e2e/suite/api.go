@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/octelium-go"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -502,4 +503,140 @@ func testAPIDynamicConfigTargets(t *testing.T, h *harness.H) {
 	v.svc = h.UpdateService(t, v.svc)
 	selectedHeader = "default"
 	h.Eventually(t, "an updated rule to use the default after removing its previous config", harness.DecisionBudget, check)
+}
+
+func testAPIContainerValidation(t *testing.T, h *harness.H) {
+	response := h.Name()
+	svc := h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_{
+						Container: &corev1.Service_Spec_Config_Upstream_Container{
+							Image:   "nginx",
+							Port:    80,
+							Command: []string{"/bin/sh", "-c"},
+							Args:    []string{`mkdir -p /data/html && printf '%s' "$OCTELIUM_E2E_RESPONSE" > /data/html/index.html && exec nginx -g 'daemon off;'`},
+							Env: []*corev1.Service_Spec_Config_Upstream_Container_Env{
+								{Name: "OCTELIUM_E2E_RESPONSE", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: response}},
+							},
+							Volumes: []*corev1.Service_Spec_Config_Upstream_Container_Volume{{
+								Name: "data",
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_{EmptyDir: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir{}},
+							}},
+							VolumeMounts: []*corev1.Service_Spec_Config_Upstream_Container_VolumeMount{
+								{Name: "data", MountPath: "/data"},
+								{Name: "data", MountPath: "/usr/share/nginx/html", SubPath: "html", ReadOnly: true},
+							},
+							ReadinessProbe: &corev1.Service_Spec_Config_Upstream_Container_Probe{
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet{HttpGet: &corev1.Service_Spec_Config_Upstream_Container_Probe_HTTPGet{
+									Path: "/", Port: 80,
+								}},
+								PeriodSeconds: 1, SuccessThreshold: 2,
+							},
+							LivenessProbe: &corev1.Service_Spec_Config_Upstream_Container_Probe{
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Probe_TcpSocket{TcpSocket: &corev1.Service_Spec_Config_Upstream_Container_Probe_TCPSocket{Port: 80}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+	h.MustWaitService(t, svc.Metadata.Name)
+	upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+	conn := h.Connect(t, harness.ConnectOpts{Publish: map[string]int{svc.Metadata.Name: h.Port()}})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	livenessPeriod := int32(10)
+	readinessSuccess := int32(2)
+	check := func(ctx context.Context) error {
+		dep, err := h.K8sDeployment(ctx, upstream)
+		if err != nil {
+			return err
+		}
+		if dep.Status.ObservedGeneration < dep.Generation || dep.Status.ReadyReplicas != 1 ||
+			dep.Status.UpdatedReplicas != 1 || dep.Status.Replicas != 1 {
+			return fmt.Errorf("the managed container has not completed its rollout")
+		}
+		pod := dep.Spec.Template.Spec
+		if len(pod.Volumes) != 1 || pod.Volumes[0].Name != "data" || pod.Volumes[0].EmptyDir == nil || len(pod.Containers) != 1 {
+			return fmt.Errorf("the managed container does not have the expected volume")
+		}
+		container := pod.Containers[0]
+		if len(container.VolumeMounts) != 2 || container.VolumeMounts[0].Name != "data" || container.VolumeMounts[0].MountPath != "/data" ||
+			container.VolumeMounts[1].Name != "data" || container.VolumeMounts[1].MountPath != "/usr/share/nginx/html" ||
+			container.VolumeMounts[1].SubPath != "html" || !container.VolumeMounts[1].ReadOnly {
+			return fmt.Errorf("the managed container does not have the expected volume mounts")
+		}
+		liveness, readiness := container.LivenessProbe, container.ReadinessProbe
+		if liveness == nil || liveness.TCPSocket == nil || liveness.TCPSocket.Port.IntVal != 80 || liveness.InitialDelaySeconds != 0 ||
+			liveness.TimeoutSeconds != 1 || liveness.PeriodSeconds != livenessPeriod || liveness.SuccessThreshold != 1 || liveness.FailureThreshold != 3 {
+			return fmt.Errorf("the managed container does not have the expected liveness probe")
+		}
+		if readiness == nil || readiness.HTTPGet == nil || readiness.HTTPGet.Path != "/" || readiness.HTTPGet.Port.IntVal != 80 ||
+			readiness.InitialDelaySeconds != 0 || readiness.TimeoutSeconds != 1 || readiness.PeriodSeconds != 1 ||
+			readiness.SuccessThreshold != readinessSuccess || readiness.FailureThreshold != 3 {
+			return fmt.Errorf("the managed container does not have the expected readiness probe")
+		}
+		res, err := c.R().SetContext(ctx).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != response {
+			return fmt.Errorf("the managed container returned %q, want %q", res.String(), response)
+		}
+		return nil
+	}
+	h.Eventually(t, "the valid mounts and defaulted probes to serve requests", harness.DeploymentBudget, check)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Service_Spec_Config_Upstream_Container)
+	}{
+		{"EmptyMountPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].MountPath = "" }},
+		{"MissingVolume", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].Name = "missing" }},
+		{"DuplicateVolume", func(c *corev1.Service_Spec_Config_Upstream_Container) {
+			c.Volumes = append(c.Volumes, proto.Clone(c.Volumes[0]).(*corev1.Service_Spec_Config_Upstream_Container_Volume))
+		}},
+		{"DuplicateMountPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[1].MountPath = "/data" }},
+		{"AbsoluteSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[1].SubPath = "/html" }},
+		{"ParentSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[1].SubPath = "nested/../html" }},
+		{"NULSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[1].SubPath = "html\x00" }},
+		{"ReadinessTiming", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.ReadinessProbe.TimeoutSeconds = -1 }},
+		{"LivenessTiming", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.LivenessProbe.InitialDelaySeconds = -1 }},
+		{"ReadinessThreshold", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.ReadinessProbe.FailureThreshold = -1 }},
+		{"LivenessSuccessThreshold", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.LivenessProbe.SuccessThreshold = 2 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := proto.Clone(svc).(*corev1.Service)
+			tc.mutate(req.Spec.Config.Upstream.GetContainer())
+			create := proto.Clone(req).(*corev1.Service)
+			create.Metadata = &metav1.Metadata{Name: fmt.Sprintf("%s.default", h.Name())}
+			create.Status = nil
+			_, err := h.CoreC().CreateService(t.Context(), create)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			_, err = h.CoreC().GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+			_, err = h.CoreC().UpdateService(t.Context(), req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			stored, err := h.CoreC().GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.True(t, proto.Equal(svc.Spec, stored.Spec))
+			h.Eventually(t, "rejected container settings to preserve the healthy upstream", harness.DecisionBudget, check)
+		})
+	}
+	container := svc.Spec.Config.Upstream.GetContainer()
+	container.LivenessProbe.PeriodSeconds = 1
+	container.LivenessProbe.SuccessThreshold = 1
+	container.ReadinessProbe.SuccessThreshold = 0
+	response = h.Name()
+	container.Env[0].Type = &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: response}
+	svc = h.UpdateService(t, svc)
+	livenessPeriod, readinessSuccess = 1, 1
+	h.Eventually(t, "valid probe updates and defaulting to complete a healthy rollout", harness.DeploymentBudget, check)
 }

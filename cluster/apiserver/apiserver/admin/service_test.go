@@ -3905,3 +3905,214 @@ func TestServiceDynamicConfigTargetPersistence(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceContainerVolumeConstraints(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		valid  bool
+		mutate func(*corev1.Service_Spec_Config_Upstream_Container)
+	}{
+		{"Valid", true, func(c *corev1.Service_Spec_Config_Upstream_Container) {}},
+		{"UnmountedVolumes", true, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts = nil }},
+		{"NoVolumes", true, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.Volumes, c.VolumeMounts = nil, nil }},
+		{"PVCMount", true, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].Name = "cache" }},
+		{"RepeatedVolumeMount", true, func(c *corev1.Service_Spec_Config_Upstream_Container) {
+			c.VolumeMounts = append(c.VolumeMounts, &corev1.Service_Spec_Config_Upstream_Container_VolumeMount{Name: "data", MountPath: "/readonly", ReadOnly: true})
+		}},
+		{"RelativeMountPath", true, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].MountPath = "data" }},
+		{"EmptyMountPath", false, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].MountPath = "" }},
+		{"MissingVolume", false, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].Name = "missing" }},
+		{"MissingAllVolumes", false, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.Volumes = nil }},
+		{"DuplicateVolume", false, func(c *corev1.Service_Spec_Config_Upstream_Container) {
+			c.Volumes = append(c.Volumes, pbutils.Clone(c.Volumes[0]).(*corev1.Service_Spec_Config_Upstream_Container_Volume))
+		}},
+		{"DuplicateVolumeWithDifferentType", false, func(c *corev1.Service_Spec_Config_Upstream_Container) { c.Volumes[1].Name = "data" }},
+		{"DuplicateMountPath", false, func(c *corev1.Service_Spec_Config_Upstream_Container) {
+			c.VolumeMounts = append(c.VolumeMounts, &corev1.Service_Spec_Config_Upstream_Container_VolumeMount{Name: "cache", MountPath: "/data"})
+		}},
+		{"DuplicateMountPathWithSameVolume", false, func(c *corev1.Service_Spec_Config_Upstream_Container) {
+			c.VolumeMounts = append(c.VolumeMounts, pbutils.Clone(c.VolumeMounts[0]).(*corev1.Service_Spec_Config_Upstream_Container_VolumeMount))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}},{"name":"cache","persistentVolumeClaim":{"name":"claim"}}],"volumeMounts":[{"name":"data","mountPath":"/data"}]}}}`)
+			tc.mutate(cfg.Upstream.GetContainer())
+			s := &Server{}
+			err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+			assert.Equal(t, tc.valid, err == nil, "%+v", err)
+		})
+	}
+	for _, count := range []int{32, 33} {
+		t.Run(fmt.Sprintf("Mounts%d", count), func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}}]}}}`)
+			for i := range count {
+				cfg.Upstream.GetContainer().VolumeMounts = append(cfg.Upstream.GetContainer().VolumeMounts,
+					&corev1.Service_Spec_Config_Upstream_Container_VolumeMount{Name: "data", MountPath: fmt.Sprintf("/data/%d", i)})
+			}
+			s := &Server{}
+			err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+			assert.Equal(t, count == 32, err == nil, "%+v", err)
+		})
+	}
+}
+
+func TestServiceContainerSubPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"Root", "", true},
+		{"CurrentDirectory", ".", true},
+		{"Directory", "nested", true},
+		{"NestedDirectory", "nested/leaf", true},
+		{"CurrentDirectoryPrefix", "./nested", true},
+		{"CurrentDirectoryComponent", "nested/./leaf", true},
+		{"RepeatedSeparator", "nested//leaf", true},
+		{"HiddenDirectory", ".hidden", true},
+		{"DotsInName", "..hidden", true},
+		{"MaximumLength", strings.Repeat("a", 256), true},
+		{"TooLong", strings.Repeat("a", 257), false},
+		{"Absolute", "/nested", false},
+		{"AbsoluteRoot", "/", false},
+		{"ParentDirectory", "..", false},
+		{"ParentDirectoryPrefix", "../nested", false},
+		{"ParentDirectorySuffix", "nested/..", false},
+		{"ParentDirectoryComponent", "nested/../leaf", false},
+		{"RepeatedSeparatorTraversal", "nested//..//leaf", false},
+		{"NUL", "nested\x00leaf", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}}],"volumeMounts":[{"name":"data","mountPath":"/data"}]}}}`)
+			cfg.Upstream.GetContainer().VolumeMounts[0].SubPath = tc.value
+			s := &Server{}
+			err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+			assert.Equal(t, tc.valid, err == nil, "%+v", err)
+		})
+	}
+}
+
+func TestServiceContainerProbeValues(t *testing.T) {
+	for _, typ := range []struct {
+		name  string
+		value string
+	}{
+		{"HTTP", `"httpGet":{"path":"/health","port":8080}`},
+		{"TCP", `"tcpSocket":{"port":8080}`},
+		{"GRPC", `"grpc":{"port":8080}`},
+	} {
+		for _, probe := range []string{"readinessProbe", "livenessProbe"} {
+			for _, field := range []string{"initialDelaySeconds", "timeoutSeconds", "periodSeconds", "successThreshold", "failureThreshold"} {
+				for _, value := range []int32{math.MinInt32, -1, 0, 1, 2, math.MaxInt32} {
+					t.Run(fmt.Sprintf("%s/%s/%s/%d", typ.name, probe, field, value), func(t *testing.T) {
+						cfg := tstServiceConfig(t, fmt.Sprintf(`{"upstream":{"container":{"image":"example/image","port":8080,%q:{%s,%q:%d}}}}`, probe, typ.value, field, value))
+						want := pbutils.MarshalMust(cfg)
+						s := &Server{}
+						err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+						valid := value >= 0 && !(probe == "livenessProbe" && field == "successThreshold" && value > 1)
+						assert.Equal(t, valid, err == nil, "%+v", err)
+						assert.Equal(t, want, pbutils.MarshalMust(cfg))
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestServiceContainerVolumeInheritance(t *testing.T) {
+	svc := &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode:   corev1.Service_Spec_HTTP,
+			Config: tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}}]}}}`),
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{
+					tstServiceConfig(t, `{"name":"child","parent":"default","upstream":{"container":{"volumeMounts":[{"name":"data","mountPath":"/data"}]}}}`),
+				},
+			},
+		},
+	}
+	cfg := svc.Spec.DynamicConfig.Configs[0]
+	s := &Server{}
+	assert.Nil(t, s.ValidateServiceConfig(t.Context(), cfg, svc, false))
+	cfg.Upstream.GetContainer().VolumeMounts[0].Name = "missing"
+	assert.Equal(t, codes.InvalidArgument, status.Code(s.ValidateServiceConfig(t.Context(), cfg, svc, false)))
+}
+
+func TestServiceContainerConstraintPersistence(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	for _, named := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Named%t", named), func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}}],"volumeMounts":[{"name":"data","mountPath":"/data"}],"readinessProbe":{"httpGet":{"path":"/health","port":8080}},"livenessProbe":{"tcpSocket":{"port":8080}}}}}`)
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+				Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, Config: cfg},
+			}
+			getContainer := func(svc *corev1.Service) *corev1.Service_Spec_Config_Upstream_Container {
+				if named {
+					return svc.Spec.DynamicConfig.Configs[0].Upstream.GetContainer()
+				}
+				return svc.Spec.Config.Upstream.GetContainer()
+			}
+			if named {
+				cfg.Name = "managed"
+				svc.Spec.Config = nil
+				svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+			}
+			svc, err := s.CreateService(t.Context(), svc)
+			require.Nil(t, err)
+			want := pbutils.MarshalMust(svc.Spec)
+			for _, tc := range []struct {
+				name   string
+				mutate func(*corev1.Service_Spec_Config_Upstream_Container)
+			}{
+				{"EmptyMountPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].MountPath = "" }},
+				{"MissingVolume", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].Name = "missing" }},
+				{"DuplicateVolume", func(c *corev1.Service_Spec_Config_Upstream_Container) {
+					c.Volumes = append(c.Volumes, pbutils.Clone(c.Volumes[0]).(*corev1.Service_Spec_Config_Upstream_Container_Volume))
+				}},
+				{"DuplicateMountPath", func(c *corev1.Service_Spec_Config_Upstream_Container) {
+					c.VolumeMounts = append(c.VolumeMounts, pbutils.Clone(c.VolumeMounts[0]).(*corev1.Service_Spec_Config_Upstream_Container_VolumeMount))
+				}},
+				{"AbsoluteSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].SubPath = "/data" }},
+				{"ParentSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].SubPath = "nested/../data" }},
+				{"NULSubPath", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.VolumeMounts[0].SubPath = "nested\x00data" }},
+				{"ReadinessTiming", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.ReadinessProbe.InitialDelaySeconds = -1 }},
+				{"LivenessTiming", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.LivenessProbe.PeriodSeconds = -1 }},
+				{"ReadinessThreshold", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.ReadinessProbe.SuccessThreshold = -1 }},
+				{"LivenessSuccessThreshold", func(c *corev1.Service_Spec_Config_Upstream_Container) { c.LivenessProbe.SuccessThreshold = 2 }},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					req := pbutils.Clone(svc).(*corev1.Service)
+					tc.mutate(getContainer(req))
+					create := pbutils.Clone(req).(*corev1.Service)
+					create.Metadata = &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)}
+					create.Status = nil
+					_, err := s.CreateService(t.Context(), create)
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+					_, err = s.GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+					assert.Equal(t, codes.NotFound, status.Code(err))
+					_, err = s.UpdateService(t.Context(), req)
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+					stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+					require.Nil(t, err)
+					assert.Equal(t, want, pbutils.MarshalMust(stored.Spec))
+				})
+			}
+			for _, success := range []int32{2, 0} {
+				container := getContainer(svc)
+				container.ReadinessProbe.SuccessThreshold = success
+				container.LivenessProbe.SuccessThreshold = min(success, 1)
+				svc, err = s.UpdateService(t.Context(), svc)
+				require.Nil(t, err)
+				stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+				require.Nil(t, err)
+				assert.Equal(t, pbutils.MarshalMust(svc.Spec), pbutils.MarshalMust(stored.Spec))
+				assert.Equal(t, success, getContainer(stored).ReadinessProbe.SuccessThreshold)
+				assert.Equal(t, min(success, 1), getContainer(stored).LivenessProbe.SuccessThreshold)
+			}
+		})
+	}
+}
