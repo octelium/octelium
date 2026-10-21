@@ -18,6 +18,8 @@ package suite
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -1216,5 +1218,201 @@ func testNocturneEnvironmentSecretFailure(t *testing.T, h *harness.H) {
 			})
 		h.Consistently(t, "every request to use the recovered Secret value", decisionSettle,
 			func(ctx context.Context) error { return check(ctx, updated) })
+	})
+}
+
+func testNocturneRegistryCredentials(t *testing.T, h *harness.H) {
+	password := h.Name()
+	source := h.CreateSecret(t, "", password)
+	response := h.Name()
+	svc := newManagedHTTPService(t, h, []*corev1.Service_Spec_Config_Upstream_Container_Env{
+		{Name: "OCTELIUM_E2E_RESPONSE", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: response}},
+	}, 1)
+	svc.Spec.Config.Upstream.GetContainer().Credentials = &corev1.Service_Spec_Config_Upstream_Container_Credentials{
+		Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_{
+			UsernamePassword: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword{
+				Username: "first", Server: "first.example.com",
+				Password: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_Credentials_UsernamePassword_Password_FromSecret{FromSecret: source.Metadata.Name},
+				},
+			},
+		},
+	}
+	same := proto.Clone(svc.Spec.Config).(*corev1.Service_Spec_Config)
+	same.Name = "same"
+	registry := proto.Clone(same).(*corev1.Service_Spec_Config)
+	registry.Name = "registry"
+	registry.Upstream.GetContainer().Credentials.GetUsernamePassword().Server = "second.example.com"
+	username := proto.Clone(same).(*corev1.Service_Spec_Config)
+	username.Name = "username"
+	username.Upstream.GetContainer().Credentials.GetUsernamePassword().Username = "second"
+	svc = h.UpdateService(t, svc)
+	configs := []*corev1.Service_Spec_Config{svc.Spec.Config}
+	waitCredentials := func(t *testing.T, previous map[string]*k8scorev1.Secret) map[string]*k8scorev1.Secret {
+		t.Helper()
+		var ret map[string]*k8scorev1.Secret
+		h.Eventually(t, "every upstream to retain its own registry credentials", harness.DeploymentBudget,
+			func(ctx context.Context) error {
+				secrets := make(map[string]*k8scorev1.Secret)
+				contexts := make(map[string]string)
+				for _, cfg := range configs {
+					dep, err := h.K8sC().AppsV1().Deployments(vutils.K8sNS).Get(ctx,
+						k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name), k8smetav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					if dep.Status.ObservedGeneration < dep.Generation || dep.Status.ReadyReplicas != 1 ||
+						dep.Status.UpdatedReplicas != 1 || dep.Status.Replicas != 1 {
+						return errors.Errorf("the upstream %s has not completed its rollout", cfg.Name)
+					}
+					if len(dep.Spec.Template.Spec.ImagePullSecrets) != 1 {
+						return errors.Errorf("the upstream %s does not have one image pull Secret", cfg.Name)
+					}
+					secret, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(ctx,
+						dep.Spec.Template.Spec.ImagePullSecrets[0].Name, k8smetav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					owner := k8smetav1.GetControllerOf(secret)
+					if secret.Type != k8scorev1.SecretTypeDockerConfigJson || owner == nil ||
+						owner.APIVersion != "v1" || owner.Kind != "ConfigMap" || owner.Name != h.SvcHostname(svc) {
+						return errors.Errorf("the upstream %s has an invalid credential Secret", cfg.Name)
+					}
+					var config struct {
+						Auths map[string]struct{ Auth string } `json:"auths"`
+					}
+					if err := json.Unmarshal(secret.Data[k8scorev1.DockerConfigJsonKey], &config); err != nil {
+						return err
+					}
+					creds := cfg.Upstream.GetContainer().Credentials.GetUsernamePassword()
+					entry, ok := config.Auths[creds.Server]
+					if !ok || len(config.Auths) != 1 {
+						return errors.Errorf("the upstream %s is missing its registry credentials", cfg.Name)
+					}
+					auth, err := base64.StdEncoding.DecodeString(entry.Auth)
+					if err != nil {
+						return err
+					}
+					if string(auth) != creds.Username+":"+password {
+						return errors.Errorf("the upstream %s has incorrect registry credentials", cfg.Name)
+					}
+					key := fmt.Sprintf("%q:%q", creds.Server, creds.Username)
+					if name, ok := contexts[key]; ok && name != secret.Name {
+						return errors.Errorf("identical registry credentials do not share one Secret")
+					}
+					for other, name := range contexts {
+						if other != key && name == secret.Name {
+							return errors.Errorf("different registry credentials share one Secret")
+						}
+					}
+					contexts[key] = secret.Name
+					if original := previous[cfg.Name]; original != nil &&
+						(original.Name != secret.Name || original.UID != secret.UID) {
+						return errors.Errorf("the upstream %s replaced its credential Secret", cfg.Name)
+					}
+					secrets[cfg.Name] = secret
+				}
+				ret = secrets
+				return nil
+			})
+		return ret
+	}
+	legacy := waitCredentials(t, nil)[svc.Spec.Config.Name]
+	assert.Equal(t, fmt.Sprintf("regcred-%s-%s", svc.Metadata.Uid, source.Metadata.Uid), legacy.Name)
+	upstream := h.MustK8sDeployment(t, k8sutils.GetSvcK8sUpstreamHostname(svc, svc.Spec.Config.Name))
+	svc = h.GetService(t, svc.Metadata.Name)
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+		Configs: []*corev1.Service_Spec_Config{same, registry, username},
+	}
+	svc = h.UpdateService(t, svc)
+	configs = append(configs, same, registry, username)
+	original := waitCredentials(t, nil)
+	assert.NotEqual(t, legacy.Name, original[svc.Spec.Config.Name].Name)
+	assert.Equal(t, upstream.UID, h.MustK8sDeployment(t, upstream.Name).UID)
+	h.MustWaitService(t, svc.Metadata.Name)
+	conn := h.Connect(t, harness.ConnectOpts{Publish: map[string]int{svc.Metadata.Name: h.Port()}})
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	check := func(ctx context.Context) error {
+		res, err := c.R().SetContext(ctx).Get(conn.URL(svc.Metadata.Name))
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != response {
+			return errors.Errorf("the Service returned an unexpected response")
+		}
+		return nil
+	}
+	h.Eventually(t, "the Service to serve its default upstream", harness.DeploymentBudget, check)
+	if !t.Run("Reorder", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		slices.Reverse(svc.Spec.DynamicConfig.Configs)
+		svc.Metadata.DisplayName = h.Name()
+		svc = h.UpdateService(t, svc)
+		waitCredentials(t, original)
+		h.Consistently(t, "requests to survive credential reconciliation", decisionSettle, check)
+	}) {
+		return
+	}
+	if !t.Run("RotatePassword", func(t *testing.T) {
+		password = h.Name()
+		h.UpdateSecret(t, source.Metadata.Name, password)
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Metadata.DisplayName = h.Name()
+		svc = h.UpdateService(t, svc)
+		waitCredentials(t, original)
+		h.Consistently(t, "requests to survive password rotation", decisionSettle, check)
+	}) {
+		return
+	}
+	t.Run("RemoveNamed", func(t *testing.T) {
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Spec.DynamicConfig = nil
+		svc = h.UpdateService(t, svc)
+		for _, cfg := range configs[1:] {
+			h.WaitK8sObjectsGone(t, k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name))
+		}
+		configs = configs[:1]
+		remaining := waitCredentials(t, nil)[configs[0].Name]
+		assert.Equal(t, fmt.Sprintf("regcred-%s-%s", svc.Metadata.Uid, source.Metadata.Uid), remaining.Name)
+		h.Eventually(t, "upstream Pods to release the old credential Secrets", harness.K8sGCBudget,
+			func(ctx context.Context) error {
+				pods, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{
+					LabelSelector: fmt.Sprintf("octelium.com/svc-uid=%s,octelium.com/component=svc-k8s-upstream", svc.Metadata.Uid),
+				})
+				if err != nil {
+					return err
+				}
+				if len(pods.Items) != 1 {
+					return errors.Errorf("the Service still has %d upstream Pods", len(pods.Items))
+				}
+				for _, ref := range pods.Items[0].Spec.ImagePullSecrets {
+					if ref.Name != remaining.Name {
+						return errors.Errorf("an upstream Pod still references an old credential Secret")
+					}
+				}
+				return nil
+			})
+		svc = h.GetService(t, svc.Metadata.Name)
+		svc.Metadata.DisplayName = h.Name()
+		svc = h.UpdateService(t, svc)
+		h.Eventually(t, "the unused registry credential Secrets to be removed", harness.DecisionBudget,
+			func(ctx context.Context) error {
+				for _, secret := range original {
+					_, err := h.K8sC().CoreV1().Secrets(vutils.K8sNS).Get(ctx, secret.Name, k8smetav1.GetOptions{})
+					if k8serr.IsNotFound(err) {
+						continue
+					}
+					if err != nil {
+						return err
+					}
+					return errors.Errorf("an unused registry credential Secret still exists")
+				}
+				return nil
+			})
+		h.Consistently(t, "requests to survive named upstream removal", decisionSettle, check)
 	})
 }

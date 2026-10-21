@@ -18,6 +18,7 @@ package svccontroller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -239,6 +240,44 @@ func (c *Controller) getK8sUpstreamLabels(svc *corev1.Service, name string) map[
 	}
 }
 
+func (c *Controller) getK8sUpstreamCredDomain(cfg *corev1.Service_Spec_Config) string {
+	spec := cfg.GetUpstream().GetContainer()
+	if server := spec.GetCredentials().GetUsernamePassword().GetServer(); server != "" {
+		return server
+	}
+
+	firstPart, _, ok := strings.Cut(spec.GetImage(), "/")
+	if !ok {
+		return "docker.io"
+	}
+
+	if firstPart == "localhost" || strings.ContainsAny(firstPart, ".:") || strings.ToLower(firstPart) != firstPart {
+		return firstPart
+	}
+
+	return "docker.io"
+}
+
+func (c *Controller) getK8sUpstreamCredSecretName(svc *corev1.Service,
+	cfg *corev1.Service_Spec_Config, passwordSec *corev1.Secret) string {
+	name := fmt.Sprintf("regcred-%s-%s", svc.Metadata.Uid, passwordSec.Metadata.Uid)
+	creds := cfg.GetUpstream().GetContainer().GetCredentials().GetUsernamePassword()
+	domain := c.getK8sUpstreamCredDomain(cfg)
+	configs := append([]*corev1.Service_Spec_Config{svc.GetSpec().GetConfig()},
+		svc.GetSpec().GetDynamicConfig().GetConfigs()...)
+	for _, other := range configs {
+		otherCreds := other.GetUpstream().GetContainer().GetCredentials().GetUsernamePassword()
+		if otherCreds.GetPassword().GetFromSecret() != creds.GetPassword().GetFromSecret() {
+			continue
+		}
+		if otherCreds.GetUsername() != creds.GetUsername() || c.getK8sUpstreamCredDomain(other) != domain {
+			sh := sha256.Sum256([]byte(fmt.Sprintf("%q:%q", domain, creds.GetUsername())))
+			return fmt.Sprintf("%s-%x", name, sh)
+		}
+	}
+	return name
+}
+
 func (c *Controller) setK8sUpstreamCredSecret(ctx context.Context,
 	svc *corev1.Service, cfg *corev1.Service_Spec_Config, ownerCM *k8scorev1.ConfigMap) (*corev1.Secret, error) {
 
@@ -268,26 +307,9 @@ func (c *Controller) setK8sUpstreamCredSecret(ctx context.Context,
 		return nil, err
 	}
 
-	domain := func() string {
-		if creds.GetUsernamePassword().Server != "" {
-			return creds.GetUsernamePassword().Server
-		}
-
-		firstPart, _, ok := strings.Cut(cfg.GetUpstream().GetContainer().Image, "/")
-		if !ok {
-			return "docker.io"
-		}
-
-		if firstPart == "localhost" || strings.ContainsAny(firstPart, ".:") || strings.ToLower(firstPart) != firstPart {
-			return firstPart
-		}
-
-		return "docker.io"
-	}()
-
 	dockerConfig := map[string]any{
 		"auths": map[string]any{
-			domain: map[string]any{
+			c.getK8sUpstreamCredDomain(cfg): map[string]any{
 				"auth": base64.StdEncoding.EncodeToString(
 					[]byte(fmt.Sprintf("%s:%s",
 						creds.GetUsernamePassword().Username, ucorev1.ToSecret(passwordSec).GetValueStr()))),
@@ -302,7 +324,7 @@ func (c *Controller) setK8sUpstreamCredSecret(ctx context.Context,
 
 	req := &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
-			Name:      fmt.Sprintf("regcred-%s-%s", svc.Metadata.Uid, passwordSec.Metadata.Uid),
+			Name:      c.getK8sUpstreamCredSecretName(svc, cfg, passwordSec),
 			Namespace: ns,
 			OwnerReferences: []k8smetav1.OwnerReference{
 				*k8smetav1.NewControllerRef(ownerCM, k8scorev1.SchemeGroupVersion.WithKind("ConfigMap")),
@@ -396,7 +418,7 @@ func (c *Controller) getK8sUpstreamPod(ctx context.Context,
 			if spec.Credentials != nil {
 				return []k8scorev1.LocalObjectReference{
 					{
-						Name: fmt.Sprintf("regcred-%s-%s", svc.Metadata.Uid, passwordSec.Metadata.Uid),
+						Name: c.getK8sUpstreamCredSecretName(svc, cfg, passwordSec),
 					},
 				}
 			} else {

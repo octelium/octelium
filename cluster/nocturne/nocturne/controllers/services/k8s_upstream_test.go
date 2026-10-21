@@ -51,6 +51,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -1585,6 +1586,407 @@ func TestK8sUpstreamCredentialRegistry(t *testing.T) {
 					assert.Equal(t, []k8scorev1.LocalObjectReference{{Name: name}}, dep.Spec.Template.Spec.ImagePullSecrets)
 				}
 			})
+		}
+	}
+}
+
+func getTstUpstreamCredentialSecret(t *testing.T, k8sC *fakek8s.Clientset,
+	dep *appsv1.Deployment, domain, username, password string) *k8scorev1.Secret {
+	t.Helper()
+	if !assert.Len(t, dep.Spec.Template.Spec.ImagePullSecrets, 1) {
+		t.FailNow()
+	}
+	name := dep.Spec.Template.Spec.ImagePullSecrets[0].Name
+	assert.Empty(t, k8svalidation.IsDNS1123Subdomain(name))
+	secret, err := k8sC.CoreV1().Secrets(ns).Get(t.Context(), name, k8smetav1.GetOptions{})
+	if !assert.Nil(t, err) {
+		t.FailNow()
+	}
+	assert.Equal(t, k8scorev1.SecretTypeDockerConfigJson, secret.Type)
+	var config struct {
+		Auths map[string]struct{ Auth string } `json:"auths"`
+	}
+	assert.Nil(t, json.Unmarshal([]byte(secret.StringData[".dockerconfigjson"]), &config))
+	assert.Len(t, config.Auths, 1)
+	entry, ok := config.Auths[domain]
+	assert.True(t, ok, "credentials for %s are missing: %v", domain, config.Auths)
+	auth, err := base64.StdEncoding.DecodeString(entry.Auth)
+	assert.Nil(t, err)
+	assert.Equal(t, username+":"+password, string(auth))
+	return secret
+}
+
+func TestK8sUpstreamCredentialIsolation(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name      string
+		images    [2]string
+		servers   [2]string
+		domains   [2]string
+		users     [2]string
+		passwords [2]string
+		shared    bool
+	}{
+		{"Registries", [2]string{"first.example.com/image:v1", "second.example.com/image:v1"},
+			[2]string{}, [2]string{"first.example.com", "second.example.com"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, false},
+		{"ServerOverrides", [2]string{"nginx:latest", "nginx:latest"},
+			[2]string{"first.example.com", "second.example.com"}, [2]string{"first.example.com", "second.example.com"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, false},
+		{"Usernames", [2]string{"registry.example.com/image:v1", "registry.example.com/image:v1"},
+			[2]string{}, [2]string{"registry.example.com", "registry.example.com"}, [2]string{"first", "second"}, [2]string{"shared", "shared"}, false},
+		{"RegistriesAndUsernames", [2]string{"first.example.com/image:v1", "second.example.com/image:v1"},
+			[2]string{}, [2]string{"first.example.com", "second.example.com"}, [2]string{"first", "second"}, [2]string{"shared", "shared"}, false},
+		{"InferredAndExplicit", [2]string{"registry.example.com/first:v1", "registry.example.com/second:v2"},
+			[2]string{"", "registry.example.com"}, [2]string{"registry.example.com", "registry.example.com"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, true},
+		{"DockerHub", [2]string{"nginx:latest", "library/nginx:1.27"},
+			[2]string{}, [2]string{"docker.io", "docker.io"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, true},
+		{"Digest", [2]string{"registry.example.com/image:v1", "registry.example.com/image@sha256:" + strings.Repeat("a", 64)},
+			[2]string{}, [2]string{"registry.example.com", "registry.example.com"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, true},
+		{"DifferentPasswords", [2]string{"nginx:latest", "nginx:latest"},
+			[2]string{}, [2]string{"docker.io", "docker.io"}, [2]string{"user", "user"}, [2]string{"first", "second"}, false},
+		{"RegistryPorts", [2]string{"localhost:5000/image:v1", "localhost:5001/image:v1"},
+			[2]string{}, [2]string{"localhost:5000", "localhost:5001"}, [2]string{"user", "user"}, [2]string{"shared", "shared"}, false},
+		{"LongUsername", [2]string{"nginx:latest", "nginx:latest"},
+			[2]string{}, [2]string{"docker.io", "docker.io"}, [2]string{strings.Repeat("u", 256), strings.Repeat("v", 256)}, [2]string{"shared", "shared"}, false},
+		{"CredentialDelimiter", [2]string{"registry.example.com\x00name/image", "registry.example.com/image"},
+			[2]string{}, [2]string{"registry.example.com\x00name", "registry.example.com"}, [2]string{"user", "name\x00user"}, [2]string{"shared", "shared"}, false},
+	} {
+		for _, namedOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/NamedOnly%t", tc.name, namedOnly), func(t *testing.T) {
+				c, svc, owner, k8sC := newTstUpstreamController(t)
+				configs := []*corev1.Service_Spec_Config{newTstContainerConfig("first"), newTstContainerConfig("second")}
+				for idx, cfg := range configs {
+					setTstUpstreamSecret(cfg, tc.passwords[idx])
+					spec := cfg.Upstream.GetContainer()
+					spec.Env = nil
+					spec.Image = tc.images[idx]
+					spec.Credentials.GetUsernamePassword().Server = tc.servers[idx]
+					spec.Credentials.GetUsernamePassword().Username = tc.users[idx]
+				}
+				duplicate := proto.Clone(configs[0]).(*corev1.Service_Spec_Config)
+				duplicate.Name = "duplicate"
+				if namedOnly {
+					svc.Spec.Config = nil
+					svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+						Configs: []*corev1.Service_Spec_Config{configs[0], configs[1], duplicate},
+					}
+				} else {
+					svc.Spec.Config = configs[0]
+					svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+						Configs: []*corev1.Service_Spec_Config{configs[1], duplicate},
+					}
+				}
+				original := make(map[string]types.UID)
+				for range 3 {
+					if !assert.Nil(t, c.setK8sUpstream(ctx, svc, owner)) {
+						return
+					}
+					var names []string
+					for idx, cfg := range append(configs, duplicate) {
+						dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx,
+							k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name), k8smetav1.GetOptions{})
+						if !assert.Nil(t, err) {
+							return
+						}
+						if idx == 2 {
+							idx = 0
+						}
+						secret := getTstUpstreamCredentialSecret(t, k8sC, dep, tc.domains[idx], tc.users[idx], "value")
+						assert.Equal(t, owner.UID, k8smetav1.GetControllerOf(secret).UID)
+						assert.True(t, strings.HasPrefix(secret.Name, fmt.Sprintf("regcred-%s-", svc.Metadata.Uid)))
+						if uid, ok := original[cfg.Name]; ok {
+							assert.Equal(t, uid, secret.UID)
+						} else {
+							original[cfg.Name] = secret.UID
+						}
+						names = append(names, secret.Name)
+					}
+					assert.Equal(t, names[0], names[2])
+					if tc.shared {
+						assert.Equal(t, names[0], names[1])
+					} else {
+						assert.NotEqual(t, names[0], names[1])
+					}
+					secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+					assert.Nil(t, err)
+					if tc.shared {
+						assert.Len(t, secrets.Items, 1)
+					} else {
+						assert.Len(t, secrets.Items, 2)
+					}
+					list := svc.Spec.DynamicConfig.Configs
+					list[0], list[len(list)-1] = list[len(list)-1], list[0]
+				}
+			})
+		}
+	}
+}
+
+func TestK8sUpstreamCredentialUpgrade(t *testing.T) {
+	ctx := context.Background()
+	for _, failResource := range []string{"", "secrets", "deployments", "services"} {
+		t.Run("Failure/"+failResource, func(t *testing.T) {
+			c, svc, owner, k8sC := newTstUpstreamController(t)
+			configs := []*corev1.Service_Spec_Config{newTstContainerConfig("default"), newTstContainerConfig("named")}
+			for idx, cfg := range configs {
+				setTstUpstreamSecret(cfg, "shared")
+				cfg.Upstream.GetContainer().Env = nil
+				cfg.Upstream.GetContainer().Credentials.GetUsernamePassword().Server = fmt.Sprintf("registry%d.example.com", idx)
+			}
+			svc.Spec.Config = configs[0]
+			svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: configs[1:]}
+			original := make(map[string]types.UID)
+			for _, cfg := range configs {
+				old := proto.Clone(svc).(*corev1.Service)
+				old.Spec.Config = cfg
+				old.Spec.DynamicConfig = nil
+				password, err := c.setK8sUpstreamCredSecret(ctx, old, cfg, owner)
+				assert.Nil(t, err)
+				dep, err := c.getK8sUpstreamDeployment(ctx, old, cfg, password, owner)
+				assert.Nil(t, err)
+				dep, err = k8sC.AppsV1().Deployments(ns).Create(ctx, dep, k8smetav1.CreateOptions{})
+				if !assert.Nil(t, err) {
+					return
+				}
+				original[cfg.Name] = dep.UID
+				_, err = k8sC.CoreV1().Services(ns).Create(ctx, c.getK8sUpstreamService(svc, cfg, owner), k8smetav1.CreateOptions{})
+				assert.Nil(t, err)
+				_, err = k8sC.CoreV1().Pods(ns).Create(ctx, &k8scorev1.Pod{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: cfg.Name, Namespace: ns, Labels: dep.Spec.Template.Labels},
+					Spec:       *dep.Spec.Template.Spec.DeepCopy(),
+				}, k8smetav1.CreateOptions{})
+				assert.Nil(t, err)
+			}
+			legacyName := fmt.Sprintf("regcred-%s-shared-uid", svc.Metadata.Uid)
+			legacy, err := k8sC.CoreV1().Secrets(ns).Get(ctx, legacyName, k8smetav1.GetOptions{})
+			if !assert.Nil(t, err) {
+				return
+			}
+			fail := failResource != ""
+			if fail {
+				errTst := errors.New("could not migrate upstream credentials")
+				k8sC.PrependReactor("create", failResource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return fail, nil, errTst
+				})
+				k8sC.ClearActions()
+				assert.ErrorContains(t, c.setK8sUpstream(ctx, svc, owner), errTst.Error())
+				for _, action := range k8sC.Actions() {
+					assert.NotEqual(t, "delete", action.GetVerb())
+				}
+				current, err := k8sC.CoreV1().Secrets(ns).Get(ctx, legacyName, k8smetav1.GetOptions{})
+				assert.Nil(t, err)
+				assert.Equal(t, legacy, current)
+				fail = false
+			}
+			for range 2 {
+				assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+				var names []string
+				for idx, cfg := range configs {
+					dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx,
+						k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name), k8smetav1.GetOptions{})
+					if !assert.Nil(t, err) {
+						return
+					}
+					assert.Equal(t, original[cfg.Name], dep.UID)
+					secret := getTstUpstreamCredentialSecret(t, k8sC, dep, fmt.Sprintf("registry%d.example.com", idx), "user", "value")
+					assert.NotEqual(t, legacyName, secret.Name)
+					names = append(names, secret.Name)
+					pod, err := k8sC.CoreV1().Pods(ns).Get(ctx, cfg.Name, k8smetav1.GetOptions{})
+					assert.Nil(t, err)
+					assert.Equal(t, []k8scorev1.LocalObjectReference{{Name: legacyName}}, pod.Spec.ImagePullSecrets)
+				}
+				assert.NotEqual(t, names[0], names[1])
+				current, err := k8sC.CoreV1().Secrets(ns).Get(ctx, legacyName, k8smetav1.GetOptions{})
+				assert.Nil(t, err)
+				assert.Equal(t, legacy, current)
+			}
+			for idx, cfg := range configs {
+				assert.Nil(t, k8sC.CoreV1().Pods(ns).Delete(ctx, cfg.Name, k8smetav1.DeleteOptions{}))
+				assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+				_, err := k8sC.CoreV1().Secrets(ns).Get(ctx, legacyName, k8smetav1.GetOptions{})
+				if idx == 0 {
+					assert.Nil(t, err)
+				} else {
+					assert.True(t, k8serr.IsNotFound(err))
+				}
+			}
+			secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+			assert.Nil(t, err)
+			assert.Len(t, secrets.Items, 2)
+		})
+	}
+}
+
+func TestK8sUpstreamCredentialRotation(t *testing.T) {
+	ctx := context.Background()
+	c, svc, owner, k8sC := newTstUpstreamController(t)
+	password := "first-password"
+	c.octeliumC = &fakeOcteliumC{coreC: &fakeSecretCoreC{
+		getSecret: func(ctx context.Context, in *rmetav1.GetOptions) (*corev1.Secret, error) {
+			return &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: in.Name, Uid: "password-uid"},
+				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: password}},
+			}, nil
+		},
+	}}
+	configs := []*corev1.Service_Spec_Config{newTstContainerConfig("default"), newTstContainerConfig("named")}
+	for _, cfg := range configs {
+		setTstUpstreamSecret(cfg, "password")
+		cfg.Upstream.GetContainer().Env = nil
+		cfg.Upstream.GetContainer().Credentials.GetUsernamePassword().Server = "registry.example.com"
+		cfg.Upstream.GetContainer().Credentials.GetUsernamePassword().Username = cfg.Name
+	}
+	svc.Spec.Config = configs[0]
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: configs[1:]}
+	getDeployment := func(cfg *corev1.Service_Spec_Config) *appsv1.Deployment {
+		dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx,
+			k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name), k8smetav1.GetOptions{})
+		if !assert.Nil(t, err) {
+			t.FailNow()
+		}
+		return dep
+	}
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	original := make([]*k8scorev1.Secret, 2)
+	for idx, cfg := range configs {
+		dep := getDeployment(cfg)
+		original[idx] = getTstUpstreamCredentialSecret(t, k8sC, dep, "registry.example.com", cfg.Name, password)
+		_, err := k8sC.CoreV1().Pods(ns).Create(ctx, &k8scorev1.Pod{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: cfg.Name, Namespace: ns, Labels: dep.Spec.Template.Labels},
+			Spec:       *dep.Spec.Template.Spec.DeepCopy(),
+		}, k8smetav1.CreateOptions{})
+		assert.Nil(t, err)
+	}
+	password = "rotated-password"
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	for idx, cfg := range configs {
+		secret := getTstUpstreamCredentialSecret(t, k8sC, getDeployment(cfg), "registry.example.com", cfg.Name, password)
+		assert.Equal(t, original[idx].Name, secret.Name)
+		assert.Equal(t, original[idx].UID, secret.UID)
+	}
+	configs[1].Upstream.GetContainer().Credentials.GetUsernamePassword().Username = "replacement"
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	current := getTstUpstreamCredentialSecret(t, k8sC, getDeployment(configs[1]), "registry.example.com", "replacement", password)
+	assert.NotEqual(t, original[1].Name, current.Name)
+	first := getTstUpstreamCredentialSecret(t, k8sC, getDeployment(configs[0]), "registry.example.com", "default", password)
+	assert.Equal(t, original[0].UID, first.UID)
+	previous, err := k8sC.CoreV1().Secrets(ns).Get(ctx, original[1].Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	assert.Equal(t, original[1].UID, previous.UID)
+	assert.Nil(t, k8sC.CoreV1().Pods(ns).Delete(ctx, configs[1].Name, k8smetav1.DeleteOptions{}))
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	_, err = k8sC.CoreV1().Secrets(ns).Get(ctx, original[1].Name, k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+	svc.Spec.DynamicConfig = nil
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	remaining := getTstUpstreamCredentialSecret(t, k8sC, getDeployment(configs[0]), "registry.example.com", "default", password)
+	assert.Equal(t, fmt.Sprintf("regcred-%s-password-uid", svc.Metadata.Uid), remaining.Name)
+	_, err = k8sC.CoreV1().Secrets(ns).Get(ctx, first.Name, k8smetav1.GetOptions{})
+	assert.Nil(t, err)
+	_, err = k8sC.CoreV1().Secrets(ns).Get(ctx, current.Name, k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+	assert.Nil(t, k8sC.CoreV1().Pods(ns).Delete(ctx, configs[0].Name, k8smetav1.DeleteOptions{}))
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	_, err = k8sC.CoreV1().Secrets(ns).Get(ctx, first.Name, k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+	secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Len(t, secrets.Items, 1)
+	svc.Spec.Config = nil
+	assert.Nil(t, c.setK8sUpstream(ctx, svc, owner))
+	secrets, err = k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+	assert.Nil(t, err)
+	assert.Empty(t, secrets.Items)
+}
+
+func TestK8sUpstreamCredentialPersistence(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	if !assert.Nil(t, err) {
+		return
+	}
+	t.Cleanup(func() { tst.Destroy() })
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: tst.C.OcteliumC, IsEmbedded: true})
+	c, _, _, k8sC := newTstUpstreamController(t)
+	c.octeliumC = tst.C.OcteliumC
+	password := "initial-password"
+	newSecret := func() *corev1.Secret {
+		return &corev1.Secret{
+			Metadata: &metav1.Metadata{Name: "registry-password"},
+			Spec:     &corev1.Secret_Spec{},
+			Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: password}},
+		}
+	}
+	source, err := adminSrv.CreateSecret(ctx, newSecret())
+	if !assert.Nil(t, err) {
+		return
+	}
+	domains := []string{"first.example.com", "second.example.com", "first.example.com"}
+	users := []string{"first", "first", "second"}
+	configs := []*corev1.Service_Spec_Config{
+		newTstContainerConfig("default"), newTstContainerConfig("registry"), newTstContainerConfig("username"),
+	}
+	for idx, cfg := range configs {
+		setTstUpstreamSecret(cfg, source.Metadata.Name)
+		spec := cfg.Upstream.GetContainer()
+		spec.Env = nil
+		spec.Image = domains[idx] + "/image:v1"
+		spec.Credentials.GetUsernamePassword().Server = ""
+		spec.Credentials.GetUsernamePassword().Username = users[idx]
+	}
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode:          corev1.Service_Spec_HTTP,
+			Config:        configs[0],
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{Configs: configs[1:]},
+		},
+	})
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.Nil(t, c.OnAdd(ctx, svc))
+	original := make(map[string]*k8scorev1.Secret)
+	for step := range 3 {
+		for idx, cfg := range configs {
+			dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx,
+				k8sutils.GetSvcK8sUpstreamHostname(svc, cfg.Name), k8smetav1.GetOptions{})
+			if !assert.Nil(t, err) {
+				return
+			}
+			secret := getTstUpstreamCredentialSecret(t, k8sC, dep, domains[idx], users[idx], password)
+			switch step {
+			case 0:
+				original[cfg.Name] = secret
+			case 1:
+				assert.Equal(t, original[cfg.Name].Name, secret.Name)
+				assert.Equal(t, original[cfg.Name].UID, secret.UID)
+			case 2:
+				assert.NotEqual(t, original[cfg.Name].Name, secret.Name)
+				_, err := k8sC.CoreV1().Secrets(ns).Get(ctx, original[cfg.Name].Name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err))
+			}
+		}
+		secrets, err := k8sC.CoreV1().Secrets(ns).List(ctx, k8smetav1.ListOptions{})
+		assert.Nil(t, err)
+		assert.Len(t, secrets.Items, 3)
+		switch step {
+		case 0:
+			password = "rotated-password"
+			_, err := adminSrv.UpdateSecret(ctx, newSecret())
+			assert.Nil(t, err)
+		case 1:
+			_, err := adminSrv.DeleteSecret(ctx, &metav1.DeleteOptions{Uid: source.Metadata.Uid})
+			assert.Nil(t, err)
+			password = "replacement-password"
+			replacement, err := adminSrv.CreateSecret(ctx, newSecret())
+			if !assert.Nil(t, err) {
+				return
+			}
+			assert.NotEqual(t, source.Metadata.Uid, replacement.Metadata.Uid)
+		}
+		if step < 2 {
+			assert.Nil(t, c.OnUpdate(ctx, svc, svc))
 		}
 	}
 }
