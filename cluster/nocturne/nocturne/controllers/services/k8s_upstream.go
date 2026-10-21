@@ -273,14 +273,12 @@ func (c *Controller) setK8sUpstreamCredSecret(ctx context.Context,
 			return creds.GetUsernamePassword().Server
 		}
 
-		parts := strings.Split(cfg.GetUpstream().GetContainer().Image, "/")
-
-		if len(parts) < 1 {
+		firstPart, _, ok := strings.Cut(cfg.GetUpstream().GetContainer().Image, "/")
+		if !ok {
 			return "docker.io"
 		}
 
-		firstPart := parts[0]
-		if strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") {
+		if firstPart == "localhost" || strings.ContainsAny(firstPart, ".:") || strings.ToLower(firstPart) != firstPart {
 			return firstPart
 		}
 
