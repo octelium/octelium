@@ -381,7 +381,7 @@ func TestGetHttpFiltersMainConfiguration(t *testing.T) {
 		assert.True(t, matcher.IgnoreCase)
 		contentTypes = append(contentTypes, matcher.GetExact())
 	}
-	assert.Equal(t, []string{"application/xml", "application/xhtml+xml", "application/javascript", "application/x-javascript", "text/html", "text/css", "text/plain", "text/xml"}, contentTypes)
+	assert.Equal(t, []string{"application/xml", "application/xhtml+xml", "application/javascript", "application/x-javascript", "text/javascript", "text/html", "text/css", "text/plain", "text/xml"}, contentTypes)
 	var gzip gzipcompr.Gzip
 	require.Nil(t, compressor.CompressorLibrary.TypedConfig.UnmarshalTo(&gzip))
 	assert.Nil(t, gzip.ValidateAll())

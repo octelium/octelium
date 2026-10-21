@@ -430,7 +430,7 @@ func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 						var ret []*matcherv3.StringMatcher
 						for _, contentType := range []string{
 							"application/xml", "application/xhtml+xml",
-							"application/javascript", "application/x-javascript",
+							"application/javascript", "application/x-javascript", "text/javascript",
 							"text/html", "text/css", "text/plain", "text/xml",
 						} {
 							ret = append(ret, &matcherv3.StringMatcher{
