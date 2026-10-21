@@ -19,12 +19,138 @@ package httputils
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/net/dns/dnsmessage"
 )
+
+func TestRestrictedDestinationRanges(t *testing.T) {
+	for _, prefix := range blockedDestinationPrefixes {
+		assert.NotNil(t, ValidatePublicAddress(prefix.Addr()), prefix.String())
+	}
+	assert.NotNil(t, ValidatePublicAddress(netip.MustParseAddr("2606:4700::1%eth0")))
+	assert.Nil(t, ValidatePublicAddress(netip.MustParseAddr("::ffff:8.8.8.8")))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := newPublicOnlyDialer()
+	for _, tc := range []struct {
+		network string
+		address string
+	}{
+		{"unix", "/var/run/docker.sock"},
+		{"tcp", "missing-port"}, {"tcp", ":80"}, {"tcp", ".:80"},
+		{"tcp", "1.1.1.1:"}, {"tcp", "1.1.1.1:-1"},
+		{"tcp", "1.1.1.1:65536"}, {"tcp", "1.1.1.1:http"},
+		{"tcp", "[::ffff:127.0.0.1]:80"},
+		{"tcp4", "[2606:4700::1111]:443"}, {"tcp6", "8.8.8.8:443"},
+		{"tcp", "8.8.8.8:443"}, {"tcp", "example.invalid:443"},
+	} {
+		conn, err := d.DialContext(ctx, tc.network, tc.address)
+		assert.NotNil(t, err, tc.address)
+		assert.Nil(t, conn)
+	}
+}
+
+func TestRestrictedDNSResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		addresses []string
+		wantDials int
+	}{
+		{"Private", []string{"127.0.0.1", "10.0.0.1", "fd00::1"}, 0},
+		{"Mixed", []string{"127.0.0.1", "169.254.169.254", "8.8.8.8", "2606:4700::1111"}, 2},
+		{"MappedPrivate", []string{"::ffff:127.0.0.1"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dnsSrv, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if !assert.Nil(t, err) {
+				return
+			}
+			t.Cleanup(func() { dnsSrv.Close() })
+			go func() {
+				buf := make([]byte, 4096)
+				for {
+					n, addr, err := dnsSrv.ReadFrom(buf)
+					if err != nil {
+						return
+					}
+					var query dnsmessage.Message
+					if query.Unpack(buf[:n]) != nil {
+						continue
+					}
+					resp := dnsmessage.Message{
+						Header:    dnsmessage.Header{ID: query.ID, Response: true, Authoritative: true, RecursionAvailable: true},
+						Questions: query.Questions,
+					}
+					for _, question := range query.Questions {
+						for _, value := range tc.addresses {
+							ip := netip.MustParseAddr(value)
+							answer := dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET, Type: question.Type}}
+							if ip.Is4() && question.Type == dnsmessage.TypeA {
+								answer.Body = &dnsmessage.AResource{A: ip.As4()}
+							} else if ip.Is6() && question.Type == dnsmessage.TypeAAAA {
+								answer.Body = &dnsmessage.AAAAResource{AAAA: ip.As16()}
+							} else {
+								continue
+							}
+							resp.Answers = append(resp.Answers, answer)
+						}
+					}
+					packet, err := resp.Pack()
+					if err == nil {
+						dnsSrv.WriteTo(packet, addr)
+					}
+				}
+			}()
+			d := newPublicOnlyDialer()
+			d.resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "udp", dnsSrv.LocalAddr().String())
+			}}
+			var mu sync.Mutex
+			var addresses []string
+			d.dialer.Control = func(network, address string, conn syscall.RawConn) error {
+				mu.Lock()
+				addresses = append(addresses, address)
+				mu.Unlock()
+				return fmt.Errorf("test dial stopped")
+			}
+			conn, err := d.DialContext(context.Background(), "tcp", "outbound.example.:443")
+			assert.NotNil(t, err)
+			assert.Nil(t, conn)
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Len(t, addresses, tc.wantDials)
+			for _, address := range addresses {
+				host, _, err := net.SplitHostPort(address)
+				assert.Nil(t, err)
+				assert.Nil(t, ValidatePublicAddress(netip.MustParseAddr(host)))
+			}
+		})
+	}
+}
+
+func TestRestrictTransportCloning(t *testing.T) {
+	for _, minVersion := range []uint16{0, tls.VersionTLS12, tls.VersionTLS13} {
+		orig := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: minVersion}}
+		tr := RestrictTransport(orig).(*http.Transport)
+		assert.NotSame(t, orig, tr)
+		assert.NotSame(t, orig.TLSClientConfig, tr.TLSClientConfig)
+		assert.GreaterOrEqual(t, tr.TLSClientConfig.MinVersion, uint16(tls.VersionTLS12))
+		assert.Equal(t, minVersion, orig.TLSClientConfig.MinVersion)
+	}
+	tr := RestrictTransport(&http.Transport{}).(*http.Transport)
+	assert.Equal(t, uint16(tls.VersionTLS12), tr.TLSClientConfig.MinVersion)
+	assert.Equal(t, restrictedTLSHandshakeTimeout, tr.TLSHandshakeTimeout)
+	assert.Equal(t, restrictedResponseTimeout, tr.ResponseHeaderTimeout)
+	assert.Equal(t, restrictedIdleConnTimeout, tr.IdleConnTimeout)
+}
 
 func TestValidatePublicAddress(t *testing.T) {
 

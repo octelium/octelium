@@ -87,3 +87,23 @@ func TestGetTLSCertificate(t *testing.T) {
 		assert.NotNil(t, crt)
 	}
 }
+
+func TestGetTLSCertificateInvalidKeys(t *testing.T) {
+	sec := genCertSecret(t)
+	other := genCertSecret(t)
+	chain, key, err := ucorev1.ToSecret(sec).GetCertificateChainAndKey()
+	assert.Nil(t, err)
+	_, otherKey, err := ucorev1.ToSecret(other).GetCertificateChainAndKey()
+	assert.Nil(t, err)
+	for _, tc := range []struct {
+		chain string
+		key   string
+	}{
+		{string(chain), string(otherKey)}, {"invalid", string(key)}, {string(chain), "invalid"},
+	} {
+		ucorev1.ToSecret(sec).SetCertificate(tc.chain, tc.key)
+		cert, err := GetTLSCertificate(sec)
+		assert.NotNil(t, err)
+		assert.Nil(t, cert)
+	}
+}

@@ -19,6 +19,7 @@ package celengine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -26,6 +27,113 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestOPAResultTypes(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	condition := "package octelium.condition\nmatch := input.ctx.value"
+	expr := "package octelium.eval\nresult := input.ctx.value"
+	assert.Nil(t, srv.AddPolicyOPA(ctx, condition))
+	assert.Nil(t, srv.AddPolicyStringOPA(ctx, expr))
+	assert.Nil(t, srv.AddPolicyMapAnyOPA(ctx, expr))
+
+	for _, value := range []any{true, false, "value", 1, nil, []any{"value"}, map[string]any{"key": "value"}} {
+		input := map[string]any{"ctx": map[string]any{"value": value}}
+		res, err := srv.opaEngine.EvalPolicy(ctx, condition, input)
+		if v, ok := value.(bool); ok {
+			assert.Nil(t, err)
+			assert.Equal(t, v, res)
+		} else {
+			assert.NotNil(t, err)
+			assert.False(t, res)
+		}
+		str, err := srv.EvalPolicyStringOPA(ctx, expr, input)
+		if v, ok := value.(string); ok {
+			assert.Nil(t, err)
+			assert.Equal(t, v, str)
+		} else {
+			assert.NotNil(t, err)
+			assert.Empty(t, str)
+		}
+		obj, err := srv.OPAEvalPolicyMapStrAny(ctx, expr, input)
+		if v, ok := value.(map[string]any); ok {
+			assert.Nil(t, err)
+			assert.Equal(t, v, obj)
+		} else {
+			assert.NotNil(t, err)
+			assert.Nil(t, obj)
+		}
+	}
+
+	res, err := srv.opaEngine.EvalPolicy(ctx, condition, nil)
+	assert.Nil(t, err)
+	assert.False(t, res)
+	_, err = srv.EvalPolicyStringOPA(ctx, expr, nil)
+	assert.ErrorIs(t, err, ErrOPAUndefined)
+	_, err = srv.OPAEvalPolicyMapStrAny(ctx, expr, nil)
+	assert.ErrorIs(t, err, ErrOPAUndefined)
+	_, err = srv.EvalPolicyStringOPA(ctx, "invalid", nil)
+	assert.NotNil(t, err)
+	_, err = srv.OPAEvalPolicyMapStrAny(ctx, "invalid", nil)
+	assert.NotNil(t, err)
+}
+
+func TestOPAPolicyLimits(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	for _, expr := range []string{"", "invalid", strings.Repeat(" ", 20001)} {
+		assert.NotNil(t, srv.AddPolicyOPA(ctx, expr))
+		assert.NotNil(t, srv.AddPolicyStringOPA(ctx, expr))
+		assert.NotNil(t, srv.AddPolicyMapAnyOPA(ctx, expr))
+		_, err := srv.opaEngine.EvalPolicy(ctx, expr, nil)
+		assert.NotNil(t, err)
+	}
+	expr := "package octelium.condition\nmatch := true"
+	assert.Nil(t, srv.AddPolicyOPA(ctx, expr+strings.Repeat(" ", 20000-len(expr))))
+
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+	res, err := srv.opaEngine.EvalPolicy(ctx, `package octelium.condition
+match if {
+	some i in numbers.range(1, 40000)
+	some j in numbers.range(1, 40000)
+	i * j == -1
+}`, nil)
+	assert.NotNil(t, err)
+	assert.False(t, res)
+}
+
+func TestOPABuiltinErrors(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	for _, expr := range []string{
+		`package octelium.condition
+match if { 1 / input.ctx.zero == 1 }`,
+		`package octelium.condition
+match if { json.unmarshal(input.ctx.value) }`,
+		`package octelium.condition
+match if { regex.match("[", input.ctx.value) }`,
+	} {
+		res, err := srv.opaEngine.EvalPolicy(ctx, expr, map[string]any{
+			"ctx": map[string]any{"zero": 0, "value": "invalid"},
+		})
+		assert.NotNil(t, err)
+		assert.False(t, res)
+	}
+	for _, expr := range []string{
+		`package octelium.condition
+match if { net.lookup_ip_addr("example.com") }`,
+		`package octelium.condition
+match if { opa.runtime() }`,
+		`package octelium.condition
+match if { trace("value") }`,
+	} {
+		assert.NotNil(t, srv.AddPolicyOPA(ctx, expr))
+	}
+}
 
 func TestConditionOPA(t *testing.T) {
 	ctx := context.Background()

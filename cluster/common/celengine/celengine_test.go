@@ -19,8 +19,12 @@ package celengine
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"cel.dev/cel-go/common/types"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -56,4 +60,201 @@ func TestEvalPolicyAny(t *testing.T) {
 	assert.Nil(t, err)
 
 	assert.Equal(t, fmt.Sprintf("https://%s.example.com", reqCtx.User.Metadata.Name), cfg.Upstream.GetUrl())
+}
+
+func TestCELPolicyTypes(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	for _, tc := range []struct {
+		expr string
+		bool bool
+		str  bool
+	}{
+		{"true", true, false},
+		{`"value"`, false, true},
+		{"42", false, false},
+		{`{"key": "value"}`, false, false},
+		{"ctx.value", true, true},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			assert.Nil(t, srv.AddPolicyMapAny(ctx, tc.expr))
+			assert.Equal(t, tc.bool, srv.AddPolicy(ctx, tc.expr) == nil)
+			assert.Equal(t, tc.str, srv.AddPolicyString(ctx, tc.expr) == nil)
+			assert.Equal(t, tc.bool, srv.AddPolicy(ctx, tc.expr) == nil)
+		})
+	}
+
+	for _, value := range []any{true, false, "value", int64(1), nil, []string{"value"}} {
+		input := map[string]any{"ctx": map[string]any{"value": value}}
+		res, err := srv.EvalPolicy(ctx, "ctx.value", input)
+		if v, ok := value.(bool); ok {
+			assert.Nil(t, err)
+			assert.Equal(t, v, res)
+		} else {
+			assert.NotNil(t, err)
+			assert.False(t, res)
+		}
+		str, err := srv.EvalPolicyString(ctx, "ctx.value", input)
+		if v, ok := value.(string); ok {
+			assert.Nil(t, err)
+			assert.Equal(t, v, str)
+		} else {
+			assert.NotNil(t, err)
+			assert.Empty(t, str)
+		}
+	}
+
+	for _, expr := range []string{"", "(", "unknownVariable", strings.Repeat(" ", 10001)} {
+		assert.NotNil(t, srv.AddPolicy(ctx, expr))
+		assert.NotNil(t, srv.AddPolicyString(ctx, expr))
+		assert.NotNil(t, srv.AddPolicyMapAny(ctx, expr))
+		_, err := srv.EvalPolicyMapStrAny(ctx, expr, nil)
+		assert.NotNil(t, err)
+	}
+	assert.Nil(t, srv.AddPolicy(ctx, "true"+strings.Repeat(" ", 9996)))
+}
+
+func TestCELMissingInput(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	for _, expr := range []string{
+		"ctx.user.name == 'alice'",
+		"ctx.values[0] == 'alice'",
+		"ctx.values[-1] == 'alice'",
+		"ctx.absent.field == 'alice'",
+	} {
+		res, err := srv.EvalPolicy(ctx, expr, map[string]any{
+			"ctx": map[string]any{"values": []string{}, "absent": nil},
+		})
+		assert.Nil(t, err, expr)
+		assert.False(t, res, expr)
+	}
+
+	for _, expr := range []string{"1 / ctx.zero == 1", `ctx.value.matches("[")`, "ctx.value + 1 == 2"} {
+		res, err := srv.EvalPolicy(ctx, expr, map[string]any{
+			"ctx": map[string]any{"zero": int64(0), "value": "value"},
+		})
+		assert.NotNil(t, err, expr)
+		assert.False(t, res, expr)
+	}
+
+	_, err = srv.EvalPolicyString(ctx, "ctx.missing", map[string]any{"ctx": map[string]any{}})
+	assert.NotNil(t, err)
+	_, err = srv.EvalPolicyMapStrAny(ctx, "ctx.missing", map[string]any{"ctx": map[string]any{}})
+	assert.NotNil(t, err)
+}
+
+func TestCELMissingInputErrors(t *testing.T) {
+	ctx := context.Background()
+	assert.False(t, isCELMissingInputErr(ctx, nil))
+	for _, msg := range []string{
+		"no such key: user", "no such field: user", "undefined field: user",
+		"unknown field: user", "no such attribute: user", "no such attribute(s): user",
+		"null field selection", "null select", "null attribute",
+		"index out of bounds", "index out of range",
+	} {
+		assert.True(t, isCELMissingInputErr(ctx, fmt.Errorf("%s", msg)), msg)
+		assert.True(t, isCELMissingInputErr(nil, fmt.Errorf("%s", msg)), msg)
+	}
+	for _, err := range []error{
+		context.Canceled, context.DeadlineExceeded,
+		fmt.Errorf("cost limit exceeded: no such key"),
+		fmt.Errorf("operation cancelled: no such field"),
+		fmt.Errorf("operation canceled: no such field"),
+		fmt.Errorf("interrupted: no such key"),
+		fmt.Errorf("division by zero"),
+	} {
+		assert.False(t, isCELMissingInputErr(ctx, err), err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+	assert.False(t, isCELMissingInputErr(ctx, fmt.Errorf("no such key")))
+}
+
+func TestCELResultConversion(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	res, err := srv.EvalPolicyMapStrAny(ctx, `{
+		"str": "value", "int": -1, "uint": 2u, "float": 1.5,
+		"bool": true, "bytes": b"abc", "null": null,
+		"list": [1, {"nested": [false, null, "value"]}],
+		"emptyMap": {}, "emptyList": [],
+		"timestamp": timestamp("2025-01-01T00:00:00Z"), "duration": duration("1s")
+	}`, nil)
+	assert.Nil(t, err)
+	assert.Equal(t, map[string]any{
+		"str": "value", "int": int64(-1), "uint": uint64(2), "float": 1.5,
+		"bool": true, "bytes": []byte("abc"), "null": nil,
+		"list":     []any{int64(1), map[string]any{"nested": []any{false, nil, "value"}}},
+		"emptyMap": map[string]any{}, "emptyList": []any{},
+		"timestamp": time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), "duration": time.Second,
+	}, res)
+	assert.Nil(t, convertCelToGo(nil))
+	assert.Equal(t, int64(1), convertCelToGo(types.IntOne))
+
+	for _, expr := range []string{"true", `"value"`, "[1, 2]", "null"} {
+		res, err := srv.EvalPolicyMapStrAny(ctx, expr, nil)
+		assert.NotNil(t, err)
+		assert.Nil(t, res)
+	}
+}
+
+func TestCELPolicyLimits(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	values := make([]int64, 2000)
+	expr := "ctx.values.map(x, ctx.values.map(y, x + y)).size() > 0"
+	input := map[string]any{"ctx": map[string]any{"values": values}}
+	res, err := srv.EvalPolicy(ctx, expr, input)
+	assert.ErrorContains(t, err, "cost limit")
+	assert.False(t, res)
+
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+	res, err = srv.EvalPolicy(ctx, expr, input)
+	assert.NotNil(t, err)
+	assert.False(t, res)
+
+	res, err = srv.EvalPolicy(context.Background(), "true", nil)
+	assert.Nil(t, err)
+	assert.True(t, res)
+}
+
+func TestPolicyConcurrent(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Go(func() {
+			for j := range 16 {
+				value := fmt.Sprintf("user-%d-%d", i, j)
+				input := map[string]any{"ctx": map[string]any{"value": value, "allow": i%2 == 0}}
+				res, err := srv.EvalPolicy(ctx, "ctx.allow", input)
+				assert.Nil(t, err)
+				assert.Equal(t, i%2 == 0, res)
+				str, err := srv.EvalPolicyString(ctx, "ctx.value", input)
+				assert.Nil(t, err)
+				assert.Equal(t, value, str)
+				obj, err := srv.EvalPolicyMapStrAny(ctx, `{"value": ctx.value}`, input)
+				assert.Nil(t, err)
+				assert.Equal(t, map[string]any{"value": value}, obj)
+				str, err = srv.EvalPolicyStringOPA(ctx, "package octelium.eval\nresult := input.ctx.value", input)
+				assert.Nil(t, err)
+				assert.Equal(t, value, str)
+				obj, err = srv.OPAEvalPolicyMapStrAny(ctx, `package octelium.eval
+result := {"value": input.ctx.value}`, input)
+				assert.Nil(t, err)
+				assert.Equal(t, map[string]any{"value": value}, obj)
+			}
+		})
+	}
+	wg.Wait()
 }

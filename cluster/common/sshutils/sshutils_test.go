@@ -17,15 +17,122 @@
 package sshutils
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/grpc"
 )
+
+type sshCoreC struct {
+	rcorev1.ResourceServiceClient
+	secrets map[string]*corev1.Secret
+	err     error
+}
+
+func (c *sshCoreC) GetSecret(ctx context.Context, req *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	return c.secrets[req.Name], c.err
+}
+
+type sshOcteliumC struct {
+	octeliumc.ClientInterface
+	c *sshCoreC
+}
+
+func (c *sshOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.c
+}
+
+func TestSSHSecretSigners(t *testing.T) {
+	ctx := context.Background()
+	key, err := utils_cert.GenerateECDSA()
+	assert.Nil(t, err)
+	keyPEM, err := utils_cert.GetPrivateKeyPEM(key.PrivateKey)
+	assert.Nil(t, err)
+	c := &sshCoreC{secrets: map[string]*corev1.Secret{
+		"sys:ssh-ca":       {Data: &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: keyPEM}}},
+		"sys:ssh-svc-seed": {Data: &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: []byte("test-master-seed")}}},
+	}}
+	client := &sshOcteliumC{c: c}
+	ca, err := GetCAPublicKey(ctx, client)
+	assert.Nil(t, err)
+	priv, certificate, pub, err := GenerateHostWithCA(ctx, client)
+	assert.Nil(t, err)
+	assert.NotNil(t, priv)
+	assert.Equal(t, ca.Marshal(), pub.Marshal())
+	assert.Nil(t, GetHostKeyCACallback(ca)("example.com:22", &net.TCPAddr{}, certificate))
+	signer, err := GenerateSigner()
+	assert.Nil(t, err)
+	host, err := GenerateHostSigner(ctx, client, signer)
+	assert.Nil(t, err)
+	assert.EqualValues(t, ssh.HostCert, host.PublicKey().(*ssh.Certificate).CertType)
+	user, err := GenerateUserSigner(ctx, client, signer)
+	assert.Nil(t, err)
+	assert.EqualValues(t, ssh.UserCert, user.PublicKey().(*ssh.Certificate).CertType)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: vutils.UUIDv4()}}
+	host, err = GenerateServiceEd25519HostSigner(ctx, client, svc)
+	assert.Nil(t, err)
+	user, err = GenerateServiceEd25519UserSigner(ctx, client, svc)
+	assert.Nil(t, err)
+	assert.NotEqual(t, host.PublicKey().Marshal(), user.PublicKey().Marshal())
+	again, err := GenerateServiceEd25519HostSigner(ctx, client, svc)
+	assert.Nil(t, err)
+	assert.Equal(t, host.PublicKey().Marshal(), again.PublicKey().Marshal())
+	c.err = fmt.Errorf("secret unavailable")
+	_, err = GetCAPublicKey(ctx, client)
+	assert.ErrorIs(t, err, c.err)
+	_, _, _, err = GenerateHostWithCA(ctx, client)
+	assert.ErrorIs(t, err, c.err)
+	_, err = GenerateHostSigner(ctx, client, signer)
+	assert.ErrorIs(t, err, c.err)
+	_, err = GenerateUserSigner(ctx, client, signer)
+	assert.ErrorIs(t, err, c.err)
+	_, err = GenerateServiceEd25519HostSigner(ctx, client, svc)
+	assert.ErrorIs(t, err, c.err)
+	_, err = GenerateServiceEd25519UserSigner(ctx, client, svc)
+	assert.ErrorIs(t, err, c.err)
+	c.err = nil
+	c.secrets["sys:ssh-ca"].Data = &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: []byte("invalid")}}
+	_, err = GetCAPublicKey(ctx, client)
+	assert.NotNil(t, err)
+}
+
+func TestSSHCertificateValidation(t *testing.T) {
+	ca, err := GenerateSigner()
+	assert.Nil(t, err)
+	host, err := GenerateSigner()
+	assert.Nil(t, err)
+	callback := GetHostKeyCACallback(ca.PublicKey())
+	for _, tc := range []struct {
+		name string
+		set  func(*ssh.Certificate)
+	}{
+		{"Expired", func(c *ssh.Certificate) { c.ValidBefore = uint64(time.Now().Add(-time.Hour).Unix()) }},
+		{"NotYetValid", func(c *ssh.Certificate) { c.ValidAfter = uint64(time.Now().Add(time.Hour).Unix()) }},
+		{"WrongPrincipal", func(c *ssh.Certificate) { c.ValidPrincipals = []string{"other.example.com"} }},
+		{"CriticalOption", func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"unknown": "value"} }},
+		{"UserCertificate", func(c *ssh.Certificate) { c.CertType = ssh.UserCert }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cert, err := makeCert(host, ca, ssh.HostCert)
+			assert.Nil(t, err)
+			tc.set(cert)
+			assert.NotNil(t, callback("example.com:22", &net.TCPAddr{}, cert))
+		})
+	}
+}
 
 func TestGenerateSigner(t *testing.T) {
 

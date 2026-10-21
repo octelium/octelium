@@ -29,6 +29,53 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestConditionCombinations(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+	match := func(expr string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Match{Match: expr}}
+	}
+	for _, tc := range []struct {
+		name      string
+		condition *corev1.Condition
+		want      bool
+		wantErr   bool
+	}{
+		{"Nil", nil, false, false},
+		{"Empty", &corev1.Condition{}, false, false},
+		{"MatchAnyFalse", &corev1.Condition{Type: &corev1.Condition_MatchAny{}}, false, false},
+		{"MatchAnyTrue", &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}, true, false},
+		{"EmptyMatch", match(""), false, false},
+		{"EmptyNot", &corev1.Condition{Type: &corev1.Condition_Not{}}, false, false},
+		{"NotFalse", &corev1.Condition{Type: &corev1.Condition_Not{Not: "false"}}, true, false},
+		{"NotTrue", &corev1.Condition{Type: &corev1.Condition_Not{Not: "true"}}, false, false},
+		{"NotError", &corev1.Condition{Type: &corev1.Condition_Not{Not: "("}}, false, true},
+		{"MatchError", match("("), false, true},
+		{"NilAll", &corev1.Condition{Type: &corev1.Condition_All_{}}, false, false},
+		{"NilAny", &corev1.Condition{Type: &corev1.Condition_Any_{}}, false, false},
+		{"NilNone", &corev1.Condition{Type: &corev1.Condition_None_{}}, false, false},
+		{"EmptyNone", &corev1.Condition{Type: &corev1.Condition_None_{None: &corev1.Condition_None{}}}, false, false},
+		{"AllError", &corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{match("true"), match("(")}}}}, false, true},
+		{"AnyError", &corev1.Condition{Type: &corev1.Condition_Any_{Any: &corev1.Condition_Any{Of: []*corev1.Condition{match("false"), match("(")}}}}, false, true},
+		{"NoneError", &corev1.Condition{Type: &corev1.Condition_None_{None: &corev1.Condition_None{Of: []*corev1.Condition{match("false"), match("(")}}}}, false, true},
+		{"AllShortCircuit", &corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{match("false"), match("(")}}}}, false, false},
+		{"AnyShortCircuit", &corev1.Condition{Type: &corev1.Condition_Any_{Any: &corev1.Condition_Any{Of: []*corev1.Condition{match("true"), match("(")}}}}, true, false},
+		{"NoneShortCircuit", &corev1.Condition{Type: &corev1.Condition_None_{None: &corev1.Condition_None{Of: []*corev1.Condition{match("true"), match("(")}}}}, false, false},
+		{"NoneMatch", &corev1.Condition{Type: &corev1.Condition_None_{None: &corev1.Condition_None{Of: []*corev1.Condition{match("false"), nil}}}}, true, false},
+		{"AllNilChild", &corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{nil}}}}, false, false},
+		{"AnyNilChild", &corev1.Condition{Type: &corev1.Condition_Any_{Any: &corev1.Condition_Any{Of: []*corev1.Condition{nil}}}}, false, false},
+		{"EmptyOPA", &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{}}}, false, false},
+		{"OPAError", &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{Type: &corev1.Condition_OPA_Inline{Inline: "invalid"}}}}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := srv.EvalCondition(ctx, tc.condition, nil)
+			assert.Equal(t, tc.wantErr, err != nil, "%+v", err)
+			assert.Equal(t, tc.want, res)
+		})
+	}
+}
+
 func TestCondition(t *testing.T) {
 
 	ctx := context.Background()

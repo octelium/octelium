@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -28,6 +29,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCacheEviction(t *testing.T) {
+	c := NewCache()
+	c.maxEntries = 2
+	for _, schema := range []string{`{"type":"string"}`, `{"type":"number"}`, `{"type":"boolean"}`} {
+		res, err := c.Compile([]byte(schema))
+		assert.Nil(t, err)
+		assert.NotNil(t, res)
+	}
+	assert.Len(t, c.entries, 1)
+	res, err := c.Compile([]byte(`{"type":"string"}`))
+	assert.Nil(t, err)
+	assert.NotNil(t, res)
+	assert.True(t, res.Validate("value").IsValid())
+	assert.False(t, res.Validate(true).IsValid())
+}
+
+func TestCacheConcurrent(t *testing.T) {
+	c := NewCache()
+	c.maxEntries = 2
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			for range 16 {
+				for _, schema := range []string{`{"type":"string"}`, `{"type":"number"}`, `{"type":"boolean"}`, `{"type":`} {
+					res, err := c.Compile([]byte(schema))
+					if schema == `{"type":` {
+						assert.NotNil(t, err)
+						assert.Nil(t, res)
+					} else {
+						assert.Nil(t, err)
+						assert.NotNil(t, res)
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+}
 
 func TestRemoteRefIsNotFetched(t *testing.T) {
 	var hits int64

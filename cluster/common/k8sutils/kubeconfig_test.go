@@ -17,12 +17,387 @@
 package k8sutils
 
 import (
+	"context"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
+	k8scorev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestKubeConfigSelection(t *testing.T) {
+	cfg := &KubeConfig{
+		CurrentContext: "first",
+		Contexts: []KubeConfigContext{
+			{Name: "first", Context: KubeConfigContextConfig{Cluster: "cluster1", User: "user1"}},
+			{Name: "second", Context: KubeConfigContextConfig{Cluster: "cluster2", User: "user2"}},
+		},
+		Clusters: []KubeConfigCluster{{Name: "cluster1"}, {Name: "cluster2"}},
+		Users:    []KubeConfigUser{{Name: "user1"}, {Name: "user2"}},
+	}
+	assert.Equal(t, "first", cfg.GetContext("").Name)
+	assert.Equal(t, "cluster2", cfg.GetCluster("second").Name)
+	assert.Equal(t, "user2", cfg.GetUser("second").Name)
+	for _, name := range []string{"missing", "invalid"} {
+		assert.Nil(t, cfg.GetContext(name))
+		assert.Nil(t, cfg.GetCluster(name))
+		assert.Nil(t, cfg.GetUser(name))
+	}
+	data, err := cfg.MarshalToYAML()
+	assert.Nil(t, err)
+	res, err := UnmarshalKubeConfigFromYAML(data)
+	assert.Nil(t, err)
+	assert.Equal(t, cfg, res)
+	cfg.CurrentContext = ""
+	assert.Nil(t, cfg.GetContext(""))
+	cfg.Clusters, cfg.Users = nil, nil
+	assert.Nil(t, cfg.GetCluster("first"))
+	assert.Nil(t, cfg.GetUser("first"))
+	_, err = UnmarshalKubeConfigFromYAML([]byte("[invalid"))
+	assert.NotNil(t, err)
+}
+
+func TestServiceHostnames(t *testing.T) {
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Name: "service.namespace"}}
+	assert.Equal(t, "svc-service-namespace", GetSvcHostname(svc))
+	assert.Equal(t, "svc-service-namespace.octelium.svc", GetSvcFQDN(svc))
+	assert.Equal(t, "upstream-svc-service-namespace-default", GetSvcK8sUpstreamHostname(svc, ""))
+	assert.Equal(t, "upstream-svc-service-namespace-selected.octelium.svc", GetSvcK8sUpstreamFQDN(svc, "selected"))
+	t.Setenv("OCTELIUM_REGION_NAME", "region")
+	node := &k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "node", UID: "uid"}}
+	name := GetGatewayName(node)
+	assert.Equal(t, name, GetGatewayName(node.DeepCopy()))
+	node.UID = "new-uid"
+	assert.NotEqual(t, name, GetGatewayName(node))
+	assert.Equal(t, k8scorev1.PullIfNotPresent, GetImagePullPolicy())
+	assert.Equal(t, "csi.spiffe.io", GetSPIFFEVolume("").CSI.Driver)
+	assert.Equal(t, "custom", GetSPIFFEVolume("custom").CSI.Driver)
+	assert.True(t, *GetSPIFFEVolume("").CSI.ReadOnly)
+	assert.True(t, GetSPIFFEVolumeMount().ReadOnly)
+	assert.Equal(t, GetSPIFFEVolume("").Name, GetSPIFFEVolumeMount().Name)
+	limits := GetDefaultLimits()
+	assert.EqualValues(t, DefaultLimitCPUMillicores, limits.Cpu().MilliValue())
+	assert.EqualValues(t, DefaultLimitMemoryMegabytes*1024*1024, limits.Memory().Value())
+	assert.EqualValues(t, 1, GetResourceQuantityMust("1").Value())
+}
+
+func testCreateOrUpdateResource[T interface {
+	runtime.Object
+	k8smetav1.Object
+}](t *testing.T, old, desired T, apply func(context.Context, kubernetes.Interface, T) (T, error), check func(T)) {
+	t.Helper()
+	ctx := context.Background()
+	md := desired
+	md.SetName("resource")
+	md.SetNamespace("octelium")
+	switch any(desired).(type) {
+	case *rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding:
+		md.SetNamespace("")
+	}
+	md.SetLabels(map[string]string{"managed": "new"})
+	md.SetAnnotations(map[string]string{"managed": "new"})
+	md.SetOwnerReferences([]k8smetav1.OwnerReference{{Name: "owner", UID: "owner"}})
+	client := fake.NewClientset()
+	created, err := apply(ctx, client, desired)
+	if !assert.Nil(t, err) {
+		return
+	}
+	check(created)
+	oldMD := old
+	oldMD.SetName(md.GetName())
+	oldMD.SetNamespace(md.GetNamespace())
+	oldMD.SetResourceVersion("42")
+	oldMD.SetLabels(map[string]string{"managed": "old", "external": "kept"})
+	oldMD.SetAnnotations(map[string]string{"managed": "old", "external": "kept"})
+	client = fake.NewClientset(old)
+	updated, err := apply(ctx, client, desired)
+	if !assert.Nil(t, err) {
+		return
+	}
+	check(updated)
+	updatedMD := updated
+	assert.Equal(t, "42", updatedMD.GetResourceVersion())
+	assert.Equal(t, map[string]string{"managed": "new", "external": "kept"}, updatedMD.GetLabels())
+	assert.Equal(t, "new", updatedMD.GetAnnotations()["managed"])
+	assert.Equal(t, "kept", updatedMD.GetAnnotations()["external"])
+	assert.Equal(t, md.GetOwnerReferences(), updatedMD.GetOwnerReferences())
+	assert.Equal(t, map[string]string{"managed": "new"}, md.GetLabels())
+}
+
+func TestCreateOrUpdateResources(t *testing.T) {
+	t.Run("Deployment", func(t *testing.T) {
+		want := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: k8scorev1.PodTemplateSpec{Spec: k8scorev1.PodSpec{Containers: []k8scorev1.Container{{Name: "app", Image: "new"}}}}}}
+		testCreateOrUpdateResource(t, &appsv1.Deployment{}, want, CreateOrUpdateDeployment, func(got *appsv1.Deployment) { assert.Equal(t, want.Spec, got.Spec) })
+	})
+	t.Run("DaemonSet", func(t *testing.T) {
+		want := &appsv1.DaemonSet{Spec: appsv1.DaemonSetSpec{MinReadySeconds: 12}}
+		testCreateOrUpdateResource(t, &appsv1.DaemonSet{}, want, CreateOrUpdateDaemonset, func(got *appsv1.DaemonSet) { assert.Equal(t, want.Spec, got.Spec) })
+	})
+	t.Run("Service", func(t *testing.T) {
+		want := &k8scorev1.Service{Spec: k8scorev1.ServiceSpec{Ports: []k8scorev1.ServicePort{{Port: 443}}, Selector: map[string]string{"app": "new"}, Type: k8scorev1.ServiceTypeClusterIP}}
+		testCreateOrUpdateResource(t, &k8scorev1.Service{Spec: k8scorev1.ServiceSpec{ClusterIP: "10.0.0.1"}}, want, CreateOrUpdateService, func(got *k8scorev1.Service) {
+			assert.Equal(t, want.Spec.Ports, got.Spec.Ports)
+			assert.Equal(t, want.Spec.Selector, got.Spec.Selector)
+			assert.Equal(t, want.Spec.Type, got.Spec.Type)
+			if got.ResourceVersion != "" {
+				assert.Equal(t, "10.0.0.1", got.Spec.ClusterIP)
+			}
+		})
+	})
+	t.Run("Secret", func(t *testing.T) {
+		want := &k8scorev1.Secret{Type: k8scorev1.SecretTypeOpaque, Data: map[string][]byte{"key": []byte("new")}, StringData: map[string]string{"key2": "new"}}
+		testCreateOrUpdateResource(t, &k8scorev1.Secret{}, want, CreateOrUpdateSecret, func(got *k8scorev1.Secret) {
+			assert.Equal(t, want.Data, got.Data)
+			assert.Equal(t, want.StringData, got.StringData)
+			assert.Equal(t, want.Type, got.Type)
+		})
+	})
+	t.Run("ConfigMap", func(t *testing.T) {
+		want := &k8scorev1.ConfigMap{Data: map[string]string{"key": "new"}, BinaryData: map[string][]byte{"key2": []byte("new")}}
+		testCreateOrUpdateResource(t, &k8scorev1.ConfigMap{}, want, CreateOrUpdateConfigMap, func(got *k8scorev1.ConfigMap) {
+			assert.Equal(t, want.Data, got.Data)
+			assert.Equal(t, want.BinaryData, got.BinaryData)
+		})
+	})
+	t.Run("ServiceAccount", func(t *testing.T) {
+		testCreateOrUpdateResource(t, &k8scorev1.ServiceAccount{Secrets: []k8scorev1.ObjectReference{{Name: "token"}}}, &k8scorev1.ServiceAccount{}, CreateOrUpdateServiceAccount, func(got *k8scorev1.ServiceAccount) {
+			if got.ResourceVersion != "" {
+				assert.Equal(t, []k8scorev1.ObjectReference{{Name: "token"}}, got.Secrets)
+			}
+		})
+	})
+	t.Run("NetworkPolicy", func(t *testing.T) {
+		want := &networkingv1.NetworkPolicy{Spec: networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}}}
+		testCreateOrUpdateResource(t, &networkingv1.NetworkPolicy{}, want, CreateOrUpdateNetworkPolicy, func(got *networkingv1.NetworkPolicy) { assert.Equal(t, want.Spec, got.Spec) })
+	})
+	t.Run("Ingress", func(t *testing.T) {
+		want := &networkingv1.Ingress{Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: "example.com"}}}}
+		testCreateOrUpdateResource(t, &networkingv1.Ingress{}, want, CreateOrUpdateIngress, func(got *networkingv1.Ingress) { assert.Equal(t, want.Spec, got.Spec) })
+	})
+	t.Run("ClusterRole", func(t *testing.T) {
+		want := &rbacv1.ClusterRole{Rules: []rbacv1.PolicyRule{{Verbs: []string{"get"}, Resources: []string{"pods"}}}, AggregationRule: &rbacv1.AggregationRule{ClusterRoleSelectors: []k8smetav1.LabelSelector{{MatchLabels: map[string]string{"aggregate": "true"}}}}}
+		testCreateOrUpdateResource(t, &rbacv1.ClusterRole{}, want, CreateOrUpdateClusterRole, func(got *rbacv1.ClusterRole) {
+			assert.Equal(t, want.Rules, got.Rules)
+			assert.Equal(t, want.AggregationRule, got.AggregationRule)
+		})
+	})
+	t.Run("ClusterRoleBinding", func(t *testing.T) {
+		want := &rbacv1.ClusterRoleBinding{RoleRef: rbacv1.RoleRef{Kind: "ClusterRole", Name: "role"}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "service"}}}
+		old := &rbacv1.ClusterRoleBinding{RoleRef: want.RoleRef}
+		testCreateOrUpdateResource(t, old, want, CreateOrUpdateClusterRoleBinding, func(got *rbacv1.ClusterRoleBinding) {
+			assert.Equal(t, want.Subjects, got.Subjects)
+			assert.Equal(t, want.RoleRef, got.RoleRef)
+		})
+		old.RoleRef.Name = "old-role"
+		client := fake.NewClientset(old)
+		got, err := CreateOrUpdateClusterRoleBinding(context.Background(), client, want)
+		assert.Nil(t, err)
+		assert.Equal(t, want.RoleRef, got.RoleRef)
+		assert.Equal(t, want.Subjects, got.Subjects)
+	})
+}
+
+func TestRetryableCreateOrUpdate(t *testing.T) {
+	previous := defaultRetryBackoff
+	t.Cleanup(func() { defaultRetryBackoff = previous })
+	defaultRetryBackoff = wait.Backoff{Steps: 3, Duration: time.Millisecond}
+	resource := schema.GroupResource{Resource: "services"}
+	transient := k8serr.NewServiceUnavailable("unavailable")
+	conflict := k8serr.NewConflict(resource, "service", fmt.Errorf("conflict"))
+	for _, stage := range []string{"Create", "Get", "Update", "NotFound", "Exhausted", "PermanentCreate", "PermanentGet", "PermanentUpdate"} {
+		t.Run(stage, func(t *testing.T) {
+			creates, gets, updates, modifies := 0, 0, 0, 0
+			permanent := k8serr.NewBadRequest("invalid")
+			result, err := retryableCreateOrUpdate(context.Background(),
+				func(ctx context.Context) (int, error) {
+					creates++
+					if stage == "PermanentCreate" {
+						return 0, permanent
+					}
+					if stage == "Exhausted" || stage == "Create" && creates == 1 {
+						return 0, transient
+					}
+					if stage == "Create" || stage == "NotFound" && creates > 1 {
+						return 42, nil
+					}
+					return 0, k8serr.NewAlreadyExists(resource, "service")
+				},
+				func(ctx context.Context) (int, error) {
+					gets++
+					if stage == "PermanentGet" {
+						return 0, permanent
+					}
+					if stage == "Get" && gets == 1 {
+						return 0, transient
+					}
+					if stage == "NotFound" {
+						return 0, k8serr.NewNotFound(resource, "service")
+					}
+					return 41, nil
+				},
+				func(ctx context.Context, obj int) (int, error) {
+					updates++
+					assert.Equal(t, 41, obj)
+					if stage == "PermanentUpdate" {
+						return 0, permanent
+					}
+					if stage == "Update" && updates == 1 {
+						return 0, conflict
+					}
+					return 42, nil
+				}, func(obj int) { modifies++ })
+			if stage == "Exhausted" {
+				assert.ErrorIs(t, err, transient)
+				assert.Equal(t, 3, creates)
+			} else if stage == "PermanentCreate" || stage == "PermanentGet" || stage == "PermanentUpdate" {
+				assert.ErrorIs(t, err, permanent)
+			} else {
+				assert.Nil(t, err)
+				assert.Equal(t, 42, result)
+			}
+			assert.Equal(t, updates, modifies)
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := retryableCreateOrUpdate(ctx, func(context.Context) (int, error) { return 0, transient }, nil, nil, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestKubernetesRetryErrors(t *testing.T) {
+	resource := schema.GroupResource{Resource: "services"}
+	for _, err := range []error{k8serr.NewServerTimeout(resource, "get", 1), k8serr.NewTimeoutError("timeout", 1), k8serr.NewTooManyRequests("limited", 1)} {
+		assert.True(t, isTransientError(err))
+		assert.True(t, ShouldRetry(err))
+	}
+	for _, err := range []error{k8serr.NewInternalError(fmt.Errorf("failed")), k8serr.NewServiceUnavailable("unavailable")} {
+		assert.True(t, isTransientError(err))
+	}
+	for _, err := range []error{nil, k8serr.NewBadRequest("invalid"), k8serr.NewNotFound(resource, "missing")} {
+		assert.False(t, isTransientError(err))
+		assert.False(t, ShouldRetry(err))
+	}
+	assert.True(t, ShouldRetry(k8serr.NewConflict(resource, "service", fmt.Errorf("conflict"))))
+}
+
+func TestDeploymentCalculations(t *testing.T) {
+	for _, tc := range []struct {
+		surge, unavailable                  intstr.IntOrString
+		desired, wantSurge, wantUnavailable int32
+	}{
+		{intstr.FromString("25%"), intstr.FromString("25%"), 3, 1, 0},
+		{intstr.FromInt32(0), intstr.FromString("1%"), 1, 0, 1},
+		{intstr.FromInt32(2), intstr.FromInt32(1), 5, 2, 1},
+	} {
+		surge, unavailable, err := ResolveFenceposts(&tc.surge, &tc.unavailable, tc.desired)
+		assert.Nil(t, err)
+		assert.Equal(t, tc.wantSurge, surge)
+		assert.Equal(t, tc.wantUnavailable, unavailable)
+	}
+	invalid := intstr.FromString("invalid")
+	_, _, err := ResolveFenceposts(&invalid, nil, 1)
+	assert.NotNil(t, err)
+	_, _, err = ResolveFenceposts(nil, &invalid, 1)
+	assert.NotNil(t, err)
+	replicas := int32(3)
+	maxUnavailable := intstr.FromInt32(5)
+	dep := appsv1.Deployment{Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &maxUnavailable}}}}
+	assert.EqualValues(t, 3, MaxUnavailable(dep))
+	dep.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
+	assert.Zero(t, MaxUnavailable(dep))
+	dep.Spec.Strategy.Type = appsv1.RollingUpdateDeploymentStrategyType
+	replicas = 0
+	assert.Zero(t, MaxUnavailable(dep))
+	sts := &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType}}}
+	assert.False(t, IsStatefulSetReady(sts))
+	sts.Status.UpdatedReplicas = 1
+	assert.False(t, IsStatefulSetReady(sts))
+	sts.Status.ReadyReplicas = 1
+	assert.True(t, IsStatefulSetReady(sts))
+	replicas, partition := int32(3), int32(2)
+	sts.Spec.Replicas = &replicas
+	sts.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition}
+	sts.Status.ReadyReplicas = 3
+	assert.True(t, IsStatefulSetReady(sts))
+	sts.Spec.UpdateStrategy.Type = appsv1.OnDeleteStatefulSetStrategyType
+	assert.True(t, IsStatefulSetReady(sts))
+}
+
+func TestReplicaSetSelection(t *testing.T) {
+	dep := &appsv1.Deployment{ObjectMeta: k8smetav1.ObjectMeta{Name: "deployment", Namespace: "namespace", UID: "deployment"}, Spec: appsv1.DeploymentSpec{
+		Selector: &k8smetav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+		Template: k8scorev1.PodTemplateSpec{ObjectMeta: k8smetav1.ObjectMeta{Labels: map[string]string{"app": "test"}}},
+	}}
+	controller := true
+	newRS := func(name string, createdAt time.Time, owner string) *appsv1.ReplicaSet {
+		return &appsv1.ReplicaSet{ObjectMeta: k8smetav1.ObjectMeta{Name: name, Namespace: "namespace", CreationTimestamp: k8smetav1.NewTime(createdAt), Labels: map[string]string{"app": "test"}, OwnerReferences: []k8smetav1.OwnerReference{{UID: k8stypes.UID(owner), Controller: &controller}}}, Spec: appsv1.ReplicaSetSpec{Template: *dep.Spec.Template.DeepCopy()}}
+	}
+	first := newRS("first", time.Now().Add(-time.Hour), "deployment")
+	first.OwnerReferences[0].UID = dep.UID
+	second := newRS("second", first.CreationTimestamp.Time, "deployment")
+	second.OwnerReferences[0].UID = dep.UID
+	unowned := newRS("unowned", time.Now(), "other")
+	client := fake.NewClientset(second, first, unowned)
+	res, err := GetNewReplicaSet(dep, client.AppsV1())
+	assert.Nil(t, err)
+	assert.Equal(t, "first", res.Name)
+	before := first.Spec.Template.DeepCopy()
+	first.Spec.Template.Labels[appsv1.DefaultDeploymentUniqueLabelKey] = "hash"
+	assert.True(t, EqualIgnoreHash(&first.Spec.Template, &dep.Spec.Template))
+	assert.Equal(t, "hash", first.Spec.Template.Labels[appsv1.DefaultDeploymentUniqueLabelKey])
+	first.Spec.Template.Spec.Containers = []k8scorev1.Container{{Name: "other"}}
+	assert.False(t, EqualIgnoreHash(&first.Spec.Template, before))
+	assert.Nil(t, FindNewReplicaSet(dep, []*appsv1.ReplicaSet{first}))
+	_, err = ListReplicaSets(dep, func(string, k8smetav1.ListOptions) ([]*appsv1.ReplicaSet, error) {
+		return nil, fmt.Errorf("list failed")
+	})
+	assert.NotNil(t, err)
+}
+
+func TestReadiness(t *testing.T) {
+	previous := ldflags.TestMode
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ldflags.TestMode = "false"
+	replicas := int32(1)
+	controller := true
+	dep := &appsv1.Deployment{ObjectMeta: k8smetav1.ObjectMeta{Name: "deployment", Namespace: "octelium", UID: "deployment"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &k8smetav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}}}}
+	rs := &appsv1.ReplicaSet{ObjectMeta: k8smetav1.ObjectMeta{Name: "replicaset", Namespace: "octelium", Labels: map[string]string{"app": "test"}, OwnerReferences: []k8smetav1.OwnerReference{{UID: "deployment", Controller: &controller}}}, Status: appsv1.ReplicaSetStatus{ReadyReplicas: 1}}
+	ds := &appsv1.DaemonSet{ObjectMeta: k8smetav1.ObjectMeta{Name: "daemonset", Namespace: "octelium"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberReady: 2}}
+	node := &k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "node"}, Status: k8scorev1.NodeStatus{Conditions: []k8scorev1.NodeCondition{{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionTrue}}}}
+	client := fake.NewClientset(dep, rs, ds, node)
+	ctx := context.Background()
+	assert.Nil(t, WaitReadinessDeployment(ctx, client, "deployment"))
+	assert.Nil(t, WaitReadinessDaemonsetWithNS(ctx, client, "daemonset", "octelium"))
+	assert.Nil(t, WaitForNodesReadiness(ctx, client))
+	wantErr := k8serr.NewForbidden(schema.GroupResource{Resource: "deployments"}, "deployment", fmt.Errorf("denied"))
+	client.PrependReactor("*", "*", func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, wantErr })
+	assert.ErrorIs(t, WaitReadinessDeployment(ctx, client, "deployment"), wantErr)
+	assert.ErrorIs(t, WaitReadinessDaemonsetWithNS(ctx, client, "daemonset", "octelium"), wantErr)
+	assert.ErrorIs(t, WaitForNodesReadiness(ctx, client), wantErr)
+	ldflags.TestMode = "true"
+	assert.Nil(t, WaitReadinessDeployment(ctx, client, "deployment"))
+	assert.Nil(t, WaitReadinessDaemonsetWithNS(ctx, client, "daemonset", "octelium"))
+	assert.Nil(t, WaitForNodesReadiness(ctx, client))
+}
 
 func TestKubeConfig(t *testing.T) {
 

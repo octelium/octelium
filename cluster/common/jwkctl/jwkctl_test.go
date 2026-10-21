@@ -19,10 +19,14 @@ package jwkctl
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"math/big"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,9 +40,233 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
+
+func newTokenController(t *testing.T) *Controller {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	assert.Nil(t, err)
+	uid := vutils.UUIDv4()
+	return &Controller{opts: &Opts{}, ctl: &ctl{keyMap: map[string]*jwtKey{
+		uid: {kind: KindEd25519, key: key, publicKey: key.Public(), createdAt: time.Now(), uid: uid},
+	}}}
+}
+
+func TestTokenClaimValidation(t *testing.T) {
+	for _, kind := range []string{KindEd25519, KindECDSAP256} {
+		t.Run(kind, func(t *testing.T) {
+			c := newTokenController(t)
+			key, err := c.chooseJWK()
+			assert.Nil(t, err)
+			if kind == KindECDSAP256 {
+				priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+				assert.Nil(t, err)
+				key.kind, key.key, key.publicKey = kind, priv, priv.Public()
+			}
+			subject, err := c.uidToBytes(vutils.UUIDv4())
+			assert.Nil(t, err)
+			tokenID, err := c.uidToBytes(vutils.UUIDv4())
+			assert.Nil(t, err)
+			kid, err := c.uidToBytes(key.uid)
+			assert.Nil(t, err)
+			content := &authv1.TokenT0_Content{
+				Type: authv1.TokenT0_Content_ACCESS_TOKEN, KeyID: kid, Subject: subject, TokenID: tokenID,
+				ExpiresAt: pbutils.Timestamp(time.Now().Add(time.Hour)),
+			}
+			encode := func(content *authv1.TokenT0_Content) string {
+				data, err := pbutils.Marshal(content)
+				assert.Nil(t, err)
+				var signature []byte
+				if kind == KindEd25519 {
+					signature = ed25519.Sign(key.key.(ed25519.PrivateKey), data)
+				} else {
+					signature, err = signECDSAP256(key.key.(*ecdsa.PrivateKey), data)
+					assert.Nil(t, err)
+				}
+				data, err = pbutils.Marshal(&authv1.TokenT0{Content: content, Signature: signature})
+				assert.Nil(t, err)
+				return base64.RawURLEncoding.EncodeToString(append([]byte{1}, data...))
+			}
+			valid := encode(content)
+			_, err = c.VerifyAccessToken(valid)
+			assert.Nil(t, err)
+			_, err = c.VerifyRefreshToken(valid)
+			assert.NotNil(t, err)
+			_, err = c.VerifyCredential(valid)
+			assert.NotNil(t, err)
+			for _, tc := range []struct {
+				name string
+				set  func(*authv1.TokenT0_Content)
+			}{
+				{"SubjectLength", func(v *authv1.TokenT0_Content) { v.Subject = v.Subject[:15] }},
+				{"SubjectUUID", func(v *authv1.TokenT0_Content) { v.Subject = make([]byte, 16) }},
+				{"TokenLength", func(v *authv1.TokenT0_Content) { v.TokenID = v.TokenID[:15] }},
+				{"TokenUUID", func(v *authv1.TokenT0_Content) { v.TokenID = make([]byte, 16) }},
+				{"KeyLength", func(v *authv1.TokenT0_Content) { v.KeyID = v.KeyID[:15] }},
+				{"KeyUUID", func(v *authv1.TokenT0_Content) { v.KeyID = make([]byte, 16) }},
+				{"UnknownKey", func(v *authv1.TokenT0_Content) { v.KeyID, _ = c.uidToBytes(vutils.UUIDv4()) }},
+				{"UnknownType", func(v *authv1.TokenT0_Content) { v.Type = authv1.TokenT0_Content_TYPE_UNKNOWN }},
+				{"Expired", func(v *authv1.TokenT0_Content) { v.ExpiresAt = pbutils.Timestamp(time.Now().Add(-time.Hour)) }},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					invalid := pbutils.Clone(content).(*authv1.TokenT0_Content)
+					tc.set(invalid)
+					res, err := c.parseToken(encode(invalid))
+					assert.NotNil(t, err)
+					assert.Nil(t, res)
+				})
+			}
+			for _, token := range []string{valid + "=", " " + valid, valid + "\n", strings.Repeat("a", 139), strings.Repeat("a", 301), strings.Repeat("é", 100)} {
+				_, err := c.parseToken(token)
+				assert.NotNil(t, err)
+			}
+			delete(c.ctl.keyMap, key.uid)
+			_, err = c.VerifyAccessToken(valid)
+			assert.NotNil(t, err)
+		})
+	}
+}
+
+func TestJWKSecretLifecycle(t *testing.T) {
+	ctx := context.Background()
+	c := newTokenController(t)
+	key, err := c.chooseJWK()
+	assert.Nil(t, err)
+	keyPEM, err := utils_cert.GetPrivateKeyPEM(key.key)
+	assert.Nil(t, err)
+	secret := &corev1.Secret{
+		Metadata: &metav1.Metadata{Uid: key.uid, CreatedAt: pbutils.Now(), SystemLabels: map[string]string{"octelium-root-secret": "true"}},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: keyPEM}},
+	}
+	assert.Nil(t, c.ctl.onDeleteSecret(ctx, secret))
+	_, err = c.chooseJWK()
+	assert.NotNil(t, err)
+	assert.Nil(t, c.ctl.onAddSecret(ctx, secret))
+	assert.Nil(t, c.ctl.onUpdateSecret(ctx, secret, secret))
+	assert.Len(t, c.ctl.keyMap, 1)
+	assert.Nil(t, c.ctl.onAddSecret(ctx, &corev1.Secret{Metadata: &metav1.Metadata{}}))
+	assert.Nil(t, c.ctl.onDeleteSecret(ctx, &corev1.Secret{Metadata: &metav1.Metadata{}}))
+	assert.Len(t, c.ctl.keyMap, 1)
+	secret.Data = &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: []byte("invalid")}}
+	assert.NotNil(t, c.ctl.setKey(secret))
+	assert.Len(t, c.ctl.keyMap, 1)
+	_, err = getKeyKind(&rsa.PrivateKey{})
+	assert.NotNil(t, err)
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	assert.Nil(t, err)
+	_, err = getKeyKind(p384)
+	assert.NotNil(t, err)
+}
+
+func TestTokenConcurrentVerification(t *testing.T) {
+	c := newTokenController(t)
+	sess := newSession()
+	token, err := c.CreateAccessToken(sess)
+	assert.Nil(t, err)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			for range 32 {
+				claims, err := c.VerifyAccessToken(token)
+				assert.Nil(t, err)
+				if assert.NotNil(t, claims) {
+					assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+					assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+				}
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func TestTokenCreationErrors(t *testing.T) {
+	for _, scenario := range []string{"Verification", "NoKey", "NoSigner", "InvalidUID", "Expired", "UnsupportedKind", "Ed25519KeyType", "ECDSAKeyType"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := newTokenController(t)
+			key, err := c.chooseJWK()
+			assert.Nil(t, err)
+			content := &authv1.TokenT0_Content{}
+			switch scenario {
+			case "Verification":
+				c.opts.IsVerificationMode = true
+			case "NoKey":
+				c.ctl.keyMap = map[string]*jwtKey{}
+			case "NoSigner":
+				key.key = nil
+			case "InvalidUID":
+				key.uid = "invalid"
+			case "Expired":
+				content.ExpiresAt = pbutils.Timestamp(time.Now().Add(-time.Hour))
+			case "UnsupportedKind":
+				key.kind = "unsupported"
+			case "Ed25519KeyType":
+				key.key = &rsa.PrivateKey{}
+			case "ECDSAKeyType":
+				key.kind = KindECDSAP256
+			}
+			token, err := c.createToken(content)
+			assert.NotNil(t, err)
+			assert.Empty(t, token)
+		})
+	}
+	c := newTokenController(t)
+	for _, field := range []string{"Subject", "TokenID"} {
+		sess := newSession()
+		if field == "Subject" {
+			sess.Metadata.Uid = "invalid"
+		} else {
+			sess.Status.Authentication.TokenID = "invalid"
+		}
+		token, err := c.CreateAccessToken(sess)
+		assert.NotNil(t, err)
+		assert.Empty(t, token)
+		token, err = c.CreateRefreshToken(sess)
+		assert.NotNil(t, err)
+		assert.Empty(t, token)
+		cred := &corev1.Credential{Metadata: sess.Metadata, Spec: &corev1.Credential_Spec{}, Status: &corev1.Credential_Status{TokenID: sess.Status.Authentication.TokenID}}
+		token, err = c.CreateCredential(cred)
+		assert.NotNil(t, err)
+		assert.Empty(t, token)
+	}
+}
+
+func TestTokenEnvelopeAndKeys(t *testing.T) {
+	c := newTokenController(t)
+	token, err := c.CreateAccessToken(newSession())
+	assert.Nil(t, err)
+	data, err := base64.RawURLEncoding.DecodeString(token)
+	assert.Nil(t, err)
+	data[0] = 2
+	_, err = c.parseToken(base64.RawURLEncoding.EncodeToString(data))
+	assert.ErrorContains(t, err, "Invalid token type")
+	data[0], data[1] = 1, 0xff
+	_, err = c.parseToken(base64.RawURLEncoding.EncodeToString(data))
+	assert.NotNil(t, err)
+	key, err := c.chooseJWK()
+	assert.Nil(t, err)
+	for _, kind := range []string{KindEd25519, KindECDSAP256, "unsupported"} {
+		key.kind, key.publicKey = kind, &rsa.PublicKey{}
+		_, err := c.parseToken(token)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestECDSASignatureRanges(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	assert.Nil(t, err)
+	n := priv.Curve.Params().N
+	for _, pair := range [][2]*big.Int{
+		{big.NewInt(0), big.NewInt(1)}, {big.NewInt(1), big.NewInt(0)},
+		{n, big.NewInt(1)}, {big.NewInt(1), n},
+	} {
+		signature := make([]byte, 64)
+		pair[0].FillBytes(signature[:32])
+		pair[1].FillBytes(signature[32:])
+		assert.False(t, verifyECDSAP256(&priv.PublicKey, []byte("content"), signature))
+	}
+}
 
 func TestToken(t *testing.T) {
 

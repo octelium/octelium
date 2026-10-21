@@ -39,6 +39,7 @@ func Phases() []Phase {
 		{"SDK", testSDK},
 		{"Authorization", testAuthorization},
 		{"AuthorizationPolicyLookupCompatibility", testAuthorizationPolicyLookupCompatibility},
+		{"AuthorizationCommonEngineIsolation", testAuthorizationCommonEngineIsolation},
 		{"AuthorizationRevocationLoad", testAuthorizationRevocationLoad},
 		{"AuthenticationAssertion", testAuthenticationAssertion},
 		{"AuthenticationSession", testAuthenticationSession},

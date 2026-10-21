@@ -96,3 +96,19 @@ func TestIsAllowed(t *testing.T) {
 		assert.False(t, IsAllowed(origin, hosts), origin)
 	}
 }
+
+func TestOriginBoundaries(t *testing.T) {
+	assert.Nil(t, SystemServiceHosts("", nil))
+	assert.Nil(t, SystemServiceHosts(".", nil))
+	hosts := []Host{{Name: "example.com", AllowSubdomains: true}}
+	for _, origin := range []string{
+		"null", "https://example.com#fragment", "https://example.com/",
+		"https://example.com@evil.com", "https://evil.com@example.com",
+		"https://example.com.evil.com", "https://example.com.",
+		"https://%65xample.com", "https://example.com\n", "https://example.com:443",
+	} {
+		assert.False(t, IsAllowed(origin, hosts), origin)
+	}
+	assert.False(t, IsAllowed("https://example.com", nil))
+	assert.True(t, IsAllowed("https://sub.example.com", hosts))
+}

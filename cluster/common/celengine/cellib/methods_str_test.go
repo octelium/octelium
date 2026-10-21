@@ -22,9 +22,26 @@ import (
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/checker/decls"
+	"cel.dev/cel-go/common/types"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMethodsStrBoundaries(t *testing.T) {
+	assert.Equal(t, types.String("héllo"), strToLower(types.String("HÉLLO")))
+	assert.Equal(t, types.String("HÉLLO"), strToUpper(types.String("héllo")))
+	assert.Equal(t, types.String(""), strToLower(types.String("")))
+	assert.True(t, types.IsError(strToLower(types.IntOne)))
+	assert.True(t, types.IsError(strToUpper(types.IntOne)))
+	assert.True(t, types.IsError(strSplit(types.IntOne, types.String(","))))
+	assert.True(t, types.IsError(strSplit(types.String("value"), types.IntOne)))
+	assert.Equal(t, types.True, types.DefaultTypeAdapter.NativeToValue([]string{"a", "", "b"}).Equal(strSplit(types.String("a,,b"), types.String(","))))
+	assert.Equal(t, types.True, strMatches(types.String("value"), types.String("^val")))
+	assert.Equal(t, types.False, strMatches(types.String("value"), types.String("^other")))
+	assert.True(t, types.IsError(strMatches(types.String("value"), types.String("["))))
+	assert.True(t, types.IsError(strMatches(types.IntOne, types.String(".*"))))
+	assert.True(t, types.IsError(strMatches(types.String("value"), types.IntOne)))
+}
 
 func TestMethodsStr(t *testing.T) {
 

@@ -20,12 +20,97 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/checker/decls"
+	"cel.dev/cel-go/common/types"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestFunctionInputErrors(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	assert.Nil(t, err)
+	for _, tc := range []struct {
+		expr string
+		arg  any
+	}{
+		{"json.parse(ctx)", ""},
+		{"json.parse(ctx)", "{"},
+		{"json.parse(ctx)", "[1,2]"},
+		{"json.parse(ctx)", "1"},
+		{"json.parse(ctx)", "{\"key\": NaN}"},
+		{"json.parse(ctx)", true},
+		{"net.isPrivateIP(ctx)", "invalid"},
+		{"net.isPrivateIP(ctx)", ""},
+		{`net.isIPInRange(ctx, "10.0.0.0/8")`, "invalid"},
+		{`net.isIPInRange("10.0.0.1", ctx)`, "invalid"},
+		{`net.isIPInRange("10.0.0.1", ctx)`, "10.0.0.0/33"},
+		{`time.isWeekdayInTZ(timestamp("2025-01-01T00:00:00Z"), ctx)`, "Invalid/Timezone"},
+		{`time.isWeekendInTZ(timestamp("2025-01-01T00:00:00Z"), ctx)`, "Invalid/Timezone"},
+		{"time.isWeekday(ctx)", "invalid"},
+		{"time.isWeekend(ctx)", "invalid"},
+	} {
+		ast, iss := env.Compile(tc.expr)
+		assert.Nil(t, iss.Err(), tc.expr)
+		prg, err := env.Program(ast)
+		assert.Nil(t, err)
+		_, _, err = prg.ContextEval(context.Background(), map[string]any{"ctx": tc.arg})
+		assert.NotNil(t, err, "%s: %+v", tc.expr, tc.arg)
+	}
+}
+
+func TestFunctionNetworkBoundaries(t *testing.T) {
+	env, err := cel.NewEnv(CELLib())
+	assert.Nil(t, err)
+	for _, tc := range []struct {
+		expr string
+		want bool
+	}{
+		{`net.isIP("")`, false},
+		{`net.isIP("127.0.0.1:80")`, false},
+		{`net.isIP("fe80::1%eth0")`, false},
+		{`net.isIPv4("192.168.001.1")`, false},
+		{`net.isIPv6("::ffff:192.168.1.1")`, true},
+		{`net.isPrivateIP("::ffff:10.0.0.1")`, true},
+		{`net.isPrivateIP("fd00::1")`, true},
+		{`net.isPrivateIP("127.0.0.1")`, false},
+		{`net.isIPInRange("10.0.0.0", "10.0.0.0/24")`, true},
+		{`net.isIPInRange("10.0.0.255", "10.0.0.0/24")`, true},
+		{`net.isIPInRange("10.0.1.0", "10.0.0.0/24")`, false},
+		{`net.isIPInRange("::ffff:10.0.0.1", "10.0.0.0/24")`, true},
+		{`net.isIPInRange("2001:db8::1", "2001:db8::/32")`, true},
+		{`net.isIPInRange("2001:db9::1", "2001:db8::/32")`, false},
+		{`net.isIPInRange("10.0.0.1", "::/0")`, false},
+	} {
+		ast, iss := env.Compile(tc.expr)
+		assert.Nil(t, iss.Err())
+		prg, err := env.Program(ast)
+		assert.Nil(t, err)
+		out, _, err := prg.Eval(map[string]any{})
+		assert.Nil(t, err, tc.expr)
+		assert.Equal(t, tc.want, out.Value(), tc.expr)
+	}
+}
+
+func TestFunctionTimeHelpers(t *testing.T) {
+	for _, zone := range []string{"", "UTC", "America/New_York"} {
+		loc, err := getTZLocation(types.String(zone))
+		assert.Nil(t, err)
+		assert.NotNil(t, loc)
+	}
+	_, err := getTZLocation(types.Int(1))
+	assert.NotNil(t, err)
+	_, err = getTZLocation(types.String("Invalid/Timezone"))
+	assert.NotNil(t, err)
+	_, err = toTime(types.String("2025-01-01"))
+	assert.NotNil(t, err)
+	now := time.Now()
+	res, err := toTime(types.Timestamp{Time: now})
+	assert.Nil(t, err)
+	assert.Equal(t, now, res)
+}
 
 func TestFunctionJSON(t *testing.T) {
 

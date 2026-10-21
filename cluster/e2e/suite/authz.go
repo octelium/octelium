@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
@@ -559,4 +560,79 @@ func testAuthorizationPolicyLookupCompatibility(t *testing.T, h *harness.H) {
 			}
 			return nil
 		})
+}
+
+func testAuthorizationCommonEngineIsolation(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	users := []*corev1.User{h.CreateWorkloadUser(t, nil), h.CreateWorkloadUser(t, nil)}
+	tokens := []string{h.AccessToken(t, users[0]), h.AccessToken(t, users[1])}
+
+	for _, engine := range []string{"CEL", "OPA"} {
+		t.Run(engine, func(t *testing.T) {
+			condition := &corev1.Condition{Type: &corev1.Condition_Match{Match: `ctx.request.http.headers["x-e2e-user"] == ctx.user.metadata.uid && ctx.request.http.headers["x-e2e-decision"] == "allow"`}}
+			if engine == "OPA" {
+				condition = &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{Type: &corev1.Condition_OPA_Inline{Inline: `package octelium.condition
+match if {
+	input.ctx.request.http.headers["x-e2e-user"] == input.ctx.user.metadata.uid
+	input.ctx.request.http.headers["x-e2e-decision"] == "allow"
+}`}}}}
+			}
+			policy := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{Name: "allow-matching-user", Effect: corev1.Policy_Spec_Rule_ALLOW, Condition: condition}}}})
+			svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{policy.Metadata.Name}}
+			svc = h.UpdateService(t, svc)
+			clients := make([]*resty.Client, len(users))
+			for i, token := range tokens {
+				clients[i] = h.HTTPNoRetry().SetBaseURL(h.ServiceURL(svc)).SetAuthScheme("Bearer").SetAuthToken(token)
+				t.Cleanup(clients[i].GetClient().CloseIdleConnections)
+			}
+			check := func(ctx context.Context, user, scenario int) error {
+				req := clients[user].R().SetContext(ctx)
+				uid, decision := users[user].Metadata.Uid, "allow"
+				want := http.StatusForbidden
+				switch scenario {
+				case 0:
+					want = http.StatusOK
+				case 1:
+					uid = users[1-user].Metadata.Uid
+				case 2:
+					uid = ""
+				case 3:
+					decision = "ALLOW"
+				case 4:
+					decision = `allow" || true || "`
+				case 5:
+					decision = ""
+				}
+				if scenario != 6 {
+					req.SetHeader("X-E2E-User", uid).SetHeader("X-E2E-Decision", decision)
+				}
+				resp, err := req.Get("/")
+				if err != nil {
+					return err
+				}
+				if resp.StatusCode() != want {
+					return fmt.Errorf("%s user %d scenario %d: %w", engine, user, scenario, errUnexpectedStatus(resp.StatusCode(), want))
+				}
+				return nil
+			}
+			h.Eventually(t, "both identities to have request-specific authorization decisions", harness.DecisionBudget, func(ctx context.Context) error {
+				for user := range users {
+					for scenario := range 7 {
+						if err := check(ctx, user, scenario); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			})
+			result := harness.RunFor(t.Context(), 3*time.Second, 16, func(ctx context.Context, worker, iteration int) error {
+				return check(ctx, worker%len(users), iteration%7)
+			})
+			assert.Zero(t, result.Failed(), "%s", result.Errors.String())
+			assert.Positive(t, result.Succeeded)
+			harness.LogPool(engine+" authorization request isolation", result)
+		})
+	}
 }

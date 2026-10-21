@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
@@ -31,6 +32,69 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 )
+
+func TestHostedServices(t *testing.T) {
+	sess := &corev1.Session{Status: &corev1.Session_Status{}}
+	assert.Nil(t, GetHostServicesFromConn(sess))
+	sess.Status.Connection = &corev1.Session_Status_Connection{}
+	assert.Nil(t, GetHostServicesFromConn(sess))
+	upstream := &corev1.Session_Status_Connection_Upstream{
+		ServiceRef: &metav1.ObjectReference{Name: "service.namespace", Uid: "service"},
+		Port:       15000, L4Type: corev1.Session_Status_Connection_Upstream_TCP,
+		Backend: &corev1.Session_Status_Connection_Upstream_Backend{Host: "127.0.0.1", Port: 8080},
+	}
+	assert.Nil(t, GetHostServicesFromUpstream(upstream, sess))
+	sess.Status.Connection.Addresses = []*metav1.DualStackNetwork{{V4: "100.64.0.2/32", V6: "fd00::2/128"}}
+	sess.Status.Connection.Upstreams = []*corev1.Session_Status_Connection_Upstream{upstream}
+	services := GetHostServicesFromConn(sess)
+	assert.Len(t, services, 1)
+	assert.Equal(t, "service.namespace", services[0].Name)
+	assert.EqualValues(t, 15000, services[0].Port)
+	assert.Equal(t, "127.0.0.1", services[0].Upstream.Host)
+	assert.EqualValues(t, 8080, services[0].Upstream.Port)
+	assert.Equal(t, &metav1.DualStackIP{Ipv4: "100.64.0.2", Ipv6: "fd00::2"}, services[0].Address)
+	other := &corev1.Session_Status_Connection_Upstream{ServiceRef: &metav1.ObjectReference{Uid: "other"}}
+	sess.Status.Connection.Upstreams = []*corev1.Session_Status_Connection_Upstream{upstream, other, upstream, upstream}
+	assert.Nil(t, RemoveConnectionUpstreams(context.Background(), nil, sess, &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}}))
+	assert.Equal(t, []*corev1.Session_Status_Connection_Upstream{other}, sess.Status.Connection.Upstreams)
+	assert.Nil(t, RemoveConnectionUpstreams(context.Background(), nil, sess, &corev1.Service{Metadata: &metav1.Metadata{Uid: "missing"}}))
+	sess.Status.Connection = nil
+	assert.Nil(t, RemoveConnectionUpstreams(context.Background(), nil, sess, nil))
+}
+
+func TestListenerPort(t *testing.T) {
+	sess := &corev1.Session{Metadata: &metav1.Metadata{Name: "session"}, Status: &corev1.Session_Status{}}
+	_, err := getListenerPort(sess)
+	assert.NotNil(t, err)
+	sess.Status.Connection = &corev1.Session_Status_Connection{}
+	_, err = getListenerPort(sess)
+	assert.NotNil(t, err)
+	sess.Status.Connection.ServiceOptions = &corev1.Session_Status_Connection_ServiceOptions{PortStart: 15000}
+	port, err := getListenerPort(sess)
+	assert.Nil(t, err)
+	assert.Equal(t, 15000, port)
+	sess.Status.Connection.Upstreams = []*corev1.Session_Status_Connection_Upstream{{Port: 15002}, {Port: 15000}, {Port: 15000}}
+	port, err = getListenerPort(sess)
+	assert.Nil(t, err)
+	assert.Equal(t, 15001, port)
+	for i := int32(15000); i < 25000; i++ {
+		sess.Status.Connection.Upstreams = append(sess.Status.Connection.Upstreams, &corev1.Session_Status_Connection_Upstream{Port: i})
+	}
+	_, err = getListenerPort(sess)
+	assert.NotNil(t, err)
+}
+
+func TestRemoveConnIndex(t *testing.T) {
+	network := &cclusterv1.ClusterConnInfo{ActiveIndexesWG: []uint32{1, 2, 2, 3}, ActiveIndexesQUIC: []uint32{2, 3}}
+	removeConnIndex(network, 2, corev1.Session_Status_Connection_WIREGUARD)
+	assert.Equal(t, []uint32{1, 3}, network.ActiveIndexesWG)
+	assert.Equal(t, []uint32{2, 3}, network.ActiveIndexesQUIC)
+	removeConnIndex(network, 3, corev1.Session_Status_Connection_QUICV0)
+	assert.Equal(t, []uint32{1, 3}, network.ActiveIndexesWG)
+	assert.Equal(t, []uint32{2}, network.ActiveIndexesQUIC)
+	removeConnIndex(network, 1, corev1.Session_Status_Connection_TYPE_UNKNOWN)
+	assert.Equal(t, []uint32{1, 3}, network.ActiveIndexesWG)
+}
 
 type fakeLockC struct {
 	rlockv1.MainServiceClient
