@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -31,6 +32,8 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -458,4 +461,36 @@ func TestSessionUpdatePreservesStatus(t *testing.T) {
 	require.Nil(t, err)
 	assert.Equal(t, corev1.Session_Spec_REJECTED, got.Spec.State)
 	assert.True(t, proto.Equal(before, got.Status))
+}
+
+func TestSessionStateValidation(t *testing.T) {
+	for _, state := range []corev1.Session_Spec_State{
+		corev1.Session_Spec_ACTIVE,
+		corev1.Session_Spec_PENDING,
+		corev1.Session_Spec_REJECTED,
+		corev1.Session_Spec_STATE_UNKNOWN,
+		-1, 4, 1000, math.MinInt32, math.MaxInt32,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			calls := 0
+			s := newTstServer(func(method string, req, resp any) error {
+				calls++
+				return status.Error(codes.Unavailable, "backend")
+			})
+			item := &corev1.Session{
+				Metadata: &metav1.Metadata{Name: "session"},
+				Spec:     &corev1.Session_Spec{State: state, ExpiresAt: pbutils.Timestamp(time.Now().Add(time.Hour))},
+			}
+			err := s.validateSession(t.Context(), item)
+			switch state {
+			case corev1.Session_Spec_ACTIVE, corev1.Session_Spec_PENDING, corev1.Session_Spec_REJECTED:
+				assert.Nil(t, err)
+			default:
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				_, err = s.UpdateSession(t.Context(), item)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			}
+			assert.Zero(t, calls)
+		})
+	}
 }

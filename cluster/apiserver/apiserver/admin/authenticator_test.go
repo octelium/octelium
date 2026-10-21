@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -31,6 +32,8 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -272,4 +275,36 @@ func TestAuthenticatorUpdatePreservesStatus(t *testing.T) {
 	assert.Equal(t, "Updated Authenticator", got.Spec.DisplayName)
 	assert.Equal(t, corev1.Authenticator_Spec_PENDING, got.Spec.State)
 	assert.True(t, proto.Equal(before, got.Status))
+}
+
+func TestAuthenticatorStateValidation(t *testing.T) {
+	for _, state := range []corev1.Authenticator_Spec_State{
+		corev1.Authenticator_Spec_ACTIVE,
+		corev1.Authenticator_Spec_PENDING,
+		corev1.Authenticator_Spec_REJECTED,
+		corev1.Authenticator_Spec_STATE_UNKNOWN,
+		-1, 4, 1000, math.MinInt32, math.MaxInt32,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			calls := 0
+			s := newTstServer(func(method string, req, resp any) error {
+				calls++
+				return status.Error(codes.Unavailable, "backend")
+			})
+			item := &corev1.Authenticator{
+				Metadata: &metav1.Metadata{Name: "authenticator"},
+				Spec:     &corev1.Authenticator_Spec{State: state},
+			}
+			err := s.validateAuthenticator(t.Context(), item)
+			switch state {
+			case corev1.Authenticator_Spec_ACTIVE, corev1.Authenticator_Spec_PENDING, corev1.Authenticator_Spec_REJECTED:
+				assert.Nil(t, err)
+			default:
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				_, err = s.UpdateAuthenticator(t.Context(), item)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			}
+			assert.Zero(t, calls)
+		})
+	}
 }

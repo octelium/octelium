@@ -154,6 +154,9 @@ func (s *Server) validateSession(ctx context.Context, itm *corev1.Session) error
 	switch spec.State {
 	case corev1.Session_Spec_STATE_UNKNOWN:
 		return grpcutils.InvalidArg("State cannot be UNKNOWN")
+	case corev1.Session_Spec_ACTIVE, corev1.Session_Spec_PENDING, corev1.Session_Spec_REJECTED:
+	default:
+		return grpcutils.InvalidArg("Invalid state: %d", spec.State)
 	}
 
 	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {

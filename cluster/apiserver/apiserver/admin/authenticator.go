@@ -118,6 +118,9 @@ func (s *Server) validateAuthenticator(ctx context.Context, itm *corev1.Authenti
 	switch itm.Spec.State {
 	case corev1.Authenticator_Spec_STATE_UNKNOWN:
 		return grpcutils.InvalidArg("State cannot be UNKNOWN")
+	case corev1.Authenticator_Spec_ACTIVE, corev1.Authenticator_Spec_PENDING, corev1.Authenticator_Spec_REJECTED:
+	default:
+		return grpcutils.InvalidArg("Invalid state: %d", itm.Spec.State)
 	}
 
 	if len(itm.Spec.DisplayName) > 120 {

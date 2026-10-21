@@ -3460,3 +3460,75 @@ func TestServiceEmptyDirLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceModeValidation(t *testing.T) {
+	s := &Server{}
+	for _, mode := range []corev1.Service_Spec_Mode{
+		corev1.Service_Spec_TCP,
+		corev1.Service_Spec_UDP,
+		corev1.Service_Spec_HTTP,
+		corev1.Service_Spec_SSH,
+		corev1.Service_Spec_KUBERNETES,
+		corev1.Service_Spec_POSTGRES,
+		corev1.Service_Spec_MYSQL,
+		corev1.Service_Spec_GRPC,
+		corev1.Service_Spec_WEB,
+		corev1.Service_Spec_DNS,
+		corev1.Service_Spec_SOCKS5,
+		corev1.Service_Spec_RDP_WEB,
+		corev1.Service_Spec_MCP,
+		corev1.Service_Spec_LLM,
+		corev1.Service_Spec_RDP,
+		corev1.Service_Spec_MODE_UNSET,
+		-1, 16, 1000, math.MinInt32, math.MaxInt32,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Name: "service.default"},
+				Spec:     &corev1.Service_Spec{Mode: mode, Config: &corev1.Service_Spec_Config{}},
+				Status:   &corev1.Service_Status{},
+			}
+			err := s.validateService(t.Context(), svc)
+			if mode >= corev1.Service_Spec_TCP && mode <= corev1.Service_Spec_RDP {
+				assert.Nil(t, err)
+			} else {
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			}
+		})
+	}
+}
+
+func TestServiceInvalidModePersistence(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	svc, err := s.CreateService(t.Context(), &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode:   corev1.Service_Spec_HTTP,
+			Config: tstServiceConfig(t, `{"upstream":{"url":"http://example.com"}}`),
+		},
+	})
+	require.Nil(t, err)
+	want := pbutils.MarshalMust(svc.Spec)
+	for _, mode := range []corev1.Service_Spec_Mode{corev1.Service_Spec_MODE_UNSET, -1, 16, 1000, math.MinInt32, math.MaxInt32} {
+		t.Run(mode.String(), func(t *testing.T) {
+			name := utilrand.GetRandomStringCanonical(8)
+			_, err := s.CreateService(t.Context(), &corev1.Service{
+				Metadata: &metav1.Metadata{Name: name},
+				Spec:     &corev1.Service_Spec{Mode: mode, Config: tstServiceConfig(t, `{"upstream":{"url":"http://example.com"}}`)},
+			})
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			_, err = s.GetService(t.Context(), &metav1.GetOptions{Name: name})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+
+			svc.Spec.Mode = mode
+			_, err = s.UpdateService(t.Context(), svc)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.Equal(t, want, pbutils.MarshalMust(stored.Spec))
+		})
+	}
+}

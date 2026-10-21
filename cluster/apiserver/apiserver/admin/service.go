@@ -300,6 +300,16 @@ func (s *Server) validateService(ctx context.Context,
 	switch svc.Spec.Mode {
 	case corev1.Service_Spec_MODE_UNSET:
 		return grpcutils.InvalidArg("Service mode must be set")
+	case corev1.Service_Spec_TCP, corev1.Service_Spec_UDP,
+		corev1.Service_Spec_HTTP, corev1.Service_Spec_SSH,
+		corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_POSTGRES,
+		corev1.Service_Spec_MYSQL, corev1.Service_Spec_GRPC,
+		corev1.Service_Spec_WEB, corev1.Service_Spec_DNS,
+		corev1.Service_Spec_SOCKS5, corev1.Service_Spec_RDP_WEB,
+		corev1.Service_Spec_MCP, corev1.Service_Spec_LLM,
+		corev1.Service_Spec_RDP:
+	default:
+		return grpcutils.InvalidArg("Invalid Service mode: %d", svc.Spec.Mode)
 	}
 
 	if spec.Port != 0 {

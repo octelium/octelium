@@ -19,6 +19,7 @@ package suite
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -227,4 +228,79 @@ func testAPIUserSelfProtection(t *testing.T, h *harness.H) {
 	storedSession, err := h.CoreC().GetSession(t.Context(), &metav1.GetOptions{Uid: sess.Metadata.Uid})
 	require.Nil(t, err)
 	assert.Equal(t, corev1.Session_Spec_ACTIVE, storedSession.Spec.State)
+}
+
+func testAPIEnumValidation(t *testing.T, h *harness.H) {
+	owner := newHumanSession(t, h)
+	deviceRef := registerDevice(t, owner)
+	authn := createTOTPAuthenticator(t, owner, "e2e enum validation")
+	c := h.CoreC()
+	authenticator, err := c.GetAuthenticator(t.Context(), &metav1.GetOptions{Uid: authn.Metadata.Uid})
+	require.Nil(t, err)
+	device, err := c.GetDevice(t.Context(), &metav1.GetOptions{Uid: deviceRef.Uid})
+	require.Nil(t, err)
+	session := owner.Session(t)
+
+	for _, state := range []int32{0, -1, 4, 1000, math.MinInt32, math.MaxInt32} {
+		t.Run(fmt.Sprintf("State%d", state), func(t *testing.T) {
+			t.Run("Authenticator", func(t *testing.T) {
+				req := proto.Clone(authenticator).(*corev1.Authenticator)
+				req.Spec.State = corev1.Authenticator_Spec_State(state)
+				_, err := c.UpdateAuthenticator(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				stored, err := c.GetAuthenticator(t.Context(), &metav1.GetOptions{Uid: authenticator.Metadata.Uid})
+				require.Nil(t, err)
+				assert.True(t, proto.Equal(authenticator.Spec, stored.Spec))
+			})
+			t.Run("Device", func(t *testing.T) {
+				req := proto.Clone(device).(*corev1.Device)
+				req.Spec.State = corev1.Device_Spec_State(state)
+				_, err := c.UpdateDevice(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				stored, err := c.GetDevice(t.Context(), &metav1.GetOptions{Uid: device.Metadata.Uid})
+				require.Nil(t, err)
+				assert.True(t, proto.Equal(device.Spec, stored.Spec))
+			})
+			t.Run("Session", func(t *testing.T) {
+				req := proto.Clone(session).(*corev1.Session)
+				req.Spec.State = corev1.Session_Spec_State(state)
+				_, err := c.UpdateSession(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				stored, err := c.GetSession(t.Context(), &metav1.GetOptions{Uid: session.Metadata.Uid})
+				require.Nil(t, err)
+				assert.True(t, proto.Equal(session.Spec, stored.Spec))
+			})
+		})
+	}
+
+	ns := h.EnsureTestNamespace(t)
+	svc := h.CreateService(t, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: fmt.Sprintf("%s.%s", h.Name(), ns.Metadata.Name)},
+		Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, Config: &corev1.Service_Spec_Config{
+			Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://127.0.0.1:8080"}},
+		}},
+	})
+	for _, mode := range []corev1.Service_Spec_Mode{corev1.Service_Spec_MODE_UNSET, -1, 16, 1000, math.MinInt32, math.MaxInt32} {
+		t.Run(fmt.Sprintf("Mode%d", mode), func(t *testing.T) {
+			t.Run("Create", func(t *testing.T) {
+				req := proto.Clone(svc).(*corev1.Service)
+				req.Metadata = &metav1.Metadata{Name: fmt.Sprintf("%s.%s", h.Name(), ns.Metadata.Name)}
+				req.Status = nil
+				req.Spec.Mode = mode
+				_, err := c.CreateService(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				_, err = c.GetService(t.Context(), &metav1.GetOptions{Name: req.Metadata.Name})
+				assert.Equal(t, codes.NotFound, status.Code(err))
+			})
+			t.Run("Update", func(t *testing.T) {
+				req := proto.Clone(svc).(*corev1.Service)
+				req.Spec.Mode = mode
+				_, err := c.UpdateService(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				stored, err := c.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+				require.Nil(t, err)
+				assert.True(t, proto.Equal(svc.Spec, stored.Spec))
+			})
+		})
+	}
 }

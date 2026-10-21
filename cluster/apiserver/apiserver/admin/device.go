@@ -134,6 +134,9 @@ func (s *Server) validateDevice(ctx context.Context, itm *corev1.Device) error {
 	switch itm.Spec.State {
 	case corev1.Device_Spec_STATE_UNKNOWN:
 		return grpcutils.InvalidArg("State cannot be UNKNOWN")
+	case corev1.Device_Spec_ACTIVE, corev1.Device_Spec_PENDING, corev1.Device_Spec_REJECTED:
+	default:
+		return grpcutils.InvalidArg("Invalid state: %d", itm.Spec.State)
 	}
 
 	if err := s.validatePolicyOwner(ctx, itm.Spec.Authorization); err != nil {
