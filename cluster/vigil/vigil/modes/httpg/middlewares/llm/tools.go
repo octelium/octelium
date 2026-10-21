@@ -330,7 +330,7 @@ func (m *tools) render(ctx context.Context, reqCtx *middlewares.RequestContext,
 	}
 
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(ret), &obj); err != nil {
+	if err := json.Unmarshal([]byte(ret), &obj); err != nil || obj == nil {
 		return nil, errors.Errorf("The rendered tool definition is not a JSON object")
 	}
 

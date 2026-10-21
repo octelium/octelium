@@ -4116,3 +4116,108 @@ func TestServiceContainerConstraintPersistence(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceLLMToolDefinitionObjects(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"Null", "null", false},
+		{"WhitespaceNull", " \t\r\nnull\r\n\t ", false},
+		{"EmptyObject", `{}`, true},
+		{"WhitespaceObject", " \r\n{}\t ", true},
+		{"ObjectWithNull", `{"type":"function","function":{"name":"sample","description":null}}`, true},
+		{"Empty", "", false},
+		{"Whitespace", " \t\r\n", false},
+		{"Array", `[]`, false},
+		{"ArrayWithNull", `[null]`, false},
+		{"String", `"null"`, false},
+		{"Number", `1`, false},
+		{"Boolean", `false`, false},
+		{"Malformed", `{`, false},
+		{"MultipleValues", `{} null`, false},
+	} {
+		for _, cfg := range []struct {
+			name  string
+			value toolDefinition
+		}{
+			{"Tool", &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{Value: tc.value}}},
+			{"Replacement", &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace{Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Value{Value: tc.value}}},
+		} {
+			t.Run(tc.name+"/"+cfg.name, func(t *testing.T) {
+				err := validateToolDefinition(t.Context(), cfg.value)
+				if tc.valid {
+					assert.Nil(t, err)
+				} else {
+					assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				}
+			})
+		}
+	}
+}
+
+func TestServiceLLMNullToolPersistence(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	for _, named := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Named%t", named), func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"url":"http://example.com"},"llm":{"protocol":"OPENAI","plugins":[{"name":"tools","condition":{"matchAny":true},"tools":{"tools":[{"value":"{}"}],"filters":[{"name":"*","decision":"REPLACE","replace":{"value":"{}"}}]}}]}}`)
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+				Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_LLM, Config: cfg},
+			}
+			getTools := func(svc *corev1.Service) *corev1.Service_Spec_Config_LLM_Plugin_Tools {
+				if named {
+					return svc.Spec.DynamicConfig.Configs[0].GetLlm().Plugins[0].GetTools()
+				}
+				return svc.Spec.Config.GetLlm().Plugins[0].GetTools()
+			}
+			if named {
+				cfg.Name = "custom"
+				svc.Spec.Config = nil
+				svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+			}
+			svc, err := s.CreateService(t.Context(), svc)
+			require.Nil(t, err)
+			want := pbutils.MarshalMust(svc.Spec)
+			for _, replacement := range []bool{false, true} {
+				for _, value := range []string{"null", " \t\r\nnull\r\n\t "} {
+					t.Run(fmt.Sprintf("Replacement%t/%q", replacement, value), func(t *testing.T) {
+						req := pbutils.Clone(svc).(*corev1.Service)
+						tools := getTools(req)
+						if replacement {
+							tools.Filters[0].Replace.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Value{Value: value}
+						} else {
+							tools.Tools[0].Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{Value: value}
+						}
+						create := pbutils.Clone(req).(*corev1.Service)
+						create.Metadata = &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)}
+						create.Status = nil
+						_, err := s.CreateService(t.Context(), create)
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+						_, err = s.GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+						assert.Equal(t, codes.NotFound, status.Code(err))
+						_, err = s.UpdateService(t.Context(), req)
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+						stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+						require.Nil(t, err)
+						assert.Equal(t, want, pbutils.MarshalMust(stored.Spec))
+					})
+				}
+			}
+			tools := getTools(svc)
+			value := `{"type":"function","function":{"name":"sample","description":null}}`
+			tools.Tools[0].Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{Value: value}
+			tools.Filters[0].Replace.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Value{Value: value}
+			svc, err = s.UpdateService(t.Context(), svc)
+			require.Nil(t, err)
+			stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.Equal(t, value, getTools(stored).Tools[0].GetValue())
+			assert.Equal(t, value, getTools(stored).Filters[0].Replace.GetValue())
+		})
+	}
+}

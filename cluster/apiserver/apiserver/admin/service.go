@@ -2471,7 +2471,7 @@ func validateToolDefinition(ctx context.Context, cfg toolDefinition) error {
 			return grpcutils.InvalidArg("The tool definition is too large")
 		}
 		var obj map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(cfg.GetValue()), &obj); err != nil {
+		if err := json.Unmarshal([]byte(cfg.GetValue()), &obj); err != nil || obj == nil {
 			return grpcutils.InvalidArg("The tool definition is not a JSON object")
 		}
 	case cfg.GetEval() != "":

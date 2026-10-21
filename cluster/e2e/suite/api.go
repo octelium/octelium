@@ -18,6 +18,7 @@ package suite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -639,4 +640,158 @@ func testAPIContainerValidation(t *testing.T, h *harness.H) {
 	svc = h.UpdateService(t, svc)
 	livenessPeriod, readinessSuccess = 1, 1
 	h.Eventually(t, "valid probe updates and defaulting to complete a healthy rollout", harness.DeploymentBudget, check)
+}
+
+func testAPILLMToolDefinitions(t *testing.T, h *harness.H) {
+	upstream := h.StartLLMUpstream(t, nil)
+	const object = `{"type":"function","function":{"name":"service_tool","description":null}}`
+	svc := h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_LLM,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: fmt.Sprintf("http://localhost:%d", upstream.Port)},
+					User: "root",
+				},
+				Type: &corev1.Service_Spec_Config_Llm{Llm: &corev1.Service_Spec_Config_LLM{
+					Protocol: corev1.Service_Spec_Config_LLM_OPENAI,
+					Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{{
+						Name: "tools", Condition: llmMatchAny(),
+						Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_{Tools: &corev1.Service_Spec_Config_LLM_Plugin_Tools{
+							Tools: []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{{
+								Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{Value: object},
+							}},
+						}},
+					}},
+				}},
+			},
+		},
+	})
+	h.MustWaitService(t, svc.Metadata.Name)
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{svc.Metadata.Name: h.Port()},
+		Serve:   []string{svc.Metadata.Name},
+	})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	request := func(ctx context.Context, definition string) (int, []byte, error) {
+		res, err := c.R().SetContext(ctx).SetBody(map[string]any{
+			"model":    "e2e-model",
+			"messages": []any{map[string]any{"role": "user", "content": definition}},
+			"tools":    []any{map[string]any{"type": "function", "function": map[string]any{"name": "client_tool"}}},
+		}).Post("/v1/chat/completions")
+		if err != nil {
+			return 0, nil, err
+		}
+		return res.StatusCode(), res.Body(), nil
+	}
+	check := func(ctx context.Context, definition string, replacement bool) error {
+		before := upstream.ReqCount()
+		code, body, err := request(ctx, definition)
+		if err != nil {
+			return err
+		}
+		if code != http.StatusOK {
+			return fmt.Errorf("got status %d: %s", code, body)
+		}
+		if upstream.ReqCount() == before {
+			return fmt.Errorf("the valid request did not reach the LLM upstream")
+		}
+		entries, _ := upstream.LastBody()["tools"].([]any)
+		count := 2
+		if replacement {
+			count = 1
+		}
+		if len(entries) != count {
+			return fmt.Errorf("got %d tools, want %d", len(entries), count)
+		}
+		var expected map[string]any
+		if err := json.Unmarshal([]byte(definition), &expected); err != nil {
+			return err
+		}
+		want, err := json.Marshal(expected)
+		if err != nil {
+			return err
+		}
+		got, err := json.Marshal(entries[len(entries)-1])
+		if err != nil {
+			return err
+		}
+		if string(got) != string(want) {
+			return fmt.Errorf("got tool %s, want %s", got, want)
+		}
+		return nil
+	}
+	h.Eventually(t, "the valid static tool object to reach the upstream", harness.DecisionBudget,
+		func(ctx context.Context) error { return check(ctx, object, false) })
+	for _, replacement := range []bool{false, true} {
+		for _, value := range []string{"null", " \t\r\nnull\r\n\t "} {
+			t.Run(fmt.Sprintf("Static/Replacement%t/%q", replacement, value), func(t *testing.T) {
+				req := proto.Clone(svc).(*corev1.Service)
+				tools := req.Spec.Config.GetLlm().Plugins[0].GetTools()
+				if replacement {
+					tools.Filters = []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter{{
+						Match:    &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name{Name: "client_tool"},
+						Decision: corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REPLACE,
+						Replace: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace{
+							Type: &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Value{Value: value},
+						},
+					}}
+				} else {
+					tools.Tools[0].Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Value{Value: value}
+				}
+				create := proto.Clone(req).(*corev1.Service)
+				create.Metadata = &metav1.Metadata{Name: fmt.Sprintf("%s.default", h.Name())}
+				create.Status = nil
+				_, err := h.CoreC().CreateService(t.Context(), create)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				_, err = h.CoreC().GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+				assert.Equal(t, codes.NotFound, status.Code(err))
+				_, err = h.CoreC().UpdateService(t.Context(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+				stored, err := h.CoreC().GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+				require.Nil(t, err)
+				assert.True(t, proto.Equal(svc.Spec, stored.Spec))
+			})
+		}
+	}
+	for _, source := range []string{"CEL", "OPA"} {
+		for _, replacement := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Replacement%t", source, replacement), func(t *testing.T) {
+				tool := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{}
+				replace := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace{}
+				if source == "CEL" {
+					tool.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Eval{Eval: `ctx.request.llm.http.bodyMap.messages[0].content`}
+					replace.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Eval{Eval: tool.GetEval()}
+				} else {
+					tool.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_Opa{Opa: "package octelium.eval\nresult := input.ctx.request.llm.http.bodyMap.messages[0].content"}
+					replace.Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace_Opa{Opa: tool.GetOpa()}
+				}
+				cfg := &corev1.Service_Spec_Config_LLM_Plugin_Tools{}
+				if replacement {
+					cfg.Filters = []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter{{
+						Match:    &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Name{Name: "client_tool"},
+						Decision: corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REPLACE,
+						Replace:  replace,
+					}}
+				} else {
+					cfg.Tools = []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{tool}
+				}
+				svc.Spec.Config.GetLlm().Plugins[0].Type = &corev1.Service_Spec_Config_LLM_Plugin_Tools_{Tools: cfg}
+				svc = h.UpdateService(t, svc)
+				value := fmt.Sprintf(`{"type":"function","function":{"name":%q,"description":null}}`, h.Name())
+				h.Eventually(t, "the evaluated tool object to reach the upstream", harness.DecisionBudget,
+					func(ctx context.Context) error { return check(ctx, value, replacement) })
+				for _, value := range []string{"null", " \t\r\nnull\r\n\t "} {
+					before := upstream.ReqCount()
+					code, body, err := request(t.Context(), value)
+					require.Nil(t, err)
+					assert.Equal(t, http.StatusInternalServerError, code)
+					assert.Contains(t, string(body), "octelium_tool_denied")
+					assert.Equal(t, before, upstream.ReqCount())
+				}
+				require.Nil(t, check(t.Context(), value, replacement))
+			})
+		}
+	}
 }

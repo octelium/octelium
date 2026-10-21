@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonguardrail"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -528,6 +529,132 @@ func newToolsBody() string {
 		`{"type":"function","function":{"name":"read_file"}},` +
 		`{"type":"function","function":{"name":"delete_file"}},` +
 		`{"type":"web_search_preview"}]}`
+}
+
+func TestToolsRenderJSONObjects(t *testing.T) {
+	engine, err := celengine.New(t.Context(), &celengine.Opts{})
+	require.Nil(t, err)
+	m := &tools{celEngine: engine}
+	for _, tc := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"Null", "null", false},
+		{"WhitespaceNull", " \t\r\nnull\r\n\t ", false},
+		{"EmptyObject", `{}`, true},
+		{"WhitespaceObject", " \r\n{}\t ", true},
+		{"ObjectWithNull", `{"type":"function","function":{"name":"sample","description":null}}`, true},
+		{"Empty", "", false},
+		{"Whitespace", " \t\r\n", false},
+		{"Array", `[]`, false},
+		{"String", `"null"`, false},
+		{"Number", `1`, false},
+		{"Boolean", `false`, false},
+		{"Malformed", `{`, false},
+		{"MultipleValues", `{} null`, false},
+	} {
+		encoded, err := json.Marshal(tc.value)
+		require.Nil(t, err)
+		for _, source := range []struct {
+			name  string
+			field string
+			value string
+		}{
+			{"Value", "value", tc.value},
+			{"CEL", "eval", string(encoded)},
+			{"OPA", "opa", "package octelium.eval\nresult := " + string(encoded)},
+		} {
+			data, err := json.Marshal(map[string]string{source.field: source.value})
+			require.Nil(t, err)
+			tool := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{}
+			replace := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace{}
+			require.Nil(t, pbutils.UnmarshalJSONStrict(data, tool))
+			require.Nil(t, pbutils.UnmarshalJSONStrict(data, replace))
+			for _, cfg := range []struct {
+				name  string
+				value toolRenderer
+			}{
+				{"Tool", tool},
+				{"Replacement", replace},
+			} {
+				t.Run(tc.name+"/"+source.name+"/"+cfg.name, func(t *testing.T) {
+					got, err := m.render(t.Context(), &middlewares.RequestContext{ReqCtxMap: map[string]any{}}, cfg.value)
+					if tc.valid {
+						require.Nil(t, err)
+						assert.Equal(t, tc.value, string(got))
+					} else {
+						assert.NotNil(t, err)
+						assert.Nil(t, got)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestToolsNullDefinition(t *testing.T) {
+	for _, provider := range []struct {
+		name     string
+		protocol corev1.Service_Spec_Config_LLM_Protocol
+		path     string
+		body     string
+	}{
+		{"ChatCompletions", corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions", newToolsBody()},
+		{"Responses", corev1.Service_Spec_Config_LLM_OPENAI, "/v1/responses", `{"model":"sample","input":"hello","tools":[{"type":"function","name":"read_file"}]}`},
+		{"Anthropic", corev1.Service_Spec_Config_LLM_ANTHROPIC, "/v1/messages", `{"model":"sample","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"read_file","input_schema":{"type":"object"}}]}`},
+		{"Gemini", corev1.Service_Spec_Config_LLM_GEMINI, geminiPath, `{"contents":[{"parts":[{"text":"hello"}]}],"tools":[{"functionDeclarations":[{"name":"read_file"}]}]}`},
+		{"Bedrock", corev1.Service_Spec_Config_LLM_BEDROCK, bedrockPath, `{"messages":[{"role":"user","content":[{"text":"hello"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"read_file","inputSchema":{"json":{"type":"object"}}}}]}}`},
+	} {
+		for _, value := range []string{"null", " \t\r\nnull\r\n\t "} {
+			encoded, err := json.Marshal(value)
+			require.Nil(t, err)
+			for _, source := range []struct {
+				name  string
+				field string
+				value string
+			}{
+				{"Value", "value", value},
+				{"CEL", "eval", string(encoded)},
+				{"OPA", "opa", "package octelium.eval\nresult := " + string(encoded)},
+			} {
+				for _, action := range []string{"Append", "Prepend", "Replace"} {
+					t.Run(provider.name+"/"+source.name+"/"+action+"/"+value, func(t *testing.T) {
+						data, err := json.Marshal(map[string]string{source.field: source.value})
+						require.Nil(t, err)
+						cfg := &corev1.Service_Spec_Config_LLM_Plugin_Tools{}
+						if action == "Replace" {
+							replace := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Replace{}
+							require.Nil(t, pbutils.UnmarshalJSONStrict(data, replace))
+							cfg.Filters = []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter{{
+								Match:    &corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_Type{Type: "*"},
+								Decision: corev1.Service_Spec_Config_LLM_Plugin_Tools_Filter_REPLACE,
+								Replace:  replace,
+							}}
+						} else {
+							tool := &corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{}
+							require.Nil(t, pbutils.UnmarshalJSONStrict(data, tool))
+							if action == "Prepend" {
+								tool.Position = corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool_PREPEND
+							}
+							cfg.Tools = []*corev1.Service_Spec_Config_LLM_Plugin_Tools_Tool{tool}
+						}
+						res := servePlugins(t, &pluginOpts{
+							protocol: provider.protocol,
+							path:     provider.path,
+							body:     provider.body,
+							plugins:  []*corev1.Service_Spec_Config_LLM_Plugin{newPlugin("tools", cfg)},
+						})
+						assert.False(t, res.isNext)
+						assert.Equal(t, http.StatusInternalServerError, res.code)
+						assert.Contains(t, res.body, "could not apply the tool policy")
+						assert.Equal(t, provider.body, string(res.reqCtx.Body))
+						assert.Nil(t, res.reqCtx.LLMTools)
+					})
+				}
+			}
+		}
+	}
 }
 
 func TestToolsFilters(t *testing.T) {
