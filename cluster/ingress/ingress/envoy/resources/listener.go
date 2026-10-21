@@ -26,6 +26,7 @@ import (
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	envoyhcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	wellknown "github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"go.uber.org/zap"
@@ -420,23 +421,25 @@ func getHttpFiltersMain() ([]*envoyhcm.HttpFilter, error) {
 				Name:        "gzip-compressor",
 				TypedConfig: gzippbFilter,
 			},
-			ContentType: []string{
-				// "application/json",
-				"application/xml",
-				"application/xhtml+xml",
-				"application/javascript",
-				"application/x-javascript",
-				"text/html",
-				"text/css",
-				"text/plain",
-				"text/xml",
-			},
-
 			ResponseDirectionConfig: &compressv3.Compressor_ResponseDirectionConfig{
 				CommonConfig: &compressv3.Compressor_CommonDirectionConfig{
 					MinContentLength: &wrapperspb.UInt32Value{
 						Value: 1024,
 					},
+					ContentTypeMatcher: func() []*matcherv3.StringMatcher {
+						var ret []*matcherv3.StringMatcher
+						for _, contentType := range []string{
+							"application/xml", "application/xhtml+xml",
+							"application/javascript", "application/x-javascript",
+							"text/html", "text/css", "text/plain", "text/xml",
+						} {
+							ret = append(ret, &matcherv3.StringMatcher{
+								MatchPattern: &matcherv3.StringMatcher_Exact{Exact: contentType},
+								IgnoreCase:   true,
+							})
+						}
+						return ret
+					}(),
 				},
 
 				DisableOnEtagHeader:        true,

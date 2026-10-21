@@ -61,7 +61,10 @@ node:
 static_resources:
     clusters:
         - name: xds_cluster
-          type: STRICT_DNS
+          cluster_type:
+              name: envoy.clusters.dns
+              typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.clusters.dns.v3.DnsCluster
           connect_timeout: 3s
           lb_policy: round_robin
           typed_extension_protocol_options:
@@ -126,7 +129,10 @@ static_resources:
                                   pipe:
                                       path: /run/spire/sockets/spire-agent.sock
         - name: xds_cluster
-          type: STRICT_DNS
+          cluster_type:
+              name: envoy.clusters.dns
+              typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.clusters.dns.v3.DnsCluster
           connect_timeout: 3s
           lb_policy: round_robin
           typed_extension_protocol_options:

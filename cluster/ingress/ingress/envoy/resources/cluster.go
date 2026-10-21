@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	dnsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dns/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	upstream_http_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
@@ -110,29 +111,25 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 
 func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sni string) (*clusterv3.Cluster, error) {
 
+	dnsConfig := &dnsv3.DnsCluster{}
+	if ldflags.IsDev() {
+		dnsConfig.DnsRefreshRate = &durationpb.Duration{Seconds: 10}
+	}
+	dnsPB, err := anypb.New(dnsConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	cluster := &clusterv3.Cluster{
 		Name:           name,
 		ConnectTimeout: &durationpb.Duration{Seconds: 15},
 		LbPolicy:       clusterv3.Cluster_ROUND_ROBIN,
-		ClusterDiscoveryType: &clusterv3.Cluster_Type{
-			Type: clusterv3.Cluster_STRICT_DNS,
+		ClusterDiscoveryType: &clusterv3.Cluster_ClusterType{
+			ClusterType: &clusterv3.Cluster_CustomClusterType{
+				Name:        "envoy.clusters.dns",
+				TypedConfig: dnsPB,
+			},
 		},
-		DnsRefreshRate: func() *durationpb.Duration {
-			if ldflags.IsDev() {
-				return &durationpb.Duration{
-					Seconds: 10,
-				}
-			}
-			return nil
-		}(),
-		CleanupInterval: func() *durationpb.Duration {
-			if ldflags.IsDev() {
-				return &durationpb.Duration{
-					Seconds: 10,
-				}
-			}
-			return nil
-		}(),
 
 		LoadAssignment: getClusterLoadAssignment(name, host, port),
 		CircuitBreakers: &clusterv3.CircuitBreakers{
