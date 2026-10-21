@@ -1,16 +1,15 @@
 module github.com/octelium/octelium/pkg
 
-go 1.26.8
+go 1.27.3
 
 require (
 	github.com/ghodss/yaml v1.0.0
 	github.com/octelium/octelium/apis v0.0.0-00010101000000-000000000000
+	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.11
 )
-
-require github.com/pkg/errors v0.9.1
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

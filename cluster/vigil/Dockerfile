@@ -14,7 +14,7 @@ COPY cluster/vigil/vigil/modes/rdp/credssp-rs/src /build/src
 RUN cargo build --release --locked
 
 
-FROM golang:1.26.8-bookworm AS builder
+FROM golang:1.27.3-bookworm AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential pkg-config ca-certificates libvectorscan-dev && \
