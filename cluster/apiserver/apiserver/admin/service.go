@@ -766,6 +766,7 @@ func (s *Server) validateServiceConfig(ctx context.Context,
 					if err := apivalidation.ValidateName(vol.GetPersistentVolumeClaim().Name, 0, 0); err != nil {
 						return err
 					}
+				case *corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_:
 				default:
 					return grpcutils.InvalidArg("Volume type must be set")
 				}

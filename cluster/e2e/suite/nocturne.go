@@ -101,6 +101,119 @@ func newManagedHTTPService(t *testing.T, h *harness.H,
 	})
 }
 
+func testNocturneEmptyDir(t *testing.T, h *harness.H) {
+	response := h.Name()
+	svc := h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Container_{
+						Container: &corev1.Service_Spec_Config_Upstream_Container{
+							Image:   "nginx",
+							Port:    80,
+							Command: []string{"/bin/sh", "-c"},
+							Args: []string{
+								`printf '%s' "$OCTELIUM_E2E_RESPONSE" > /scratch/index.html && cp /scratch/index.html /usr/share/nginx/html/index.html && exec nginx -g 'daemon off;'`,
+							},
+							Env: []*corev1.Service_Spec_Config_Upstream_Container_Env{
+								{Name: "OCTELIUM_E2E_RESPONSE", Type: &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: response}},
+							},
+							Volumes: []*corev1.Service_Spec_Config_Upstream_Container_Volume{
+								{
+									Name: "data",
+									Type: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_{
+										EmptyDir: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir{SizeLimitMegabytes: 64},
+									},
+								},
+								{
+									Name: "scratch",
+									Type: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_{
+										EmptyDir: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir{},
+									},
+								},
+							},
+							VolumeMounts: []*corev1.Service_Spec_Config_Upstream_Container_VolumeMount{
+								{Name: "data", MountPath: "/usr/share/nginx/html"},
+								{Name: "scratch", MountPath: "/scratch"},
+							},
+							ReadinessProbe: &corev1.Service_Spec_Config_Upstream_Container_Probe{
+								Type: &corev1.Service_Spec_Config_Upstream_Container_Probe_HttpGet{
+									HttpGet: &corev1.Service_Spec_Config_Upstream_Container_Probe_HTTPGet{Path: "/", Port: 80},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	h.MustWaitServiceUpstream(t, svc.Metadata.Name)
+	h.MustWaitService(t, svc.Metadata.Name)
+	upstream := k8sutils.GetSvcK8sUpstreamHostname(svc, "")
+	conn := h.Connect(t, harness.ConnectOpts{Publish: map[string]int{svc.Metadata.Name: h.Port()}})
+	c := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	wait := func(t *testing.T, size uint32) {
+		t.Helper()
+		h.Eventually(t, "the upstream to serve a file from its emptyDir volumes", harness.DeploymentBudget,
+			func(ctx context.Context) error {
+				dep, err := h.K8sDeployment(ctx, upstream)
+				if err != nil {
+					return err
+				}
+				if dep.Status.ObservedGeneration < dep.Generation || dep.Status.ReadyReplicas != 1 ||
+					dep.Status.UpdatedReplicas != 1 || dep.Status.Replicas != 1 {
+					return errors.Errorf("the upstream has not completed its rollout")
+				}
+				volumes := dep.Spec.Template.Spec.Volumes
+				if len(volumes) != 2 || volumes[0].Name != "data" || volumes[0].EmptyDir == nil ||
+					volumes[1].Name != "scratch" || volumes[1].EmptyDir == nil || volumes[1].EmptyDir.SizeLimit != nil {
+					return errors.Errorf("the upstream does not have the expected emptyDir volumes")
+				}
+				limit := volumes[0].EmptyDir.SizeLimit
+				if size == 0 {
+					if limit != nil {
+						return errors.Errorf("the emptyDir volume still has a size limit")
+					}
+				} else if limit == nil || limit.Value() != int64(size)*1024*1024 {
+					return errors.Errorf("the emptyDir volume does not have the expected size limit")
+				}
+				containers := dep.Spec.Template.Spec.Containers
+				if len(containers) != 1 || len(containers[0].VolumeMounts) != 2 ||
+					containers[0].VolumeMounts[0].Name != "data" || containers[0].VolumeMounts[0].MountPath != "/usr/share/nginx/html" ||
+					containers[0].VolumeMounts[1].Name != "scratch" || containers[0].VolumeMounts[1].MountPath != "/scratch" {
+					return errors.Errorf("the upstream does not have the expected volume mounts")
+				}
+				res, err := c.R().SetContext(ctx).Get("/")
+				if err != nil {
+					return err
+				}
+				if res.StatusCode() != http.StatusOK {
+					return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+				}
+				if res.String() != response {
+					return errors.Errorf("the upstream returned %q, want %q", res.String(), response)
+				}
+				return nil
+			})
+	}
+	wait(t, 64)
+	for _, size := range []uint32{128, 0} {
+		if !t.Run(fmt.Sprintf("SizeLimit%d", size), func(t *testing.T) {
+			response = h.Name()
+			svc = h.GetService(t, svc.Metadata.Name)
+			container := svc.Spec.Config.Upstream.GetContainer()
+			container.Volumes[0].GetEmptyDir().SizeLimitMegabytes = size
+			container.Env[0].Type = &corev1.Service_Spec_Config_Upstream_Container_Env_Value{Value: response}
+			svc = h.UpdateService(t, svc)
+			wait(t, size)
+		}) {
+			return
+		}
+	}
+}
+
 func testNocturneKubernetesSecret(t *testing.T, h *harness.H) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 

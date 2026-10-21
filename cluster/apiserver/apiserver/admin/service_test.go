@@ -3366,3 +3366,97 @@ func TestServiceLLMPluginDispatch(t *testing.T) {
 	}
 	assert.NotNil(t, s.validateLLMPlugins(t.Context(), "default", make([]*corev1.Service_Spec_Config_LLM_Plugin, maxPlugins+1)))
 }
+
+func TestServiceEmptyDirValidation(t *testing.T) {
+	s := &Server{}
+	for _, tc := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"DefaultLimit", `[{"name":"data","emptyDir":{}}]`, true},
+		{"ZeroLimit", `[{"name":"data","emptyDir":{"sizeLimitMegabytes":0}}]`, true},
+		{"MinimumLimit", `[{"name":"data","emptyDir":{"sizeLimitMegabytes":1}}]`, true},
+		{"SizeLimit", `[{"name":"data","emptyDir":{"sizeLimitMegabytes":64}}]`, true},
+		{"MaximumLimit", fmt.Sprintf(`[{"name":"data","emptyDir":{"sizeLimitMegabytes":%d}}]`, uint32(math.MaxUint32)), true},
+		{"MixedVolumes", `[{"name":"data","emptyDir":{}},{"name":"cache","emptyDir":{"sizeLimitMegabytes":64}},{"name":"persistent","persistentVolumeClaim":{"name":"claim"}}]`, true},
+		{"MissingName", `[{"emptyDir":{}}]`, false},
+		{"InvalidName", `[{"name":"invalid/name","emptyDir":{}}]`, false},
+		{"MissingType", `[{"name":"data"}]`, false},
+		{"MissingPVCName", `[{"name":"data","emptyDir":{}},{"name":"persistent","persistentVolumeClaim":{}}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":`+tc.value+`,"volumeMounts":[{"name":"data","mountPath":"/data"}]}}}`)
+			err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+			if tc.valid {
+				assert.Nil(t, err)
+			} else {
+				assert.NotNil(t, err)
+			}
+		})
+	}
+	for _, count := range []int{32, 33} {
+		t.Run(fmt.Sprintf("Volumes%d", count), func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080}}}`)
+			for i := range count {
+				cfg.Upstream.GetContainer().Volumes = append(cfg.Upstream.GetContainer().Volumes,
+					&corev1.Service_Spec_Config_Upstream_Container_Volume{
+						Name: fmt.Sprintf("data-%d", i),
+						Type: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir_{
+							EmptyDir: &corev1.Service_Spec_Config_Upstream_Container_Volume_EmptyDir{},
+						},
+					})
+			}
+			err := s.ValidateServiceConfig(t.Context(), cfg, &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}, false)
+			if count == 32 {
+				assert.Nil(t, err)
+			} else {
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			}
+		})
+	}
+}
+
+func TestServiceEmptyDirLifecycle(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+
+	for _, name := range []string{"DefaultConfig", "DynamicConfig"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := tstServiceConfig(t, `{"upstream":{"container":{"image":"example/image","port":8080,"volumes":[{"name":"data","emptyDir":{}}],"volumeMounts":[{"name":"data","mountPath":"/data"}]}}}`)
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+				Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, Config: cfg},
+			}
+			getConfig := func(svc *corev1.Service) *corev1.Service_Spec_Config {
+				if name == "DynamicConfig" {
+					return svc.Spec.DynamicConfig.Configs[0]
+				}
+				return svc.Spec.Config
+			}
+			if name == "DynamicConfig" {
+				cfg.Name = "managed"
+				svc.Spec.Config = nil
+				svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+					Configs: []*corev1.Service_Spec_Config{cfg},
+				}
+			}
+			want := pbutils.MarshalMust(cfg.Upstream)
+			svc, err := s.CreateService(t.Context(), svc)
+			require.Nil(t, err)
+			assert.Equal(t, want, pbutils.MarshalMust(getConfig(svc).Upstream))
+			for _, size := range []uint32{64, 0} {
+				getConfig(svc).Upstream.GetContainer().Volumes[0].GetEmptyDir().SizeLimitMegabytes = size
+				want := pbutils.MarshalMust(getConfig(svc).Upstream)
+				svc, err = s.UpdateService(t.Context(), svc)
+				require.Nil(t, err)
+				assert.Equal(t, want, pbutils.MarshalMust(getConfig(svc).Upstream))
+				svc, err = s.GetService(t.Context(), &metav1.GetOptions{Name: svc.Metadata.Name})
+				require.Nil(t, err)
+				assert.Equal(t, want, pbutils.MarshalMust(getConfig(svc).Upstream))
+			}
+		})
+	}
+}
