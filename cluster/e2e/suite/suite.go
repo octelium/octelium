@@ -55,6 +55,7 @@ func Phases() []Phase {
 		{"ServiceHostHeader", testServiceHostHeader},
 		{"VigilPlugins", testVigilPlugins},
 		{"VigilDynamicConfig", testVigilDynamicConfig},
+		{"VigilDynamicConfigValidation", testVigilDynamicConfigValidation},
 		{"VigilServiceState", testVigilServiceState},
 		{"VigilSecretManager", testVigilSecretManager},
 		{"VigilSecretLifecycle", testVigilSecretLifecycle},

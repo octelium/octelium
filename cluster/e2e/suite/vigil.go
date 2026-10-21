@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -541,6 +542,97 @@ func testVigilDynamicConfig(t *testing.T, h *harness.H) {
 				return nil
 			})
 	})
+}
+
+func testVigilDynamicConfigValidation(t *testing.T, h *harness.H) {
+	v := newVigilCtx(t, h)
+	var fallback atomic.Int64
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dynamic/invalid" {
+			fallback.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	for _, engine := range []string{"CEL", "OPA"} {
+		if !t.Run(engine, func(t *testing.T) {
+			rule := &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: `ctx.request.http.path.startsWith("/dynamic/")`}},
+			}
+			if engine == "CEL" {
+				rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"parent": ctx.request.http.headers["x-e2e-config"]}`}
+			} else {
+				rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"parent\": input.ctx.request.http.headers[\"x-e2e-config\"]}"}
+			}
+			v.svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{{
+					Name: "selected", Upstream: v.svc.Spec.Config.Upstream,
+					Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+						Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{{
+							Name:      "selected",
+							Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
+								StatusCode: http.StatusAccepted,
+								Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
+									Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{Inline: "selected"},
+								},
+							}},
+						}},
+					}},
+				}},
+				Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+					rule,
+					{Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}},
+				},
+			}
+			v.svc = h.UpdateService(t, v.svc)
+			check := func(ctx context.Context) error {
+				for _, tc := range []struct {
+					path   string
+					parent string
+					status int
+				}{
+					{"/dynamic/valid", "selected", http.StatusAccepted},
+					{"/dynamic/invalid", "missing", http.StatusInternalServerError},
+					{"/", "", http.StatusOK},
+				} {
+					res, err := c.R().SetContext(ctx).SetHeader("X-E2E-Config", tc.parent).Get(v.url(tc.path))
+					if err != nil {
+						return err
+					}
+					if res.StatusCode() != tc.status {
+						return errUnexpectedStatus(res.StatusCode(), tc.status)
+					}
+					if tc.status == http.StatusAccepted && string(res.Body()) != "selected" {
+						return errors.Errorf("got body %q, want selected", res.Body())
+					}
+				}
+				return nil
+			}
+			var stableAt time.Time
+			h.Eventually(t, "dynamic configuration validation errors to stop requests", harness.DecisionBudget,
+				func(ctx context.Context) error {
+					if err := check(ctx); err != nil {
+						stableAt = time.Time{}
+						return err
+					}
+					if stableAt.IsZero() {
+						stableAt = time.Now()
+					}
+					if time.Since(stableAt) < decisionSettle {
+						return errors.New("the dynamic configuration responses are still settling")
+					}
+					return nil
+				})
+			fallback.Store(0)
+			h.Consistently(t, "invalid dynamic configurations to leave the default upstream unreachable", decisionSettle, check)
+			assert.Zero(t, fallback.Load())
+		}) {
+			return
+		}
+	}
 }
 
 func testVigilServiceState(t *testing.T, h *harness.H) {

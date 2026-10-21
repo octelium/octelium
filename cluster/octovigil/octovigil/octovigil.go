@@ -515,6 +515,7 @@ func (s *Server) AuthenticateAndAuthorize(ctx context.Context, req *coctovigilv1
 	if isAuthorized {
 		if err := s.setServiceConfig(ctx, ret); err != nil {
 			zap.L().Warn("Could not setServiceConfig", zap.Error(err))
+			return nil, err
 		}
 	}
 

@@ -691,6 +691,184 @@ func TestEvaluateInvalidContext(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
+func TestAuthenticateAndAuthorizeDynamicConfigValidation(t *testing.T) {
+	for _, engine := range []string{"CEL", "OPA"} {
+		for _, anonymous := range []bool{false, true} {
+			for _, fallback := range []bool{false, true} {
+				for _, tc := range []struct {
+					name    string
+					parent  bool
+					invalid string
+				}{
+					{"InvalidURL", false, "invalid-upstream"},
+					{"EmptyURL", false, ""},
+					{"InvalidPort", false, "http://127.0.0.1:65536"},
+					{"MalformedURL", false, "http://%"},
+					{"MissingParent", true, "missing"},
+				} {
+					t.Run(fmt.Sprintf("%s/Anonymous%t/Fallback%t/%s", engine, anonymous, fallback, tc.name), func(t *testing.T) {
+						srv, coreC := newAuthorizationService(t)
+						coreC.service.Spec.IsAnonymous = anonymous
+						coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+						rule := &corev1.Service_Spec_DynamicConfig_Rule{
+							Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						}
+						expression := `{"upstream": {"url": ctx.request.http.headers["x-e2e-config"]}}`
+						opa := "package octelium.eval\nresult := {\"upstream\": {\"url\": input.ctx.request.http.headers[\"x-e2e-config\"]}}"
+						valid := "http://127.0.0.1:9090"
+						wantURL := valid
+						if tc.parent {
+							expression = `{"parent": ctx.request.http.headers["x-e2e-config"]}`
+							opa = "package octelium.eval\nresult := {\"parent\": input.ctx.request.http.headers[\"x-e2e-config\"]}"
+							valid = "default"
+							wantURL = coreC.service.Spec.Config.Upstream.GetUrl()
+						}
+						if engine == "CEL" {
+							rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: expression}
+						} else {
+							rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: opa}
+						}
+						coreC.service.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: []*corev1.Service_Spec_DynamicConfig_Rule{rule}}
+						if fallback {
+							coreC.service.Spec.DynamicConfig.Rules = append(coreC.service.Spec.DynamicConfig.Rules,
+								&corev1.Service_Spec_DynamicConfig_Rule{
+									Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+									Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"},
+								})
+						}
+						request := &coctovigilv1.DownstreamRequest{
+							Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+							Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+								Http: &corev1.RequestContext_Request_HTTP{Path: "/", Headers: map[string]string{"x-e2e-config": tc.invalid}},
+							}},
+						}
+						resp, err := srv.s.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+							Service: coreC.service, Request: request,
+						})
+						assert.Nil(t, resp)
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+						resp, err = srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: request,
+						})
+						assert.Nil(t, resp)
+						assert.Equal(t, codes.Internal, status.Code(err))
+						request.Request.GetHttp().Headers["x-e2e-config"] = valid
+						resp, err = srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: request,
+						})
+						if assert.Nil(t, err) && assert.NotNil(t, resp) {
+							assert.True(t, resp.IsAuthorized)
+							assert.Equal(t, !anonymous, resp.IsAuthenticated)
+							if assert.NotNil(t, resp.Config) {
+								assert.Equal(t, wantURL, resp.Config.Upstream.GetUrl())
+							}
+							assert.Empty(t, resp.ServiceConfigName)
+						}
+						request.Request.GetHttp().Headers["x-e2e-config"] = tc.invalid
+						rule.Condition = &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: false}}
+						resp, err = srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: request,
+						})
+						if assert.Nil(t, err) && assert.NotNil(t, resp) {
+							assert.True(t, resp.IsAuthorized)
+							assert.Nil(t, resp.Config)
+							if fallback {
+								assert.Equal(t, "default", resp.ServiceConfigName)
+							} else {
+								assert.Empty(t, resp.ServiceConfigName)
+							}
+						}
+						rule.Condition = &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}
+						coreC.service.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+						resp, err = srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: request,
+						})
+						if assert.Nil(t, err) && assert.NotNil(t, resp) {
+							assert.False(t, resp.IsAuthorized)
+							assert.Nil(t, resp.Config)
+							assert.Empty(t, resp.ServiceConfigName)
+						}
+						assert.Empty(t, coreC.calls)
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestInternalRPCDynamicConfigValidation(t *testing.T) {
+	for _, engine := range []string{"CEL", "OPA"} {
+		t.Run(engine, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			rule := &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+			}
+			if engine == "CEL" {
+				rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": {"url": ctx.request.http.path}}`}
+			} else {
+				rule.Type = &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": input.ctx.request.http.path}}"}
+			}
+			coreC.service.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: []*corev1.Service_Spec_DynamicConfig_Rule{rule}}
+			listener := bufconn.Listen(1024 * 1024)
+			server := grpc.NewServer()
+			srv.s.grpcSrv = server
+			coctovigilv1.RegisterInternalServiceServer(server, srv)
+			done := make(chan error, 1)
+			go func() { done <- server.Serve(listener) }()
+			t.Cleanup(func() {
+				assert.Nil(t, srv.s.Close())
+				listener.Close()
+				select {
+				case err := <-done:
+					assert.Nil(t, err)
+				case <-time.After(3 * time.Second):
+					assert.Fail(t, "the internal RPC server did not stop")
+				}
+			})
+			conn, err := grpc.NewClient("passthrough:///octovigil",
+				grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+					return listener.DialContext(ctx)
+				}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if !assert.Nil(t, err) {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+			client := coctovigilv1.NewInternalServiceClient(conn)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			var wg sync.WaitGroup
+			for range 16 {
+				wg.Go(func() {
+					for range 8 {
+						for _, path := range []string{"invalid-upstream", "http://127.0.0.1:9090", "http://%"} {
+							resp, err := client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+								ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{
+									Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+									Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+										Http: &corev1.RequestContext_Request_HTTP{Path: path},
+									}},
+								},
+							})
+							if path != "http://127.0.0.1:9090" {
+								assert.Nil(t, resp)
+								assert.Equal(t, codes.Internal, status.Code(err))
+							} else if assert.Nil(t, err) && assert.NotNil(t, resp) {
+								assert.True(t, resp.IsAuthenticated)
+								assert.True(t, resp.IsAuthorized)
+								if assert.NotNil(t, resp.Config) {
+									assert.Equal(t, path, resp.Config.Upstream.GetUrl())
+								}
+							}
+						}
+					}
+				})
+			}
+			wg.Wait()
+			assert.Empty(t, coreC.calls)
+		})
+	}
+}
+
 func TestInternalRPCNilRequests(t *testing.T) {
 	for _, method := range []string{"AuthenticateAndAuthorize", "Authorize", "GetDownstreamFromSessionUID", "Evaluate"} {
 		t.Run(method, func(t *testing.T) {
