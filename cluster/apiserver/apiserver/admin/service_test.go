@@ -3532,3 +3532,197 @@ func TestServiceInvalidModePersistence(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceHTTPHeaderNameSyntax(t *testing.T) {
+	for _, field := range []string{"AddRequestHeaders", "AddResponseHeaders", "RemoveRequestHeaders", "RemoveResponseHeaders", "CustomAuth"} {
+		t.Run(field, func(t *testing.T) {
+			for _, tc := range []struct {
+				name  string
+				value string
+				valid bool
+			}{
+				{"Canonical", "X-Token", true},
+				{"Lowercase", "x-token", true},
+				{"TokenCharacters", "!#$%&'*+-.^_`|~0123456789AZaz", true},
+				{"MaximumLength", strings.Repeat("a", maxGenStrLen), true},
+				{"Empty", "", false},
+				{"Space", "Bad Header", false},
+				{"LeadingSpace", " X-Token", false},
+				{"TrailingSpace", "X-Token ", false},
+				{"Tab", "X-Token\t", false},
+				{"Colon", "X-Token:", false},
+				{"Slash", "X/Token", false},
+				{"Parentheses", "X(Token)", false},
+				{"Quotes", "X-\"Token\"", false},
+				{"Backslash", "X\\Token", false},
+				{"CRLF", "X-Token\r\nInjected", false},
+				{"NUL", "X-Token\x00", false},
+				{"DEL", "X-Token\x7f", false},
+				{"NonASCII", "X-日本語", false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					calls := 0
+					s := newTstServer(func(method string, req, resp any) error {
+						assert.Equal(t, "GetSecret", method)
+						calls++
+						return nil
+					})
+					hdr := &corev1.Service_Spec_Config_HTTP_Header{}
+					entry := &corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+						Key: tc.value, Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "value"},
+					}
+					var err error
+					switch field {
+					case "AddRequestHeaders":
+						hdr.AddRequestHeaders = []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{entry}
+					case "AddResponseHeaders":
+						hdr.AddResponseHeaders = []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{entry}
+					case "RemoveRequestHeaders":
+						hdr.RemoveRequestHeaders = []string{tc.value}
+					case "RemoveResponseHeaders":
+						hdr.RemoveResponseHeaders = []string{tc.value}
+					case "CustomAuth":
+						err = s.validateHTTPAuth(t.Context(), &corev1.Service_Spec_Config_HTTP_Auth{
+							Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_{
+								Custom: &corev1.Service_Spec_Config_HTTP_Auth_Custom{
+									Header: tc.value,
+									Value: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value{
+										Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value_FromSecret{FromSecret: "secret"},
+									},
+								},
+							},
+						})
+					}
+					if field != "CustomAuth" {
+						err = s.validateHTTPHeader(t.Context(), hdr)
+					}
+					if tc.valid {
+						assert.Nil(t, err)
+					} else {
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+					}
+					if field == "CustomAuth" && tc.valid {
+						assert.Equal(t, 1, calls)
+					} else {
+						assert.Zero(t, calls)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestServiceHTTPResponseHeaderValueSyntax(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"Plain", "value", true},
+		{"Spaces", "one two", true},
+		{"Tab", "one\ttwo", true},
+		{"Punctuation", `attachment; filename="report.txt"`, true},
+		{"MaximumLength", strings.Repeat("a", maxGenStrLen), true},
+		{"TooLong", strings.Repeat("a", maxGenStrLen+1), false},
+		{"Empty", "", false},
+		{"NonASCII", "日本語", false},
+		{"CRLF", "value\r\nInjected: true", false},
+		{"Folded", "value\r\n continued", false},
+		{"DEL", "value\x7f", false},
+	}
+	for i := byte(0); i < 32; i++ {
+		if i == '\t' {
+			continue
+		}
+		cases = append(cases, struct {
+			name  string
+			value string
+			valid bool
+		}{fmt.Sprintf("Control%02x", i), "before" + string(i) + "after", false})
+	}
+	s := &Server{}
+	for _, appendValue := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Append%t", appendValue), func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					err := s.validateHTTPHeader(t.Context(), &corev1.Service_Spec_Config_HTTP_Header{
+						AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+							{Key: "X-Value", Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: tc.value}, Append: appendValue},
+						},
+					})
+					if tc.valid {
+						assert.Nil(t, err)
+					} else {
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestServiceHeaderValidationPersistence(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	_, err = s.CreateSecret(t.Context(), &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "header-secret"},
+		Spec:     &corev1.Secret_Spec{},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "token"}},
+	})
+	require.Nil(t, err)
+	for _, mode := range []struct {
+		name string
+		mode corev1.Service_Spec_Mode
+	}{
+		{"http", corev1.Service_Spec_HTTP},
+		{"mcp", corev1.Service_Spec_MCP},
+		{"llm", corev1.Service_Spec_LLM},
+	} {
+		for _, named := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Named%t", mode.name, named), func(t *testing.T) {
+				newService := func(value string) *corev1.Service {
+					cfg := tstServiceConfig(t, `{"upstream":{"url":"http://example.com"},"`+mode.name+`":`+value+`}`)
+					svc := &corev1.Service{
+						Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+						Spec:     &corev1.Service_Spec{Mode: mode.mode, Config: cfg},
+					}
+					if named {
+						cfg.Name = "custom"
+						svc.Spec.Config = nil
+						svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{cfg}}
+					}
+					return svc
+				}
+				svc, err := s.CreateService(t.Context(), newService(`{"header":{"addResponseHeaders":[{"key":"X-Value","value":"one\ttwo"}],"removeRequestHeaders":["x-remove"],"removeResponseHeaders":["X-Remove"]},"auth":{"custom":{"header":"x_auth-token","value":{"fromSecret":"header-secret"}}}}`))
+				require.Nil(t, err)
+				want := pbutils.MarshalMust(svc.Spec)
+				for _, tc := range []struct {
+					name  string
+					value string
+				}{
+					{"ResponseCRLF", `{"header":{"addResponseHeaders":[{"key":"X-Value","value":"value\r\nInjected: true"}]}}`},
+					{"ResponseControl", `{"header":{"addResponseHeaders":[{"key":"X-Value","value":"value\u0000"}]}}`},
+					{"CustomAuthName", `{"auth":{"custom":{"header":"Bad Header","value":{"fromSecret":"header-secret"}}}}`},
+					{"RemoveRequestName", `{"header":{"removeRequestHeaders":["Bad Header"]}}`},
+					{"RemoveResponseName", `{"header":{"removeResponseHeaders":["X-Remove:"]}}`},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						req := newService(tc.value)
+						_, err := s.CreateService(t.Context(), req)
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+						_, err = s.GetService(t.Context(), &metav1.GetOptions{Name: req.Metadata.Name})
+						assert.Equal(t, codes.NotFound, status.Code(err))
+						req.Metadata = svc.Metadata
+						_, err = s.UpdateService(t.Context(), req)
+						assert.Equal(t, codes.InvalidArgument, status.Code(err))
+						stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+						require.Nil(t, err)
+						assert.Equal(t, want, pbutils.MarshalMust(stored.Spec))
+					})
+				}
+			})
+		}
+	}
+}

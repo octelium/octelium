@@ -1451,6 +1451,9 @@ func (s *Server) validateHTTPHeader(ctx context.Context, hdrSpec *corev1.Service
 			if err := s.validateGenStr(hdr.GetValue(), true, "value"); err != nil {
 				return err
 			}
+			if !httpguts.ValidHeaderFieldValue(hdr.GetValue()) {
+				return grpcutils.InvalidArg("invalid header value")
+			}
 		case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
 			if err := checkCELExpressionString(ctx, hdr.GetEval()); err != nil {
 				return grpcutils.InvalidArg("Invalid eval: %s", hdr.GetEval())
@@ -1464,11 +1467,17 @@ func (s *Server) validateHTTPHeader(ctx context.Context, hdrSpec *corev1.Service
 		if err := s.validateGenStr(hdr, true, "key"); err != nil {
 			return err
 		}
+		if !httpguts.ValidHeaderFieldName(hdr) {
+			return grpcutils.InvalidArg("invalid header name")
+		}
 	}
 
 	for _, hdr := range hdrSpec.RemoveResponseHeaders {
 		if err := s.validateGenStr(hdr, true, "key"); err != nil {
 			return err
+		}
+		if !httpguts.ValidHeaderFieldName(hdr) {
+			return grpcutils.InvalidArg("invalid header name")
 		}
 	}
 	return nil
@@ -1503,6 +1512,9 @@ func (s *Server) validateHTTPAuth(ctx context.Context, authSpec *corev1.Service_
 
 		if err := s.validateGenStr(authSpec.GetCustom().Header, true, "header"); err != nil {
 			return err
+		}
+		if !httpguts.ValidHeaderFieldName(authSpec.GetCustom().Header) {
+			return grpcutils.InvalidArg("invalid header name")
 		}
 
 		if err := s.validateSecretOwner(ctx, authSpec.GetCustom().GetValue()); err != nil {

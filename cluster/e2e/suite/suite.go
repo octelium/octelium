@@ -37,6 +37,7 @@ func Phases() []Phase {
 		{"AdminAPI", testAdminAPI},
 		{"APIValidationLoad", testAPIValidationLoad},
 		{"APIEnumValidation", testAPIEnumValidation},
+		{"APIHeaderValidation", testAPIHeaderValidation},
 		{"APIUserSelfProtection", testAPIUserSelfProtection},
 		{"OcteliumctlCommands", testOcteliumctlCommands},
 		{"SDK", testSDK},

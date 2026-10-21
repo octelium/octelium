@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -301,6 +302,98 @@ func testAPIEnumValidation(t *testing.T, h *harness.H) {
 				require.Nil(t, err)
 				assert.True(t, proto.Equal(svc.Spec, stored.Spec))
 			})
+		})
+	}
+}
+
+func testAPIHeaderValidation(t *testing.T, h *harness.H) {
+	v := newVigilCtx(t, h)
+	token := h.Name()
+	secret := h.CreateSecret(t, "", token)
+	response := h.Name()
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x_e2e-auth") != token || r.Header.Get("X-E2E-Remove") != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("X-E2E-Remove", "upstream")
+		w.Write([]byte(response))
+	})
+	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+		Header: &corev1.Service_Spec_Config_HTTP_Header{
+			AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+				{Key: "X-E2E-Safe", Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "safe value"}},
+			},
+			RemoveRequestHeaders:  []string{"X-E2E-Remove"},
+			RemoveResponseHeaders: []string{"X-E2E-Remove"},
+		},
+		Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_{
+				Custom: &corev1.Service_Spec_Config_HTTP_Auth_Custom{
+					Header: "x_e2e-auth",
+					Value: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value_FromSecret{FromSecret: secret.Metadata.Name},
+					},
+				},
+			},
+		},
+	})
+	c := h.HTTPNoRetry().SetBaseURL(v.url("")).SetHeader("X-E2E-Remove", "downstream")
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	check := func(ctx context.Context) error {
+		res, err := c.R().SetContext(ctx).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+		}
+		if res.String() != response || res.Header().Get("X-E2E-Safe") != "safe value" ||
+			res.Header().Get("X-E2E-Remove") != "" || res.Header().Get("X-E2E-Injected") != "" {
+			return fmt.Errorf("the Service did not preserve its valid header configuration")
+		}
+		return nil
+	}
+	h.Eventually(t, "the Service to apply its valid header configuration", harness.DecisionBudget, check)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Service_Spec_Config_HTTP)
+	}{
+		{"ResponseCRLF", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Header.AddResponseHeaders[0].Type = &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "value\r\nX-E2E-Injected: true"}
+		}},
+		{"ResponseLF", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Header.AddResponseHeaders[0].Type = &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "value\nX-E2E-Injected: true"}
+		}},
+		{"ResponseControl", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Header.AddResponseHeaders[0].Type = &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "value\x00"}
+		}},
+		{"CustomAuthName", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Auth.GetCustom().Header = "Bad Header"
+		}},
+		{"RemoveRequestName", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Header.RemoveRequestHeaders = []string{"Bad Header"}
+		}},
+		{"RemoveResponseName", func(cfg *corev1.Service_Spec_Config_HTTP) {
+			cfg.Header.RemoveResponseHeaders = []string{"X-E2E-Remove:"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := proto.Clone(v.svc).(*corev1.Service)
+			tc.mutate(req.Spec.Config.GetHttp())
+			create := proto.Clone(req).(*corev1.Service)
+			create.Metadata = &metav1.Metadata{Name: fmt.Sprintf("%s.default", h.Name())}
+			create.Status = nil
+			_, err := h.CoreC().CreateService(t.Context(), create)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			_, err = h.CoreC().GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+			_, err = h.CoreC().UpdateService(t.Context(), req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			stored, err := h.CoreC().GetService(t.Context(), &metav1.GetOptions{Uid: v.svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.True(t, proto.Equal(v.svc.Spec, stored.Spec))
+			h.Eventually(t, "the Service to retain its header configuration after rejected writes", harness.DecisionBudget, check)
 		})
 	}
 }
