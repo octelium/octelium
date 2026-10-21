@@ -18,6 +18,7 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -38,6 +39,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -1578,4 +1580,109 @@ func TestDoInitConnectGetClusterConfig(t *testing.T) {
 	utils.mu.Lock()
 	defer utils.mu.Unlock()
 	assert.Equal(t, 1, utils.getClusterConfigCalls)
+}
+
+type tstConnectStream struct {
+	*fakeConnectStream
+	requests chan *userv1.ConnectRequest
+	sendErr  error
+}
+
+func (s *tstConnectStream) Recv() (*userv1.ConnectRequest, error) {
+	select {
+	case req, ok := <-s.requests:
+		if !ok {
+			return nil, io.EOF
+		}
+		return req, nil
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
+}
+
+func (s *tstConnectStream) Send(msg *userv1.ConnectResponse) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	return s.fakeConnectStream.Send(msg)
+}
+
+func TestConnectInvalidFirstMessage(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := NewServer(nil)
+	stream := &tstConnectStream{fakeConnectStream: newFakeConnectStream(), requests: make(chan *userv1.ConnectRequest, 2)}
+	assert.NotNil(t, s.Connect(stream))
+	stream.ctx = context.WithValue(t.Context(), "octelium-user-ctx", &userctx.UserCtx{Session: &corev1.Session{Status: &corev1.Session_Status{Type: corev1.Session_Status_CLIENTLESS}}})
+	assert.Equal(t, codes.InvalidArgument, status.Code(s.Connect(stream)))
+	stream.ctx = context.WithValue(t.Context(), "octelium-user-ctx", &userctx.UserCtx{Session: &corev1.Session{Status: &corev1.Session_Status{Type: corev1.Session_Status_CLIENT}}})
+	for _, req := range []*userv1.ConnectRequest{{}, {Type: &userv1.ConnectRequest_KeepAlive_{KeepAlive: &userv1.ConnectRequest_KeepAlive{}}}} {
+		stream.requests <- req
+		assert.Equal(t, codes.InvalidArgument, status.Code(s.Connect(stream)))
+	}
+}
+
+func TestConnectStreamLifecycle(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s, adminS := newFakeServers(tst.C)
+	for _, mode := range []string{"EOF", "Canceled", "Displaced", "SendError"} {
+		t.Run(mode, func(t *testing.T) {
+			usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminS, s, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+			require.Nil(t, err)
+			ctx, cancel := context.WithCancel(usr.Ctx())
+			defer cancel()
+			stream := &tstConnectStream{fakeConnectStream: newFakeConnectStream(), requests: make(chan *userv1.ConnectRequest, 2)}
+			stream.ctx = ctx
+			stream.requests <- &userv1.ConnectRequest{Type: &userv1.ConnectRequest_Initialize_{Initialize: &userv1.ConnectRequest_Initialize{}}}
+			if mode == "SendError" {
+				stream.sendErr = fmt.Errorf("send failed")
+				assert.Equal(t, codes.Internal, status.Code(s.Connect(stream)))
+			} else {
+				done := make(chan error, 1)
+				go func() { done <- s.Connect(stream) }()
+				select {
+				case msg := <-stream.sent:
+					require.NotNil(t, msg.GetState())
+				case err := <-done:
+					require.FailNow(t, "connection ended before sending its state", "%+v", err)
+				case <-time.After(5 * time.Second):
+					require.FailNow(t, "connection did not send its state")
+				}
+				switch mode {
+				case "EOF":
+					stream.requests <- &userv1.ConnectRequest{Type: &userv1.ConnectRequest_KeepAlive_{KeepAlive: &userv1.ConnectRequest_KeepAlive{}}}
+					close(stream.requests)
+				case "Canceled":
+					cancel()
+				case "Displaced":
+					require.Eventually(t, func() bool {
+						s.connServer.RLock()
+						cs := s.connServer.connectedSessMap[usr.Session.Metadata.Uid]
+						s.connServer.RUnlock()
+						if cs == nil {
+							return false
+						}
+						cs.cancel()
+						return true
+					}, 5*time.Second, time.Millisecond)
+				}
+				select {
+				case err := <-done:
+					assert.Nil(t, err)
+				case <-time.After(5 * time.Second):
+					require.FailNow(t, "connection did not exit")
+				}
+			}
+			stored, err := s.octeliumC.CoreC().GetSession(t.Context(), &rmetav1.GetOptions{Uid: usr.Session.Metadata.Uid})
+			require.Nil(t, err)
+			assert.False(t, stored.Status.IsConnected)
+			assert.Nil(t, stored.Status.Connection)
+			s.connServer.RLock()
+			assert.NotContains(t, s.connServer.connectedSessMap, usr.Session.Metadata.Uid)
+			s.connServer.RUnlock()
+		})
+	}
 }

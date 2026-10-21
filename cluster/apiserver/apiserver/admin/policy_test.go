@@ -23,10 +23,13 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func genMatchAnyCondition() *corev1.Condition {
@@ -596,4 +599,74 @@ func TestConditionMixedNestingDepth(t *testing.T) {
 		err := srv.validateCondition(ctx, wrap(maxConditionDepth*8))
 		assert.NotNil(t, err)
 	}
+}
+
+func TestPolicyLifecycle(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	parent, err := s.CreatePolicy(t.Context(), genPolicyWithCondition(utilrand.GetRandomStringCanonical(8), genMatchAnyCondition()))
+	require.Nil(t, err)
+	child, err := s.CreatePolicy(t.Context(), genPolicyWithCondition("child."+parent.Metadata.Name, genMatchAnyCondition()))
+	require.Nil(t, err)
+	assert.Equal(t, parent.Metadata.Uid, child.Status.ParentPolicyRef.Uid)
+	for _, opts := range []*metav1.GetOptions{{Name: child.Metadata.Name}, {Uid: child.Metadata.Uid}} {
+		got, err := s.GetPolicy(t.Context(), opts)
+		require.Nil(t, err)
+		assert.True(t, proto.Equal(child, got))
+	}
+	list, err := s.ListPolicy(t.Context(), &corev1.ListPolicyOptions{})
+	require.Nil(t, err)
+	var found bool
+	for _, p := range list.Items {
+		found = found || p.Metadata.Uid == child.Metadata.Uid
+	}
+	assert.True(t, found)
+	req := proto.Clone(child).(*corev1.Policy)
+	req.Metadata.DisplayName = "Updated Policy"
+	req.Spec.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+	req.Status.ParentPolicyRef = &metav1.ObjectReference{Name: "forged-parent", Uid: "forged-uid"}
+	updated, err := s.UpdatePolicy(t.Context(), req)
+	require.Nil(t, err)
+	assert.Equal(t, "Updated Policy", updated.Metadata.DisplayName)
+	assert.Equal(t, corev1.Policy_Spec_Rule_DENY, updated.Spec.Rules[0].Effect)
+	assert.Equal(t, parent.Metadata.Uid, updated.Status.ParentPolicyRef.Uid)
+	_, err = s.DeletePolicy(t.Context(), &metav1.DeleteOptions{Uid: parent.Metadata.Uid})
+	assert.True(t, grpcerr.IsInvalidArg(err))
+	_, err = s.DeletePolicy(t.Context(), &metav1.DeleteOptions{Uid: child.Metadata.Uid})
+	require.Nil(t, err)
+	_, err = s.DeletePolicy(t.Context(), &metav1.DeleteOptions{Name: parent.Metadata.Name})
+	require.Nil(t, err)
+	_, err = s.GetPolicy(t.Context(), &metav1.GetOptions{Uid: child.Metadata.Uid})
+	assert.True(t, grpcerr.IsNotFound(err))
+	parent.Metadata.IsSystem = true
+	parent.Metadata.Name = utilrand.GetRandomStringCanonical(8)
+	parent.Metadata.Uid = ""
+	parent, err = tst.C.OcteliumC.CoreC().CreatePolicy(t.Context(), parent)
+	require.Nil(t, err)
+	_, err = s.UpdatePolicy(t.Context(), parent)
+	assert.True(t, grpcerr.IsUnauthorized(err))
+	_, err = s.ListPolicy(t.Context(), nil)
+	assert.True(t, grpcerr.IsInvalidArg(err))
+	_, err = s.UpdatePolicy(t.Context(), genPolicyWithCondition("missing-policy", genMatchAnyCondition()))
+	assert.True(t, grpcerr.IsNotFound(err))
+	_, err = tst.C.OcteliumC.CoreC().DeletePolicy(t.Context(), &rmetav1.DeleteOptions{Uid: parent.Metadata.Uid})
+	assert.Nil(t, err)
+}
+
+func TestPolicyOwnerBoundaries(t *testing.T) {
+	s := &Server{}
+	for _, owner := range []*corev1.User_Spec_Authorization{
+		{Policies: make([]string, maxPolicyRefs+1)},
+		{InlinePolicies: make([]*corev1.InlinePolicy, maxPolicyRefs+1)},
+		{Policies: []string{"invalid/name"}},
+		{InlinePolicies: []*corev1.InlinePolicy{nil}},
+		{InlinePolicies: []*corev1.InlinePolicy{{Name: "invalid/name", Spec: &corev1.Policy_Spec{}}}},
+		{InlinePolicies: []*corev1.InlinePolicy{{Name: "policy"}}},
+	} {
+		assert.NotNil(t, s.validatePolicyOwner(t.Context(), owner))
+	}
+	assert.Nil(t, s.validatePolicyOwner(t.Context(), nil))
+	assert.Nil(t, s.validatePolicyOwner(t.Context(), (*corev1.User_Spec_Authorization)(nil)))
 }

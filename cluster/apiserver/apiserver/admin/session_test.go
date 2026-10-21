@@ -30,6 +30,8 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestSession(t *testing.T) {
@@ -435,4 +437,25 @@ func TestSessionListFilters(t *testing.T) {
 		})
 		assert.NotNil(t, err)
 	}
+}
+
+func TestSessionUpdatePreservesStatus(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	item, err := s.octeliumC.CoreC().CreateSession(t.Context(), &corev1.Session{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec:     &corev1.Session_Spec{State: corev1.Session_Spec_ACTIVE, ExpiresAt: pbutils.Timestamp(time.Now().Add(time.Hour))},
+		Status:   &corev1.Session_Status{Type: corev1.Session_Status_CLIENTLESS, UserRef: &metav1.ObjectReference{Name: "owner", Uid: "7f0da666-37af-4cf9-8d0f-995d82877e70"}},
+	})
+	require.Nil(t, err)
+	before := proto.Clone(item.Status)
+	req := proto.Clone(item).(*corev1.Session)
+	req.Spec.State = corev1.Session_Spec_REJECTED
+	req.Status = &corev1.Session_Status{Type: corev1.Session_Status_CLIENT, UserRef: &metav1.ObjectReference{Name: "forged-owner"}, IsConnected: true}
+	got, err := s.UpdateSession(t.Context(), req)
+	require.Nil(t, err)
+	assert.Equal(t, corev1.Session_Spec_REJECTED, got.Spec.State)
+	assert.True(t, proto.Equal(before, got.Status))
 }

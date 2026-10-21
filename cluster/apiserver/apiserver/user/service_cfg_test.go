@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSetServiceConfigs(t *testing.T) {
@@ -225,4 +226,73 @@ func TestGetServiceConfigHostPort(t *testing.T) {
 		host, _ := getServiceConfigHostPort(newSvc(dualStack), sess, cc)
 		assert.Equal(t, "svc1.local.example.com", host)
 	}
+}
+
+func TestPublishedServiceConfig(t *testing.T) {
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Name: "service.default", Uid: "service-uid"}, Spec: &corev1.Service_Spec{}, Status: &corev1.Service_Status{Port: 8080}}
+	for _, address := range []string{"", "127.0.0.1", "::1"} {
+		sess := &corev1.Session{Status: &corev1.Session_Status{Connection: &corev1.Session_Status_Connection{
+			PublishedServices: []*corev1.Session_Status_Connection_PublishedService{
+				{ServiceRef: &metav1.ObjectReference{Uid: "other-uid"}, Address: "other", Port: 9000},
+				{ServiceRef: &metav1.ObjectReference{Uid: svc.Metadata.Uid}, Address: address, Port: 8443},
+			},
+		}}}
+		host, port := getServiceConfigHostPort(svc, sess, nil)
+		if address == "" {
+			assert.Equal(t, "localhost", host)
+		} else {
+			assert.Equal(t, address, host)
+		}
+		assert.Equal(t, 8443, port)
+	}
+}
+
+func TestKubeConfigAddresses(t *testing.T) {
+	for _, tls := range []bool{true, false} {
+		cfg := getKubeConfig(&corev1.Service{Spec: &corev1.Service_Spec{IsTLS: tls}}, "2001:db8::1", 6443)
+		require.Len(t, cfg.Clusters, 1)
+		want := "http://[2001:db8::1]:6443"
+		if tls {
+			want = "https://[2001:db8::1]:6443"
+		}
+		assert.Equal(t, want, cfg.Clusters[0].Cluster.Server)
+		assert.Equal(t, "kubernetes-admin@kubernetes", cfg.CurrentContext)
+		assert.Equal(t, "dummy-token-authenticated-by-octelium-session", cfg.Users[0].User.Token)
+		_, err := cfg.MarshalToYAML()
+		assert.Nil(t, err)
+	}
+}
+
+func TestSetServiceConfigsModes(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s, adminS := newFakeServers(tst.C)
+	usr, err := tstuser.NewUser(tst.C.OcteliumC, adminS, s, nil)
+	require.Nil(t, err)
+	require.Nil(t, usr.Connect())
+	for _, mode := range []corev1.Service_Spec_Mode{corev1.Service_Spec_HTTP, corev1.Service_Spec_SSH} {
+		svc, err := adminS.CreateService(t.Context(), &corev1.Service{
+			Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+			Spec: &corev1.Service_Spec{Mode: mode, Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "tcp://example.com:8080"}},
+			}},
+		})
+		require.Nil(t, err)
+		got, err := s.SetServiceConfigs(usr.Ctx(), &userv1.SetServiceConfigsRequest{Name: svc.Metadata.Name})
+		require.Nil(t, err)
+		assert.Equal(t, int32(8080), got.Port)
+		assert.NotEmpty(t, got.Host)
+		if mode == corev1.Service_Spec_HTTP {
+			assert.Empty(t, got.Configs)
+		} else {
+			require.Len(t, got.Configs, 1)
+			assert.Len(t, got.Configs[0].GetSsh().KnownHosts, 1)
+			assert.Len(t, got.Configs[0].GetSsh().AuthorizedKeys, 1)
+		}
+	}
+	_, err = s.SetServiceConfigs(t.Context(), &userv1.SetServiceConfigsRequest{Name: "service"})
+	assert.NotNil(t, err)
+	_, err = s.SetServiceConfigs(usr.Ctx(), &userv1.SetServiceConfigsRequest{Name: "invalid/name"})
+	assert.NotNil(t, err)
 }

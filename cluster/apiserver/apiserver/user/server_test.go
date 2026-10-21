@@ -18,6 +18,8 @@ package user
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +30,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func newFakeServers(fakeC *tests.FakeClient) (*Server, *admin.Server) {
@@ -194,5 +198,116 @@ func TestConnServerBroadcastMessageByL3Mode(t *testing.T) {
 	case msg := <-v6.sent:
 		t.Fatalf("The stream must not receive a message for its L3 mode. Got %v", msg)
 	case <-time.After(time.Second):
+	}
+}
+
+func tstConnectedSession(t *testing.T, uid string, size int) *connectedSession {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	return &connectedSession{sess: &corev1.Session{Metadata: &metav1.Metadata{Uid: uid}}, ctx: ctx, cancel: cancel, sendCh: make(chan *userv1.ConnectResponse, size)}
+}
+
+func TestConnServerBackpressure(t *testing.T) {
+	for _, method := range []string{"Broadcast", "Unicast", "L3Mode"} {
+		t.Run(method, func(t *testing.T) {
+			s := NewServer(nil)
+			require.Same(t, s.connServer, s.ConnServer())
+			slow, fast := tstConnectedSession(t, "slow", 1), tstConnectedSession(t, "fast", 2)
+			slow.l3Mode, fast.l3Mode = corev1.Session_Status_Connection_V4, corev1.Session_Status_Connection_V6
+			slow.sendCh <- &userv1.ConnectResponse{}
+			s.connServer.connectedSessMap = map[string]*connectedSession{"slow": slow, "fast": fast}
+			msg := &userv1.ConnectResponse{CreatedAt: timestamppb.Now()}
+			ts := msg.CreatedAt
+			switch method {
+			case "Broadcast":
+				require.Nil(t, s.ConnServer().BroadcastMessage(msg))
+			case "Unicast":
+				require.Nil(t, s.ConnServer().SendMessage(msg, "slow"))
+				require.Nil(t, s.ConnServer().SendMessage(msg, "fast"))
+			case "L3Mode":
+				require.Nil(t, s.ConnServer().BroadcastMessageByL3Mode(func(mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse { return msg }))
+			}
+			assert.ErrorIs(t, slow.ctx.Err(), context.Canceled)
+			assert.Nil(t, fast.ctx.Err())
+			require.Len(t, fast.sendCh, 1)
+			assert.Same(t, msg, <-fast.sendCh)
+			assert.Same(t, ts, msg.CreatedAt)
+		})
+	}
+}
+
+func TestConnServerMessages(t *testing.T) {
+	s := NewServer(nil)
+	assert.Nil(t, s.ConnServer().BroadcastMessage(&userv1.ConnectResponse{}))
+	msg := &userv1.ConnectResponse{}
+	assert.Nil(t, s.ConnServer().SendMessage(msg, "missing"))
+	assert.Nil(t, msg.CreatedAt)
+	first, second := tstConnectedSession(t, "first", 4), tstConnectedSession(t, "second", 4)
+	s.connServer.connectedSessMap = map[string]*connectedSession{"first": first, "second": second}
+	require.Nil(t, s.ConnServer().SendMessage(msg, "first"))
+	require.Len(t, first.sendCh, 1)
+	assert.Same(t, msg, <-first.sendCh)
+	assert.Empty(t, second.sendCh)
+	assert.NotNil(t, msg.CreatedAt)
+	msg = &userv1.ConnectResponse{}
+	require.Nil(t, s.ConnServer().BroadcastMessage(msg))
+	assert.Same(t, msg, <-first.sendCh)
+	assert.Same(t, msg, <-second.sendCh)
+	assert.NotNil(t, msg.CreatedAt)
+	msg = &userv1.ConnectResponse{}
+	require.Nil(t, s.ConnServer().BroadcastMessageByL3Mode(func(mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse { return msg }))
+	assert.NotNil(t, msg.CreatedAt)
+	assert.Same(t, msg, <-first.sendCh)
+	assert.Same(t, msg, <-second.sendCh)
+	for range 4 {
+		assert.True(t, first.enqueue(msg))
+	}
+	assert.False(t, first.enqueue(msg))
+}
+
+type tstSendStream struct {
+	userv1.MainService_ConnectServer
+	send func(*userv1.ConnectResponse) error
+}
+
+func (s *tstSendStream) Send(msg *userv1.ConnectResponse) error {
+	return s.send(msg)
+}
+
+func TestConnServerSendFailure(t *testing.T) {
+	cs := tstConnectedSession(t, "session", 1)
+	cs.stream = &tstSendStream{send: func(msg *userv1.ConnectResponse) error { return fmt.Errorf("stream closed") }}
+	cs.sendCh <- &userv1.ConnectResponse{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cs.runSendLoop()
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "the failed stream did not exit")
+	}
+	assert.ErrorIs(t, cs.ctx.Err(), context.Canceled)
+}
+
+func TestConnServerConcurrentMessages(t *testing.T) {
+	s := NewServer(nil)
+	cs := tstConnectedSession(t, "session", 1024)
+	s.connServer.connectedSessMap["session"] = cs
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			for range 64 {
+				assert.Nil(t, s.ConnServer().SendMessage(&userv1.ConnectResponse{}, "session"))
+			}
+		})
+	}
+	wg.Wait()
+	assert.Nil(t, cs.ctx.Err())
+	require.Len(t, cs.sendCh, 1024)
+	for range 1024 {
+		assert.NotNil(t, (<-cs.sendCh).CreatedAt)
 	}
 }

@@ -741,3 +741,56 @@ func TestIdentityProviderOIDCIssuer(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 	}
 }
+
+func TestIdentityProviderURLBoundaries(t *testing.T) {
+	for _, arg := range []string{
+		"", " ", "https://%", "https:///path", "ftp://example.com", "https://user:pass@example.com", "https://example.com#fragment",
+		"https://example.com/" + strings.Repeat("a", idpMaxURLLen), string([]byte{0xff}),
+	} {
+		_, err := canonicalHTTPSURL(arg, "url", true)
+		assert.NotNil(t, err, "%q", arg)
+		_, err = canonicalOIDCIssuerURL(arg)
+		assert.NotNil(t, err, "%q", arg)
+	}
+	for _, arg := range []string{"https://example.com?query", "https://example.com?"} {
+		_, err := canonicalHTTPSURL(arg, "url", false)
+		assert.NotNil(t, err)
+		_, err = canonicalHTTPSURL(arg, "url", true)
+		assert.Nil(t, err)
+		_, err = canonicalOIDCIssuerURL(arg)
+		assert.NotNil(t, err)
+	}
+	got, err := canonicalHTTPSURL(" HTTPS://EXAMPLE.COM/path?key=value ", "url", true)
+	assert.Nil(t, err)
+	assert.Equal(t, "https://example.com/path?key=value", got)
+	assert.Equal(t, "", canonicalIssuerString("  "))
+	assert.Equal(t, "non-url-issuer", canonicalIssuerString(" non-url-issuer/// "))
+	assert.Equal(t, "https://example.com", canonicalIssuerString("HTTPS://EXAMPLE.COM/"))
+}
+
+func TestIdentityProviderStringBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		arg   string
+		valid bool
+	}{
+		{"", true}, {"日本語", true}, {strings.Repeat("a", idpMaxDisplayNameLen), true},
+		{strings.Repeat("a", idpMaxDisplayNameLen+1), false}, {"name\x00", false}, {"name\x7f", false}, {string([]byte{0xff}), false},
+	} {
+		assert.Equal(t, tc.valid, validateIdentityProviderDisplayName(tc.arg) == nil)
+	}
+	for _, tc := range []struct {
+		arg      string
+		required bool
+		valid    bool
+	}{
+		{"", false, true}, {"", true, false}, {" \t ", true, false}, {"scope", true, true},
+		{"a b", true, false}, {"a\x7f", true, false}, {string([]byte{0xff}), true, false},
+		{strings.Repeat("a", 16), true, true}, {strings.Repeat("a", 17), true, false},
+	} {
+		assert.Equal(t, tc.valid, validateIdentityProviderStr(tc.arg, "field", 16, tc.required) == nil)
+	}
+	assert.Nil(t, validateIdentityProviderScopes([]string{"openid", "profile"}))
+	for _, scopes := range [][]string{{"openid", "openid"}, {""}, {"invalid scope"}, make([]string, idpMaxScopes+1)} {
+		assert.NotNil(t, validateIdentityProviderScopes(scopes))
+	}
+}

@@ -35,6 +35,8 @@ func Phases() []Phase {
 		{"CLIVersions", testCLIVersions},
 		{"IngressPublic", testIngressPublic},
 		{"AdminAPI", testAdminAPI},
+		{"APIValidationLoad", testAPIValidationLoad},
+		{"APIUserSelfProtection", testAPIUserSelfProtection},
 		{"OcteliumctlCommands", testOcteliumctlCommands},
 		{"SDK", testSDK},
 		{"Authorization", testAuthorization},

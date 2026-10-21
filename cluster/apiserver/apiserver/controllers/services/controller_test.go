@@ -182,3 +182,13 @@ func TestOnUpdate(t *testing.T) {
 		assert.Equal(t, 1, len(ctlI.broadcasted))
 	}
 }
+
+func TestServiceNoopEvents(t *testing.T) {
+	ctl := &fakeCtl{}
+	c := NewController(nil, ctl)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Name: "service.default"}, Status: &corev1.Service_Status{}}
+	assert.Nil(t, c.OnAdd(t.Context(), svc))
+	assert.Nil(t, c.OnDelete(t.Context(), svc))
+	assert.Nil(t, c.OnUpdate(t.Context(), svc, svc))
+	assert.Empty(t, ctl.broadcasted)
+}

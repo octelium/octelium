@@ -28,6 +28,8 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestDevice(t *testing.T) {
@@ -271,4 +273,25 @@ func TestDevice(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsInvalidArg(err))
 	}
+}
+
+func TestDeviceUpdatePreservesStatus(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	item, err := s.octeliumC.CoreC().CreateDevice(t.Context(), &corev1.Device{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec:     &corev1.Device_Spec{State: corev1.Device_Spec_ACTIVE},
+		Status:   &corev1.Device_Status{UserRef: &metav1.ObjectReference{Name: "owner", Uid: "7f0da666-37af-4cf9-8d0f-995d82877e70"}},
+	})
+	require.Nil(t, err)
+	before := proto.Clone(item.Status)
+	req := proto.Clone(item).(*corev1.Device)
+	req.Spec.State = corev1.Device_Spec_REJECTED
+	req.Status = &corev1.Device_Status{UserRef: &metav1.ObjectReference{Name: "forged-owner"}}
+	got, err := s.UpdateDevice(t.Context(), req)
+	require.Nil(t, err)
+	assert.Equal(t, corev1.Device_Spec_REJECTED, got.Spec.State)
+	assert.True(t, proto.Equal(before, got.Status))
 }
