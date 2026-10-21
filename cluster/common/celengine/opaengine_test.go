@@ -20,11 +20,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -262,4 +265,119 @@ result := {
 	assert.Nil(t, err)
 
 	assert.Equal(t, fmt.Sprintf("https://%s.example.com", usr.Metadata.Name), cfg.Upstream.GetUrl())
+}
+
+func TestOPAQueryCache(t *testing.T) {
+	ctx := context.Background()
+	const script = `package octelium
+condition := {"match": false, "alternate": true}
+eval := {"match": "value", "result": {"parent": "default"}}
+optional := {"result": input.ctx.missing}`
+	cases := []struct {
+		mod, qry string
+		want     any
+	}{
+		{"condition", "match", false},
+		{"condition", "alternate", true},
+		{"eval", "match", "value"},
+		{"eval", "result", map[string]any{"parent": "default"}},
+		{"optional", "result", nil},
+	}
+	for _, order := range []string{"Forward", "Reverse"} {
+		t.Run(order, func(t *testing.T) {
+			e, err := newOPAEngine(ctx, nil)
+			assert.Nil(t, err)
+			var queries []*rego.PreparedEvalQuery
+			for i := range cases {
+				idx := i
+				if order == "Reverse" {
+					idx = len(cases) - 1 - i
+				}
+				tc := cases[idx]
+				pq, err := e.getOrSetPQ(ctx, script, tc.mod, tc.qry)
+				assert.Nil(t, err)
+				for _, previous := range queries {
+					assert.NotSame(t, previous, pq, "%s.%s", tc.mod, tc.qry)
+				}
+				queries = append(queries, pq)
+				for range 2 {
+					res, err := e.doEvalPolicy(ctx, script, nil, tc.mod, tc.qry)
+					if tc.want == nil {
+						assert.ErrorIs(t, err, ErrOPAUndefined)
+					} else {
+						assert.Nil(t, err)
+					}
+					assert.Equal(t, tc.want, res, "%s.%s", tc.mod, tc.qry)
+					cached, err := e.getOrSetPQ(ctx, script, tc.mod, tc.qry)
+					assert.Nil(t, err)
+					assert.Same(t, pq, cached)
+				}
+			}
+		})
+	}
+}
+
+func TestOPAQueryCacheConcurrent(t *testing.T) {
+	const script = `package octelium
+condition := {"match": input.ctx.allowed}
+eval := {"result": input.ctx.value}`
+	condition := &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+		Type: &corev1.Condition_OPA_Inline{Inline: script},
+	}}}
+	for _, prime := range []string{"Cold", "Condition", "String", "Map"} {
+		t.Run(prime, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			srv, err := New(ctx, nil)
+			assert.Nil(t, err)
+			switch prime {
+			case "Condition":
+				assert.Nil(t, srv.AddPolicyOPA(ctx, script))
+			case "String":
+				assert.Nil(t, srv.AddPolicyStringOPA(ctx, script))
+			case "Map":
+				assert.Nil(t, srv.AddPolicyMapAnyOPA(ctx, script))
+			}
+			var wg sync.WaitGroup
+			for i := range 16 {
+				wg.Go(func() {
+					for j := range 16 {
+						var value any
+						switch j % 4 {
+						case 0:
+							value = map[string]any{"parent": fmt.Sprintf("config-%d-%d", i, j)}
+						case 1:
+							value = fmt.Sprintf("user-%d-%d", i, j)
+						case 2:
+							value = true
+						case 3:
+							value = false
+						}
+						allowed := (i+j)%3 == 0
+						input := map[string]any{"ctx": map[string]any{"allowed": allowed, "value": value}}
+						res, err := srv.EvalCondition(ctx, condition, input)
+						assert.Nil(t, err)
+						assert.Equal(t, allowed, res)
+						str, err := srv.EvalPolicyStringOPA(ctx, script, input)
+						if want, ok := value.(string); ok {
+							assert.Nil(t, err)
+							assert.Equal(t, want, str)
+						} else {
+							assert.NotNil(t, err)
+							assert.Empty(t, str)
+						}
+						obj, err := srv.OPAEvalPolicyMapStrAny(ctx, script, input)
+						if want, ok := value.(map[string]any); ok {
+							assert.Nil(t, err)
+							assert.Equal(t, want, obj)
+						} else {
+							assert.NotNil(t, err)
+							assert.Nil(t, obj)
+						}
+					}
+				})
+			}
+			wg.Wait()
+		})
+	}
 }

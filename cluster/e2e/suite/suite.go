@@ -40,6 +40,7 @@ func Phases() []Phase {
 		{"Authorization", testAuthorization},
 		{"AuthorizationPolicyLookupCompatibility", testAuthorizationPolicyLookupCompatibility},
 		{"AuthorizationCommonEngineIsolation", testAuthorizationCommonEngineIsolation},
+		{"AuthorizationOPAQueryCache", testAuthorizationOPAQueryCache},
 		{"AuthorizationRevocationLoad", testAuthorizationRevocationLoad},
 		{"AuthenticationAssertion", testAuthenticationAssertion},
 		{"AuthenticationSession", testAuthenticationSession},

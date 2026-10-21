@@ -91,7 +91,7 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry stri
 		return nil, errors.Errorf("OPA script is too long")
 	}
 
-	key := getKey(script)
+	key := getKey(script + "\x00" + mod + "\x00" + qry)
 	cacheI, ok := e.c.Get(key)
 	if ok {
 		return cacheI.(*rego.PreparedEvalQuery), nil

@@ -636,3 +636,95 @@ match if {
 		})
 	}
 }
+
+func testAuthorizationOPAQueryCache(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	usr := h.CreateWorkloadUser(t, nil)
+	const script = `package octelium
+default condition := {"match": false}
+condition := {"match": true} if {
+	input.ctx.request.http.headers["x-e2e-access"] == "allow"
+}
+eval := {"result": {"parent": input.ctx.request.http.headers["x-e2e-config"]}}`
+	policy := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{
+		Rules: []*corev1.Policy_Spec_Rule{{
+			Name: "allow-request", Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+				Type: &corev1.Condition_OPA_Inline{Inline: script},
+			}}},
+		}},
+	}})
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{policy.Metadata.Name}}
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+		Configs: []*corev1.Service_Spec_Config{{
+			Name: "selected", Upstream: svc.Spec.Config.Upstream,
+			Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+				Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{{
+					Name: "selected", Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
+						StatusCode: http.StatusAccepted,
+						Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{Inline: "selected"},
+						},
+					}},
+				}},
+			}},
+		}},
+		Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+			Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+			Type:      &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: script},
+		}},
+	}
+	svc = h.UpdateService(t, svc)
+	c := h.HTTPNoRetry().SetBaseURL(h.ServiceURL(svc)).SetAuthScheme("Bearer").SetAuthToken(h.AccessToken(t, usr))
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	cases := []struct {
+		access, config string
+		status         int
+	}{
+		{"allow", "selected", http.StatusAccepted},
+		{"deny", "selected", http.StatusForbidden},
+		{"allow", "default", http.StatusOK},
+		{"deny", "default", http.StatusForbidden},
+		{"", "selected", http.StatusForbidden},
+	}
+	check := func(ctx context.Context, idx int) error {
+		tc := cases[idx]
+		res, err := c.R().SetContext(ctx).SetHeader("X-E2E-Access", tc.access).SetHeader("X-E2E-Config", tc.config).Get("/")
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != tc.status {
+			return errUnexpectedStatus(res.StatusCode(), tc.status)
+		}
+		if tc.status == http.StatusAccepted && string(res.Body()) != "selected" {
+			return fmt.Errorf("got body %q, want selected", res.Body())
+		}
+		return nil
+	}
+	var stableAt time.Time
+	h.Eventually(t, "the shared Rego source to authorize requests and select their configurations independently", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			for i := range cases {
+				if err := check(ctx, i); err != nil {
+					stableAt = time.Time{}
+					return err
+				}
+			}
+			if stableAt.IsZero() {
+				stableAt = time.Now()
+			}
+			if time.Since(stableAt) < decisionSettle {
+				return fmt.Errorf("the OPA query decisions are still settling")
+			}
+			return nil
+		})
+	result := harness.RunFor(t.Context(), 3*time.Second, 16, func(ctx context.Context, worker, iteration int) error {
+		return check(ctx, (worker+iteration)%len(cases))
+	})
+	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
+	assert.Positive(t, result.Succeeded)
+	harness.LogPool("OPA condition and dynamic configuration query isolation", result)
+}
