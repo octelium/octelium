@@ -18,6 +18,7 @@ package octovigil
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -176,4 +177,91 @@ func TestIsAuthorizedWithMetricsAttributes(t *testing.T) {
 	reasonVal, ok := dp.Attributes.Value("reason")
 	assert.True(t, ok)
 	assert.NotEqual(t, "", reasonVal.AsString())
+}
+
+type failingMeter struct {
+	metric.Meter
+	name string
+	err  error
+}
+
+func (m *failingMeter) Int64UpDownCounter(name string, opts ...metric.Int64UpDownCounterOption) (metric.Int64UpDownCounter, error) {
+	if name == m.name {
+		return nil, m.err
+	}
+	return m.Meter.Int64UpDownCounter(name, opts...)
+}
+
+func (m *failingMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	if name == m.name {
+		return nil, m.err
+	}
+	return m.Meter.Int64Counter(name, opts...)
+}
+
+func (m *failingMeter) Float64Histogram(name string, opts ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	if name == m.name {
+		return nil, m.err
+	}
+	return m.Meter.Float64Histogram(name, opts...)
+}
+
+type failingMeterProvider struct {
+	metric.MeterProvider
+	meter metric.Meter
+}
+
+func (m *failingMeterProvider) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	return m.meter
+}
+
+func TestCommonMetricsErrors(t *testing.T) {
+	setTestMeterProvider(t)
+	previous := otel.GetMeterProvider()
+	t.Cleanup(func() { otel.SetMeterProvider(previous) })
+	for _, name := range []string{"authorization.req.active", "authorization.req.total", "authorization.req.duration"} {
+		t.Run(name, func(t *testing.T) {
+			errTst := errors.New("could not create instrument")
+			provider := sdkmetric.NewMeterProvider()
+			t.Cleanup(func() { provider.Shutdown(context.Background()) })
+			otel.SetMeterProvider(&failingMeterProvider{meter: &failingMeter{Meter: provider.Meter("default"), name: name, err: errTst}})
+			metrics, err := newCommonMetrics(t.Context())
+			assert.Nil(t, metrics)
+			assert.ErrorIs(t, err, errTst)
+		})
+	}
+}
+
+func TestAuthorizationMetricsOutcomes(t *testing.T) {
+	for _, mode := range []string{"Allowed", "Denied", "Error"} {
+		t.Run(mode, func(t *testing.T) {
+			reader := setTestMeterProvider(t)
+			srv, coreC := newAuthorizationService(t)
+			switch mode {
+			case "Denied":
+				coreC.service.Spec.Authorization = nil
+			case "Error":
+				coreC.service.Spec.Authorization.Policies = []string{"invalid..name"}
+			}
+			di, err := srv.s.GetDownstreamInfo(t.Context(), "100.64.0.2")
+			assert.Nil(t, err)
+			allowed, _, err := srv.s.isAuthorizedWithMetrics(t.Context(), srv.s.getReqCtx(di, nil, coreC.service), nil)
+			assert.Equal(t, mode == "Allowed", allowed)
+			assert.Equal(t, mode == "Error", err != nil)
+			var metrics metricdata.ResourceMetrics
+			assert.Nil(t, reader.Collect(t.Context(), &metrics))
+			total := findSumDataPoint(t, &metrics, "authorization.req.total")
+			assert.Equal(t, int64(1), total.Value)
+			value, ok := total.Attributes.Value("req.error")
+			assert.True(t, ok)
+			assert.Equal(t, mode == "Error", value.AsBool())
+			value, ok = total.Attributes.Value("req.authorized")
+			assert.True(t, ok)
+			assert.Equal(t, mode == "Allowed", value.AsBool())
+			_, ok = total.Attributes.Value("reason")
+			assert.Equal(t, mode != "Allowed", ok)
+			active := findSumDataPoint(t, &metrics, "authorization.req.active")
+			assert.Equal(t, int64(0), active.Value)
+		})
+	}
 }

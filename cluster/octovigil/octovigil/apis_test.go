@@ -2,6 +2,10 @@ package octovigil
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +14,8 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
@@ -17,7 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -249,4 +258,435 @@ func TestGetDownstreamFromSessionUIDWatchUpdate(t *testing.T) {
 	sess, err := srv.s.cache.GetSession(sessUID)
 	assert.Nil(t, err)
 	assert.True(t, pbutils.IsEqual(newSession, sess))
+}
+
+type authorizationCoreC struct {
+	rcorev1.ResourceServiceClient
+	mu        sync.Mutex
+	service   *corev1.Service
+	namespace *corev1.Namespace
+	policies  map[string]*corev1.Policy
+	errs      map[string]error
+	calls     []string
+}
+
+func (c *authorizationCoreC) GetService(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Service, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, "service:"+in.Uid)
+	if err := c.errs["service"]; err != nil {
+		return nil, err
+	}
+	if c.service == nil || c.service.Metadata.Uid != in.Uid {
+		return nil, status.Error(codes.NotFound, "Service not found")
+	}
+	return c.service, nil
+}
+
+func (c *authorizationCoreC) GetPolicy(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Policy, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, "policy:"+in.Name)
+	if err := c.errs["policy:"+in.Name]; err != nil {
+		return nil, err
+	}
+	if policy := c.policies[in.Name]; policy != nil {
+		return policy, nil
+	}
+	return nil, status.Error(codes.NotFound, "Policy not found")
+}
+
+func (c *authorizationCoreC) GetNamespace(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Namespace, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, "namespace:"+in.Name)
+	if err := c.errs["namespace"]; err != nil {
+		return nil, err
+	}
+	if c.namespace == nil || c.namespace.Metadata.Name != in.Name {
+		return nil, status.Error(codes.NotFound, "Namespace not found")
+	}
+	return c.namespace, nil
+}
+
+type authorizationOcteliumC struct {
+	octeliumc.ClientInterface
+	coreC rcorev1.ResourceServiceClient
+}
+
+func (c *authorizationOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c.coreC
+}
+
+func newAuthorizationService(t *testing.T) (*internalService, *authorizationCoreC) {
+	t.Helper()
+	srv, downstream := newDownstreamService(t)
+	downstream.session.Spec = &corev1.Session_Spec{State: corev1.Session_Spec_ACTIVE}
+	downstream.session.Status.Type = corev1.Session_Status_CLIENT
+	downstream.session.Status.Authentication = &corev1.Session_Status_Authentication{TokenID: "token"}
+	downstream.session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32", V6: "fd00::2/128"}},
+	}
+	downstream.user.Status = &corev1.User_Status{}
+	downstream.device.Spec = &corev1.Device_Spec{State: corev1.Device_Spec_ACTIVE}
+	for _, group := range downstream.groups {
+		group.Spec = &corev1.Group_Spec{}
+		assert.Nil(t, srv.s.cache.SetGroup(group))
+	}
+	assert.Nil(t, srv.s.cache.SetUser(downstream.user))
+	assert.Nil(t, srv.s.cache.SetDevice(downstream.device))
+	assert.Nil(t, srv.s.cache.SetSession(downstream.session))
+	coreC := &authorizationCoreC{
+		ResourceServiceClient: downstream,
+		service: &corev1.Service{
+			Metadata: &metav1.Metadata{Uid: "service", Name: "service.namespace"},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_HTTP,
+				Config: &corev1.Service_Spec_Config{Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://127.0.0.1:8080"},
+				}},
+				Authorization: &corev1.Service_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{{
+					Name: "allow",
+					Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{
+						Name: "allow", Effect: corev1.Policy_Spec_Rule_ALLOW,
+						Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					}}},
+				}}},
+			},
+			Status: &corev1.Service_Status{NamespaceRef: &metav1.ObjectReference{Uid: "namespace", Name: "namespace"}},
+		},
+		namespace: &corev1.Namespace{Metadata: &metav1.Metadata{Uid: "namespace", Name: "namespace"}, Spec: &corev1.Namespace_Spec{}},
+		policies:  make(map[string]*corev1.Policy),
+		errs:      make(map[string]error),
+	}
+	srv.s.octeliumC = &authorizationOcteliumC{coreC: coreC}
+	assert.Nil(t, srv.s.cache.SetService(coreC.service))
+	assert.Nil(t, srv.s.cache.SetNamespace(coreC.namespace))
+	var err error
+	srv.s.celEngine, err = celengine.New(t.Context(), &celengine.Opts{})
+	assert.Nil(t, err)
+	srv.s.commonMetrics, err = newCommonMetrics(t.Context())
+	assert.Nil(t, err)
+	srv.s.coreSrv = admin.NewServer(&admin.Opts{OcteliumC: srv.s.octeliumC, IsEmbedded: true})
+	srv.s.policyTriggerCtl = &policyTriggerCtl{ptMap: make(map[string]*corev1.PolicyTrigger)}
+	v4 := netip.MustParsePrefix("100.64.0.0/10")
+	v6 := netip.MustParsePrefix("fd00::/64")
+	srv.s.v4Prefix, srv.s.v6Prefix = &v4, &v6
+	return srv, coreC
+}
+
+func TestAuthenticateAndAuthorizeRPC(t *testing.T) {
+	for _, cold := range []bool{false, true} {
+		for _, address := range []string{"100.64.0.2", "fd00::2"} {
+			t.Run(fmt.Sprintf("%s/Cold%t", address, cold), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				if cold {
+					assert.Nil(t, srv.s.cache.DeleteService(coreC.service))
+				}
+				request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{Path: "/private", Method: "GET"},
+				}}
+				for range 2 {
+					resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+						ServiceUID: coreC.service.Metadata.Uid,
+						Request: &coctovigilv1.DownstreamRequest{
+							Source: &coctovigilv1.DownstreamRequest_Source{Address: address}, Request: request,
+						},
+					})
+					if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+						return
+					}
+					assert.True(t, resp.IsAuthenticated)
+					assert.True(t, resp.IsAuthorized)
+					assert.Equal(t, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH, resp.AuthorizationDecisionReason.Type)
+					assert.Equal(t, request, resp.RequestContext.Request)
+					assert.Equal(t, coreC.namespace, resp.RequestContext.Namespace)
+					assert.Equal(t, coreC.service, resp.RequestContext.Service)
+					assert.NotNil(t, resp.RequestContext.User)
+					assert.NotNil(t, resp.RequestContext.Session)
+					assert.Len(t, resp.RequestContext.Groups, 2)
+					assert.Nil(t, resp.RequestContext.Device.Status.Posture)
+					assert.Nil(t, resp.RequestContext.Device.Status.ProbeAttempt)
+				}
+				if cold {
+					assert.Equal(t, []string{"service:service"}, coreC.calls)
+				} else {
+					assert.Empty(t, coreC.calls)
+				}
+			})
+		}
+	}
+}
+
+func TestAuthorizationRPCServiceErrors(t *testing.T) {
+	for _, code := range []codes.Code{codes.NotFound, codes.Unavailable, codes.PermissionDenied, codes.Canceled, codes.DeadlineExceeded} {
+		for _, method := range []string{"AuthenticateAndAuthorize", "Authorize"} {
+			t.Run(method+"/"+code.String(), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				assert.Nil(t, srv.s.cache.DeleteService(coreC.service))
+				coreC.errs["service"] = status.Error(code, "lookup failed")
+				if method == "AuthenticateAndAuthorize" {
+					resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{ServiceUID: "service"})
+					assert.Nil(t, resp)
+					assert.Equal(t, code, status.Code(err))
+				} else {
+					resp, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{ServiceUID: "service"})
+					assert.Nil(t, resp)
+					assert.Equal(t, code, status.Code(err))
+				}
+				_, err := srv.s.cache.GetService("service")
+				assert.ErrorIs(t, err, acache.ErrNotFound)
+			})
+		}
+	}
+}
+
+func TestAuthenticateAndAuthorizeRPCUnauthenticated(t *testing.T) {
+	for _, request := range []*coctovigilv1.DownstreamRequest{
+		nil, {}, {Source: &coctovigilv1.DownstreamRequest_Source{}},
+		{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.99"}},
+		{Source: &coctovigilv1.DownstreamRequest_Source{Address: "192.0.2.1"}},
+		{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2:1234"}},
+		{Source: &coctovigilv1.DownstreamRequest_Source{Address: "malicious\x00address"}},
+	} {
+		srv, coreC := newAuthorizationService(t)
+		resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+			ServiceUID: coreC.service.Metadata.Uid, Request: request,
+		})
+		if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+			continue
+		}
+		assert.False(t, resp.IsAuthenticated)
+		assert.False(t, resp.IsAuthorized)
+		assert.Nil(t, resp.RequestContext)
+		assert.Nil(t, resp.Config)
+		assert.Empty(t, resp.ServiceConfigName)
+		assert.Empty(t, coreC.calls)
+	}
+}
+
+func TestAuthorizeRPC(t *testing.T) {
+	for _, cold := range []bool{false, true} {
+		srv, coreC := newAuthorizationService(t)
+		if cold {
+			assert.Nil(t, srv.s.cache.DeleteService(coreC.service))
+		}
+		downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+		for range 2 {
+			resp, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{
+				ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid,
+			})
+			if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+				return
+			}
+			assert.True(t, resp.IsAuthorized)
+			assert.Equal(t, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH, resp.Reason.Type)
+		}
+		if cold {
+			assert.Equal(t, []string{"service:service"}, coreC.calls)
+		} else {
+			assert.Empty(t, coreC.calls)
+		}
+		resp, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{ServiceUID: "service", SessionUID: "missing"})
+		assert.Nil(t, resp)
+		assert.ErrorIs(t, err, acache.SessionNotFound)
+		downstream.errs["user"] = status.Error(codes.Unavailable, "user unavailable")
+		assert.Nil(t, srv.s.cache.DeleteUser(downstream.user))
+		resp, err = srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid})
+		assert.Nil(t, resp)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
+	}
+}
+
+func TestEvaluateRPC(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		condition string
+		effect    corev1.Policy_Spec_Rule_Effect
+		want      corev1.Policy_Spec_Rule_Effect
+		code      codes.Code
+	}{
+		{"Allow", `ctx.user == "alice"`, corev1.Policy_Spec_Rule_ALLOW, corev1.Policy_Spec_Rule_ALLOW, codes.OK},
+		{"Deny", `ctx.user == "alice"`, corev1.Policy_Spec_Rule_DENY, corev1.Policy_Spec_Rule_DENY, codes.OK},
+		{"NoMatch", `ctx.user == "bob"`, corev1.Policy_Spec_Rule_ALLOW, corev1.Policy_Spec_Rule_DENY, codes.OK},
+		{"MissingField", `ctx.missing == true`, corev1.Policy_Spec_Rule_ALLOW, corev1.Policy_Spec_Rule_DENY, codes.OK},
+		{"MalformedExpression", `ctx.user ==`, corev1.Policy_Spec_Rule_ALLOW, 0, codes.Internal},
+		{"WrongResultType", `42`, corev1.Policy_Spec_Rule_ALLOW, 0, codes.Internal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newAuthorizationService(t)
+			input, err := structpb.NewStruct(map[string]any{"user": "alice"})
+			assert.Nil(t, err)
+			resp, err := srv.Evaluate(t.Context(), &coctovigilv1.EvaluateRequest{
+				Ctx: input,
+				InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{
+					Policy: &corev1.InlinePolicy{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{
+						Effect: tc.effect, Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: tc.condition}},
+					}}}},
+				}},
+			})
+			assert.Equal(t, tc.code, status.Code(err))
+			if tc.code == codes.OK {
+				if assert.NotNil(t, resp) {
+					assert.Equal(t, tc.want, resp.Effect)
+				}
+			} else {
+				assert.Nil(t, resp)
+			}
+		})
+	}
+	for _, req := range []*coctovigilv1.EvaluateRequest{{}, {Ctx: &structpb.Struct{}}, {Policies: []string{"missing"}}} {
+		srv, _ := newAuthorizationService(t)
+		resp, err := srv.Evaluate(t.Context(), req)
+		assert.Nil(t, err)
+		if assert.NotNil(t, resp) {
+			assert.Equal(t, corev1.Policy_Spec_Rule_DENY, resp.Effect)
+		}
+	}
+}
+
+func TestInternalRPCConcurrentIdentities(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	srv.s.grpcSrv = server
+	coctovigilv1.RegisterInternalServiceServer(server, srv)
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	t.Cleanup(func() {
+		assert.Nil(t, srv.s.Close())
+		listener.Close()
+		select {
+		case err := <-done:
+			assert.Nil(t, err)
+		case <-time.After(3 * time.Second):
+			assert.Fail(t, "the internal RPC server did not stop")
+		}
+	})
+	conn, err := grpc.NewClient("passthrough:///octovigil",
+		grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if !assert.Nil(t, err) {
+		return
+	}
+	t.Cleanup(func() { conn.Close() })
+	client := coctovigilv1.NewInternalServiceClient(conn)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	base := coreC.ResourceServiceClient.(*downstreamCoreC)
+	var wg sync.WaitGroup
+	for idx := range 24 {
+		user := pbutils.Clone(base.user).(*corev1.User)
+		user.Metadata.Uid = fmt.Sprintf("user-%d", idx)
+		user.Spec.Groups = nil
+		session := pbutils.Clone(base.session).(*corev1.Session)
+		session.Metadata.Uid = vutils.UUIDv4()
+		session.Metadata.Name = fmt.Sprintf("session-%d", idx)
+		session.Status.UserRef = &metav1.ObjectReference{Uid: user.Metadata.Uid}
+		session.Status.DeviceRef = nil
+		address := fmt.Sprintf("100.64.1.%d", idx+1)
+		session.Status.Connection.Addresses = []*metav1.DualStackNetwork{{V4: address + "/32"}}
+		assert.Nil(t, srv.s.cache.SetUser(user))
+		assert.Nil(t, srv.s.cache.SetSession(session))
+		wg.Go(func() {
+			for range 16 {
+				authenticated, err := client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+					ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{
+						Source: &coctovigilv1.DownstreamRequest_Source{Address: address},
+					},
+				})
+				if !assert.Nil(t, err) || !assert.NotNil(t, authenticated) {
+					return
+				}
+				assert.True(t, authenticated.IsAuthenticated)
+				assert.True(t, authenticated.IsAuthorized)
+				assert.Equal(t, session.Metadata.Uid, authenticated.RequestContext.Session.Metadata.Uid)
+				assert.Equal(t, user.Metadata.Uid, authenticated.RequestContext.User.Metadata.Uid)
+				authorized, err := client.Authorize(ctx, &coctovigilv1.AuthorizeRequest{ServiceUID: "service", SessionUID: session.Metadata.Uid})
+				if !assert.Nil(t, err) || !assert.NotNil(t, authorized) {
+					return
+				}
+				assert.True(t, authorized.IsAuthorized)
+				downstream, err := client.GetDownstreamFromSessionUID(ctx, &coctovigilv1.GetDownstreamFromSessionUIDRequest{SessionUID: session.Metadata.Uid})
+				if !assert.Nil(t, err) || !assert.NotNil(t, downstream) {
+					return
+				}
+				assert.Equal(t, user.Metadata.Uid, downstream.User.Metadata.Uid)
+				assert.Equal(t, session.Metadata.Uid, downstream.Session.Metadata.Uid)
+				evaluated, err := client.Evaluate(ctx, &coctovigilv1.EvaluateRequest{InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{
+					Policy: &corev1.InlinePolicy{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{
+						Effect: corev1.Policy_Spec_Rule_DENY, Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					}}}},
+				}}})
+				if !assert.Nil(t, err) || !assert.NotNil(t, evaluated) {
+					return
+				}
+				assert.Equal(t, corev1.Policy_Spec_Rule_DENY, evaluated.Effect)
+			}
+		})
+	}
+	wg.Wait()
+	assert.Empty(t, coreC.calls)
+	_, err = client.Authorize(ctx, &coctovigilv1.AuthorizeRequest{ServiceUID: "missing"})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	_, err = client.GetDownstreamFromSessionUID(ctx, &coctovigilv1.GetDownstreamFromSessionUIDRequest{})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = client.Evaluate(canceled, &coctovigilv1.EvaluateRequest{})
+	assert.Equal(t, codes.Canceled, status.Code(err))
+}
+
+func TestAuthorizationRPCPolicyErrors(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		for _, mode := range []string{"Expression", "PolicyName", "ContextEncoding"} {
+			t.Run(fmt.Sprintf("%s/Anonymous%t", mode, anonymous), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				coreC.service.Spec.IsAnonymous = anonymous
+				coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+				request := &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}}
+				switch mode {
+				case "Expression":
+					coreC.service.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Condition = &corev1.Condition{Type: &corev1.Condition_Match{Match: "ctx =="}}
+				case "PolicyName":
+					coreC.service.Spec.Authorization.Policies = []string{"invalid..name"}
+				case "ContextEncoding":
+					request.Request = &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{Http: &corev1.RequestContext_Request_HTTP{Path: "\xff"}}}
+				}
+				resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{ServiceUID: "service", Request: request})
+				assert.Nil(t, resp)
+				assert.Equal(t, codes.Internal, status.Code(err))
+				downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+				authorized, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{
+					ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid, Request: request.Request,
+				})
+				assert.Nil(t, authorized)
+				assert.NotNil(t, err)
+			})
+		}
+	}
+	for _, code := range []codes.Code{codes.NotFound, codes.Unavailable, codes.Canceled} {
+		srv, coreC := newAuthorizationService(t)
+		downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+		assert.Nil(t, srv.s.cache.DeleteUser(downstream.user))
+		downstream.errs["user"] = status.Error(code, "User lookup failed")
+		resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+			ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+		})
+		assert.Nil(t, resp)
+		assert.Equal(t, codes.Internal, status.Code(err))
+	}
+}
+
+func TestEvaluateInvalidContext(t *testing.T) {
+	srv, _ := newAuthorizationService(t)
+	resp, err := srv.Evaluate(t.Context(), &coctovigilv1.EvaluateRequest{
+		Ctx: &structpb.Struct{Fields: map[string]*structpb.Value{"value": structpb.NewStringValue("\xff")}},
+	})
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.Internal, status.Code(err))
 }

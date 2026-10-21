@@ -38,6 +38,7 @@ func Phases() []Phase {
 		{"OcteliumctlCommands", testOcteliumctlCommands},
 		{"SDK", testSDK},
 		{"Authorization", testAuthorization},
+		{"AuthorizationRevocationLoad", testAuthorizationRevocationLoad},
 		{"AuthenticationAssertion", testAuthenticationAssertion},
 		{"AuthenticationSession", testAuthenticationSession},
 		{"AuthenticationRefresh", testAuthenticationRefresh},

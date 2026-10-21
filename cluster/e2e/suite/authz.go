@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
@@ -336,4 +338,171 @@ func testAuthorization(t *testing.T, h *harness.H) {
 		assert.Less(t, grant, propagationBudget,
 			"granting access took %s, budget is %s", grant, propagationBudget)
 	})
+}
+
+func testAuthorizationRevocationLoad(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	policy := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{
+		Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow-group", 0)},
+	}})
+	group := h.CreateGroup(t, &corev1.Group{Spec: &corev1.Group_Spec{
+		Authorization: &corev1.Group_Spec_Authorization{Policies: []string{policy.Metadata.Name}},
+	}})
+	usr := h.CreateWorkloadUser(t, nil)
+	usr.Spec.Groups = []string{group.Metadata.Name}
+	usr = h.UpdateUser(t, usr)
+	other := h.CreateWorkloadUser(t, nil)
+	tokens := []string{h.AccessToken(t, usr), h.AccessToken(t, other)}
+	clients := []func(context.Context) (int, error){}
+	for _, token := range tokens {
+		client := h.HTTPNoRetry().SetBaseURL(h.ServiceURL(svc)).SetAuthScheme("Bearer").SetAuthToken(token)
+		t.Cleanup(client.GetClient().CloseIdleConnections)
+		clients = append(clients, func(ctx context.Context) (int, error) { return h.StatusOf(ctx, client, "/") })
+	}
+	h.Eventually(t, "only the group member to reach the Service", harness.DecisionBudget, func(ctx context.Context) error {
+		for idx, check := range clients {
+			status, err := check(ctx)
+			if err != nil {
+				return err
+			}
+			want := http.StatusOK
+			if idx == 1 {
+				want = http.StatusForbidden
+			}
+			if status != want {
+				return errUnexpectedStatus(status, want)
+			}
+		}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	var phase atomic.Int64
+	var violations atomic.Int64
+	var completed [2]atomic.Int64
+	done := make(chan *harness.PoolResult, 1)
+	go func() {
+		done <- harness.RunFor(ctx, 5*time.Minute, 16, func(ctx context.Context, worker, iteration int) error {
+			idx := worker % len(clients)
+			before := phase.Load()
+			callCtx, callCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer callCancel()
+			status, err := clients[idx](callCtx)
+			if err != nil {
+				return err
+			}
+			completed[idx].Add(1)
+			want := http.StatusForbidden
+			if idx == 0 {
+				if before == 0 || before != phase.Load() {
+					if status == http.StatusOK || status == http.StatusForbidden {
+						return nil
+					}
+				} else if before&1 == 0 {
+					want = http.StatusOK
+				}
+			}
+			if status != want {
+				violations.Add(1)
+				return errUnexpectedStatus(status, want)
+			}
+			return nil
+		})
+	}()
+	var result *harness.PoolResult
+	stop := func() {
+		cancel()
+		if result == nil {
+			select {
+			case result = <-done:
+			case <-time.After(15 * time.Second):
+				assert.Fail(t, "the authorization load did not stop")
+			}
+		}
+	}
+	t.Cleanup(stop)
+	var generation int64
+	waitDecision := func(t *testing.T, want int) {
+		t.Helper()
+		var stableAt time.Time
+		h.Eventually(t, "authorization to converge under request load", harness.DecisionBudget,
+			func(ctx context.Context) error {
+				for idx, check := range clients {
+					status, err := check(ctx)
+					expected := want
+					if idx == 1 {
+						expected = http.StatusForbidden
+					}
+					if err != nil || status != expected {
+						stableAt = time.Time{}
+						if err != nil {
+							return err
+						}
+						return errUnexpectedStatus(status, expected)
+					}
+				}
+				if stableAt.IsZero() {
+					stableAt = time.Now()
+				}
+				if time.Since(stableAt) < decisionSettle {
+					return fmt.Errorf("the authorization decision is still settling")
+				}
+				return nil
+			})
+		generation++
+		current := generation << 1
+		if want == http.StatusForbidden {
+			current |= 1
+		}
+		before := [2]int64{completed[0].Load(), completed[1].Load()}
+		phase.Store(current)
+		h.Eventually(t, "both identities to make requests with the stable authorization decision", harness.DecisionBudget,
+			func(ctx context.Context) error {
+				if violations.Load() > 0 {
+					return fmt.Errorf("unexpected authorization decisions were observed")
+				}
+				if completed[0].Load()-before[0] < 32 || completed[1].Load()-before[1] < 32 {
+					return fmt.Errorf("both identities have not completed enough requests")
+				}
+				return nil
+			})
+	}
+	waitDecision(t, http.StatusOK)
+	for _, step := range []string{"RemoveGroup", "RestoreGroup", "DisablePolicy", "EnablePolicy", "DisableUser", "EnableUser"} {
+		if !t.Run(step, func(t *testing.T) {
+			phase.Store(0)
+			want := http.StatusForbidden
+			switch step {
+			case "RemoveGroup":
+				usr.Spec.Groups = nil
+				usr = h.UpdateUser(t, usr)
+			case "RestoreGroup":
+				usr.Spec.Groups = []string{group.Metadata.Name}
+				usr = h.UpdateUser(t, usr)
+				want = http.StatusOK
+			case "DisablePolicy", "EnablePolicy":
+				policy.Spec.IsDisabled = step == "DisablePolicy"
+				policy = h.UpdatePolicy(t, policy)
+				if !policy.Spec.IsDisabled {
+					want = http.StatusOK
+				}
+			case "DisableUser", "EnableUser":
+				usr.Spec.IsDisabled = step == "DisableUser"
+				usr = h.UpdateUser(t, usr)
+				if !usr.Spec.IsDisabled {
+					want = http.StatusOK
+				}
+			}
+			waitDecision(t, want)
+		}) {
+			return
+		}
+	}
+	stop()
+	require.NotNil(t, result)
+	assert.Zero(t, violations.Load())
+	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
+	assert.Positive(t, result.Succeeded)
+	harness.LogPool("Octovigil authorization changes under HTTP load", result)
 }
