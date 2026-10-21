@@ -138,9 +138,11 @@ func NewServer(ctx context.Context, domain string, octeliumC octeliumc.ClientInt
 
 func (s *Server) startDebouncer(ctx context.Context) {
 	const debounceInterval = 300 * time.Millisecond
+	const maxDebounceInterval = time.Second
 	const maxRetryInterval = 30 * time.Second
 	var timer *time.Timer
 	var timerCh <-chan time.Time
+	var debounceDeadline time.Time
 	var retryInterval time.Duration
 
 	zap.L().Debug("Starting startDebouncer loop")
@@ -158,16 +160,21 @@ func (s *Server) startDebouncer(ctx context.Context) {
 				continue
 			}
 			if timer == nil {
+				debounceDeadline = time.Now().Add(maxDebounceInterval)
 				timer = time.NewTimer(debounceInterval)
 				timerCh = timer.C
 			} else {
+				interval := min(debounceInterval, time.Until(debounceDeadline))
+				if interval <= 0 {
+					continue
+				}
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
 					default:
 					}
 				}
-				timer.Reset(debounceInterval)
+				timer.Reset(interval)
 			}
 
 		case <-timerCh:

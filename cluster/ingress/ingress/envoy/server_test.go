@@ -673,3 +673,175 @@ func TestServerSnapshotRetryInvalidCertificateResource(t *testing.T) {
 	after := fetchIngress(t, conn, resource.ClusterType)
 	assert.Equal(t, after.VersionInfo, fetchIngress(t, conn, resource.ListenerType).VersionInfo)
 }
+
+func TestServerSnapshotContinuousEvents(t *testing.T) {
+	b := &tstIngressBackend{}
+	s, conn := newIngressServer(t, b, &envoy.Opts{HasFrontProxy: true})
+	require.Nil(t, s.Run(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.DoSnapshot(ctx)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	for _, name := range []string{"first", "second", ""} {
+		before := fetchIngress(t, conn, resource.ClusterType).VersionInfo
+		var services []*corev1.Service
+		if name != "" {
+			services = []*corev1.Service{{
+				Metadata: &metav1.Metadata{Name: name + ".default"},
+				Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, IsPublic: true},
+				Status:   &corev1.Service_Status{Port: 8080, NamespaceRef: &metav1.ObjectReference{Name: "default"}},
+			}}
+		}
+		b.Lock()
+		b.services = services
+		b.Unlock()
+		require.Eventually(t, func() bool {
+			resp, err := getIngress(t.Context(), conn, resource.ClusterType)
+			if err != nil || resp.VersionInfo == before || len(resp.Resources) != len(services)+1 {
+				return false
+			}
+			if name == "" {
+				return true
+			}
+			for _, item := range resp.Resources {
+				var clstr clusterv3.Cluster
+				if item.UnmarshalTo(&clstr) == nil && clstr.Name == "svc-svc-"+name+"-default" {
+					return true
+				}
+			}
+			return false
+		}, 2*time.Second, 20*time.Millisecond)
+		clusters := fetchIngress(t, conn, resource.ClusterType)
+		var names []string
+		for _, item := range clusters.Resources {
+			var clstr clusterv3.Cluster
+			require.Nil(t, item.UnmarshalTo(&clstr))
+			names = append(names, clstr.Name)
+		}
+		expected := []string{"octelium-health-check"}
+		if name != "" {
+			expected = append(expected, "svc-svc-"+name+"-default")
+		}
+		assert.ElementsMatch(t, expected, names)
+		listeners := fetchIngress(t, conn, resource.ListenerType)
+		assert.Equal(t, clusters.VersionInfo, listeners.VersionInfo)
+		for _, item := range listeners.Resources {
+			var listener listenerv3.Listener
+			require.Nil(t, item.UnmarshalTo(&listener))
+			if listener.Name == "main-listener" {
+				var hcm envoyhcm.HttpConnectionManager
+				require.Nil(t, listener.FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&hcm))
+				require.Len(t, hcm.GetRouteConfig().VirtualHosts, len(services))
+				if name != "" {
+					assert.Equal(t, []string{name + ".default.example.com", name + ".example.com"}, hcm.GetRouteConfig().VirtualHosts[0].Domains)
+				}
+			}
+		}
+	}
+	cancel()
+	<-done
+	assert.Less(t, b.count("GetClusterConfig"), 10)
+}
+
+func TestServerSnapshotDebounceQuietPeriod(t *testing.T) {
+	b := &tstIngressBackend{}
+	s, conn := newIngressServer(t, b, nil)
+	require.Nil(t, s.Run(t.Context()))
+	before := fetchIngress(t, conn, resource.ClusterType).VersionInfo
+	require.Nil(t, s.DoSnapshot(t.Context()))
+	assert.Never(t, func() bool { return b.count("GetRegion") > 1 }, 180*time.Millisecond, 10*time.Millisecond)
+	require.Nil(t, s.DoSnapshot(t.Context()))
+	assert.Never(t, func() bool { return b.count("GetRegion") > 1 }, 180*time.Millisecond, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		resp, err := getIngress(t.Context(), conn, resource.ClusterType)
+		return err == nil && resp.VersionInfo != before
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 2, b.count("GetClusterConfig"))
+	assert.Never(t, func() bool { return b.count("GetRegion") > 2 }, 1200*time.Millisecond, 20*time.Millisecond)
+	before = fetchIngress(t, conn, resource.ClusterType).VersionInfo
+	require.Nil(t, s.DoSnapshot(t.Context()))
+	assert.Never(t, func() bool { return b.count("GetRegion") > 2 }, 180*time.Millisecond, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		resp, err := getIngress(t.Context(), conn, resource.ClusterType)
+		return err == nil && resp.VersionInfo != before
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, 3, b.count("GetClusterConfig"))
+}
+
+func TestServerSnapshotContinuousEventsRetry(t *testing.T) {
+	b := &tstIngressBackend{}
+	s, conn := newIngressServer(t, b, nil)
+	require.Nil(t, s.Run(t.Context()))
+	before := fetchIngress(t, conn, resource.ClusterType).VersionInfo
+	b.Lock()
+	b.fail = "ListSecret"
+	b.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.DoSnapshot(ctx)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	require.Eventually(t, func() bool { return b.count("ListSecret") >= 2 }, 2*time.Second, 10*time.Millisecond)
+	assert.Equal(t, before, fetchIngress(t, conn, resource.ClusterType).VersionInfo)
+	assert.Equal(t, before, fetchIngress(t, conn, resource.ListenerType).VersionInfo)
+	b.Lock()
+	b.fail = ""
+	b.Unlock()
+	require.Eventually(t, func() bool {
+		resp, err := getIngress(t.Context(), conn, resource.ClusterType)
+		return err == nil && resp.VersionInfo != before
+	}, 2*time.Second, 20*time.Millisecond)
+	before = fetchIngress(t, conn, resource.ClusterType).VersionInfo
+	require.Eventually(t, func() bool {
+		resp, err := getIngress(t.Context(), conn, resource.ClusterType)
+		return err == nil && resp.VersionInfo != before
+	}, 2*time.Second, 20*time.Millisecond)
+	assert.Equal(t, fetchIngress(t, conn, resource.ClusterType).VersionInfo, fetchIngress(t, conn, resource.ListenerType).VersionInfo)
+}
+
+func TestServerSnapshotDebounceCancellation(t *testing.T) {
+	b := &tstIngressBackend{}
+	s, conn := newIngressServer(t, b, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	require.Nil(t, s.Run(ctx))
+	before := fetchIngress(t, conn, resource.ClusterType).VersionInfo
+	require.Nil(t, s.DoSnapshot(ctx))
+	assert.Never(t, func() bool { return b.count("GetRegion") > 1 }, 100*time.Millisecond, 10*time.Millisecond)
+	cancel()
+	for range 1000 {
+		require.Nil(t, s.DoSnapshot(t.Context()))
+	}
+	assert.Never(t, func() bool { return b.count("GetRegion") > 1 }, 1200*time.Millisecond, 20*time.Millisecond)
+	assert.Equal(t, before, fetchIngress(t, conn, resource.ClusterType).VersionInfo)
+	assert.Equal(t, before, fetchIngress(t, conn, resource.ListenerType).VersionInfo)
+}

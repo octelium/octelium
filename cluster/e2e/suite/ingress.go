@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -552,4 +554,124 @@ func testIngressSnapshotRetry(t *testing.T, h *harness.H) {
 			assert.Equal(t, container.RestartCount, current.Status.ContainerStatuses[i].RestartCount)
 		}
 	}
+}
+
+func testIngressSnapshotContinuousEvents(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	v := newVigilCtx(t, h)
+	v.record(t, http.StatusOK, "snapshot-continuous-events")
+	v.svc.Spec.IsAnonymous = true
+	v.svc = h.UpdateService(t, v.svc)
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	h.WaitStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
+	svc := h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://example.invalid"},
+				},
+			},
+		},
+	})
+	h.MustWaitService(t, svc.Metadata.Name)
+	h.WaitStatus(t, c, h.ServiceURL(svc), http.StatusNotFound)
+	var services []*corev1.Service
+	var updates [4]atomic.Int64
+	for range len(updates) {
+		current := h.CreateService(t, &corev1.Service{
+			Spec: &corev1.Service_Spec{
+				Mode:     corev1.Service_Spec_HTTP,
+				IsPublic: true,
+				Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://example.invalid"},
+					},
+				},
+			},
+		})
+		h.MustWaitService(t, current.Metadata.Name)
+		services = append(services, current)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	errs := make(chan error, len(services))
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		wg.Go(func() {
+			svc := pbutils.Clone(svc).(*corev1.Service)
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for iteration := 0; ; iteration++ {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+				svc.Metadata.DisplayName = fmt.Sprintf("snapshot-load-%d", iteration)
+				var err error
+				svc, err = h.CoreC().UpdateService(ctx, svc)
+				if err != nil {
+					if ctx.Err() == nil {
+						errs <- err
+					}
+					return
+				}
+				updates[i].Add(1)
+			}
+		})
+	}
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			assert.Nil(t, err)
+		}
+	})
+	h.Eventually(t, "every public Service to receive continuous updates", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			for i := range updates {
+				if updates[i].Load() < 2 {
+					return errors.Errorf("the public Service %s has not received enough updates", services[i].Metadata.Name)
+				}
+			}
+			return nil
+		})
+	count := func() int64 {
+		var ret int64
+		for i := range updates {
+			ret += updates[i].Load()
+		}
+		return ret
+	}
+	for _, public := range []bool{true, false, true} {
+		before := count()
+		svc.Spec.IsPublic = public
+		svc = h.UpdateService(t, svc)
+		want := http.StatusNotFound
+		if public {
+			want = http.StatusUnauthorized
+		}
+		h.Eventually(t, fmt.Sprintf("the ingress route to return %d during continuous updates", want), propagationBudget,
+			func(ctx context.Context) error {
+				for address, expected := range map[string]int{h.ServiceURL(v.svc): http.StatusOK, h.ServiceURL(svc): want} {
+					got, err := h.StatusOf(ctx, c, address)
+					if err != nil {
+						return err
+					}
+					if got != expected {
+						return errors.Errorf("GET %s returned %d, want %d", address, got, expected)
+					}
+				}
+				return nil
+			})
+		assert.Greater(t, count(), before)
+	}
+	cancel()
+	wg.Wait()
+	svc.Spec.IsPublic = false
+	svc = h.UpdateService(t, svc)
+	h.WaitStatus(t, c, h.ServiceURL(svc), http.StatusNotFound)
+	h.GetStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
 }

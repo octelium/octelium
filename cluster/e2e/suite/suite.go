@@ -104,6 +104,7 @@ func Phases() []Phase {
 		{"IngressHTTPValidation", testIngressHTTPValidation},
 		{"IngressCertificateRotation", testIngressCertificateRotation},
 		{"IngressSnapshotRetry", testIngressSnapshotRetry},
+		{"IngressSnapshotContinuousEvents", testIngressSnapshotContinuousEvents},
 		{"GatewayResource", testGatewayResource},
 		{"GatewayConnection", testGatewayConnection},
 		{"GatewayReconnect", testGatewayReconnect},
