@@ -60,9 +60,12 @@ func New(ctx context.Context, o *Opts) (*Controller, error) {
 
 func (c *Controller) Run(ctx context.Context) error {
 
-	if c.name != "" {
+	c.mu.RLock()
+	name := c.name
+	c.mu.RUnlock()
+	if name != "" {
 		if cfg, err := c.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
-			Name: c.name,
+			Name: name,
 		}); err == nil {
 			if err := c.setConfig(ctx, cfg); err != nil {
 				zap.L().Warn("Could not set mmdb config",
@@ -300,7 +303,7 @@ func (c *Controller) Set(ctx context.Context, cfg *corev1.ClusterConfig_Spec_Aut
 		if err != nil {
 			return err
 		}
-		return c.setConfig(ctx, res)
+		return c.SetConfig(ctx, res)
 	case *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_:
 		return c.setUpstream(ctx, cfg.GetUpstream())
 	default:
@@ -407,7 +410,11 @@ func (c *Controller) setUpstream(ctx context.Context,
 		mmdbBytes = body
 	}
 
-	return c.doLoadDB(mmdbBytes)
+	if err := c.doLoadDB(mmdbBytes); err != nil {
+		return err
+	}
+	c.name = ""
+	return nil
 }
 
 func decompress(data []byte) ([]byte, error) {

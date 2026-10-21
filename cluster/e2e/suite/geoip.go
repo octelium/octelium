@@ -26,6 +26,8 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -254,4 +256,202 @@ func testGeoIP(t *testing.T, h *harness.H) {
 	})
 
 	zap.L().Debug("Done with the GeoIP phase")
+}
+
+func testGeoIPConfigSources(t *testing.T, h *harness.H) {
+	ctx := t.Context()
+	c := h.CoreC()
+
+	getDB := func(name string) []byte {
+		res, err := h.HTTP().R().SetContext(ctx).Get(mmdbPrefixURL + "/" + name)
+		require.Nil(t, err)
+		require.Equal(t, http.StatusOK, res.StatusCode())
+		return res.Body()
+	}
+	cityDB := getDB("GeoIP2-City-Test.mmdb")
+	countryDB := getDB("GeoIP2-Country-Test.mmdb")
+	configData := func(data []byte) *corev1.Config_Data {
+		return &corev1.Config_Data{Type: &corev1.Config_Data_ValueBytes{ValueBytes: data}}
+	}
+	createConfig := func(t *testing.T, name string, data []byte) *corev1.Config {
+		t.Helper()
+		cfg, err := c.CreateConfig(ctx, &corev1.Config{
+			Metadata: &metav1.Metadata{Name: name},
+			Spec:     &corev1.Config_Spec{},
+			Data:     configData(data),
+		})
+		require.Nil(t, err)
+		return cfg
+	}
+	cityName, countryName := h.Name(), h.Name()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		for _, name := range []string{cityName, countryName} {
+			if _, err := c.DeleteConfig(ctx, &metav1.DeleteOptions{Name: name}); err != nil && !grpcerr.IsNotFound(err) {
+				zap.L().Warn("Could not delete the Config", zap.String("name", name), zap.Error(err))
+			}
+		}
+	})
+	cityCfg := createConfig(t, cityName, cityDB)
+	countryCfg := createConfig(t, countryName, countryDB)
+
+	original := pbutils.Clone(h.ClusterConfig(t)).(*corev1.ClusterConfig)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		cc, err := c.GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+		if err != nil {
+			zap.L().Warn("Could not get the ClusterConfig", zap.Error(err))
+			return
+		}
+		cc.Spec.Authentication = original.Spec.Authentication
+		cc.Spec.Ingress = original.Spec.Ingress
+		if _, err := c.UpdateClusterConfig(ctx, cc); err != nil {
+			zap.L().Warn("Could not restore the ClusterConfig", zap.Error(err))
+		}
+	})
+
+	usr := h.CreateWorkloadUser(t, nil)
+	cred := h.CreateCredential(t, harness.CredentialOpts{
+		User:        usr.Metadata.Name,
+		Type:        corev1.Credential_Spec_OAUTH2,
+		SessionType: corev1.Session_Status_CLIENTLESS,
+	})
+	credentials := h.CredentialToken(t, cred).GetOauth2Credentials()
+	require.NotNil(t, credentials)
+
+	setSource := func(t *testing.T, source *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB) {
+		t.Helper()
+		cc := h.ClusterConfig(t)
+		cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{
+			UseForwardedForHeader: true,
+			XffNumTrustedHops:     1,
+		}
+		cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
+			Geolocation: &corev1.ClusterConfig_Spec_Authentication_Geolocation{
+				Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_Mmdb{Mmdb: source},
+			},
+		}
+		h.UpdateClusterConfig(t, cc)
+	}
+	fromConfig := func(name string) *corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB {
+		return &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_FromConfig{FromConfig: name},
+		}
+	}
+	updateConfig := func(t *testing.T, cfg *corev1.Config, data []byte) *corev1.Config {
+		t.Helper()
+		cfg = pbutils.Clone(cfg).(*corev1.Config)
+		cfg.Data = configData(data)
+		ret, err := c.UpdateConfig(ctx, cfg)
+		require.Nil(t, err)
+		return ret
+	}
+	check := func(ctx context.Context, city bool) error {
+		var tokenResponse struct {
+			AccessToken string `json:"access_token"`
+		}
+		res, err := h.HTTPNoRetry().R().SetContext(ctx).
+			SetHeader("X-Forwarded-For", geoipUSAddr).
+			SetFormData(map[string]string{
+				"grant_type":    "client_credentials",
+				"client_id":     credentials.ClientID,
+				"client_secret": credentials.ClientSecret,
+			}).SetResult(&tokenResponse).Post(h.ClusterURL() + "/oauth2/token")
+		if err != nil {
+			return err
+		}
+		if !res.IsSuccess() || tokenResponse.AccessToken == "" {
+			return errors.Errorf("token endpoint returned %d without an access token", res.StatusCode())
+		}
+		items, err := c.ListSession(ctx, &corev1.ListSessionOptions{UserRef: umetav1.GetObjectReference(usr)})
+		if err != nil {
+			return err
+		}
+		if len(items.Items) != 1 {
+			return errors.Errorf("got %d Sessions, want 1", len(items.Items))
+		}
+		geoip := items.Items[0].GetStatus().GetAuthentication().GetInfo().GetGeoip()
+		if geoip.GetIp() != geoipUSAddr || geoip.GetCountry().GetCode() != "US" {
+			return errors.Errorf("the Session has unexpected geolocation: %+v", geoip)
+		}
+		if (geoip.GetCity() != nil) != city {
+			return errors.Errorf("the Session has city data %t, want %t", geoip.GetCity() != nil, city)
+		}
+		return nil
+	}
+	wait := func(t *testing.T, city bool) {
+		t.Helper()
+		var stableAt time.Time
+		h.EventuallyEvery(t, "authentication to use the selected MMDB source", 60*time.Second,
+			500*time.Millisecond, func(ctx context.Context) error {
+				if err := check(ctx, city); err != nil {
+					stableAt = time.Time{}
+					return err
+				}
+				if stableAt.IsZero() {
+					stableAt = time.Now()
+				}
+				if time.Since(stableAt) < decisionSettle {
+					return errors.Errorf("waiting for the selected MMDB source to settle")
+				}
+				return nil
+			})
+	}
+	unchanged := func(t *testing.T) {
+		t.Helper()
+		h.Consistently(t, "obsolete Config events to preserve the upstream MMDB", 3*decisionSettle,
+			func(ctx context.Context) error {
+				return check(ctx, false)
+			})
+	}
+
+	t.Run("FromConfig", func(t *testing.T) {
+		setSource(t, fromConfig(cityCfg.Metadata.Name))
+		wait(t, true)
+		cityCfg = updateConfig(t, cityCfg, countryDB)
+		wait(t, false)
+		cityCfg = updateConfig(t, cityCfg, cityDB)
+		wait(t, true)
+	})
+
+	t.Run("SwitchConfig", func(t *testing.T) {
+		setSource(t, fromConfig(countryCfg.Metadata.Name))
+		wait(t, false)
+		countryCfg = updateConfig(t, countryCfg, cityDB)
+		wait(t, true)
+	})
+
+	t.Run("SwitchToUpstream", func(t *testing.T) {
+		setSource(t, &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream_{
+				Upstream: &corev1.ClusterConfig_Spec_Authentication_Geolocation_MMDB_Upstream{
+					Url: mmdbPrefixURL + "/GeoIP2-Country-Test.mmdb",
+				},
+			},
+		})
+		wait(t, false)
+		countryCfg = updateConfig(t, countryCfg, countryDB)
+		countryCfg = updateConfig(t, countryCfg, cityDB)
+		unchanged(t)
+	})
+
+	t.Run("DeleteObsoleteConfig", func(t *testing.T) {
+		_, err := c.DeleteConfig(ctx, &metav1.DeleteOptions{Uid: countryCfg.Metadata.Uid})
+		require.Nil(t, err)
+		unchanged(t)
+	})
+
+	t.Run("RecreateObsoleteConfig", func(t *testing.T) {
+		countryCfg = createConfig(t, countryName, cityDB)
+		unchanged(t)
+	})
+
+	t.Run("SwitchBackToConfig", func(t *testing.T) {
+		setSource(t, fromConfig(countryCfg.Metadata.Name))
+		wait(t, true)
+		countryCfg = updateConfig(t, countryCfg, countryDB)
+		wait(t, false)
+	})
 }

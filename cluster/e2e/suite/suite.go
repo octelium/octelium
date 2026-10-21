@@ -53,6 +53,7 @@ func Phases() []Phase {
 		{"DeviceRegistration", testDeviceRegistration},
 		{"AuthServerLogout", testAuthServerLogout},
 		{"GeoIP", testGeoIP},
+		{"GeoIPConfigSources", testGeoIPConfigSources},
 		{"AnonymousAuthorization", testAnonymousAuthorization},
 		{"ServiceHostHeader", testServiceHostHeader},
 		{"VigilPlugins", testVigilPlugins},
