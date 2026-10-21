@@ -18,6 +18,7 @@ package octovigil
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -2871,5 +2872,231 @@ func TestUnavailablePoliciesCannotGrantAccess(t *testing.T) {
 				assert.False(t, resp.IsAuthorized)
 			}
 		})
+	}
+}
+
+func assertAuthorizationLookupError(t *testing.T, srv *internalService, coreC *authorizationCoreC,
+	additional *coctovigilv1.Authorization, lookupErr error) {
+	t.Helper()
+	downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+	di, err := srv.s.GetDownstreamInfo(t.Context(), downstream.session.Metadata.Uid)
+	assert.Nil(t, err)
+	req := srv.s.getReqCtx(di, nil, coreC.service)
+	resp, err := srv.s.DoAuthorize(t.Context(), req, additional)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, lookupErr)
+	authenticated, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+		ServiceUID: coreC.service.Metadata.Uid, Additional: additional,
+		Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+	})
+	assert.Nil(t, authenticated)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	authorized, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{
+		ServiceUID: coreC.service.Metadata.Uid, SessionUID: downstream.session.Metadata.Uid, Additional: additional,
+	})
+	assert.Nil(t, authorized)
+	assert.ErrorIs(t, err, lookupErr)
+}
+
+func TestPolicyLookupFailuresOverrideAllow(t *testing.T) {
+	lookupErrors := []error{context.Canceled, context.DeadlineExceeded, errors.New("Policy lookup failed")}
+	for _, code := range []codes.Code{codes.Unavailable, codes.Internal, codes.PermissionDenied, codes.ResourceExhausted, codes.DeadlineExceeded, codes.Canceled} {
+		lookupErrors = append(lookupErrors, status.Error(code, "Policy lookup failed"))
+	}
+	for _, resource := range []string{"service", "namespace", "user", "group", "session", "device", "additional", "trigger", "parent"} {
+		for _, anonymous := range []bool{false, true} {
+			if anonymous && (resource == "user" || resource == "group" || resource == "session" || resource == "device") {
+				continue
+			}
+			for idx, lookupErr := range lookupErrors {
+				t.Run(fmt.Sprintf("%s/Anonymous%t/Error%d", resource, anonymous, idx), func(t *testing.T) {
+					srv, coreC := newAuthorizationService(t)
+					coreC.service.Spec.IsAnonymous = anonymous
+					coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+					deny := pbutils.Clone(coreC.service.Spec.Authorization.InlinePolicies[0].Spec).(*corev1.Policy_Spec)
+					deny.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+					coreC.policies["deny"] = &corev1.Policy{Metadata: &metav1.Metadata{Uid: "deny-policy", Name: "deny"}, Spec: deny}
+					coreC.errs["policy:deny"] = lookupErr
+					downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+					names := []string{"deny"}
+					var additional *coctovigilv1.Authorization
+					switch resource {
+					case "service":
+						coreC.service.Spec.Authorization.Policies = names
+					case "namespace":
+						coreC.namespace.Spec.Authorization = &corev1.Namespace_Spec_Authorization{Policies: names}
+					case "user":
+						downstream.user.Spec.Authorization = &corev1.User_Spec_Authorization{Policies: names}
+					case "group":
+						downstream.groups[0].Spec.Authorization = &corev1.Group_Spec_Authorization{Policies: names}
+					case "session":
+						downstream.session.Spec.Authorization = &corev1.Session_Spec_Authorization{Policies: names}
+					case "device":
+						downstream.device.Spec.Authorization = &corev1.Device_Spec_Authorization{Policies: names}
+					case "additional":
+						additional = &coctovigilv1.Authorization{Policies: names}
+					case "trigger":
+						assert.Nil(t, srv.s.policyTriggerCtl.SetPolicyTrigger(&corev1.PolicyTrigger{
+							Metadata: &metav1.Metadata{Uid: "trigger"},
+							Status: &corev1.PolicyTrigger_Status{Policies: names,
+								PreCondition: &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_MatchAny{MatchAny: true}},
+							},
+						}))
+					case "parent":
+						coreC.service.Spec.Authorization.Policies = []string{"child.deny"}
+						coreC.policies["child.deny"] = &corev1.Policy{Metadata: &metav1.Metadata{Name: "child.deny", Uid: "child"}, Spec: &corev1.Policy_Spec{}}
+					}
+					assertAuthorizationLookupError(t, srv, coreC, additional, lookupErr)
+					_, err := srv.s.cache.GetPolicy("deny")
+					assert.NotNil(t, err)
+					delete(coreC.errs, "policy:deny")
+					di, err := srv.s.GetDownstreamInfo(t.Context(), downstream.session.Metadata.Uid)
+					assert.Nil(t, err)
+					req := srv.s.getReqCtx(di, nil, coreC.service)
+					for range 2 {
+						resp, err := srv.s.DoAuthorize(t.Context(), req, additional)
+						if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+							return
+						}
+						if assert.False(t, resp.IsAuthorized) {
+							assert.Equal(t, "deny-policy", resp.Reason.Details.GetPolicyMatch().GetPolicy().PolicyRef.Uid)
+						}
+						coreC.errs["policy:deny"] = lookupErr
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestNamespaceLookupFailuresOverrideAllow(t *testing.T) {
+	lookupErrors := []error{context.Canceled, context.DeadlineExceeded, errors.New("Namespace lookup failed")}
+	for _, code := range []codes.Code{codes.NotFound, codes.Unavailable, codes.Internal, codes.PermissionDenied, codes.DeadlineExceeded, codes.Canceled} {
+		lookupErrors = append(lookupErrors, status.Error(code, "Namespace lookup failed"))
+	}
+	for _, anonymous := range []bool{false, true} {
+		for idx, lookupErr := range lookupErrors {
+			t.Run(fmt.Sprintf("Anonymous%t/Error%d", anonymous, idx), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				coreC.service.Spec.IsAnonymous = anonymous
+				coreC.service.Spec.Authorization.EnableAnonymous = anonymous
+				deny := pbutils.Clone(coreC.service.Spec.Authorization.InlinePolicies[0]).(*corev1.InlinePolicy)
+				deny.Spec.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+				coreC.namespace.Spec.Authorization = &corev1.Namespace_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{deny}}
+				assert.Nil(t, srv.s.cache.DeleteNamespace(coreC.namespace))
+				coreC.errs["namespace"] = lookupErr
+				assertAuthorizationLookupError(t, srv, coreC, nil, lookupErr)
+				_, err := srv.s.cache.GetNamespace(coreC.namespace.Metadata.Name)
+				assert.NotNil(t, err)
+				delete(coreC.errs, "namespace")
+				downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+				di, err := srv.s.GetDownstreamInfo(t.Context(), downstream.session.Metadata.Uid)
+				assert.Nil(t, err)
+				req := srv.s.getReqCtx(di, nil, coreC.service)
+				for range 2 {
+					resp, err := srv.s.DoAuthorize(t.Context(), req, nil)
+					if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+						return
+					}
+					assert.False(t, resp.IsAuthorized)
+					coreC.errs["namespace"] = lookupErr
+				}
+			})
+		}
+	}
+}
+
+func TestEvaluatePolicyLookupFailuresOverrideAllow(t *testing.T) {
+	for _, parent := range []bool{false, true} {
+		for _, lookupErr := range []error{status.Error(codes.Unavailable, "Policy lookup failed"), context.Canceled, errors.New("Policy lookup failed")} {
+			t.Run(fmt.Sprintf("Parent%t/%s", parent, lookupErr.Error()), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				allow := coreC.service.Spec.Authorization.InlinePolicies[0]
+				deny := pbutils.Clone(allow.Spec).(*corev1.Policy_Spec)
+				deny.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+				coreC.policies["deny"] = &corev1.Policy{Metadata: &metav1.Metadata{Name: "deny", Uid: "deny"}, Spec: deny}
+				name := "deny"
+				if parent {
+					name = "child.deny"
+					coreC.policies[name] = &corev1.Policy{Metadata: &metav1.Metadata{Name: name, Uid: "child"}, Spec: &corev1.Policy_Spec{}}
+				}
+				req := &coctovigilv1.EvaluateRequest{
+					Policies: []string{name}, InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: allow}},
+				}
+				coreC.errs["policy:deny"] = lookupErr
+				rules, err := srv.s.getEvaluatePolicyRules(t.Context(), req, nil)
+				assert.Nil(t, rules)
+				assert.ErrorIs(t, err, lookupErr)
+				resp, err := srv.Evaluate(t.Context(), req)
+				assert.Nil(t, resp)
+				assert.Equal(t, codes.Internal, status.Code(err))
+				delete(coreC.errs, "policy:deny")
+				resp, err = srv.Evaluate(t.Context(), req)
+				if assert.Nil(t, err) && assert.NotNil(t, resp) {
+					assert.Equal(t, corev1.Policy_Spec_Rule_DENY, resp.Effect)
+				}
+			})
+		}
+	}
+}
+
+func TestMissingPolicyLookupCompatibility(t *testing.T) {
+	for _, source := range []string{"service", "trigger", "evaluate"} {
+		for _, tc := range []struct {
+			name       string
+			policyName string
+			wrapped    bool
+		}{
+			{"MissingParent", "child.parent", false},
+			{"MissingChild", "parent", false},
+			{"MissingBoth", "", false},
+			{"WrappedNotFound", "parent", true},
+		} {
+			t.Run(source+"/"+tc.name, func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				allow := coreC.service.Spec.Authorization.InlinePolicies[0]
+				if tc.policyName != "" {
+					deny := pbutils.Clone(allow.Spec).(*corev1.Policy_Spec)
+					deny.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+					coreC.policies[tc.policyName] = &corev1.Policy{
+						Metadata: &metav1.Metadata{Name: tc.policyName, Uid: "deny-policy"}, Spec: deny,
+					}
+				}
+				if tc.wrapped {
+					coreC.errs["policy:child.parent"] = fmt.Errorf("Policy lookup failed: %w", status.Error(codes.NotFound, "Policy not found"))
+				}
+				names := []string{"child.parent"}
+				wantAllow := tc.policyName == ""
+				switch source {
+				case "service":
+					coreC.service.Spec.Authorization.Policies = names
+				case "trigger":
+					assert.Nil(t, srv.s.policyTriggerCtl.SetPolicyTrigger(&corev1.PolicyTrigger{
+						Metadata: &metav1.Metadata{Uid: "trigger"},
+						Status: &corev1.PolicyTrigger_Status{Policies: names,
+							PreCondition: &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_MatchAny{MatchAny: true}},
+						},
+					}))
+				case "evaluate":
+					resp, err := srv.Evaluate(t.Context(), &coctovigilv1.EvaluateRequest{
+						Policies: names, InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: allow}},
+					})
+					if assert.Nil(t, err) && assert.NotNil(t, resp) {
+						want := corev1.Policy_Spec_Rule_DENY
+						if wantAllow {
+							want = corev1.Policy_Spec_Rule_ALLOW
+						}
+						assert.Equal(t, want, resp.Effect)
+					}
+					return
+				}
+				resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+					ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+				})
+				if assert.Nil(t, err) && assert.NotNil(t, resp) {
+					assert.Equal(t, wantAllow, resp.IsAuthorized)
+				}
+			})
+		}
 	}
 }

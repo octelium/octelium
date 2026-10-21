@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -505,4 +506,57 @@ func testAuthorizationRevocationLoad(t *testing.T, h *harness.H) {
 	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
 	assert.Positive(t, result.Succeeded)
 	harness.LogPool("Octovigil authorization changes under HTTP load", result)
+}
+
+func testAuthorizationPolicyLookupCompatibility(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	usr := h.CreateWorkloadUser(t, nil)
+	c := h.ServiceClient(svc, h.AccessToken(t, usr))
+	parent := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{
+		Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow-parent", 0)},
+	}})
+	child := h.CreatePolicy(t, &corev1.Policy{
+		Metadata: &metav1.Metadata{Name: "child." + parent.Metadata.Name},
+		Spec: &corev1.Policy_Spec{
+			Rules: []*corev1.Policy_Spec_Rule{harness.DenyAnyRule("deny-child", 0)},
+		},
+	})
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+		Policies: []string{child.Metadata.Name}, InlinePolicies: harness.InlineAllowAny("allow-service"),
+	}
+	svc = h.UpdateService(t, svc)
+	h.WaitDenied(t, c)
+
+	_, err := h.CoreC().DeletePolicy(t.Context(), &metav1.DeleteOptions{Uid: child.Metadata.Uid})
+	require.Nil(t, err)
+	h.WaitAllowed(t, c)
+
+	parent.Spec.Rules = []*corev1.Policy_Spec_Rule{harness.DenyAnyRule("deny-parent", 0)}
+	parent = h.UpdatePolicy(t, parent)
+	h.WaitDenied(t, c)
+
+	_, err = h.CoreC().DeletePolicy(t.Context(), &metav1.DeleteOptions{Uid: parent.Metadata.Uid})
+	require.Nil(t, err)
+	h.WaitAllowed(t, c)
+
+	parent = h.CreatePolicy(t, &corev1.Policy{
+		Metadata: &metav1.Metadata{Name: parent.Metadata.Name},
+		Spec: &corev1.Policy_Spec{
+			Rules: []*corev1.Policy_Spec_Rule{harness.DenyAnyRule("deny-parent", 0)},
+		},
+	})
+	h.WaitDenied(t, c)
+	h.Consistently(t, "the recreated parent Policy to deny access through the deleted child reference", decisionSettle,
+		func(ctx context.Context) error {
+			status, err := h.StatusOf(ctx, c, "/")
+			if err != nil {
+				return err
+			}
+			if status != http.StatusForbidden {
+				return errUnexpectedStatus(status, http.StatusForbidden)
+			}
+			return nil
+		})
 }

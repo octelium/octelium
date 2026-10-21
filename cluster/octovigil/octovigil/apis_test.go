@@ -690,3 +690,81 @@ func TestEvaluateInvalidContext(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
+
+func TestInternalRPCLookupFailures(t *testing.T) {
+	for _, resource := range []string{"policy", "namespace", "trigger"} {
+		t.Run(resource, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			lookupErr := status.Error(codes.Unavailable, "authorization lookup failed")
+			switch resource {
+			case "policy":
+				coreC.service.Spec.Authorization.Policies = []string{"deny"}
+				coreC.errs["policy:deny"] = lookupErr
+			case "namespace":
+				assert.Nil(t, srv.s.cache.DeleteNamespace(coreC.namespace))
+				coreC.errs["namespace"] = lookupErr
+			case "trigger":
+				coreC.errs["policy:deny"] = lookupErr
+				assert.Nil(t, srv.s.policyTriggerCtl.SetPolicyTrigger(&corev1.PolicyTrigger{
+					Metadata: &metav1.Metadata{Uid: "trigger"},
+					Status: &corev1.PolicyTrigger_Status{Policies: []string{"deny"},
+						PreCondition: &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_MatchAny{MatchAny: true}},
+					},
+				}))
+			}
+			listener := bufconn.Listen(1024 * 1024)
+			server := grpc.NewServer()
+			srv.s.grpcSrv = server
+			coctovigilv1.RegisterInternalServiceServer(server, srv)
+			done := make(chan error, 1)
+			go func() { done <- server.Serve(listener) }()
+			t.Cleanup(func() {
+				assert.Nil(t, srv.s.Close())
+				listener.Close()
+				select {
+				case err := <-done:
+					assert.Nil(t, err)
+				case <-time.After(3 * time.Second):
+					assert.Fail(t, "the internal RPC server did not stop")
+				}
+			})
+			conn, err := grpc.NewClient("passthrough:///octovigil",
+				grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+					return listener.DialContext(ctx)
+				}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if !assert.Nil(t, err) {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+			client := coctovigilv1.NewInternalServiceClient(conn)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+			var wg sync.WaitGroup
+			for range 16 {
+				wg.Go(func() {
+					for range 8 {
+						authenticated, err := client.AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: &coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"}},
+						})
+						assert.Nil(t, authenticated)
+						assert.Equal(t, codes.Internal, status.Code(err))
+						authorized, err := client.Authorize(ctx, &coctovigilv1.AuthorizeRequest{
+							ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid,
+						})
+						assert.Nil(t, authorized)
+						assert.Equal(t, codes.Unavailable, status.Code(err))
+						if resource == "policy" {
+							evaluated, err := client.Evaluate(ctx, &coctovigilv1.EvaluateRequest{
+								Policies: []string{"deny"}, InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{{Policy: coreC.service.Spec.Authorization.InlinePolicies[0]}},
+							})
+							assert.Nil(t, evaluated)
+							assert.Equal(t, codes.Internal, status.Code(err))
+						}
+					}
+				})
+			}
+			wg.Wait()
+		})
+	}
+}

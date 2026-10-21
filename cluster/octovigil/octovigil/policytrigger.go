@@ -39,9 +39,7 @@ func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
 
 		rules, err := s.getRulesFromPolicyTrigger(ctx, i, reqCtxMap, pt, usedPolicies)
 		if err != nil {
-			zap.L().Error("Could not getRulesFromPolicyTrigger. Ignoring it...",
-				zap.Any("trigger", pt), zap.Error(err))
-			continue
+			return nil, err
 		}
 		if len(rules) == 0 {
 			continue
@@ -60,7 +58,9 @@ func (s *Server) getRulesFromPolicyTrigger(ctx context.Context,
 		"ctx": reqCtxMap,
 	}, pt.Status.PreCondition)
 	if err != nil {
-		return nil, err
+		zap.L().Error("Could not getRulesFromPolicyTrigger. Ignoring it...",
+			zap.Any("trigger", pt), zap.Error(err))
+		return nil, nil
 	}
 	if !isMatched {
 		return nil, nil

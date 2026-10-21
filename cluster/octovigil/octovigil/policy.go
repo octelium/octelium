@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.uber.org/zap"
 )
 
@@ -183,8 +184,10 @@ func (s *Server) getEvaluatePolicyRules(ctx context.Context, req *coctovigilv1.E
 		for _, p := range allPolices {
 			policy, err := s.getPolicyFromName(ctx, p)
 			if err != nil {
-				zap.L().Error("Could not getPolicyFromName", zap.String("policy", p))
-				continue
+				if grpcerr.IsNotFound(err) {
+					continue
+				}
+				return nil, err
 			}
 
 			if policy.Spec.IsDisabled {
@@ -270,8 +273,10 @@ func (s *Server) getResourcePolicyRules(ctx context.Context,
 		for _, p := range allPolices {
 			policy, err := s.getPolicyFromName(ctx, p)
 			if err != nil {
-				zap.L().Error("Could not getPolicyFromName", zap.String("policy", p))
-				continue
+				if grpcerr.IsNotFound(err) {
+					continue
+				}
+				return nil, err
 			}
 
 			if policy.Spec.IsDisabled {
@@ -359,19 +364,21 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 		ret = append(ret, rules...)
 	}
 
-	if ns, err := s.getNamespaceFromName(ctx, i.Service.Status.NamespaceRef.Name); err == nil {
-		if ns.Spec.Authorization != nil {
+	ns, err := s.getNamespaceFromName(ctx, i.Service.Status.NamespaceRef.Name)
+	if err != nil {
+		return nil, err
+	}
+	if ns.Spec.Authorization != nil {
 
-			rules, err := s.getResourcePolicyRules(ctx,
-				req.i, reqCtxMap,
-				ns.Spec.Authorization.Policies,
-				ns.Spec.Authorization.InlinePolicies,
-				umetav1.GetObjectReference(ns), &usedPolicies)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, rules...)
+		rules, err := s.getResourcePolicyRules(ctx,
+			req.i, reqCtxMap,
+			ns.Spec.Authorization.Policies,
+			ns.Spec.Authorization.InlinePolicies,
+			umetav1.GetObjectReference(ns), &usedPolicies)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, rules...)
 	}
 
 	if !s.isAnonymousAuthorizationEnabled(i.Service) {
@@ -426,9 +433,11 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 		}
 	}
 
-	if rules, err := s.getRulesFromPolicyTriggers(ctx, req.i, reqCtxMap, &usedPolicies); err == nil {
-		ret = append(ret, rules...)
+	rules, err := s.getRulesFromPolicyTriggers(ctx, req.i, reqCtxMap, &usedPolicies)
+	if err != nil {
+		return nil, err
 	}
+	ret = append(ret, rules...)
 
 	if req.additional != nil {
 		rules, err := s.getResourcePolicyRules(ctx,
