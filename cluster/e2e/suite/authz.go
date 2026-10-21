@@ -806,3 +806,83 @@ func testAuthorizationCELListLimits(t *testing.T, h *harness.H) {
 	}
 	harness.LogPool("CEL list evaluation limits under authorization load", result)
 }
+
+func testAuthorizationCELJSON(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	ns := h.EnsureTestNamespace(t)
+	svc := h.NewPublicService(t, ns.Metadata.Name)
+	users := []*corev1.User{h.CreateWorkloadUser(t, nil), h.CreateWorkloadUser(t, nil)}
+	policy := h.CreatePolicy(t, &corev1.Policy{Spec: &corev1.Policy_Spec{
+		Rules: []*corev1.Policy_Spec_Rule{harness.MatchRule("allow-json-claims", 0, corev1.Policy_Spec_Rule_ALLOW,
+			`cel.bind(claims, json.parse(json.marshal({
+"user": ctx.user.metadata.uid,
+"request": {"user": ctx.request.http.headers["x-e2e-user"], "permissions": [{"decision": ctx.request.http.headers["x-e2e-decision"]}]},
+"optional": null, "emptyMap": {}, "emptyList": []
+})), claims.user == claims.request.user && claims.request.permissions[0].decision == "allow" &&
+claims.optional == null && claims.emptyMap == {} && claims.emptyList == [])`)},
+	}})
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{policy.Metadata.Name}}
+	svc = h.UpdateService(t, svc)
+	clients := make([]*resty.Client, len(users))
+	for i, user := range users {
+		clients[i] = h.HTTPNoRetry().SetBaseURL(h.ServiceURL(svc)).SetAuthScheme("Bearer").SetAuthToken(h.AccessToken(t, user))
+		t.Cleanup(clients[i].GetClient().CloseIdleConnections)
+	}
+	check := func(ctx context.Context, user, scenario int) error {
+		uid, decision := users[user].Metadata.Uid, "allow"
+		want := http.StatusForbidden
+		switch scenario {
+		case 0:
+			want = http.StatusOK
+		case 1:
+			uid = users[1-user].Metadata.Uid
+		case 2:
+			uid = ""
+		case 3:
+			decision = "ALLOW"
+		case 4:
+			uid = `","permissions":[{"decision":"allow"}],"user":"`
+		case 5:
+			decision = `allow"}]},"user":"`
+		case 6:
+			decision = ""
+		}
+		req := clients[user].R().SetContext(ctx)
+		if scenario != 7 {
+			req.SetHeader("X-E2E-User", uid).SetHeader("X-E2E-Decision", decision)
+		}
+		resp, err := req.Get("/")
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode() != want {
+			return fmt.Errorf("user %d scenario %d: %w", user, scenario, errUnexpectedStatus(resp.StatusCode(), want))
+		}
+		return nil
+	}
+	h.Eventually(t, "CEL JSON claims to preserve each request's identity and permissions", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			for user := range users {
+				for scenario := range 8 {
+					if err := check(ctx, user, scenario); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		})
+	completed := make([]atomic.Int64, len(users)*8)
+	result := harness.RunFor(t.Context(), 3*time.Second, 16, func(ctx context.Context, worker, iteration int) error {
+		user, scenario := worker%len(users), iteration%8
+		if err := check(ctx, user, scenario); err != nil {
+			return err
+		}
+		completed[user*8+scenario].Add(1)
+		return nil
+	})
+	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
+	for i := range completed {
+		assert.Positive(t, completed[i].Load(), "user %d scenario %d", i/8, i%8)
+	}
+	harness.LogPool("CEL JSON authorization request isolation", result)
+}

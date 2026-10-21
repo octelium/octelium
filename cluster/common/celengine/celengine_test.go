@@ -18,6 +18,7 @@ package celengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -203,6 +204,60 @@ func TestCELResultConversion(t *testing.T) {
 		res, err := srv.EvalPolicyMapStrAny(ctx, expr, nil)
 		assert.NotNil(t, err)
 		assert.Nil(t, res)
+	}
+}
+
+func TestCELJSONMarshal(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+	const expr = `json.marshal({"user": ctx.user, "items": ctx.items, "enabled": ctx.enabled, "empty": {}, "null": null})`
+	const match = `json.parse(` + expr + `).user == ctx.user && json.parse(` + expr + `).enabled == ctx.enabled`
+	require.Nil(t, srv.AddPolicyString(ctx, expr))
+	require.Nil(t, srv.AddPolicy(ctx, match))
+	for i := range 8 {
+		t.Run(fmt.Sprintf("User%d", i), func(t *testing.T) {
+			t.Parallel()
+			for j := range 16 {
+				value := map[string]any{
+					"user":    fmt.Sprintf("user-%d-%d\"\\\n", i, j),
+					"items":   []any{map[string]any{"index": int64(j)}, nil, []string{"one", "two"}},
+					"enabled": i%2 == 0,
+					"empty":   map[string]any{}, "null": nil,
+				}
+				want, err := json.Marshal(value)
+				require.Nil(t, err)
+				input := map[string]any{"ctx": value}
+				out, err := srv.EvalPolicyString(t.Context(), expr, input)
+				require.Nil(t, err)
+				assert.Equal(t, string(want), out)
+				matched, err := srv.EvalPolicy(t.Context(), match, input)
+				require.Nil(t, err)
+				assert.True(t, matched)
+				obj, err := srv.EvalPolicyMapStrAny(t.Context(), `{"body": `+expr+`}`, input)
+				require.Nil(t, err)
+				assert.Equal(t, map[string]any{"body": string(want)}, obj)
+			}
+		})
+	}
+}
+
+func TestCELJSONMarshalErrors(t *testing.T) {
+	srv, err := New(t.Context(), nil)
+	require.Nil(t, err)
+	for _, expr := range []string{
+		`json.marshal({"nested": {true: "value"}})`,
+		`json.marshal({"nested": {1: "number", "1": "string"}})`,
+	} {
+		out, err := srv.EvalPolicyString(t.Context(), expr, nil)
+		assert.ErrorContains(t, err, "Could not marshal json")
+		assert.Empty(t, out)
+		matched, err := srv.EvalPolicy(t.Context(), expr+` != "{}"`, nil)
+		assert.ErrorContains(t, err, "Could not marshal json")
+		assert.False(t, matched)
+		obj, err := srv.EvalPolicyMapStrAny(t.Context(), `{"body": `+expr+`}`, nil)
+		assert.ErrorContains(t, err, "Could not marshal json")
+		assert.Nil(t, obj)
 	}
 }
 

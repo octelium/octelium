@@ -19,11 +19,13 @@ package cellib
 import (
 	"encoding/json"
 	"net"
+	"reflect"
 	"time"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
+	"cel.dev/cel-go/common/types/traits"
 	"github.com/asaskevich/govalidator"
 	"github.com/pkg/errors"
 )
@@ -77,7 +79,10 @@ func funcJSON() []cel.EnvOption {
 				},
 				cel.StringType,
 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-					value := val.Value()
+					value, err := toJSONValue(val, 0)
+					if err != nil {
+						return types.NewErr("Could not marshal json")
+					}
 					out, err := json.Marshal(value)
 					if err != nil {
 						return types.NewErr("Could not marshal json")
@@ -86,6 +91,63 @@ func funcJSON() []cel.EnvOption {
 				}),
 			),
 		),
+	}
+}
+
+func toJSONValue(val ref.Val, depth int) (any, error) {
+	if depth > 10000 || types.IsUnknownOrError(val) {
+		return nil, errors.Errorf("Invalid json value")
+	}
+
+	switch v := val.(type) {
+	case types.Null:
+		return nil, nil
+	case traits.Mapper:
+		if v.Size() == types.IntZero {
+			native := reflect.ValueOf(v.Value())
+			if native.Kind() == reflect.Map && native.IsNil() {
+				return nil, nil
+			}
+		}
+		ret := make(map[string]any)
+		it := v.Iterator()
+		for it.HasNext() == types.True {
+			key := it.Next()
+			switch key.Type() {
+			case types.StringType, types.IntType, types.UintType:
+			default:
+				return nil, errors.Errorf("Invalid json key")
+			}
+			name := string(key.ConvertToType(types.StringType).(types.String))
+			if _, ok := ret[name]; ok {
+				return nil, errors.Errorf("Duplicate json key")
+			}
+			value, err := toJSONValue(v.Get(key), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			ret[name] = value
+		}
+		return ret, nil
+	case traits.Lister:
+		size := int(v.Size().(types.Int))
+		if size == 0 {
+			native := reflect.ValueOf(v.Value())
+			if native.Kind() == reflect.Slice && native.IsNil() {
+				return nil, nil
+			}
+		}
+		ret := make([]any, size)
+		for i := range size {
+			value, err := toJSONValue(v.Get(types.Int(i)), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			ret[i] = value
+		}
+		return ret, nil
+	default:
+		return val.Value(), nil
 	}
 }
 

@@ -19,14 +19,17 @@ package cellib
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/checker/decls"
 	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/common/types/ref"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFunctionInputErrors(t *testing.T) {
@@ -175,6 +178,131 @@ func TestFunctionJSON(t *testing.T) {
 
 	}
 
+}
+
+func TestFunctionJSONMarshalLiterals(t *testing.T) {
+	env, err := cel.NewEnv(CELLib())
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		expr string
+		want string
+	}{
+		{`{"value": "test"}`, `{"value":"test"}`},
+		{`{"nested": {"items": [{"enabled": true}, null, [1, 2u, 3.5]]}}`, `{"nested":{"items":[{"enabled":true},null,[1,2,3.5]]}}`},
+		{`[{"value": "test"}, {}, []]`, `[{"value":"test"},{},[]]`},
+		{`[1, 2].map(x, {"value": x})`, `[{"value":1},{"value":2}]`},
+		{`[{"value": 1}] + [{"value": 2}]`, `[{"value":1},{"value":2}]`},
+		{`{"": "", "unicode": "日本語", "quote": "\"\\\n"}`, `{"":"","quote":"\"\\\n","unicode":"日本語"}`},
+		{`{"min": -9223372036854775808, "max": 9223372036854775807, "uint": 18446744073709551615u}`, `{"max":9223372036854775807,"min":-9223372036854775808,"uint":18446744073709551615}`},
+		{`{1: "one", -2: "two"}`, `{"-2":"two","1":"one"}`},
+		{`{18446744073709551615u: "max"}`, `{"18446744073709551615":"max"}`},
+		{`{"bytes": b"abc", "time": timestamp("2025-01-01T00:00:00Z"), "duration": duration("1s")}`, `{"bytes":"YWJj","duration":1000000000,"time":"2025-01-01T00:00:00Z"}`},
+		{`{}`, `{}`},
+		{`[]`, `[]`},
+		{`null`, `null`},
+		{`true`, `true`},
+		{`false`, `false`},
+		{`"value"`, `"value"`},
+		{`-1`, `-1`},
+		{`18446744073709551615u`, `18446744073709551615`},
+		{`1.5`, `1.5`},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			ast, iss := env.Compile("json.marshal(" + tc.expr + ")")
+			require.Nil(t, iss.Err())
+			for _, opt := range []cel.EvalOption{0, cel.OptOptimize} {
+				prg, err := env.Program(ast, cel.EvalOptions(opt))
+				require.Nil(t, err)
+				out, _, err := prg.ContextEval(t.Context(), map[string]any{})
+				require.Nil(t, err)
+				assert.Equal(t, tc.want, out.Value())
+			}
+		})
+	}
+}
+
+func TestFunctionJSONMarshalValues(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	require.Nil(t, err)
+	ast, iss := env.Compile("json.marshal(ctx)")
+	require.Nil(t, iss.Err())
+	prg, err := env.Program(ast, cel.EvalOptions(cel.OptOptimize))
+	require.Nil(t, err)
+	for _, value := range []any{
+		map[string]any{"nested": []any{map[string]any{"value": true}, nil}},
+		[]any{map[string]any{"value": "test"}, false, nil},
+		map[int64]string{-1: "negative", math.MaxInt64: "max"},
+		map[uint64]string{math.MaxUint64: "max"},
+		map[string]any{}, []any{},
+		map[string]any(nil), []any(nil),
+		[2]any{map[string]any{"value": "test"}, nil},
+		[]byte("abc"), []byte(nil),
+		int64(math.MinInt64), int64(math.MaxInt64), uint64(math.MaxUint64),
+		true, false, "value", 1.5, nil,
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), time.Second,
+	} {
+		want, err := json.Marshal(value)
+		require.Nil(t, err)
+		out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": value})
+		require.Nil(t, err, "%T: %+v", value, value)
+		assert.Equal(t, string(want), out.Value(), "%T: %+v", value, value)
+	}
+	for _, value := range []any{
+		map[string]ref.Val{"value": types.NewRefValMap(types.DefaultTypeAdapter, map[ref.Val]ref.Val{types.String("nested"): types.NullValue})},
+		map[string]any{"value": map[ref.Val]ref.Val{types.String("nested"): types.NullValue}},
+	} {
+		out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": value})
+		require.Nil(t, err)
+		assert.Equal(t, `{"value":{"nested":null}}`, out.Value())
+	}
+}
+
+func TestFunctionJSONMarshalErrors(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	require.Nil(t, err)
+	for _, expr := range []string{
+		`json.marshal({true: "value"})`,
+		`json.marshal({"nested": [{false: "value"}]})`,
+		`json.marshal({1: "number", "1": "string"})`,
+		`json.marshal({"nested": {1: "number", "1": "string"}})`,
+		`json.marshal(ctx)`,
+		`json.marshal({"nested": [ctx]})`,
+		`json.marshal(ctx) == "{}"`,
+	} {
+		ast, iss := env.Compile(expr)
+		require.Nil(t, iss.Err())
+		prg, err := env.Program(ast, cel.EvalOptions(cel.OptOptimize))
+		require.Nil(t, err)
+		for _, value := range []any{
+			math.NaN(), math.Inf(1), math.Inf(-1),
+			map[bool]string{true: "value"},
+			[]ref.Val{types.NewErr("invalid value")},
+			map[string]ref.Val{"value": types.NewUnknown(1, nil)},
+		} {
+			_, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": value})
+			assert.NotNil(t, err, "%s: %T", expr, value)
+		}
+	}
+}
+
+func TestFunctionJSONMarshalCycles(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	require.Nil(t, err)
+	ast, iss := env.Compile("json.marshal(ctx)")
+	require.Nil(t, iss.Err())
+	prg, err := env.Program(ast)
+	require.Nil(t, err)
+	obj := map[string]any{}
+	obj["self"] = obj
+	list := make([]any, 1)
+	list[0] = list
+	for _, value := range []any{obj, list} {
+		_, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": value})
+		assert.ErrorContains(t, err, "Could not marshal json")
+	}
+	out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": map[string]any{"value": "test"}})
+	require.Nil(t, err)
+	assert.Equal(t, `{"value":"test"}`, out.Value())
 }
 
 func TestFunctionNet(t *testing.T) {
