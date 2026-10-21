@@ -18,24 +18,31 @@ package otelutils
 
 import (
 	"context"
+	"math"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/components/otelcore"
 	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 )
 
@@ -169,4 +176,130 @@ func TestServer(t *testing.T) {
 	metricsProvider.Shutdown(ctx)
 
 	time.Sleep(3 * time.Second)
+}
+
+type componentLogSrv struct {
+	plogotlp.UnimplementedGRPCServer
+	records chan plog.LogRecord
+}
+
+func (s *componentLogSrv) Export(ctx context.Context, req plogotlp.ExportRequest) (plogotlp.ExportResponse, error) {
+	resources := req.Logs().ResourceLogs()
+	for i := range resources.Len() {
+		scopes := resources.At(i).ScopeLogs()
+		for j := range scopes.Len() {
+			records := scopes.At(j).LogRecords()
+			for k := range records.Len() {
+				record := plog.NewLogRecord()
+				records.At(k).CopyTo(record)
+				select {
+				case s.records <- record:
+				case <-ctx.Done():
+					return plogotlp.NewExportResponse(), ctx.Err()
+				}
+			}
+		}
+	}
+	return plogotlp.NewExportResponse(), nil
+}
+
+func TestComponentLogExport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	levels := []struct {
+		level    zapcore.Level
+		severity plog.SeverityNumber
+		want     corev1.ComponentLog_Entry_Level
+	}{
+		{zapcore.DebugLevel, plog.SeverityNumberDebug, corev1.ComponentLog_Entry_DEBUG},
+		{zapcore.InfoLevel, plog.SeverityNumberInfo, corev1.ComponentLog_Entry_INFO},
+		{zapcore.WarnLevel, plog.SeverityNumberWarn, corev1.ComponentLog_Entry_WARN},
+		{zapcore.ErrorLevel, plog.SeverityNumberError, corev1.ComponentLog_Entry_ERROR},
+		{zapcore.DPanicLevel, plog.SeverityNumberFatal, corev1.ComponentLog_Entry_PANIC},
+		{zapcore.PanicLevel, plog.SeverityNumberFatal2, corev1.ComponentLog_Entry_PANIC},
+		{zapcore.FatalLevel, plog.SeverityNumberFatal3, corev1.ComponentLog_Entry_FATAL},
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.Nil(t, err)
+	srv := &componentLogSrv{records: make(chan plog.LogRecord, len(levels)+1)}
+	grpcSrv := grpc.NewServer()
+	plogotlp.RegisterGRPCServer(grpcSrv, srv)
+	done := make(chan error, 1)
+	go func() {
+		done <- grpcSrv.Serve(lis)
+	}()
+	t.Cleanup(func() {
+		grpcSrv.Stop()
+		err := <-done
+		assert.True(t, err == nil || err == grpc.ErrServerStopped, "%+v", err)
+	})
+
+	exporter, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(lis.Addr().String()), otlploggrpc.WithInsecure())
+	require.Nil(t, err)
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		assert.Nil(t, provider.Shutdown(ctx))
+	})
+
+	c := otelcore.NewOTELCore(provider.Logger("component-test")).With([]zapcore.Field{
+		zap.String("context", "original"), zap.Float32("float32", 1.5),
+	})
+	require.NotNil(t, c)
+	for _, level := range levels {
+		require.Nil(t, c.Write(zapcore.Entry{Level: level.level, Time: time.Now(), Message: level.level.String()},
+			[]zapcore.Field{zap.Float64("float64", -2.5), zap.Uint64("uint64", math.MaxUint64), zap.Float64("nan", math.NaN())}))
+	}
+	logger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), c))
+	logger.With(zap.String("context", "child"), zap.String("request", "request")).Warn("child")
+	require.Nil(t, provider.ForceFlush(ctx))
+
+	seen := map[string]bool{}
+	for range len(levels) + 1 {
+		var record plog.LogRecord
+		select {
+		case record = <-srv.records:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		res := &corev1.ComponentLog{}
+		require.Nil(t, pbutils.UnmarshalJSON([]byte(record.Body().Str()), res))
+		assert.False(t, seen[res.Entry.Message])
+		seen[res.Entry.Message] = true
+		assert.Equal(t, "core/v1", res.ApiVersion)
+		assert.Equal(t, "ComponentLog", res.Kind)
+		assert.NotEmpty(t, res.Metadata.Id)
+		assert.False(t, record.Timestamp().AsTime().IsZero())
+		assert.False(t, record.ObservedTimestamp().AsTime().IsZero())
+		fields := res.Entry.Fields.Fields
+		assert.Equal(t, 1.5, fields["float32"].GetNumberValue())
+		if res.Entry.Message == "child" {
+			assert.Equal(t, plog.SeverityNumberWarn, record.SeverityNumber())
+			assert.Equal(t, "warn", record.SeverityText())
+			assert.Equal(t, corev1.ComponentLog_Entry_WARN, res.Entry.Level)
+			assert.Equal(t, "child", fields["context"].GetStringValue())
+			assert.Equal(t, "request", fields["request"].GetStringValue())
+			assert.Len(t, fields, 3)
+			continue
+		}
+		assert.Equal(t, "original", fields["context"].GetStringValue())
+		assert.Equal(t, -2.5, fields["float64"].GetNumberValue())
+		assert.Equal(t, float64(math.MaxUint64), fields["uint64"].GetNumberValue())
+		assert.Equal(t, "NaN", fields["nan"].GetStringValue())
+		assert.Len(t, fields, 5)
+		found := false
+		for _, level := range levels {
+			if res.Entry.Message == level.level.String() {
+				assert.Equal(t, level.severity, record.SeverityNumber())
+				assert.Equal(t, level.level.String(), record.SeverityText())
+				assert.Equal(t, level.want, res.Entry.Level)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, res.Entry.Message)
+	}
+	assert.Len(t, seen, len(levels)+1)
 }

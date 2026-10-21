@@ -19,6 +19,8 @@ package otelcore
 import (
 	"context"
 	"encoding/base64"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -42,6 +44,7 @@ func NewOTELCore(logger log.Logger) zapcore.Core {
 
 type otelCore struct {
 	logger log.Logger
+	fields *structpb.Struct
 }
 
 func (c *otelCore) Enabled(zapcore.Level) bool {
@@ -49,7 +52,10 @@ func (c *otelCore) Enabled(zapcore.Level) bool {
 }
 
 func (c *otelCore) With(fs []zapcore.Field) zapcore.Core {
-	return nil
+	return &otelCore{
+		logger: c.logger,
+		fields: c.getFields(fs),
+	}
 }
 
 func (c *otelCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
@@ -92,7 +98,7 @@ func (c *otelCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	rec.SetBody(attribute.StringValue(string(lrJSON)))
 	rec.SetTimestamp(ent.Time)
 	rec.SetObservedTimestamp(pbutils.Now().AsTime())
-	rec.SetSeverity(log.Severity(ent.Level))
+	rec.SetSeverity(c.getSeverity(ent.Level))
 	rec.SetSeverityText(ent.Level.String())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -111,21 +117,62 @@ func (c *otelCore) getLevel(l zapcore.Level) corev1.ComponentLog_Entry_Level {
 		return corev1.ComponentLog_Entry_ERROR
 	case zapcore.InfoLevel:
 		return corev1.ComponentLog_Entry_INFO
-	case zapcore.DPanicLevel:
+	case zapcore.WarnLevel:
+		return corev1.ComponentLog_Entry_WARN
+	case zapcore.DPanicLevel, zapcore.PanicLevel:
 		return corev1.ComponentLog_Entry_PANIC
 	default:
 		return corev1.ComponentLog_Entry_LEVEL_UNSET
 	}
 }
 
+func (c *otelCore) getSeverity(l zapcore.Level) log.Severity {
+	switch l {
+	case zapcore.DebugLevel:
+		return log.SeverityDebug
+	case zapcore.InfoLevel:
+		return log.SeverityInfo
+	case zapcore.WarnLevel:
+		return log.SeverityWarn
+	case zapcore.ErrorLevel:
+		return log.SeverityError
+	case zapcore.DPanicLevel:
+		return log.SeverityFatal1
+	case zapcore.PanicLevel:
+		return log.SeverityFatal2
+	case zapcore.FatalLevel:
+		return log.SeverityFatal3
+	default:
+		return log.SeverityUndefined
+	}
+}
+
+func (c *otelCore) getFloat(value float64) *structpb.Value {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return &structpb.Value{
+			Kind: &structpb.Value_StringValue{
+				StringValue: strconv.FormatFloat(value, 'g', -1, 64),
+			},
+		}
+	}
+	return &structpb.Value{
+		Kind: &structpb.Value_NumberValue{
+			NumberValue: value,
+		},
+	}
+}
+
 func (c *otelCore) getFields(fields []zapcore.Field) *structpb.Struct {
 
-	if len(fields) < 1 {
+	if len(fields) < 1 && c.fields == nil {
 		return nil
 	}
 
 	ret := &structpb.Struct{
 		Fields: map[string]*structpb.Value{},
+	}
+	for key, value := range c.fields.GetFields() {
+		ret.Fields[key] = value
 	}
 
 	for _, f := range fields {
@@ -165,10 +212,19 @@ func (c *otelCore) getFields(fields []zapcore.Field) *structpb.Struct {
 				},
 			}
 
+		case zapcore.Float32Type:
+			ret.Fields[f.Key] = c.getFloat(float64(math.Float32frombits(uint32(f.Integer))))
+		case zapcore.Float64Type:
+			ret.Fields[f.Key] = c.getFloat(math.Float64frombits(uint64(f.Integer)))
+		case zapcore.Uint64Type, zapcore.Uint32Type, zapcore.Uint16Type,
+			zapcore.Uint8Type, zapcore.UintptrType:
+			ret.Fields[f.Key] = &structpb.Value{
+				Kind: &structpb.Value_NumberValue{
+					NumberValue: float64(uint64(f.Integer)),
+				},
+			}
 		case zapcore.Int64Type, zapcore.Int32Type, zapcore.Int16Type,
-			zapcore.Int8Type, zapcore.Float32Type, zapcore.Float64Type,
-			zapcore.Uint64Type, zapcore.Uint32Type, zapcore.Uint16Type,
-			zapcore.Uint8Type, zapcore.DurationType:
+			zapcore.Int8Type, zapcore.DurationType:
 			ret.Fields[f.Key] = &structpb.Value{
 				Kind: &structpb.Value_NumberValue{
 					NumberValue: float64(f.Integer),
