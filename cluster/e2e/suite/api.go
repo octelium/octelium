@@ -397,3 +397,109 @@ func testAPIHeaderValidation(t *testing.T, h *harness.H) {
 		})
 	}
 }
+
+func testAPIDynamicConfigTargets(t *testing.T, h *harness.H) {
+	v := newVigilCtx(t, h)
+	response := h.Name()
+	v.record(t, http.StatusOK, response)
+	v.svc.Spec.Config.Type = &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+		Header: &corev1.Service_Spec_Config_HTTP_Header{
+			AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{{
+				Key:  "X-E2E-Config",
+				Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "default"},
+			}},
+		},
+	}}
+	selected := proto.Clone(v.svc.Spec.Config).(*corev1.Service_Spec_Config)
+	selected.Name = "selected"
+	selected.GetHttp().Header.AddResponseHeaders[0].Type = &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "selected"}
+	other := proto.Clone(v.svc.Spec.Config).(*corev1.Service_Spec_Config)
+	other.Name = "other"
+	v.svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+		Configs: []*corev1.Service_Spec_Config{selected, other},
+		Rules: []*corev1.Service_Spec_DynamicConfig_Rule{
+			{
+				Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: `ctx.request.http.path.startsWith("/selected")`}},
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "selected"},
+			},
+			{
+				Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"},
+			},
+		},
+	}
+	v.svc = h.UpdateService(t, v.svc)
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	selectedHeader := "selected"
+	check := func(ctx context.Context) error {
+		for _, tc := range []struct {
+			path   string
+			header string
+		}{
+			{"/selected", selectedHeader},
+			{"/", "default"},
+		} {
+			res, err := c.R().SetContext(ctx).Get(v.url(tc.path))
+			if err != nil {
+				return err
+			}
+			if res.StatusCode() != http.StatusOK {
+				return errUnexpectedStatus(res.StatusCode(), http.StatusOK)
+			}
+			if res.String() != response || res.Header().Get("X-E2E-Config") != tc.header {
+				return fmt.Errorf("the request to %s did not use the expected %s config", tc.path, tc.header)
+			}
+		}
+		return nil
+	}
+	h.Eventually(t, "requests to select the named and default configs", harness.DecisionBudget, check)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Service)
+	}{
+		{"MissingTarget", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"}
+		}},
+		{"RenamedTarget", func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs[0].Name = "renamed" }},
+		{"RemovedTarget", func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[1:] }},
+		{"MissingDefault", func(svc *corev1.Service) { svc.Spec.Config = nil }},
+		{"UnmatchedMissingTarget", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules = append(svc.Spec.DynamicConfig.Rules, &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: false}},
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"},
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := proto.Clone(v.svc).(*corev1.Service)
+			tc.mutate(req)
+			create := proto.Clone(req).(*corev1.Service)
+			create.Metadata = &metav1.Metadata{Name: fmt.Sprintf("%s.default", h.Name())}
+			create.Status = nil
+			_, err := h.CoreC().CreateService(t.Context(), create)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			_, err = h.CoreC().GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+			_, err = h.CoreC().UpdateService(t.Context(), req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			stored, err := h.CoreC().GetService(t.Context(), &metav1.GetOptions{Uid: v.svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.True(t, proto.Equal(v.svc.Spec, stored.Spec))
+			h.Eventually(t, "rejected writes to preserve dynamic config routing", harness.DecisionBudget, check)
+		})
+	}
+
+	v.svc.Spec.DynamicConfig.Configs[0].Name = "renamed"
+	v.svc.Spec.DynamicConfig.Configs[0].GetHttp().Header.AddResponseHeaders[0].Type = &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "renamed"}
+	v.svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "renamed"}
+	v.svc = h.UpdateService(t, v.svc)
+	selectedHeader = "renamed"
+	h.Eventually(t, "a renamed config and its updated rule to keep routing requests", harness.DecisionBudget, check)
+
+	v.svc.Spec.DynamicConfig.Configs = v.svc.Spec.DynamicConfig.Configs[1:]
+	v.svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+	v.svc = h.UpdateService(t, v.svc)
+	selectedHeader = "default"
+	h.Eventually(t, "an updated rule to use the default after removing its previous config", harness.DecisionBudget, check)
+}

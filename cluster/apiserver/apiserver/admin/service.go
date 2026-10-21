@@ -387,6 +387,10 @@ func (s *Server) validateService(ctx context.Context,
 				if err := apivalidation.ValidateName(rule.GetConfigName(), 0, 0); err != nil {
 					return err
 				}
+				if !slices.Contains(names, rule.GetConfigName()) ||
+					(rule.GetConfigName() == "default" && spec.Config == nil) {
+					return serr.InvalidArg("Config name: %s does not exist", rule.GetConfigName())
+				}
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
 				if err := checkCELExpressionMap(ctx, rule.GetEval()); err != nil {
 					return grpcutils.InvalidArg("Invalid eval: %s", rule.GetEval())

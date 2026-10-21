@@ -3726,3 +3726,182 @@ func TestServiceHeaderValidationPersistence(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceDynamicConfigRuleTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		valid  bool
+		mutate func(*corev1.Service)
+	}{
+		{"NamedConfig", true, func(svc *corev1.Service) {}},
+		{"LastNamedConfig", true, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "other"}
+		}},
+		{"NamedWithoutDefault", true, func(svc *corev1.Service) { svc.Spec.Config = nil }},
+		{"DefaultConfig", true, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+		}},
+		{"ExplicitDefaultName", true, func(svc *corev1.Service) {
+			svc.Spec.Config.Name = "default"
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+		}},
+		{"MissingNamedConfig", false, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"}
+		}},
+		{"MissingWithoutDefault", false, func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"}
+		}},
+		{"MissingDefault", false, func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+		}},
+		{"UnmatchedMissingTarget", false, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Condition = &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: false}}
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"}
+		}},
+		{"LaterMissingTarget", false, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules = append(svc.Spec.DynamicConfig.Rules, &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: genMatchAnyCondition(),
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"},
+			})
+		}},
+		{"RenamedTarget", false, func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs[0].Name = "renamed" }},
+		{"RemovedTarget", false, func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[1:] }},
+		{"EmptyTarget", false, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{}
+		}},
+		{"InvalidTargetName", false, func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "selected/config"}
+		}},
+		{"CEL", true, func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig.Configs = nil
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream":{"url":"http://example.com"}}`}
+		}},
+		{"OPA", true, func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig.Configs = nil
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": \"http://example.com\"}}"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Name: "service.default"},
+				Spec: &corev1.Service_Spec{
+					Mode:   corev1.Service_Spec_HTTP,
+					Config: tstServiceConfig(t, `{"upstream":{"url":"http://example.com"}}`),
+					DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+						Configs: []*corev1.Service_Spec_Config{
+							tstServiceConfig(t, `{"name":"selected","upstream":{"url":"http://selected.example.com"}}`),
+							tstServiceConfig(t, `{"name":"other","upstream":{"url":"http://other.example.com"}}`),
+						},
+						Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+							Condition: genMatchAnyCondition(),
+							Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "selected"},
+						}},
+					},
+				},
+				Status: &corev1.Service_Status{},
+			}
+			tc.mutate(svc)
+			s := &Server{}
+			err := s.validateService(t.Context(), svc)
+			if tc.valid {
+				assert.Nil(t, err)
+			} else {
+				assert.NotNil(t, err)
+			}
+		})
+	}
+}
+
+func TestServiceDynamicConfigTargetPersistence(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newFakeServer(tst.C)
+	svc, err := s.CreateService(t.Context(), &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode:   corev1.Service_Spec_HTTP,
+			Config: tstServiceConfig(t, `{"upstream":{"url":"http://example.com"}}`),
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{
+					tstServiceConfig(t, `{"name":"selected","upstream":{"url":"http://selected.example.com"}}`),
+					tstServiceConfig(t, `{"name":"other","upstream":{"url":"http://other.example.com"}}`),
+				},
+				Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+					Condition: genMatchAnyCondition(),
+					Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "selected"},
+				}},
+			},
+		},
+	})
+	require.Nil(t, err)
+	want := pbutils.MarshalMust(svc.Spec)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Service)
+	}{
+		{"MissingTarget", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"}
+		}},
+		{"RenamedTarget", func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs[0].Name = "renamed" }},
+		{"RemovedTarget", func(svc *corev1.Service) { svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[1:] }},
+		{"MissingDefault", func(svc *corev1.Service) {
+			svc.Spec.Config = nil
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+		}},
+		{"LaterMissingTarget", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Rules = append(svc.Spec.DynamicConfig.Rules, &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: false}},
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "missing"},
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := pbutils.Clone(svc).(*corev1.Service)
+			tc.mutate(req)
+			create := pbutils.Clone(req).(*corev1.Service)
+			create.Metadata = &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)}
+			create.Status = nil
+			_, err := s.CreateService(t.Context(), create)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			_, err = s.GetService(t.Context(), &metav1.GetOptions{Name: create.Metadata.Name})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+			_, err = s.UpdateService(t.Context(), req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.Equal(t, want, pbutils.MarshalMust(stored.Spec))
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Service)
+	}{
+		{"RenameWithRule", func(svc *corev1.Service) {
+			svc.Spec.DynamicConfig.Configs[0].Name = "renamed"
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "renamed"}
+		}},
+		{"RemoveUnreferencedDefault", func(svc *corev1.Service) { svc.Spec.Config = nil }},
+		{"RemoveWithRule", func(svc *corev1.Service) {
+			svc.Spec.Config = tstServiceConfig(t, `{"upstream":{"url":"http://example.com"}}`)
+			svc.Spec.DynamicConfig.Configs = svc.Spec.DynamicConfig.Configs[1:]
+			svc.Spec.DynamicConfig.Rules[0].Type = &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "default"}
+		}},
+	} {
+		if !t.Run(tc.name, func(t *testing.T) {
+			req := pbutils.Clone(svc).(*corev1.Service)
+			tc.mutate(req)
+			svc, err = s.UpdateService(t.Context(), req)
+			require.Nil(t, err)
+			stored, err := s.GetService(t.Context(), &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			require.Nil(t, err)
+			assert.Equal(t, pbutils.MarshalMust(req.Spec), pbutils.MarshalMust(stored.Spec))
+		}) {
+			return
+		}
+	}
+}
