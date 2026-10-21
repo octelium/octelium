@@ -138,8 +138,10 @@ func NewServer(ctx context.Context, domain string, octeliumC octeliumc.ClientInt
 
 func (s *Server) startDebouncer(ctx context.Context) {
 	const debounceInterval = 300 * time.Millisecond
+	const maxRetryInterval = 30 * time.Second
 	var timer *time.Timer
 	var timerCh <-chan time.Time
+	var retryInterval time.Duration
 
 	zap.L().Debug("Starting startDebouncer loop")
 
@@ -152,6 +154,9 @@ func (s *Server) startDebouncer(ctx context.Context) {
 			return
 
 		case <-s.triggerCh:
+			if retryInterval > 0 {
+				continue
+			}
 			if timer == nil {
 				timer = time.NewTimer(debounceInterval)
 				timerCh = timer.C
@@ -168,12 +173,24 @@ func (s *Server) startDebouncer(ctx context.Context) {
 		case <-timerCh:
 			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 
-			if err := s.doSnapshot(snapshotCtx); err != nil {
-				zap.L().Error("Failed to perform Envoy snapshot", zap.Error(err))
+			err := s.doSnapshot(snapshotCtx)
+			cancel()
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if retryInterval == 0 {
+					retryInterval = time.Second
+				} else {
+					retryInterval = min(2*retryInterval, maxRetryInterval)
+				}
+				zap.L().Error("Failed to perform Envoy snapshot",
+					zap.Error(err), zap.Duration("retryAfter", retryInterval))
+				timer.Reset(retryInterval)
+				continue
 			}
 
-			cancel()
-
+			retryInterval = 0
 			timer = nil
 			timerCh = nil
 		}

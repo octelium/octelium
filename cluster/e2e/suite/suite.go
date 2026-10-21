@@ -103,6 +103,7 @@ func Phases() []Phase {
 		{"IngressHTTPProtocolsLoad", testIngressHTTPProtocolsLoad},
 		{"IngressHTTPValidation", testIngressHTTPValidation},
 		{"IngressCertificateRotation", testIngressCertificateRotation},
+		{"IngressSnapshotRetry", testIngressSnapshotRetry},
 		{"GatewayResource", testGatewayResource},
 		{"GatewayConnection", testGatewayConnection},
 		{"GatewayReconnect", testGatewayReconnect},

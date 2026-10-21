@@ -35,12 +35,16 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	k8scorev1 "k8s.io/api/core/v1"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func testIngress(t *testing.T, h *harness.H) {
@@ -458,4 +462,94 @@ func testIngressCertificateRotation(t *testing.T, h *harness.H) {
 			}
 			return nil
 		})
+}
+
+func testIngressSnapshotRetry(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	v := newVigilCtx(t, h)
+	v.record(t, http.StatusOK, "snapshot-retry")
+	v.svc.Spec.IsAnonymous = true
+	v.svc = h.UpdateService(t, v.svc)
+	c := h.HTTPNoRetry()
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+	h.WaitStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
+	svc := h.CreateService(t, &corev1.Service{
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://example.invalid"},
+				},
+			},
+		},
+	})
+	h.MustWaitService(t, svc.Metadata.Name)
+	h.WaitStatus(t, c, h.ServiceURL(svc), http.StatusNotFound)
+	secret := h.CreateSecret(t, "", "snapshot-retry")
+	db, err := h.ClusterDB(t.Context())
+	require.Nil(t, err)
+	var original []byte
+	require.Nil(t, db.QueryRowContext(t.Context(),
+		`SELECT resource FROM octelium_resources WHERE api = $1 AND kind = $2 AND resource->'metadata'->>'uid' = $3`,
+		ucorev1.API, ucorev1.KindSecret, secret.Metadata.Uid).Scan(&original))
+	restored := false
+	restore := func(ctx context.Context) error {
+		_, err := db.ExecContext(ctx,
+			`UPDATE octelium_resources SET resource = $1::jsonb WHERE api = $2 AND kind = $3 AND resource->'metadata'->>'uid' = $4`,
+			string(original), ucorev1.API, ucorev1.KindSecret, secret.Metadata.Uid)
+		return err
+	}
+	t.Cleanup(func() {
+		if !restored {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			assert.Nil(t, restore(ctx))
+		}
+	})
+	pods, err := h.ComponentPods(t.Context(), "ingress")
+	require.Nil(t, err)
+	since := k8smetav1.NewTime(time.Now())
+	result, err := db.ExecContext(t.Context(),
+		`UPDATE octelium_resources SET resource = jsonb_set(jsonb_set(resource, '{metadata,systemLabels}', '{"octelium-cert":"true"}'::jsonb), '{data}', '{"value":123}'::jsonb) WHERE api = $1 AND kind = $2 AND resource->'metadata'->>'uid' = $3`,
+		ucorev1.API, ucorev1.KindSecret, secret.Metadata.Uid)
+	require.Nil(t, err)
+	changed, err := result.RowsAffected()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), changed)
+	svc.Spec.IsPublic = true
+	svc = h.UpdateService(t, svc)
+	h.Eventually(t, "every ingress controller to report a failed snapshot", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			for _, pod := range pods {
+				limit := int64(256 * 1024)
+				logs, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).GetLogs(pod.Name, &k8scorev1.PodLogOptions{
+					Container: pod.Spec.Containers[0].Name, SinceTime: &since, LimitBytes: &limit,
+				}).DoRaw(ctx)
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(string(logs), "Failed to perform Envoy snapshot") {
+					return errors.Errorf("the ingress controller %s has not reported a failed snapshot", pod.Name)
+				}
+			}
+			return nil
+		})
+	h.GetStatus(t, c, h.ServiceURL(svc), http.StatusNotFound)
+	h.GetStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
+	require.Nil(t, restore(t.Context()))
+	restored = true
+	h.WaitStatus(t, c, h.ServiceURL(svc), http.StatusUnauthorized)
+	h.GetStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
+	after, err := h.ComponentPods(t.Context(), "ingress")
+	require.Nil(t, err)
+	require.Len(t, after, len(pods))
+	for _, before := range pods {
+		current, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).Get(t.Context(), before.Name, k8smetav1.GetOptions{})
+		require.Nil(t, err)
+		assert.Equal(t, before.UID, current.UID)
+		for i, container := range before.Status.ContainerStatuses {
+			require.Greater(t, len(current.Status.ContainerStatuses), i)
+			assert.Equal(t, container.RestartCount, current.Status.ContainerStatuses[i].RestartCount)
+		}
+	}
 }
