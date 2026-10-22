@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/cluster/gwagent/gwagent/gw"
 	"github.com/octelium/octelium/cluster/gwagent/gwagent/wg"
+	gwtests "github.com/octelium/octelium/cluster/gwagent/internal/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,6 +133,7 @@ func TestWireGuardController(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("The WireGuard device requires root")
 	}
+	gwtests.LockGateway(t)
 	tst, err := tests.Initialize(nil)
 	require.Nil(t, err)
 	t.Cleanup(func() { tst.Destroy() })
@@ -203,6 +205,7 @@ func newTstWireGuardController(t *testing.T) (*Controller, *wgctrl.Client, *test
 	if os.Geteuid() != 0 {
 		t.Skip("The WireGuard device requires root")
 	}
+	gwtests.LockGateway(t)
 	tst, err := tests.Initialize(nil)
 	require.Nil(t, err)
 	t.Cleanup(func() { tst.Destroy() })

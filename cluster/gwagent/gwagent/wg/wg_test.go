@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/gwagent/gwagent/gw"
+	gwtests "github.com/octelium/octelium/cluster/gwagent/internal/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -179,6 +180,7 @@ func TestWg(t *testing.T) {
 		}
 	}
 
+	gwtests.LockGateway(t)
 	ctx := context.Background()
 
 	tst, err := tests.Initialize(nil)
@@ -206,7 +208,8 @@ func TestWg(t *testing.T) {
 	assert.NotNil(t, err, "%+v", err)
 
 	wgC, err := New(ctx, node, fakeC.OcteliumC, privateKey)
-	assert.Nil(t, err, "%+v", err)
+	require.Nil(t, err, "%+v", err)
+	t.Cleanup(func() { assert.Nil(t, wgC.Cleanup()) })
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
@@ -671,6 +674,7 @@ func TestWgKeyRotation(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("The WireGuard device requires root")
 	}
+	gwtests.LockGateway(t)
 	tst, err := tests.Initialize(nil)
 	require.Nil(t, err)
 	t.Cleanup(func() { tst.Destroy() })

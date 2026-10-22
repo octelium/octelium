@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	gwtests "github.com/octelium/octelium/cluster/gwagent/internal/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
@@ -256,6 +257,7 @@ func TestServerRun(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("The gateway devices require root")
 	}
+	gwtests.LockGateway(t)
 	for _, enableQUIC := range []bool{false, true} {
 		t.Run(fmt.Sprint(enableQUIC), func(t *testing.T) {
 			tst, err := tests.Initialize(nil)

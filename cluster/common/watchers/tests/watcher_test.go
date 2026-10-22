@@ -25,7 +25,9 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -33,6 +35,8 @@ import (
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestWatcherCore(t *testing.T) {
@@ -169,43 +173,91 @@ func TestWatcherCluster(t *testing.T) {
 }
 */
 
+type tstClusterConfigWatchClient struct {
+	octeliumc.ClientInterface
+	rcorev1.ResourceServiceClient
+	ready chan struct{}
+}
+
+func (c *tstClusterConfigWatchClient) CoreC() rcorev1.ResourceServiceClient {
+	return c
+}
+
+func (c *tstClusterConfigWatchClient) WatchClusterConfig(ctx context.Context, opts *rmetav1.WatchOptions,
+	callOpts ...grpc.CallOption) (grpc.ServerStreamingClient[rmetav1.WatchEvent], error) {
+	stream, err := c.ResourceServiceClient.WatchClusterConfig(ctx, opts, callOpts...)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := stream.Header(); err != nil {
+		return nil, err
+	}
+	select {
+	case c.ready <- struct{}{}:
+	default:
+	}
+	return stream, nil
+}
+
 func TestWatcherClusterConfig(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 
 	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
-	fakeC := tst.C
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	client := &tstClusterConfigWatchClient{
+		ClientInterface:       tst.C.OcteliumC,
+		ResourceServiceClient: tst.C.OcteliumC.CoreC(),
+		ready:                 make(chan struct{}, 1),
+	}
+	cc, err := client.CoreV1Utils().GetClusterConfig(ctx)
+	require.Nil(t, err)
+	uid := cc.Metadata.Uid
+	oldMaxPerUser := cc.GetSpec().GetDevice().GetHuman().GetMaxPerUser()
+	maxPerUser := oldMaxPerUser + 1
 
-	watcher := watchers.NewCoreV1(fakeC.OcteliumC)
+	type update struct {
+		new *corev1.ClusterConfig
+		old *corev1.ClusterConfig
+	}
+	updates := make(chan update, 1)
+	err = watchers.NewCoreV1(client).ClusterConfig(ctx, nil,
+		func(ctx context.Context, new, old *corev1.ClusterConfig) error {
+			if new.Metadata.Uid != uid {
+				return nil
+			}
+			select {
+			case updates <- update{new: new, old: old}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		})
+	require.Nil(t, err)
 
-	cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	assert.Nil(t, err)
-
-	maxPerUser := uint32(utilrand.GetRandomRangeMath(1, 100))
-	err = watcher.ClusterConfig(ctx, nil, func(ctx context.Context, new, old *corev1.ClusterConfig) error {
-
-		assert.Equal(t, maxPerUser, cc.Spec.Device.Human.MaxPerUser)
-		return nil
-	})
-
-	assert.Nil(t, err)
-
-	time.Sleep(1 * time.Second)
-	cc, err = fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	assert.Nil(t, err)
+	select {
+	case <-client.ready:
+	case <-ctx.Done():
+		t.Fatal("The ClusterConfig watch did not start")
+	}
 
 	cc.Spec.Device = &corev1.ClusterConfig_Spec_Device{
 		Human: &corev1.ClusterConfig_Spec_Device_Human{
 			MaxPerUser: maxPerUser,
 		},
 	}
-	cc, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
-	assert.Nil(t, err, "%+v", err)
-	time.Sleep(3 * time.Second)
-	cancel()
+	cc, err = client.CoreC().UpdateClusterConfig(ctx, cc)
+	require.Nil(t, err)
+	select {
+	case ev := <-updates:
+		assert.Equal(t, cc.Metadata.ResourceVersion, ev.new.Metadata.ResourceVersion)
+		assert.Equal(t, uid, ev.old.Metadata.Uid)
+		assert.Equal(t, maxPerUser, ev.new.GetSpec().GetDevice().GetHuman().GetMaxPerUser())
+		assert.Equal(t, oldMaxPerUser, ev.old.GetSpec().GetDevice().GetHuman().GetMaxPerUser())
+	case <-ctx.Done():
+		t.Fatal("The ClusterConfig watch event was not handled")
+	}
 }
 
 func TestWatcherResyncAfterLostEvents(t *testing.T) {
