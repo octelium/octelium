@@ -1041,6 +1041,7 @@ func testNocturneSessionUpstreamLoad(t *testing.T, h *harness.H) {
 		svc := h.CreateService(t, &corev1.Service{
 			Spec: &corev1.Service_Spec{
 				Mode: corev1.Service_Spec_HTTP,
+				Port: 80,
 				Config: &corev1.Service_Spec_Config{
 					Upstream: &corev1.Service_Spec_Config_Upstream{
 						Type: &corev1.Service_Spec_Config_Upstream_Url{
@@ -1157,6 +1158,10 @@ func testNocturneSessionUpstreamLoad(t *testing.T, h *harness.H) {
 					<-start
 					res, err := h.CoreC().UpdateService(ctx, svc)
 					if err == nil {
+						if res.Status.Port != svc.Spec.Port {
+							err = errors.Errorf("the Service %s port changed from %d to %d",
+								svc.Metadata.Name, svc.Spec.Port, res.Status.Port)
+						}
 						services[i] = res
 					}
 					errs <- err

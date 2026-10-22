@@ -366,6 +366,7 @@ func testIngressHTTPProtocolsLoad(t *testing.T, h *harness.H) {
 		})
 	}
 	v.svc.Spec.IsPublic = false
+	v.svc.Spec.IsAnonymous = false
 	v.svc = h.UpdateService(t, v.svc)
 	h.WaitStatus(t, h.HTTPNoRetry(), url+"/known/withdrawn", http.StatusNotFound)
 	before := requests.Load()
@@ -377,6 +378,7 @@ func testIngressHTTPProtocolsLoad(t *testing.T, h *harness.H) {
 	assert.Equal(t, result.Total, result.Count("default", http.StatusNotFound))
 	assert.Equal(t, before, requests.Load())
 	v.svc.Spec.IsPublic = true
+	v.svc.Spec.IsAnonymous = true
 	v.svc = h.UpdateService(t, v.svc)
 	h.WaitStatus(t, h.HTTPNoRetry(), url+"/known/republished", http.StatusOK)
 }

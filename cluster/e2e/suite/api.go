@@ -166,9 +166,12 @@ func testAPIValidationLoad(t *testing.T, h *harness.H) {
 	for i := range cases {
 		require.Nil(t, check(t.Context(), i), cases[i].name)
 	}
+	const requestsPerCase = 128
 	completed := make([]atomic.Int64, len(cases))
-	result := harness.RunFor(t.Context(), 3*time.Second, 16, func(ctx context.Context, worker, iteration int) error {
-		idx := (worker + iteration) % len(cases)
+	result := harness.ForEach(t.Context(), requestsPerCase*len(cases), 16, func(ctx context.Context, i int) error {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		idx := i % len(cases)
 		if err := check(ctx, idx); err != nil {
 			return err
 		}
@@ -177,7 +180,7 @@ func testAPIValidationLoad(t *testing.T, h *harness.H) {
 	})
 	assert.Zero(t, result.Failed(), "%s", result.Errors.String())
 	for i := range cases {
-		assert.Positive(t, completed[i].Load(), cases[i].name)
+		assert.Equal(t, int64(requestsPerCase), completed[i].Load(), cases[i].name)
 	}
 	require.Nil(t, check(t.Context(), 0))
 	require.Nil(t, check(t.Context(), 1))
