@@ -17,8 +17,10 @@
 package suite
 
 import (
+	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"go.uber.org/zap"
@@ -81,6 +83,13 @@ func testComponentHealth(t *testing.T, h *harness.H) {
 		zap.Time("installedAt", h.State.InstalledAt))
 
 	for _, component := range h.Scenario.ComponentList() {
+		if component == "gwagent" {
+			h.Eventually(t, "the Gateway Agent to be healthy", harness.DeploymentBudget,
+				func(ctx context.Context) error {
+					return h.GatewayHealth(ctx, 30*time.Second)
+				})
+			continue
+		}
 		h.CheckComponentRestarts(t, component)
 	}
 }

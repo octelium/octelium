@@ -18,11 +18,13 @@ package harness
 
 import (
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/scenario"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -83,6 +85,99 @@ func TestRestartsSince(t *testing.T) {
 	assert.Contains(t, got[1].String(), "OOMKilled")
 
 	assert.Len(t, RestartsSince(before, after, "component/gwagent"), 1)
+}
+
+func TestGatewayHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*k8scorev1.Pod, *appsv1.DaemonSet)
+		ok     bool
+	}{
+		{name: "healthy", ok: true},
+		{name: "recovered restart", ok: true, change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses[0].RestartCount = 3
+			pod.Status.ContainerStatuses[0].LastTerminationState.Terminated = &k8scorev1.ContainerStateTerminated{
+				Reason: "Error", ExitCode: 1,
+			}
+		}},
+		{name: "recent restart", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses[0].RestartCount = 1
+			pod.Status.ContainerStatuses[0].State.Running.StartedAt = k8smetav1.Now()
+		}},
+		{name: "crash loop", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses[0].State = k8scorev1.ContainerState{
+				Waiting: &k8scorev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+			}
+		}},
+		{name: "container not ready", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses[0].Ready = false
+		}},
+		{name: "pod not ready", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.Conditions[0].Status = k8scorev1.ConditionFalse
+		}},
+		{name: "pod pending", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.Phase = k8scorev1.PodPending
+		}},
+		{name: "pod terminating", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			now := k8smetav1.Now()
+			pod.DeletionTimestamp = &now
+		}},
+		{name: "container status missing", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses = nil
+		}},
+		{name: "container start time missing", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			pod.Status.ContainerStatuses[0].State.Running.StartedAt = k8smetav1.Time{}
+		}},
+		{name: "missing pod", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			ds.Status.DesiredNumberScheduled = 2
+			ds.Status.UpdatedNumberScheduled = 2
+			ds.Status.NumberAvailable = 2
+		}},
+		{name: "no scheduled pods", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			ds.Status.DesiredNumberScheduled = 0
+		}},
+		{name: "rollout not observed", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			ds.Status.ObservedGeneration = 1
+		}},
+		{name: "old pod", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			ds.Status.UpdatedNumberScheduled = 0
+		}},
+		{name: "pod not available", change: func(pod *k8scorev1.Pod, ds *appsv1.DaemonSet) {
+			ds.Status.NumberAvailable = 0
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &k8scorev1.Pod{
+				ObjectMeta: k8smetav1.ObjectMeta{
+					Name: "octelium-gwagent-1", Namespace: vutils.K8sNS,
+					Labels: map[string]string{"octelium.com/component": "gwagent"},
+				},
+				Spec: k8scorev1.PodSpec{Containers: []k8scorev1.Container{{Name: "gwagent"}}},
+				Status: k8scorev1.PodStatus{
+					Phase:      k8scorev1.PodRunning,
+					Conditions: []k8scorev1.PodCondition{{Type: k8scorev1.PodReady, Status: k8scorev1.ConditionTrue}},
+					ContainerStatuses: []k8scorev1.ContainerStatus{{
+						Name: "gwagent", Ready: true,
+						State: k8scorev1.ContainerState{Running: &k8scorev1.ContainerStateRunning{
+							StartedAt: k8smetav1.NewTime(time.Now().Add(-time.Minute)),
+						}},
+					}},
+				},
+			}
+			ds := &appsv1.DaemonSet{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-gwagent", Namespace: vutils.K8sNS, Generation: 2},
+				Status: appsv1.DaemonSetStatus{
+					ObservedGeneration: 2, DesiredNumberScheduled: 1, UpdatedNumberScheduled: 1, NumberAvailable: 1,
+				},
+			}
+			if tc.change != nil {
+				tc.change(pod, ds)
+			}
+			h := &H{k8sC: fake.NewSimpleClientset(pod, ds)}
+			err := h.GatewayHealth(t.Context(), 30*time.Second)
+			assert.Equal(t, tc.ok, err == nil, "%+v", err)
+		})
+	}
 }
 
 func TestParseTopContainers(t *testing.T) {

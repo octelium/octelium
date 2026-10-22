@@ -48,6 +48,7 @@ const (
 
 type netTun struct {
 	stack          *stack.Stack
+	dispatcherMu   sync.RWMutex
 	dispatcher     stack.NetworkDispatcher
 	events         chan tun.Event
 	incomingPacket chan *bufferv2.View
@@ -64,10 +65,14 @@ type endpoint netTun
 type Net netTun
 
 func (e *endpoint) Attach(dispatcher stack.NetworkDispatcher) {
+	e.dispatcherMu.Lock()
+	defer e.dispatcherMu.Unlock()
 	e.dispatcher = dispatcher
 }
 
 func (e *endpoint) IsAttached() bool {
+	e.dispatcherMu.RLock()
+	defer e.dispatcherMu.RUnlock()
 	return e.dispatcher != nil
 }
 
@@ -349,6 +354,18 @@ func (tun *netTun) Read(buf [][]byte, sizes []int, offset int) (int, error) {
 }
 
 func (tun *netTun) Write(buffs [][]byte, offset int) (int, error) {
+	select {
+	case <-tun.closed:
+		return 0, os.ErrClosed
+	default:
+	}
+
+	tun.dispatcherMu.RLock()
+	dispatcher := tun.dispatcher
+	tun.dispatcherMu.RUnlock()
+	if dispatcher == nil {
+		return 0, os.ErrClosed
+	}
 
 	for _, buf := range buffs {
 		packet := buf[offset:]
@@ -365,9 +382,9 @@ func (tun *netTun) Write(buffs [][]byte, offset int) (int, error) {
 
 		switch packet[0] >> 4 {
 		case 4:
-			tun.dispatcher.DeliverNetworkPacket(ipv4.ProtocolNumber, pkb)
+			dispatcher.DeliverNetworkPacket(ipv4.ProtocolNumber, pkb)
 		case 6:
-			tun.dispatcher.DeliverNetworkPacket(ipv6.ProtocolNumber, pkb)
+			dispatcher.DeliverNetworkPacket(ipv6.ProtocolNumber, pkb)
 		}
 
 		pkb.DecRef()

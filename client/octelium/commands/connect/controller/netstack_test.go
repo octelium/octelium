@@ -108,6 +108,113 @@ func TestNetTunReadUnblocksOnClose(t *testing.T) {
 	assert.ErrorIs(t, <-errCh, os.ErrClosed)
 }
 
+type testNetstackDispatcher struct {
+	protocols []tcpip.NetworkProtocolNumber
+	packets   [][]byte
+}
+
+func (d *testNetstackDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) {
+	view := pkt.ToView()
+	defer view.Release()
+	d.protocols = append(d.protocols, protocol)
+	d.packets = append(d.packets, append([]byte(nil), view.AsSlice()...))
+}
+
+func (*testNetstackDispatcher) DeliverLinkPacket(tcpip.NetworkProtocolNumber, *stack.PacketBuffer) {
+}
+
+func TestNetTunWrite(t *testing.T) {
+	dev := &netTun{closed: make(chan struct{})}
+	ep := (*endpoint)(dev)
+	dispatcher := &testNetstackDispatcher{}
+	ep.Attach(dispatcher)
+	assert.True(t, ep.IsAttached())
+
+	v4 := []byte{4 << 4, 1, 2, 3}
+	v6 := []byte{6 << 4, 4, 5, 6}
+	bufs := [][]byte{
+		append(make([]byte, 16), v4...),
+		make([]byte, 16),
+		append(make([]byte, 16), v6...),
+	}
+	n, err := dev.Write(bufs, 16)
+	assert.Nil(t, err)
+	assert.Equal(t, len(bufs), n)
+	assert.Equal(t, []tcpip.NetworkProtocolNumber{header.IPv4ProtocolNumber, header.IPv6ProtocolNumber}, dispatcher.protocols)
+	assert.Equal(t, [][]byte{v4, v6}, dispatcher.packets)
+}
+
+func TestNetTunWriteAfterClose(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		version byte
+	}{
+		{name: "IPv4", version: 4},
+		{name: "IPv6", version: 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestNetstackCtl(t)
+			assert.Nil(t, c.nsTun.Close())
+
+			packet := make([]byte, 16+60)
+			packet[16] = tt.version << 4
+			n, err := c.nsTun.Write([][]byte{packet}, 16)
+			assert.Equal(t, 0, n)
+			assert.ErrorIs(t, err, os.ErrClosed)
+		})
+	}
+}
+
+func TestNetTunWriteAfterDetach(t *testing.T) {
+	c := newTestNetstackCtl(t)
+	t.Cleanup(func() { assert.Nil(t, c.nsTun.Close()) })
+	ep := (*endpoint)(c.nsTun)
+	ep.Attach(nil)
+	assert.False(t, ep.IsAttached())
+
+	packet := make([]byte, 60)
+	packet[0] = 4 << 4
+	n, err := c.nsTun.Write([][]byte{packet}, 0)
+	assert.Equal(t, 0, n)
+	assert.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestNetTunConcurrentWriteAndClose(t *testing.T) {
+	c := newTestNetstackCtl(t)
+	ep := (*endpoint)(c.nsTun)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			packet := make([]byte, 60)
+			<-start
+			for i := range 128 {
+				packet[0] = byte(4+2*(i%2)) << 4
+				n, err := c.nsTun.Write([][]byte{packet}, 0)
+				if err != nil {
+					assert.Equal(t, 0, n)
+					assert.ErrorIs(t, err, os.ErrClosed)
+				} else {
+					assert.Equal(t, 1, n)
+				}
+				ep.IsAttached()
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		assert.Nil(t, c.nsTun.Close())
+	}()
+	close(start)
+	wg.Wait()
+	assert.False(t, ep.IsAttached())
+}
+
 func TestNetTunWritePacketAfterClose(t *testing.T) {
 	c := newTestNetstackCtl(t)
 	ep := (*endpoint)(c.nsTun)

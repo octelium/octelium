@@ -132,6 +132,66 @@ func (h *H) ServicePods(ctx context.Context, service string) ([]k8scorev1.Pod, e
 	return podList.Items, nil
 }
 
+func (h *H) GatewayHealth(ctx context.Context, minUptime time.Duration) error {
+	ds, err := h.k8sC.AppsV1().DaemonSets(vutils.K8sNS).
+		Get(ctx, "octelium-gwagent", k8smetav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if ds.Status.DesiredNumberScheduled == 0 {
+		return errors.Errorf("the Gateway Agent DaemonSet has no scheduled pods yet")
+	}
+	if err := daemonSetRolloutErr(ds); err != nil {
+		return err
+	}
+
+	pods, err := h.ComponentPods(ctx, "gwagent")
+	if err != nil {
+		return err
+	}
+
+	stableBefore := time.Now().Add(-minUptime)
+	var ready int32
+	for _, pod := range pods {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.Phase != k8scorev1.PodRunning {
+			return errors.Errorf("the Gateway Agent pod %s is %s", pod.Name, pod.Status.Phase)
+		}
+		var isReady bool
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == k8scorev1.PodReady && cond.Status == k8scorev1.ConditionTrue {
+				isReady = true
+			}
+		}
+		if !isReady {
+			return errors.Errorf("the Gateway Agent pod %s is not ready", pod.Name)
+		}
+		if len(pod.Status.ContainerStatuses) == 0 ||
+			len(pod.Status.ContainerStatuses) != len(pod.Spec.Containers) {
+			return errors.Errorf("the Gateway Agent pod %s has incomplete container statuses", pod.Name)
+		}
+		for _, cs := range pod.Status.ContainerStatuses {
+			if !cs.Ready || cs.State.Running == nil {
+				return errors.Errorf("container %s of the Gateway Agent pod %s is not running and ready",
+					cs.Name, pod.Name)
+			}
+			started := cs.State.Running.StartedAt
+			if started.IsZero() || started.Time.After(stableBefore) {
+				return errors.Errorf("container %s of the Gateway Agent pod %s has not been running for %s yet",
+					cs.Name, pod.Name, minUptime)
+			}
+		}
+		ready++
+	}
+	if ready != ds.Status.DesiredNumberScheduled {
+		return errors.Errorf("%d of %d Gateway Agent pods are ready", ready, ds.Status.DesiredNumberScheduled)
+	}
+
+	return nil
+}
+
 func (h *H) CheckComponentRestarts(t *testing.T, component string) {
 	t.Helper()
 
