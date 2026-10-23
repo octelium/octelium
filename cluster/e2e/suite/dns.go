@@ -308,6 +308,77 @@ func testDNSLifecycleLoad(t *testing.T, h *harness.H) {
 	assert.Greater(t, completed.Load(), before)
 }
 
+func testDNSAddressFamilies(t *testing.T, h *harness.H) {
+	h.Require(t, capRootTUN)
+	ns := h.EnsureTestNamespace(t)
+	services := []*corev1.Service{
+		h.NewPublicService(t, "default"),
+		h.NewPublicService(t, ns.Metadata.Name),
+	}
+	h.Connect(t, harness.ConnectOpts{Root: true, Args: []string{"--no-dns"}})
+	c := h.DNSClient(t)
+	type query struct {
+		name  string
+		qtype uint16
+		want  []string
+	}
+	check := func(ctx context.Context, q query) error {
+		msg, err := c.Exchange(ctx, q.name, q.qtype)
+		if err != nil {
+			return err
+		}
+		if msg.Rcode != dns.RcodeSuccess || !msg.Authoritative || msg.Truncated {
+			return errors.Errorf("%s/%s returned %s, authoritative %t, truncated %t",
+				q.name, dns.TypeToString[q.qtype], dns.RcodeToString[msg.Rcode],
+				msg.Authoritative, msg.Truncated)
+		}
+		if len(q.want) == 0 {
+			if len(msg.Answer) != 0 {
+				return errors.Errorf("%s/%s returned unexpected answers %v",
+					q.name, dns.TypeToString[q.qtype], msg.Answer)
+			}
+			return nil
+		}
+		addrs := harness.DNSAnswerAddrs(msg)
+		if len(msg.Answer) != 1 || len(addrs) != 1 || !slices.Contains(q.want, addrs[0]) {
+			return errors.Errorf("%s/%s returned addresses %v, want one of %v",
+				q.name, dns.TypeToString[q.qtype], addrs, q.want)
+		}
+		return nil
+	}
+	var queries []query
+	for _, svc := range services {
+		svc = h.GetService(t, svc.Metadata.Name)
+		require.Positive(t, len(serviceAddrs(svc, dns.TypeA))+len(serviceAddrs(svc, dns.TypeAAAA)))
+		names := []string{
+			svc.Metadata.Name + ".local", strings.ToUpper(svc.Metadata.Name + ".local"),
+			svc.Metadata.Name + ".local." + h.Domain, svc.Metadata.Name + "." + h.Domain + ".local",
+		}
+		for _, name := range names {
+			for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+				q := query{name: name, qtype: qtype, want: serviceAddrs(svc, qtype)}
+				h.Eventually(t, fmt.Sprintf("the Cluster DNS to answer %s/%s", name, dns.TypeToString[qtype]),
+					harness.DecisionBudget, func(ctx context.Context) error {
+						return check(ctx, q)
+					})
+				queries = append(queries, q)
+			}
+		}
+	}
+	result := harness.ForEach(t.Context(), 256, 16, func(ctx context.Context, i int) error {
+		return check(ctx, queries[i%len(queries)])
+	})
+	harness.LogPool("Cluster DNS address family load", result)
+	assert.Equal(t, 256, result.Succeeded)
+	assert.Zero(t, result.Failed(), result.Errors.String())
+	for _, svc := range services {
+		h.DeleteService(t, svc)
+		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			waitDNSRcode(t, h, c, svc.Metadata.Name+".local", qtype, dns.RcodeNameError)
+		}
+	}
+}
+
 func startDNSZoneUpstream(t *testing.T, h *harness.H, names []string) []string {
 	t.Helper()
 	ctx := t.Context()

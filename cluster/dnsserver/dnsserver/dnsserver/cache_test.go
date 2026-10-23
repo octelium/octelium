@@ -378,3 +378,63 @@ func TestCacheSingleFamilyAddresses(t *testing.T) {
 		assert.Nil(t, cache.get("svc1.default", dns.TypeMX))
 	}
 }
+
+func TestCacheLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ip   *metav1.DualStackIP
+	}{
+		{name: "IPv4Only", ip: &metav1.DualStackIP{Ipv4: "192.0.2.1"}},
+		{name: "IPv6Only", ip: &metav1.DualStackIP{Ipv6: "2001:db8::1"}},
+		{name: "DualStack", ip: &metav1.DualStackIP{Ipv4: "192.0.2.1", Ipv6: "2001:db8::1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCache()
+			svc := newTstDNSService()
+			svc.Metadata.Name = "default.default"
+			svc.Status.PrimaryHostname = "default"
+			svc.Status.AdditionalHostnames = []string{"default.default", "alias.default"}
+			svc.Status.Addresses = []*corev1.Service_Status_Address{{DualStackIP: tc.ip}}
+
+			for _, hostname := range []string{"", "default.default", "default", "alias.default"} {
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeMX} {
+					addr, ok := c.lookup(hostname, qtype)
+					assert.Nil(t, addr)
+					assert.False(t, ok)
+				}
+			}
+			c.set(svc)
+			for _, hostname := range []string{"", "default.default", "default", "alias.default"} {
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeMX} {
+					addr, ok := c.lookup(hostname, qtype)
+					assert.True(t, ok)
+					ip := ""
+					switch qtype {
+					case dns.TypeA:
+						ip = tc.ip.Ipv4
+					case dns.TypeAAAA:
+						ip = tc.ip.Ipv6
+					}
+					if ip == "" {
+						assert.Nil(t, addr)
+					} else {
+						assert.True(t, addr.Equal(net.ParseIP(ip)))
+					}
+				}
+			}
+			for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+				addr, ok := c.lookup("missing.default", qtype)
+				assert.Nil(t, addr)
+				assert.False(t, ok)
+			}
+			c.delete(svc)
+			for _, hostname := range []string{"", "default.default", "default", "alias.default"} {
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+					addr, ok := c.lookup(hostname, qtype)
+					assert.Nil(t, addr)
+					assert.False(t, ok)
+				}
+			}
+		})
+	}
+}

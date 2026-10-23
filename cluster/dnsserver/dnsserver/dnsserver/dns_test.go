@@ -381,6 +381,218 @@ func TestServeDNSInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestServeDNSLocalAddressFamilies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ip   *metav1.DualStackIP
+	}{
+		{name: "IPv4Only", ip: &metav1.DualStackIP{Ipv4: "192.0.2.1"}},
+		{name: "IPv6Only", ip: &metav1.DualStackIP{Ipv6: "2001:db8::1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, namespace := range []string{"default", "ns1"} {
+				t.Run(namespace, func(t *testing.T) {
+					s := newTstDNSServer()
+					svc := newTstDNSService()
+					name := "svc." + namespace
+					alias := "alias." + namespace
+					svc.Metadata.Name = name
+					svc.Status.PrimaryHostname = name
+					if namespace == "default" {
+						svc.Status.PrimaryHostname = "svc"
+					}
+					svc.Status.AdditionalHostnames = []string{name, alias}
+					svc.Status.Addresses = []*corev1.Service_Status_Address{
+						nil,
+						{},
+						{DualStackIP: tc.ip},
+					}
+					s.Set(svc)
+
+					names := []string{
+						name + ".", name + ".local.", strings.ToUpper(name + ".local."),
+						name + ".local.example.com.", name + ".example.com.local.",
+						"prefix.more." + name + ".local.", alias + ".", alias + ".local.",
+					}
+					if namespace == "default" {
+						names = append(names, "svc.", "svc.local.", "alias.")
+					}
+					for _, hostname := range names {
+						for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+							t.Run(fmt.Sprintf("%s/%s", hostname, dns.TypeToString[qtype]), func(t *testing.T) {
+								r := &dns.Msg{}
+								r.SetQuestion(hostname, qtype)
+								w := &tstDNSResponseWriter{}
+								s.ServeDNS(w, r)
+								require.NotNil(t, w.msg)
+								assert.Equal(t, 1, w.writes)
+								assert.Equal(t, r.Id, w.msg.Id)
+								assert.Equal(t, r.Question, w.msg.Question)
+								assert.True(t, w.msg.Response)
+								assert.True(t, w.msg.Authoritative)
+								assert.False(t, w.msg.Truncated)
+								assert.Equal(t, dns.RcodeSuccess, w.msg.Rcode)
+								assert.Empty(t, w.msg.Ns)
+								assert.Empty(t, w.msg.Extra)
+								ip := tc.ip.Ipv4
+								if qtype == dns.TypeAAAA {
+									ip = tc.ip.Ipv6
+								}
+								if ip == "" {
+									assert.Empty(t, w.msg.Answer)
+									return
+								}
+								require.Len(t, w.msg.Answer, 1)
+								assert.Equal(t, strings.ToLower(hostname), w.msg.Answer[0].Header().Name)
+								assert.Equal(t, qtype, w.msg.Answer[0].Header().Rrtype)
+								assert.Equal(t, uint32(60), w.msg.Answer[0].Header().Ttl)
+								switch rr := w.msg.Answer[0].(type) {
+								case *dns.A:
+									assert.True(t, rr.A.Equal(net.ParseIP(ip)))
+								case *dns.AAAA:
+									assert.True(t, rr.AAAA.Equal(net.ParseIP(ip)))
+								}
+							})
+						}
+					}
+					for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+						r := &dns.Msg{}
+						r.SetQuestion("missing."+namespace+".local.", qtype)
+						w := &tstDNSResponseWriter{}
+						s.ServeDNS(w, r)
+						require.NotNil(t, w.msg)
+						assert.Equal(t, dns.RcodeNameError, w.msg.Rcode)
+						assert.Empty(t, w.msg.Answer)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestServeDNSLocalAddressFamilyUpdates(t *testing.T) {
+	s := newTstDNSServer()
+	addr := newTstDNSUpstream(t, s)
+	c := &dns.Client{Net: "udp", Timeout: 2 * time.Second}
+	for _, tc := range []struct {
+		name  string
+		ip    *metav1.DualStackIP
+		unset bool
+	}{
+		{name: "Missing", unset: true},
+		{name: "IPv4Only", ip: &metav1.DualStackIP{Ipv4: "192.0.2.1"}},
+		{name: "DualStack", ip: &metav1.DualStackIP{Ipv4: "192.0.2.2", Ipv6: "2001:db8::2"}},
+		{name: "IPv6Only", ip: &metav1.DualStackIP{Ipv6: "2001:db8::3"}},
+		{name: "EmptyAddresses", ip: &metav1.DualStackIP{}},
+		{name: "Recreated", ip: &metav1.DualStackIP{Ipv4: "192.0.2.4"}},
+		{name: "Deleted", unset: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTstDNSService()
+			svc.Status.Addresses = []*corev1.Service_Status_Address{{DualStackIP: tc.ip}}
+			if tc.unset {
+				s.Unset(svc)
+			} else {
+				s.Set(svc)
+			}
+			for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+				r := &dns.Msg{}
+				r.SetQuestion("SvC.DeFaUlT.LoCaL.", qtype)
+				msg, _, err := c.ExchangeContext(t.Context(), r, addr)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, r.Id, msg.Id)
+				assert.Equal(t, r.Question, msg.Question)
+				assert.True(t, msg.Response)
+				assert.False(t, msg.Truncated)
+				if tc.unset || tc.ip.GetIpv4() == "" && tc.ip.GetIpv6() == "" {
+					assert.Equal(t, dns.RcodeNameError, msg.Rcode)
+					assert.Empty(t, msg.Answer)
+					continue
+				}
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				assert.True(t, msg.Authoritative)
+				ip := tc.ip.Ipv4
+				if qtype == dns.TypeAAAA {
+					ip = tc.ip.Ipv6
+				}
+				if ip == "" {
+					assert.Empty(t, msg.Answer)
+					continue
+				}
+				require.Len(t, msg.Answer, 1)
+				assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+				switch rr := msg.Answer[0].(type) {
+				case *dns.A:
+					assert.True(t, rr.A.Equal(net.ParseIP(ip)))
+				case *dns.AAAA:
+					assert.True(t, rr.AAAA.Equal(net.ParseIP(ip)))
+				}
+			}
+		})
+	}
+}
+
+func TestServeDNSLocalAddressFamilyConcurrentUpdates(t *testing.T) {
+	s := newTstDNSServer()
+	s.Set(newTstDNSService())
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := range 512 {
+			svc := newTstDNSService()
+			switch i % 3 {
+			case 0:
+				svc.Status.Addresses[0].DualStackIP.Ipv6 = ""
+			case 1:
+				svc.Status.Addresses[0].DualStackIP.Ipv4 = ""
+			}
+			s.Set(svc)
+		}
+	}()
+	for worker := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := range 128 {
+				qtype := uint16(dns.TypeA)
+				if (worker+i)%2 == 1 {
+					qtype = dns.TypeAAAA
+				}
+				r := &dns.Msg{}
+				r.SetQuestion("SvC.DeFaUlT.LoCaL.", qtype)
+				r.Id = uint16(worker*128 + i)
+				w := &tstDNSResponseWriter{}
+				s.ServeDNS(w, r)
+				if !assert.NotNil(t, w.msg) {
+					return
+				}
+				assert.Equal(t, 1, w.writes)
+				assert.Equal(t, r.Id, w.msg.Id)
+				assert.Equal(t, r.Question, w.msg.Question)
+				assert.Equal(t, dns.RcodeSuccess, w.msg.Rcode)
+				assert.True(t, w.msg.Authoritative)
+				assert.LessOrEqual(t, len(w.msg.Answer), 1)
+				for _, rr := range w.msg.Answer {
+					assert.Equal(t, qtype, rr.Header().Rrtype)
+					switch rr := rr.(type) {
+					case *dns.A:
+						assert.True(t, rr.A.Equal(net.ParseIP("192.0.2.1")))
+					case *dns.AAAA:
+						assert.True(t, rr.AAAA.Equal(net.ParseIP("2001:db8::1")))
+					}
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
 func TestServeDNSProxiedAnswers(t *testing.T) {
 	queries := make(chan *dns.Msg, 20)
 	addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {

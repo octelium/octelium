@@ -199,14 +199,18 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	doResolve := func(typ uint16) {
 
-		address := s.cache.get(hostname, typ)
-		if address == nil {
+		address, ok := s.cache.lookup(hostname, typ)
+		if !ok {
 			msg.SetRcode(r, dns.RcodeNameError)
 			w.WriteMsg(&msg)
 			return
 		}
 
 		msg.Authoritative = true
+		if address == nil {
+			w.WriteMsg(&msg)
+			return
+		}
 
 		switch typ {
 		case dns.TypeA:

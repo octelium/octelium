@@ -81,6 +81,11 @@ func (c *cache) delete(svc *corev1.Service) {
 }
 
 func (c *cache) get(arg string, typ uint16) net.IP {
+	ret, _ := c.lookup(arg, typ)
+	return ret
+}
+
+func (c *cache) lookup(arg string, typ uint16) (net.IP, bool) {
 	if arg == "" {
 		arg = "default.default"
 	}
@@ -88,8 +93,8 @@ func (c *cache) get(arg string, typ uint16) net.IP {
 	defer c.RUnlock()
 
 	res, ok := c.cMap[arg]
-	if !ok {
-		return nil
+	if !ok || res == nil {
+		return nil, false
 	}
 
 	var addrs []string
@@ -99,14 +104,14 @@ func (c *cache) get(arg string, typ uint16) net.IP {
 	case dns.TypeAAAA:
 		addrs = ucorev1.ToService(res.svc).AddressesV6()
 	default:
-		return nil
+		return nil, true
 	}
 
 	if len(addrs) == 0 {
-		return nil
+		return nil, true
 	}
 
-	return net.ParseIP(addrs[utilrand.GetRandomRangeMath(0, len(addrs)-1)])
+	return net.ParseIP(addrs[utilrand.GetRandomRangeMath(0, len(addrs)-1)]), true
 }
 
 func (c *cache) has(arg string) bool {

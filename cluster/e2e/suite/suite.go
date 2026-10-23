@@ -122,6 +122,7 @@ func Phases() []Phase {
 		{"ConnectIPMode", testConnectIPMode},
 		{"ConnectImplementation", testConnectImplementation},
 		{"DNSResolution", testDNSResolution},
+		{"DNSAddressFamilies", testDNSAddressFamilies},
 		{"DNSLifecycleLoad", testDNSLifecycleLoad},
 		{"DNSZones", testDNSZones},
 		{"DNSFailover", testDNSFailover},
