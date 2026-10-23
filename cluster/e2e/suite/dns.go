@@ -482,3 +482,97 @@ func testDNSZones(t *testing.T, h *harness.H) {
 		waitDNSAnswerAt(t, h, c, parent, dns.TypeAAAA, "2001:db8::1")
 	})
 }
+
+func testDNSFailover(t *testing.T, h *harness.H) {
+	h.Require(t, capRootTUN)
+	domain := h.Name() + ".e2e-dns.test"
+	probe := "probe." + domain
+	fallbackProbe := "probe." + h.Name() + ".test"
+	private := "private.sub." + domain
+	type query struct {
+		name string
+		ipv4 string
+		ipv6 string
+	}
+	var queries []query
+	names := []string{probe, fallbackProbe, private}
+	for i := range 32 {
+		name := fmt.Sprintf("query%d.%s", i, domain)
+		fallback := fmt.Sprintf("query%d.%s.test", i, h.Name())
+		names = append(names, name, fallback)
+		queries = append(queries,
+			query{name: name, ipv4: "198.51.100.2", ipv6: "2001:db8::2"},
+			query{name: fallback, ipv4: "198.51.100.1", ipv6: "2001:db8::1"},
+		)
+	}
+	servers := startDNSZoneUpstream(t, h, names)
+	original := pbutils.Clone(h.ClusterConfig(t)).(*corev1.ClusterConfig)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cc, err := h.CoreC().GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+		if !assert.Nil(t, err) {
+			return
+		}
+		cc.Spec.Dns = original.Spec.Dns
+		_, err = h.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	})
+	cc := h.ClusterConfig(t)
+	cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+		FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{"udp://127.0.0.1:1", servers[0]}},
+		Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+			{Domains: []string{domain}, Servers: []string{"udp://127.0.0.1:1", servers[1]}},
+			{Domains: []string{"sub." + domain}, Servers: []string{"udp://127.0.0.1:1", "udp://127.0.0.1:2"}},
+		},
+	}
+	h.UpdateClusterConfig(t, cc)
+	svc := h.NewPublicService(t, "default")
+	svc = h.GetService(t, svc.Metadata.Name)
+	h.Connect(t, harness.ConnectOpts{Root: true, Args: []string{"--no-dns"}})
+	c := h.DNSClient(t)
+	waitDNSAnswerAt(t, h, c, probe, dns.TypeA, "198.51.100.2")
+	waitDNSAnswerAt(t, h, c, fallbackProbe, dns.TypeA, "198.51.100.1")
+	waitDNSRcode(t, h, c, private, dns.TypeA, dns.RcodeServerFailure)
+	waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, serviceAddrs(svc, dns.TypeA))
+
+	t.Run("ConcurrentQueries", func(t *testing.T) {
+		result := harness.ForEach(t.Context(), 2*len(queries), 16,
+			func(ctx context.Context, i int) error {
+				q := queries[i/2]
+				qtype := dns.TypeA
+				want := q.ipv4
+				if i%2 == 1 {
+					qtype = dns.TypeAAAA
+					want = q.ipv6
+				}
+				for range 2 {
+					msg, err := c.Exchange(ctx, q.name, qtype)
+					if err != nil {
+						return err
+					}
+					if msg.Rcode != dns.RcodeSuccess {
+						return errors.Errorf("%s returned %s", q.name, dns.RcodeToString[msg.Rcode])
+					}
+					addrs := harness.DNSAnswerAddrs(msg)
+					if len(addrs) != 1 || addrs[0] != want {
+						return errors.Errorf("%s returned addresses %v, want %s", q.name, addrs, want)
+					}
+				}
+				return nil
+			})
+		harness.LogPool("Cluster DNS upstream failover", result)
+		assert.Equal(t, 2*len(queries), result.Succeeded)
+		assert.Zero(t, result.Failed(), result.Errors.String())
+	})
+
+	t.Run("Recovery", func(t *testing.T) {
+		cc := h.ClusterConfig(t)
+		cc.Spec.Dns.Zones[1].Servers = []string{"udp://127.0.0.1:1", servers[2]}
+		h.UpdateClusterConfig(t, cc)
+		waitDNSAnswerAt(t, h, c, private, dns.TypeA, "198.51.100.3")
+		waitDNSAnswerAt(t, h, c, private, dns.TypeAAAA, "2001:db8::3")
+		waitDNSAnswerAt(t, h, c, probe, dns.TypeA, "198.51.100.2")
+		waitDNSAnswerAt(t, h, c, fallbackProbe, dns.TypeA, "198.51.100.1")
+	})
+}

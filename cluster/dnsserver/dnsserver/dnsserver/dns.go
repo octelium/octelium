@@ -344,23 +344,37 @@ func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error
 		return cached, nil
 	}
 
-	upstream := chooseUpstream(zone)
-	c := dns.Client{
-		Net:     upstream.typ,
-		Timeout: 6 * time.Second,
-	}
+	start := slices.Index(zone.upstreams, chooseUpstream(zone))
+	deadline := time.Now().Add(4 * time.Second)
 	m := dns.Msg{}
-
 	m.SetQuestion(domain, typ)
 
-	r, _, err := c.Exchange(&m, upstream.getAddr())
-	if err != nil {
-		return nil, err
+	var ret *dns.Msg
+	var retErr error
+	for i := range zone.upstreams {
+		upstream := zone.upstreams[(start+i)%len(zone.upstreams)]
+		timeout := time.Until(deadline) / time.Duration(len(zone.upstreams)-i)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		c := dns.Client{Net: upstream.typ, Timeout: timeout}
+		r, _, err := c.ExchangeContext(ctx, &m, upstream.getAddr())
+		cancel()
+		if err != nil {
+			retErr = err
+			continue
+		}
+		if r.Rcode == dns.RcodeServerFailure {
+			ret = r
+			continue
+		}
+
+		zone.cache.set(domain, typ, r)
+		return r, nil
 	}
 
-	zone.cache.set(domain, typ, r)
-
-	return r, nil
+	if ret != nil {
+		return ret, nil
+	}
+	return nil, retErr
 }
 
 func chooseUpstream(zone *dnsZone) *upstream {

@@ -1654,3 +1654,384 @@ func TestGetProxiedAnswerTTLRefresh(t *testing.T) {
 		})
 	}
 }
+
+func TestGetProxiedAnswerFailover(t *testing.T) {
+	for _, namedZone := range []bool{false, true} {
+		t.Run(fmt.Sprintf("NamedZone%t", namedZone), func(t *testing.T) {
+			var queries atomic.Int64
+			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				queries.Add(1)
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			}))
+			conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			require.Nil(t, err)
+			badAddr := conn.LocalAddr().String()
+			require.Nil(t, conn.Close())
+			s := newTstDNSServer()
+			zone := &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{badAddr, addr}}
+			config := &corev1.ClusterConfig_Spec_DNS{FallbackZone: zone}
+			if namedZone {
+				zone.Domains = []string{"example.com"}
+				config.FallbackZone = &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{badAddr}}
+				config.Zones = []*corev1.ClusterConfig_Spec_DNS_Zone{zone}
+			}
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{Dns: config}})
+			for i := range 16 {
+				name := fmt.Sprintf("query%d.example.com.", i)
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeTXT} {
+					before := queries.Load()
+					for range 2 {
+						msg, err := s.getProxiedAnswer(name, qtype)
+						require.Nil(t, err)
+						require.NotNil(t, msg)
+						assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+						require.Equal(t, 1, len(msg.Answer))
+						assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+					}
+					want := int64(1)
+					if qtype == dns.TypeTXT {
+						want = 2
+					}
+					assert.Equal(t, before+want, queries.Load())
+				}
+			}
+			if namedZone {
+				assert.Nil(t, s.fallbackZoneCache.get("query0.example.com.", dns.TypeA))
+			}
+		})
+	}
+}
+
+func TestGetProxiedAnswerFailoverRetries(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Malformed%t", malformed), func(t *testing.T) {
+			var queries atomic.Int64
+			var attempts [3]atomic.Int64
+			var servers []string
+			for i := range attempts {
+				servers = append(servers, newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					attempts[i].Add(1)
+					assert.Equal(t, []dns.Question{{Name: "external.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}, r.Question)
+					if queries.Add(1) < 3 {
+						if malformed {
+							_, err := w.Write([]byte{0})
+							assert.Nil(t, err)
+						} else {
+							msg := &dns.Msg{}
+							msg.SetRcode(r, dns.RcodeServerFailure)
+							assert.Nil(t, w.WriteMsg(msg))
+						}
+						return
+					}
+					assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+				})))
+			}
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: servers}},
+			}})
+			for range 2 {
+				msg, err := s.getProxiedAnswer("external.example.", dns.TypeA)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				require.Equal(t, 1, len(msg.Answer))
+				assert.Equal(t, "198.51.100.1", msg.Answer[0].(*dns.A).A.String())
+			}
+			assert.Equal(t, int64(3), queries.Load())
+			for i := range attempts {
+				assert.Equal(t, int64(1), attempts[i].Load())
+			}
+		})
+	}
+}
+
+func TestGetProxiedAnswerFailoverRcodes(t *testing.T) {
+	for _, rcode := range []int{dns.RcodeSuccess, dns.RcodeNameError, dns.RcodeRefused, dns.RcodeNotImplemented, dns.RcodeFormatError} {
+		t.Run(dns.RcodeToString[rcode], func(t *testing.T) {
+			var queries atomic.Int64
+			handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				queries.Add(1)
+				msg := &dns.Msg{}
+				msg.SetRcode(r, rcode)
+				msg.Authoritative = true
+				msg.Ns = []dns.RR{&dns.SOA{
+					Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 60},
+					Ns:  "ns.example.", Mbox: "hostmaster.example.", Serial: 1, Minttl: 30,
+				}}
+				assert.Nil(t, w.WriteMsg(msg))
+			})
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+					Servers: []string{newTstDNSUpstream(t, handler), newTstDNSUpstream(t, handler)},
+				}},
+			}})
+			msg, err := s.getProxiedAnswer("external.example.", dns.TypeA)
+			require.Nil(t, err)
+			require.NotNil(t, msg)
+			assert.Equal(t, rcode, msg.Rcode)
+			assert.True(t, msg.Authoritative)
+			assert.Empty(t, msg.Answer)
+			require.Equal(t, 1, len(msg.Ns))
+			assert.Equal(t, "ns.example.", msg.Ns[0].(*dns.SOA).Ns)
+			assert.Equal(t, int64(1), queries.Load())
+			if rcode != dns.RcodeSuccess {
+				assert.Nil(t, s.fallbackZoneCache.get("external.example.", dns.TypeA))
+			}
+		})
+	}
+}
+
+func TestGetProxiedAnswerFailoverErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		firstError bool
+		lastError  bool
+	}{
+		{name: "ServerFailure"},
+		{name: "ServerFailureThenError", lastError: true},
+		{name: "ErrorThenServerFailure", firstError: true},
+		{name: "Errors", firstError: true, lastError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var queries atomic.Int64
+			var attempts [2]atomic.Int64
+			var servers []string
+			for i := range attempts {
+				servers = append(servers, newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					attempts[i].Add(1)
+					n := queries.Add(1)
+					if n == 1 && tc.firstError || n == 2 && tc.lastError {
+						_, err := w.Write([]byte{0})
+						assert.Nil(t, err)
+						return
+					}
+					msg := &dns.Msg{}
+					msg.SetRcode(r, dns.RcodeServerFailure)
+					msg.Ns = []dns.RR{&dns.NS{
+						Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 60},
+						Ns:  "ns.example.",
+					}}
+					assert.Nil(t, w.WriteMsg(msg))
+				})))
+			}
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: servers}},
+			}})
+			msg, err := s.getProxiedAnswer("external.example.", dns.TypeA)
+			if tc.firstError && tc.lastError {
+				assert.NotNil(t, err)
+				assert.Nil(t, msg)
+			} else {
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, dns.RcodeServerFailure, msg.Rcode)
+				require.Equal(t, 1, len(msg.Ns))
+				assert.Equal(t, "ns.example.", msg.Ns[0].(*dns.NS).Ns)
+			}
+			assert.Equal(t, int64(2), queries.Load())
+			for i := range attempts {
+				assert.Equal(t, int64(1), attempts[i].Load())
+			}
+			assert.Nil(t, s.fallbackZoneCache.get("external.example.", dns.TypeA))
+		})
+	}
+}
+
+func TestGetProxiedAnswerFailoverTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(nil)
+	t.Cleanup(srv.Close)
+	var queries atomic.Int64
+	addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		queries.Add(1)
+		assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+	}))
+	s := newTstDNSServer()
+	s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+		Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+			Servers: []string{"tls://" + srv.Listener.Addr().String(), addr},
+		}},
+	}})
+	for i := range 16 {
+		msg, err := s.getProxiedAnswer(fmt.Sprintf("query%d.example.", i), dns.TypeTXT)
+		require.Nil(t, err)
+		require.NotNil(t, msg)
+		assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+		require.Equal(t, 1, len(msg.Answer))
+		assert.Equal(t, []string{"upstream"}, msg.Answer[0].(*dns.TXT).Txt)
+	}
+	assert.Equal(t, int64(16), queries.Load())
+}
+
+func TestServeDNSFailoverTimeouts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		servers int
+		recover bool
+	}{
+		{name: "Recovery", servers: 2, recover: true},
+		{name: "Unavailable", servers: 3},
+		{name: "ManyResolvers", servers: 32, recover: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var queries atomic.Int64
+			var fallbackQueries atomic.Int64
+			fallback := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				fallbackQueries.Add(1)
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			}))
+			attempts := make([]atomic.Int64, tc.servers)
+			var servers []string
+			for i := range attempts {
+				servers = append(servers, newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					attempts[i].Add(1)
+					if queries.Add(1) == int64(tc.servers) && tc.recover {
+						assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+					}
+				})))
+			}
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{
+					FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{fallback}},
+					Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+						{Domains: []string{"example.com"}, Servers: servers},
+					},
+				},
+			}})
+			r := &dns.Msg{}
+			r.SetQuestion("www.example.com.", dns.TypeA)
+			w := &tstDNSResponseWriter{}
+			start := time.Now()
+			s.ServeDNS(w, r)
+			elapsed := time.Since(start)
+			require.NotNil(t, w.msg)
+			assert.Equal(t, r.Id, w.msg.Id)
+			assert.Equal(t, r.Question, w.msg.Question)
+			if tc.recover {
+				assert.Equal(t, dns.RcodeSuccess, w.msg.Rcode)
+				require.Equal(t, 1, len(w.msg.Answer))
+				assert.Equal(t, "198.51.100.1", w.msg.Answer[0].(*dns.A).A.String())
+				assert.NotNil(t, s.zones[0].cache.get("www.example.com.", dns.TypeA))
+			} else {
+				assert.Equal(t, dns.RcodeServerFailure, w.msg.Rcode)
+				assert.Empty(t, w.msg.Answer)
+				assert.Nil(t, s.zones[0].cache.get("www.example.com.", dns.TypeA))
+			}
+			assert.Less(t, elapsed, 5*time.Second)
+			assert.Equal(t, int64(tc.servers), queries.Load())
+			for i := range attempts {
+				assert.Equal(t, int64(1), attempts[i].Load())
+			}
+			assert.Zero(t, fallbackQueries.Load())
+		})
+	}
+}
+
+func TestServeDNSFailoverRecovery(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeTXT} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			var healthy atomic.Bool
+			var queries atomic.Int64
+			var fallbackQueries atomic.Int64
+			fallback := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				fallbackQueries.Add(1)
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			}))
+			handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				queries.Add(1)
+				if !healthy.Load() {
+					_, err := w.Write([]byte{0})
+					assert.Nil(t, err)
+					return
+				}
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			})
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{
+					FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{fallback}},
+					Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+						{Domains: []string{"example.com"}, Servers: []string{newTstDNSUpstream(t, handler), newTstDNSUpstream(t, handler)}},
+					},
+				},
+			}})
+			r := &dns.Msg{}
+			r.SetQuestion("www.example.com.", qtype)
+			w := &tstDNSResponseWriter{}
+			s.ServeDNS(w, r)
+			require.NotNil(t, w.msg)
+			assert.Equal(t, dns.RcodeServerFailure, w.msg.Rcode)
+			assert.Equal(t, r.Id, w.msg.Id)
+			assert.Equal(t, r.Question, w.msg.Question)
+			assert.Equal(t, int64(2), queries.Load())
+			assert.Nil(t, s.zones[0].cache.get("www.example.com.", qtype))
+			healthy.Store(true)
+			s.ServeDNS(w, r)
+			require.NotNil(t, w.msg)
+			assert.Equal(t, dns.RcodeSuccess, w.msg.Rcode)
+			assert.Equal(t, r.Id, w.msg.Id)
+			assert.Equal(t, r.Question, w.msg.Question)
+			require.Equal(t, 1, len(w.msg.Answer))
+			assert.Equal(t, qtype, w.msg.Answer[0].Header().Rrtype)
+			assert.Equal(t, int64(3), queries.Load())
+			assert.Zero(t, fallbackQueries.Load())
+		})
+	}
+}
+
+func TestServeDNSFailoverConcurrentRequests(t *testing.T) {
+	var queries atomic.Int64
+	addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		queries.Add(1)
+		assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+	}))
+	badAddr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		_, err := w.Write([]byte{0})
+		assert.Nil(t, err)
+	}))
+	failedAddr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		msg := &dns.Msg{}
+		msg.SetRcode(r, dns.RcodeServerFailure)
+		assert.Nil(t, w.WriteMsg(msg))
+	}))
+	s := newTstDNSServer()
+	s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+		Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+			Servers: []string{badAddr, addr, failedAddr},
+		}},
+	}})
+	serverAddr := newTstDNSUpstream(t, s)
+	var wg sync.WaitGroup
+	for worker := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := &dns.Client{Timeout: 3 * time.Second}
+			for i := range 16 {
+				qtype := dns.TypeA
+				if i%2 == 1 {
+					qtype = dns.TypeAAAA
+				}
+				for range 2 {
+					r := &dns.Msg{}
+					r.SetQuestion(fmt.Sprintf("query%d-%d.example.", worker, i), qtype)
+					msg, _, err := c.ExchangeContext(t.Context(), r, serverAddr)
+					if !assert.Nil(t, err) || !assert.NotNil(t, msg) {
+						return
+					}
+					assert.Equal(t, r.Id, msg.Id)
+					assert.Equal(t, r.Question, msg.Question)
+					assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+					if assert.Equal(t, 1, len(msg.Answer)) {
+						assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, int64(16*16), queries.Load())
+}
