@@ -32,8 +32,9 @@ type zoneCache struct {
 }
 
 type zoneCacheVal struct {
-	r   *dns.Msg
-	exp time.Time
+	r         *dns.Msg
+	createdAt time.Time
+	exp       time.Time
 }
 
 func newZoneCache(duration time.Duration) *zoneCache {
@@ -59,11 +60,22 @@ func (c *zoneCache) get(domain string, typ uint16) *dns.Msg {
 		return nil
 	}
 
-	if time.Now().After(val.exp) {
+	now := time.Now()
+	if !now.Before(val.exp) {
 		return nil
 	}
 
-	return val.r.Copy()
+	ret := val.r.Copy()
+	age := uint32(now.Sub(val.createdAt) / time.Second)
+	for _, section := range [][]dns.RR{ret.Answer, ret.Ns, ret.Extra} {
+		for _, rr := range section {
+			hdr := rr.Header()
+			if hdr.Rrtype != dns.TypeOPT {
+				hdr.Ttl -= min(hdr.Ttl, age)
+			}
+		}
+	}
+	return ret
 }
 
 func (c *zoneCache) set(domain string, typ uint16, r *dns.Msg) {
@@ -77,12 +89,33 @@ func (c *zoneCache) set(domain string, typ uint16, r *dns.Msg) {
 		return
 	}
 
+	now := time.Now()
 	c.Lock()
-	c.cMap[c.getCacheKey(domain, typ)] = &zoneCacheVal{
-		r:   r.Copy(),
-		exp: time.Now().Add(c.duration),
+	defer c.Unlock()
+
+	duration := c.duration
+	for _, section := range [][]dns.RR{r.Answer, r.Ns, r.Extra} {
+		for _, rr := range section {
+			hdr := rr.Header()
+			if hdr.Rrtype == dns.TypeOPT {
+				continue
+			}
+			ttl := hdr.Ttl
+			if ttl > 0x7fffffff {
+				ttl = 0
+			}
+			duration = min(duration, time.Duration(ttl)*time.Second)
+		}
 	}
-	c.Unlock()
+	if duration <= 0 {
+		delete(c.cMap, c.getCacheKey(domain, typ))
+		return
+	}
+	c.cMap[c.getCacheKey(domain, typ)] = &zoneCacheVal{
+		r:         r.Copy(),
+		createdAt: now,
+		exp:       now.Add(duration),
+	}
 }
 
 func (c *zoneCache) startCleanupLoop(ctx context.Context) {
@@ -109,8 +142,9 @@ func (c *zoneCache) startCleanupLoop(ctx context.Context) {
 func (c *zoneCache) doCleanup() {
 	c.Lock()
 	defer c.Unlock()
+	now := time.Now()
 	for k, v := range c.cMap {
-		if time.Now().After(v.exp) {
+		if !now.Before(v.exp) {
 			delete(c.cMap, k)
 		}
 	}

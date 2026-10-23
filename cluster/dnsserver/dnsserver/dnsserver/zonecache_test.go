@@ -246,3 +246,233 @@ func TestZoneCacheConcurrentAccess(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, 16, len(c.cMap))
 }
+
+func TestZoneCacheTTLExpiration(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		for _, tc := range []struct {
+			name     string
+			duration time.Duration
+			ttl      uint32
+			lifetime time.Duration
+		}{
+			{name: "Zero", duration: time.Minute},
+			{name: "OneSecond", duration: time.Minute, ttl: 1, lifetime: time.Second},
+			{name: "UpstreamLimit", duration: time.Minute, ttl: 10, lifetime: 10 * time.Second},
+			{name: "ConfiguredLimit", duration: 2 * time.Second, ttl: 60, lifetime: 2 * time.Second},
+			{name: "DefaultLimit", ttl: 60, lifetime: 30 * time.Second},
+			{name: "HighBit", duration: time.Minute, ttl: 0x80000000},
+			{name: "MaxUint32", duration: time.Minute, ttl: 0xffffffff},
+			{name: "MaxTTL", duration: time.Duration(0x7fffffff) * time.Second, ttl: 0x7fffffff, lifetime: time.Duration(0x7fffffff) * time.Second},
+		} {
+			t.Run(fmt.Sprintf("%s/%s", dns.TypeToString[qtype], tc.name), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					c := newZoneCache(tc.duration)
+					r := &dns.Msg{}
+					r.SetQuestion("example.com.", qtype)
+					msg := tstDNSAnswer(r)
+					msg.Answer[0].Header().Ttl = tc.ttl
+					c.set("example.com.", qtype, msg)
+					if tc.lifetime == 0 {
+						assert.Nil(t, c.get("example.com.", qtype))
+						assert.Empty(t, c.cMap)
+						return
+					}
+					require.NotNil(t, c.get("example.com.", qtype))
+					time.Sleep(tc.lifetime - time.Millisecond)
+					assert.NotNil(t, c.get("example.com.", qtype))
+					time.Sleep(time.Millisecond)
+					assert.Nil(t, c.get("example.com.", qtype))
+					c.doCleanup()
+					assert.Empty(t, c.cMap)
+				})
+			})
+		}
+	}
+}
+
+func TestZoneCacheTTLAging(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newZoneCache(time.Minute)
+				r := &dns.Msg{}
+				r.SetQuestion("example.com.", qtype)
+				msg := tstDNSAnswer(r)
+				msg.Answer[0].Header().Ttl = 12
+				msg.Answer = append([]dns.RR{&dns.CNAME{
+					Hdr:    dns.RR_Header{Name: "alias.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 10},
+					Target: "example.com.",
+				}}, msg.Answer...)
+				msg.Ns = []dns.RR{&dns.NS{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 20},
+					Ns:  "ns.example.com.",
+				}}
+				msg.Extra = []dns.RR{&dns.A{
+					Hdr: dns.RR_Header{Name: "ns.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 30},
+					A:   net.ParseIP("192.0.2.1"),
+				}}
+				msg.SetEdns0(1232, true)
+				original := msg.Copy()
+				c.set("example.com.", qtype, msg)
+				time.Sleep(1500 * time.Millisecond)
+				got := c.get("example.com.", qtype)
+				require.NotNil(t, got)
+				assert.Equal(t, uint32(9), got.Answer[0].Header().Ttl)
+				assert.Equal(t, uint32(11), got.Answer[1].Header().Ttl)
+				assert.Equal(t, uint32(19), got.Ns[0].Header().Ttl)
+				assert.Equal(t, uint32(29), got.Extra[0].Header().Ttl)
+				assert.Equal(t, original.IsEdns0(), got.IsEdns0())
+				got.Answer[0].Header().Ttl = 0
+				got.Answer[1].Header().Ttl = 0
+				got.Ns[0].Header().Ttl = 0
+				got.Extra[0].Header().Ttl = 0
+				got.IsEdns0().SetDo(false)
+
+				time.Sleep(500 * time.Millisecond)
+				got = c.get("example.com.", qtype)
+				require.NotNil(t, got)
+				assert.Equal(t, uint32(8), got.Answer[0].Header().Ttl)
+				assert.Equal(t, uint32(10), got.Answer[1].Header().Ttl)
+				assert.Equal(t, uint32(18), got.Ns[0].Header().Ttl)
+				assert.Equal(t, uint32(28), got.Extra[0].Header().Ttl)
+				assert.Equal(t, original.IsEdns0(), got.IsEdns0())
+				assert.Equal(t, original, msg.Copy())
+				time.Sleep(8 * time.Second)
+				assert.Nil(t, c.get("example.com.", qtype))
+			})
+		})
+	}
+}
+
+func TestZoneCacheTTLSections(t *testing.T) {
+	for _, section := range []string{"Answer", "Authority", "Additional"} {
+		for _, ttl := range []uint32{0, 2} {
+			t.Run(fmt.Sprintf("%s/%d", section, ttl), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					c := newZoneCache(time.Minute)
+					r := &dns.Msg{}
+					r.SetQuestion("example.com.", dns.TypeA)
+					msg := tstDNSAnswer(r)
+					msg.Ns = []dns.RR{&dns.NS{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 60},
+						Ns:  "ns.example.com.",
+					}}
+					msg.Extra = []dns.RR{&dns.A{
+						Hdr: dns.RR_Header{Name: "ns.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+						A:   net.ParseIP("192.0.2.1"),
+					}}
+					msg.SetEdns0(1232, false)
+					switch section {
+					case "Answer":
+						msg.Answer[0].Header().Ttl = ttl
+					case "Authority":
+						msg.Ns[0].Header().Ttl = ttl
+					case "Additional":
+						msg.Extra[0].Header().Ttl = ttl
+					}
+					c.set("example.com.", dns.TypeA, msg)
+					if ttl == 0 {
+						assert.Nil(t, c.get("example.com.", dns.TypeA))
+						assert.Empty(t, c.cMap)
+						return
+					}
+					require.NotNil(t, c.get("example.com.", dns.TypeA))
+					time.Sleep(time.Second)
+					require.NotNil(t, c.get("example.com.", dns.TypeA))
+					time.Sleep(time.Second)
+					assert.Nil(t, c.get("example.com.", dns.TypeA))
+				})
+			})
+		}
+	}
+}
+
+func TestZoneCacheTTLReplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newZoneCache(time.Minute)
+		r := &dns.Msg{}
+		r.SetQuestion("example.com.", dns.TypeA)
+		msg := tstDNSAnswer(r)
+		msg.Answer[0].Header().Ttl = 10
+		c.set("example.com.", dns.TypeA, msg)
+		time.Sleep(3 * time.Second)
+
+		msg.Answer[0].Header().Ttl = 20
+		msg.Answer[0].(*dns.A).A = net.ParseIP("198.51.100.2")
+		c.set("example.com.", dns.TypeA, msg)
+		got := c.get("example.com.", dns.TypeA)
+		require.NotNil(t, got)
+		assert.Equal(t, uint32(20), got.Answer[0].Header().Ttl)
+		assert.Equal(t, "198.51.100.2", got.Answer[0].(*dns.A).A.String())
+		time.Sleep(7 * time.Second)
+		got = c.get("example.com.", dns.TypeA)
+		require.NotNil(t, got)
+		assert.Equal(t, uint32(13), got.Answer[0].Header().Ttl)
+
+		msg.Answer[0].Header().Ttl = 0
+		c.set("example.com.", dns.TypeA, msg)
+		assert.Nil(t, c.get("example.com.", dns.TypeA))
+		assert.Empty(t, c.cMap)
+		msg.Answer[0].Header().Ttl = 4
+		c.set("example.com.", dns.TypeA, msg)
+		require.NotNil(t, c.get("example.com.", dns.TypeA))
+		time.Sleep(4 * time.Second)
+		assert.Nil(t, c.get("example.com.", dns.TypeA))
+	})
+}
+
+func TestZoneCacheTTLNodata(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newZoneCache(time.Minute)
+		msg := &dns.Msg{}
+		msg.SetQuestion("example.com.", dns.TypeAAAA)
+		msg.SetReply(msg)
+		msg.Ns = []dns.RR{&dns.SOA{
+			Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 5},
+			Ns:  "ns.example.com.", Mbox: "hostmaster.example.com.", Serial: 1, Minttl: 5,
+		}}
+		c.set("example.com.", dns.TypeAAAA, msg)
+		time.Sleep(2 * time.Second)
+		got := c.get("example.com.", dns.TypeAAAA)
+		require.NotNil(t, got)
+		assert.Empty(t, got.Answer)
+		assert.Equal(t, uint32(3), got.Ns[0].Header().Ttl)
+		assert.Equal(t, uint32(5), got.Ns[0].(*dns.SOA).Minttl)
+		time.Sleep(3 * time.Second)
+		assert.Nil(t, c.get("example.com.", dns.TypeAAAA))
+	})
+}
+
+func TestZoneCacheTTLConcurrentReads(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newZoneCache(time.Minute)
+		r := &dns.Msg{}
+		r.SetQuestion("example.com.", dns.TypeA)
+		msg := tstDNSAnswer(r)
+		msg.Answer[0].Header().Ttl = 60
+		msg.SetEdns0(1232, true)
+		opt := dns.Copy(msg.IsEdns0())
+		c.set("example.com.", dns.TypeA, msg)
+		time.Sleep(10 * time.Second)
+		var wg sync.WaitGroup
+		for range 16 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for range 100 {
+					got := c.get("example.com.", dns.TypeA)
+					if !assert.NotNil(t, got) {
+						return
+					}
+					assert.Equal(t, uint32(50), got.Answer[0].Header().Ttl)
+					assert.Equal(t, opt, got.IsEdns0())
+					got.Answer[0].Header().Ttl = 0
+					got.IsEdns0().SetDo(false)
+				}
+			}()
+		}
+		wg.Wait()
+		assert.Equal(t, uint32(60), msg.Answer[0].Header().Ttl)
+		assert.True(t, msg.IsEdns0().Do())
+	})
+}

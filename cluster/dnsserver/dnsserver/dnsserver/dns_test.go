@@ -1548,3 +1548,109 @@ func TestGetHostnameFromPossibleHostname(t *testing.T) {
 		}
 	}
 }
+
+func TestServeDNSCachedTTLAging(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTstDNSServer()
+		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			r := &dns.Msg{}
+			r.SetQuestion("external.example.", qtype)
+			msg := tstDNSAnswer(r)
+			msg.Answer[0].Header().Ttl = 20
+			s.fallbackZoneCache.set("external.example.", qtype, msg)
+		}
+		time.Sleep(5 * time.Second)
+		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			r := &dns.Msg{}
+			r.SetQuestion("EXTERNAL.EXAMPLE.", qtype)
+			r.SetEdns0(1232, false)
+			w := &tstDNSResponseWriter{}
+			s.ServeDNS(w, r)
+			require.NotNil(t, w.msg)
+			assert.Equal(t, r.Id, w.msg.Id)
+			assert.Equal(t, r.Question, w.msg.Question)
+			assert.Equal(t, dns.RcodeSuccess, w.msg.Rcode)
+			require.Equal(t, 1, len(w.msg.Answer))
+			assert.Equal(t, uint32(15), w.msg.Answer[0].Header().Ttl)
+			assert.Equal(t, qtype, w.msg.Answer[0].Header().Rrtype)
+			assert.Equal(t, uint32(15), s.fallbackZoneCache.get("external.example.", qtype).Answer[0].Header().Ttl)
+		}
+	})
+}
+
+func TestServeDNSZeroTTLUpstream(t *testing.T) {
+	var queries atomic.Int64
+	addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		n := queries.Add(1)
+		msg := tstDNSAnswer(r)
+		msg.Answer[0].Header().Ttl = 0
+		switch rr := msg.Answer[0].(type) {
+		case *dns.A:
+			rr.A = net.ParseIP(fmt.Sprintf("198.51.100.%d", n))
+		case *dns.AAAA:
+			rr.AAAA = net.ParseIP(fmt.Sprintf("2001:db8::%x", n))
+		}
+		assert.Nil(t, w.WriteMsg(msg))
+	}))
+	s := newTstDNSServer()
+	s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+		Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{addr}}},
+	}})
+	serverAddr := newTstDNSUpstream(t, s)
+	c := &dns.Client{Timeout: 2 * time.Second}
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		for range 3 {
+			before := queries.Load()
+			r := &dns.Msg{}
+			r.SetQuestion("external.example.", qtype)
+			msg, _, err := c.ExchangeContext(t.Context(), r, serverAddr)
+			require.Nil(t, err)
+			require.NotNil(t, msg)
+			assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+			assert.Equal(t, r.Id, msg.Id)
+			assert.Equal(t, r.Question, msg.Question)
+			require.Equal(t, 1, len(msg.Answer))
+			assert.Zero(t, msg.Answer[0].Header().Ttl)
+			assert.Equal(t, before+1, queries.Load())
+			assert.Nil(t, s.fallbackZoneCache.get("external.example.", qtype))
+		}
+	}
+}
+
+func TestGetProxiedAnswerTTLRefresh(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			var queries atomic.Int64
+			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				n := queries.Add(1)
+				msg := tstDNSAnswer(r)
+				msg.Answer[0].Header().Ttl = 1
+				switch rr := msg.Answer[0].(type) {
+				case *dns.A:
+					rr.A = net.ParseIP(fmt.Sprintf("198.51.100.%d", n))
+				case *dns.AAAA:
+					rr.AAAA = net.ParseIP(fmt.Sprintf("2001:db8::%x", n))
+				}
+				assert.Nil(t, w.WriteMsg(msg))
+			}))
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+					{Domains: []string{"example.com"}, Servers: []string{addr},
+						CacheDuration: &metav1.Duration{Type: &metav1.Duration_Minutes{Minutes: 1}}},
+				}},
+			}})
+			first, err := s.getProxiedAnswer("www.example.com.", qtype)
+			require.Nil(t, err)
+			require.NotNil(t, first)
+			assert.Equal(t, int64(1), queries.Load())
+			require.Eventually(t, func() bool {
+				msg, err := s.getProxiedAnswer("www.example.com.", qtype)
+				return err == nil && queries.Load() > 1 && msg != nil &&
+					len(msg.Answer) == 1 && msg.Answer[0].String() != first.Answer[0].String()
+			}, 3*time.Second, 20*time.Millisecond)
+			assert.Equal(t, int64(2), queries.Load())
+			assert.Equal(t, uint32(1), first.Answer[0].Header().Ttl)
+		})
+	}
+}
