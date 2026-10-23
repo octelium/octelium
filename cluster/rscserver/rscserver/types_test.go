@@ -18,6 +18,8 @@ package rscserver
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/doug-martin/goqu/v9"
@@ -30,7 +32,13 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 /*
@@ -299,4 +307,83 @@ func TestGetLabelFilter(t *testing.T) {
 	assert.Equal(t,
 		`SELECT "resource" FROM "octelium_resources" WHERE (resource->'metadata'->'specLabels'->>'email' = 'v'' OR ''1''=''1')`,
 		getLabelSQL(specLabelsPath, "email", `v' OR '1'='1`))
+}
+
+func TestToResourceListMetadataAndErrors(t *testing.T) {
+	srv := &Server{opts: &Opts{NewResourceObjectList: vutils.NewResourceObjectList}}
+	meta := &metav1.ListResponseMeta{Page: 2, ItemsPerPage: 10, TotalCount: 35, HasMore: true}
+	obj, err := srv.toResourceList(nil, meta, "core", "v1", ucorev1.KindNamespace)
+	require.Nil(t, err)
+	list := obj.(*corev1.NamespaceList)
+	assert.Empty(t, list.Items)
+	assert.Equal(t, "core/v1", list.ApiVersion)
+	assert.Equal(t, "NamespaceList", list.Kind)
+	assert.True(t, proto.Equal(meta, list.ListResponseMeta))
+
+	srv.opts.NewResourceObjectList = func(string, string, string) (protoreflect.ProtoMessage, error) {
+		return nil, fmt.Errorf("list factory failed")
+	}
+	_, err = srv.toResourceList(nil, nil, "core", "v1", ucorev1.KindNamespace)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	srv.opts.NewResourceObjectList = vutils.NewResourceObjectList
+	_, err = srv.toResourceList([]umetav1.ResourceObjectI{
+		&corev1.Namespace{Metadata: &metav1.Metadata{CreatedAt: &timestamppb.Timestamp{Seconds: 253402300800}}},
+	}, nil, "core", "v1", ucorev1.KindNamespace)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestListFilterValueTypes(t *testing.T) {
+	for _, entry := range []struct {
+		value    *structpb.Value
+		expected any
+	}{
+		{structpb.NewStringValue("value"), "value"},
+		{structpb.NewStringValue(""), ""},
+		{structpb.NewBoolValue(true), "true"},
+		{structpb.NewBoolValue(false), ""},
+		{structpb.NewNumberValue(42), float64(42)},
+		{structpb.NewNullValue(), nil},
+		{structpb.NewListValue(&structpb.ListValue{}), nil},
+	} {
+		assert.Equal(t, entry.expected, getPBVal(entry.value))
+	}
+	for _, value := range []*structpb.Value{
+		structpb.NewNullValue(),
+		structpb.NewListValue(&structpb.ListValue{}),
+		structpb.NewStructValue(&structpb.Struct{}),
+		{},
+	} {
+		_, err := getListFilters(&rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{{Field: "spec.field", Op: rmetav1.ListOptions_Filter_OP_EQ, Value: value}},
+		})
+		assert.NotNil(t, err)
+	}
+	for _, field := range []string{
+		"spec..field",
+		"spec._field",
+		"Spec.field",
+		"spec.field-name",
+		"spec.field\x00",
+		"spec." + strings.Repeat("x", 129),
+	} {
+		_, err := getListFilters(&rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{{Field: field, Op: rmetav1.ListOptions_Filter_OP_EQ, Value: structpb.NewStringValue("value")}},
+		})
+		assert.NotNil(t, err, field)
+	}
+	for _, value := range []*structpb.Value{
+		structpb.NewStringValue(""),
+		structpb.NewNumberValue(0),
+		structpb.NewNumberValue(42),
+		structpb.NewBoolValue(false),
+		structpb.NewBoolValue(true),
+	} {
+		filters, err := getListFilters(&rmetav1.ListOptions{
+			Filters: []*rmetav1.ListOptions_Filter{{Field: "spec.field", Op: rmetav1.ListOptions_Filter_OP_EQ, Value: value}},
+		})
+		require.Nil(t, err)
+		require.Len(t, filters, 1)
+		_, _, err = goqu.From(tableName).Where(filters...).ToSQL()
+		assert.Nil(t, err)
+	}
 }

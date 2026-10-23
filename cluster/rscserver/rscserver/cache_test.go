@@ -17,7 +17,9 @@
 package rscserver
 
 import (
+	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +29,9 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestCache(t *testing.T) {
@@ -152,4 +157,90 @@ func TestCache(t *testing.T) {
 		assert.Nil(t, err)
 	}
 
+}
+
+func TestCacheBinaryAndOverwrite(t *testing.T) {
+	ctx := t.Context()
+	srv := &srvCache{redisC: redisutils.NewClient()}
+	t.Cleanup(func() { srv.redisC.Close() })
+
+	key := append(utilrand.GetRandomBytesMust(32), 0, 255, ':', '*')
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), srv.getRedisCacheKey(key)) })
+	data := []byte{0, 255, 128, 1}
+	_, err := srv.SetCache(ctx, &rcachev1.SetCacheRequest{Key: key, Data: data, Duration: durSeconds(30)})
+	require.Nil(t, err)
+
+	got, err := srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: key})
+	require.Nil(t, err)
+	assert.Equal(t, data, got.Data)
+
+	_, err = srv.SetCache(ctx, &rcachev1.SetCacheRequest{Key: key})
+	require.Nil(t, err)
+	got, err = srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: key})
+	require.Nil(t, err)
+	assert.Empty(t, got.Data)
+	ttl, err := srv.redisC.PTTL(ctx, srv.getRedisCacheKey(key)).Result()
+	require.Nil(t, err)
+	assert.Equal(t, -time.Nanosecond, ttl)
+
+	other := append(bytes.Clone(key), 0)
+	_, err = srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: other})
+	assert.True(t, grpcerr.IsNotFound(err))
+}
+
+func TestCacheGetDeleteConcurrent(t *testing.T) {
+	ctx := t.Context()
+	srv := &srvCache{redisC: redisutils.NewClient()}
+	t.Cleanup(func() { srv.redisC.Close() })
+	key := utilrand.GetRandomBytesMust(32)
+	data := utilrand.GetRandomBytesMust(128)
+	_, err := srv.SetCache(ctx, &rcachev1.SetCacheRequest{Key: key, Data: data})
+	require.Nil(t, err)
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), srv.getRedisCacheKey(key)) })
+
+	var wg sync.WaitGroup
+	results := make(chan *rcachev1.GetCacheResponse, 64)
+	start := make(chan struct{})
+	for range 64 {
+		wg.Go(func() {
+			<-start
+			res, err := srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: key, Delete: true})
+			if err != nil {
+				assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+				return
+			}
+			results <- res
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	require.Len(t, results, 1)
+	assert.Equal(t, data, (<-results).Data)
+	_, err = srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: key})
+	assert.True(t, grpcerr.IsNotFound(err))
+}
+
+func TestCacheErrors(t *testing.T) {
+	srv := &srvCache{redisC: redisutils.NewClient()}
+	require.Nil(t, srv.redisC.Close())
+	ctx := t.Context()
+
+	res, err := srv.SetCache(ctx, &rcachev1.SetCacheRequest{})
+	assert.Nil(t, res)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	deleted, err := srv.DeleteCache(ctx, &rcachev1.DeleteCacheRequest{})
+	assert.Nil(t, err)
+	assert.NotNil(t, deleted)
+	for _, del := range []bool{false, true} {
+		got, err := srv.GetCache(ctx, &rcachev1.GetCacheRequest{Key: []byte("key"), Delete: del})
+		assert.Nil(t, got)
+		assert.Equal(t, codes.Internal, status.Code(err))
+	}
+	deleted, err = srv.DeleteCache(ctx, &rcachev1.DeleteCacheRequest{Key: []byte("key")})
+	assert.Nil(t, deleted)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	res, err = srv.SetCache(ctx, &rcachev1.SetCacheRequest{Key: []byte("key")})
+	assert.Nil(t, res)
+	assert.NotNil(t, err)
 }

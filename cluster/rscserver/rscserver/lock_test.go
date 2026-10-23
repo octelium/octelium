@@ -17,7 +17,9 @@
 package rscserver
 
 import (
+	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -391,4 +394,94 @@ func TestLock(t *testing.T) {
 		assert.Nil(t, err)
 		assert.True(t, unlockRes.Released)
 	}
+}
+
+func TestLockConcurrent(t *testing.T) {
+	ctx := t.Context()
+	srv := &srvLock{redisC: redisutils.NewClient()}
+	t.Cleanup(func() { srv.redisC.Close() })
+	key := utilrand.GetRandomBytesMust(lockMaxKeyLen)
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), srv.getRedisLockKey(key)) })
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	leases := make(chan []byte, 64)
+	for range 64 {
+		wg.Go(func() {
+			<-start
+			res, err := srv.Lock(ctx, &rlockv1.LockRequest{Key: key, Ttl: durMinutes(5)})
+			if !assert.Nil(t, err) {
+				return
+			}
+			if res.Acquired {
+				leases <- res.LeaseID
+			} else {
+				assert.Empty(t, res.LeaseID)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(leases)
+	require.Len(t, leases, 1)
+	lease := <-leases
+	require.Len(t, lease, lockLeaseIDLen)
+	res, err := srv.Unlock(ctx, &rlockv1.UnlockRequest{Key: key, LeaseID: lease})
+	require.Nil(t, err)
+	require.True(t, res.Released)
+
+	next, err := srv.Lock(ctx, &rlockv1.LockRequest{Key: key, Ttl: durSeconds(1)})
+	require.Nil(t, err)
+	require.True(t, next.Acquired)
+	assert.NotEqual(t, lease, next.LeaseID)
+	refreshed, err := srv.Refresh(ctx, &rlockv1.RefreshRequest{Key: key, LeaseID: lease, Ttl: durMinutes(5)})
+	require.Nil(t, err)
+	assert.False(t, refreshed.Refreshed)
+	res, err = srv.Unlock(ctx, &rlockv1.UnlockRequest{Key: key, LeaseID: lease})
+	require.Nil(t, err)
+	assert.False(t, res.Released)
+	stored, err := srv.redisC.Get(ctx, srv.getRedisLockKey(key)).Bytes()
+	require.Nil(t, err)
+	assert.Equal(t, next.LeaseID, stored)
+}
+
+func TestLockValidationAndBackendErrors(t *testing.T) {
+	srv := &srvLock{redisC: redisutils.NewClient()}
+	require.Nil(t, srv.redisC.Close())
+	ctx := t.Context()
+	for _, key := range [][]byte{nil, {}, bytes.Repeat([]byte("x"), lockMaxKeyLen+1)} {
+		_, err := srv.Lock(ctx, &rlockv1.LockRequest{Key: key, Ttl: durSeconds(1)})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = srv.Unlock(ctx, &rlockv1.UnlockRequest{Key: key, LeaseID: make([]byte, lockLeaseIDLen)})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = srv.Refresh(ctx, &rlockv1.RefreshRequest{Key: key, LeaseID: make([]byte, lockLeaseIDLen), Ttl: durSeconds(1)})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+	for _, ttl := range []*metav1.Duration{nil, {}, durMilliseconds(999), durMilliseconds(300001)} {
+		_, err := srv.Lock(ctx, &rlockv1.LockRequest{Key: []byte("key"), Ttl: ttl})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = srv.Refresh(ctx, &rlockv1.RefreshRequest{Key: []byte("key"), LeaseID: make([]byte, lockLeaseIDLen), Ttl: ttl})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+
+	_, err := srv.Lock(ctx, &rlockv1.LockRequest{Key: []byte("key"), Ttl: durSeconds(1)})
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.Unlock(ctx, &rlockv1.UnlockRequest{Key: []byte("key"), LeaseID: make([]byte, lockLeaseIDLen)})
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.Refresh(ctx, &rlockv1.RefreshRequest{Key: []byte("key"), LeaseID: make([]byte, lockLeaseIDLen), Ttl: durSeconds(1)})
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	for _, entry := range []struct {
+		err  error
+		code codes.Code
+	}{
+		{context.Canceled, codes.Canceled},
+		{context.DeadlineExceeded, codes.DeadlineExceeded},
+	} {
+		assert.Equal(t, entry.code, status.Code(srv.toGRPCErr(ctx, entry.err)))
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = srv.Lock(canceled, &rlockv1.LockRequest{Key: []byte("key"), Ttl: durSeconds(1)})
+	assert.Equal(t, codes.Canceled, status.Code(err))
 }

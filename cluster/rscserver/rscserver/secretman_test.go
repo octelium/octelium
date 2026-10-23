@@ -18,6 +18,7 @@ package rscserver
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -34,9 +35,12 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type tstSecretMan struct {
@@ -289,4 +293,149 @@ func TestSecretManOps(t *testing.T) {
 	assert.Nil(t, err)
 	_, ok := tstSecretManSrv.c.Get(sec13.GetMetadata().Uid)
 	assert.False(t, ok)
+}
+
+type testSecretManClient struct {
+	csecretmanv1.MainServiceClient
+	get    func(context.Context, *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error)
+	set    func(context.Context, *csecretmanv1.SetSecretRequest) (*csecretmanv1.SetSecretResponse, error)
+	list   func(context.Context, *csecretmanv1.ListSecretRequest) (*csecretmanv1.ListSecretResponse, error)
+	delete func(context.Context, *csecretmanv1.DeleteSecretRequest) (*csecretmanv1.DeleteSecretResponse, error)
+}
+
+func (c *testSecretManClient) GetSecret(ctx context.Context, req *csecretmanv1.GetSecretRequest, _ ...grpc.CallOption) (*csecretmanv1.GetSecretResponse, error) {
+	return c.get(ctx, req)
+}
+func (c *testSecretManClient) SetSecret(ctx context.Context, req *csecretmanv1.SetSecretRequest, _ ...grpc.CallOption) (*csecretmanv1.SetSecretResponse, error) {
+	return c.set(ctx, req)
+}
+func (c *testSecretManClient) ListSecret(ctx context.Context, req *csecretmanv1.ListSecretRequest, _ ...grpc.CallOption) (*csecretmanv1.ListSecretResponse, error) {
+	return c.list(ctx, req)
+}
+func (c *testSecretManClient) DeleteSecret(ctx context.Context, req *csecretmanv1.DeleteSecretRequest, _ ...grpc.CallOption) (*csecretmanv1.DeleteSecretResponse, error) {
+	return c.delete(ctx, req)
+}
+
+func TestSecretManagerBypass(t *testing.T) {
+	ctx := t.Context()
+	srv := &Server{hasSecretManager: true}
+	user := newTestUser("user")
+	ret, err := srv.handleSecretManagerSet(ctx, user, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.Same(t, user, ret)
+	ret, err = srv.handleSecretManagerGet(ctx, user, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.Same(t, user, ret)
+	assert.Nil(t, srv.handleSecretManagerDelete(ctx, user, "core", "v1", ucorev1.KindUser))
+	items, err := srv.handleSecretManagerList(ctx, []umetav1.ResourceObjectI{user}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.Same(t, user, items[0])
+	items, err = srv.handleSecretManagerList(ctx, nil, "core", "v1", ucorev1.KindSecret)
+	require.Nil(t, err)
+	assert.Empty(t, items)
+	secret := &corev1.Secret{Kind: ucorev1.KindSecret, Metadata: &metav1.Metadata{Uid: vutils.UUIDv4()}}
+	ret, err = srv.handleSecretManagerSet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	require.Nil(t, err)
+	assert.Same(t, secret, ret)
+	assert.Nil(t, srv.handleSecretManagerDelete(ctx, secret, "core", "v1", ucorev1.KindSecret))
+}
+
+func TestSecretManagerErrors(t *testing.T) {
+	ctx := t.Context()
+	backendErr := status.Error(codes.Unavailable, "secret backend unavailable")
+	client := &testSecretManClient{
+		get: func(context.Context, *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error) {
+			return nil, backendErr
+		},
+		set: func(context.Context, *csecretmanv1.SetSecretRequest) (*csecretmanv1.SetSecretResponse, error) {
+			return nil, backendErr
+		},
+		list: func(context.Context, *csecretmanv1.ListSecretRequest) (*csecretmanv1.ListSecretResponse, error) {
+			return nil, backendErr
+		},
+		delete: func(context.Context, *csecretmanv1.DeleteSecretRequest) (*csecretmanv1.DeleteSecretResponse, error) {
+			return nil, backendErr
+		},
+	}
+	srv := &Server{
+		hasSecretManager: true,
+		secretmanC:       client,
+		opts:             &Opts{NewResourceObject: vutils.NewResourceObject},
+	}
+	secret := &corev1.Secret{
+		Kind:     ucorev1.KindSecret,
+		Metadata: &metav1.Metadata{Uid: vutils.UUIDv4()},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "private"}},
+	}
+	_, err := srv.handleSecretManagerSet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.ErrorIs(t, err, backendErr)
+	_, err = srv.handleSecretManagerGet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.ErrorIs(t, err, backendErr)
+	_, err = srv.handleSecretManagerList(ctx, []umetav1.ResourceObjectI{secret}, "core", "v1", ucorev1.KindSecret)
+	assert.ErrorIs(t, err, backendErr)
+	assert.ErrorIs(t, srv.handleSecretManagerDelete(ctx, secret, "core", "v1", ucorev1.KindSecret), backendErr)
+
+	client.get = func(context.Context, *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error) {
+		return &csecretmanv1.GetSecretResponse{Data: []byte("invalid")}, nil
+	}
+	_, err = srv.handleSecretManagerGet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	client.list = func(context.Context, *csecretmanv1.ListSecretRequest) (*csecretmanv1.ListSecretResponse, error) {
+		return &csecretmanv1.ListSecretResponse{
+			Items: []*csecretmanv1.ListSecretResponse_Item{{SecretRef: umetav1.GetObjectReference(secret), Data: []byte("invalid")}},
+		}, nil
+	}
+	_, err = srv.handleSecretManagerList(ctx, []umetav1.ResourceObjectI{secret}, "core", "v1", ucorev1.KindSecret)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	client.get = func(context.Context, *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error) {
+		return &csecretmanv1.GetSecretResponse{Data: []byte(`{"value": 42}`)}, nil
+	}
+	_, err = srv.handleSecretManagerGet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.NotNil(t, err)
+	srv.opts.NewResourceObject = func(string, string, string) (umetav1.ResourceObjectI, error) {
+		return nil, fmt.Errorf("factory failed")
+	}
+	_, err = srv.handleSecretManagerSet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	client.get = func(context.Context, *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error) {
+		return &csecretmanv1.GetSecretResponse{Data: []byte(`{"value": "private"}`)}, nil
+	}
+	_, err = srv.handleSecretManagerGet(ctx, secret, "core", "v1", ucorev1.KindSecret)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestSecretManagerStorageIsolation(t *testing.T) {
+	srv := newTestServer(t, nil)
+	backend := newTstSecretMan(t)
+	srv.hasSecretManager = true
+	srv.secretmanC = &testSecretManClient{
+		get:    backend.GetSecret,
+		set:    backend.SetSecret,
+		list:   backend.ListSecret,
+		delete: backend.DeleteSecret,
+	}
+	ctx := t.Context()
+	created, err := srv.doCreate(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret-isolation"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "private"}},
+	}, "core", "v1", ucorev1.KindSecret)
+	require.Nil(t, err)
+	assert.Equal(t, "private", created.(*corev1.Secret).Data.GetValue())
+	var data []byte
+	require.Nil(t, srv.db.QueryRowContext(ctx, `SELECT resource FROM octelium_resources WHERE uid = $1`, created.GetMetadata().Uid).Scan(&data))
+	stored := &corev1.Secret{}
+	require.Nil(t, pbutils.UnmarshalJSON(data, stored))
+	assert.Nil(t, stored.Data)
+	for _, key := range []string{
+		getObjectKeyByUID(created.GetMetadata().Uid),
+		getObjectKeyByName("core", "v1", ucorev1.KindSecret, created.GetMetadata().Name),
+	} {
+		count, err := srv.redisC.Exists(ctx, key).Result()
+		require.Nil(t, err)
+		assert.Zero(t, count)
+	}
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindSecret)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, pbutils.IsEqual(created, items[0]))
 }

@@ -18,6 +18,8 @@ package rscserver
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +28,9 @@ import (
 	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestRatLimit(t *testing.T) {
@@ -478,5 +483,82 @@ func TestReconcileSlidingWindowTimestamp(t *testing.T) {
 		assert.Nil(t, err, "%+v", err)
 		assert.False(t, resp.IsAllowed)
 		assert.Equal(t, int64(30), resp.Total)
+	}
+}
+
+func TestReserveSlidingWindowConcurrent(t *testing.T) {
+	srv := &srvRateLimit{redisC: redisutils.NewClient()}
+	t.Cleanup(func() { srv.redisC.Close() })
+	ctx := t.Context()
+	for _, sameID := range []bool{false, true} {
+		t.Run(fmt.Sprintf("same-id-%t", sameID), func(t *testing.T) {
+			key := utilrand.GetRandomBytesMust(32)
+			t.Cleanup(func() { srv.redisC.Del(context.Background(), getReservationKeys(key)...) })
+			var wg sync.WaitGroup
+			results := make(chan bool, 128)
+			start := make(chan struct{})
+			for i := range 128 {
+				wg.Go(func() {
+					<-start
+					id := []byte(fmt.Sprintf("id-%d", i))
+					if sameID {
+						id = []byte("same-id")
+					}
+					res, err := srv.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+						Key: key, Id: id, Window: durMinutes(1), Limit: 25, Amount: 1,
+					})
+					if assert.Nil(t, err) {
+						results <- res.IsAllowed
+					}
+				})
+			}
+			close(start)
+			wg.Wait()
+			close(results)
+			allowed := 0
+			for ok := range results {
+				if ok {
+					allowed++
+				}
+			}
+			expected := 25
+			if sameID {
+				expected = 128
+			}
+			assert.Equal(t, expected, allowed)
+			res, err := srv.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{
+				Key: key, Id: []byte("probe"), Window: durMinutes(1), Limit: 25,
+			})
+			require.Nil(t, err)
+			assert.True(t, res.IsAllowed)
+			total := int64(25)
+			if sameID {
+				total = 1
+			}
+			assert.Equal(t, total, res.Total)
+		})
+	}
+}
+
+func TestRateLimitErrors(t *testing.T) {
+	srv := &srvRateLimit{redisC: redisutils.NewClient()}
+	require.Nil(t, srv.redisC.Close())
+	ctx := t.Context()
+	_, err := srv.CheckSlidingWindow(ctx, &rratelimitv1.CheckSlidingWindowRequest{})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	_, err = srv.CheckSlidingWindow(ctx, &rratelimitv1.CheckSlidingWindowRequest{Key: []byte("key"), Window: durSeconds(1), Limit: 1})
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.ReserveSlidingWindow(ctx, &rratelimitv1.ReserveSlidingWindowRequest{Key: []byte("key"), Id: []byte("id"), Window: durSeconds(1), Limit: 1})
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.ReconcileSlidingWindow(ctx, &rratelimitv1.ReconcileSlidingWindowRequest{Key: []byte("key"), Id: []byte("id"), Window: durSeconds(1)})
+	assert.Equal(t, codes.Internal, status.Code(err))
+	for _, req := range []*rratelimitv1.ReconcileSlidingWindowRequest{
+		{}, {Key: []byte("key")}, {Key: []byte("key"), Id: []byte("id")},
+		{Key: []byte("key"), Id: []byte("id"), Window: durSeconds(0)},
+		{Key: []byte("key"), Id: []byte("id"), Window: durSeconds(1), Amount: -1},
+		{Key: []byte("key"), Id: []byte("id"), Window: durSeconds(1), Amount: maxSlidingWindowAmount + 1},
+	} {
+		_, err := srv.ReconcileSlidingWindow(ctx, req)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
 }

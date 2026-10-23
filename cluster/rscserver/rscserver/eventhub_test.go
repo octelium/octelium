@@ -19,6 +19,7 @@ package rscserver
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestKind() string {
@@ -661,4 +664,112 @@ func TestEventHubGapCheckerLive(t *testing.T) {
 
 	assert.True(t, waitForDone(sub, streamGapCheckInterval+10*time.Second))
 	assert.False(t, h.hasSubscribers(streamKey))
+}
+
+func TestEventHubMessageValidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	kind := newTestKind()
+	key := getRscStreamKey("core", "v1", kind)
+	h := newEventHub(nil)
+	sub := &eventSubscriber{
+		streamKey: key,
+		barrierID: streamIDZero,
+		ctx:       ctx,
+		cancel:    cancel,
+		ch:        make(chan *rmetav1.WatchEvent, 1),
+	}
+	h.subs[key] = map[*eventSubscriber]struct{}{sub: {}}
+	marshal := func(ev *rmetav1.WatchEvent) string {
+		data, err := pbutils.Marshal(ev)
+		require.Nil(t, err)
+		return string(data)
+	}
+	for _, values := range []map[string]any{
+		{}, {rscStreamFieldData: 42}, {rscStreamFieldData: string([]byte{255})},
+		{rscStreamFieldData: marshal(&rmetav1.WatchEvent{})},
+		{rscStreamFieldData: marshal(newTestWatchEvent("other", "v1", kind, "wrong-api"))},
+		{rscStreamFieldData: marshal(newTestWatchEvent("core", "v2", kind, "wrong-version"))},
+		{rscStreamFieldData: marshal(newTestWatchEvent("core", "v1", "Other", "wrong-kind"))},
+	} {
+		assert.NotNil(t, h.handleMessage(key, "core", "v1", kind, redis.XMessage{ID: "1-0", Values: values}))
+		assert.Empty(t, sub.ch)
+	}
+	valid := newTestWatchEvent("core", "v1", kind, "valid")
+	require.Nil(t, h.handleMessage(key, "core", "v1", kind, redis.XMessage{ID: "1-0", Values: map[string]any{rscStreamFieldData: marshal(valid)}}))
+	require.Len(t, sub.ch, 1)
+	assert.True(t, proto.Equal(valid, <-sub.ch))
+	cancel()
+	assert.True(t, sub.enqueue(valid))
+	assert.Empty(t, sub.ch)
+}
+
+func TestEventHubConcurrentPublishing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	redisC := redisutils.NewClient()
+	t.Cleanup(func() { redisC.Close() })
+	h := newEventHub(redisC)
+	require.Nil(t, h.Start(ctx))
+	defer h.Stop()
+	kind := newTestKind()
+	key := getRscStreamKey("core", "v1", kind)
+	t.Cleanup(func() { redisC.Del(context.Background(), key) })
+	var subs []*eventSubscriber
+	for range 3 {
+		sub, err := h.subscribe(ctx, "core", "v1", kind)
+		require.Nil(t, err)
+		subs = append(subs, sub)
+		defer h.unsubscribe(sub)
+	}
+	srv := &Server{redisC: redisC}
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Go(func() {
+			for i := range 80 {
+				assert.Nil(t, srv.publishMessage(ctx, "core", "v1", kind,
+					newTestWatchEvent("core", "v1", kind, fmt.Sprintf("worker-%d-%d", worker, i))))
+			}
+		})
+	}
+	wg.Wait()
+	entries, err := redisC.XRange(ctx, key, "-", "+").Result()
+	require.Nil(t, err)
+	require.Len(t, entries, 640)
+	var expected []string
+	for _, entry := range entries {
+		ev := &rmetav1.WatchEvent{}
+		require.Nil(t, pbutils.Unmarshal([]byte(entry.Values[rscStreamFieldData].(string)), ev))
+		expected = append(expected, getEventName(ev))
+	}
+	for _, sub := range subs {
+		var actual []string
+		for range len(expected) {
+			select {
+			case ev := <-sub.ch:
+				actual = append(actual, getEventName(ev))
+			case <-ctx.Done():
+				require.FailNow(t, fmt.Sprintf("Timed out after receiving %d Watch events", len(actual)))
+			}
+		}
+		assert.Equal(t, expected, actual)
+		assert.Empty(t, sub.ch)
+	}
+}
+
+func TestEventHubBackendErrors(t *testing.T) {
+	redisC := redisutils.NewClient()
+	require.Nil(t, redisC.Close())
+	h := newEventHub(redisC)
+	ctx := t.Context()
+	assert.NotNil(t, h.Start(ctx))
+	assert.NotNil(t, h.Start(ctx))
+	h.Stop()
+	_, err := h.getFirstID(ctx, "key")
+	assert.NotNil(t, err)
+	_, err = h.getLastID(ctx, "key")
+	assert.NotNil(t, err)
+	_, err = h.subscribe(ctx, "core", "v1", newTestKind())
+	assert.NotNil(t, err)
+	assert.Empty(t, h.getReadArgs())
 }

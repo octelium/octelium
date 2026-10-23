@@ -83,6 +83,7 @@ func Phases() []Phase {
 		{"RscServerMetadata", testRscServerMetadata},
 		{"RscServerLifecycle", testRscServerLifecycle},
 		{"RscServerList", testRscServerList},
+		{"RscServerConcurrentLifecycle", testRscServerConcurrentLifecycle},
 		{"Nocturne", testNocturne},
 		{"NocturneEmptyDir", testNocturneEmptyDir},
 		{"NocturneKubernetesSecret", testNocturneKubernetesSecret},

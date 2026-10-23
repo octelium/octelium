@@ -19,18 +19,23 @@ package rscserver
 import (
 	"context"
 	"fmt"
+	"io"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/rsc/rpubsubv1"
 	"github.com/octelium/octelium/cluster/common/redisutils"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -676,4 +681,166 @@ func TestPubSubSubscribeGroup(t *testing.T) {
 
 		assert.Nil(t, sub.stop())
 	}
+}
+
+func TestPubSubDecodeMessage(t *testing.T) {
+	srv := &srvPubSub{}
+	for _, values := range []map[string]any{
+		{}, {pubSubFieldData: 1}, {pubSubFieldData: string([]byte{255})}, {pubSubFieldData: ""},
+	} {
+		res, err := srv.decodeMessage(redis.XMessage{ID: "1-0", Values: values})
+		assert.Nil(t, res)
+		assert.NotNil(t, err)
+	}
+	msg := newTestPubSubDataMessage(string([]byte{0, 255, 1}))
+	msg.Id = []byte("forged")
+	data, err := pbutils.Marshal(msg)
+	require.Nil(t, err)
+	res, err := srv.decodeMessage(redis.XMessage{ID: "2-1", Values: map[string]any{pubSubFieldData: string(data)}})
+	require.Nil(t, err)
+	assert.Equal(t, []byte("2-1"), res.Id)
+	assert.Equal(t, msg.GetData(), res.GetData())
+}
+
+func TestPubSubPublishValidationAtomicity(t *testing.T) {
+	srv := newSrvPubSub(redisutils.NewClient())
+	t.Cleanup(func() { srv.close(); srv.redisC.Close() })
+	ctx := t.Context()
+	topic := newTestPubSubTopic()
+	key := srv.getTopicKey(topic)
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), key) })
+	for _, invalid := range []*rpubsubv1.Message{nil, {}, newTestPubSubDataMessage(string(make([]byte, pubSubMaxMessageSize+1)))} {
+		_, err := srv.Publish(ctx, &rpubsubv1.PublishRequest{Topic: topic, Messages: []*rpubsubv1.Message{newTestPubSubDataMessage("valid"), invalid}})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		count, err := srv.redisC.Exists(ctx, key).Result()
+		require.Nil(t, err)
+		assert.Zero(t, count)
+	}
+	msg := newTestPubSubDataMessage("valid")
+	msg.Id = []byte("forged")
+	before := proto.Clone(msg)
+	res, err := srv.Publish(ctx, &rpubsubv1.PublishRequest{Topic: topic, Messages: []*rpubsubv1.Message{msg}})
+	require.Nil(t, err)
+	require.Len(t, res.Ids, 1)
+	assert.True(t, proto.Equal(before, msg))
+	entries, err := srv.redisC.XRange(ctx, key, "-", "+").Result()
+	require.Nil(t, err)
+	require.Len(t, entries, 1)
+	decoded, err := srv.decodeMessage(entries[0])
+	require.Nil(t, err)
+	assert.Equal(t, res.Ids[0], decoded.Id)
+	assert.NotEqual(t, msg.Id, decoded.Id)
+	assert.True(t, decoded.CreatedAt.IsValid())
+}
+
+func TestPubSubFanoutConcurrent(t *testing.T) {
+	srv := newSrvPubSub(redisutils.NewClient())
+	t.Cleanup(func() { srv.close(); srv.redisC.Close() })
+	topic := newTestPubSubTopic()
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), srv.getTopicKey(topic)) })
+	var subs []*testPubSubSubscription
+	for range 3 {
+		sub := startTestPubSubSubscription(t, srv, &rpubsubv1.SubscribeRequest{Topic: topic})
+		subs = append(subs, sub)
+		t.Cleanup(func() { assert.Nil(t, sub.stop()) })
+	}
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Go(func() {
+			for i := range 25 {
+				_, err := srv.Publish(t.Context(), &rpubsubv1.PublishRequest{Topic: topic,
+					Messages: []*rpubsubv1.Message{newTestPubSubDataMessage(fmt.Sprintf("%d-%d", worker, i))}})
+				assert.Nil(t, err)
+			}
+		})
+	}
+	wg.Wait()
+	var expected []*rpubsubv1.Message
+	entries, err := srv.redisC.XRange(t.Context(), srv.getTopicKey(topic), "-", "+").Result()
+	require.Nil(t, err)
+	require.Len(t, entries, 200)
+	for _, entry := range entries {
+		msg, err := srv.decodeMessage(entry)
+		require.Nil(t, err)
+		expected = append(expected, msg)
+	}
+	for _, sub := range subs {
+		actual := sub.receive(len(expected), 10*time.Second)
+		assert.Equal(t, getTestPubSubIDs(expected), getTestPubSubIDs(actual))
+		assert.Equal(t, getTestPubSubData(expected), getTestPubSubData(actual))
+	}
+}
+
+func TestPubSubGroupIsolationAndRecovery(t *testing.T) {
+	srv := newSrvPubSub(redisutils.NewClient())
+	t.Cleanup(func() { srv.close(); srv.redisC.Close() })
+	ctx := t.Context()
+	topic := newTestPubSubTopic()
+	key := srv.getTopicKey(topic)
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), key) })
+	sub := startTestPubSubSubscription(t, srv, &rpubsubv1.SubscribeRequest{Topic: topic, Group: []byte("first")})
+	t.Cleanup(func() { assert.Nil(t, sub.stop()) })
+	res, err := srv.Publish(ctx, &rpubsubv1.PublishRequest{Topic: topic, Messages: []*rpubsubv1.Message{newTestPubSubDataMessage("first")}})
+	require.Nil(t, err)
+	require.Len(t, sub.receive(1, 5*time.Second), 1)
+	ack, err := srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{Topic: topic, Group: []byte("other"), Ids: res.Ids})
+	require.Nil(t, err)
+	assert.Zero(t, ack.Count)
+	pending, err := srv.redisC.XPending(ctx, key, "first").Result()
+	require.Nil(t, err)
+	assert.Equal(t, int64(1), pending.Count)
+
+	require.Nil(t, srv.redisC.XGroupDestroy(ctx, key, "first").Err())
+	_, err = srv.Publish(ctx, &rpubsubv1.PublishRequest{Topic: topic, Messages: []*rpubsubv1.Message{newTestPubSubDataMessage("second")}})
+	require.Nil(t, err)
+	msgs := sub.receive(2, 10*time.Second)
+	assert.Equal(t, []string{"first", "second"}, getTestPubSubData(msgs))
+	ack, err = srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{Topic: topic, Group: []byte("first"), Ids: getTestPubSubIDs(msgs)})
+	require.Nil(t, err)
+	assert.Equal(t, uint32(2), ack.Count)
+	ack, err = srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{Topic: topic, Group: []byte("first"), Ids: getTestPubSubIDs(msgs)})
+	require.Nil(t, err)
+	assert.Zero(t, ack.Count)
+}
+
+type testPubSubErrorStream struct {
+	*fakePubSubStream
+}
+
+func (s *testPubSubErrorStream) Send(*rpubsubv1.SubscribeResponse) error {
+	return io.ErrUnexpectedEOF
+}
+
+func TestPubSubErrors(t *testing.T) {
+	srv := newSrvPubSub(redisutils.NewClient())
+	t.Cleanup(func() { srv.close(); srv.redisC.Close() })
+	ctx := t.Context()
+	for _, group := range [][]byte{nil, []byte("group")} {
+		topic := newTestPubSubTopic()
+		t.Cleanup(func() { srv.redisC.Del(context.Background(), srv.getTopicKey(topic)) })
+		stream := &testPubSubErrorStream{fakePubSubStream: &fakePubSubStream{ctx: ctx}}
+		assert.ErrorIs(t, srv.Subscribe(&rpubsubv1.SubscribeRequest{Topic: topic, Group: group}, stream), io.ErrUnexpectedEOF)
+		assert.Zero(t, srv.subscriptions.Load())
+	}
+	for _, id := range [][]byte{nil, []byte("1-"), []byte("1-2-3"), make([]byte, pubSubMaxIDLen+1)} {
+		assert.Equal(t, codes.InvalidArgument, status.Code(srv.validateID(id)))
+	}
+	_, err := srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{Topic: []byte("topic"), Group: []byte("group"), Ids: make([][]byte, pubSubMaxAckIDs+1)})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	_, err = srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Nil(t, srv.redisC.Close())
+	_, err = srv.Publish(ctx, &rpubsubv1.PublishRequest{Topic: []byte("topic"), Messages: []*rpubsubv1.Message{newTestPubSubDataMessage("data")}})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	_, err = srv.Acknowledge(ctx, &rpubsubv1.AcknowledgeRequest{Topic: []byte("topic"), Group: []byte("group"), Ids: [][]byte{[]byte("1-0")}})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	for _, group := range [][]byte{nil, []byte("group")} {
+		err := srv.Subscribe(&rpubsubv1.SubscribeRequest{Topic: []byte("topic"), Group: group}, &fakePubSubStream{ctx: ctx})
+		assert.Equal(t, codes.Unavailable, status.Code(err))
+		assert.Zero(t, srv.subscriptions.Load())
+	}
+	assert.Equal(t, codes.Canceled, status.Code(srv.toGRPCErr(ctx, context.Canceled)))
+	assert.Equal(t, codes.DeadlineExceeded, status.Code(srv.toGRPCErr(ctx, context.DeadlineExceeded)))
+	assert.False(t, isPubSubNoGroupErr(nil))
+	assert.True(t, isPubSubNoGroupErr(fmt.Errorf("NOGROUP missing")))
 }

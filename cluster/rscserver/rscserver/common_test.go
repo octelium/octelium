@@ -19,19 +19,31 @@ package rscserver
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/octelium/octelium/apis/rsc/rcachev1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"net"
 
 	"fmt"
 
@@ -1255,4 +1267,456 @@ func TestUpdateConflict(t *testing.T) {
 		cur := getObj(uid)
 		assert.True(t, proto.Equal(updated, cur))
 	})
+}
+
+func newTestServer(t *testing.T, opts *Opts) *Server {
+	t.Helper()
+	for _, key := range []string{
+		"OCTELIUM_POSTGRES_NOSSL", "OCTELIUM_POSTGRES_HOST", "OCTELIUM_POSTGRES_USERNAME",
+		"OCTELIUM_POSTGRES_PASSWORD", "OCTELIUM_POSTGRES_DATABASE", "OCTELIUM_TEST_RSCSERVER_PORT",
+	} {
+		t.Setenv(key, os.Getenv(key))
+	}
+	privateRegistry, mode, testMode := ldflags.PrivateRegistry, ldflags.Mode, ldflags.TestMode
+	t.Cleanup(func() {
+		ldflags.PrivateRegistry, ldflags.Mode, ldflags.TestMode = privateRegistry, mode, testMode
+	})
+	tst, err := initTest()
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		db, err := postgresutils.NewDBWithNODB()
+		if !assert.Nil(t, err) {
+			return
+		}
+		defer db.Close()
+		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", tst.dbName))
+		assert.Nil(t, err)
+	})
+	srv, err := NewServer(t.Context(), opts)
+	require.Nil(t, err)
+	t.Cleanup(srv.Stop)
+	return srv
+}
+
+func TestResourceInvalidRequests(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	for _, req := range []*rmetav1.GetOptions{
+		{}, {Name: "a"}, {Name: "user' OR '1'='1"}, {Uid: "invalid"},
+		{Uid: vutils.UUIDv7()}, {Name: "valid", Uid: "invalid"},
+	} {
+		_, err := srv.GetResource(ctx, req, "core", "v1", ucorev1.KindUser)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Name: req.Name, Uid: req.Uid}, "core", "v1", ucorev1.KindUser)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+	for _, req := range []*corev1.User{{}, {Metadata: &metav1.Metadata{}}, {Metadata: &metav1.Metadata{Name: "invalid/name"}}} {
+		_, err := srv.CreateResource(ctx, req, "core", "v1", ucorev1.KindUser)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, _, err = srv.doUpdate(ctx, req, "core", "v1", ucorev1.KindUser)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+	uid := vutils.UUIDv4()
+	_, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: uid}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Contains(t, err.Error(), uid)
+	_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uid}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	_, _, err = srv.doUpdate(ctx, &corev1.User{Metadata: &metav1.Metadata{Uid: uid}}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.Empty(t, items)
+}
+
+func TestResourceMetadataActor(t *testing.T) {
+	srv := newTestServer(t, nil)
+	actor := &metav1.ObjectReference{Uid: vutils.UUIDv4(), Kind: "Session", ApiVersion: "core/v1", Name: "actor"}
+	data, err := pbutils.MarshalJSON(actor, false)
+	require.Nil(t, err)
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(
+		"x-octelium-session-ref", string(data), "x-octelium-req-path", "/create"))
+	req := &corev1.User{Metadata: &metav1.Metadata{Name: "actor-test", Uid: vutils.UUIDv4()}}
+	original := proto.Clone(req)
+	created, err := srv.CreateResource(ctx, req, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(original, req))
+	assert.NotEqual(t, req.Metadata.Uid, created.GetMetadata().Uid)
+	assert.True(t, proto.Equal(actor, created.GetMetadata().ActorRef))
+	assert.Equal(t, "create", created.GetMetadata().ActorOperation)
+	assert.Equal(t, "core/v1", created.GetApiVersion())
+	assert.Equal(t, ucorev1.KindUser, created.GetKind())
+	assert.NotNil(t, created.(*corev1.User).Spec)
+	assert.NotNil(t, created.(*corev1.User).Status)
+
+	ctx = metadata.NewIncomingContext(t.Context(), metadata.Pairs(
+		"x-octelium-session-ref", string(data), "x-octelium-req-path", "/update"))
+	update := proto.Clone(created).(*corev1.User)
+	update.Metadata.DisplayName = "updated"
+	updated, old, err := srv.doUpdate(ctx, update, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(created, old))
+	assert.Equal(t, created.GetMetadata().ResourceVersion, updated.GetMetadata().LastResourceVersion)
+	assert.Equal(t, created.GetMetadata().Uid, updated.GetMetadata().Uid)
+	assert.True(t, proto.Equal(created.GetMetadata().CreatedAt, updated.GetMetadata().CreatedAt))
+	assert.Equal(t, "update", updated.GetMetadata().ActorOperation)
+
+	ctx = metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-octelium-req-path", "delete"))
+	deleted, err := srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: updated.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.Equal(t, updated.GetMetadata().ResourceVersion, deleted.GetMetadata().LastResourceVersion)
+	assert.NotEqual(t, updated.GetMetadata().ResourceVersion, deleted.GetMetadata().ResourceVersion)
+	assert.Equal(t, "delete", deleted.GetMetadata().ActorOperation)
+	assert.Nil(t, deleted.GetMetadata().ActorRef)
+
+	for _, md := range []metadata.MD{
+		{}, {"x-octelium-session-ref": {}}, {"x-octelium-session-ref": {"invalid"}},
+		{"x-octelium-session-ref": {`{"uid": 42}`}},
+	} {
+		ctx := metadata.NewIncomingContext(t.Context(), md)
+		assert.Nil(t, getActorRef(ctx))
+		assert.Empty(t, getActorOp(ctx))
+	}
+}
+
+func TestResourceCacheLifecycle(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	obj, err := srv.CreateResource(ctx, newTestUser(utilrand.GetRandomStringCanonical(12)), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	md := obj.GetMetadata()
+	t.Cleanup(func() { srv.doDeleteCache(context.Background(), obj, "core", "v1", ucorev1.KindUser) })
+	for _, req := range []*rmetav1.GetOptions{{Name: md.Name}, {Uid: md.Uid}} {
+		got, found, err := srv.doGetCache(ctx, req, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		require.True(t, found)
+		assert.True(t, proto.Equal(obj, got))
+		got.GetMetadata().DisplayName = "local mutation"
+		again, found, err := srv.doGetCache(ctx, req, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		require.True(t, found)
+		assert.True(t, proto.Equal(obj, again))
+	}
+	for _, key := range []string{getObjectKeyByUID(md.Uid), getObjectKeyByName("core", "v1", ucorev1.KindUser, md.Name)} {
+		ttl, err := srv.redisC.PTTL(ctx, key).Result()
+		require.Nil(t, err)
+		assert.Greater(t, ttl, cacheResourceTTL-time.Second)
+		assert.LessOrEqual(t, ttl, cacheResourceTTL)
+	}
+
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: md.Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(obj, got))
+
+	for _, req := range []*rmetav1.GetOptions{{Name: md.Name}, {Uid: md.Uid}} {
+		key := getObjectKeyByUID(md.Uid)
+		if req.Name != "" {
+			key = getObjectKeyByName("core", "v1", ucorev1.KindUser, md.Name)
+		}
+		require.Nil(t, srv.redisC.Set(ctx, key, []byte{255}, time.Minute).Err())
+		_, found, err := srv.doGetCache(ctx, req, "core", "v1", ucorev1.KindUser)
+		assert.False(t, found)
+		assert.Equal(t, codes.Internal, status.Code(err))
+		got, err := srv.GetResource(ctx, req, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		assert.True(t, proto.Equal(obj, got))
+	}
+	srv.doDeleteCache(ctx, obj, "core", "v1", ucorev1.KindUser)
+	got, err = srv.GetResource(ctx, &rmetav1.GetOptions{Name: md.Name}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(obj, got))
+
+	_, _, err = srv.doGetCache(ctx, &rmetav1.GetOptions{}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	srv.opts.NewResourceObject = func(string, string, string) (umetav1.ResourceObjectI, error) {
+		return nil, fmt.Errorf("factory failed")
+	}
+	_, found, err := srv.doGetCache(ctx, &rmetav1.GetOptions{Uid: md.Uid}, "core", "v1", ucorev1.KindUser)
+	assert.False(t, found)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestResourceCacheUnavailable(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	obj, err := srv.CreateResource(ctx, newTestUser(utilrand.GetRandomStringCanonical(12)), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	realRedis := srv.redisC
+	srv.doDeleteCache(ctx, obj, "core", "v1", ucorev1.KindUser)
+	srv.redisC = redis.NewClient(realRedis.Options())
+	require.Nil(t, srv.redisC.Close())
+	t.Cleanup(func() { srv.redisC = realRedis })
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+
+	got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(obj, got))
+}
+
+func TestResourceListSelectors(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	for _, entry := range []struct {
+		name         string
+		systemHidden bool
+		userHidden   bool
+		specLabels   map[string]string
+		systemLabels map[string]string
+	}{
+		{
+			"aa",
+			false,
+			false,
+			map[string]string{"team": "red", "env": "prod"},
+			map[string]string{"region": "west"},
+		},
+		{
+			"bb",
+			true,
+			false,
+			map[string]string{"team": "blue", "env": "prod"},
+			map[string]string{"region": "east"},
+		},
+		{
+			"cc",
+			false,
+			true,
+			map[string]string{"team": "red", "env": "test"},
+			map[string]string{"region": "east"},
+		},
+		{"dd", true, true, nil, nil},
+	} {
+		_, err := srv.doCreate(ctx, &corev1.User{Metadata: &metav1.Metadata{
+			Name: entry.name, IsSystemHidden: entry.systemHidden, IsUserHidden: entry.userHidden,
+			SpecLabels: entry.specLabels, SystemLabels: entry.systemLabels,
+		}}, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+	}
+	for _, entry := range []struct {
+		name  string
+		req   *rmetav1.ListOptions
+		names []string
+	}{
+		{"all", &rmetav1.ListOptions{}, []string{"aa", "bb", "cc", "dd"}},
+		{"system-hidden", &rmetav1.ListOptions{ExcludeSystemHidden: true}, []string{"aa", "cc"}},
+		{"user-hidden", &rmetav1.ListOptions{ExcludeUserHidden: true}, []string{"aa", "bb"}},
+		{
+			"both-hidden",
+			&rmetav1.ListOptions{ExcludeSystemHidden: true, ExcludeUserHidden: true},
+			[]string{"aa"},
+		},
+		{
+			"spec-and",
+			&rmetav1.ListOptions{SpecLabels: map[string]string{"team": "red", "env": "prod"}},
+			[]string{"aa"},
+		},
+		{
+			"spec-or",
+			&rmetav1.ListOptions{SpecLabelsORed: map[string]string{"team": "blue", "env": "test"}},
+			[]string{"bb", "cc"},
+		},
+		{
+			"system-and",
+			&rmetav1.ListOptions{SystemLabels: map[string]string{"region": "east"}},
+			[]string{"bb", "cc"},
+		},
+		{
+			"system-or",
+			&rmetav1.ListOptions{SystemLabelsORed: map[string]string{"region": "west", "other": "yes"}},
+			[]string{"aa"},
+		},
+		{
+			"combined",
+			&rmetav1.ListOptions{
+				SpecLabels:       map[string]string{"team": "red"},
+				SystemLabelsORed: map[string]string{"region": "east"},
+			},
+			[]string{"cc"},
+		},
+		{"escaped-key", &rmetav1.ListOptions{SpecLabels: map[string]string{"x' OR '1'='1": "value"}}, nil},
+		{
+			"escaped-value",
+			&rmetav1.ListOptions{SystemLabelsORed: map[string]string{"region": "east' OR '1'='1"}},
+			nil,
+		},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			items, meta, err := srv.doList(ctx, entry.req, "core", "v1", ucorev1.KindUser)
+			require.Nil(t, err)
+			var names []string
+			for _, item := range items {
+				names = append(names, item.GetMetadata().Name)
+			}
+			assert.Equal(t, entry.names, names)
+			assert.Equal(t, uint32(len(entry.names)), meta.TotalCount)
+		})
+	}
+	for _, limit := range []uint32{0, maxItemsPerPage + 1} {
+		_, meta, err := srv.doList(ctx, &rmetav1.ListOptions{Paginate: true, ItemsPerPage: limit}, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		expected := uint32(defaultItemsPerPage)
+		if limit > maxItemsPerPage {
+			expected = maxItemsPerPage
+		}
+		assert.Equal(t, expected, meta.ItemsPerPage)
+		assert.False(t, meta.HasMore)
+	}
+	_, _, err := srv.doList(ctx, &rmetav1.ListOptions{Paginate: true, Page: 10001}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	_, _, err = srv.doList(ctx, &rmetav1.ListOptions{Filters: []*rmetav1.ListOptions_Filter{nil}}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestResourceStorageErrors(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	obj, err := srv.doCreate(ctx, newTestUser("storage-errors"), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	uid := obj.GetMetadata().Uid
+
+	require.Nil(t, srv.db.Close())
+	_, err = srv.doGet(ctx, &rmetav1.GetOptions{Uid: uid}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, _, err = srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, _, _, err = srv.doListAfterID(ctx, "core", "v1", ucorev1.KindUser, 0, 10)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.doExistsByUID(ctx, uid)
+	assert.NotNil(t, err)
+	assert.True(t, grpcerr.IsResourceChanged(srv.getUpdateConflictErr(ctx, obj, "core", "v1", ucorev1.KindUser)))
+	_, err = srv.doCreate(ctx, newTestUser("another-user"), "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestResourceMalformedStorage(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	obj, err := srv.doCreate(ctx, newTestUser("malformed-storage"), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	_, err = srv.db.ExecContext(ctx, `UPDATE octelium_resources SET resource = jsonb_set(resource, '{metadata,name}', '42') WHERE uid = $1`, obj.GetMetadata().Uid)
+	require.Nil(t, err)
+	_, err = srv.doGet(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, _, err = srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, _, _, err = srv.doListAfterID(ctx, "core", "v1", ucorev1.KindUser, 0, 10)
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	srv.opts.NewResourceObject = func(string, string, string) (umetav1.ResourceObjectI, error) {
+		return nil, fmt.Errorf("factory failed")
+	}
+	_, err = srv.doGet(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+	assert.EqualError(t, err, "factory failed")
+	_, _, err = srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, _, _, err = srv.doListAfterID(ctx, "core", "v1", ucorev1.KindUser, 0, 10)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	_, err = srv.doCreate(ctx, newTestUser("factory-errors"), "core", "v1", ucorev1.KindUser)
+	assert.EqualError(t, err, "factory failed")
+}
+
+func TestResourceNameBoundaries(t *testing.T) {
+	for _, name := range []string{
+		"ab",
+		"aa:bb",
+		strings.Repeat("a", 54),
+		strings.Repeat("a", 54) + "." + strings.Repeat("b", 54) + "." + strings.Repeat("c", 30),
+	} {
+		assert.Nil(t, checkName(name), name)
+	}
+	for _, name := range []string{
+		strings.Repeat("a", 55),
+		strings.Repeat("a", 54) + "." + strings.Repeat("b", 54) + "." + strings.Repeat("c", 31),
+		"aa..bb",
+		"aa\x00bb",
+		"aa\nbb",
+		"aa/../bb",
+		"aa.世界",
+	} {
+		assert.NotNil(t, checkName(name), name)
+	}
+}
+
+func TestResourceServerLifecycle(t *testing.T) {
+	t.Setenv("OCTELIUM_ENABLE_SPIFFE_CSI", "false")
+	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "")
+	srv := newTestServer(t, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	assert.Same(t, srv.db, srv.GetDB())
+	assert.Same(t, srv.redisC, srv.GetRedisC())
+	require.Nil(t, srv.Run(ctx))
+	addr := net.JoinHostPort("127.0.0.1", os.Getenv("OCTELIUM_TEST_RSCSERVER_PORT"))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.Nil(t, err)
+	defer conn.Close()
+	client := rcorev1.NewResourceServiceClient(conn)
+	created, err := client.CreateUser(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: "server-lifecycle"}})
+	require.Nil(t, err)
+	assert.NotEmpty(t, created.Metadata.Uid)
+	cacheClient := rcachev1.NewMainServiceClient(conn)
+	key := utilrand.GetRandomBytesMust(32)
+	_, err = cacheClient.SetCache(ctx, &rcachev1.SetCacheRequest{Key: key, Data: []byte("data"), Duration: durSeconds(30)})
+	require.Nil(t, err)
+	got, err := cacheClient.GetCache(ctx, &rcachev1.GetCacheRequest{Key: key, Delete: true})
+	require.Nil(t, err)
+	assert.Equal(t, []byte("data"), got.Data)
+	srv.Stop()
+	_, err = client.GetUser(ctx, &rmetav1.GetOptions{Uid: created.Metadata.Uid})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestResourceServerRegistrationError(t *testing.T) {
+	t.Setenv("OCTELIUM_ENABLE_SPIFFE_CSI", "false")
+	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "")
+	srv := newTestServer(t, &Opts{RegisterResourceFn: func(grpc.ServiceRegistrar) error { return fmt.Errorf("registration failed") }})
+	assert.EqualError(t, srv.Run(t.Context()), "registration failed")
+}
+
+func TestResourceHooks(t *testing.T) {
+	for _, op := range []string{"get", "create", "update", "delete", "list"} {
+		t.Run(op, func(t *testing.T) {
+			srv := newTestServer(t, nil)
+			ctx := t.Context()
+			created, err := srv.doCreate(ctx, newTestUser("hook-test"), "core", "v1", ucorev1.KindUser)
+			require.Nil(t, err)
+			uid := created.GetMetadata().Uid
+			hookErr := status.Error(codes.PermissionDenied, "hook rejected the request")
+			switch op {
+			case "get":
+				srv.opts.PostGet = func(context.Context, umetav1.ResourceObjectI, string, string, string) error { return hookErr }
+				_, err = srv.doGet(ctx, &rmetav1.GetOptions{Uid: uid}, "core", "v1", ucorev1.KindUser)
+			case "create":
+				srv.opts.PreCreate = func(context.Context, umetav1.ResourceObjectI, string, string, string) error { return hookErr }
+				_, err = srv.doCreate(ctx, newTestUser("rejected-create"), "core", "v1", ucorev1.KindUser)
+			case "update":
+				srv.opts.PreUpdate = func(context.Context, umetav1.ResourceObjectI, umetav1.ResourceObjectI, string, string, string) error {
+					return hookErr
+				}
+				updated := proto.Clone(created).(*corev1.User)
+				updated.Metadata.DisplayName = "rejected-update"
+				_, _, err = srv.doUpdate(ctx, updated, "core", "v1", ucorev1.KindUser)
+			case "delete":
+				srv.opts.PreDelete = func(context.Context, umetav1.ResourceObjectI, string, string, string) error { return hookErr }
+				_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uid}, "core", "v1", ucorev1.KindUser)
+			case "list":
+				srv.opts.PostList = func(context.Context, *ObjectList, string, string, string) error { return hookErr }
+				_, _, err = srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+				assert.ErrorIs(t, err, hookErr)
+				_, _, _, err = srv.doListAfterID(ctx, "core", "v1", ucorev1.KindUser, 0, 10)
+			}
+			assert.ErrorIs(t, err, hookErr)
+			srv.opts = &Opts{NewResourceObject: vutils.NewResourceObject}
+			items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+			require.Nil(t, err)
+			require.Len(t, items, 1)
+			assert.True(t, proto.Equal(created, items[0]))
+		})
+	}
 }

@@ -19,10 +19,19 @@ package rscserver
 import (
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+	"net"
 
 	"context"
 	"fmt"
@@ -36,6 +45,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestGetRequestInfo(t *testing.T) {
@@ -568,4 +578,184 @@ func TestWatchSubscriberOverflowAborts(t *testing.T) {
 
 	assert.True(t, waitForDone(sub, 5*time.Second))
 	assert.False(t, h.hasSubscribers(streamKey))
+}
+
+func TestResourceGRPC(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx, cancelContext := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancelContext()
+	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(srv.handleUnaryRequest), grpc.ChainStreamInterceptor(srv.handleStreamRequest))
+	rcorev1.RegisterResourceServiceServer(gs, &rcorev1.UnimplementedResourceServiceServer{})
+	lis := bufconn.Listen(1024 * 1024)
+	t.Cleanup(gs.Stop)
+	t.Cleanup(func() { lis.Close() })
+	go gs.Serve(lis)
+	conn, err := grpc.NewClient("passthrough:///rscserver", grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }))
+	require.Nil(t, err)
+	t.Cleanup(func() { conn.Close() })
+	client := rcorev1.NewResourceServiceClient(conn)
+	require.Nil(t, srv.eventHub.Start(ctx))
+
+	_, err = client.GetUser(ctx, &rmetav1.GetOptions{})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	_, err = client.ListUser(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			{
+				Field: "spec.bad'; DROP TABLE octelium_resources",
+				Value: structpb.NewStringValue("x"),
+				Op:    rmetav1.ListOptions_Filter_OP_EQ,
+			},
+		},
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	created, err := client.CreateUser(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: "grpc-user"}})
+	require.Nil(t, err)
+	got, err := client.GetUser(ctx, &rmetav1.GetOptions{Uid: created.Metadata.Uid})
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(created, got))
+	list, err := client.ListUser(ctx, &rmetav1.ListOptions{Paginate: true, ItemsPerPage: 1})
+	require.Nil(t, err)
+	require.Len(t, list.Items, 1)
+	assert.True(t, proto.Equal(created, list.Items[0]))
+	assert.Equal(t, uint32(1), list.ListResponseMeta.TotalCount)
+
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	watch, err := client.WatchUser(watchCtx, &rmetav1.WatchOptions{})
+	require.Nil(t, err)
+	ev, err := watch.Recv()
+	require.Nil(t, err)
+	assert.Equal(t, eventTypeCreate, getEventType(ev))
+	assert.Equal(t, created.Metadata.Uid, getEventItemUID(ev, &corev1.User{}))
+
+	got.Metadata.DisplayName = "updated"
+	updated, err := client.UpdateUser(ctx, got)
+	require.Nil(t, err)
+	ev, err = watch.Recv()
+	require.Nil(t, err)
+	require.NotNil(t, ev.GetEvent().GetUpdate())
+	old := &corev1.User{}
+	require.Nil(t, ev.GetEvent().GetUpdate().OldItem.UnmarshalTo(old))
+	assert.True(t, proto.Equal(created, old))
+	assert.Equal(t, updated.Metadata.Uid, getEventItemUID(ev, &corev1.User{}))
+
+	deleted, err := client.DeleteUser(ctx, &rmetav1.DeleteOptions{Uid: created.Metadata.Uid})
+	require.Nil(t, err)
+	ev, err = watch.Recv()
+	require.Nil(t, err)
+	assert.Equal(t, eventTypeDelete, getEventType(ev))
+	actual := &corev1.User{}
+	require.Nil(t, ev.GetEvent().GetDelete().Item.UnmarshalTo(actual))
+	assert.NotNil(t, deleted)
+	assert.Equal(t, updated.Metadata.Uid, actual.Metadata.Uid)
+	assert.Equal(t, updated.Metadata.ResourceVersion, actual.Metadata.LastResourceVersion)
+	assert.NotEqual(t, updated.Metadata.ResourceVersion, actual.Metadata.ResourceVersion)
+	cancel()
+	_, err = watch.Recv()
+	assert.Equal(t, codes.Canceled, status.Code(err))
+
+	_, err = client.GetUser(ctx, &rmetav1.GetOptions{Uid: created.Metadata.Uid})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	_, err = client.UpdateUser(ctx, updated)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+type testWatchStream struct {
+	*fakeStream
+	send func(any) error
+	recv func(any) error
+}
+
+func (s *testWatchStream) SendMsg(msg any) error {
+	if s.send != nil {
+		return s.send(msg)
+	}
+	return s.fakeStream.SendMsg(msg)
+}
+
+func (s *testWatchStream) RecvMsg(msg any) error {
+	if s.recv != nil {
+		return s.recv(msg)
+	}
+	return s.fakeStream.RecvMsg(msg)
+}
+
+func TestResourceInterceptorRouting(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	called := 0
+	handler := func(context.Context, any) (any, error) { called++; return "response", io.ErrUnexpectedEOF }
+	for _, method := range []string{"/other.Service/Method", "/octelium.api.rsc.core.v1.ResourceService/WatchUser"} {
+		ret, err := srv.handleUnaryRequest(ctx, "request", &grpc.UnaryServerInfo{FullMethod: method}, handler)
+		assert.Equal(t, "response", ret)
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	}
+	assert.Equal(t, 2, called)
+
+	streamHandler := func(any, grpc.ServerStream) error { called++; return io.ErrUnexpectedEOF }
+	for _, method := range []string{"/other.Service/Watch", "/octelium.api.rsc.core.v1.ResourceService/GetUser"} {
+		err := srv.handleStreamRequest(nil, newFakeStream(ctx), &grpc.StreamServerInfo{FullMethod: method}, streamHandler)
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	}
+	assert.Equal(t, 4, called)
+	method := &grpc.StreamServerInfo{FullMethod: "/octelium.api.rsc.core.v1.ResourceService/WatchUser"}
+	err := srv.handleStreamRequest(nil, newFakeStream(ctx), method, streamHandler)
+	assert.ErrorIs(t, err, io.EOF)
+	assert.Equal(t, 4, called)
+
+	stream := &testWatchStream{fakeStream: newFakeStream(ctx), recv: func(msg any) error {
+		msg.(*rmetav1.WatchOptions).SkipInitial = true
+		return nil
+	}}
+	err = srv.handleStreamRequest(nil, stream, method, streamHandler)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestWatchInitialPaging(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	var uids []string
+	for i := range watchInitialItemsPerPag + 3 {
+		obj, err := srv.doCreate(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: fmt.Sprintf("paging-%04d", i)}}, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		uids = append(uids, obj.GetMetadata().Uid)
+	}
+	sub, err := srv.eventHub.subscribe(ctx, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	defer srv.eventHub.unsubscribe(sub)
+	stream := newFakeStream(ctx)
+	require.Nil(t, srv.sendInitialState(ctx, sub, stream, "core", "v1", ucorev1.KindUser))
+	var actual []string
+	for _, ev := range stream.getMsgs() {
+		actual = append(actual, getEventItemUID(ev, &corev1.User{}))
+	}
+	assert.Equal(t, uids, actual)
+}
+
+func TestWatchInitialErrors(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	_, err := srv.doCreate(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: "watch-errors"}}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	sub, err := srv.eventHub.subscribe(ctx, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	defer srv.eventHub.unsubscribe(sub)
+	stream := &testWatchStream{fakeStream: newFakeStream(ctx), send: func(any) error { return io.ErrUnexpectedEOF }}
+	assert.ErrorIs(t, srv.sendInitialState(ctx, sub, stream, "core", "v1", ucorev1.KindUser), io.ErrUnexpectedEOF)
+	assert.ErrorIs(t, srv.doHandleStreamRequest(&rmetav1.WatchOptions{}, stream, "core", "v1", ucorev1.KindUser), io.ErrUnexpectedEOF)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	assert.Nil(t, srv.sendInitialState(canceled, sub, newFakeStream(canceled), "core", "v1", ucorev1.KindUser))
+	sub.cancel()
+	assert.ErrorIs(t, srv.sendInitialState(ctx, sub, newFakeStream(ctx), "core", "v1", ucorev1.KindUser), errWatchSubscriberClosed)
+
+	sub, err = srv.eventHub.subscribe(ctx, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	defer srv.eventHub.unsubscribe(sub)
+	srv.opts.PostList = func(context.Context, *ObjectList, string, string, string) error { return io.ErrUnexpectedEOF }
+	assert.ErrorIs(t, srv.sendInitialState(ctx, sub, newFakeStream(ctx), "core", "v1", ucorev1.KindUser), io.ErrUnexpectedEOF)
 }

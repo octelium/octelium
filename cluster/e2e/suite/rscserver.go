@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -397,4 +398,110 @@ func testRscServerResilience(t *testing.T, h *harness.H) {
 			}
 			return nil
 		})
+}
+
+func testRscServerConcurrentLifecycle(t *testing.T, h *harness.H) {
+	ctx := t.Context()
+	const total = 64
+	prefix := h.Name()
+	policies := make([]*corev1.Policy, total)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), harness.DecisionBudget)
+		defer cancel()
+		for _, policy := range policies {
+			if policy == nil {
+				continue
+			}
+			_, err := h.CoreC().DeletePolicy(ctx, &metav1.DeleteOptions{Uid: policy.Metadata.Uid})
+			if err != nil && !grpcerr.IsNotFound(err) {
+				t.Errorf("Could not delete Policy: %+v", err)
+			}
+		}
+	})
+
+	res := harness.ForEach(ctx, total, 16, func(ctx context.Context, i int) error {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		policy, err := h.CoreC().CreatePolicy(ctx, &corev1.Policy{
+			Metadata: &metav1.Metadata{Name: fmt.Sprintf("%s-%03d", prefix, i)},
+			Spec:     &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow", 0)}},
+		})
+		if err != nil {
+			return err
+		}
+		policies[i] = policy
+		for _, req := range []*metav1.GetOptions{{Name: policy.Metadata.Name}, {Uid: policy.Metadata.Uid}} {
+			got, err := h.CoreC().GetPolicy(ctx, req)
+			if err != nil {
+				return err
+			}
+			if got.Metadata.Uid != policy.Metadata.Uid || got.Metadata.ResourceVersion != policy.Metadata.ResourceVersion {
+				return errors.Errorf("Created Policy does not match Get: %s", policy.Metadata.Name)
+			}
+		}
+		before := policy.Metadata.ResourceVersion
+		policy.Metadata.DisplayName = fmt.Sprintf("updated-%d", i)
+		policy.Metadata.Labels = map[string]string{"worker": fmt.Sprintf("%d", i)}
+		updated, err := h.CoreC().UpdatePolicy(ctx, policy)
+		if err != nil {
+			return err
+		}
+		policies[i] = updated
+		if updated.Metadata.Uid != policy.Metadata.Uid || updated.Metadata.ResourceVersion == before || updated.Metadata.LastResourceVersion != before {
+			return errors.Errorf("Invalid updated Policy metadata: %s", policy.Metadata.Name)
+		}
+		for _, req := range []*metav1.GetOptions{{Name: policy.Metadata.Name}, {Uid: policy.Metadata.Uid}} {
+			got, err := h.CoreC().GetPolicy(ctx, req)
+			if err != nil {
+				return err
+			}
+			if got.Metadata.ResourceVersion != updated.Metadata.ResourceVersion || got.Metadata.DisplayName != updated.Metadata.DisplayName || got.Metadata.Labels["worker"] != fmt.Sprintf("%d", i) {
+				return errors.Errorf("Updated Policy does not match Get: %s", policy.Metadata.Name)
+			}
+		}
+		return nil
+	})
+	harness.LogPool("Resource server concurrent create, update and read", res)
+	require.Zero(t, res.Failed(), "%s", res)
+
+	res = harness.ForEach(ctx, total, 16, func(ctx context.Context, i int) error {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		policy := policies[i]
+		_, err := h.CoreC().DeletePolicy(ctx, &metav1.DeleteOptions{Uid: policy.Metadata.Uid})
+		if err != nil {
+			return err
+		}
+		for _, req := range []*metav1.GetOptions{{Name: policy.Metadata.Name}, {Uid: policy.Metadata.Uid}} {
+			_, err := h.CoreC().GetPolicy(ctx, req)
+			if !grpcerr.IsNotFound(err) {
+				return errors.Errorf("Deleted Policy remains readable: %s: %+v", policy.Metadata.Name, err)
+			}
+		}
+		created, err := h.CoreC().CreatePolicy(ctx, &corev1.Policy{
+			Metadata: &metav1.Metadata{Name: policy.Metadata.Name},
+			Spec:     &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow", 0)}},
+		})
+		if err != nil {
+			return err
+		}
+		policies[i] = created
+		if created.Metadata.Uid == policy.Metadata.Uid {
+			return errors.Errorf("Re-created Policy reused its UID: %s", policy.Metadata.Name)
+		}
+		_, err = h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Uid: policy.Metadata.Uid})
+		if !grpcerr.IsNotFound(err) {
+			return errors.Errorf("Old Policy UID remains readable: %+v", err)
+		}
+		got, err := h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Name: policy.Metadata.Name})
+		if err != nil {
+			return err
+		}
+		if got.Metadata.Uid != created.Metadata.Uid || got.Metadata.DisplayName != "" || len(got.Metadata.Labels) != 0 {
+			return errors.Errorf("Re-created Policy returned stale data: %s", policy.Metadata.Name)
+		}
+		return nil
+	})
+	harness.LogPool("Resource server concurrent deletion and name reuse", res)
+	require.Zero(t, res.Failed(), "%s", res)
 }
