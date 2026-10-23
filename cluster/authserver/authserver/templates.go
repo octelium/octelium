@@ -112,6 +112,10 @@ func (s *server) buildIndexPage(withState bool) (*indexPage, error) {
 
 	head.AppendHtml(scripts.String())
 
+	doc.Find("*").Contents().FilterFunction(func(_ int, sel *goquery.Selection) bool {
+		return goquery.NodeName(sel) == "#text" && strings.Trim(sel.Text(), " \t\n\f\r") == ""
+	}).Remove()
+
 	var out bytes.Buffer
 	out.WriteString("<!DOCTYPE html>")
 	if err := goquery.Render(&out, head.Parent()); err != nil {

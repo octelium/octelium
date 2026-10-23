@@ -67,6 +67,18 @@ func TestRenderIndex(t *testing.T) {
 }
 
 var rgxCSPNonce = regexp.MustCompile(`'nonce-([a-zA-Z0-9]+)'`)
+var rgxInterTagWhitespace = regexp.MustCompile(`>\s+<`)
+
+func assertMinifiedBody(t *testing.T, body []byte) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	assert.Nil(t, err)
+
+	assert.False(t, strings.Contains(string(body), "\n"))
+	assert.False(t, rgxInterTagWhitespace.Match(body))
+	assert.Equal(t, 1, doc.Find("head > meta[charset]").Length())
+	assert.NotEmpty(t, doc.Find("head > title").Text())
+	assert.Equal(t, 1, doc.Find("body > #root").Length())
+}
 
 func getGlobalsFromBody(t *testing.T, body []byte, nonce string) *templateGlobals {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
@@ -325,6 +337,7 @@ func TestRenderIndexNonce(t *testing.T) {
 	assert.True(t, strings.Contains(string(body), "__OCTELIUM_STATE__"))
 	assert.True(t, strings.Contains(string(body), "__OCTELIUM_GLOBALS__"))
 	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
+	assertMinifiedBody(t, body)
 
 	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
 	assert.Empty(t, resp.Cookies())
@@ -373,6 +386,7 @@ func TestRenderLoggedIn(t *testing.T) {
 
 	assert.False(t, strings.Contains(string(body), "__OCTELIUM_STATE__"))
 	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
+	assertMinifiedBody(t, body)
 
 	csp := resp.Header.Get("Content-Security-Policy")
 	assert.True(t, strings.Contains(csp, "default-src 'none'"))
