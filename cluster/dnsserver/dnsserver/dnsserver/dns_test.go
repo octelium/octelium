@@ -2302,3 +2302,264 @@ func TestGetProxiedAnswerFallbackConfigUpdateInFlight(t *testing.T) {
 		})
 	}
 }
+
+func newTstDNSTCPUpstream(t *testing.T, addr string, handler dns.Handler) string {
+	t.Helper()
+	listener, err := net.Listen("tcp4", addr)
+	require.Nil(t, err)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	srv := &dns.Server{
+		Listener: listener, Handler: handler,
+		NotifyStartedFunc: func() { close(started) },
+	}
+	go func() { done <- srv.ActivateAndServe() }()
+	t.Cleanup(func() {
+		assert.Nil(t, srv.Shutdown())
+		assert.Nil(t, <-done)
+	})
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("The TCP DNS upstream did not start")
+	}
+	return listener.Addr().String()
+}
+
+func tstDNSLargeAnswer(r *dns.Msg) *dns.Msg {
+	msg := tstDNSAnswer(r)
+	rr := msg.Answer[0]
+	msg.Answer = nil
+	for i := range 64 {
+		answer := dns.Copy(rr)
+		switch answer := answer.(type) {
+		case *dns.A:
+			answer.A = net.ParseIP(fmt.Sprintf("198.51.100.%d", i+1))
+		case *dns.AAAA:
+			answer.AAAA = net.ParseIP(fmt.Sprintf("2001:db8::%x", i+1))
+		case *dns.TXT:
+			answer.Txt = []string{fmt.Sprintf("%d-%s", i, strings.Repeat("x", 64))}
+		}
+		msg.Answer = append(msg.Answer, answer)
+	}
+	return msg
+}
+
+func TestGetProxiedAnswerTruncatedUDP(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeTXT} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			var udpQueries atomic.Int64
+			var tcpQueries atomic.Int64
+			requests := make(chan *dns.Msg, 4)
+			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				udpQueries.Add(1)
+				requests <- r.Copy()
+				msg := tstDNSAnswer(r)
+				msg.Truncated = true
+				assert.Nil(t, w.WriteMsg(msg))
+			}))
+			newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				tcpQueries.Add(1)
+				requests <- r.Copy()
+				assert.Nil(t, w.WriteMsg(tstDNSLargeAnswer(r)))
+			}))
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{addr}}},
+			}})
+			for range 2 {
+				msg, err := s.getProxiedAnswer("external.example.", qtype)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.False(t, msg.Truncated)
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				require.Equal(t, 64, len(msg.Answer))
+				assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+			}
+			want := int64(1)
+			if qtype == dns.TypeTXT {
+				want = 2
+				assert.Nil(t, s.fallbackZoneCache.get("external.example.", qtype))
+			} else {
+				cached := s.fallbackZoneCache.get("external.example.", qtype)
+				require.NotNil(t, cached)
+				assert.False(t, cached.Truncated)
+				assert.Equal(t, 64, len(cached.Answer))
+			}
+			assert.Equal(t, want, udpQueries.Load())
+			assert.Equal(t, want, tcpQueries.Load())
+			for range want {
+				udp := <-requests
+				tcp := <-requests
+				assert.Equal(t, udp.Id, tcp.Id)
+				assert.Equal(t, udp.Question, tcp.Question)
+			}
+		})
+	}
+}
+
+func TestGetProxiedAnswerTruncatedErrors(t *testing.T) {
+	for _, name := range []string{"Unavailable", "Malformed", "Truncated", "ServerFailure"} {
+		t.Run(name, func(t *testing.T) {
+			var udpQueries atomic.Int64
+			var tcpQueries atomic.Int64
+			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				udpQueries.Add(1)
+				msg := tstDNSAnswer(r)
+				msg.Truncated = true
+				assert.Nil(t, w.WriteMsg(msg))
+			}))
+			if name != "Unavailable" {
+				newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					tcpQueries.Add(1)
+					if name == "Malformed" {
+						_, err := w.Write([]byte{0})
+						assert.Nil(t, err)
+						return
+					}
+					msg := tstDNSAnswer(r)
+					if name == "Truncated" {
+						msg.Truncated = true
+					} else {
+						msg.SetRcode(r, dns.RcodeServerFailure)
+					}
+					assert.Nil(t, w.WriteMsg(msg))
+				}))
+			}
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{addr}}},
+			}})
+			for range 2 {
+				msg, err := s.getProxiedAnswer("external.example.", dns.TypeA)
+				if name == "ServerFailure" {
+					require.Nil(t, err)
+					require.NotNil(t, msg)
+					assert.Equal(t, dns.RcodeServerFailure, msg.Rcode)
+					assert.False(t, msg.Truncated)
+				} else {
+					assert.NotNil(t, err)
+					assert.Nil(t, msg)
+				}
+				assert.Nil(t, s.fallbackZoneCache.get("external.example.", dns.TypeA))
+			}
+			assert.Equal(t, int64(2), udpQueries.Load())
+			if name == "Unavailable" {
+				assert.Zero(t, tcpQueries.Load())
+			} else {
+				assert.Equal(t, int64(2), tcpQueries.Load())
+			}
+		})
+	}
+}
+
+func TestGetProxiedAnswerTruncatedFailover(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Timeout%t", timeout), func(t *testing.T) {
+			var udpQueries atomic.Int64
+			var tcpQueries atomic.Int64
+			var fallbackQueries atomic.Int64
+			fallback := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				fallbackQueries.Add(1)
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			}))
+			var servers []string
+			for range 2 {
+				addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					msg := tstDNSAnswer(r)
+					msg.Truncated = udpQueries.Add(1) == 1
+					assert.Nil(t, w.WriteMsg(msg))
+				}))
+				newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+					tcpQueries.Add(1)
+					if timeout {
+						return
+					}
+					msg := tstDNSAnswer(r)
+					msg.Truncated = true
+					assert.Nil(t, w.WriteMsg(msg))
+				}))
+				servers = append(servers, addr)
+			}
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{
+					FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{fallback}},
+					Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+						{Domains: []string{"example.com"}, Servers: servers},
+					},
+				},
+			}})
+			start := time.Now()
+			msg, err := s.getProxiedAnswer("www.example.com.", dns.TypeA)
+			require.Nil(t, err)
+			require.NotNil(t, msg)
+			assert.Less(t, time.Since(start), 4*time.Second)
+			assert.False(t, msg.Truncated)
+			assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+			assert.Equal(t, int64(2), udpQueries.Load())
+			assert.Equal(t, int64(1), tcpQueries.Load())
+			assert.Zero(t, fallbackQueries.Load())
+			cached := s.zones[0].cache.get("www.example.com.", dns.TypeA)
+			require.NotNil(t, cached)
+			assert.False(t, cached.Truncated)
+		})
+	}
+}
+
+func TestServeDNSTruncatedUpstream(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeTXT} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			var udpQueries atomic.Int64
+			var tcpQueries atomic.Int64
+			upstream := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				udpQueries.Add(1)
+				msg := tstDNSAnswer(r)
+				msg.Truncated = true
+				assert.Nil(t, w.WriteMsg(msg))
+			}))
+			newTstDNSTCPUpstream(t, upstream, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				tcpQueries.Add(1)
+				assert.Nil(t, w.WriteMsg(tstDNSLargeAnswer(r)))
+			}))
+			s := newTstDNSServer()
+			s.setDNSConfig(&corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{upstream}}},
+			}})
+			addr := newTstDNSUpstream(t, s)
+			c := &dns.Client{Net: "udp", Timeout: time.Second}
+			for _, size := range []uint16{512, 8192, 512, 8192} {
+				r := &dns.Msg{}
+				r.SetQuestion("EXTERNAL.EXAMPLE.", qtype)
+				r.SetEdns0(size, false)
+				msg, _, err := c.ExchangeContext(t.Context(), r, addr)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, r.Id, msg.Id)
+				assert.Equal(t, r.Question, msg.Question)
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				if size == 8192 {
+					assert.False(t, msg.Truncated)
+					assert.Equal(t, 64, len(msg.Answer))
+				} else {
+					assert.True(t, msg.Truncated)
+					assert.Less(t, len(msg.Answer), 64)
+					msg.Compress = true
+					assert.LessOrEqual(t, msg.Len(), 512)
+				}
+				if qtype != dns.TypeTXT {
+					cached := s.fallbackZoneCache.get("external.example.", qtype)
+					require.NotNil(t, cached)
+					assert.False(t, cached.Truncated)
+					assert.Equal(t, 64, len(cached.Answer))
+				}
+			}
+			want := int64(1)
+			if qtype == dns.TypeTXT {
+				want = 4
+			}
+			assert.Equal(t, want, udpQueries.Load())
+			assert.Equal(t, want, tcpQueries.Load())
+		})
+	}
+}

@@ -672,3 +672,185 @@ func testDNSFallbackCacheUpdates(t *testing.T, h *harness.H) {
 		})
 	}
 }
+
+func testDNSTruncatedUpstream(t *testing.T, h *harness.H) {
+	h.Require(t, capRootTUN)
+	ctx := t.Context()
+	domain := h.Name() + ".e2e-dns.test"
+	name := "large." + domain
+	deployments, err := h.K8sC().AppsV1().Deployments("kube-system").List(ctx, k8smetav1.ListOptions{})
+	require.Nil(t, err)
+	var image string
+	for _, dep := range deployments.Items {
+		for _, container := range dep.Spec.Template.Spec.Containers {
+			if strings.Contains(container.Image, "coredns") {
+				image = container.Image
+				break
+			}
+		}
+	}
+	if image == "" {
+		t.Skip("the Cluster does not have a CoreDNS image for the TCP DNS fixture")
+	}
+	fixture := "e2e-dns-upstream-" + h.Name()
+	labels := map[string]string{"app": fixture}
+	var config strings.Builder
+	config.WriteString(".:1053 {\n hosts {\n")
+	want := map[uint16][]string{}
+	for i := range 64 {
+		ipv4 := fmt.Sprintf("198.51.100.%d", i+1)
+		ipv6 := fmt.Sprintf("2001:db8::%x", i+1)
+		fmt.Fprintf(&config, "%s %s\n%s %s\n", ipv4, name, ipv6, name)
+		want[dns.TypeA] = append(want[dns.TypeA], ipv4)
+		want[dns.TypeAAAA] = append(want[dns.TypeAAAA], ipv6)
+	}
+	config.WriteString("ttl 300\nno_reverse\n}\n}\n")
+	kc := h.K8sC().CoreV1()
+	_, err = kc.ConfigMaps(vutils.K8sNS).Create(ctx, &k8scorev1.ConfigMap{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: fixture},
+		Data:       map[string]string{"Corefile": config.String()},
+	}, k8smetav1.CreateOptions{})
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, err := range []error{
+			kc.Pods(vutils.K8sNS).Delete(ctx, fixture, k8smetav1.DeleteOptions{}),
+			kc.Services(vutils.K8sNS).Delete(ctx, fixture, k8smetav1.DeleteOptions{}),
+			kc.ConfigMaps(vutils.K8sNS).Delete(ctx, fixture, k8smetav1.DeleteOptions{}),
+		} {
+			if !k8serr.IsNotFound(err) {
+				assert.Nil(t, err)
+			}
+		}
+	})
+	_, err = kc.Pods(vutils.K8sNS).Create(ctx, &k8scorev1.Pod{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: fixture, Labels: labels},
+		Spec: k8scorev1.PodSpec{
+			Containers: []k8scorev1.Container{{
+				Name: "coredns", Image: image, Args: []string{"-conf", "/etc/coredns/Corefile"},
+				VolumeMounts: []k8scorev1.VolumeMount{{Name: "config", MountPath: "/etc/coredns", ReadOnly: true}},
+				ReadinessProbe: &k8scorev1.Probe{ProbeHandler: k8scorev1.ProbeHandler{
+					TCPSocket: &k8scorev1.TCPSocketAction{Port: intstr.FromInt32(1053)},
+				}},
+			}},
+			Volumes: []k8scorev1.Volume{{Name: "config", VolumeSource: k8scorev1.VolumeSource{
+				ConfigMap: &k8scorev1.ConfigMapVolumeSource{LocalObjectReference: k8scorev1.LocalObjectReference{Name: fixture}},
+			}}},
+		},
+	}, k8smetav1.CreateOptions{})
+	require.Nil(t, err)
+	svc, err := kc.Services(vutils.K8sNS).Create(ctx, &k8scorev1.Service{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: fixture},
+		Spec: k8scorev1.ServiceSpec{Selector: labels, Ports: []k8scorev1.ServicePort{
+			{Name: "udp", Protocol: k8scorev1.ProtocolUDP, Port: 1053, TargetPort: intstr.FromInt32(1053)},
+			{Name: "tcp", Protocol: k8scorev1.ProtocolTCP, Port: 1053, TargetPort: intstr.FromInt32(1053)},
+		}},
+	}, k8smetav1.CreateOptions{})
+	require.Nil(t, err)
+	h.Eventually(t, "the TCP DNS upstream to become ready", harness.DeploymentBudget,
+		func(ctx context.Context) error {
+			pod, err := kc.Pods(vutils.K8sNS).Get(ctx, fixture, k8smetav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == k8scorev1.PodReady && condition.Status == k8scorev1.ConditionTrue {
+					return nil
+				}
+			}
+			return errors.New("the TCP DNS upstream is not ready")
+		})
+	original := pbutils.Clone(h.ClusterConfig(t)).(*corev1.ClusterConfig)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cc, err := h.CoreC().GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+		if !assert.Nil(t, err) {
+			return
+		}
+		cc.Spec.Dns = original.Spec.Dns
+		_, err = h.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	})
+	cc := h.ClusterConfig(t)
+	if cc.Spec.Dns == nil {
+		cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{}
+	}
+	cc.Spec.Dns.Zones = append(cc.Spec.Dns.Zones, &corev1.ClusterConfig_Spec_DNS_Zone{
+		Domains: []string{domain}, Servers: []string{"udp://" + net.JoinHostPort(svc.Spec.ClusterIP, "1053")},
+		CacheDuration: &metav1.Duration{Type: &metav1.Duration_Minutes{Minutes: 10}},
+	})
+	h.UpdateClusterConfig(t, cc)
+	h.Connect(t, harness.ConnectOpts{Root: true, Args: []string{"--no-dns"}})
+	c := h.DNSClient(t)
+	client := &dns.Client{
+		Net: "udp", Timeout: 5 * time.Second,
+		Dialer: &net.Dialer{LocalAddr: &net.UDPAddr{IP: net.ParseIP(c.Source)}},
+	}
+	h.Eventually(t, "the Cluster DNS to return the complete answer after upstream truncation", harness.ConnectBudget,
+		func(ctx context.Context) error {
+			r := &dns.Msg{}
+			r.SetQuestion(name+".", dns.TypeA)
+			r.SetEdns0(4096, false)
+			msg, _, err := client.ExchangeContext(ctx, r, c.Server)
+			if err != nil {
+				return err
+			}
+			if msg.Rcode != dns.RcodeSuccess || msg.Truncated || len(msg.Answer) != 64 {
+				return errors.Errorf("the DNS answer is incomplete: %s, truncated %t, %d records",
+					dns.RcodeToString[msg.Rcode], msg.Truncated, len(msg.Answer))
+			}
+			return nil
+		})
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		for _, size := range []uint16{0, 512, 1232, 4096} {
+			t.Run(fmt.Sprintf("%s/%d", dns.TypeToString[qtype], size), func(t *testing.T) {
+				r := &dns.Msg{}
+				r.SetQuestion(name+".", qtype)
+				if size != 0 {
+					r.SetEdns0(size, false)
+				}
+				msg, _, err := client.ExchangeContext(t.Context(), r, c.Server)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, r.Id, msg.Id)
+				assert.Equal(t, r.Question, msg.Question)
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				addrs := harness.DNSAnswerAddrs(msg)
+				if size == 4096 || size == 1232 && qtype == dns.TypeA {
+					assert.False(t, msg.Truncated)
+					assert.ElementsMatch(t, want[qtype], addrs)
+				} else {
+					assert.True(t, msg.Truncated)
+					assert.Less(t, len(addrs), len(want[qtype]))
+					msg.Compress = true
+					assert.LessOrEqual(t, msg.Len(), max(dns.MinMsgSize, int(size)))
+					for _, addr := range addrs {
+						assert.Contains(t, want[qtype], addr)
+					}
+				}
+			})
+		}
+	}
+	result := harness.ForEach(t.Context(), 128, 16, func(ctx context.Context, i int) error {
+		qtype := dns.TypeA
+		if i%2 == 1 {
+			qtype = dns.TypeAAAA
+		}
+		r := &dns.Msg{}
+		r.SetQuestion(name+".", qtype)
+		r.SetEdns0(4096, false)
+		msg, _, err := client.ExchangeContext(ctx, r, c.Server)
+		if err != nil {
+			return err
+		}
+		if msg.Rcode != dns.RcodeSuccess || msg.Truncated || len(msg.Answer) != 64 {
+			return errors.New("the concurrent DNS answer is incomplete")
+		}
+		return nil
+	})
+	harness.LogPool("Cluster DNS upstream TCP fallback load", result)
+	assert.Equal(t, 128, result.Succeeded)
+	assert.Zero(t, result.Failed(), result.Errors.String())
+}

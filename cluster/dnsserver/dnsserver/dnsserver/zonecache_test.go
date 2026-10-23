@@ -32,6 +32,28 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 )
 
+func TestZoneCacheTruncatedResponses(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			c := newZoneCache(time.Minute)
+			r := &dns.Msg{}
+			r.SetQuestion("external.example.", qtype)
+			msg := tstDNSAnswer(r)
+			msg.Truncated = true
+			c.set("external.example.", qtype, msg)
+			assert.Nil(t, c.get("external.example.", qtype))
+			msg.Truncated = false
+			c.set("external.example.", qtype, msg)
+			want := c.get("external.example.", qtype)
+			require.NotNil(t, want)
+			msg.Truncated = true
+			msg.Answer = nil
+			c.set("external.example.", qtype, msg)
+			assert.Equal(t, want, c.get("external.example.", qtype))
+		})
+	}
+}
+
 func TestZoneCache(t *testing.T) {
 
 	tst, err := tests.Initialize(nil)

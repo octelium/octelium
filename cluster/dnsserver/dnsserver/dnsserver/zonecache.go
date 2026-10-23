@@ -79,7 +79,7 @@ func (c *zoneCache) get(domain string, typ uint16) *dns.Msg {
 }
 
 func (c *zoneCache) set(domain string, typ uint16, r *dns.Msg) {
-	if r.Rcode != dns.RcodeSuccess {
+	if r.Rcode != dns.RcodeSuccess || r.Truncated {
 		return
 	}
 

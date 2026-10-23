@@ -126,6 +126,7 @@ func Phases() []Phase {
 		{"DNSZones", testDNSZones},
 		{"DNSFailover", testDNSFailover},
 		{"DNSFallbackCacheUpdates", testDNSFallbackCacheUpdates},
+		{"DNSTruncatedUpstream", testDNSTruncatedUpstream},
 		{"ConnectLocalDNS", testConnectLocalDNS},
 		{"Apply", testApply},
 		{"VigilMySQL", testVigilMySQL},

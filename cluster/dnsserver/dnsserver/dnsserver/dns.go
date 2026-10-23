@@ -357,9 +357,17 @@ func (s *DNSServer) getProxiedAnswer(domain string, typ uint16) (*dns.Msg, error
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		c := dns.Client{Net: upstream.typ, Timeout: timeout}
 		r, _, err := c.ExchangeContext(ctx, &m, upstream.getAddr())
+		if err == nil && r.Truncated && (c.Net == "" || c.Net == "udp") {
+			c.Net = "tcp"
+			r, _, err = c.ExchangeContext(ctx, &m, upstream.getAddr())
+		}
 		cancel()
 		if err != nil {
 			retErr = err
+			continue
+		}
+		if r.Truncated {
+			retErr = errors.Errorf("Truncated DNS upstream response")
 			continue
 		}
 		if r.Rcode == dns.RcodeServerFailure {
