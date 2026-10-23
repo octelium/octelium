@@ -2035,3 +2035,270 @@ func TestServeDNSFailoverConcurrentRequests(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, int64(16*16), queries.Load())
 }
+
+func TestDNSFallbackCacheConfigUpdates(t *testing.T) {
+	config := func(server string, seconds uint32) *corev1.ClusterConfig {
+		return &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+			Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+				Servers:       []string{server},
+				CacheDuration: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: seconds}},
+			}},
+		}}
+	}
+	for _, tc := range []struct {
+		name     string
+		cc       *corev1.ClusterConfig
+		duration time.Duration
+	}{
+		{name: "Server", cc: config("udp://192.0.2.2:53", 60), duration: time.Minute},
+		{name: "Port", cc: config("udp://192.0.2.1:5353", 60), duration: time.Minute},
+		{name: "TLS", cc: config("tls://192.0.2.1:53", 60), duration: time.Minute},
+		{name: "Duration", cc: config("udp://192.0.2.1:53", 1), duration: time.Second},
+		{name: "DefaultDuration", cc: config("udp://192.0.2.1:53", 0), duration: 30 * time.Second},
+		{name: "DefaultServers", cc: config("", 60), duration: time.Minute},
+		{name: "NoFallback", cc: &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{Dns: &corev1.ClusterConfig_Spec_DNS{}}}, duration: 30 * time.Second},
+		{name: "NoDNS", cc: &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{}}, duration: 30 * time.Second},
+		{name: "NoSpec", cc: &corev1.ClusterConfig{}, duration: 30 * time.Second},
+		{name: "NoConfig", duration: 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTstDNSServer()
+			s.setDNSConfig(config("udp://192.0.2.1:53", 60))
+			old := s.getDNSZone("external.example.").cache
+			for _, name := range []string{"external.example.", "nodata.example."} {
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+					r := &dns.Msg{}
+					r.SetQuestion(name, qtype)
+					msg := tstDNSAnswer(r)
+					if name == "nodata.example." {
+						msg.Answer = nil
+					}
+					old.set(name, qtype, msg)
+					require.NotNil(t, old.get(name, qtype))
+				}
+			}
+			s.setDNSConfig(tc.cc)
+			current := s.getDNSZone("external.example.").cache
+			assert.NotSame(t, old, current)
+			assert.Same(t, current, s.fallbackZoneCache)
+			assert.Equal(t, tc.duration, current.duration)
+			assert.Equal(t, time.Minute, old.duration)
+			for _, name := range []string{"external.example.", "nodata.example."} {
+				for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+					assert.Nil(t, current.get(name, qtype))
+					assert.NotNil(t, old.get(name, qtype))
+				}
+			}
+		})
+	}
+}
+
+func TestDNSFallbackCacheDurationUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		old uint32
+		new uint32
+	}{
+		{old: 60, new: 1},
+		{old: 1, new: 60},
+		{old: 60, new: 0},
+	} {
+		t.Run(fmt.Sprintf("%dTo%d", tc.old, tc.new), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := newTstDNSServer()
+				cc := &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+					Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+						Servers:       []string{"192.0.2.1"},
+						CacheDuration: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: tc.old}},
+					}},
+				}}
+				s.setDNSConfig(cc)
+				old := s.getDNSZone("external.example.").cache
+				r := &dns.Msg{}
+				r.SetQuestion("external.example.", dns.TypeA)
+				old.set("external.example.", dns.TypeA, tstDNSAnswer(r))
+				time.Sleep(500 * time.Millisecond)
+				cc.Spec.Dns.FallbackZone.CacheDuration = &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: tc.new}}
+				s.setDNSConfig(cc)
+				current := s.getDNSZone("external.example.").cache
+				assert.Nil(t, current.get("external.example.", dns.TypeA))
+				assert.NotNil(t, old.get("external.example.", dns.TypeA))
+				assert.Equal(t, time.Duration(tc.old)*time.Second, old.duration)
+				duration := time.Duration(tc.new) * time.Second
+				if duration == 0 {
+					duration = 30 * time.Second
+				}
+				assert.Equal(t, duration, current.duration)
+				current.set("external.example.", dns.TypeA, tstDNSAnswer(r))
+				time.Sleep(duration - time.Nanosecond)
+				assert.NotNil(t, current.get("external.example.", dns.TypeA))
+				time.Sleep(time.Nanosecond)
+				assert.Nil(t, current.get("external.example.", dns.TypeA))
+			})
+		})
+	}
+}
+
+func TestServeDNSFallbackConfigUpdate(t *testing.T) {
+	var queries [2]atomic.Int64
+	var servers []string
+	for i := range queries {
+		servers = append(servers, newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			queries[i].Add(1)
+			msg := tstDNSAnswer(r)
+			switch rr := msg.Answer[0].(type) {
+			case *dns.A:
+				rr.A = net.ParseIP(fmt.Sprintf("198.51.100.%d", i+1))
+			case *dns.AAAA:
+				rr.AAAA = net.ParseIP(fmt.Sprintf("2001:db8::%d", i+1))
+			}
+			assert.Nil(t, w.WriteMsg(msg))
+		})))
+	}
+	s := newTstDNSServer()
+	s.Set(newTstDNSService())
+	addr := newTstDNSUpstream(t, s)
+	c := &dns.Client{Timeout: time.Second}
+	cc := &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+		Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+			CacheDuration: &metav1.Duration{Type: &metav1.Duration_Minutes{Minutes: 10}},
+		}},
+	}}
+	for _, i := range []int{0, 1, 0} {
+		before := queries[i].Load()
+		cc.Spec.Dns.FallbackZone.Servers = []string{servers[i]}
+		s.setDNSConfig(cc)
+		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			for range 2 {
+				r := &dns.Msg{}
+				r.SetQuestion("EXTERNAL.EXAMPLE.", qtype)
+				msg, _, err := c.ExchangeContext(t.Context(), r, addr)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+				assert.Equal(t, r.Id, msg.Id)
+				assert.Equal(t, r.Question, msg.Question)
+				require.Equal(t, 1, len(msg.Answer))
+				assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+				switch rr := msg.Answer[0].(type) {
+				case *dns.A:
+					assert.Equal(t, fmt.Sprintf("198.51.100.%d", i+1), rr.A.String())
+				case *dns.AAAA:
+					assert.Equal(t, fmt.Sprintf("2001:db8::%d", i+1), rr.AAAA.String())
+				}
+			}
+		}
+		assert.Equal(t, before+2, queries[i].Load())
+		r := &dns.Msg{}
+		r.SetQuestion("svc.default.local.", dns.TypeA)
+		msg, _, err := c.ExchangeContext(t.Context(), r, addr)
+		require.Nil(t, err)
+		require.NotNil(t, msg)
+		assert.True(t, msg.Authoritative)
+		require.Equal(t, 1, len(msg.Answer))
+		assert.Equal(t, "192.0.2.1", msg.Answer[0].(*dns.A).A.String())
+		assert.Equal(t, before+2, queries[i].Load())
+	}
+}
+
+func TestGetProxiedAnswerFallbackConfigUpdateInFlight(t *testing.T) {
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
+			const workers = 16
+			started := make(chan struct{}, workers)
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			var oldQueries atomic.Int64
+			oldAddr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				oldQueries.Add(1)
+				started <- struct{}{}
+				<-release
+				assert.Nil(t, w.WriteMsg(tstDNSAnswer(r)))
+			}))
+			t.Cleanup(unblock)
+			var newQueries atomic.Int64
+			newAddr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				newQueries.Add(1)
+				msg := tstDNSAnswer(r)
+				switch rr := msg.Answer[0].(type) {
+				case *dns.A:
+					rr.A = net.ParseIP("198.51.100.3")
+				case *dns.AAAA:
+					rr.AAAA = net.ParseIP("2001:db8::3")
+				}
+				assert.Nil(t, w.WriteMsg(msg))
+			}))
+			s := newTstDNSServer()
+			cc := &corev1.ClusterConfig{Spec: &corev1.ClusterConfig_Spec{
+				Dns: &corev1.ClusterConfig_Spec_DNS{FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{oldAddr}}},
+			}}
+			s.setDNSConfig(cc)
+			old := s.getDNSZone("external.example.").cache
+			type result struct {
+				name string
+				msg  *dns.Msg
+				err  error
+			}
+			done := make(chan result, workers)
+			var wg sync.WaitGroup
+			for i := range workers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					name := fmt.Sprintf("query%d.example.", i)
+					msg, err := s.getProxiedAnswer(name, qtype)
+					done <- result{name: name, msg: msg, err: err}
+				}()
+			}
+			t.Cleanup(func() {
+				unblock()
+				wg.Wait()
+			})
+			timer := time.NewTimer(2 * time.Second)
+			defer timer.Stop()
+			for range workers {
+				select {
+				case <-started:
+				case <-timer.C:
+					t.Fatal("The old DNS queries did not start")
+				}
+			}
+			cc.Spec.Dns.FallbackZone.Servers = []string{newAddr}
+			s.setDNSConfig(cc)
+			current := s.getDNSZone("external.example.").cache
+			assert.NotSame(t, old, current)
+			for i := range workers {
+				_, err := s.getProxiedAnswer(fmt.Sprintf("query%d.example.", i), qtype)
+				require.Nil(t, err)
+			}
+			assert.Equal(t, int64(workers), newQueries.Load())
+			unblock()
+			wg.Wait()
+			for range workers {
+				ret := <-done
+				require.Nil(t, ret.err)
+				require.NotNil(t, ret.msg)
+				require.Equal(t, 1, len(ret.msg.Answer))
+				r := &dns.Msg{}
+				r.SetQuestion(ret.name, qtype)
+				assert.Equal(t, tstDNSAnswer(r).Answer[0].String(), ret.msg.Answer[0].String())
+				assert.NotNil(t, old.get(ret.name, qtype))
+			}
+			for i := range workers {
+				msg, err := s.getProxiedAnswer(fmt.Sprintf("query%d.example.", i), qtype)
+				require.Nil(t, err)
+				require.NotNil(t, msg)
+				require.Equal(t, 1, len(msg.Answer))
+				assert.Equal(t, qtype, msg.Answer[0].Header().Rrtype)
+				switch rr := msg.Answer[0].(type) {
+				case *dns.A:
+					assert.Equal(t, "198.51.100.3", rr.A.String())
+				case *dns.AAAA:
+					assert.Equal(t, "2001:db8::3", rr.AAAA.String())
+				}
+			}
+			assert.Equal(t, int64(workers), oldQueries.Load())
+			assert.Equal(t, int64(workers), newQueries.Load())
+		})
+	}
+}

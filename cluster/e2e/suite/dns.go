@@ -576,3 +576,99 @@ func testDNSFailover(t *testing.T, h *harness.H) {
 		waitDNSAnswerAt(t, h, c, fallbackProbe, dns.TypeA, "198.51.100.1")
 	})
 }
+
+func testDNSFallbackCacheUpdates(t *testing.T, h *harness.H) {
+	h.Require(t, capRootTUN)
+	domain := h.Name() + ".e2e-dns.test"
+	name := "external." + h.Name() + ".test"
+	private := "private." + domain
+	servers := startDNSZoneUpstream(t, h, []string{name, private})
+	original := pbutils.Clone(h.ClusterConfig(t)).(*corev1.ClusterConfig)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cc, err := h.CoreC().GetClusterConfig(ctx, &corev1.GetClusterConfigRequest{})
+		if !assert.Nil(t, err) {
+			return
+		}
+		cc.Spec.Dns = original.Spec.Dns
+		_, err = h.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+	})
+	cc := h.ClusterConfig(t)
+	cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
+		FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{
+			Servers:       []string{servers[0]},
+			CacheDuration: &metav1.Duration{Type: &metav1.Duration_Minutes{Minutes: 10}},
+		},
+		Zones: []*corev1.ClusterConfig_Spec_DNS_Zone{
+			{Domains: []string{domain}, Servers: []string{servers[2]}},
+		},
+	}
+	h.UpdateClusterConfig(t, cc)
+	h.Connect(t, harness.ConnectOpts{Root: true, Args: []string{"--no-dns"}})
+	c := h.DNSClient(t)
+	checkAnswers := func(t *testing.T, ipv4, ipv6 string, rcode int) {
+		t.Helper()
+		result := harness.ForEach(t.Context(), 64, 16,
+			func(ctx context.Context, i int) error {
+				qtype := dns.TypeA
+				want := ipv4
+				if i%2 == 1 {
+					qtype = dns.TypeAAAA
+					want = ipv6
+				}
+				msg, err := c.Exchange(ctx, name, qtype)
+				if err != nil {
+					return err
+				}
+				if msg.Rcode != rcode {
+					return errors.Errorf("%s returned %s, want %s", name,
+						dns.RcodeToString[msg.Rcode], dns.RcodeToString[rcode])
+				}
+				addrs := harness.DNSAnswerAddrs(msg)
+				if want == "" {
+					if len(addrs) != 0 {
+						return errors.Errorf("%s unexpectedly returned addresses %v", name, addrs)
+					}
+				} else if len(addrs) != 1 || addrs[0] != want {
+					return errors.Errorf("%s returned addresses %v, want %s", name, addrs, want)
+				}
+				return nil
+			})
+		harness.LogPool("Cluster DNS fallback cache update", result)
+		assert.Equal(t, 64, result.Succeeded)
+		assert.Zero(t, result.Failed(), result.Errors.String())
+	}
+	waitDNSAnswerAt(t, h, c, name, dns.TypeA, "198.51.100.1")
+	waitDNSAnswerAt(t, h, c, name, dns.TypeAAAA, "2001:db8::1")
+	checkAnswers(t, "198.51.100.1", "2001:db8::1", dns.RcodeSuccess)
+
+	for _, tc := range []struct {
+		name   string
+		server string
+		ipv4   string
+		ipv6   string
+		rcode  int
+	}{
+		{name: "ResolverUpdate", server: servers[1], ipv4: "198.51.100.2", ipv6: "2001:db8::2"},
+		{name: "UnavailableResolver", server: "udp://127.0.0.1:1", rcode: dns.RcodeServerFailure},
+		{name: "Recovery", server: servers[0], ipv4: "198.51.100.1", ipv6: "2001:db8::1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cc := h.ClusterConfig(t)
+			cc.Spec.Dns.FallbackZone.Servers = []string{tc.server}
+			h.UpdateClusterConfig(t, cc)
+			if tc.rcode == dns.RcodeSuccess {
+				waitDNSAnswerAt(t, h, c, name, dns.TypeA, tc.ipv4)
+				waitDNSAnswerAt(t, h, c, name, dns.TypeAAAA, tc.ipv6)
+			} else {
+				waitDNSRcode(t, h, c, name, dns.TypeA, tc.rcode)
+				waitDNSRcode(t, h, c, name, dns.TypeAAAA, tc.rcode)
+			}
+			checkAnswers(t, tc.ipv4, tc.ipv6, tc.rcode)
+			waitDNSAnswerAt(t, h, c, private, dns.TypeA, "198.51.100.3")
+			waitDNSAnswerAt(t, h, c, private, dns.TypeAAAA, "2001:db8::3")
+		})
+	}
+}

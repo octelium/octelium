@@ -443,7 +443,7 @@ func (s *DNSServer) setDNSConfig(cc *corev1.ClusterConfig) {
 	if dnsConfig != nil {
 		fallbackConfig = dnsConfig.FallbackZone
 	}
-	s.fallbackZoneCache.setDuration(getZoneDuration(fallbackConfig))
+	s.fallbackZoneCache = newZoneCache(getZoneDuration(fallbackConfig))
 	s.fallbackZone = &dnsZone{
 		upstreams: s.upstreams,
 		cache:     s.fallbackZoneCache,
