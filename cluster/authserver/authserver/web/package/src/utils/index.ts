@@ -8,11 +8,6 @@ export function isDev(): boolean {
 
 let __domain: string | undefined;
 
-const isValidDomain = (value: string): boolean =>
-  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d{1,5})?$/i.test(
-    value,
-  );
-
 export const getDomain = (): string => {
   if (isDev()) {
     return window.location.host;
@@ -22,22 +17,12 @@ export const getDomain = (): string => {
     return __domain;
   }
 
-  const cookieDomain =
-    ("; " + window.document.cookie)
-      .split("; octelium_domain=")
-      .pop()
-      ?.split(";")
-      .shift() ?? "";
-
-  try {
-    __domain = decodeURIComponent(cookieDomain);
-  } catch {
-    __domain = "";
+  const domain = window.__OCTELIUM_GLOBALS__?.cluster?.domain;
+  if (typeof domain !== "string" || domain.length === 0) {
+    throw new Error("The cluster domain is unavailable");
   }
 
-  if (!isValidDomain(__domain)) {
-    __domain = "";
-  }
+  __domain = domain;
 
   return __domain;
 };
@@ -47,8 +32,7 @@ export const getPortalURL = (): string => {
     return import.meta.env.VITE_PORTAL_URL || window.location.origin;
   }
 
-  const domain = getDomain();
-  return domain ? `https://portal.${domain}` : "/";
+  return `https://portal.${getDomain()}`;
 };
 
 const appCallbackProtocol = "com.octelium.client:";

@@ -68,7 +68,8 @@ type server struct {
 
 	genCache *cache.Cache
 
-	indexPageC atomic.Pointer[indexPage]
+	indexPageC    atomic.Pointer[indexPage]
+	loggedInPageC atomic.Pointer[indexPage]
 
 	webProvidersC struct {
 		sync.RWMutex

@@ -17,6 +17,7 @@
 package authserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -65,6 +67,24 @@ func TestRenderIndex(t *testing.T) {
 }
 
 var rgxCSPNonce = regexp.MustCompile(`'nonce-([a-zA-Z0-9]+)'`)
+
+func getGlobalsFromBody(t *testing.T, body []byte, nonce string) *templateGlobals {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	assert.Nil(t, err)
+
+	script := doc.Find("script").FilterFunction(func(_ int, sel *goquery.Selection) bool {
+		return strings.Contains(sel.Text(), "window.__OCTELIUM_GLOBALS__")
+	})
+	assert.Equal(t, 1, script.Length())
+	assert.Equal(t, nonce, script.AttrOr("nonce", ""))
+
+	_, globalsJSON, found := strings.Cut(script.Text(), " = ")
+	assert.True(t, found)
+
+	ret := &templateGlobals{}
+	assert.Nil(t, json.Unmarshal([]byte(globalsJSON), ret))
+	return ret
+}
 
 func newIdPWithNames(t *testing.T, ctx context.Context, srv *server,
 	name, metadataDisplayName, specDisplayName string) *corev1.IdentityProvider {
@@ -156,38 +176,6 @@ func TestSetHTMLSecurityHeaders(t *testing.T) {
 		srv.setHTMLSecurityHeaders(w2, utilrand.GetRandomStringCanonical(24))
 		assert.NotEqual(t, csp, w2.Header().Get("Content-Security-Policy"))
 	}
-}
-
-func TestSetDomainCookie(t *testing.T) {
-
-	ctx := context.Background()
-
-	tst, err := tests.Initialize(nil)
-	assert.Nil(t, err)
-	t.Cleanup(func() {
-		tst.Destroy()
-	})
-	fakeC := tst.C
-	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	assert.Nil(t, err)
-
-	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
-	assert.Nil(t, err)
-
-	w := httptest.NewRecorder()
-	srv.setDomainCookie(w)
-
-	cookies := w.Result().Cookies()
-	assert.Equal(t, 1, len(cookies))
-
-	cookie := cookies[0]
-	assert.Equal(t, "octelium_domain", cookie.Name)
-	assert.Equal(t, srv.domain, cookie.Value)
-	assert.Equal(t, srv.domain, cookie.Domain)
-	assert.Equal(t, "/", cookie.Path)
-	assert.True(t, cookie.Secure)
-	assert.False(t, cookie.HttpOnly)
-	assert.Equal(t, http.SameSiteNoneMode, cookie.SameSite)
 }
 
 func TestGetTemplateIndexArgs(t *testing.T) {
@@ -339,15 +327,10 @@ func TestRenderIndexNonce(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
 
 	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+	assert.Empty(t, resp.Cookies())
 
-	found := false
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "octelium_domain" {
-			found = true
-			assert.Equal(t, srv.domain, cookie.Value)
-		}
-	}
-	assert.True(t, found)
+	globals := getGlobalsFromBody(t, body, nonce)
+	assert.Equal(t, srv.domain, globals.Cluster.Domain)
 
 	{
 		w2 := httptest.NewRecorder()
@@ -389,21 +372,42 @@ func TestRenderLoggedIn(t *testing.T) {
 	assert.True(t, len(body) > 0)
 
 	assert.False(t, strings.Contains(string(body), "__OCTELIUM_STATE__"))
+	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
 
 	csp := resp.Header.Get("Content-Security-Policy")
 	assert.True(t, strings.Contains(csp, "default-src 'none'"))
 	assert.True(t, strings.Contains(csp, "frame-ancestors 'none'"))
 
+	match := rgxCSPNonce.FindStringSubmatch(csp)
+	assert.Equal(t, 2, len(match))
+
+	nonce := match[1]
+	assert.Equal(t, 24, len(nonce))
+
 	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Empty(t, resp.Cookies())
 
-	found := false
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "octelium_domain" {
-			found = true
-		}
+	globals := getGlobalsFromBody(t, body, nonce)
+	assert.Equal(t, srv.domain, globals.Cluster.Domain)
+
+	{
+		w2 := httptest.NewRecorder()
+		srv.renderLoggedIn(w2)
+		csp2 := w2.Result().Header.Get("Content-Security-Policy")
+
+		match2 := rgxCSPNonce.FindStringSubmatch(csp2)
+		assert.Equal(t, 2, len(match2))
+		assert.NotEqual(t, nonce, match2[1])
 	}
-	assert.True(t, found)
+
+	{
+		srv.loggedInPageC.Store(nil)
+
+		w2 := httptest.NewRecorder()
+		srv.renderLoggedIn(w2)
+		assert.Equal(t, http.StatusInternalServerError, w2.Result().StatusCode)
+	}
 }
 
 func TestRenderIndexCache(t *testing.T) {
@@ -457,6 +461,13 @@ func TestRenderIndexCache(t *testing.T) {
 		body := doRender()
 		assert.True(t, strings.Contains(body, "spec-display"))
 		assert.True(t, strings.Contains(body, idp.Metadata.Uid))
+
+		w := httptest.NewRecorder()
+		srv.renderLoggedIn(w)
+		loggedInBody := w.Body.String()
+		assert.False(t, strings.Contains(loggedInBody, "spec-display"))
+		assert.False(t, strings.Contains(loggedInBody, idp.Metadata.Uid))
+		assert.True(t, strings.Contains(loggedInBody, "__OCTELIUM_GLOBALS__"))
 	}
 
 	{

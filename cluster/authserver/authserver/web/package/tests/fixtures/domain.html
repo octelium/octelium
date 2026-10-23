@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <body>
+    <script type="module">
+      import { getDomain, getPortalURL, isDev } from "/src/utils";
+      import { getClientAuth, getTransport } from "/src/utils/client";
+
+      window.authDomain = {
+        getDomain,
+        getPortalURL,
+        isDev,
+        transportOptions: () => getTransport().mergeOptions({}),
+        requestAvailableAuthenticator: () =>
+          getClientAuth().getAvailableAuthenticator({}),
+      };
+    </script>
+  </body>
+</html>

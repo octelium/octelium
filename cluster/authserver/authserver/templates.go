@@ -34,7 +34,7 @@ import (
 )
 
 var indexTmpl2 = template.Must(template.New("index.html").Parse(`
-<script nonce="{{ .Nonce }}">window.__OCTELIUM_STATE__ = {{ .State }}</script>
+{{ if .State }}<script nonce="{{ .Nonce }}">window.__OCTELIUM_STATE__ = {{ .State }}</script>{{ end }}
 <script nonce="{{ .Nonce }}">window.__OCTELIUM_GLOBALS__ = {{ .Globals }}</script>
 `))
 
@@ -78,12 +78,16 @@ func (p *indexPage) render(nonce string) []byte {
 	return ret
 }
 
-func (s *server) buildIndexPage() (*indexPage, error) {
+func (s *server) buildIndexPage(withState bool) (*indexPage, error) {
 	noncePlaceholder := utilrand.GetRandomStringCanonical(32)
 
 	data, err := s.getTemplateIndexArgs(noncePlaceholder)
 	if err != nil {
 		return nil, err
+	}
+
+	if !withState {
+		data.State = ""
 	}
 
 	blob, err := getIndexHTML()
@@ -118,18 +122,31 @@ func (s *server) buildIndexPage() (*indexPage, error) {
 }
 
 func (s *server) setIndexPage() error {
-	page, err := s.buildIndexPage()
+	page, err := s.buildIndexPage(true)
+	if err != nil {
+		return err
+	}
+
+	loggedInPage, err := s.buildIndexPage(false)
 	if err != nil {
 		return err
 	}
 
 	s.indexPageC.Store(page)
+	s.loggedInPageC.Store(loggedInPage)
 
 	return nil
 }
 
 func (s *server) renderIndex(w http.ResponseWriter) {
-	page := s.indexPageC.Load()
+	s.renderPage(w, s.indexPageC.Load())
+}
+
+func (s *server) renderLoggedIn(w http.ResponseWriter) {
+	s.renderPage(w, s.loggedInPageC.Load())
+}
+
+func (s *server) renderPage(w http.ResponseWriter, page *indexPage) {
 	if page == nil {
 		zap.L().Error("The index page has not been set")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -138,7 +155,6 @@ func (s *server) renderIndex(w http.ResponseWriter) {
 
 	nonce := utilrand.GetRandomStringCanonical(24)
 
-	s.setDomainCookie(w)
 	s.setHTMLSecurityHeaders(w, nonce)
 	w.Write(page.render(nonce))
 }
@@ -214,21 +230,6 @@ type templateGlobalsCluster struct {
 	Domain string `json:"domain,omitempty"`
 }
 
-func (s *server) renderLoggedIn(w http.ResponseWriter) {
-	nonce := utilrand.GetRandomStringCanonical(24)
-
-	blob, err := getIndexHTML()
-	if err != nil {
-		zap.L().Error("Could not read index.html file from web fs", zap.Error(err))
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	s.setDomainCookie(w)
-	s.setHTMLSecurityHeaders(w, nonce)
-	w.Write(blob)
-}
-
 func (s *server) setHTMLSecurityHeaders(w http.ResponseWriter, nonce string) {
 	csp := strings.Join([]string{
 		"default-src 'none'",
@@ -250,15 +251,4 @@ func (s *server) setHTMLSecurityHeaders(w http.ResponseWriter, nonce string) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-}
-
-func (s *server) setDomainCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "octelium_domain",
-		Value:    s.domain,
-		Secure:   true,
-		Domain:   s.domain,
-		Path:     "/",
-		SameSite: http.SameSiteNoneMode,
-	})
 }
