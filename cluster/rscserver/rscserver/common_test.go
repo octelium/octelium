@@ -27,6 +27,7 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -1718,5 +1719,190 @@ func TestResourceHooks(t *testing.T) {
 			require.Len(t, items, 1)
 			assert.True(t, proto.Equal(created, items[0]))
 		})
+	}
+}
+
+func TestResourceCacheIdentity(t *testing.T) {
+	ctx := t.Context()
+	srv := &Server{
+		redisC: redisutils.NewClient(),
+		opts:   &Opts{NewResourceObject: vutils.NewResourceObject},
+	}
+	t.Cleanup(func() { srv.redisC.Close() })
+	original := newTestUser(utilrand.GetRandomStringCanonical(12))
+	original.ApiVersion = ucorev1.APIVersion
+	original.Kind = ucorev1.KindUser
+	nameKey := getObjectKeyByName("core", "v1", ucorev1.KindUser, original.Metadata.Name)
+	uidKey := getObjectKeyByUID(original.Metadata.Uid)
+	t.Cleanup(func() { srv.redisC.Del(context.Background(), nameKey, uidKey) })
+
+	for _, entry := range []struct {
+		name   string
+		mutate func(*corev1.User)
+		byName bool
+		byUID  bool
+	}{
+		{"valid", func(*corev1.User) {}, true, true},
+		{"missing-api-version", func(obj *corev1.User) { obj.ApiVersion = "" }, false, false},
+		{"different-api", func(obj *corev1.User) { obj.ApiVersion = "other/v1" }, false, false},
+		{"different-version", func(obj *corev1.User) { obj.ApiVersion = "core/v2" }, false, false},
+		{"missing-kind", func(obj *corev1.User) { obj.Kind = "" }, false, false},
+		{"different-kind", func(obj *corev1.User) { obj.Kind = ucorev1.KindGroup }, false, false},
+		{"missing-metadata", func(obj *corev1.User) { obj.Metadata = nil }, false, false},
+		{"empty-metadata", func(obj *corev1.User) { obj.Metadata = &metav1.Metadata{} }, false, false},
+		{"missing-name", func(obj *corev1.User) { obj.Metadata.Name = "" }, false, false},
+		{"missing-uid", func(obj *corev1.User) { obj.Metadata.Uid = "" }, false, false},
+		{"different-name", func(obj *corev1.User) { obj.Metadata.Name = "different-name" }, false, true},
+		{"different-uid", func(obj *corev1.User) { obj.Metadata.Uid = vutils.UUIDv4() }, true, false},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			obj := proto.Clone(original).(*corev1.User)
+			entry.mutate(obj)
+			data, err := pbutils.Marshal(obj)
+			require.Nil(t, err)
+			for _, lookup := range []struct {
+				req   *rmetav1.GetOptions
+				key   string
+				found bool
+			}{
+				{&rmetav1.GetOptions{Name: original.Metadata.Name}, nameKey, entry.byName},
+				{&rmetav1.GetOptions{Uid: original.Metadata.Uid}, uidKey, entry.byUID},
+				{&rmetav1.GetOptions{Name: original.Metadata.Name, Uid: vutils.UUIDv4()}, nameKey, entry.byName},
+			} {
+				require.Nil(t, srv.redisC.Set(ctx, lookup.key, data, cacheResourceTTL).Err())
+				got, found, err := srv.doGetCache(ctx, lookup.req, "core", "v1", ucorev1.KindUser)
+				require.Nil(t, err)
+				assert.Equal(t, lookup.found, found)
+				if lookup.found {
+					assert.True(t, proto.Equal(obj, got))
+				} else {
+					assert.Nil(t, got)
+				}
+				stored, err := srv.redisC.Get(ctx, lookup.key).Bytes()
+				require.Nil(t, err)
+				assert.Equal(t, data, stored)
+			}
+		})
+	}
+}
+
+func TestResourceCacheKindIsolation(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	name := utilrand.GetRandomStringCanonical(12)
+	kinds := []string{ucorev1.KindUser, ucorev1.KindGroup, ucorev1.KindNamespace, ucorev1.KindPolicy}
+	objects := map[string]umetav1.ResourceObjectI{}
+	for _, kind := range kinds {
+		obj := newTestResource(kind)
+		obj.GetMetadata().Name = name
+		created, err := srv.doCreate(ctx, obj, "core", "v1", kind)
+		require.Nil(t, err)
+		objects[kind] = created
+		t.Cleanup(func() { srv.doDeleteCache(context.Background(), created, "core", "v1", kind) })
+	}
+	otherVersion, err := srv.doCreate(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: name}}, "core", "v2", ucorev1.KindUser)
+	require.Nil(t, err)
+	t.Cleanup(func() { srv.doDeleteCache(context.Background(), otherVersion, "core", "v2", ucorev1.KindUser) })
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+
+	for _, sourceKind := range kinds {
+		for _, targetKind := range kinds {
+			t.Run(fmt.Sprintf("%s-as-%s", sourceKind, targetKind), func(t *testing.T) {
+				obj := objects[sourceKind]
+				got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", targetKind)
+				if sourceKind == targetKind {
+					require.Nil(t, err)
+					assert.True(t, proto.Equal(obj, got))
+					return
+				}
+				require.Equal(t, codes.NotFound, status.Code(err))
+				assert.Nil(t, got)
+				cached, found, err := srv.doGetCache(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", sourceKind)
+				require.Nil(t, err)
+				require.True(t, found)
+				assert.True(t, proto.Equal(obj, cached))
+			})
+		}
+		got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Name: name}, "core", "v1", sourceKind)
+		require.Nil(t, err)
+		assert.True(t, proto.Equal(objects[sourceKind], got))
+	}
+	for _, entry := range []struct {
+		api     string
+		version string
+		uid     string
+	}{
+		{"core", "v2", objects[ucorev1.KindUser].GetMetadata().Uid},
+		{"core", "v1", otherVersion.GetMetadata().Uid},
+		{"other", "v1", objects[ucorev1.KindUser].GetMetadata().Uid},
+	} {
+		got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: entry.uid}, entry.api, entry.version, ucorev1.KindUser)
+		assert.Nil(t, got)
+		assert.Equal(t, codes.NotFound, status.Code(err))
+	}
+	got, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: otherVersion.GetMetadata().Uid}, "core", "v2", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(otherVersion, got))
+
+	user := objects[ucorev1.KindUser]
+	wrongGroup := &corev1.Group{
+		ApiVersion: ucorev1.APIVersion,
+		Kind:       ucorev1.KindGroup,
+		Metadata:   proto.Clone(user.GetMetadata()).(*metav1.Metadata),
+		Spec:       &corev1.Group_Spec{},
+	}
+	wrongGroup.Metadata.DisplayName = "wrong-kind"
+	_, _, err = srv.doUpdate(ctx, wrongGroup, "core", "v1", ucorev1.KindGroup)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	_, err = srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: user.GetMetadata().Uid}, "core", "v1", ucorev1.KindGroup)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	current, err := srv.GetResource(ctx, &rmetav1.GetOptions{Uid: user.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	assert.True(t, proto.Equal(user, current))
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, proto.Equal(user, items[0]))
+}
+
+func TestResourceCacheIdentityFallback(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	created, err := srv.doCreate(ctx, newTestUser(utilrand.GetRandomStringCanonical(12)), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	t.Cleanup(func() { srv.doDeleteCache(context.Background(), created, "core", "v1", ucorev1.KindUser) })
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+
+	for _, byName := range []bool{false, true} {
+		for _, invalid := range []*corev1.User{
+			{},
+			{ApiVersion: ucorev1.APIVersion, Kind: ucorev1.KindUser},
+			{
+				ApiVersion: ucorev1.APIVersion,
+				Kind:       ucorev1.KindUser,
+				Metadata:   &metav1.Metadata{Uid: vutils.UUIDv4(), Name: "wrong-identity"},
+			},
+		} {
+			req := &rmetav1.GetOptions{Uid: created.GetMetadata().Uid}
+			key := getObjectKeyByUID(created.GetMetadata().Uid)
+			if byName {
+				req = &rmetav1.GetOptions{Name: created.GetMetadata().Name}
+				key = getObjectKeyByName("core", "v1", ucorev1.KindUser, created.GetMetadata().Name)
+			}
+			data, err := pbutils.Marshal(invalid)
+			require.Nil(t, err)
+			require.Nil(t, srv.redisC.Set(ctx, key, data, cacheResourceTTL).Err())
+			got, err := srv.GetResource(ctx, req, "core", "v1", ucorev1.KindUser)
+			require.Nil(t, err)
+			assert.True(t, proto.Equal(created, got))
+			cached, found, err := srv.doGetCache(ctx, req, "core", "v1", ucorev1.KindUser)
+			require.Nil(t, err)
+			require.True(t, found)
+			assert.True(t, proto.Equal(created, cached))
+		}
 	}
 }

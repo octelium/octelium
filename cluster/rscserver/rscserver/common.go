@@ -868,6 +868,23 @@ func (s *Server) doGetCache(ctx context.Context, req *rmetav1.GetOptions, api, v
 		return nil, false, rerr.InternalWithErr(err)
 	}
 
+	if ret.GetApiVersion() != vutils.GetApiVersion(api, version) || ret.GetKind() != kind {
+		return nil, false, nil
+	}
+
+	md := ret.GetMetadata()
+	if md == nil || md.Name == "" || md.Uid == "" {
+		return nil, false, nil
+	}
+
+	if req.Name != "" {
+		if md.Name != req.Name {
+			return nil, false, nil
+		}
+	} else if md.Uid != req.Uid {
+		return nil, false, nil
+	}
+
 	return ret, true, nil
 }
 

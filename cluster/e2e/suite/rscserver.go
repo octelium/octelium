@@ -505,3 +505,50 @@ func testRscServerConcurrentLifecycle(t *testing.T, h *harness.H) {
 	harness.LogPool("Resource server concurrent deletion and name reuse", res)
 	require.Zero(t, res.Failed(), "%s", res)
 }
+
+func testRscServerKindIsolation(t *testing.T, h *harness.H) {
+	ctx := t.Context()
+	name := h.Name()
+	policy := newAllowPolicy(t, h, name)
+	group := h.CreateGroup(t, &corev1.Group{
+		Metadata: &metav1.Metadata{Name: name},
+		Spec:     &corev1.Group_Spec{},
+	})
+
+	res := harness.ForEach(ctx, 256, 16, func(ctx context.Context, i int) error {
+		ctx, cancel := context.WithTimeout(ctx, harness.DecisionBudget)
+		defer cancel()
+		if i%2 == 0 {
+			_, err := h.CoreC().GetGroup(ctx, &metav1.GetOptions{Uid: policy.Metadata.Uid})
+			if !grpcerr.IsNotFound(err) {
+				return errors.Errorf("Group lookup of a Policy UID must return NotFound: %+v", err)
+			}
+		} else {
+			_, err := h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Uid: group.Metadata.Uid})
+			if !grpcerr.IsNotFound(err) {
+				return errors.Errorf("Policy lookup of a Group UID must return NotFound: %+v", err)
+			}
+		}
+		for _, req := range []*metav1.GetOptions{{Uid: policy.Metadata.Uid}, {Name: name}} {
+			got, err := h.CoreC().GetPolicy(ctx, req)
+			if err != nil {
+				return err
+			}
+			if got.Kind != policy.Kind || got.ApiVersion != policy.ApiVersion || got.Metadata.Uid != policy.Metadata.Uid {
+				return errors.Errorf("Policy lookup returned the wrong resource: %+v", got)
+			}
+		}
+		for _, req := range []*metav1.GetOptions{{Uid: group.Metadata.Uid}, {Name: name}} {
+			got, err := h.CoreC().GetGroup(ctx, req)
+			if err != nil {
+				return err
+			}
+			if got.Kind != group.Kind || got.ApiVersion != group.ApiVersion || got.Metadata.Uid != group.Metadata.Uid {
+				return errors.Errorf("Group lookup returned the wrong resource: %+v", got)
+			}
+		}
+		return nil
+	})
+	harness.LogPool("Resource server cache kind isolation", res)
+	require.Zero(t, res.Failed(), "%s", res)
+}
