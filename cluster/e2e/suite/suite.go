@@ -122,6 +122,8 @@ func Phases() []Phase {
 		{"ConnectIPMode", testConnectIPMode},
 		{"ConnectImplementation", testConnectImplementation},
 		{"DNSResolution", testDNSResolution},
+		{"DNSLifecycleLoad", testDNSLifecycleLoad},
+		{"DNSZones", testDNSZones},
 		{"ConnectLocalDNS", testConnectLocalDNS},
 		{"Apply", testApply},
 		{"VigilMySQL", testVigilMySQL},
