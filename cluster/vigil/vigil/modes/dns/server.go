@@ -232,6 +232,21 @@ func (s *Server) Close() error {
 	return nil
 }
 
+func writeUpstreamReply(w dns.ResponseWriter, r *dns.Msg, resp *dns.Msg) {
+	resp.Id = r.Id
+	resp.Question = r.Question
+
+	size := dns.MinMsgSize
+	if opt := r.IsEdns0(); opt != nil {
+		size = int(opt.UDPSize())
+	}
+	resp.Truncate(size)
+
+	if err := w.WriteMsg(resp); err != nil {
+		zap.L().Debug("Could not write the DNS response", zap.Error(err))
+	}
+}
+
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	startedAt := time.Now()
 	defer func() {
@@ -440,16 +455,8 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	resp := new(dns.Msg)
-	resp.MsgHdr = proxiedMsg.MsgHdr
-	resp.Id = r.Id
-
-	resp.Question = r.Question
-	resp.Answer = proxiedMsg.Answer
-	resp.Ns = proxiedMsg.Ns
-	resp.Extra = proxiedMsg.Extra
-
-	_ = w.WriteMsg(resp)
+	resp := proxiedMsg
+	writeUpstreamReply(w, r, resp)
 
 	rcodeClass = rcodeClassOf(resp.Rcode)
 	logE.Entry.Info.GetDns().Rcode = int64(resp.Rcode)

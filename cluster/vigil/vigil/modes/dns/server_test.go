@@ -19,6 +19,7 @@ package dns
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,145 @@ func (w *testResponseWriter) TsigTimersOnly(bool) {
 }
 
 func (w *testResponseWriter) Hijack() {
+}
+
+func newTestDNSServer(t *testing.T, handler dns.Handler) string {
+	t.Helper()
+
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	require.Nil(t, err)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	srv := &dns.Server{
+		PacketConn:        conn,
+		Handler:           handler,
+		NotifyStartedFunc: func() { close(started) },
+	}
+	go func() { done <- srv.ActivateAndServe() }()
+	t.Cleanup(func() {
+		assert.Nil(t, srv.Shutdown())
+		assert.Nil(t, <-done)
+	})
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("The DNS server did not start")
+	}
+	return conn.LocalAddr().String()
+}
+
+func TestWriteUpstreamReply(t *testing.T) {
+	for _, upstream := range []string{"UDP", "TCP"} {
+		t.Run(upstream, func(t *testing.T) {
+			addr := newTestDNSServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				resp := &dns.Msg{}
+				resp.SetReply(r)
+				resp.Id++
+				resp.Question[0].Name = strings.ToLower(resp.Question[0].Name)
+				resp.Authoritative = true
+				resp.RecursionAvailable = true
+				size := dns.MinMsgSize
+				if opt := r.IsEdns0(); opt != nil {
+					size = max(dns.MinMsgSize, int(opt.UDPSize()))
+					resp.SetEdns0(4096, false)
+				}
+				for i := range 64 {
+					hdr := dns.RR_Header{
+						Name: "large.upstream.e2e-dns.test.", Rrtype: r.Question[0].Qtype,
+						Class: dns.ClassINET, Ttl: 300,
+					}
+					if hdr.Rrtype == dns.TypeA {
+						resp.Answer = append(resp.Answer, &dns.A{
+							Hdr: hdr, A: net.ParseIP(fmt.Sprintf("198.51.100.%d", i+1)),
+						})
+					} else {
+						resp.Answer = append(resp.Answer, &dns.AAAA{
+							Hdr: hdr, AAAA: net.ParseIP(fmt.Sprintf("2001:db8::%x", i+1)),
+						})
+					}
+				}
+				resp.Compress = true
+				if upstream == "UDP" {
+					resp.Truncate(size)
+				}
+				data, err := resp.Pack()
+				if !assert.Nil(t, err) {
+					return
+				}
+				decoded := &dns.Msg{}
+				if !assert.Nil(t, decoded.Unpack(data)) {
+					return
+				}
+				cw := &countingResponseWriter{ResponseWriter: w}
+				writeUpstreamReply(cw, r, decoded)
+				assert.True(t, cw.written)
+				assert.LessOrEqual(t, cw.size, size)
+				assert.Equal(t, decoded.Truncated, cw.truncated)
+			}))
+			for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+				for _, tc := range []struct {
+					name string
+					edns bool
+					size uint16
+				}{
+					{name: "NoEDNS"},
+					{name: "EDNS0", edns: true},
+					{name: "EDNS128", edns: true, size: 128},
+					{name: "EDNS512", edns: true, size: 512},
+					{name: "EDNS1232", edns: true, size: 1232},
+					{name: "EDNS4096", edns: true, size: 4096},
+				} {
+					t.Run(fmt.Sprintf("%s/%s", dns.TypeToString[qtype], tc.name), func(t *testing.T) {
+						r := &dns.Msg{}
+						r.SetQuestion("LARGE.UPSTREAM.E2E-DNS.TEST.", qtype)
+						if tc.edns {
+							r.SetEdns0(tc.size, false)
+						}
+						client := &dns.Client{Net: "udp", Timeout: time.Second}
+						msg, _, err := client.ExchangeContext(t.Context(), r, addr)
+						require.Nil(t, err)
+						require.NotNil(t, msg)
+						assert.Equal(t, r.Id, msg.Id)
+						assert.Equal(t, r.Question, msg.Question)
+						assert.True(t, msg.Response)
+						assert.True(t, msg.Authoritative)
+						assert.True(t, msg.RecursionAvailable)
+						assert.Equal(t, dns.RcodeSuccess, msg.Rcode)
+						if tc.size == 4096 || tc.size == 1232 && qtype == dns.TypeA {
+							assert.False(t, msg.Truncated)
+							assert.Len(t, msg.Answer, 64)
+						} else {
+							assert.True(t, msg.Truncated)
+							assert.NotEmpty(t, msg.Answer)
+							assert.Less(t, len(msg.Answer), 64)
+						}
+						for i, rr := range msg.Answer {
+							assert.Equal(t, qtype, rr.Header().Rrtype)
+							switch rr := rr.(type) {
+							case *dns.A:
+								assert.Equal(t, fmt.Sprintf("198.51.100.%d", i+1), rr.A.String())
+							case *dns.AAAA:
+								assert.Equal(t, fmt.Sprintf("2001:db8::%x", i+1), rr.AAAA.String())
+							}
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestWriteUpstreamReplyPreservesTruncation(t *testing.T) {
+	r := &dns.Msg{}
+	r.SetQuestion("example.com.", dns.TypeA)
+	r.SetEdns0(4096, false)
+	resp := &dns.Msg{}
+	resp.SetReply(r)
+	resp.Truncated = true
+	w := &testResponseWriter{}
+	writeUpstreamReply(w, r, resp)
+	require.NotNil(t, w.msg)
+	assert.True(t, w.msg.Truncated)
 }
 
 func TestInvalidRequest(t *testing.T) {
