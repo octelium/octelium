@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver/rerr"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -234,6 +235,7 @@ func (s *Server) doCreate(ctx context.Context, req umetav1.ResourceObjectI, api,
 	md.ActorRef = getActorRef(ctx)
 	md.ActorOperation = getActorOp(ctx)
 
+	orig := req
 	req, err = s.handleSecretManagerSet(ctx, req, api, version, kind)
 	if err != nil {
 		return nil, err
@@ -261,7 +263,18 @@ func (s *Server) doCreate(ctx context.Context, req umetav1.ResourceObjectI, api,
 
 	_, err = s.db.ExecContext(ctx, sqln, sqlargs...)
 	if err != nil {
-		return nil, rerr.InternalWithErr(err)
+		if !postgresutils.IsUniqueViolation(err) {
+			return nil, rerr.InternalWithErr(err)
+		}
+
+		ctx, cancel := getPostCommitContext(ctx)
+		defer cancel()
+		if err := s.handleSecretManagerDelete(ctx, orig, api, version, kind); err != nil {
+			zap.L().Warn("Could not delete the Secret data of the rejected resource", zap.Error(err))
+		}
+
+		return nil, rerr.AlreadyExistsWithErr(
+			errors.Errorf("%s.%s.%s %s already exists", api, version, kind, md.Name))
 	}
 
 	if s.isTypeSecret(kind) {
@@ -347,6 +360,10 @@ func (s *Server) doUpdate(ctx context.Context, req umetav1.ResourceObjectI, api,
 
 	res, err := s.db.ExecContext(ctx, sqln, sqlargs...)
 	if err != nil {
+		if postgresutils.IsUniqueViolation(err) {
+			return nil, nil, rerr.AlreadyExistsWithErr(
+				errors.Errorf("%s.%s.%s %s already exists", api, version, kind, mdNew.Name))
+		}
 		return nil, nil, rerr.InternalWithErr(err)
 	}
 

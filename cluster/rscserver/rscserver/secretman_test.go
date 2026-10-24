@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -438,4 +439,64 @@ func TestSecretManagerStorageIsolation(t *testing.T) {
 	require.Nil(t, err)
 	require.Len(t, items, 1)
 	assert.True(t, pbutils.IsEqual(created, items[0]))
+}
+
+func TestSecretManagerConcurrentCreate(t *testing.T) {
+	srv := newTestServer(t, nil)
+	backend := newTstSecretMan(t)
+	srv.hasSecretManager = true
+	srv.secretmanC = &testSecretManClient{
+		get: backend.GetSecret, set: backend.SetSecret,
+		list: backend.ListSecret, delete: backend.DeleteSecret,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	const count = 8
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	srv.opts.PreCreate = func(ctx context.Context, _ umetav1.ResourceObjectI, _, _, _ string) error {
+		entered <- struct{}{}
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	name := utilrand.GetRandomStringCanonical(12)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var winners []umetav1.ResourceObjectI
+	for i := range count {
+		wg.Go(func() {
+			created, err := srv.doCreate(ctx, &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: name},
+				Data: &corev1.Secret_Data{
+					Type: &corev1.Secret_Data_Value{Value: fmt.Sprintf("secret-%d", i)},
+				},
+			}, "core", "v1", ucorev1.KindSecret)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				winners = append(winners, created)
+			} else {
+				assert.Equal(t, codes.AlreadyExists, status.Code(err))
+			}
+		})
+	}
+	for range count {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			require.FailNow(t, "Timed out waiting for Secret creates")
+		}
+	}
+	close(release)
+	wg.Wait()
+	require.Len(t, winners, 1)
+	assert.Equal(t, 1, backend.c.ItemCount())
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindSecret)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, pbutils.IsEqual(winners[0], items[0]))
 }

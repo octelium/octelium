@@ -21,11 +21,14 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/postgresutils"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -551,4 +554,118 @@ func testRscServerKindIsolation(t *testing.T, h *harness.H) {
 	})
 	harness.LogPool("Resource server cache kind isolation", res)
 	require.Zero(t, res.Failed(), "%s", res)
+}
+
+func testRscServerConcurrentCreate(t *testing.T, h *harness.H) {
+	ctx := t.Context()
+	prefix := h.Name()
+	const names = 4
+	var mu sync.Mutex
+	var created []*corev1.Policy
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), harness.DecisionBudget)
+		defer cancel()
+		for _, obj := range created {
+			_, err := h.CoreC().DeletePolicy(ctx, &metav1.DeleteOptions{Uid: obj.Metadata.Uid})
+			if err != nil && !grpcerr.IsNotFound(err) {
+				t.Errorf("Could not delete Policy: %+v", err)
+			}
+		}
+	})
+
+	res := harness.ForEach(ctx, names*16, 32, func(ctx context.Context, i int) error {
+		ctx, cancel := context.WithTimeout(ctx, harness.DecisionBudget)
+		defer cancel()
+		obj, err := h.CoreC().CreatePolicy(ctx, &corev1.Policy{
+			Metadata: &metav1.Metadata{Name: fmt.Sprintf("%s-%02d", prefix, i%names)},
+			Spec: &corev1.Policy_Spec{
+				Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow", 0)},
+			},
+		})
+		if grpcerr.AlreadyExists(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		created = append(created, obj)
+		mu.Unlock()
+		return nil
+	})
+	harness.LogPool("Resource server concurrent creates of the same name", res)
+	require.Zero(t, res.Failed(), "%s", res)
+	require.Len(t, created, names)
+	byName := map[string]*corev1.Policy{}
+	for _, obj := range created {
+		_, exists := byName[obj.Metadata.Name]
+		require.False(t, exists, "Multiple creates succeeded for %s", obj.Metadata.Name)
+		byName[obj.Metadata.Name] = obj
+		got, err := h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Uid: obj.Metadata.Uid})
+		require.Nil(t, err)
+		assert.Equal(t, obj.Metadata.ResourceVersion, got.Metadata.ResourceVersion)
+	}
+
+	counts := map[string]int{}
+	for page := uint32(0); ; page++ {
+		require.Less(t, page, uint32(1000))
+		list, err := h.CoreC().ListPolicy(ctx, &corev1.ListPolicyOptions{
+			Common: &metav1.CommonListOptions{Page: page, ItemsPerPage: 100},
+		})
+		require.Nil(t, err)
+		for _, obj := range list.Items {
+			if expected := byName[obj.Metadata.Name]; expected != nil {
+				counts[obj.Metadata.Name]++
+				assert.Equal(t, expected.Metadata.Uid, obj.Metadata.Uid)
+			}
+		}
+		if !list.GetListResponseMeta().GetHasMore() {
+			break
+		}
+	}
+	for name := range byName {
+		assert.Equal(t, 1, counts[name], name)
+	}
+}
+
+func testRscServerUniqueNames(t *testing.T, h *harness.H) {
+	ctx := t.Context()
+	db, err := h.ClusterDB(ctx)
+	require.Nil(t, err)
+
+	var def string
+	var valid bool
+	require.Nil(t, db.QueryRowContext(ctx, `SELECT pg_get_indexdef(indexrelid), indisunique AND indisvalid
+		FROM pg_index WHERE indexrelid = to_regclass($1)`,
+		"idx_octelium_resources_api_version_kind_name").Scan(&def, &valid))
+	assert.True(t, valid, def)
+	assert.Equal(t, 4, strings.Count(def, `COLLATE "C"`), def)
+
+	var duplicates int
+	require.Nil(t, db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM octelium_resources
+		GROUP BY api, version, kind, resource->'metadata'->>'name' HAVING count(*) > 1) AS d`).Scan(&duplicates))
+	assert.Zero(t, duplicates)
+
+	policy := newAllowPolicy(t, h, h.Name())
+	tx, err := db.BeginTx(ctx, nil)
+	require.Nil(t, err)
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO octelium_resources (uid, created_at, api, version, kind, resource)
+		SELECT $1, created_at, api, version, kind, resource FROM octelium_resources WHERE uid = $2`,
+		vutils.UUIDv4(), policy.Metadata.Uid)
+	assert.True(t, postgresutils.IsUniqueViolation(err), "%+v", err)
+	require.Nil(t, tx.Rollback())
+
+	_, err = h.CoreC().CreatePolicy(ctx, &corev1.Policy{
+		Metadata: &metav1.Metadata{Name: policy.Metadata.Name},
+		Spec: &corev1.Policy_Spec{
+			Rules: []*corev1.Policy_Spec_Rule{harness.AllowAnyRule("allow", 0)},
+		},
+	})
+	assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+
+	got, err := h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Name: policy.Metadata.Name})
+	require.Nil(t, err)
+	assert.Equal(t, policy.Metadata.Uid, got.Metadata.Uid)
+	assert.Equal(t, policy.Metadata.ResourceVersion, got.Metadata.ResourceVersion)
 }

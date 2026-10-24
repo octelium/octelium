@@ -84,6 +84,8 @@ func Phases() []Phase {
 		{"RscServerLifecycle", testRscServerLifecycle},
 		{"RscServerList", testRscServerList},
 		{"RscServerConcurrentLifecycle", testRscServerConcurrentLifecycle},
+		{"RscServerConcurrentCreate", testRscServerConcurrentCreate},
+		{"RscServerUniqueNames", testRscServerUniqueNames},
 		{"RscServerKindIsolation", testRscServerKindIsolation},
 		{"Nocturne", testNocturne},
 		{"NocturneEmptyDir", testNocturneEmptyDir},

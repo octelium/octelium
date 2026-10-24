@@ -27,7 +27,9 @@ import (
 	"strconv"
 	"text/template"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
+	"github.com/lib/pq/pqerror"
+	"go.uber.org/zap"
 )
 
 const migrationTmpl = `
@@ -48,6 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_{{$val}}_uid ON {{$val}}((resource->'metadata'->>
 CREATE INDEX IF NOT EXISTS idx_{{$val}}_created_at_ts ON {{$val}}(created_at);
 {{ end }}
 `
+
+const uniqueNameIndexTmpl = `CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s
+	(api COLLATE "C", version COLLATE "C", kind COLLATE "C", ((resource->'metadata'->>'name')) COLLATE "C")`
 
 type migrationTmplArgs struct {
 	Tables []string
@@ -75,11 +80,39 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 
 	tmpl := tpl.String()
 
-	_, err = db.Exec(tmpl)
+	_, err = db.ExecContext(ctx, tmpl)
 	if err != nil {
 		return err
 	}
+
+	for _, table := range Tables {
+		if err := migrateUniqueNameIndex(ctx, db, table); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func migrateUniqueNameIndex(ctx context.Context, db *sql.DB, table string) error {
+	idxName := fmt.Sprintf("idx_%s_api_version_kind_name", table)
+
+	_, err := db.ExecContext(ctx, fmt.Sprintf(uniqueNameIndexTmpl, idxName, table))
+	pqErr := pq.As(err, pqerror.UniqueViolation)
+	if pqErr == nil {
+		return err
+	}
+
+	if pqErr.Constraint == idxName {
+		zap.L().Error("Could not enforce unique resource names. Duplicate resource names must be removed",
+			zap.String("table", table), zap.String("detail", pqErr.Detail))
+	}
+
+	return nil
+}
+
+func IsUniqueViolation(err error) bool {
+	return pq.As(err, pqerror.UniqueViolation) != nil
 }
 
 func getPostgresURL(noDB bool) string {

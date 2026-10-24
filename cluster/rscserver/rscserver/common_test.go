@@ -18,6 +18,7 @@ package rscserver
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -1905,4 +1907,249 @@ func TestResourceCacheIdentityFallback(t *testing.T) {
 			assert.True(t, proto.Equal(created, cached))
 		}
 	}
+}
+
+const uniqueNameIndex = "idx_octelium_resources_api_version_kind_name"
+
+func assertUniqueNameIndex(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var def string
+	var valid bool
+	require.Nil(t, db.QueryRowContext(t.Context(), `SELECT pg_get_indexdef(indexrelid), indisunique AND indisvalid
+		FROM pg_index WHERE indexrelid = to_regclass($1)`, uniqueNameIndex).Scan(&def, &valid))
+	assert.True(t, valid)
+	assert.Contains(t, def, "CREATE UNIQUE INDEX")
+	assert.Equal(t, 4, strings.Count(def, `COLLATE "C"`), def)
+}
+
+func hasUniqueNameIndex(t *testing.T, db *sql.DB) bool {
+	t.Helper()
+	var exists bool
+	require.Nil(t, db.QueryRowContext(t.Context(),
+		"SELECT to_regclass($1) IS NOT NULL", uniqueNameIndex).Scan(&exists))
+	return exists
+}
+
+func insertRawUser(ctx context.Context, db *sql.DB, obj *corev1.User) error {
+	data, err := pbutils.MarshalJSON(obj, false)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO octelium_resources
+		(uid, created_at, api, version, kind, resource) VALUES ($1, $2, $3, $4, $5, $6)`,
+		obj.Metadata.Uid, obj.Metadata.CreatedAt.AsTime(), "core", "v1", ucorev1.KindUser, string(data))
+	return err
+}
+
+func newRawUser(name string) *corev1.User {
+	obj := newTestUser(name)
+	obj.ApiVersion = ucorev1.APIVersion
+	obj.Kind = ucorev1.KindUser
+	obj.Metadata.CreatedAt = pbutils.Now()
+	return obj
+}
+
+func TestCreateConcurrentNames(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	servers := []*Server{srv}
+	for range 2 {
+		other, err := NewServer(ctx, nil)
+		require.Nil(t, err)
+		t.Cleanup(other.Stop)
+		servers = append(servers, other)
+	}
+	_, err := srv.db.ExecContext(ctx, fmt.Sprintf(
+		"ALTER DATABASE %s SET default_transaction_isolation TO 'repeatable read'",
+		os.Getenv("OCTELIUM_POSTGRES_DATABASE")))
+	require.Nil(t, err)
+	const count = 24
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	for _, server := range servers {
+		server.db.SetMaxIdleConns(0)
+		server.db.SetMaxOpenConns(8)
+		server.opts.PreCreate = func(ctx context.Context, _ umetav1.ResourceObjectI, _, _, _ string) error {
+			entered <- struct{}{}
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	name := utilrand.GetRandomStringCanonical(12)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var winners []umetav1.ResourceObjectI
+	conflicts := 0
+	for i := range count {
+		wg.Go(func() {
+			obj := newTestUser(name)
+			obj.Metadata.DisplayName = fmt.Sprintf("writer-%d", i)
+			created, err := servers[i%len(servers)].doCreate(ctx, obj, "core", "v1", ucorev1.KindUser)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				winners = append(winners, created)
+			} else {
+				assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+				conflicts++
+			}
+		})
+	}
+	for range count {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			require.FailNow(t, "Timed out waiting for concurrent creates")
+		}
+	}
+	close(release)
+	wg.Wait()
+	require.Len(t, winners, 1)
+	assert.Equal(t, count-1, conflicts)
+	t.Cleanup(func() { srv.doDeleteCache(context.Background(), winners[0], "core", "v1", ucorev1.KindUser) })
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, proto.Equal(winners[0], items[0]))
+}
+
+func TestCreateConflictAfterCheck(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	other, err := NewServer(ctx, nil)
+	require.Nil(t, err)
+	t.Cleanup(other.Stop)
+	name := utilrand.GetRandomStringCanonical(12)
+	var winner umetav1.ResourceObjectI
+	var loserUID string
+	srv.opts.PreCreate = func(ctx context.Context, req umetav1.ResourceObjectI, api, version, kind string) error {
+		loserUID = req.GetMetadata().Uid
+		var err error
+		winner, err = other.doCreate(ctx, newTestUser(name), api, version, kind)
+		return err
+	}
+	_, err = srv.doCreate(ctx, newTestUser(name), "core", "v1", ucorev1.KindUser)
+	assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+	require.NotNil(t, winner)
+	t.Cleanup(func() { srv.doDeleteCache(context.Background(), winner, "core", "v1", ucorev1.KindUser) })
+	require.NotEmpty(t, loserUID)
+	exists, err := srv.doExistsByUID(ctx, loserUID)
+	require.Nil(t, err)
+	assert.False(t, exists)
+	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, proto.Equal(winner, items[0]))
+}
+
+func TestUpdateNameConflict(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	var objs []umetav1.ResourceObjectI
+	for range 2 {
+		created, err := srv.doCreate(ctx, newTestUser(utilrand.GetRandomStringCanonical(12)), "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		t.Cleanup(func() { srv.doDeleteCache(context.Background(), created, "core", "v1", ucorev1.KindUser) })
+		objs = append(objs, created)
+	}
+	renamed := proto.Clone(objs[1]).(*corev1.User)
+	renamed.Metadata.Name = objs[0].GetMetadata().Name
+	_, _, err := srv.doUpdate(ctx, renamed, "core", "v1", ucorev1.KindUser)
+	assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+	for _, obj := range objs {
+		got, err := srv.doGet(ctx, &rmetav1.GetOptions{Uid: obj.GetMetadata().Uid}, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		assert.True(t, proto.Equal(obj, got))
+	}
+	updated := proto.Clone(objs[1]).(*corev1.User)
+	updated.Metadata.DisplayName = "updated"
+	_, _, err = srv.doUpdate(ctx, updated, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+}
+
+func TestMigrateUniqueNameIndex(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	assertUniqueNameIndex(t, srv.db)
+	core, logs := observer.New(zap.ErrorLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+	for range 3 {
+		_, err := srv.db.ExecContext(ctx, "DROP INDEX "+uniqueNameIndex)
+		require.Nil(t, err)
+		errs := make(chan error, 8)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() { errs <- postgresutils.Migrate(ctx, srv.db) })
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			require.Nil(t, err)
+		}
+		assertUniqueNameIndex(t, srv.db)
+	}
+	require.Nil(t, postgresutils.Migrate(ctx, srv.db))
+	assertUniqueNameIndex(t, srv.db)
+	assert.Zero(t, logs.Len(), "%+v", logs.All())
+	err := insertRawUser(ctx, srv.db, newRawUser(utilrand.GetRandomStringCanonical(12)))
+	require.Nil(t, err)
+}
+
+func TestMigrateLegacyDuplicates(t *testing.T) {
+	srv := newTestServer(t, nil)
+	ctx := t.Context()
+	_, err := srv.db.ExecContext(ctx, "DROP INDEX "+uniqueNameIndex)
+	require.Nil(t, err)
+	name := utilrand.GetRandomStringCanonical(12)
+	var legacy []*corev1.User
+	for range 2 {
+		obj := newRawUser(name)
+		require.Nil(t, insertRawUser(ctx, srv.db, obj))
+		legacy = append(legacy, obj)
+	}
+
+	core, logs := observer.New(zap.ErrorLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+	upgraded, err := NewServer(ctx, nil)
+	require.Nil(t, err)
+	defer upgraded.Stop()
+	entries := logs.FilterMessageSnippet("unique resource names").All()
+	require.Len(t, entries, 1)
+	assert.Contains(t, entries[0].ContextMap()["detail"], name)
+	assert.False(t, hasUniqueNameIndex(t, upgraded.db))
+
+	for _, obj := range legacy {
+		got, err := upgraded.doGet(ctx, &rmetav1.GetOptions{Uid: obj.Metadata.Uid}, "core", "v1", ucorev1.KindUser)
+		require.Nil(t, err)
+		assert.True(t, proto.Equal(obj, got))
+	}
+	_, err = upgraded.doCreate(ctx, newTestUser(name), "core", "v1", ucorev1.KindUser)
+	assert.True(t, grpcerr.AlreadyExists(err), "%+v", err)
+	updated := proto.Clone(legacy[0]).(*corev1.User)
+	updated.Metadata.DisplayName = "legacy-update"
+	_, _, err = upgraded.doUpdate(ctx, updated, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	_, err = upgraded.doDelete(ctx, &rmetav1.DeleteOptions{Uid: legacy[1].Metadata.Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+
+	logs.TakeAll()
+	require.Nil(t, postgresutils.Migrate(ctx, upgraded.db))
+	assert.Zero(t, logs.Len(), "%+v", logs.All())
+	assertUniqueNameIndex(t, upgraded.db)
+	assert.True(t, postgresutils.IsUniqueViolation(insertRawUser(ctx, upgraded.db, newRawUser(name))))
+
+	_, err = upgraded.doDelete(ctx, &rmetav1.DeleteOptions{Uid: legacy[0].Metadata.Uid}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	created, err := upgraded.doCreate(ctx, newTestUser(name), "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	defer upgraded.doDeleteCache(context.Background(), created, "core", "v1", ucorev1.KindUser)
+	items, _, err := upgraded.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindUser)
+	require.Nil(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, proto.Equal(created, items[0]))
 }
