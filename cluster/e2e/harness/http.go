@@ -70,6 +70,10 @@ func (h *H) HTTPNoRetry() *resty.Client {
 		SetLogger(zap.S())
 }
 
+func (h *H) HTTPNoKeepAlive() *resty.Client {
+	return h.HTTPNoRetry().SetCloseConnection(true)
+}
+
 func (h *H) ClusterURL() string {
 	return fmt.Sprintf("https://%s", h.Domain)
 }

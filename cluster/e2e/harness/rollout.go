@@ -51,6 +51,15 @@ func (h *H) ServiceDeployment(service string) string {
 }
 
 func (h *H) RolloutRestart(ctx context.Context, deployment string) error {
+	dep, err := h.K8sDeployment(ctx, deployment)
+	if err != nil {
+		return err
+	}
+	if service := dep.Spec.Template.Labels["octelium.com/svc"]; service != "" {
+		return errors.Errorf("The Deployment %s is managed by Nocturne. Restart the Service %s instead",
+			deployment, service)
+	}
+
 	patch, err := json.Marshal(map[string]any{
 		"spec": map[string]any{
 			"template": map[string]any{

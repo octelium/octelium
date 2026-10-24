@@ -45,7 +45,7 @@ import (
 
 func serviceAddrs(svc *corev1.Service, qtype uint16) []string {
 	var ret []string
-	for _, addr := range svc.Status.Addresses {
+	for _, addr := range svc.GetStatus().GetAddresses() {
 		if addr.DualStackIP == nil {
 			continue
 		}
@@ -65,34 +65,51 @@ func serviceAddrs(svc *corev1.Service, qtype uint16) []string {
 }
 
 func waitDNSAnswer(t *testing.T, h *harness.H, c *harness.DNSClient,
-	name string, qtype uint16, want []string) {
+	name string, qtype uint16, svc *corev1.Service) *corev1.Service {
 	t.Helper()
 
+	var ret *corev1.Service
 	h.Eventually(t, fmt.Sprintf("the Cluster DNS to resolve %s", name),
 		harness.DecisionBudget, func(ctx context.Context) error {
+			current, err := h.CoreC().GetService(ctx, &metav1.GetOptions{Uid: svc.Metadata.Uid})
+			if err != nil {
+				return err
+			}
 			msg, err := c.Exchange(ctx, name, qtype)
 			if err != nil {
 				return err
 			}
-			if msg.Rcode != dns.RcodeSuccess {
-				return errors.Errorf("%s returned %s", name, dns.RcodeToString[msg.Rcode])
+			if err := serviceDNSAnswerErr(current, name, qtype, msg); err != nil {
+				return err
 			}
-			if !msg.Authoritative {
-				return errors.Errorf("%s was not answered authoritatively", name)
-			}
-
-			got := harness.DNSAnswerAddrs(msg)
-			if len(got) == 0 {
-				return errors.Errorf("%s returned no address records", name)
-			}
-			for _, addr := range got {
-				if !slices.Contains(want, addr) {
-					return errors.Errorf("%s resolved to %s, want one of %v",
-						name, addr, want)
-				}
-			}
+			ret = current
 			return nil
 		})
+	return ret
+}
+
+func serviceDNSAnswerErr(svc *corev1.Service, name string, qtype uint16, msg *dns.Msg) error {
+	want := serviceAddrs(svc, qtype)
+	if len(want) == 0 {
+		return errors.Errorf("the Service %s has no %s address yet", svc.Metadata.Name, dns.TypeToString[qtype])
+	}
+	if msg.Rcode != dns.RcodeSuccess {
+		return errors.Errorf("%s returned %s", name, dns.RcodeToString[msg.Rcode])
+	}
+	if !msg.Authoritative {
+		return errors.Errorf("%s was not answered authoritatively", name)
+	}
+
+	got := harness.DNSAnswerAddrs(msg)
+	if len(got) == 0 {
+		return errors.Errorf("%s returned no address records", name)
+	}
+	for _, addr := range got {
+		if !slices.Contains(want, addr) {
+			return errors.Errorf("%s resolved to %s, want one of %v", name, addr, want)
+		}
+	}
+	return nil
 }
 
 func waitDNSRcode(t *testing.T, h *harness.H, c *harness.DNSClient,
@@ -128,9 +145,6 @@ func testDNSResolution(t *testing.T, h *harness.H) {
 	rootName, _, _ := strings.Cut(rootSvc.Metadata.Name, ".")
 	nsName, _, _ := strings.Cut(nsSvc.Metadata.Name, ".")
 
-	require.True(t, len(serviceAddrs(rootSvc, dns.TypeA)) > 0,
-		"the Service %s has no IPv4 address", rootSvc.Metadata.Name)
-
 	h.Connect(t, harness.ConnectOpts{
 		Root: true,
 		Args: []string{"--no-dns"},
@@ -142,8 +156,6 @@ func testDNSResolution(t *testing.T, h *harness.H) {
 		zap.String("server", c.Server), zap.String("source", c.Source))
 
 	t.Run("Hostnames", func(t *testing.T) {
-		want := serviceAddrs(rootSvc, dns.TypeA)
-
 		for _, name := range []string{
 			fmt.Sprintf("%s.local", rootName),
 			fmt.Sprintf("%s.default.local", rootName),
@@ -152,18 +164,16 @@ func testDNSResolution(t *testing.T, h *harness.H) {
 			fmt.Sprintf("%s.%s.local", rootName, h.Domain),
 			fmt.Sprintf("%s.default.%s.local", rootName, h.Domain),
 		} {
-			waitDNSAnswer(t, h, c, name, dns.TypeA, want)
+			waitDNSAnswer(t, h, c, name, dns.TypeA, rootSvc)
 		}
 	})
 
 	t.Run("Namespaced", func(t *testing.T) {
-		want := serviceAddrs(nsSvc, dns.TypeA)
-
 		for _, name := range []string{
 			fmt.Sprintf("%s.%s.local", nsName, ns.Metadata.Name),
 			fmt.Sprintf("%s.%s.local.%s", nsName, ns.Metadata.Name, h.Domain),
 		} {
-			waitDNSAnswer(t, h, c, name, dns.TypeA, want)
+			waitDNSAnswer(t, h, c, name, dns.TypeA, nsSvc)
 		}
 
 		waitDNSRcode(t, h, c, fmt.Sprintf("%s.local", nsName),
@@ -173,13 +183,8 @@ func testDNSResolution(t *testing.T, h *harness.H) {
 	t.Run("IPv6", func(t *testing.T) {
 		h.Require(t, capIPv6)
 
-		want := serviceAddrs(rootSvc, dns.TypeAAAA)
-		if len(want) == 0 {
-			t.Skipf("the Service %s has no IPv6 address", rootSvc.Metadata.Name)
-		}
-
 		waitDNSAnswer(t, h, c, fmt.Sprintf("%s.default.local", rootName),
-			dns.TypeAAAA, want)
+			dns.TypeAAAA, rootSvc)
 	})
 
 	t.Run("UnknownService", func(t *testing.T) {
@@ -195,7 +200,7 @@ func testDNSResolution(t *testing.T, h *harness.H) {
 		name, _, _ := strings.Cut(svc.Metadata.Name, ".")
 		fqdn := fmt.Sprintf("%s.default.local", name)
 
-		waitDNSAnswer(t, h, c, fqdn, dns.TypeA, serviceAddrs(svc, dns.TypeA))
+		waitDNSAnswer(t, h, c, fqdn, dns.TypeA, svc)
 
 		h.DeleteService(t, svc)
 
@@ -236,12 +241,11 @@ func testDNSLifecycleLoad(t *testing.T, h *harness.H) {
 		svc = h.GetService(t, svc.Metadata.Name)
 		name := svc.Metadata.Name + ".local"
 		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
-			addrs := serviceAddrs(svc, qtype)
-			if len(addrs) == 0 {
+			if qtype == dns.TypeAAAA && !h.Scenario.Caps.Has(capIPv6) {
 				continue
 			}
-			waitDNSAnswer(t, h, c, name, qtype, addrs)
-			queries = append(queries, query{name: strings.ToUpper(name), qtype: qtype, want: addrs})
+			svc = waitDNSAnswer(t, h, c, name, qtype, svc)
+			queries = append(queries, query{name: strings.ToUpper(name), qtype: qtype, want: serviceAddrs(svc, qtype)})
 		}
 	}
 	queries = append(queries,
@@ -294,7 +298,7 @@ func testDNSLifecycleLoad(t *testing.T, h *harness.H) {
 	svc := h.NewPublicService(t, "default")
 	svc = h.GetService(t, svc.Metadata.Name)
 	name := svc.Metadata.Name + ".local"
-	waitDNSAnswer(t, h, c, name, dns.TypeA, serviceAddrs(svc, dns.TypeA))
+	waitDNSAnswer(t, h, c, name, dns.TypeA, svc)
 	h.DeleteService(t, svc)
 	waitDNSRcode(t, h, c, name, dns.TypeA, dns.RcodeNameError)
 
@@ -304,7 +308,7 @@ func testDNSLifecycleLoad(t *testing.T, h *harness.H) {
 	})
 	recreated = h.GetService(t, recreated.Metadata.Name)
 	assert.NotEqual(t, svc.Metadata.Uid, recreated.Metadata.Uid)
-	waitDNSAnswer(t, h, c, name, dns.TypeA, serviceAddrs(recreated, dns.TypeA))
+	waitDNSAnswer(t, h, c, name, dns.TypeA, recreated)
 	assert.Greater(t, completed.Load(), before)
 }
 
@@ -520,7 +524,7 @@ func testDNSZones(t *testing.T, h *harness.H) {
 			waitDNSAnswerAt(t, h, c, strings.ToUpper(tc.name), dns.TypeA, tc.ipv4)
 			waitDNSAnswerAt(t, h, c, tc.name, dns.TypeAAAA, tc.ipv6)
 		}
-		waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, serviceAddrs(svc, dns.TypeA))
+		waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, svc)
 	})
 
 	t.Run("UpdateZone", func(t *testing.T) {
@@ -537,7 +541,7 @@ func testDNSZones(t *testing.T, h *harness.H) {
 		h.UpdateClusterConfig(t, cc)
 		waitDNSRcode(t, h, c, sub, dns.TypeA, dns.RcodeServerFailure)
 		waitDNSAnswerAt(t, h, c, parent, dns.TypeA, "198.51.100.1")
-		waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, serviceAddrs(svc, dns.TypeA))
+		waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, svc)
 
 		cc = h.ClusterConfig(t)
 		cc.Spec.Dns.Zones[1].Servers = []string{servers[2]}
@@ -605,7 +609,7 @@ func testDNSFailover(t *testing.T, h *harness.H) {
 	waitDNSAnswerAt(t, h, c, probe, dns.TypeA, "198.51.100.2")
 	waitDNSAnswerAt(t, h, c, fallbackProbe, dns.TypeA, "198.51.100.1")
 	waitDNSRcode(t, h, c, private, dns.TypeA, dns.RcodeServerFailure)
-	waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, serviceAddrs(svc, dns.TypeA))
+	waitDNSAnswer(t, h, c, svc.Metadata.Name+".local", dns.TypeA, svc)
 
 	t.Run("ConcurrentQueries", func(t *testing.T) {
 		result := harness.ForEach(t.Context(), 2*len(queries), 16,

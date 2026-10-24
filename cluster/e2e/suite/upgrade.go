@@ -19,7 +19,6 @@ package suite
 import (
 	"context"
 	"net/http"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -489,10 +488,13 @@ func upgradeDisruptions() []upgradeDisruption {
 			},
 		},
 		{
-			name:  "OctovigilAndAPIServerRollout",
+			name:  "OctovigilRolloutAndAPIServerRestart",
 			drops: true,
 			run: func(t *testing.T, e *upgradeEnv) time.Duration {
-				return rolloutDeployments(t, e.h, octovigilDeployment, e.h.ServiceDeployment(apiService))
+				started := time.Now()
+				rolloutDeployments(t, e.h, octovigilDeployment)
+				e.h.RestartService(t, apiService)
+				return time.Since(started)
 			},
 		},
 		{
@@ -503,11 +505,13 @@ func upgradeDisruptions() []upgradeDisruption {
 			},
 		},
 		{
-			name:  "ControlPlaneRollout",
+			name:  "ControlPlaneRolloutAndAPIServerRestart",
 			drops: true,
 			run: func(t *testing.T, e *upgradeEnv) time.Duration {
-				return rolloutDeployments(t, e.h,
-					append(slices.Clone(controlPlaneDeployments), e.h.ServiceDeployment(apiService))...)
+				started := time.Now()
+				rolloutDeployments(t, e.h, controlPlaneDeployments...)
+				e.h.RestartService(t, apiService)
+				return time.Since(started)
 			},
 		},
 		{

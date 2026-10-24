@@ -117,6 +117,21 @@ func TestRolloutRestart(t *testing.T) {
 	assert.Error(t, h.RolloutRestart(t.Context(), "octelium-missing"))
 }
 
+func TestRolloutRestartManagedService(t *testing.T) {
+	dep := testDeployment("svc-default-octelium-api", map[string]string{svcUpgradeUIDAnnotation: ""}, 1, rolledOut(1))
+	dep.Spec.Template.Labels = map[string]string{"octelium.com/svc": "default.octelium-api"}
+	h := &H{k8sC: fake.NewSimpleClientset(dep)}
+
+	err := h.RolloutRestart(t.Context(), dep.Name)
+	require.ErrorContains(t, err, "managed by Nocturne")
+	for _, action := range h.k8sC.(*fake.Clientset).Actions() {
+		assert.Equal(t, "get", action.GetVerb())
+	}
+	current, err := h.K8sDeployment(t.Context(), dep.Name)
+	require.Nil(t, err)
+	assert.Equal(t, dep.Spec.Template.Annotations, current.Spec.Template.Annotations)
+}
+
 func TestUpgradeRevisions(t *testing.T) {
 	h := &H{k8sC: fake.NewSimpleClientset(
 		testDeployment("octelium-octovigil", map[string]string{installUIDAnnotation: "a"}, 1, rolledOut(1)),

@@ -76,7 +76,7 @@ func testIngress(t *testing.T, h *harness.H) {
 
 		h.MustWaitService(t, svc.Metadata.Name)
 
-		c := h.ServiceClient(svc, "")
+		c := h.HTTPNoKeepAlive().SetBaseURL(h.ServiceURL(svc))
 
 		h.WaitStatus(t, c, "/", http.StatusNotFound)
 
@@ -564,7 +564,7 @@ func testIngressSnapshotContinuousEvents(t *testing.T, h *harness.H) {
 	v.record(t, http.StatusOK, "snapshot-continuous-events")
 	v.svc.Spec.IsAnonymous = true
 	v.svc = h.UpdateService(t, v.svc)
-	c := h.HTTPNoRetry()
+	c := h.HTTPNoKeepAlive()
 	t.Cleanup(c.GetClient().CloseIdleConnections)
 	h.WaitStatus(t, c, h.ServiceURL(v.svc), http.StatusOK)
 	svc := h.CreateService(t, &corev1.Service{
