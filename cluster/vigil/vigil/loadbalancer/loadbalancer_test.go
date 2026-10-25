@@ -18,6 +18,8 @@ package loadbalancer
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -29,10 +31,113 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeCache struct {
 	s *corev1.Service
+}
+
+func newTestSession(uid, user, service string, port int32) *corev1.Session {
+	return &corev1.Session{
+		Metadata: &metav1.Metadata{Uid: uid},
+		Status: &corev1.Session_Status{
+			Type:    corev1.Session_Status_CLIENT,
+			UserRef: &metav1.ObjectReference{Name: user},
+			Connection: &corev1.Session_Status_Connection{
+				L3Mode:    corev1.Session_Status_Connection_V4,
+				Addresses: []*metav1.DualStackNetwork{{V4: "192.0.2.1/32"}},
+				Upstreams: []*corev1.Session_Status_Connection_Upstream{
+					{ServiceRef: &metav1.ObjectReference{Uid: service}, Port: port},
+				},
+			},
+		},
+	}
+}
+
+func TestSessionCacheLifecycle(t *testing.T) {
+	c := newCache()
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}}
+	assert.Nil(t, c.getByUserName("user", svc))
+	c.deleteSession(newTestSession("missing", "user", "service", 80))
+
+	first := newTestSession("first", "user", "other", 80)
+	second := newTestSession("second", "user", "service", 81)
+	c.setSession(first)
+	c.setSession(second)
+	assert.Equal(t, second, c.getByUserName("user", svc))
+	assert.Nil(t, c.getByUserName("other-user", svc))
+
+	replacement := newTestSession("second", "user", "service", 82)
+	c.setSession(replacement)
+	assert.Equal(t, replacement, c.getByUserName("user", svc))
+	assert.Len(t, c.sMap["user"], 2)
+	c.deleteSession(replacement)
+	assert.Nil(t, c.getByUserName("user", svc))
+	assert.Len(t, c.sMap["user"], 1)
+	c.deleteSession(first)
+	assert.Empty(t, c.sMap)
+}
+
+func TestSessionCacheConcurrentAccess(t *testing.T) {
+	c := newCache()
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}}
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Go(func() {
+			sess := newTestSession(fmt.Sprintf("session-%d", i), "user", "service", 80)
+			for range 32 {
+				c.setSession(sess)
+				got := c.getByUserName("user", svc)
+				if got != nil {
+					assert.Equal(t, int32(80), got.Status.Connection.Upstreams[0].Port)
+				}
+				c.deleteSession(sess)
+			}
+		})
+	}
+	wg.Wait()
+	assert.Empty(t, c.sMap)
+}
+
+func TestSessionUpdate(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}}
+	vc.SetService(svc)
+	lb := NewLbManager(nil, vc)
+
+	old := newTestSession("session", "user", "service", 80)
+	require.Nil(t, lb.onAdd(t.Context(), old))
+	assert.Equal(t, old, lb.cache.getByUserName("user", svc))
+
+	updated := newTestSession("session", "user", "service", 81)
+	require.Nil(t, lb.OnUpdate(t.Context(), updated, old))
+	assert.Equal(t, updated, lb.cache.getByUserName("user", svc))
+	require.Nil(t, lb.OnUpdate(t.Context(), updated, updated))
+
+	disconnected := newTestSession("session", "user", "service", 81)
+	disconnected.Status.Connection = nil
+	require.Nil(t, lb.OnUpdate(t.Context(), disconnected, updated))
+	assert.Nil(t, lb.cache.getByUserName("user", svc))
+
+	lb.SetSession(updated)
+	require.Nil(t, lb.onDelete(t.Context(), updated))
+	assert.Nil(t, lb.cache.getByUserName("user", svc))
+}
+
+func TestGetUpstreamMissing(t *testing.T) {
+	lb := NewLbManager(nil, nil)
+	for _, resp := range []*coctovigilv1.AuthenticateAndAuthorizeResponse{
+		nil,
+		{},
+		{RequestContext: &corev1.RequestContext{}},
+		{RequestContext: &corev1.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{}, Status: &corev1.Service_Status{}}}},
+	} {
+		got, err := lb.GetUpstream(t.Context(), resp)
+		assert.ErrorIs(t, err, ErrNoUpstream)
+		assert.Nil(t, got)
+	}
 }
 
 func (c *fakeCache) GetService() *corev1.Service {

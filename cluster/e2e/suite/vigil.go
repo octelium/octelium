@@ -19,8 +19,10 @@ package suite
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,6 +169,98 @@ func newVigilCtx(t *testing.T, h *harness.H) *vigilCtx {
 	})
 
 	return &vigilCtx{h: h, svc: svc, upstream: upstream, conn: conn}
+}
+
+func testVigilRequestLimitsLoad(t *testing.T, h *harness.H) {
+	const limit = 4096
+	const total = 96
+	v := newVigilCtx(t, h)
+	var mu sync.Mutex
+	seen := make(map[string]int)
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		id := r.Header.Get(harness.RequestIDHeader)
+		mu.Lock()
+		seen[id]++
+		mu.Unlock()
+		w.Header().Set(harness.RequestIDHeader, id)
+		_, _ = w.Write(body)
+	})
+	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Body:                   &corev1.Service_Spec_Config_HTTP_Body{MaxRequestSize: limit},
+	})
+	h.Eventually(t, "Vigil to enforce the request body limit", harness.DecisionBudget,
+		func(ctx context.Context) error {
+			resp, err := h.HTTPNoRetry().R().SetContext(ctx).
+				SetBody(strings.Repeat("x", limit+1)).Post(v.url("/probe"))
+			if err != nil {
+				return err
+			}
+			if resp.StatusCode() != http.StatusRequestEntityTooLarge {
+				return errUnexpectedStatus(resp.StatusCode(), http.StatusRequestEntityTooLarge)
+			}
+			return nil
+		})
+
+	tr := &http.Transport{MaxIdleConns: 32, MaxIdleConnsPerHost: 16}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 15 * time.Second}
+	var latencies harness.Latencies
+	var wg sync.WaitGroup
+	for worker := range 12 {
+		wg.Go(func() {
+			for i := worker; i < total; i += 12 {
+				id := fmt.Sprintf("request-%d", i)
+				body := id + strings.Repeat("x", limit-len(id))
+				want := http.StatusOK
+				if i%3 == 1 {
+					body += "x"
+					want = http.StatusRequestEntityTooLarge
+				}
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, v.url("/load"), strings.NewReader(body))
+				if !assert.Nil(t, err) {
+					return
+				}
+				if i%2 == 0 {
+					req.ContentLength = -1
+				}
+				req.Header.Set(harness.RequestIDHeader, id)
+				if i%3 == 2 {
+					req.Header.Set("X-Large", strings.Repeat("h", 64*1024))
+					want = http.StatusRequestHeaderFieldsTooLarge
+				}
+				started := time.Now()
+				resp, err := client.Do(req)
+				if !assert.Nil(t, err) {
+					continue
+				}
+				got, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				latencies.Add(time.Since(started))
+				assert.Nil(t, err)
+				assert.Equal(t, want, resp.StatusCode, "request %s", id)
+				if want == http.StatusOK {
+					assert.Equal(t, body, string(got))
+					assert.Equal(t, id, resp.Header.Get(harness.RequestIDHeader))
+				}
+			}
+		})
+	}
+	wg.Wait()
+	t.Logf("Vigil request limit load latency: %s", latencies.Summary())
+
+	mu.Lock()
+	for i := range total {
+		want := 0
+		if i%3 == 0 {
+			want = 1
+		}
+		assert.Equal(t, want, seen[fmt.Sprintf("request-%d", i)], "request %d reached the upstream unexpectedly or more than once", i)
+	}
+	mu.Unlock()
+	v.waitStatusAt(t, "/healthy", http.StatusOK)
 }
 
 func testVigilPlugins(t *testing.T, h *harness.H) {

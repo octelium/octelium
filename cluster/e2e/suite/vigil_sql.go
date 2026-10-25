@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,6 +179,31 @@ func testVigilPostgres(t *testing.T, h *harness.H) {
 
 	table := fmt.Sprintf("octelium_e2e_%s", utilrand.GetRandomStringCanonical(8))
 	update := fmt.Sprintf("UPDATE %s SET status = 'inactive'", table)
+
+	t.Run("ConcurrentConnections", func(t *testing.T) {
+		db := openDB(t, strings.Repeat("u", 4096))
+		db.SetMaxOpenConns(16)
+		db.SetMaxIdleConns(16)
+		ctx, cancel := context.WithTimeout(t.Context(), harness.SQLConnectBudget)
+		defer cancel()
+		var wg sync.WaitGroup
+		for i := range 16 {
+			wg.Go(func() {
+				payload := fmt.Sprintf("connection-%d-", i) + strings.Repeat("'\\;\n", 8192)
+				for range 8 {
+					var got string
+					if !assert.Nil(t, db.QueryRowContext(ctx, "SELECT $1::text", payload).Scan(&got)) {
+						return
+					}
+					assert.Equal(t, payload, got)
+				}
+			})
+		}
+		wg.Wait()
+		var got int
+		require.Nil(t, db.QueryRowContext(ctx, "SELECT 1").Scan(&got))
+		assert.Equal(t, 1, got)
+	})
 
 	t.Run("QueryReachesUpstream", func(t *testing.T) {
 		db := openDB(t, "")

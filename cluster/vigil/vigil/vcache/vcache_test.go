@@ -18,6 +18,8 @@ package vcache
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -27,6 +29,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServer(t *testing.T) {
@@ -91,4 +94,63 @@ func TestServer(t *testing.T) {
 		out := c.GetService()
 		assert.True(t, pbutils.IsEqual(svc, out))
 	}
+}
+
+func TestServiceIsolation(t *testing.T) {
+	c, err := NewCache(t.Context())
+	require.Nil(t, err)
+	assert.Nil(t, c.GetService())
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name:   "test.default",
+			Labels: map[string]string{"owner": "original"},
+		},
+		Spec: &corev1.Service_Spec{
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "https://example.com"},
+				},
+			},
+		},
+	}
+	c.SetService(svc)
+	svc.Metadata.Labels["owner"] = "changed"
+	svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{Url: "https://other.example.com"}
+
+	got := c.GetService()
+	assert.Equal(t, "original", got.Metadata.Labels["owner"])
+	assert.Equal(t, "https://example.com", got.Spec.Config.Upstream.GetUrl())
+	got.Metadata.Labels["owner"] = "reader"
+	got.Spec.IsDisabled = true
+	assert.Equal(t, "original", c.GetService().Metadata.Labels["owner"])
+	assert.False(t, c.GetService().Spec.IsDisabled)
+}
+
+func TestServiceConcurrentAccess(t *testing.T) {
+	c, err := NewCache(t.Context())
+	require.Nil(t, err)
+	c.SetService(&corev1.Service{
+		Metadata: &metav1.Metadata{Name: "initial"},
+		Spec:     &corev1.Service_Spec{Config: &corev1.Service_Spec_Config{Name: "initial"}},
+	})
+
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Go(func() {
+			for j := range 32 {
+				name := fmt.Sprintf("service-%d-%d", i, j)
+				c.SetService(&corev1.Service{
+					Metadata: &metav1.Metadata{Name: name},
+					Spec:     &corev1.Service_Spec{Config: &corev1.Service_Spec_Config{Name: name}},
+				})
+				got := c.GetService()
+				assert.Equal(t, got.Metadata.Name, got.Spec.Config.Name)
+				got.Metadata.Name = "reader"
+			}
+		})
+	}
+	wg.Wait()
+	got := c.GetService()
+	assert.Equal(t, got.Metadata.Name, got.Spec.Config.Name)
 }

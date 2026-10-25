@@ -23,6 +23,8 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -63,6 +66,196 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
 
 	return reader
+}
+
+func TestStartupMalformed(t *testing.T) {
+	packet := func(code uint32, body []byte) []byte {
+		ret := binary.BigEndian.AppendUint32(nil, uint32(8+len(body)))
+		ret = binary.BigEndian.AppendUint32(ret, code)
+		return append(ret, body...)
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"empty", nil},
+		{"short length", []byte{0, 0, 0}},
+		{"zero length", []byte{0, 0, 0, 0}},
+		{"negative length", []byte{255, 255, 255, 255}},
+		{"short message", []byte{0, 0, 0, 7}},
+		{"large length", binary.BigEndian.AppendUint32(nil, 10005)},
+		{"unknown version", packet(123, nil)},
+		{"incomplete parameter", packet(pgproto3.ProtocolVersion30, []byte("user\x00root"))},
+		{"missing parameter value", packet(pgproto3.ProtocolVersion30, []byte("user\x00"))},
+		{"GSS request", packet(80877104, nil)},
+		{"short cancel", packet(80877102, []byte{1})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer server.Close()
+			require.Nil(t, server.SetDeadline(time.Now().Add(2*time.Second)))
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer client.Close()
+				_, _ = client.Write(tc.data)
+			}()
+			msg, backend, isCancel, err := (&Server{}).getStartupMessage(t.Context(),
+				&corev1.Service{Spec: &corev1.Service_Spec{}}, server)
+			assert.NotNil(t, err)
+			assert.Nil(t, msg)
+			assert.Nil(t, backend)
+			assert.False(t, isCancel)
+			assert.False(t, isTimeoutErr(err))
+			server.Close()
+			<-done
+		})
+	}
+}
+
+func TestStartupFragmented(t *testing.T) {
+	for _, username := range []string{"", "user", "user' host=attacker sslmode=disable", strings.Repeat("u", 9000)} {
+		client, server := net.Pipe()
+		require.Nil(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+		startup, err := (&pgproto3.StartupMessage{
+			ProtocolVersion: pgproto3.ProtocolVersion30,
+			Parameters:      map[string]string{"user": username, "database": "database"},
+		}).Encode(nil)
+		require.Nil(t, err)
+		query, err := (&pgproto3.Query{String: "SELECT 1"}).Encode(nil)
+		require.Nil(t, err)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer client.Close()
+			for _, b := range append(startup, query...) {
+				if _, err := client.Write([]byte{b}); err != nil {
+					return
+				}
+			}
+		}()
+		msg, backend, isCancel, err := (&Server{}).getStartupMessage(t.Context(),
+			&corev1.Service{Spec: &corev1.Service_Spec{}}, server)
+		require.Nil(t, err)
+		require.NotNil(t, msg)
+		assert.False(t, isCancel)
+		assert.Equal(t, username, msg.Parameters["user"])
+		request := (&Server{}).getDownstreamReq(t.Context(), server, msg)
+		assert.Equal(t, username, request.Request.GetPostgres().GetConnect().User)
+		next, err := backend.Receive()
+		require.Nil(t, err)
+		assert.Equal(t, &pgproto3.Query{String: "SELECT 1"}, next)
+		server.Close()
+		<-done
+	}
+}
+
+func TestStartupSSLRequestLimit(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	require.Nil(t, server.SetDeadline(time.Now().Add(3*time.Second)))
+	sslRequest, err := (&pgproto3.SSLRequest{}).Encode(nil)
+	require.Nil(t, err)
+	done := make(chan int, 1)
+	go func() {
+		defer client.Close()
+		var accepted int
+		defer func() { done <- accepted }()
+		for range 11 {
+			if _, err := client.Write(sslRequest); err != nil {
+				return
+			}
+			var response [1]byte
+			if _, err := io.ReadFull(client, response[:]); err != nil {
+				return
+			}
+			assert.Equal(t, byte('N'), response[0])
+			accepted++
+		}
+	}()
+	msg, backend, isCancel, err := (&Server{}).getStartupMessage(t.Context(),
+		&corev1.Service{Spec: &corev1.Service_Spec{}}, server)
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "Too many ssl requests")
+	assert.Nil(t, msg)
+	assert.Nil(t, backend)
+	assert.False(t, isCancel)
+	server.Close()
+	assert.Equal(t, 10, <-done)
+}
+
+func TestStartupCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	msg, backend, isCancel, err := (&Server{}).getStartupMessage(ctx,
+		&corev1.Service{Spec: &corev1.Service_Spec{}}, server)
+	assert.Nil(t, err)
+	assert.Nil(t, msg)
+	assert.Nil(t, backend)
+	assert.False(t, isCancel)
+}
+
+func TestCancelKeyStoreConcurrent(t *testing.T) {
+	store := newCancelKeyStore()
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			key := cancelKey{processID: 1, secretKey: fmt.Sprintf("secret-%d", i)}
+			target := &cancelTarget{addr: fmt.Sprintf("127.0.0.1:%d", i+1)}
+			for range 32 {
+				store.set(key, target)
+				assert.Equal(t, target, store.get(key))
+				assert.Nil(t, store.get(cancelKey{processID: 2, secretKey: key.secretKey}))
+				store.delete(key)
+				assert.Nil(t, store.get(key))
+			}
+		})
+	}
+	wg.Wait()
+	assert.Empty(t, store.targets)
+}
+
+func TestConcurrentConnections(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	s := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{Effect: corev1.Policy_Spec_Rule_ALLOW, Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{MatchAny: true},
+		}},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL})
+
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Go(func() {
+			db, err := sql.Open("postgres", fmt.Sprintf("postgres://downstream:ignored@127.0.0.1:%d/ignored?sslmode=disable&connect_timeout=5", s.port))
+			if !assert.Nil(t, err) {
+				return
+			}
+			defer db.Close()
+			db.SetMaxOpenConns(1)
+			payload := fmt.Sprintf("request-%d-", i) + strings.Repeat("'\\;\n", 16*1024)
+			for range 4 {
+				var got string
+				err := db.QueryRowContext(ctx, "SELECT $1::text", payload).Scan(&got)
+				if !assert.Nil(t, err) {
+					return
+				}
+				assert.Equal(t, payload, got)
+			}
+		})
+	}
+	wg.Wait()
+	require.Eventually(t, func() bool {
+		s.srv.dctxMap.mu.Lock()
+		defer s.srv.dctxMap.mu.Unlock()
+		return len(s.srv.dctxMap.dctxMap) == 0
+	}, 3*time.Second, 10*time.Millisecond)
 }
 
 func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {

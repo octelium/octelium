@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -164,6 +166,49 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, len(mdlwr.(*middleware).cMap))
+}
+
+func TestConcurrentValidation(t *testing.T) {
+	m, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	require.Nil(t, err)
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			schema := `{"type":"object","required":["id"],"properties":{"id":{"type":"string"}},"additionalProperties":false}`
+			body := map[string]any{"id": "valid"}
+			want := http.StatusNoContent
+			if i%3 == 1 {
+				body["extra"] = true
+				want = http.StatusBadRequest
+			}
+			if i%3 == 2 {
+				schema = `{"type":`
+				want = http.StatusInternalServerError
+			}
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{BodyJSONMap: body, ServiceConfig: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+						Body: &corev1.Service_Spec_Config_HTTP_Body{
+							Validation: &corev1.Service_Spec_Config_HTTP_Body_Validation{
+								Type: &corev1.Service_Spec_Config_HTTP_Body_Validation_JsonSchema{
+									JsonSchema: &corev1.Service_Spec_Config_HTTP_Body_Validation_JSONSchema{
+										Type: &corev1.Service_Spec_Config_HTTP_Body_Validation_JSONSchema_Inline{Inline: schema},
+									},
+								},
+							},
+						},
+					}},
+				}}))
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, req)
+			assert.Equal(t, want, w.Code)
+		})
+	}
+	wg.Wait()
+	assert.Len(t, m.(*middleware).cMap, 1)
 }
 
 const schema = `

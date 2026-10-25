@@ -43,10 +43,126 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type echoSrv struct {
 	lis net.Listener
+}
+
+func TestRDCleanPathMalformed(t *testing.T) {
+	version := derWrapContext(0, derEncodeUint64(rdcleanpathVersion1))
+	destination := derWrapContext(2, derWrap(derTagUTF8String, []byte("server:3389")))
+	x224 := derWrapContext(6, derWrap(derTagOctetString, []byte{3, 0, 0, 4}))
+	valid := derWrap(derTagSequence, concatDER(version, destination, x224))
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"empty", nil},
+		{"too large", make([]byte, rdcleanpathMaxSize+1)},
+		{"wrong outer tag", derWrap(derTagOctetString, concatDER(version, destination, x224))},
+		{"trailing bytes", append(append([]byte(nil), valid...), 0)},
+		{"missing version", derWrap(derTagSequence, concatDER(destination, x224))},
+		{"wrong version", derWrap(derTagSequence, concatDER(derWrapContext(0, derEncodeUint64(0)), destination, x224))},
+		{"missing destination", derWrap(derTagSequence, concatDER(version, x224))},
+		{"missing X224", derWrap(derTagSequence, concatDER(version, destination))},
+		{"empty X224", derWrap(derTagSequence, concatDER(version, destination, derWrapContext(6, derWrap(derTagOctetString, nil))))},
+		{"unexpected tag", derWrap(derTagSequence, concatDER(version, destination, x224, derWrap(derTagInteger, []byte{1})))},
+		{"indefinite length", []byte{derTagSequence, 0x80, 0, 0}},
+		{"length overflow", []byte{derTagSequence, 0x84, 0xff, 0xff, 0xff, 0xff}},
+		{"non minimal length", []byte{derTagSequence, 0x81, 1, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := decodeRDCleanPathRequest(tc.data)
+			assert.NotNil(t, err)
+			assert.Nil(t, got)
+		})
+	}
+	for n := range len(valid) {
+		got, err := decodeRDCleanPathRequest(valid[:n])
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+	got, err := decodeRDCleanPathRequest(valid)
+	require.Nil(t, err)
+	assert.Equal(t, "server:3389", got.Destination)
+	assert.Equal(t, []byte{3, 0, 0, 4}, got.X224ConnectionPDU)
+	got.X224ConnectionPDU[0] = 0
+	again, err := decodeRDCleanPathRequest(valid)
+	require.Nil(t, err)
+	assert.Equal(t, byte(3), again.X224ConnectionPDU[0])
+}
+
+func TestDERInteger(t *testing.T) {
+	for _, value := range []uint64{0, 1, 127, 128, 255, 256, 3389, 1 << 63, ^uint64(0)} {
+		got, err := derDecodeExplicitUint64(derEncodeUint64(value))
+		require.Nil(t, err)
+		assert.Equal(t, value, got)
+	}
+	for _, data := range [][]byte{
+		nil,
+		derWrap(derTagOctetString, []byte{1}),
+		derWrap(derTagInteger, nil),
+		derWrap(derTagInteger, []byte{0, 1}),
+		derWrap(derTagInteger, []byte{0xff}),
+		derWrap(derTagInteger, make([]byte, 10)),
+		append(derEncodeUint64(1), 0),
+	} {
+		_, err := derDecodeExplicitUint64(data)
+		assert.NotNil(t, err)
+	}
+}
+
+func TestWebSocketMalformed(t *testing.T) {
+	srv := &Server{}
+	ts := httptest.NewServer(http.HandlerFunc(srv.handleWebSocket))
+	defer ts.Close()
+	url := "ws" + strings.TrimPrefix(ts.URL, "http")
+	for _, tc := range []struct {
+		name string
+		typ  websocket.MessageType
+		data []byte
+	}{
+		{"text", websocket.MessageText, []byte("invalid")},
+		{"empty binary", websocket.MessageBinary, nil},
+		{"invalid binary", websocket.MessageBinary, []byte{0xff, 0xff}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			ws, _, err := websocket.Dial(ctx, url, nil)
+			require.Nil(t, err)
+			defer ws.CloseNow()
+			require.Nil(t, ws.Write(ctx, tc.typ, tc.data))
+			typ, data, err := ws.Read(ctx)
+			require.Nil(t, err)
+			assert.Equal(t, websocket.MessageBinary, typ)
+			assert.Equal(t, encodeRDCleanPathHTTPError(http.StatusBadRequest), data)
+			_, _, err = ws.Read(ctx)
+			assert.Equal(t, websocket.StatusUnsupportedData, websocket.CloseStatus(err))
+		})
+	}
+}
+
+func FuzzRDCleanPathRequest(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{derTagSequence, 0x80})
+	f.Add(derWrap(derTagSequence, concatDER(
+		derWrapContext(0, derEncodeUint64(rdcleanpathVersion1)),
+		derWrapContext(2, derWrap(derTagUTF8String, []byte("server"))),
+		derWrapContext(6, derWrap(derTagOctetString, []byte{3, 0, 0, 4})),
+	)))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got, err := decodeRDCleanPathRequest(data)
+		if err != nil {
+			assert.Nil(t, got)
+			return
+		}
+		require.NotNil(t, got)
+		assert.NotEmpty(t, got.Destination)
+		assert.NotEmpty(t, got.X224ConnectionPDU)
+	})
 }
 
 func newEchoSrv(t *testing.T, port int) *echoSrv {

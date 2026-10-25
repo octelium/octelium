@@ -19,17 +19,21 @@ package rdp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"testing/iotest"
 	"unicode/utf16"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDialPassthrough(t *testing.T) {
@@ -79,6 +83,150 @@ func TestDialPassthrough(t *testing.T) {
 
 	conn.Close()
 	<-doneCh
+}
+
+func TestReadTPKTMalformed(t *testing.T) {
+	for _, data := range [][]byte{
+		nil,
+		{3},
+		{3, 0, 0},
+		{2, 0, 0, 4},
+		{3, 0, 0, 0},
+		{3, 0, 0, 3},
+		{3, 0, 0, 8, 1},
+		{3, 0, 255, 255, 1},
+	} {
+		got, err := ReadTPKT(iotest.OneByteReader(bytes.NewReader(data)))
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+
+	first := buildX224ConnectionRequest(protocolSSL)
+	second := buildX224ConnectionRequest(protocolHybrid)
+	r := iotest.OneByteReader(bytes.NewReader(append(append([]byte(nil), first...), second...)))
+	for _, want := range [][]byte{first, second} {
+		got, err := ReadTPKT(r)
+		require.Nil(t, err)
+		assert.Equal(t, want, got)
+	}
+	_, err := ReadTPKT(r)
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestCertificatePin(t *testing.T) {
+	cert := []byte("leaf certificate")
+	pin := sha256.Sum256(cert)
+	hexPin := hex.EncodeToString(pin[:])
+	for _, raw := range []string{hexPin, "sha256/" + hexPin, "  " + strings.ToUpper(hexPin) + "  "} {
+		got, err := parseSHA256Pin(raw)
+		require.Nil(t, err)
+		assert.Equal(t, pin, got)
+	}
+	for _, raw := range []string{"", "sha256/", "invalid", strings.Repeat("a", 63), strings.Repeat("a", 66), strings.Repeat("z", 64)} {
+		_, err := parseSHA256Pin(raw)
+		assert.NotNil(t, err)
+	}
+
+	var missing *TLSTrustPolicy
+	assert.NotNil(t, missing.verifyPeerCertificate([][]byte{cert}))
+	assert.NotNil(t, (&TLSTrustPolicy{allowAnyCert: true}).verifyPeerCertificate(nil))
+	assert.NotNil(t, (&TLSTrustPolicy{}).verifyPeerCertificate([][]byte{cert}))
+	assert.Nil(t, (&TLSTrustPolicy{allowAnyCert: true}).verifyPeerCertificate([][]byte{cert}))
+	policy := &TLSTrustPolicy{pinnedSHA256: [][32]byte{{}, pin}, allowAnyCert: true}
+	assert.Nil(t, policy.verifyPeerCertificate([][]byte{cert}))
+	assert.NotNil(t, policy.verifyPeerCertificate([][]byte{[]byte("other"), cert}))
+	assert.NotNil(t, policy.verifyPeerCertificate([][]byte{nil}))
+}
+
+func TestUpstreamTLSTrust(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tls  *corev1.Service_Spec_Config_RDP_UpstreamTLS
+		fail bool
+	}{
+		{"default", nil, false},
+		{"empty trust", &corev1.Service_Spec_Config_RDP_UpstreamTLS{}, true},
+		{"allow any", &corev1.Service_Spec_Config_RDP_UpstreamTLS{AllowAnyCert: true}, false},
+		{"valid pin", &corev1.Service_Spec_Config_RDP_UpstreamTLS{PinnedCertSHA256: []string{strings.Repeat("ab", 32)}}, false},
+		{"invalid pin", &corev1.Service_Spec_Config_RDP_UpstreamTLS{AllowAnyCert: true, PinnedCertSHA256: []string{"invalid"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := GetUpstreamTLSTrust(&corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Rdp{Rdp: &corev1.Service_Spec_Config_RDP{UpstreamTLS: tc.tls}},
+			})
+			if tc.fail {
+				assert.NotNil(t, err)
+				assert.Nil(t, got)
+				return
+			}
+			require.Nil(t, err)
+			assert.NotNil(t, got)
+		})
+	}
+}
+
+func TestClientInfoTextBounds(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		fail  bool
+	}{
+		{"", false},
+		{strings.Repeat("a", 255), false},
+		{strings.Repeat("a", 256), true},
+		{strings.Repeat("😀", 127), false},
+		{strings.Repeat("😀", 128), true},
+		{"user\x00other", true},
+	} {
+		got, err := encodeClientInfoText(tc.value, 512)
+		if tc.fail {
+			assert.NotNil(t, err)
+			assert.Nil(t, got)
+			continue
+		}
+		require.Nil(t, err)
+		assert.LessOrEqual(t, len(got), 512)
+		assert.Equal(t, []byte{0, 0}, got[len(got)-2:])
+	}
+}
+
+func TestClientInfoMalformed(t *testing.T) {
+	packet := buildClientInfoPacket(t, []string{"", "user", "password", "", ""}, 0x10, nil)
+	_, lengthLen, err := readPERLength(packet[13:])
+	require.Nil(t, err)
+	infoAt := 13 + lengthLen + 4
+
+	for _, tc := range []struct {
+		name string
+		edit func([]byte)
+	}{
+		{"bad MCS length", func(p []byte) { p[13]-- }},
+		{"encrypted info", func(p []byte) { p[infoAt-4] |= 8 }},
+		{"non Unicode", func(p []byte) { p[infoAt+4] = 0 }},
+		{"odd field length", func(p []byte) { p[infoAt+8] = 1 }},
+		{"field length overflow", func(p []byte) { binary.LittleEndian.PutUint16(p[infoAt+8:], 65534) }},
+		{"missing terminator", func(p []byte) { p[infoAt+18] = 1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := append([]byte(nil), packet...)
+			tc.edit(data)
+			original := append([]byte(nil), data...)
+			got, matched, err := rewriteClientInfoCredential(data, &Credential{Username: "root", Password: "secret"})
+			assert.NotNil(t, err)
+			assert.False(t, matched)
+			assert.Nil(t, got)
+			assert.Equal(t, original, data)
+		})
+	}
+	for _, credential := range []*Credential{
+		nil,
+		{Username: strings.Repeat("u", 513)},
+		{Username: "root", Password: strings.Repeat("p", 513)},
+		{Domain: "domain\x00other", Username: "root"},
+	} {
+		_, matched, err := rewriteClientInfoCredential(packet, credential)
+		assert.NotNil(t, err)
+		assert.False(t, matched)
+	}
 }
 
 func TestX224ConnectionRequest(t *testing.T) {

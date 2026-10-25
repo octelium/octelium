@@ -17,6 +17,7 @@
 package httpg
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
@@ -28,6 +29,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +59,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -77,6 +81,197 @@ type tstSrvHTTP struct {
 
 	wait      time.Duration
 	startedAt time.Time
+}
+
+func newTestHTTPServer(t *testing.T, handler http.Handler, cfg *corev1.Service_Spec_Config_HTTP) (*Server, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	upstream := httptest.NewServer(handler)
+	t.Cleanup(upstream.Close)
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: tst.C.OcteliumC, IsEmbedded: true})
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP, Port: uint32(tests.GetPort()), IsPublic: true, IsAnonymous: true,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: upstream.URL},
+				},
+				Type: &corev1.Service_Spec_Config_Http{Http: cfg},
+			},
+		},
+	})
+	require.Nil(t, err)
+	vc, err := vcache.NewCache(ctx)
+	require.Nil(t, err)
+	vc.SetService(svc)
+	secretMan, err := secretman.New(ctx, tst.C.OcteliumC, vc)
+	require.Nil(t, err)
+	oc, err := octovigilc.NewClient(ctx, &octovigilc.Opts{OcteliumC: tst.C.OcteliumC, VCache: vc})
+	require.Nil(t, err)
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC: tst.C.OcteliumC, VCache: vc, SecretMan: secretMan, OctovigilC: oc,
+		LBManager: loadbalancer.NewLbManager(tst.C.OcteliumC, vc),
+	})
+	require.Nil(t, err)
+	require.Nil(t, srv.Run(ctx))
+	t.Cleanup(func() { srv.Close() })
+	return srv, fmt.Sprintf("http://127.0.0.1:%d", ucorev1.ToService(svc).RealPort())
+}
+
+func TestHTTPMalformedRequests(t *testing.T) {
+	var rejectedCalls atomic.Int64
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rejected" {
+			rejectedCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), &corev1.Service_Spec_Config_HTTP{EnableRequestBuffering: true})
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+		code int
+	}{
+		{"duplicate host", "GET /rejected HTTP/1.1\r\nHost: example.com\r\nHost: other.example.com\r\n\r\n", http.StatusBadRequest},
+		{"conflicting length", "POST /rejected HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab", http.StatusBadRequest},
+		{"negative length", "POST /rejected HTTP/1.1\r\nHost: example.com\r\nContent-Length: -1\r\n\r\n", http.StatusBadRequest},
+		{"invalid length", "POST /rejected HTTP/1.1\r\nHost: example.com\r\nContent-Length: invalid\r\n\r\n", http.StatusBadRequest},
+		{"invalid header name", "GET /rejected HTTP/1.1\r\nHost: example.com\r\nBad Header: value\r\n\r\n", http.StatusBadRequest},
+		{"NUL header", "GET /rejected HTTP/1.1\r\nHost: example.com\r\nX-Test: a\x00b\r\n\r\n", http.StatusBadRequest},
+		{"missing host", "GET /rejected HTTP/1.1\r\nConnection: close\r\n\r\n", http.StatusBadRequest},
+		{"invalid method", "G(ET /rejected HTTP/1.1\r\nHost: example.com\r\n\r\n", http.StatusBadRequest},
+		{"large header", "GET /rejected HTTP/1.1\r\nHost: example.com\r\nX-Test: " + strings.Repeat("a", 2*maxHeaderBytes) + "\r\n\r\n", http.StatusRequestHeaderFieldsTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", strings.TrimPrefix(addr, "http://"), 3*time.Second)
+			require.Nil(t, err)
+			defer conn.Close()
+			require.Nil(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+			_, err = io.WriteString(conn, tc.raw)
+			require.Nil(t, err)
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.Nil(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, tc.code, resp.StatusCode)
+			assert.Zero(t, rejectedCalls.Load())
+		})
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(addr + "/healthy")
+	require.Nil(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+}
+
+func TestHTTPConcurrentRequests(t *testing.T) {
+	const limit = 16 * 1024
+	var calls atomic.Int64
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		assert.Equal(t, r.Header.Get("X-Test-ID"), r.URL.Query().Get("id"))
+		assert.Equal(t, r.Header.Get("X-Test-ID"), strings.TrimRight(string(body), "x"))
+		w.Header().Set("X-Test-ID", r.Header.Get("X-Test-ID"))
+		_, _ = w.Write(body)
+	}), &corev1.Service_Spec_Config_HTTP{
+		ListenHTTP2: true, EnableRequestBuffering: true,
+		Body: &corev1.Service_Spec_Config_HTTP_Body{MaxRequestSize: limit},
+	})
+
+	for _, h2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("HTTP2-%t", h2), func(t *testing.T) {
+			tr := &http.Transport{}
+			tr.Protocols = new(http.Protocols)
+			if h2 {
+				tr.Protocols.SetUnencryptedHTTP2(true)
+			} else {
+				tr.Protocols.SetHTTP1(true)
+			}
+			defer tr.CloseIdleConnections()
+			client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+			var wg sync.WaitGroup
+			for i := range 48 {
+				wg.Go(func() {
+					id := fmt.Sprintf("request-%d-%t", i, h2)
+					size := limit
+					if i%3 == 0 {
+						size++
+					}
+					body := id + strings.Repeat("x", size-len(id))
+					req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, addr+"/?id="+id, strings.NewReader(body))
+					if !assert.Nil(t, err) {
+						return
+					}
+					if i%2 == 0 {
+						req.ContentLength = -1
+					}
+					req.Header.Set("X-Test-ID", id)
+					resp, err := client.Do(req)
+					if !assert.Nil(t, err) {
+						return
+					}
+					defer resp.Body.Close()
+					got, err := io.ReadAll(resp.Body)
+					assert.Nil(t, err)
+					if size > limit {
+						assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+						assert.Empty(t, resp.Header.Get("X-Test-ID"))
+						return
+					}
+					assert.Equal(t, http.StatusOK, resp.StatusCode)
+					assert.Equal(t, body, string(got))
+					assert.Equal(t, id, resp.Header.Get("X-Test-ID"))
+					if h2 {
+						assert.Equal(t, 2, resp.ProtoMajor)
+					}
+				})
+			}
+			wg.Wait()
+		})
+	}
+	assert.Equal(t, int64(64), calls.Load())
+}
+
+func TestHTTPIncompleteBodies(t *testing.T) {
+	var incompleteCalls atomic.Int64
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/incomplete" {
+			incompleteCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Body:                   &corev1.Service_Spec_Config_HTTP_Body{MaxRequestSize: 1024},
+	})
+
+	var conns []net.Conn
+	defer func() {
+		for _, conn := range conns {
+			conn.Close()
+		}
+	}()
+	for range 16 {
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(addr, "http://"), time.Second)
+		require.Nil(t, err)
+		conns = append(conns, conn)
+		require.Nil(t, conn.SetWriteDeadline(time.Now().Add(2*time.Second)))
+		_, err = io.WriteString(conn, "POST /incomplete HTTP/1.1\r\nHost: example.com\r\nContent-Length: 100\r\n\r\nx")
+		require.Nil(t, err)
+	}
+
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(addr + "/healthy")
+	require.Nil(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	for _, conn := range conns {
+		require.Nil(t, conn.Close())
+	}
+	assert.Zero(t, incompleteCalls.Load())
 }
 
 type tstResp struct {

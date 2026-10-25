@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -86,6 +87,26 @@ func testVigilSSH(t *testing.T, h *harness.H) {
 		return fmt.Sprintf("ssh %s -p %d %s@localhost %s",
 			sshOpts, port, sessName, command)
 	}
+
+	t.Run("ConcurrentSessions", func(t *testing.T) {
+		h.Eventually(t, "the SSH Service to accept sessions", harness.ConnectBudget,
+			func(ctx context.Context) error {
+				_, err := h.Output(ctx, ssh(fullPort, "true"))
+				return err
+			})
+		var wg sync.WaitGroup
+		for range 12 {
+			wg.Go(func() {
+				nonce := utilrand.GetRandomStringCanonical(16)
+				ctx, cancel := context.WithTimeout(t.Context(), sshBudget)
+				defer cancel()
+				out, err := h.Output(ctx, ssh(fullPort, fmt.Sprintf("'printf %s'", nonce)))
+				assert.Nil(t, err, "%s", out)
+				assert.Contains(t, string(out), nonce)
+			})
+		}
+		wg.Wait()
+	})
 
 	t.Run("Exec", func(t *testing.T) {
 		nonce := utilrand.GetRandomStringCanonical(12)

@@ -22,11 +22,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"context"
 
+	"github.com/go-mysql-org/go-mysql/client"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -41,6 +44,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -241,6 +245,96 @@ func TestServer(t *testing.T) {
 
 	err = srv.Close()
 	zap.L().Debug("close err", zap.Error(err))
+}
+
+func TestDownstreamCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		username string
+		password string
+		fail     bool
+	}{
+		{"empty", "", "", false},
+		{"default password", "user", "password", false},
+		{"special username", "user' host=other sslmode=disable", "", false},
+		{"large username", strings.Repeat("u", 64*1024), "", false},
+		{"wrong password", "user", "wrong", true},
+		{"large password", "user", strings.Repeat("p", 64*1024), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			downstream, upstream := net.Pipe()
+			defer downstream.Close()
+			defer upstream.Close()
+			require.Nil(t, downstream.SetDeadline(time.Now().Add(3*time.Second)))
+			require.Nil(t, upstream.SetDeadline(time.Now().Add(3*time.Second)))
+			done := make(chan error, 1)
+			go func() {
+				defer upstream.Close()
+				var serverErr error
+				defer func() { done <- serverErr }()
+				defer modes.Recover(func(v any) { serverErr = fmt.Errorf("downstream handshake: %v", v) })
+				conn, err := (&Server{}).getDownstreamConn(upstream)
+				serverErr = err
+				if conn != nil {
+					assert.Equal(t, tc.username, conn.GetUser())
+					conn.Close()
+				}
+			}()
+			conn, err := client.ConnectWithDialer(t.Context(), "tcp", "127.0.0.1:3306",
+				tc.username, tc.password, "", func(ctx context.Context, network, address string) (net.Conn, error) {
+					return downstream, nil
+				})
+			if conn != nil {
+				conn.Close()
+			}
+			serverErr := <-done
+			if tc.fail {
+				assert.NotNil(t, err)
+				assert.NotNil(t, serverErr)
+			} else {
+				assert.Nil(t, err)
+				assert.Nil(t, serverErr)
+			}
+		})
+	}
+}
+
+func TestDownstreamConcurrentHandshake(t *testing.T) {
+	srv := &Server{}
+	var wg sync.WaitGroup
+	for i := range 24 {
+		wg.Go(func() {
+			username := fmt.Sprintf("user-%d", i)
+			downstream, upstream := net.Pipe()
+			defer downstream.Close()
+			defer upstream.Close()
+			assert.Nil(t, downstream.SetDeadline(time.Now().Add(5*time.Second)))
+			assert.Nil(t, upstream.SetDeadline(time.Now().Add(5*time.Second)))
+			done := make(chan error, 1)
+			go func() {
+				defer upstream.Close()
+				var serverErr error
+				defer func() { done <- serverErr }()
+				defer modes.Recover(func(v any) { serverErr = fmt.Errorf("downstream handshake: %v", v) })
+				conn, err := srv.getDownstreamConn(upstream)
+				serverErr = err
+				if conn != nil {
+					assert.Equal(t, username, conn.GetUser())
+					conn.Close()
+				}
+			}()
+			conn, err := client.ConnectWithDialer(t.Context(), "tcp", "127.0.0.1:3306",
+				username, "", "", func(ctx context.Context, network, address string) (net.Conn, error) {
+					return downstream, nil
+				})
+			assert.Nil(t, err)
+			if conn != nil {
+				conn.Close()
+			}
+			assert.Nil(t, <-done)
+		})
+	}
+	wg.Wait()
 }
 
 func assertClosedByDeadline(t *testing.T, c net.Conn, timeout time.Duration) {

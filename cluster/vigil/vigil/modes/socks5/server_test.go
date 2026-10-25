@@ -19,12 +19,14 @@ package socks5
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"context"
 
 	gosocks5 "github.com/things-go/go-socks5"
+	"github.com/things-go/go-socks5/statute"
 	xproxy "golang.org/x/net/proxy"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -41,6 +43,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -56,6 +59,99 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
 
 	return reader
+}
+
+func TestTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		addr *statute.AddrSpec
+		want string
+		typ  corev1.RequestContext_Request_SOCKS5_Connect_AddressType
+	}{
+		{"domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "EXAMPLE.COM.", Port: 443}, "example.com:443", corev1.RequestContext_Request_SOCKS5_Connect_DOMAIN},
+		{"IPv4", &statute.AddrSpec{AddrType: statute.ATYPIPv4, IP: net.ParseIP("192.0.2.1"), Port: 1}, "192.0.2.1:1", corev1.RequestContext_Request_SOCKS5_Connect_IPV4},
+		{"IPv6", &statute.AddrSpec{AddrType: statute.ATYPIPv6, IP: net.ParseIP("2001:db8::1"), Port: 65535}, "[2001:db8::1]:65535", corev1.RequestContext_Request_SOCKS5_Connect_IPV6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := newTarget(&gosocks5.Request{
+				Request:     statute.Request{Command: statute.CommandConnect},
+				RawDestAddr: tc.addr,
+			})
+			require.Nil(t, err)
+			assert.Equal(t, tc.want, got.addr)
+			assert.Equal(t, tc.typ, got.toRequestAddressType())
+			assert.NotEmpty(t, got.toLogAddressType().String())
+			assert.NotEmpty(t, got.metricAddressType())
+			request := (&Server{}).getDownstreamReq(t.Context(), nil, got)
+			assert.Equal(t, got.host, request.Request.GetSocks5().GetConnect().Host)
+			assert.Equal(t, uint32(got.port), request.Request.GetSocks5().GetConnect().Port)
+		})
+	}
+}
+
+func TestTargetInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		addr *statute.AddrSpec
+	}{
+		{"nil destination", nil},
+		{"zero port", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example.com"}},
+		{"negative port", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example.com", Port: -1}},
+		{"large port", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example.com", Port: 65536}},
+		{"unknown address type", &statute.AddrSpec{AddrType: 255, Port: 443}},
+		{"empty domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, Port: 443}},
+		{"long domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: strings.Repeat("a", 254), Port: 443}},
+		{"NUL domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example\x00.com", Port: 443}},
+		{"slash domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example.com/path", Port: 443}},
+		{"backslash domain", &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: `example.com\path`, Port: 443}},
+		{"missing IPv4", &statute.AddrSpec{AddrType: statute.ATYPIPv4, Port: 443}},
+		{"IPv6 as IPv4", &statute.AddrSpec{AddrType: statute.ATYPIPv4, IP: net.ParseIP("::1"), Port: 443}},
+		{"missing IPv6", &statute.AddrSpec{AddrType: statute.ATYPIPv6, Port: 443}},
+		{"IPv4 as IPv6", &statute.AddrSpec{AddrType: statute.ATYPIPv6, IP: net.ParseIP("127.0.0.1"), Port: 443}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := newTarget(&gosocks5.Request{
+				Request:     statute.Request{Command: statute.CommandConnect},
+				RawDestAddr: tc.addr,
+			})
+			assert.NotNil(t, err)
+			assert.Nil(t, got)
+		})
+	}
+	got, err := newTarget(nil)
+	assert.NotNil(t, err)
+	assert.Nil(t, got)
+	for _, command := range []byte{0, statute.CommandBind, statute.CommandAssociate, 255} {
+		got, err := newTarget(&gosocks5.Request{
+			Request:     statute.Request{Command: command},
+			RawDestAddr: &statute.AddrSpec{AddrType: statute.ATYPDomain, FQDN: "example.com", Port: 443},
+		})
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+}
+
+func TestEmbeddedSessionInvalid(t *testing.T) {
+	srv := &Server{}
+	for _, username := range []string{"", "../root", "root\x00", "root/other", strings.Repeat("a", 1024)} {
+		req := &gosocks5.Request{
+			AuthContext: &gosocks5.AuthContext{
+				Method:  statute.MethodUserPassAuth,
+				Payload: map[string]string{"username": username, "password": strings.Repeat("p", 1024)},
+			},
+		}
+		got, err := srv.getEmbeddedUpstreamSession(t.Context(), req)
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+	assert.Empty(t, getAuthUsername(nil))
+	assert.Empty(t, getAuthUsername(&gosocks5.Request{}))
+	assert.Empty(t, getAuthUsername(&gosocks5.Request{
+		AuthContext: &gosocks5.AuthContext{
+			Method:  statute.MethodNoAuth,
+			Payload: map[string]string{"username": "root"},
+		},
+	}))
 }
 
 func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {

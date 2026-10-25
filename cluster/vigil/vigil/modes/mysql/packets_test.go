@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/go-mysql-org/go-mysql/mysql"
@@ -34,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestFullPacket(seq byte, typ byte) []byte {
@@ -44,6 +46,74 @@ func newTestFullPacket(seq byte, typ byte) []byte {
 	ret[3] = seq
 	ret[4] = typ
 	return ret
+}
+
+func TestReadPacketMalformed(t *testing.T) {
+	for _, data := range [][]byte{
+		nil,
+		{1},
+		{1, 0, 0},
+		{1, 0, 0, 0},
+		{8, 0, 0, 0, mysql.COM_QUERY},
+		{0xff, 0xff, 0xff, 0},
+	} {
+		got, err := readPacket(iotest.OneByteReader(bytes.NewReader(data)))
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+
+	for _, data := range [][]byte{nil, {}} {
+		got, err := decodePacket(data)
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+}
+
+func TestReadPacketFragmented(t *testing.T) {
+	packets := [][]byte{
+		newPacket(0, []byte{mysql.COM_QUERY}),
+		newPacket(255, append([]byte{mysql.COM_QUERY}, bytes.Repeat([]byte("query"), 8192)...)),
+		newPacket(0, nil),
+		newPacket(0, []byte{mysql.COM_QUIT}),
+	}
+	r := iotest.OneByteReader(bytes.NewReader(bytes.Join(packets, nil)))
+	for _, want := range packets {
+		got, err := readPacket(r)
+		require.Nil(t, err)
+		assert.Equal(t, want, got)
+	}
+	_, err := readPacket(r)
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestWritePacketError(t *testing.T) {
+	r, w := io.Pipe()
+	require.Nil(t, r.Close())
+	defer w.Close()
+	assert.ErrorIs(t, writePacket(newPacket(0, []byte{mysql.COM_QUERY}), w), io.ErrClosedPipe)
+}
+
+func FuzzDecodePacket(f *testing.F) {
+	for _, data := range [][]byte{nil, {mysql.COM_QUERY}, {mysql.COM_CHANGE_USER, 0}, {255, 0, 0xff}} {
+		f.Add(data)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got, err := decodePacket(data)
+		if len(data) == 0 {
+			assert.NotNil(t, err)
+			assert.Nil(t, got)
+			return
+		}
+		require.Nil(t, err)
+		assert.Equal(t, data, got.raw)
+		assert.Equal(t, data[0], got.typ)
+		assert.Equal(t, len(data), got.len)
+		request := getMySQLRequest(got)
+		if request != nil {
+			assert.NotNil(t, request.GetMysql())
+		}
+		assert.NotEmpty(t, mysqlCommandName(got))
+	})
 }
 
 func TestPacketPayloadLen(t *testing.T) {

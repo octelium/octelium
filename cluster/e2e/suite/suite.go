@@ -66,6 +66,7 @@ func Phases() []Phase {
 		{"AnonymousAuthorization", testAnonymousAuthorization},
 		{"ServiceHostHeader", testServiceHostHeader},
 		{"VigilPlugins", testVigilPlugins},
+		{"VigilRequestLimitsLoad", testVigilRequestLimitsLoad},
 		{"VigilDynamicConfig", testVigilDynamicConfig},
 		{"VigilDynamicConfigValidation", testVigilDynamicConfigValidation},
 		{"VigilServiceState", testVigilServiceState},

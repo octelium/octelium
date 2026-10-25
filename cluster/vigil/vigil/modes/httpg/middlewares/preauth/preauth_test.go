@@ -20,10 +20,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +40,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -197,6 +200,192 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, reqCtx.BodyJSONMap, pbutils.MustConvertToMap(usrT.Usr))
 	}
 
+}
+
+type tstBodyReader struct {
+	reader io.Reader
+	read   int
+	closed bool
+	err    error
+}
+
+func (r *tstBodyReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	n, err := r.reader.Read(p)
+	r.read += n
+	return n, err
+}
+
+func (r *tstBodyReader) Close() error {
+	r.closed = true
+	return nil
+}
+
+func TestBodySizeBoundaries(t *testing.T) {
+	const limit = 1024
+	for _, unknownLength := range []bool{false, true} {
+		for _, size := range []int{0, limit - 1, limit, limit + 1, 64 * limit} {
+			t.Run(fmt.Sprintf("unknown-%t-size-%d", unknownLength, size), func(t *testing.T) {
+				body := &tstBodyReader{reader: strings.NewReader(strings.Repeat("a", size))}
+				req := httptest.NewRequest(http.MethodPost, "/upload", body)
+				if unknownLength {
+					req.ContentLength = -1
+				} else {
+					req.ContentLength = int64(size)
+				}
+				reqCtx := &middlewares.RequestContext{
+					Service: &corev1.Service{Spec: &corev1.Service_Spec{
+						IsAnonymous: true,
+						Config: &corev1.Service_Spec_Config{
+							Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+								EnableRequestBuffering: true,
+								Body:                   &corev1.Service_Spec_Config_HTTP_Body{MaxRequestSize: limit},
+							}},
+						},
+					}},
+				}
+				req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext, reqCtx))
+				var reached bool
+				m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					reached = true
+					got, err := io.ReadAll(r.Body)
+					require.Nil(t, err)
+					assert.Equal(t, strings.Repeat("a", size), string(got))
+					assert.Equal(t, int64(size), r.ContentLength)
+					assert.Equal(t, got, reqCtx.Body)
+					w.WriteHeader(http.StatusNoContent)
+				})}
+				w := httptest.NewRecorder()
+				m.ServeHTTP(w, req)
+				assert.True(t, body.closed)
+				assert.LessOrEqual(t, body.read, limit+1)
+				if size > limit {
+					assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+					assert.False(t, reached)
+					assert.Nil(t, reqCtx.DownstreamRequest)
+				} else {
+					assert.Equal(t, http.StatusNoContent, w.Code)
+					assert.True(t, reached)
+				}
+			})
+		}
+	}
+}
+
+func TestBodyReadError(t *testing.T) {
+	body := &tstBodyReader{err: io.ErrUnexpectedEOF}
+	req := httptest.NewRequest(http.MethodPost, "/", body)
+	req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+		&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{
+			Config: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{EnableRequestBuffering: true}},
+			},
+		}}}))
+	var reached bool
+	m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true })}
+	w := httptest.NewRecorder()
+	m.ServeHTTP(w, req)
+	assert.False(t, reached)
+	assert.True(t, body.closed)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestJSONBodyMalformed(t *testing.T) {
+	for _, body := range []string{`{`, `{"key":}`, `[]`, `true`, `"text"`, `1`, `{} {}`, "{\"key\":\"\x00\"}"} {
+		t.Run(body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{
+					Config: &corev1.Service_Spec_Config{
+						Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+							EnableRequestBuffering: true,
+							Body:                   &corev1.Service_Spec_Config_HTTP_Body{Mode: corev1.Service_Spec_Config_HTTP_Body_JSON},
+						}},
+					},
+				}}}))
+			var reached bool
+			m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true })}
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.False(t, reached)
+		})
+	}
+}
+
+func TestConcurrentBodyIsolation(t *testing.T) {
+	m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCtx := middlewares.GetCtxRequestContext(r.Context())
+		assert.Equal(t, r.URL.Query().Get("id"), string(reqCtx.Body))
+		assert.Equal(t, string(reqCtx.Body), string(reqCtx.DownstreamRequest.Request.GetHttp().Body))
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{
+		IsAnonymous: true,
+		Config: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{EnableRequestBuffering: true}},
+		},
+	}}
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			id := fmt.Sprintf("request-%d", i)
+			req := httptest.NewRequest(http.MethodPost, "/?id="+id, strings.NewReader(id))
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{Service: svc}))
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNoContent, w.Code)
+		})
+	}
+	wg.Wait()
+}
+
+func TestKubernetesRequestContext(t *testing.T) {
+	for _, tc := range []struct {
+		method      string
+		path        string
+		verb        string
+		resource    string
+		namespace   string
+		name        string
+		subresource string
+	}{
+		{http.MethodGet, "/api/v1/namespaces/default/pods", "list", "pods", "default", "", ""},
+		{http.MethodHead, "/api/v1/namespaces/default/pods/pod", "get", "pods", "default", "pod", ""},
+		{http.MethodGet, "/api/v1/namespaces/default/pods?watch=true", "watch", "pods", "default", "", ""},
+		{http.MethodGet, "/api/v1/namespaces/default/pods?watch=invalid", "watch", "pods", "default", "", ""},
+		{http.MethodGet, "/api/v1/namespaces/default/pods?fieldSelector=metadata.name%3Dpod", "list", "pods", "default", "pod", ""},
+		{http.MethodDelete, "/api/v1/namespaces/default/pods", "deletecollection", "pods", "default", "", ""},
+		{http.MethodDelete, "/api/v1/namespaces/default/pods/pod", "delete", "pods", "default", "pod", ""},
+		{http.MethodPost, "/api/v1/namespaces/default/pods/pod/exec", "create", "pods", "default", "pod", "exec"},
+		{http.MethodGet, "/api/v1/namespaces/default/pods/pod/log?follow=true", "get", "pods", "default", "pod", "log"},
+		{http.MethodPatch, "/apis/apps/v1/namespaces/default/deployments/app", "patch", "deployments", "default", "app", ""},
+		{http.MethodPut, "/api/v1/namespaces/default/status", "update", "namespaces", "default", "default", "status"},
+		{http.MethodGet, "/api/v1/nodes/node/proxy/metrics", "get", "nodes", "", "node", "proxy"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			var reached bool
+			m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				got := middlewares.GetCtxRequestContext(r.Context()).DownstreamRequest.Request.GetKubernetes()
+				require.NotNil(t, got)
+				assert.Equal(t, tc.verb, got.Verb)
+				assert.Equal(t, tc.resource, got.Resource)
+				assert.Equal(t, tc.namespace, got.Namespace)
+				assert.Equal(t, tc.name, got.Name)
+				assert.Equal(t, tc.subresource, got.Subresource)
+				assert.Equal(t, r.URL.Path, got.Http.Path)
+			})}
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_KUBERNETES}}}))
+			m.ServeHTTP(httptest.NewRecorder(), req)
+			assert.True(t, reached)
+		})
+	}
 }
 
 func TestRemoveDotSegments(t *testing.T) {

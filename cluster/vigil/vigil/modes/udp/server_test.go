@@ -17,8 +17,10 @@
 package udp
 
 import (
+	"bytes"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +41,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -54,6 +57,111 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
 
 	return reader
+}
+
+func newTestUDPServer(t *testing.T, upstream string) *Server {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	require.Nil(t, err)
+	cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{V4: "127.0.0.0/8"}
+	_, err = tst.C.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+	require.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: tst.C.OcteliumC, IsEmbedded: true})
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_UDP, Port: uint32(tests.GetPort()),
+			Authorization: &corev1.Service_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{
+				{Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{
+					{Effect: corev1.Policy_Spec_Rule_ALLOW, Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}},
+				}}},
+			}},
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "udp://" + upstream}},
+			},
+		},
+	})
+	require.Nil(t, err)
+	vc, err := vcache.NewCache(ctx)
+	require.Nil(t, err)
+	vc.SetService(svc)
+	oc, err := octovigilc.NewClient(ctx, &octovigilc.Opts{OcteliumC: tst.C.OcteliumC, VCache: vc})
+	require.Nil(t, err)
+	srv, err := New(ctx, &modes.Opts{OcteliumC: tst.C.OcteliumC, VCache: vc, OctovigilC: oc,
+		LBManager: loadbalancer.NewLbManager(tst.C.OcteliumC, vc)})
+	require.Nil(t, err)
+	usr, err := tstuser.NewUser(tst.C.OcteliumC, adminSrv, user.NewServer(tst.C.OcteliumC), nil)
+	require.Nil(t, err)
+	require.Nil(t, usr.Connect())
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{{V4: "127.0.0.1/32"}},
+		L3Mode:    corev1.Session_Status_Connection_V4,
+		Type:      corev1.Session_Status_Connection_WIREGUARD,
+	}
+	usr.Session, err = tst.C.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	require.Nil(t, err)
+	oc.GetCache().SetSession(usr.Session)
+	require.Nil(t, srv.Run(ctx))
+	t.Cleanup(func() { srv.Close() })
+	return srv
+}
+
+func TestConcurrentDatagrams(t *testing.T) {
+	upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 65535)
+		for {
+			n, addr, err := upstream.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			_, _ = upstream.WriteToUDP(buf[:n], addr)
+		}
+	}()
+	t.Cleanup(func() { upstream.Close(); <-done })
+	srv := newTestUDPServer(t, upstream.LocalAddr().String())
+	addr := fmt.Sprintf("127.0.0.1:%d", srv.lis.LocalAddr().(*net.UDPAddr).Port)
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Go(func() {
+			conn, err := net.Dial("udp4", addr)
+			if !assert.Nil(t, err) {
+				return
+			}
+			defer conn.Close()
+			assert.Nil(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+			for _, size := range []int{1, 32, udpBufSize - 1, udpBufSize} {
+				body := bytes.Repeat([]byte{byte(i)}, size)
+				if _, err := conn.Write(body); !assert.Nil(t, err) {
+					return
+				}
+				buf := make([]byte, 65535)
+				n, err := conn.Read(buf)
+				if !assert.Nil(t, err) {
+					return
+				}
+				assert.Equal(t, body, buf[:n])
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func TestPacketServiceUnavailable(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	srv := &Server{vCache: vc}
+	assert.NotNil(t, srv.handlePacket(t.Context(), nil, 0, &net.UDPAddr{}))
+	vc.SetService(&corev1.Service{Spec: &corev1.Service_Spec{IsDisabled: true}})
+	assert.Nil(t, srv.handlePacket(t.Context(), []byte("disabled"), 8, &net.UDPAddr{}))
 }
 
 func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {
