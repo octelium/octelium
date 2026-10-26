@@ -293,7 +293,9 @@ func TestBodyReadError(t *testing.T) {
 }
 
 func TestJSONBodyMalformed(t *testing.T) {
-	for _, body := range []string{`{`, `{"key":}`, `[]`, `true`, `"text"`, `1`, `{} {}`, "{\"key\":\"\x00\"}"} {
+	for _, body := range []string{`{`, `{"key":}`, `[]`, `true`, `"text"`, `1`, `{} {}`, "{\"key\":\"\x00\"}",
+		`{"role":"user","role":"admin"}`, `{"user":{"role":"user","role":"admin"}}`,
+		`{"users":[{"role":"user","role":"admin"}]}`} {
 		t.Run(body, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
@@ -311,6 +313,37 @@ func TestJSONBodyMalformed(t *testing.T) {
 			m.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.False(t, reached)
+		})
+	}
+}
+
+func TestJSONBodyAccepted(t *testing.T) {
+	for _, body := range []string{`{"role":"user","Role":"admin"}`, `{"a":{"role":"user"},"b":{"role":"admin"}}`,
+		"{\"name\":\"caf\xe9\"}", `{"name":"\ud800"}`, ` {"key":"value"} `} {
+		t.Run(body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{
+					IsAnonymous: true,
+					Config: &corev1.Service_Spec_Config{
+						Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+							EnableRequestBuffering: true,
+							Body:                   &corev1.Service_Spec_Config_HTTP_Body{Mode: corev1.Service_Spec_Config_HTTP_Body_JSON},
+						}},
+					},
+				}}}))
+			var reached bool
+			m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				reqCtx := middlewares.GetCtxRequestContext(r.Context())
+				assert.NotNil(t, reqCtx.BodyJSONMap)
+				assert.Equal(t, body, string(reqCtx.Body))
+				w.WriteHeader(http.StatusNoContent)
+			})}
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.True(t, reached)
 		})
 	}
 }

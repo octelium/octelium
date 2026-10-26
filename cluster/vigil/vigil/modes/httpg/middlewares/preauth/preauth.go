@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
@@ -167,6 +168,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			switch buffer.Mode {
 			case corev1.Service_Spec_Config_HTTP_Body_JSON:
 				if len(additional.Body) > 0 {
+					if !jsontext.Value(additional.Body).IsValid(jsontext.AllowInvalidUTF8(true)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
 					additional.bodyMap = make(map[string]any)
 					if err := json.Unmarshal(additional.Body, &additional.bodyMap); err != nil {
 						w.WriteHeader(http.StatusBadRequest)

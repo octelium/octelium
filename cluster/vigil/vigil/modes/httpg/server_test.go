@@ -376,6 +376,35 @@ func TestPluginConditionError(t *testing.T) {
 	}
 }
 
+func TestHTTPJSONBodyDuplicateNames(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}), &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Body:                   &corev1.Service_Spec_Config_HTTP_Body{Mode: corev1.Service_Spec_Config_HTTP_Body_JSON},
+	})
+
+	post := func(body string) int {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(addr+"/", "application/json", strings.NewReader(body))
+		require.Nil(t, err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	for _, body := range []string{
+		`{"role":"user","role":"admin"}`,
+		`{"user":{"role":"user","role":"admin"}}`,
+	} {
+		assert.Equal(t, http.StatusBadRequest, post(body), body)
+		assert.Zero(t, upstreamCalls.Load(), body)
+	}
+
+	assert.Equal(t, http.StatusNoContent, post(`{"role":"user","Role":"admin"}`))
+	assert.Equal(t, int64(1), upstreamCalls.Load())
+}
+
 type tstResp struct {
 	Hello string `json:"hello"`
 }

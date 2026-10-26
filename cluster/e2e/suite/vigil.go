@@ -513,6 +513,50 @@ func testVigilPlugins(t *testing.T, h *harness.H) {
 		assert.Equal(t, http.StatusOK, got)
 	})
 
+	t.Run("JSONBodyDuplicateNames", func(t *testing.T) {
+		v.record(t, http.StatusOK, "")
+
+		v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+			EnableRequestBuffering: true,
+			Body: &corev1.Service_Spec_Config_HTTP_Body{
+				Mode: corev1.Service_Spec_Config_HTTP_Body_JSON,
+			},
+		})
+
+		post := func(ctx context.Context, body string) (int, error) {
+			res, err := h.HTTP().R().SetContext(ctx).
+				SetHeader("Content-Type", "application/json").
+				SetBody(body).
+				Post(v.url("/"))
+			if err != nil {
+				return 0, err
+			}
+			return res.StatusCode(), nil
+		}
+
+		h.Eventually(t, "a body with duplicate member names to be rejected",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				got, err := post(ctx, `{"role":"user","role":"admin"}`)
+				if err != nil {
+					return err
+				}
+				if got != http.StatusBadRequest {
+					return errUnexpectedStatus(got, http.StatusBadRequest)
+				}
+				return nil
+			})
+
+		v.seen.Store(nil)
+		got, err := post(t.Context(), `{"user":{"role":"user","role":"admin"}}`)
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusBadRequest, got)
+		assert.Nil(t, v.seen.Load(), "a body with duplicate member names must not reach the upstream")
+
+		got, err = post(t.Context(), `{"role":"user","Role":"admin"}`)
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, got)
+	})
+
 	t.Run("Lua", func(t *testing.T) {
 		v.record(t, http.StatusOK, "")
 
