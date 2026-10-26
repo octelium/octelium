@@ -221,6 +221,39 @@ func TestFunctionJSONMarshalLiterals(t *testing.T) {
 	}
 }
 
+func TestFunctionJSONParseDuplicateNames(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	require.Nil(t, err)
+	ast, iss := env.Compile("json.parse(ctx)")
+	require.Nil(t, iss.Err())
+	for _, opt := range []cel.EvalOption{0, cel.OptOptimize} {
+		prg, err := env.Program(ast, cel.EvalOptions(opt))
+		require.Nil(t, err)
+		for _, arg := range []string{
+			`{"role":"user","role":"admin"}`,
+			`{"user":{"role":"user","role":"admin"}}`,
+			`{"users":[{"role":"user","role":"admin"}]}`,
+		} {
+			_, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": arg})
+			assert.ErrorContains(t, err, "Could not parse json", arg)
+		}
+		for _, tc := range []struct {
+			arg  string
+			want map[string]any
+		}{
+			{`{"role":"user","Role":"admin"}`, map[string]any{"role": "user", "Role": "admin"}},
+			{`{"a":{"role":"user"},"b":{"role":"admin"}}`, map[string]any{
+				"a": map[string]any{"role": "user"}, "b": map[string]any{"role": "admin"}}},
+			{"{\"name\":\"caf\xe9\"}", map[string]any{"name": "caf�"}},
+			{` {"name":"value"} `, map[string]any{"name": "value"}},
+		} {
+			out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": tc.arg})
+			require.Nil(t, err, tc.arg)
+			assert.Equal(t, tc.want, out.Value(), tc.arg)
+		}
+	}
+}
+
 func TestFunctionJSONMarshalValues(t *testing.T) {
 	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
 	require.Nil(t, err)

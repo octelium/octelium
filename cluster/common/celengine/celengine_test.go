@@ -242,6 +242,23 @@ func TestCELJSONMarshal(t *testing.T) {
 	}
 }
 
+func TestCELJSONParseDuplicateNames(t *testing.T) {
+	srv, err := New(t.Context(), nil)
+	require.Nil(t, err)
+
+	const expr = `json.parse(ctx.body).role == "admin"`
+
+	matched, err := srv.EvalPolicy(t.Context(), expr,
+		map[string]any{"ctx": map[string]any{"body": `{"role":"admin"}`}})
+	assert.Nil(t, err)
+	assert.True(t, matched)
+
+	matched, err = srv.EvalPolicy(t.Context(), expr,
+		map[string]any{"ctx": map[string]any{"body": `{"role":"user","role":"admin"}`}})
+	assert.ErrorContains(t, err, "Could not parse json")
+	assert.False(t, matched)
+}
+
 func TestCELJSONMarshalErrors(t *testing.T) {
 	srv, err := New(t.Context(), nil)
 	require.Nil(t, err)

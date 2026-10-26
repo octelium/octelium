@@ -502,13 +502,15 @@ func testVigilPlugins(t *testing.T, h *harness.H) {
 				return nil
 			})
 
-		v.seen.Store(nil)
-		got, err := post(t.Context(), "not json")
-		require.Nil(t, err)
-		assert.Equal(t, http.StatusInternalServerError, got)
-		assert.Nil(t, v.seen.Load(), "a request whose plugin condition fails must not reach the upstream")
+		for _, meta := range []string{"not json", `{"strict": true, "strict": false}`} {
+			v.seen.Store(nil)
+			got, err := post(t.Context(), meta)
+			require.Nil(t, err)
+			assert.Equal(t, http.StatusInternalServerError, got, meta)
+			assert.Nil(t, v.seen.Load(), "a request whose plugin condition fails must not reach the upstream")
+		}
 
-		got, err = post(t.Context(), `{"strict": false}`)
+		got, err := post(t.Context(), `{"strict": false}`)
 		require.Nil(t, err)
 		assert.Equal(t, http.StatusOK, got)
 	})

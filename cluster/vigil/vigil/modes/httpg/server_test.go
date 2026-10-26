@@ -354,15 +354,15 @@ func TestPluginConditionError(t *testing.T) {
 				return resp
 			}
 
-			{
-				resp := post("not json")
+			for _, meta := range []string{"not json", `{"priority": 10, "priority": 1}`} {
+				resp := post(meta)
 				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				require.Nil(t, err)
 
-				assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-				assert.Contains(t, string(body), "could not evaluate the Plugins")
-				assert.Zero(t, upstreamCalls.Load())
+				assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, meta)
+				assert.Contains(t, string(body), "could not evaluate the Plugins", meta)
+				assert.Zero(t, upstreamCalls.Load(), meta)
 			}
 
 			{

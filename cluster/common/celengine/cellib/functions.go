@@ -27,6 +27,7 @@ import (
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/common/types/traits"
 	"github.com/asaskevich/govalidator"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/pkg/errors"
 )
 
@@ -54,17 +55,9 @@ func funcJSON() []cel.EnvOption {
 					value := val.Value()
 					switch tVal := value.(type) {
 					case string:
-						out := make(map[string]any)
-						if err := json.Unmarshal([]byte(tVal), &out); err != nil {
-							return types.NewErr("Could not parse json")
-						}
-						return types.DefaultTypeAdapter.NativeToValue(out)
+						return parseJSON([]byte(tVal))
 					case []byte:
-						out := make(map[string]any)
-						if err := json.Unmarshal(tVal, &out); err != nil {
-							return types.NewErr("Could not parse json")
-						}
-						return types.DefaultTypeAdapter.NativeToValue(out)
+						return parseJSON(tVal)
 					default:
 						return types.NewErr("Invalid json_from arg")
 					}
@@ -92,6 +85,19 @@ func funcJSON() []cel.EnvOption {
 			),
 		),
 	}
+}
+
+func parseJSON(arg []byte) ref.Val {
+	if !jsontext.Value(arg).IsValid(jsontext.AllowInvalidUTF8(true)) {
+		return types.NewErr("Could not parse json")
+	}
+
+	out := make(map[string]any)
+	if err := json.Unmarshal(arg, &out); err != nil {
+		return types.NewErr("Could not parse json")
+	}
+
+	return types.DefaultTypeAdapter.NativeToValue(out)
 }
 
 func toJSONValue(val ref.Val, depth int) (any, error) {
