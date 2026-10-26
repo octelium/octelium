@@ -315,6 +315,40 @@ func TestGuardEnvelope(t *testing.T) {
 	}
 }
 
+func TestGuardInvalidMembers(t *testing.T) {
+
+	tsts := []struct {
+		body      string
+		hasBodyID bool
+	}{
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","NAME":"get_weather"}}`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"Name":"get_weather"}}`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":42}}`, true},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"delete_all"}}`, false},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"PARAMS":{"name":"get_weather"}}`, false},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"get_weather"}}`, false},
+		{`{"jsonrpc":"2.0","id":1,"id":2,"method":"tools/list"}`, false},
+	}
+
+	for _, tst := range tsts {
+		ret := serveGuard(t, http.MethodPost, "/mcp", tst.body, nil,
+			&corev1.Service_Spec_Config_MCP{})
+
+		assert.False(t, ret.isNext, tst.body)
+		assert.Equal(t, http.StatusBadRequest, ret.code, tst.body)
+		assert.Equal(t, ErrCodeInvalidRequest, ret.errCode, tst.body)
+		assert.Equal(t, tst.hasBodyID, ret.hasBodyID, tst.body)
+	}
+
+	{
+		ret := serveGuard(t, http.MethodPost, "/mcp",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"name":"a","NAME":"b"}}}`,
+			nil, &corev1.Service_Spec_Config_MCP{})
+
+		assert.True(t, ret.isNext)
+	}
+}
+
 func TestGuardErrorRequestID(t *testing.T) {
 
 	{

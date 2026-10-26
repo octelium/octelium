@@ -18,6 +18,7 @@ package httputils
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -261,6 +262,141 @@ func TestParseMCPRequestMalformed(t *testing.T) {
 	}
 }
 
+func TestParseMCPRequestInvalidMembers(t *testing.T) {
+
+	tsts := []struct {
+		body         string
+		requestIDRaw string
+	}{
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","NAME":"get_weather"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"NAME":"get_weather","name":"delete_all"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"Name":"get_weather"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","ARGUMENTS":{}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","_META":{}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"file:///a","URI":"file:///b"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"ref":{"name":"p1","NAME":"p2"}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"ref":{"name":"p1","uri":"res://x"}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"a","Name":"b"}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","protocolversion":"x"}}`, `1`},
+
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"delete_all"}}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"PARAMS":{"name":"get_weather"}}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"paramſ":{"name":"get_weather"}}`, ``},
+		{`{"JSONRPC":"2.0","id":1,"method":"tools/list"}`, ``},
+		{`{"jsonrpc":"2.0","ID":1,"method":"tools/list"}`, ``},
+
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"get_weather"}}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"get_weather"}}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/list","method":"tools/call"}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"id":2,"method":"tools/list"}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":1,"a":2}}}`, ``},
+		{"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"add\xff\"}}", ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add\ud800"}}`, ``},
+
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":"a string"}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":["delete_all"]}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":42}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","_meta":"x"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","clientInfo":5}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","capabilities":[]}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":{}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"ref":"p1"}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call",` +
+			`"params":{"name":"add","_meta":{"io.modelcontextprotocol/protocolVersion":1}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call",` +
+			`"params":{"name":"add","_meta":{"io.modelcontextprotocol/clientInfo":{"name":1}}}}`, `1`},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/call",` +
+			`"params":{"name":"add","_meta":{"io.modelcontextprotocol/clientCapabilities":[]}}}`, `1`},
+	}
+
+	for _, tst := range tsts {
+		ret := ParseMCPRequest(newMCPRequest(tst.body, nil), []byte(tst.body))
+
+		assert.True(t, ret.IsJSONRPC, tst.body)
+		assert.True(t, ret.HasInvalidMembers, tst.body)
+		assert.Equal(t, tst.requestIDRaw, string(ret.RequestIDRaw), tst.body)
+	}
+}
+
+func TestParseMCPRequestExactMembers(t *testing.T) {
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_weather",
+			"arguments":{"name":"delete_all","NAME":"x","Method":"tools/list","params":{"Name":"y"}},
+			"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","acme.com/NAME":"z"}}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "tools/call", ret.Method)
+		assert.Equal(t, "get_weather", ret.Name)
+		assert.Equal(t, "2026-07-28", ret.ProtocolVersion)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_weather"}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "tools/call", ret.Method)
+		assert.Equal(t, "get_weather", ret.Name)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","protocolVersion":1}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "add", ret.Name)
+		assert.Equal(t, "", ret.ProtocolVersion)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call",
+			"params":{"name":"add","_meta":null,"clientInfo":null,"capabilities":null}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "add", ret.Name)
+		assert.Nil(t, ret.Client)
+		assert.Nil(t, ret.Capabilities)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":null}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "tools/call", ret.Method)
+		assert.Equal(t, "", ret.Name)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",
+			"capabilities":{"roots":{},"Roots":{},"experimental":{"NAME":{}}}}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, []string{"Roots", "experimental", "roots"}, ret.Capabilities)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a"},"result":{"name":"b"}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "a", ret.Name)
+	}
+
+	{
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a","arguments":{"x":{"k":1},"y":{"k":2}}}}`
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+
+		assert.False(t, ret.HasInvalidMembers)
+		assert.Equal(t, "a", ret.Name)
+	}
+}
+
 func TestDecodeMCPHeaderValue(t *testing.T) {
 
 	tsts := []struct {
@@ -391,9 +527,24 @@ func FuzzParseMCPRequest(f *testing.F) {
 	f.Add(`[{"jsonrpc":"2.0"}]`)
 	f.Add(`{"params":{"_meta":{"io.modelcontextprotocol/clientInfo":{}}}}`)
 	f.Add(``)
+	f.Add(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a","NAME":"b"}}`)
+	f.Add(`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"a"}}`)
+	f.Add(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a","name":"b"}}`)
+	f.Add(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a"},"paramſ":{"name":"b"}}`)
 
 	f.Fuzz(func(t *testing.T, body string) {
-		ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+		ret := ParseMCPRequest(newMCPRequest(body, nil), []byte(body))
+		if ret.IsJSONRPC && !ret.HasInvalidMembers {
+			env := map[string]any{}
+			if err := json.Unmarshal([]byte(body), &env); err == nil {
+				method, _ := env["method"].(string)
+				assert.Equal(t, method, ret.Method)
+				if params, ok := env["params"].(map[string]any); ok && ret.Method == "tools/call" {
+					name, _ := params["name"].(string)
+					assert.Equal(t, name, ret.Name)
+				}
+			}
+		}
 		ParseMCPResponse([]byte(body))
 		GetSSEEventData([]byte(body))
 		_, _ = DecodeMCPHeaderValue(body)

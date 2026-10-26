@@ -524,6 +524,86 @@ func TestServerMCPEnvelope(t *testing.T) {
 	}
 }
 
+func TestServerMCPInvalidMembers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newMCPEnv(t, ctx)
+	env.authz = &corev1.Service_Spec_Authorization{
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:     "deny-delete-production",
+							Priority: 0,
+							Effect:   corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: `ctx.request.mcp.method == "tools/call" && ctx.request.mcp.name == "delete-production"`,
+								},
+							},
+						},
+						{
+							Name:     "allow-rest",
+							Priority: 1,
+							Effect:   corev1.Policy_Spec_Rule_ALLOW,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	env.start(t, ctx, &corev1.Service_Spec_Config_MCP{}, "")
+
+	{
+		cnt := env.upstream.getReqCount()
+
+		resp := env.postMCP(t, newMCPToolCallBody("delete-production"))
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode(), resp.String())
+
+		assert.Equal(t, cnt, env.upstream.getReqCount())
+	}
+
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","NAME":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"delete-production"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production"},"PARAMS":{"name":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","name":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","name":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","_meta":"x"}}`,
+	} {
+		cnt := env.upstream.getReqCount()
+
+		resp := env.postMCP(t, body)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode(), body)
+
+		errResp := &tstMCPErrResp{}
+		assert.Nil(t, json.Unmarshal(resp.Body(), errResp))
+		assert.Equal(t, -32600, errResp.Error.Code, body)
+
+		assert.Equal(t, cnt, env.upstream.getReqCount(), body)
+	}
+
+	{
+		resp := env.postMCP(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call",`+
+			`"params":{"name":"read-report","arguments":{"name":"delete-production","NAME":"x"}}}`)
+		assert.True(t, resp.IsSuccess(), resp.String())
+
+		params := env.upstream.getLastBodyMap()["params"].(map[string]any)
+		assert.Equal(t, "read-report", params["name"])
+
+		args := params["arguments"].(map[string]any)
+		assert.Equal(t, "delete-production", args["name"])
+		assert.Equal(t, "x", args["NAME"])
+	}
+}
+
 func TestServerMCPProtocolVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1109,6 +1189,43 @@ end
 
 	params := env.upstream.getLastBodyMap()["params"].(map[string]any)
 	assert.Equal(t, "delete-production", params["name"])
+}
+
+func TestServerMCPLuaInvalidMembers(t *testing.T) {
+
+	for _, phase := range []corev1.Service_Spec_Config_HTTP_Plugin_Phase{
+		corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH,
+		corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+	} {
+		t.Run(phase.String(), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			env := newMCPEnv(t, ctx)
+			env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+				Plugins: []*corev1.Service_Spec_Config_MCP_Plugin{
+					newMCPLuaPlugin("add-name-alias", phase, `
+function onRequest(ctx)
+  local body = json.decode(octelium.req.getRequestBody())
+  body["params"]["NAME"] = "delete-production"
+  octelium.req.setRequestBody(json.encode(body))
+end
+`),
+				},
+			}, "")
+
+			cnt := env.upstream.getReqCount()
+
+			resp := env.postMCP(t, newMCPToolCallBody("read-report"))
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode(), resp.String())
+
+			errResp := &tstMCPErrResp{}
+			assert.Nil(t, json.Unmarshal(resp.Body(), errResp))
+			assert.Equal(t, -32600, errResp.Error.Code)
+
+			assert.Equal(t, cnt, env.upstream.getReqCount())
+		})
+	}
 }
 
 func TestServerMCPLuaResponse(t *testing.T) {

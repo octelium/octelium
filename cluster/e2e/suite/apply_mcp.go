@@ -274,6 +274,41 @@ func applyMCPGateway(t *testing.T, a *applyCtx) {
 			callArgs("transfer", map[string]any{"amount": 10}), http.StatusOK)
 	})
 
+	t.Run("InvalidMembers", func(t *testing.T) {
+		setPolicy(t, "mcp-tool-allowlist-members", []*corev1.Policy_Spec_Rule{
+			harness.MatchRule("deny-unlisted-tools", 0,
+				corev1.Policy_Spec_Rule_DENY,
+				`ctx.request.mcp.method == "tools/call" && !(ctx.request.mcp.name in ["echo"])`),
+			harness.MatchRule("allow-rest", 1,
+				corev1.Policy_Spec_Rule_ALLOW, `true`),
+		})
+
+		c := h.ServiceClient(svc, token)
+
+		waitStatus(t, c, "the MCP tool that is not in the allow list to be rejected",
+			callArgs("transfer", map[string]any{"amount": 10}), http.StatusForbidden)
+
+		for _, body := range []string{
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"transfer","NAME":"echo","arguments":{"amount":10}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"transfer","name":"echo","arguments":{"amount":10}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"transfer","arguments":{"amount":10}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"transfer","arguments":{"amount":10}},"PARAMS":{"name":"echo"}}`,
+		} {
+			res, err := c.R().
+				SetHeader("Content-Type", "application/json").
+				SetHeader("Accept", mcpAccept).
+				SetBody(body).
+				Post("/")
+			require.Nil(t, err)
+			assert.Equal(t, http.StatusBadRequest, res.StatusCode(), res.String())
+			assert.Contains(t, string(res.Body()), "-32600", body)
+		}
+
+		res, err := post(c, callBody("echo")).Post("/")
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode(), res.String())
+	})
+
 	t.Run("ToolArguments", func(t *testing.T) {
 		setPolicy(t, "mcp-tool-arguments", []*corev1.Policy_Spec_Rule{
 			harness.MatchRule("deny-large-transfers", 0,

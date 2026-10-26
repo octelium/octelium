@@ -148,6 +148,39 @@ func TestRebuild(t *testing.T) {
 	}
 }
 
+func TestRebuildInvalidMembers(t *testing.T) {
+
+	ctx := context.Background()
+
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","NAME":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete-production","name":"read-report"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"tools/list","params":{"name":"delete-production"}}`,
+	} {
+		var isNext bool
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			isNext = true
+		})
+
+		mdlwr, err := NewRebuild(ctx, next)
+		assert.Nil(t, err)
+
+		req, reqCtx := newMutationRequest(t, readReportBody)
+		setRequestBody(req, reqCtx, body)
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.False(t, isNext, body)
+		assert.True(t, reqCtx.MCP.HasInvalidMembers, body)
+		assert.Equal(t, http.StatusBadRequest, rw.Code, body)
+
+		resp := &jsonRPCErrorResponse{}
+		assert.Nil(t, json.Unmarshal(rw.Body.Bytes(), resp), body)
+		assert.Equal(t, ErrCodeInvalidRequest, resp.Error.Code, body)
+	}
+}
+
 func TestMutationNonMCP(t *testing.T) {
 
 	ctx := context.Background()

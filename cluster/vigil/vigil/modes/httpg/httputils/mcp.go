@@ -24,6 +24,9 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/go-json-experiment/json/jsontext"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -48,6 +51,15 @@ const maxMCPCaps = 64
 
 const mcpCapsExtensions = "extensions"
 
+var (
+	mcpEnvelopeMembers = []string{"jsonrpc", "id", "method", "params"}
+	mcpParamsMembers   = []string{
+		"name", "uri", "ref", "arguments", "_meta", "protocolVersion", "clientInfo", "capabilities",
+	}
+	mcpRefMembers        = []string{"name", "uri"}
+	mcpClientInfoMembers = []string{"name", "version", "title"}
+)
+
 type MCPClientInfo struct {
 	Name    string
 	Version string
@@ -66,6 +78,7 @@ type MCPRequest struct {
 	IsNotification bool
 
 	HasInvalidRequestID bool
+	HasInvalidMembers   bool
 
 	ProtocolVersion       string
 	BodyProtocolVersion   string
@@ -166,35 +179,6 @@ func (c *MCPClientInfo) GetTitle() string {
 	return c.Title
 }
 
-type mcpEnvelope struct {
-	JSONRPC json.RawMessage `json:"jsonrpc"`
-	Method  json.RawMessage `json:"method"`
-	ID      json.RawMessage `json:"id"`
-	Params  json.RawMessage `json:"params"`
-}
-
-type mcpClientInfoJSON struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Title   string `json:"title"`
-}
-
-type mcpParams struct {
-	Name string `json:"name"`
-	URI  string `json:"uri"`
-
-	Ref *struct {
-		Name string `json:"name"`
-		URI  string `json:"uri"`
-	} `json:"ref"`
-
-	Meta map[string]json.RawMessage `json:"_meta"`
-
-	ProtocolVersion string                     `json:"protocolVersion"`
-	ClientInfo      *mcpClientInfoJSON         `json:"clientInfo"`
-	Capabilities    map[string]json.RawMessage `json:"capabilities"`
-}
-
 func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 	ret := &MCPRequest{}
 
@@ -223,76 +207,87 @@ func ParseMCPRequest(req *http.Request, body []byte) *MCPRequest {
 		return ret
 	}
 
-	env := &mcpEnvelope{}
-	if err := json.Unmarshal(body, env); err != nil {
+	env := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(body, &env); err != nil {
 		return ret
 	}
 
 	ret.IsJSONRPC = true
 
-	if len(env.JSONRPC) > 0 {
-		var v string
-		if err := json.Unmarshal(env.JSONRPC, &v); err == nil {
-			ret.JSONRPCVersion = v
-		}
+	if !jsontext.Value(body).IsValid() || hasMCPMemberAlias(env, mcpEnvelopeMembers) {
+		ret.HasInvalidMembers = true
+		return ret
 	}
 
-	if len(env.Method) > 0 {
-		var v string
-		if err := json.Unmarshal(env.Method, &v); err == nil {
-			ret.Method = v
-		}
-	}
+	ret.JSONRPCVersion, _ = getMCPString(env, "jsonrpc")
+	ret.Method, _ = getMCPString(env, "method")
 
 	var isValidRequestID bool
-	ret.RequestID, ret.RequestIDRaw, ret.IsNotification, isValidRequestID = parseMCPRequestID(env.ID)
+	ret.RequestID, ret.RequestIDRaw, ret.IsNotification, isValidRequestID = parseMCPRequestID(env["id"])
 	ret.HasInvalidRequestID = !isValidRequestID
 
-	if len(env.Params) == 0 {
+	params, err := getMCPObject(env["params"], mcpParamsMembers)
+	if err != nil {
+		ret.HasInvalidMembers = true
 		return ret
 	}
 
-	params := &mcpParams{}
-	if err := json.Unmarshal(env.Params, params); err != nil {
+	if params == nil {
 		return ret
 	}
 
-	ret.Name = deriveMCPName(ret.Method, params)
+	if err := setMCPParams(ret, params); err != nil {
+		ret.HasInvalidMembers = true
+	}
 
-	if bodyVersion := getMCPMetaString(params.Meta, mcpMetaProtocolVersion); bodyVersion != "" {
-		ret.BodyProtocolVersion = bodyVersion
-	} else if params.ProtocolVersion != "" && ret.Method == "initialize" {
-		ret.BodyProtocolVersion = params.ProtocolVersion
+	return ret
+}
+
+func setMCPParams(ret *MCPRequest, params map[string]json.RawMessage) error {
+	var err error
+
+	ret.Name, err = deriveMCPName(ret.Method, params)
+	if err != nil {
+		return err
+	}
+
+	meta, err := getMCPObject(params["_meta"], nil)
+	if err != nil {
+		return err
+	}
+
+	ret.BodyProtocolVersion, err = getMCPString(meta, mcpMetaProtocolVersion)
+	if err != nil {
+		return err
+	}
+
+	if ret.BodyProtocolVersion == "" && ret.Method == "initialize" {
+		ret.BodyProtocolVersion, err = getMCPString(params, "protocolVersion")
+		if err != nil {
+			return err
+		}
 	}
 
 	if ret.BodyProtocolVersion != "" {
 		ret.ProtocolVersion = ret.BodyProtocolVersion
 	}
 
-	if raw, ok := params.Meta[mcpMetaClientInfo]; ok {
-		info := &mcpClientInfoJSON{}
-		if err := json.Unmarshal(raw, info); err == nil {
-			ret.Client = &MCPClientInfo{
-				Name:    info.Name,
-				Version: info.Version,
-				Title:   info.Title,
-			}
-		}
-	} else if params.ClientInfo != nil {
-		ret.Client = &MCPClientInfo{
-			Name:    params.ClientInfo.Name,
-			Version: params.ClientInfo.Version,
-			Title:   params.ClientInfo.Title,
-		}
+	if raw, ok := meta[mcpMetaClientInfo]; ok {
+		ret.Client, err = getMCPClientInfo(raw)
+	} else {
+		ret.Client, err = getMCPClientInfo(params["clientInfo"])
+	}
+	if err != nil {
+		return err
 	}
 
-	if raw, ok := params.Meta[mcpMetaClientCaps]; ok {
-		ret.Capabilities = getMCPObjectKeys(raw)
-	} else if len(params.Capabilities) > 0 {
-		ret.Capabilities = getMCPMapKeys(params.Capabilities)
+	if raw, ok := meta[mcpMetaClientCaps]; ok {
+		ret.Capabilities, err = getMCPObjectKeys(raw)
+	} else {
+		ret.Capabilities, err = getMCPObjectKeys(params["capabilities"])
 	}
 
-	return ret
+	return err
 }
 
 func parseMCPRequestID(raw json.RawMessage) (string, json.RawMessage, bool, bool) {
@@ -318,50 +313,112 @@ func parseMCPRequestID(raw json.RawMessage) (string, json.RawMessage, bool, bool
 	return string(trimmed), nil, false, false
 }
 
-func deriveMCPName(method string, params *mcpParams) string {
-	if params == nil {
-		return ""
-	}
-
+func deriveMCPName(method string, params map[string]json.RawMessage) (string, error) {
 	switch method {
 	case "tools/call", "prompts/get":
-		return params.Name
+		return getMCPString(params, "name")
 	case "resources/read", "resources/subscribe", "resources/unsubscribe":
-		return params.URI
+		return getMCPString(params, "uri")
 	case "completion/complete":
-		if params.Ref == nil {
-			return ""
+		ref, err := getMCPObject(params["ref"], mcpRefMembers)
+		if err != nil {
+			return "", err
 		}
-		if params.Ref.Name != "" {
-			return params.Ref.Name
+		name, err := getMCPString(ref, "name")
+		if err != nil {
+			return "", err
 		}
-		return params.Ref.URI
+		uri, err := getMCPString(ref, "uri")
+		if err != nil {
+			return "", err
+		}
+		if name != "" && uri != "" {
+			return "", errors.Errorf("Ambiguous MCP completion reference")
+		}
+		if name != "" {
+			return name, nil
+		}
+		return uri, nil
 	default:
-		return ""
+		return "", nil
 	}
 }
 
-func getMCPMetaString(meta map[string]json.RawMessage, key string) string {
-	if meta == nil {
-		return ""
+func getMCPClientInfo(raw json.RawMessage) (*MCPClientInfo, error) {
+	obj, err := getMCPObject(raw, mcpClientInfoMembers)
+	if err != nil || obj == nil {
+		return nil, err
 	}
-	raw, ok := meta[key]
-	if !ok {
-		return ""
+
+	ret := &MCPClientInfo{}
+
+	if ret.Name, err = getMCPString(obj, "name"); err != nil {
+		return nil, err
 	}
+	if ret.Version, err = getMCPString(obj, "version"); err != nil {
+		return nil, err
+	}
+	if ret.Title, err = getMCPString(obj, "title"); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
+func getMCPObject(raw json.RawMessage, members []string) (map[string]json.RawMessage, error) {
+	if isMCPNull(raw) {
+		return nil, nil
+	}
+
+	ret := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &ret); err != nil {
+		return nil, err
+	}
+
+	if hasMCPMemberAlias(ret, members) {
+		return nil, errors.Errorf("Ambiguous MCP member")
+	}
+
+	return ret, nil
+}
+
+func hasMCPMemberAlias(obj map[string]json.RawMessage, members []string) bool {
+	for k := range obj {
+		for _, member := range members {
+			if k != member && strings.EqualFold(k, member) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func getMCPString(obj map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := obj[key]
+	if !ok || isMCPNull(raw) {
+		return "", nil
+	}
+
 	var ret string
 	if err := json.Unmarshal(raw, &ret); err != nil {
-		return ""
+		return "", err
 	}
-	return ret
+
+	return ret, nil
 }
 
-func getMCPObjectKeys(raw json.RawMessage) []string {
-	obj := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil
+func isMCPNull(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
+}
+
+func getMCPObjectKeys(raw json.RawMessage) ([]string, error) {
+	obj, err := getMCPObject(raw, nil)
+	if err != nil {
+		return nil, err
 	}
-	return getMCPMapKeys(obj)
+	return getMCPMapKeys(obj), nil
 }
 
 func getMCPMapKeys(obj map[string]json.RawMessage) []string {

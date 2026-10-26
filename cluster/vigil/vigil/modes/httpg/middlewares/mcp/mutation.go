@@ -48,6 +48,16 @@ func (m *rebuild) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		zap.L().Debug("MCP request body was mutated by a Plugin. Rebuilding the RequestContext")
 		middlewares.SetMCPRequestContext(reqCtx, req)
 		reqCtx.SetBodyDigest()
+
+		if reqCtx.MCP.HasInvalidMembers {
+			WriteError(w, &WriteErrorOpts{
+				HTTPStatus: http.StatusBadRequest,
+				Code:       ErrCodeInvalidRequest,
+				Message:    "Octelium: the request body contains ambiguous or invalid MCP members",
+				RequestID:  reqCtx.MCP.GetRequestIDRaw(),
+			})
+			return
+		}
 	}
 
 	m.next.ServeHTTP(w, req)

@@ -144,6 +144,15 @@ func (m *guard) checkEnvelope(mcpReq *httputils.MCPRequest, reqID json.RawMessag
 		}
 	}
 
+	if mcpReq.HasInvalidMembers {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Code:       ErrCodeInvalidRequest,
+			Message:    "Octelium: the request body contains ambiguous or invalid MCP members",
+			RequestID:  reqID,
+		}
+	}
+
 	if mcpReq.JSONRPCVersion != "2.0" {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,
