@@ -274,6 +274,108 @@ func TestHTTPIncompleteBodies(t *testing.T) {
 	assert.Zero(t, incompleteCalls.Load())
 }
 
+func TestPluginConditionError(t *testing.T) {
+	window := &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 60}}
+
+	for _, tc := range []struct {
+		name   string
+		plugin *corev1.Service_Spec_Config_HTTP_Plugin
+	}{
+		{"Direct", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
+				Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{StatusCode: http.StatusForbidden},
+			},
+		}},
+		{"Path", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Path_{
+				Path: &corev1.Service_Spec_Config_HTTP_Plugin_Path{AddPrefix: "/blocked"},
+			},
+		}},
+		{"JSONSchema", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema{
+				JsonSchema: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema{
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline{
+						Inline: `{"type": "object", "required": ["id"]}`,
+					},
+				},
+			},
+		}},
+		{"Lua", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+				Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+						Inline: "function onRequest(ctx)\n  octelium.req.exit(403)\nend\n",
+					},
+				},
+			},
+		}},
+		{"RateLimit", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_{
+				RateLimit: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{Limit: 1, Window: window},
+			},
+		}},
+		{"Cache", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{
+				Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{Ttl: window},
+			},
+		}},
+		{"ExtProc", &corev1.Service_Spec_Config_HTTP_Plugin{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_{
+				ExtProc: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc{
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_ExtProc_Address{Address: "localhost:1"},
+				},
+			},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.plugin.Name = "plugin"
+			tc.plugin.Condition = &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `json.parse(ctx.request.http.headers["x-meta"]).priority > 5.0`,
+				},
+			}
+
+			var upstreamCalls atomic.Int64
+			_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamCalls.Add(1)
+				w.WriteHeader(http.StatusNoContent)
+			}), &corev1.Service_Spec_Config_HTTP{
+				EnableRequestBuffering: true,
+				Plugins:                []*corev1.Service_Spec_Config_HTTP_Plugin{tc.plugin},
+			})
+
+			post := func(meta string) *http.Response {
+				req, err := http.NewRequest(http.MethodPost, addr+"/", strings.NewReader(`{"name": "test"}`))
+				require.Nil(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Meta", meta)
+				resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+				require.Nil(t, err)
+				return resp
+			}
+
+			{
+				resp := post("not json")
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				require.Nil(t, err)
+
+				assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+				assert.Contains(t, string(body), "could not evaluate the Plugins")
+				assert.Zero(t, upstreamCalls.Load())
+			}
+
+			{
+				resp := post(`{"priority": 1}`)
+				resp.Body.Close()
+
+				assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+				assert.Equal(t, int64(1), upstreamCalls.Load())
+			}
+		})
+	}
+}
+
 type tstResp struct {
 	Hello string `json:"hello"`
 }

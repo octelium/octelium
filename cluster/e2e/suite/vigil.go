@@ -453,6 +453,66 @@ func testVigilPlugins(t *testing.T, h *harness.H) {
 			})
 	})
 
+	t.Run("ConditionError", func(t *testing.T) {
+		v.record(t, http.StatusOK, "")
+
+		v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+			EnableRequestBuffering: true,
+			Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{
+					Name: "schema",
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `json.parse(ctx.request.http.headers["x-meta"]).strict == true`,
+						},
+					},
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_JsonSchema{
+						JsonSchema: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema{
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_JSONSchema_Inline{
+								Inline: `{"type": "object", "required": ["name"]}`,
+							},
+							StatusCode: http.StatusUnprocessableEntity,
+						},
+					},
+				},
+			},
+		})
+
+		post := func(ctx context.Context, meta string) (int, error) {
+			res, err := h.HTTP().R().SetContext(ctx).
+				SetHeader("Content-Type", "application/json").
+				SetHeader("X-Meta", meta).
+				SetBody(`{"unexpected": 1}`).
+				Post(v.url("/"))
+			if err != nil {
+				return 0, err
+			}
+			return res.StatusCode(), nil
+		}
+
+		h.Eventually(t, "the schema to be enforced when its condition matches",
+			harness.DecisionBudget, func(ctx context.Context) error {
+				got, err := post(ctx, `{"strict": true}`)
+				if err != nil {
+					return err
+				}
+				if got != http.StatusUnprocessableEntity {
+					return errUnexpectedStatus(got, http.StatusUnprocessableEntity)
+				}
+				return nil
+			})
+
+		v.seen.Store(nil)
+		got, err := post(t.Context(), "not json")
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusInternalServerError, got)
+		assert.Nil(t, v.seen.Load(), "a request whose plugin condition fails must not reach the upstream")
+
+		got, err = post(t.Context(), `{"strict": false}`)
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, got)
+	})
+
 	t.Run("Lua", func(t *testing.T) {
 		v.record(t, http.StatusOK, "")
 

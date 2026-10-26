@@ -59,11 +59,15 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		switch {
 		case plugin.GetPath() != nil:
 
-			if !commonplugin.ShouldEnforcePlugin(ctx, &commonplugin.ShouldEnforcePluginOpts{
+			isEnforced, ok := commonplugin.ShouldEnforcePlugin(ctx, rw, &commonplugin.ShouldEnforcePluginOpts{
 				Plugin:    plugin,
 				CELEngine: m.celEngine,
 				Phase:     m.phase,
-			}) {
+			})
+			if !ok {
+				return
+			}
+			if !isEnforced {
 				continue
 			}
 

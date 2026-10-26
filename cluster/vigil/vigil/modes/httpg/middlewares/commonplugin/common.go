@@ -18,6 +18,7 @@ package commonplugin
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
@@ -33,12 +34,21 @@ type ShouldEnforcePluginOpts struct {
 	Phase     corev1.Service_Spec_Config_HTTP_Plugin_Phase
 }
 
-func ShouldEnforcePlugin(ctx context.Context, o *ShouldEnforcePluginOpts) bool {
-	isMatched, err := ShouldEnforcePluginErr(ctx, o)
-	if err != nil {
-		return false
+func ShouldEnforcePlugin(ctx context.Context,
+	rw http.ResponseWriter, o *ShouldEnforcePluginOpts) (bool, bool) {
+	isEnforced, err := ShouldEnforcePluginErr(ctx, o)
+	if err == nil {
+		return isEnforced, true
 	}
-	return isMatched
+
+	zap.L().Warn("Could not evaluate the Plugin Condition. Rejecting the request",
+		zap.String("plugin", o.Plugin.GetName()), zap.Error(err))
+
+	rw.Header().Set("Server", "octelium")
+	http.Error(rw, "Octelium: could not evaluate the Plugins of this Service",
+		http.StatusInternalServerError)
+
+	return false, false
 }
 
 func ShouldEnforcePluginErr(ctx context.Context, o *ShouldEnforcePluginOpts) (bool, error) {
