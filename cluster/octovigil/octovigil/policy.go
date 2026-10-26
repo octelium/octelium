@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -71,11 +72,11 @@ func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDeci
 		return nil, err
 	}
 
-	return s.doGetDecision(ctx, reqCtxMap, allRules)
+	return s.doGetDecision(ctx, reqCtxMap, allRules, isBodyOmitted(req.i))
 }
 
 func (s *Server) doGetDecision(ctx context.Context,
-	reqCtxMap map[string]any, allRules []*policyRule) (*getDecisionResp, error) {
+	reqCtxMap map[string]any, allRules []*policyRule, isBodyOmitted bool) (*getDecisionResp, error) {
 
 	slices.SortFunc(allRules, func(a, b *policyRule) int {
 		if diff := a.rule.Priority - b.rule.Priority; diff < 0 {
@@ -96,8 +97,9 @@ func (s *Server) doGetDecision(ctx context.Context,
 
 	for _, rule := range allRules {
 		res, err := s.getDecisionRule(ctx, &getDecisionRuleReq{
-			rule:      rule,
-			reqCtxMap: reqCtxMap,
+			rule:          rule,
+			reqCtxMap:     reqCtxMap,
+			isBodyOmitted: isBodyOmitted,
 		})
 		if err != nil {
 			return nil, err
@@ -200,11 +202,15 @@ func (s *Server) getEvaluatePolicyRules(ctx context.Context, req *coctovigilv1.E
 				continue
 			}
 
-			if !s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
+			isEnforced, err := s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
 				spec:      policy.Spec,
 				reqCtxMap: reqCtxMap,
 				attrs:     attrs,
-			}) {
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !isEnforced {
 				continue
 			}
 			if isInList(usedPolicies, policy.Metadata.Name) {
@@ -232,11 +238,15 @@ func (s *Server) getEvaluatePolicyRules(ctx context.Context, req *coctovigilv1.E
 		if err != nil {
 			continue
 		}
-		if !s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
+		isEnforced, err := s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
 			spec:      p.Policy.Spec,
 			reqCtxMap: reqCtxMap,
 			attrs:     attrs,
-		}) {
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !isEnforced {
 			continue
 		}
 
@@ -289,11 +299,16 @@ func (s *Server) getResourcePolicyRules(ctx context.Context,
 				continue
 			}
 
-			if !s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
-				spec:      policy.Spec,
-				reqCtxMap: reqCtxMap,
-				attrs:     attrs,
-			}) {
+			isEnforced, err := s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
+				spec:          policy.Spec,
+				reqCtxMap:     reqCtxMap,
+				attrs:         attrs,
+				isBodyOmitted: isBodyOmitted(reqCtx),
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !isEnforced {
 				continue
 			}
 			if isInList(*usedPolicies, policy.Metadata.Name) {
@@ -321,11 +336,16 @@ func (s *Server) getResourcePolicyRules(ctx context.Context,
 		if err != nil {
 			continue
 		}
-		if !s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
-			spec:      p.Spec,
-			reqCtxMap: reqCtxMap,
-			attrs:     attrs,
-		}) {
+		isEnforced, err := s.shouldEnforcePolicy(ctx, &shouldEnforcePolicyReq{
+			spec:          p.Spec,
+			reqCtxMap:     reqCtxMap,
+			attrs:         attrs,
+			isBodyOmitted: isBodyOmitted(reqCtx),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !isEnforced {
 			continue
 		}
 
@@ -455,8 +475,9 @@ func (s *Server) getAllRules(ctx context.Context, req *getDecisionReq, reqCtxMap
 }
 
 type getDecisionRuleReq struct {
-	rule      *policyRule
-	reqCtxMap map[string]any
+	rule          *policyRule
+	reqCtxMap     map[string]any
+	isBodyOmitted bool
 }
 
 func (s *Server) getDecisionRule(ctx context.Context, req *getDecisionRuleReq) (*policyDecisionResult, error) {
@@ -475,9 +496,15 @@ func (s *Server) getDecisionRule(ctx context.Context, req *getDecisionRuleReq) (
 	}
 
 	if rule.Condition != nil {
-		isMatched, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
-		if err != nil {
-			return nil, err
+		var isMatched bool
+		if req.isBodyOmitted && isBodyCondition(rule.Condition) {
+			isMatched = rule.Effect == corev1.Policy_Spec_Rule_DENY
+		} else {
+			var err error
+			isMatched, err = s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !isMatched {
 			return resp, nil
@@ -539,14 +566,22 @@ type getDecisionEnforcementRuleRes struct {
 }
 
 type shouldEnforcePolicyReq struct {
-	spec      *corev1.Policy_Spec
-	reqCtxMap map[string]any
-	attrs     map[string]any
+	spec          *corev1.Policy_Spec
+	reqCtxMap     map[string]any
+	attrs         map[string]any
+	isBodyOmitted bool
 }
 
-func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePolicyReq) bool {
+func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePolicyReq) (bool, error) {
 	if len(req.spec.EnforcementRules) == 0 {
-		return true
+		return true, nil
+	}
+
+	if req.isBodyOmitted && slices.ContainsFunc(req.spec.EnforcementRules,
+		func(rule *corev1.Policy_Spec_EnforcementRule) bool {
+			return isBodyCondition(rule.GetCondition())
+		}) {
+		return false, errors.Errorf("Cannot evaluate the Policy enforcement rules without the request body")
 	}
 
 	var enforceRules []*corev1.Policy_Spec_EnforcementRule
@@ -573,7 +608,7 @@ func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePoli
 			continue
 		}
 		if res.decision == matchDecisionMATCH_YES {
-			return true
+			return true, nil
 		}
 	}
 
@@ -587,11 +622,11 @@ func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePoli
 			continue
 		}
 		if res.decision == matchDecisionMATCH_YES {
-			return false
+			return false, nil
 		}
 	}
 
-	return true
+	return true, nil
 }
 
 func (s *Server) getDecisionEnforcementRule(ctx context.Context,

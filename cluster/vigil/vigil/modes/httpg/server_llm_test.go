@@ -739,6 +739,129 @@ func TestServerLLMMaxRequestBytes(t *testing.T) {
 	assert.Equal(t, cnt, env.upstream.getReqCount())
 }
 
+func newLLMDenyAuthz(match string) *corev1.Service_Spec_Authorization {
+	return &corev1.Service_Spec_Authorization{
+		InlinePolicies: []*corev1.InlinePolicy{
+			{
+				Spec: &corev1.Policy_Spec{
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:     "deny",
+							Priority: 0,
+							Effect:   corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_Match{
+									Match: match,
+								},
+							},
+						},
+						{
+							Name:     "allow-rest",
+							Priority: 1,
+							Effect:   corev1.Policy_Spec_Rule_ALLOW,
+							Condition: &corev1.Condition{
+								Type: &corev1.Condition_MatchAny{
+									MatchAny: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestServerLLMInvalidMembers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.authz = newLLMDenyAuthz(`ctx.request.llm.model == "gpt-big"`)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{}, "")
+
+	{
+		cnt := env.upstream.getReqCount()
+
+		resp, err := resty.New().R().
+			SetBody(env.newChatBody("gpt-big")).
+			Post(env.getURL("/v1/chat/completions"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode(), resp.String())
+		assert.Equal(t, cnt, env.upstream.getReqCount())
+	}
+
+	for _, body := range []string{
+		`{"model":"gpt-big","MODEL":"gpt-small","messages":[{"role":"user","content":"hello"}]}`,
+		`{"model":"gpt-big","model":"gpt-small","messages":[{"role":"user","content":"hello"}]}`,
+		`{"model":"gpt-big","model":"gpt-small","messages":[{"role":"user","content":"hello"}]}`,
+	} {
+		cnt := env.upstream.getReqCount()
+
+		resp, err := resty.New().R().
+			SetHeader("Content-Type", "application/json").
+			SetBody(body).
+			Post(env.getURL("/v1/chat/completions"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode(), body)
+		assert.Equal(t, cnt, env.upstream.getReqCount(), body)
+	}
+
+	{
+		resp, err := resty.New().R().
+			SetBody(env.newChatBody("gpt-small")).
+			Post(env.getURL("/v1/chat/completions"))
+		assert.Nil(t, err, "%+v", err)
+		assert.True(t, resp.IsSuccess(), resp.String())
+		assert.Equal(t, "gpt-small", env.upstream.getLastBodyMap()["model"])
+	}
+}
+
+func TestServerLLMBodyOmitted(t *testing.T) {
+
+	for _, tst := range []struct {
+		name   string
+		match  string
+		model  string
+		size   int
+		status int
+	}{
+		{"BodyRuleSmall", `ctx.request.llm.http.bodyMap.temperature > 1.0`, "gpt-small", 0, http.StatusOK},
+		{"BodyRuleOmitted", `ctx.request.llm.http.bodyMap.temperature > 1.0`, "gpt-small", 3 * 1024 * 1024, http.StatusForbidden},
+		{"ModelRuleOmitted", `ctx.request.llm.model == "gpt-big"`, "gpt-small", 3 * 1024 * 1024, http.StatusOK},
+		{"ModelRuleOmittedDenied", `ctx.request.llm.model == "gpt-big"`, "gpt-big", 3 * 1024 * 1024, http.StatusForbidden},
+	} {
+		t.Run(tst.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			env := newLLMEnv(t, ctx)
+			env.authz = newLLMDenyAuthz(tst.match)
+			env.start(t, ctx, &corev1.Service_Spec_Config_LLM{}, "")
+
+			cnt := env.upstream.getReqCount()
+
+			body := env.newChatBody(tst.model)
+			body["temperature"] = 0.5
+			body["messages"] = []any{
+				map[string]any{"role": "user", "content": "hello" + strings.Repeat("x", tst.size)},
+			}
+
+			resp, err := resty.New().R().
+				SetBody(body).
+				Post(env.getURL("/v1/chat/completions"))
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, tst.status, resp.StatusCode())
+
+			if tst.status == http.StatusOK {
+				assert.Equal(t, cnt+1, env.upstream.getReqCount())
+			} else {
+				assert.Equal(t, cnt, env.upstream.getReqCount())
+			}
+		})
+	}
+}
+
 func TestServerLLMCORS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

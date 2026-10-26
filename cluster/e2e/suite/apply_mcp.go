@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
@@ -341,6 +342,64 @@ func applyMCPGateway(t *testing.T, a *applyCtx) {
 
 		waitStatus(t, c, "the same MCP tool call to be allowed once the Policy is removed",
 			callArgs("transfer", map[string]any{"amount": 500}), http.StatusOK)
+	})
+
+	t.Run("BodyOmitted", func(t *testing.T) {
+		svc := h.GetService(t, "mcp-echo")
+		original := svc.Spec.Config.Type
+
+		t.Cleanup(func() {
+			svc := h.GetService(t, "mcp-echo")
+			svc.Spec.Config.Type = original
+			h.UpdateService(t, svc)
+		})
+
+		mcpCfg := svc.Spec.Config.GetMcp()
+		if mcpCfg == nil {
+			mcpCfg = &corev1.Service_Spec_Config_MCP{}
+		}
+		mcpCfg.Limits = &corev1.Service_Spec_Config_MCP_Limits{
+			MaxRequestBytes: 4 * 1024 * 1024,
+		}
+		svc.Spec.Config.Type = &corev1.Service_Spec_Config_Mcp{Mcp: mcpCfg}
+		h.UpdateService(t, svc)
+
+		setPolicy(t, "mcp-tool-arguments-omitted", []*corev1.Policy_Spec_Rule{
+			harness.MatchRule("deny-large-transfers", 0,
+				corev1.Policy_Spec_Rule_DENY,
+				`double(ctx.request.mcp.http.bodyMap.params.arguments.amount) > 100.0`),
+			harness.MatchRule("allow-rest", 1,
+				corev1.Policy_Spec_Rule_ALLOW, `true`),
+		})
+
+		c := h.ServiceClient(svc, token)
+
+		waitStatus(t, c, "the MCP tool call above the argument limit to be rejected",
+			callArgs("transfer", map[string]any{"amount": 500}), http.StatusForbidden)
+
+		res, err := post(c, callArgs("transfer", map[string]any{"amount": 10})).Post("/")
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode(), res.String())
+
+		padded := `{"jsonrpc":"2.0","id":1,"method":"tools/call",` +
+			`"params":{"name":"transfer","arguments":{"amount":10}}}` + strings.Repeat(" ", 2*1024*1024+1)
+
+		h.Eventually(t, "the MCP tool call with an omitted body to be rejected", propagationBudget,
+			func(ctx context.Context) error {
+				res, err := c.R().SetContext(ctx).
+					SetHeader("Content-Type", "application/json").
+					SetHeader("Accept", mcpAccept).
+					SetBody(padded).
+					Post("/")
+				if err != nil {
+					return err
+				}
+				if res.StatusCode() != http.StatusForbidden {
+					return errors.Errorf("got status %d, want %d",
+						res.StatusCode(), http.StatusForbidden)
+				}
+				return nil
+			})
 	})
 
 	t.Run("CORS", func(t *testing.T) {

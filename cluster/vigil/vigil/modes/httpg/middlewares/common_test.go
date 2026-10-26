@@ -63,6 +63,22 @@ func TestSetRequestContextBody(t *testing.T) {
 
 		assert.Nil(t, httpC.Body)
 		assert.Nil(t, httpC.BodyMap)
+		assert.True(t, httpC.IsBodyOmitted)
+
+		SetRequestContextBody(httpC, []byte(`{"k": "v"}`), map[string]any{"k": "v"})
+
+		assert.Equal(t, []byte(`{"k": "v"}`), httpC.Body)
+		assert.NotNil(t, httpC.BodyMap)
+		assert.False(t, httpC.IsBodyOmitted)
+	}
+
+	{
+		httpC := &corev1.RequestContext_Request_HTTP{}
+
+		SetRequestContextBody(httpC, make([]byte, MaxReqCtxBodySize), nil)
+
+		assert.NotNil(t, httpC.Body)
+		assert.False(t, httpC.IsBodyOmitted)
 	}
 
 	{

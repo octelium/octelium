@@ -221,6 +221,107 @@ func applyLLMGateway(t *testing.T, a *applyCtx, upstream *harness.LLMSrv) {
 		assert.Equal(t, http.StatusOK, res.StatusCode(), res.String())
 	})
 
+	setDenyPolicy := func(t *testing.T, name, match string) {
+		t.Helper()
+
+		svc := h.GetService(t, "llm-echo")
+		original := svc.Spec.Authorization
+
+		t.Cleanup(func() {
+			svc := h.GetService(t, "llm-echo")
+			svc.Spec.Authorization = original
+			h.UpdateService(t, svc)
+		})
+
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Name: name,
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							harness.MatchRule("deny", 0,
+								corev1.Policy_Spec_Rule_DENY, match),
+							harness.MatchRule("allow-rest", 1,
+								corev1.Policy_Spec_Rule_ALLOW, `true`),
+						},
+					},
+				},
+			},
+		}
+		h.UpdateService(t, svc)
+	}
+
+	postChat := func(ctx context.Context, body any) (int, string, error) {
+		res, err := h.ServiceClient(svc, token).R().SetContext(ctx).
+			SetHeader("Content-Type", "application/json").
+			SetBody(body).
+			Post("/v1/chat/completions")
+		if err != nil {
+			return 0, "", err
+		}
+		return res.StatusCode(), res.String(), nil
+	}
+
+	waitChatStatus := func(t *testing.T, what string, body any, want int) {
+		t.Helper()
+
+		h.Eventually(t, what, propagationBudget, func(ctx context.Context) error {
+			status, _, err := postChat(ctx, body)
+			if err != nil {
+				return err
+			}
+			if status != want {
+				return errors.Errorf("got status %d, want %d", status, want)
+			}
+			return nil
+		})
+	}
+
+	t.Run("InvalidMembers", func(t *testing.T) {
+		setDenyPolicy(t, "deny-llm-model-members", `ctx.request.llm.model == "e2e-denied"`)
+
+		waitChatStatus(t, "the denied model to be rejected", map[string]any{
+			"model": "e2e-denied",
+			"messages": []any{
+				map[string]any{"role": "user", "content": "hello"},
+			},
+		}, http.StatusForbidden)
+
+		for _, body := range []string{
+			`{"model":"e2e-denied","MODEL":"e2e-model","messages":[{"role":"user","content":"hello"}]}`,
+			`{"model":"e2e-denied","model":"e2e-model","messages":[{"role":"user","content":"hello"}]}`,
+		} {
+			status, resp, err := postChat(t.Context(), body)
+			require.Nil(t, err)
+			assert.Equal(t, http.StatusBadRequest, status, resp)
+		}
+	})
+
+	t.Run("BodyOmitted", func(t *testing.T) {
+		setDenyPolicy(t, "deny-llm-temperature", `ctx.request.llm.http.bodyMap.temperature > 1.0`)
+
+		newBody := func(temperature float64, size int) map[string]any {
+			return map[string]any{
+				"model":       "e2e-model",
+				"temperature": temperature,
+				"messages": []any{
+					map[string]any{"role": "user", "content": "hello" + strings.Repeat("x", size)},
+				},
+			}
+		}
+
+		waitChatStatus(t, "the request above the temperature limit to be rejected",
+			newBody(1.5, 0), http.StatusForbidden)
+
+		status, resp, err := postChat(t.Context(), newBody(0.5, 0))
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, status, resp)
+
+		status, resp, err = postChat(t.Context(), newBody(0.5, 3*1024*1024))
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, status, resp)
+	})
+
 	t.Run("CORS", func(t *testing.T) {
 		svc := h.GetService(t, "llm-echo")
 

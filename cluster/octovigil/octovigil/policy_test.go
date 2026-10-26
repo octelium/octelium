@@ -2761,8 +2761,166 @@ func TestEnforcementRuleEdges(t *testing.T) {
 		{"EnforceNoMatch", []*corev1.Policy_Spec_EnforcementRule{{Effect: corev1.Policy_Spec_EnforcementRule_ENFORCE, Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: false}}}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, srv.s.shouldEnforcePolicy(t.Context(), &shouldEnforcePolicyReq{spec: &corev1.Policy_Spec{EnforcementRules: tc.rules}}))
+			isEnforced, err := srv.s.shouldEnforcePolicy(t.Context(), &shouldEnforcePolicyReq{spec: &corev1.Policy_Spec{EnforcementRules: tc.rules}})
+			assert.Nil(t, err)
+			assert.Equal(t, tc.want, isEnforced)
 		})
+	}
+}
+
+func TestIsBodyCondition(t *testing.T) {
+	match := func(arg string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Match{Match: arg}}
+	}
+	matchAny := &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}
+	opa := func(arg string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{Type: &corev1.Condition_OPA_Inline{Inline: arg}}}}
+	}
+
+	for _, tc := range []struct {
+		condition *corev1.Condition
+		want      bool
+	}{
+		{match(`ctx.request.http.bodyMap.amount > 100`), true},
+		{match(`ctx.request.mcp.http.bodyMap.params.arguments.amount > 100`), true},
+		{match(`string(ctx.request.http.body).contains("delete")`), true},
+		{match(`ctx.request.http["bodyMap"].amount > 100`), true},
+		{&corev1.Condition{Type: &corev1.Condition_Not{Not: `has(ctx.request.llm.http.bodyMap)`}}, true},
+		{&corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{matchAny, match(`ctx.request.http.bodyMap.x == 1`)}}}}, true},
+		{&corev1.Condition{Type: &corev1.Condition_Any_{Any: &corev1.Condition_Any{Of: []*corev1.Condition{
+			{Type: &corev1.Condition_None_{None: &corev1.Condition_None{Of: []*corev1.Condition{match(`ctx.request.http.body == b""`)}}}},
+		}}}}, true},
+		{opa("package octelium.condition\n\nmatch if {\n\tinput.ctx.request.http.bodyMap.amount > 100\n}\n"), true},
+
+		{match(`ctx.request.http.path == "/admin"`), false},
+		{match(`ctx.user.metadata.name == "nobody"`), false},
+		{match(`ctx.request.mcp.name == "delete" && ctx.request.http.size > 100`), false},
+		{&corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{matchAny, match(`ctx.request.http.path == "/"`)}}}}, false},
+		{opa("package octelium.condition\n\nmatch if {\n\tinput.ctx.request.http.path == \"/\"\n}\n"), false},
+		{matchAny, false},
+		{nil, false},
+	} {
+		assert.Equal(t, tc.want, isBodyCondition(tc.condition), "%v", tc.condition)
+	}
+
+	bodyPreCondition := &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_Condition{Condition: match(`ctx.request.http.bodyMap.x == 1`)}}
+	pathPreCondition := &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_Condition{Condition: match(`ctx.request.http.path == "/"`)}}
+
+	assert.True(t, isBodyPreCondition(bodyPreCondition))
+	assert.False(t, isBodyPreCondition(pathPreCondition))
+	assert.True(t, isBodyPreCondition(&corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_All_{
+		All: &corev1.PolicyTrigger_Status_PreCondition_All{Of: []*corev1.PolicyTrigger_Status_PreCondition{pathPreCondition, {
+			Type: &corev1.PolicyTrigger_Status_PreCondition_Any_{Any: &corev1.PolicyTrigger_Status_PreCondition_Any{Of: []*corev1.PolicyTrigger_Status_PreCondition{bodyPreCondition}}},
+		}}},
+	}}))
+	assert.False(t, isBodyPreCondition(&corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_MatchAny{MatchAny: true}}))
+	assert.False(t, isBodyPreCondition(nil))
+}
+
+func TestIsBodyOmitted(t *testing.T) {
+	httpC := &corev1.RequestContext_Request_HTTP{IsBodyOmitted: true}
+
+	for _, req := range []*corev1.RequestContext_Request{
+		{Type: &corev1.RequestContext_Request_Http{Http: httpC}},
+		{Type: &corev1.RequestContext_Request_Mcp{Mcp: &corev1.RequestContext_Request_MCP{Http: httpC}}},
+		{Type: &corev1.RequestContext_Request_Llm{Llm: &corev1.RequestContext_Request_LLM{Http: httpC}}},
+	} {
+		assert.True(t, isBodyOmitted(&corev1.RequestContext{Request: req}))
+	}
+
+	assert.False(t, isBodyOmitted(&corev1.RequestContext{Request: &corev1.RequestContext_Request{
+		Type: &corev1.RequestContext_Request_Http{Http: &corev1.RequestContext_Request_HTTP{}}}}))
+	assert.False(t, isBodyOmitted(&corev1.RequestContext{}))
+	assert.False(t, isBodyOmitted(nil))
+}
+
+func TestPolicyBodyOmitted(t *testing.T) {
+	srv, _ := newAuthorizationService(t)
+
+	rule := func(name string, priority int32, effect corev1.Policy_Spec_Rule_Effect, arg string) *policyRule {
+		condition := &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}
+		if arg != "" {
+			condition = &corev1.Condition{Type: &corev1.Condition_Match{Match: arg}}
+		}
+		return &policyRule{rule: &corev1.Policy_Spec_Rule{Name: name, Priority: priority, Effect: effect, Condition: condition}}
+	}
+
+	withBody := map[string]any{"request": map[string]any{"http": map[string]any{
+		"path": "/", "bodyMap": map[string]any{"amount": int64(5)},
+	}}}
+	withoutBody := map[string]any{"request": map[string]any{"http": map[string]any{
+		"path": "/", "isBodyOmitted": true,
+	}}}
+
+	for _, tc := range []struct {
+		name          string
+		rules         []*policyRule
+		reqCtxMap     map[string]any
+		isBodyOmitted bool
+		effect        corev1.Policy_Spec_Rule_Effect
+		ruleName      string
+	}{
+		{"DenyBodyWithBody",
+			[]*policyRule{rule("deny-body", 0, corev1.Policy_Spec_Rule_DENY, `ctx.request.http.bodyMap.amount > 100`), rule("allow-rest", 1, corev1.Policy_Spec_Rule_ALLOW, "")},
+			withBody, false, corev1.Policy_Spec_Rule_ALLOW, "allow-rest"},
+		{"DenyBodyOmitted",
+			[]*policyRule{rule("deny-body", 0, corev1.Policy_Spec_Rule_DENY, `ctx.request.http.bodyMap.amount > 100`), rule("allow-rest", 1, corev1.Policy_Spec_Rule_ALLOW, "")},
+			withoutBody, true, corev1.Policy_Spec_Rule_DENY, "deny-body"},
+		{"AllowBodyWithBody",
+			[]*policyRule{rule("allow-body", 0, corev1.Policy_Spec_Rule_ALLOW, `ctx.request.http.bodyMap.amount < 100`), rule("deny-rest", 1, corev1.Policy_Spec_Rule_DENY, "")},
+			withBody, false, corev1.Policy_Spec_Rule_ALLOW, "allow-body"},
+		{"AllowBodyOmitted",
+			[]*policyRule{rule("allow-body", 0, corev1.Policy_Spec_Rule_ALLOW, `!has(ctx.request.http.bodyMap) || ctx.request.http.bodyMap.amount < 100`), rule("deny-rest", 1, corev1.Policy_Spec_Rule_DENY, "")},
+			withoutBody, true, corev1.Policy_Spec_Rule_DENY, "deny-rest"},
+		{"NonBodyRuleOmitted",
+			[]*policyRule{rule("deny-admin", 0, corev1.Policy_Spec_Rule_DENY, `ctx.request.http.path == "/admin"`), rule("allow-rest", 1, corev1.Policy_Spec_Rule_ALLOW, "")},
+			withoutBody, true, corev1.Policy_Spec_Rule_ALLOW, "allow-rest"},
+		{"OmittedFlagRule",
+			[]*policyRule{rule("deny-omitted", 0, corev1.Policy_Spec_Rule_DENY, `ctx.request.http.isBodyOmitted`), rule("allow-rest", 1, corev1.Policy_Spec_Rule_ALLOW, "")},
+			withoutBody, true, corev1.Policy_Spec_Rule_DENY, "deny-omitted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := srv.s.doGetDecision(t.Context(), tc.reqCtxMap, tc.rules, tc.isBodyOmitted)
+			assert.Nil(t, err)
+			assert.Equal(t, matchDecisionMATCH_YES, resp.decision)
+			assert.Equal(t, tc.effect, resp.effect)
+			assert.Equal(t, tc.ruleName, resp.reason.Details.GetPolicyMatch().RuleName)
+		})
+	}
+
+	{
+		spec := &corev1.Policy_Spec{EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{{
+			Effect:    corev1.Policy_Spec_EnforcementRule_IGNORE,
+			Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: `ctx.request.http.bodyMap.env == "dev"`}},
+		}}}
+
+		isEnforced, err := srv.s.shouldEnforcePolicy(t.Context(), &shouldEnforcePolicyReq{spec: spec, reqCtxMap: withBody})
+		assert.Nil(t, err)
+		assert.True(t, isEnforced)
+
+		_, err = srv.s.shouldEnforcePolicy(t.Context(), &shouldEnforcePolicyReq{spec: spec, reqCtxMap: withoutBody, isBodyOmitted: true})
+		assert.NotNil(t, err)
+	}
+
+	{
+		i := &corev1.RequestContext{Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+			Http: &corev1.RequestContext_Request_HTTP{Path: "/", IsBodyOmitted: true},
+		}}}
+		pt := &corev1.PolicyTrigger{Status: &corev1.PolicyTrigger_Status{PreCondition: &corev1.PolicyTrigger_Status_PreCondition{
+			Type: &corev1.PolicyTrigger_Status_PreCondition_Condition{Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{Match: `ctx.request.http.bodyMap.env == "prod"`},
+			}},
+		}}}
+
+		var usedPolicies []string
+		rules, err := srv.s.getRulesFromPolicyTrigger(t.Context(), i, withoutBody, pt, &usedPolicies)
+		assert.NotNil(t, err)
+		assert.Nil(t, rules)
+
+		i.Request.GetHttp().IsBodyOmitted = false
+		rules, err = srv.s.getRulesFromPolicyTrigger(t.Context(), i, withBody, pt, &usedPolicies)
+		assert.Nil(t, err)
+		assert.Nil(t, rules)
 	}
 }
 
@@ -2804,7 +2962,7 @@ func TestPolicyPriorityRange(t *testing.T) {
 				if reverse {
 					rules[0], rules[1] = rules[1], rules[0]
 				}
-				resp, err := srv.s.doGetDecision(t.Context(), nil, rules)
+				resp, err := srv.s.doGetDecision(t.Context(), nil, rules, false)
 				if !assert.Nil(t, err) {
 					return
 				}

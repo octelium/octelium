@@ -97,6 +97,15 @@ func (m *guard) check(req *http.Request, reqCtx *middlewares.RequestContext) *Wr
 		}
 	}
 
+	if llmReq.HasInvalidMembers {
+		return &WriteErrorOpts{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       ErrTypeInvalidRequest,
+			Code:       ErrCodeInvalidRequest,
+			Message:    "Octelium: the request body contains ambiguous or invalid members",
+		}
+	}
+
 	if llmReq.Stream && !httputils.IsLLMRouteStreamable(llmReq.Route) {
 		return &WriteErrorOpts{
 			HTTPStatus: http.StatusBadRequest,

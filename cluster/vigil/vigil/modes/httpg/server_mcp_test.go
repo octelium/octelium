@@ -604,6 +604,91 @@ func TestServerMCPInvalidMembers(t *testing.T) {
 	}
 }
 
+func TestServerMCPBodyOmitted(t *testing.T) {
+
+	newAuthz := func(match string) *corev1.Service_Spec_Authorization {
+		return &corev1.Service_Spec_Authorization{
+			InlinePolicies: []*corev1.InlinePolicy{
+				{
+					Spec: &corev1.Policy_Spec{
+						Rules: []*corev1.Policy_Spec_Rule{
+							{
+								Name:     "deny",
+								Priority: 0,
+								Effect:   corev1.Policy_Spec_Rule_DENY,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_Match{
+										Match: match,
+									},
+								},
+							},
+							{
+								Name:     "allow-rest",
+								Priority: 1,
+								Effect:   corev1.Policy_Spec_Rule_ALLOW,
+								Condition: &corev1.Condition{
+									Type: &corev1.Condition_MatchAny{
+										MatchAny: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	newBody := func(name string, amount int, padding int) string {
+		return fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call",`+
+			`"params":{"name":%q,"arguments":{"amount":%d}}}`, name, amount) + strings.Repeat(" ", padding)
+	}
+
+	padding := 2*1024*1024 + 1
+
+	for _, tst := range []struct {
+		name   string
+		match  string
+		body   string
+		status int
+	}{
+		{"BodyRuleSmall", `double(ctx.request.mcp.http.bodyMap.params.arguments.amount) > 100.0`,
+			newBody("transfer", 500, 0), http.StatusForbidden},
+		{"BodyRuleSmallAllowed", `double(ctx.request.mcp.http.bodyMap.params.arguments.amount) > 100.0`,
+			newBody("transfer", 5, 0), http.StatusOK},
+		{"BodyRuleOmitted", `double(ctx.request.mcp.http.bodyMap.params.arguments.amount) > 100.0`,
+			newBody("transfer", 5, padding), http.StatusForbidden},
+		{"NameRuleOmitted", `ctx.request.mcp.name == "delete"`,
+			newBody("transfer", 500, padding), http.StatusOK},
+		{"NameRuleOmittedDenied", `ctx.request.mcp.name == "delete"`,
+			newBody("delete", 5, padding), http.StatusForbidden},
+	} {
+		t.Run(tst.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			env := newMCPEnv(t, ctx)
+			env.authz = newAuthz(tst.match)
+			env.start(t, ctx, &corev1.Service_Spec_Config_MCP{
+				Limits: &corev1.Service_Spec_Config_MCP_Limits{
+					MaxRequestBytes: 4 * 1024 * 1024,
+				},
+			}, "")
+
+			cnt := env.upstream.getReqCount()
+
+			resp := env.postMCP(t, tst.body)
+			assert.Equal(t, tst.status, resp.StatusCode())
+
+			if tst.status == http.StatusOK {
+				assert.Equal(t, cnt+1, env.upstream.getReqCount())
+			} else {
+				assert.Equal(t, cnt, env.upstream.getReqCount())
+			}
+		})
+	}
+}
+
 func TestServerMCPProtocolVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

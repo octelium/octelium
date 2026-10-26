@@ -340,9 +340,11 @@ func SetRequestContextBody(httpC *corev1.RequestContext_Request_HTTP,
 
 	httpC.Body = body
 	httpC.BodyMap = nil
+	httpC.IsBodyOmitted = false
 
 	if len(body) > MaxReqCtxBodySize {
 		httpC.Body = nil
+		httpC.IsBodyOmitted = true
 		return
 	}
 

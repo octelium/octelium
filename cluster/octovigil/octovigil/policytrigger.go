@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -53,6 +54,10 @@ func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
 
 func (s *Server) getRulesFromPolicyTrigger(ctx context.Context,
 	i *corev1.RequestContext, reqCtxMap map[string]any, pt *corev1.PolicyTrigger, usedPolicies *[]string) ([]*policyRule, error) {
+
+	if isBodyOmitted(i) && isBodyPreCondition(pt.Status.PreCondition) {
+		return nil, errors.Errorf("Cannot evaluate the PolicyTrigger preCondition without the request body")
+	}
 
 	isMatched, err := s.doEvalPreCondition(ctx, i, map[string]any{
 		"ctx": reqCtxMap,

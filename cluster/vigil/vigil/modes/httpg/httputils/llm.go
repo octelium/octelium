@@ -23,10 +23,13 @@ import (
 	"hash/crc32"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -40,9 +43,10 @@ type LLMRequest struct {
 	Protocol corev1.Service_Spec_Config_LLM_Protocol
 	Route    corev1.RequestContext_Request_LLM_Route
 
-	IsKnownRoute bool
-	HasBody      bool
-	IsBodyValid  bool
+	IsKnownRoute      bool
+	HasBody           bool
+	IsBodyValid       bool
+	HasInvalidMembers bool
 
 	Model          string
 	IsModelTooLong bool
@@ -638,36 +642,36 @@ func (t *llmTool) schemaLen() int {
 }
 
 func (e *llmEnvelope) toolsRaw(
-	protocol corev1.Service_Spec_Config_LLM_Protocol) json.RawMessage {
+	protocol corev1.Service_Spec_Config_LLM_Protocol) (json.RawMessage, error) {
 
 	switch protocol {
 	case corev1.Service_Spec_Config_LLM_GEMINI:
 		return flattenLLMToolGroups(e.Tools)
 	case corev1.Service_Spec_Config_LLM_BEDROCK:
 		if e.ToolConfig == nil {
-			return nil
+			return nil, nil
 		}
-		return e.ToolConfig.Tools
+		return e.ToolConfig.Tools, nil
 	default:
-		return e.Tools
+		return e.Tools, nil
 	}
 }
 
-func flattenLLMToolGroups(raw json.RawMessage) json.RawMessage {
+func flattenLLMToolGroups(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var groups []json.RawMessage
 	if err := json.Unmarshal(raw, &groups); err != nil {
-		return nil
+		return nil, err
 	}
 
 	var ret []json.RawMessage
 	for _, rawGroup := range groups {
 		group := &llmToolGroup{}
-		if err := json.Unmarshal(rawGroup, group); err != nil {
-			continue
+		if err := unmarshalLLMObject(rawGroup, group); err != nil {
+			return nil, err
 		}
 		if len(group.FunctionDeclarations) == 0 {
 			ret = append(ret, rawGroup)
@@ -677,15 +681,15 @@ func flattenLLMToolGroups(raw json.RawMessage) json.RawMessage {
 	}
 
 	if len(ret) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	out, err := json.Marshal(ret)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	return out
+	return out, nil
 }
 
 func (e *llmEnvelope) inputRaw(
@@ -770,18 +774,27 @@ func ParseLLMRequest(req *http.Request,
 
 	ret.IsBodyValid = true
 
+	if !jsontext.Value(body).IsValid() || hasLLMMemberAlias(body, reflect.TypeFor[llmEnvelope]()) {
+		ret.HasInvalidMembers = true
+		return ret
+	}
+
 	if len(env.Model) > 0 && ret.Model == "" && !ret.IsModelTooLong {
 		var v string
-		if err := json.Unmarshal(env.Model, &v); err == nil {
-			ret.setModel(v)
+		if err := json.Unmarshal(env.Model, &v); err != nil {
+			ret.HasInvalidMembers = true
+			return ret
 		}
+		ret.setModel(v)
 	}
 
 	if len(env.Stream) > 0 && isLLMStreamInBody(ret.Protocol) {
 		var v bool
-		if err := json.Unmarshal(env.Stream, &v); err == nil {
-			ret.Stream = v
+		if err := json.Unmarshal(env.Stream, &v); err != nil {
+			ret.HasInvalidMembers = true
+			return ret
 		}
+		ret.Stream = v
 	}
 
 	for _, raw := range env.maxOutputTokensRaw(ret.Protocol) {
@@ -789,9 +802,11 @@ func ParseLLMRequest(req *http.Request,
 			continue
 		}
 		var v uint64
-		if err := json.Unmarshal(raw, &v); err == nil {
-			ret.MaxOutputTokens = max(ret.MaxOutputTokens, v)
+		if err := json.Unmarshal(raw, &v); err != nil {
+			ret.HasInvalidMembers = true
+			return ret
 		}
+		ret.MaxOutputTokens = max(ret.MaxOutputTokens, v)
 	}
 
 	walker := &llmTextWalker{}
@@ -808,7 +823,16 @@ func ParseLLMRequest(req *http.Request,
 		walker.walkRaw(raw, 0)
 	}
 
-	ret.parseTools(env.toolsRaw(ret.Protocol), walker)
+	toolsRaw, err := env.toolsRaw(ret.Protocol)
+	if err != nil {
+		ret.HasInvalidMembers = true
+		return ret
+	}
+
+	if err := ret.parseTools(toolsRaw, walker); err != nil {
+		ret.HasInvalidMembers = true
+		return ret
+	}
 
 	ret.HasImageInput = walker.hasImage
 	ret.HasAudioInput = walker.hasAudio
@@ -835,18 +859,18 @@ func (r *LLMRequest) setModel(arg string) {
 	r.Model = arg
 }
 
-func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) {
+func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) error {
 	if len(raw) == 0 {
-		return
+		return nil
 	}
 
 	var tools []json.RawMessage
 	if err := json.Unmarshal(raw, &tools); err != nil {
-		return
+		return err
 	}
 
 	if len(tools) == 0 {
-		return
+		return nil
 	}
 
 	r.HasTools = true
@@ -854,16 +878,13 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) {
 
 	for _, rawTool := range tools {
 		tool := &llmTool{}
-		if err := json.Unmarshal(rawTool, tool); err != nil {
-			continue
+		if err := unmarshalLLMObject(rawTool, tool); err != nil {
+			return err
 		}
 
-		name := tool.Name
-		if name == "" && tool.Function != nil {
-			name = tool.Function.Name
-		}
-		if name == "" && tool.ToolSpec != nil {
-			name = tool.ToolSpec.Name
+		name, err := tool.getName()
+		if err != nil {
+			return err
 		}
 		if name != "" && len(name) <= maxLLMStringLen &&
 			len(r.ToolNames) < maxLLMToolNames {
@@ -878,6 +899,64 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) {
 	}
 
 	sort.Strings(r.ToolNames)
+
+	return nil
+}
+
+func (t *llmTool) getName() (string, error) {
+	names := []string{t.Name}
+	if t.Function != nil {
+		names = append(names, t.Function.Name)
+	}
+	if t.ToolSpec != nil {
+		names = append(names, t.ToolSpec.Name)
+	}
+
+	var ret string
+	for _, name := range names {
+		switch {
+		case name == "":
+		case ret == "":
+			ret = name
+		case name != ret:
+			return "", errors.Errorf("Ambiguous LLM tool name")
+		}
+	}
+
+	return ret, nil
+}
+
+func unmarshalLLMObject(raw json.RawMessage, v any) error {
+	if hasLLMMemberAlias(raw, reflect.TypeOf(v).Elem()) {
+		return errors.Errorf("Ambiguous LLM member")
+	}
+
+	return json.Unmarshal(raw, v)
+}
+
+func hasLLMMemberAlias(raw json.RawMessage, typ reflect.Type) bool {
+	obj := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+
+		for k := range obj {
+			if k != name && strings.EqualFold(k, name) {
+				return true
+			}
+		}
+
+		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct &&
+			hasLLMMemberAlias(obj[name], field.Type.Elem()) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func countLLMItems(raw json.RawMessage) uint32 {

@@ -48,6 +48,17 @@ func (m *rebuild) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		zap.L().Debug("LLM request body was mutated by a Plugin. Rebuilding the RequestContext")
 		middlewares.SetLLMRequestContext(reqCtx, req)
 		reqCtx.SetBodyDigest()
+
+		if reqCtx.LLM.HasInvalidMembers {
+			WriteError(w, &WriteErrorOpts{
+				Protocol:   reqCtx.LLM.GetProtocol(),
+				HTTPStatus: http.StatusBadRequest,
+				Type:       ErrTypeInvalidRequest,
+				Code:       ErrCodeInvalidRequest,
+				Message:    "Octelium: the request body contains ambiguous or invalid members",
+			})
+			return
+		}
 	}
 
 	m.next.ServeHTTP(w, req)

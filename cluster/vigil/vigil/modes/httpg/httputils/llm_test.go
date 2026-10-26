@@ -719,6 +719,115 @@ func TestParseLLMRequestGemini(t *testing.T) {
 	assert.Equal(t, corev1.RequestContext_Request_LLM_COMPLETE, llmReq.EstimateQuality)
 }
 
+func TestParseLLMRequestInvalidMembers(t *testing.T) {
+
+	tsts := []struct {
+		protocol corev1.Service_Spec_Config_LLM_Protocol
+		path     string
+		body     string
+	}{
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","MODEL":"gpt-small","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"Model":"gpt-small","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","model":"gpt-small","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","model":"gpt-small","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","max_tokens":100000,"MAX_TOKENS":10,"messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","stream":true,"Stream":false,"messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"TOOLS":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[{"role":"user","content":"a","content":"b"}]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			"{\"model\":\"gpt-big\xff\",\"messages\":[]}"},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":[{"type":"function","function":{"name":"shell","NAME":"weather"}}]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":[{"type":"function","Function":{"name":"shell"}}]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":[{"type":"function","name":"weather","function":{"name":"shell"}}]}`},
+
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":42,"messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","stream":"true","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","max_tokens":"100000","messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","max_tokens":1e5,"messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","max_tokens":-1,"messages":[]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":{"type":"function"}}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":["shell"]}`},
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[],"tools":[{"name":5,"function":{"name":"shell"}}]}`},
+
+		{corev1.Service_Spec_Config_LLM_ANTHROPIC, "/v1/messages",
+			`{"model":"claude","max_tokens":10,"messages":[],"tools":[{"name":"web_search","Name":"x"}]}`},
+		{corev1.Service_Spec_Config_LLM_GEMINI, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[],"generationConfig":{"maxOutputTokens":512,"MaxOutputTokens":10}}`},
+		{corev1.Service_Spec_Config_LLM_GEMINI, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"contents":[],"tools":[{"FunctionDeclarations":[{"name":"shell"}]}]}`},
+		{corev1.Service_Spec_Config_LLM_BEDROCK, "/model/anthropic.claude-sonnet-4-5-v1:0/converse",
+			`{"messages":[],"inferenceConfig":{"maxTokens":900,"MAXTOKENS":10}}`},
+		{corev1.Service_Spec_Config_LLM_BEDROCK, "/model/anthropic.claude-sonnet-4-5-v1:0/converse",
+			`{"messages":[],"toolConfig":{"tools":[{"toolSpec":{"name":"shell","Name":"weather"}}]}}`},
+	}
+
+	for _, tst := range tsts {
+		llmReq := parseLLM(t, tst.protocol, http.MethodPost, tst.path, tst.body)
+
+		assert.True(t, llmReq.IsBodyValid, tst.body)
+		assert.True(t, llmReq.HasInvalidMembers, tst.body)
+	}
+}
+
+func TestParseLLMRequestExactMembers(t *testing.T) {
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_OPENAI,
+			http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-big","messages":[{"role":"user","content":"Hello","Content":"x","MODEL":"y"}],`+
+				`"metadata":{"Model":"z","model":"w"},`+
+				`"tools":[{"type":"function","name":"shell","function":{"name":"shell",`+
+				`"parameters":{"type":"object","properties":{"name":{},"Name":{}}}}}]}`)
+
+		assert.True(t, llmReq.IsBodyValid)
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, "gpt-big", llmReq.Model)
+		assert.Equal(t, []string{"shell"}, llmReq.ToolNames)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_OPENAI,
+			http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-big","stream":null,"max_tokens":null,"tools":null,"messages":[]}`)
+
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, "gpt-big", llmReq.Model)
+		assert.False(t, llmReq.Stream)
+		assert.Equal(t, uint64(0), llmReq.MaxOutputTokens)
+		assert.False(t, llmReq.HasTools)
+	}
+
+	{
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"model":42,"contents":[],"tools":[{"googleSearch":{}},{"functionDeclarations":[{"name":"get_weather"}]}]}`)
+
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, "gemini-2.5-pro", llmReq.Model)
+		assert.Equal(t, uint32(2), llmReq.ToolCount)
+		assert.Equal(t, []string{"get_weather"}, llmReq.ToolNames)
+	}
+}
+
 func TestParseLLMRequestBedrock(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":[{"text":"Hello there"}]}],` +
 		`"system":[{"text":"You are helpful"}],` +

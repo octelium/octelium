@@ -183,7 +183,7 @@ func (s *internalService) Evaluate(
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
-	resp, err := s.s.doGetDecision(ctx, reqCtxMap, allRules)
+	resp, err := s.s.doGetDecision(ctx, reqCtxMap, allRules, false)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)
 	}
