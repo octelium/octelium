@@ -66,7 +66,7 @@ func (d *memDB) set(ctx context.Context, domain string, sessToken *authv1.Sessio
 		itm = &cliconfigv1.State_Domain{}
 		d.state.DomainMap[domain] = itm
 	}
-	itm.SessionToken = sessToken
+	itm.SessionToken = pbutils.Clone(sessToken).(*authv1.SessionToken)
 	itm.SessionTokenSetAt = pbutils.Now()
 	return nil
 }
@@ -80,7 +80,7 @@ func (d *memDB) setSettings(ctx context.Context, domain string, settings *daemon
 		itm = &cliconfigv1.State_Domain{}
 		d.state.DomainMap[domain] = itm
 	}
-	itm.Settings = settings
+	itm.Settings = pbutils.Clone(settings).(*daemonv1.DomainSettings)
 
 	return nil
 }
