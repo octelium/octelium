@@ -36,3 +36,13 @@ func TestRunPromptConfirmNonInteractive(t *testing.T) {
 
 	assert.Nil(t, RunPromptConfirm("Confirm to proceed"))
 }
+
+func TestNewPrompt(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		ret := NewPrompt("Proceed", confirm)
+		assert.Equal(t, "Proceed", ret.Label)
+		assert.Equal(t, confirm, ret.IsConfirm)
+		assert.NotNil(t, ret.Templates)
+		assert.Contains(t, ret.Templates.Prompt, "bold")
+	}
+}

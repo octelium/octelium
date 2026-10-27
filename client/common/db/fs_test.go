@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFSDB(t *testing.T) {
@@ -720,4 +721,93 @@ func TestFSDBDeleteStaleSessionToken(t *testing.T) {
 	assert.True(t, state.GetSettings().GetAutoConnect())
 
 	assert.Nil(t, db.deleteStaleSessionToken(context.Background(), "other.com", "new"))
+}
+
+func TestFSDBCorruptState(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted=%t", encrypted), func(t *testing.T) {
+			opts := &Opts{Path: t.TempDir()}
+			if encrypted {
+				opts.EncryptionKey = bytes.Repeat([]byte{1}, encryptionKeyLen)
+			}
+			d, err := newFSDB(opts)
+			require.NoError(t, err)
+			corrupt := []byte{0xff}
+			if encrypted {
+				corrupt, err = d.seal([]byte("state"))
+				require.NoError(t, err)
+				corrupt[len(corrupt)-1] ^= 1
+			}
+			require.NoError(t, os.WriteFile(d.dbPath, corrupt, 0600))
+			ctx := context.Background()
+			_, err = d.get(ctx, "example.com")
+			assert.Error(t, err)
+			_, err = d.list(ctx)
+			assert.Error(t, err)
+			for _, fn := range []func() error{
+				func() error { return d.set(ctx, "example.com", &authv1.SessionToken{AccessToken: "token"}) },
+				func() error { return d.setSettings(ctx, "example.com", &daemonv1.DomainSettings{}) },
+				func() error { return d.setConnectionCleanup(ctx, "example.com", &cliconfigv1.ConnectionCleanup{}) },
+				func() error { return d.deleteConnectionCleanup(ctx, "example.com") },
+				func() error { return d.deleteSessionToken(ctx, "example.com") },
+				func() error { return d.deleteStaleSessionToken(ctx, "example.com", "refresh") },
+				func() error { return d.delete(ctx, "example.com") },
+			} {
+				assert.Error(t, fn())
+			}
+			got, err := os.ReadFile(d.dbPath)
+			require.NoError(t, err)
+			assert.Equal(t, corrupt, got)
+		})
+	}
+}
+
+func TestWriteFileAtomicRollback(t *testing.T) {
+	for _, name := range []string{"prepare", "sync", "rename"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "state")
+			if name == "rename" {
+				require.NoError(t, os.Mkdir(path, 0700))
+			} else {
+				require.NoError(t, os.WriteFile(path, []byte("original"), 0600))
+			}
+			wantErr := errors.New("prepare failed")
+			prepare := func(f *os.File) error {
+				switch name {
+				case "prepare":
+					return wantErr
+				case "sync":
+					return f.Close()
+				}
+				return nil
+			}
+			err := doWriteFileAtomic(path, []byte("replacement"), prepare)
+			require.Error(t, err)
+			if name == "prepare" {
+				assert.ErrorIs(t, err, wantErr)
+			}
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.Equal(t, "state", entries[0].Name())
+			if name != "rename" {
+				got, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, "original", string(got))
+			}
+		})
+	}
+}
+
+func TestFSDBWriteState(t *testing.T) {
+	d, err := newFSDB(&Opts{Path: t.TempDir()})
+	require.NoError(t, err)
+	state := &cliconfigv1.State{DomainMap: map[string]*cliconfigv1.State_Domain{
+		"example.com": {SessionToken: &authv1.SessionToken{AccessToken: "token"}},
+	}}
+	require.NoError(t, d.writeState(state))
+	got, err := d.readState()
+	require.NoError(t, err)
+	assert.True(t, pbutils.IsEqual(state, got))
 }

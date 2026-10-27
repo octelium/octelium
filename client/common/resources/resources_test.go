@@ -15,6 +15,7 @@
 package resources
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +23,10 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadResources(t *testing.T) {
@@ -407,4 +410,67 @@ spec:
 
 	_, _, err = ValidateCoreResources(filepath.Join(dir, "does-not-exist.yaml"))
 	assert.NotNil(t, err)
+}
+
+func TestResourceStdin(t *testing.T) {
+	for _, validate := range []bool{false, true} {
+		f, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+		require.NoError(t, err)
+		_, err = f.WriteString("---\n# empty document\n---\nkind: User\nmetadata:\n  name: stdin-user\nspec:\n  type: HUMAN\n")
+		require.NoError(t, err)
+		_, err = f.Seek(0, io.SeekStart)
+		require.NoError(t, err)
+		previous := os.Stdin
+		os.Stdin = f
+		var items []umetav1.ResourceObjectI
+		if validate {
+			var errs []error
+			items, errs, err = ValidateCoreResources("-")
+			assert.Empty(t, errs)
+		} else {
+			items, err = LoadCoreResources("-")
+		}
+		os.Stdin = previous
+		f.Close()
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		assert.Equal(t, "stdin-user", items[0].GetMetadata().Name)
+	}
+}
+
+func TestResourceFileSelection(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0700))
+	for _, name := range []string{"one.YAML", "nested/two.YmL"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte("kind: Namespace\nmetadata:\n  name: ns\n"), 0600))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ignored.json"), []byte("invalid resource"), 0600))
+	items, err := LoadCoreResources(dir)
+	require.NoError(t, err)
+	assert.Len(t, items, 2)
+	items, errs, err := ValidateCoreResources(dir)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
+	assert.Len(t, items, 2)
+	items, err = LoadCoreResources("")
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	items, errs, err = ValidateCoreResources("")
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	assert.Empty(t, errs)
+}
+
+func TestLoadResourcesDecodeErrors(t *testing.T) {
+	for _, arg := range []string{"kind: [", "kind: 42", "metadata: {name: user}", "kind: Service\nspec:\n  port: invalid"} {
+		items, err := loadResources(strings.NewReader(arg), "broken.yaml", ucorev1.NewObject)
+		assert.ErrorContains(t, err, "broken.yaml")
+		assert.Empty(t, items)
+	}
+	wantErr := errors.New("factory error")
+	_, err := loadResources(strings.NewReader("kind: User"), "user.yaml", func(kind string) (umetav1.ResourceObjectI, error) { return nil, wantErr })
+	assert.ErrorContains(t, err, wantErr.Error())
+	_, errs := validateResources(strings.NewReader("kind: User\nmetadata: {name: user}"), "user.yaml", func(kind string) (umetav1.ResourceObjectI, error) { return nil, wantErr })
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], wantErr.Error())
 }

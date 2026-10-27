@@ -16,10 +16,14 @@ package deviceinfo
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsInvalidSerialNumber(t *testing.T) {
@@ -98,4 +102,35 @@ func TestGetDeviceInfo(t *testing.T) {
 	macs, err := GetMacAddresses()
 	assert.Nil(t, err)
 	assert.Equal(t, info.MacAddresses, macs)
+}
+
+func TestDeviceIdentifiers(t *testing.T) {
+	rawID, err := GetOSInstallationID()
+	id, idErr := getID()
+	if err != nil {
+		assert.Error(t, idErr)
+	} else {
+		require.NoError(t, idErr)
+		assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(rawID))), id)
+	}
+	rawUUID, err := getHardwareUUID(context.Background())
+	uuid, uuidErr := GetHardwareUUID(context.Background())
+	if err != nil {
+		assert.Error(t, uuidErr)
+	} else {
+		require.NoError(t, uuidErr)
+		assert.Equal(t, strings.ToLower(strings.TrimSpace(rawUUID)), uuid)
+	}
+	rawSerial, err := getSerialNumber(context.Background())
+	serial, serialErr := GetSerialNumber(context.Background())
+	if err != nil {
+		assert.Error(t, serialErr)
+	} else {
+		require.NoError(t, serialErr)
+		if isInvalidSerialNumber(rawSerial) {
+			assert.Empty(t, serial)
+		} else {
+			assert.Equal(t, strings.TrimSpace(rawSerial), serial)
+		}
+	}
 }

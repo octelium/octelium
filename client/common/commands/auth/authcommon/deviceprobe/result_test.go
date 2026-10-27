@@ -16,6 +16,9 @@ package deviceprobe
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -147,4 +150,24 @@ func TestProbeText(t *testing.T) {
 		_, err := proto.Marshal(res)
 		assert.Nil(t, err)
 	}
+}
+
+func TestProbeErrorStatuses(t *testing.T) {
+	for _, itm := range []struct {
+		err  error
+		want authv1.DeviceProbeResult_Status
+	}{
+		{fs.ErrNotExist, authv1.DeviceProbeResult_NOT_FOUND},
+		{fs.ErrPermission, authv1.DeviceProbeResult_PERMISSION_REQUIRED},
+		{context.DeadlineExceeded, authv1.DeviceProbeResult_TIMEOUT},
+		{errors.New("failure"), authv1.DeviceProbeResult_FAILED},
+	} {
+		for _, err := range []error{itm.err, fmt.Errorf("wrapped: %w", itm.err)} {
+			ret := probeErr("probe", err)
+			assert.Equal(t, itm.want, ret.Status)
+			assert.Equal(t, "probe", ret.ProbeID)
+			assert.Contains(t, ret.Detail, err.Error())
+		}
+	}
+	assert.Zero(t, getResultSize(&authv1.DeviceProbeResult{}))
 }
