@@ -387,7 +387,7 @@ func getIngressDataPlaneDeployment(o *CommonOpts) *appsv1.Deployment {
 
 						{
 							Name:      "envoy",
-							Image:     "envoyproxy/envoy:v1.40.0",
+							Image:     "envoyproxy/envoy:v1.40.2",
 							Resources: getDefaultResourceRequirements(),
 
 							Command: []string{"envoy"},
