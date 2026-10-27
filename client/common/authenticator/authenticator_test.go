@@ -914,3 +914,141 @@ func TestRefreshUsesSessionRenewedDuringRPC(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAssertionOptionColons(t *testing.T) {
+	uid := "9cf5cddc-6a18-4d48-9a04-722846144d92"
+	for _, typ := range []string{"k8s", "kubernetes", "azure", "github-actions", "jwt"} {
+		for _, prefix := range []string{"", "provider:", uid + ":", "jwt:"} {
+			for _, itm := range []struct {
+				name string
+				arg  string
+				want map[string]string
+			}{
+				{"URL", "audience=https://custom.example:8443/path:segment?resource=urn:example:api", map[string]string{
+					"audience": "https://custom.example:8443/path:segment?resource=urn:example:api",
+				}},
+				{"URN", "audience=urn:example:api", map[string]string{"audience": "urn:example:api"}},
+				{"Windows path", `file=C:\Users\workload\assertion.jwt`, map[string]string{"file": `C:\Users\workload\assertion.jwt`}},
+				{"Unix path", "file=/tmp/issuer:workload/assertion.jwt", map[string]string{"file": "/tmp/issuer:workload/assertion.jwt"}},
+				{"multiple options", "audience=https://custom.example:8443,file=C:\\token.jwt,extra=a=b:c", map[string]string{
+					"audience": "https://custom.example:8443", "file": "C:\\token.jwt", "extra": "a=b:c",
+				}},
+				{"empty and repeated values", "env=,audience=urn:first,ignored,audience=urn:second:", map[string]string{
+					"env": "", "audience": "urn:second:",
+				}},
+			} {
+				t.Run(prefix+typ+"/"+itm.name, func(t *testing.T) {
+					ret, err := parseAssertion(prefix + typ + ":" + itm.arg)
+					require.NoError(t, err)
+					assert.Equal(t, typ, ret.typ)
+					assert.Equal(t, itm.want, ret.argMap)
+					switch prefix {
+					case "":
+						assert.Nil(t, ret.identityProviderRef)
+					case uid + ":":
+						require.NotNil(t, ret.identityProviderRef)
+						assert.Equal(t, uid, ret.identityProviderRef.Uid)
+						assert.Empty(t, ret.identityProviderRef.Name)
+					default:
+						require.NotNil(t, ret.identityProviderRef)
+						assert.Equal(t, strings.TrimSuffix(prefix, ":"), ret.identityProviderRef.Name)
+						assert.Empty(t, ret.identityProviderRef.Uid)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestParseAssertionOptionBoundaries(t *testing.T) {
+	for _, itm := range []struct {
+		arg      string
+		typ      string
+		provider string
+		want     map[string]string
+	}{
+		{"jwt", "jwt", "", nil},
+		{"jwt:", "jwt", "", map[string]string{}},
+		{"jwt:env=TOKEN", "jwt", "", map[string]string{"env": "TOKEN"}},
+		{"provider:jwt", "jwt", "provider", nil},
+		{"provider:jwt:", "jwt", "provider", nil},
+		{"provider:jwt:env=TOKEN", "jwt", "provider", map[string]string{"env": "TOKEN"}},
+		{"jwt:azure:audience=urn:example:api", "azure", "jwt", map[string]string{"audience": "urn:example:api"}},
+		{"github-actions:jwt", "jwt", "github-actions", nil},
+		{"github-actions:jwt:", "jwt", "github-actions", nil},
+	} {
+		t.Run(itm.arg, func(t *testing.T) {
+			ret, err := parseAssertion(itm.arg)
+			require.NoError(t, err)
+			assert.Equal(t, itm.typ, ret.typ)
+			assert.Equal(t, itm.want, ret.argMap)
+			assert.Equal(t, itm.provider, ret.identityProviderRef.GetName())
+		})
+	}
+	for _, arg := range []string{"", "unknown", "unknown:audience=https://custom.example", "provider:unknown:audience=urn:example:api"} {
+		ret, err := parseAssertion(arg)
+		assert.Error(t, err)
+		assert.Nil(t, ret)
+	}
+}
+
+func TestGetAssertionJWTFileWithColons(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(dir, "issuer:workload")
+		require.NoError(t, os.Mkdir(dir, 0700))
+	}
+	path := filepath.Join(dir, "assertion.jwt")
+	require.Contains(t, path, ":")
+	require.NoError(t, os.WriteFile(path, []byte("signed-jwt"), 0600))
+	for _, prefix := range []string{"", "provider:", "9cf5cddc-6a18-4d48-9a04-722846144d92:"} {
+		t.Run(prefix+"jwt", func(t *testing.T) {
+			a := &authenticator{opts: &AuthenticateOpts{Assertion: &AuthenticateOptsAssertion{Arg: prefix + "jwt:file=" + path}}}
+			ret, err := a.getAssertion(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, "signed-jwt", ret.assertion)
+		})
+	}
+}
+
+func TestGithubActionsAssertionAudienceE2E(t *testing.T) {
+	for _, prefix := range []string{"", "provider:", "9cf5cddc-6a18-4d48-9a04-722846144d92:"} {
+		t.Run(prefix+"github-actions", func(t *testing.T) {
+			var authCalls atomic.Int32
+			ctx, d := newAuthenticationTestContext(t, "mem",
+				func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+					if !strings.HasSuffix(info.FullMethod, "/AuthenticateWithAssertion") {
+						return handler(ctx, req)
+					}
+					authCalls.Add(1)
+					arg := req.(*authv1.AuthenticateWithAssertionRequest)
+					assert.Equal(t, "signed-jwt", arg.Assertion)
+					assert.Equal(t, []string{"service:api.default"}, arg.Scopes)
+					return &authv1.SessionToken{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 7200, RefreshTokenExpiresIn: 86400}, nil
+				})
+			audience := "https://custom.example:8443/path:segment?resource=urn:example:api&mode=workload"
+			var httpCalls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				httpCalls.Add(1)
+				assert.Equal(t, "Bearer request-token", r.Header.Get("Authorization"))
+				assert.Equal(t, "kept", r.URL.Query().Get("existing"))
+				assert.Equal(t, []string{audience}, r.URL.Query()["audience"])
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, `{"value":"signed-jwt"}`)
+			}))
+			defer srv.Close()
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", srv.URL+"?existing=kept")
+			require.NoError(t, Authenticate(ctx, &AuthenticateOpts{
+				Domain: "example.invalid", Scopes: []string{"service:api.default"},
+				Assertion: &AuthenticateOptsAssertion{Arg: prefix + "github-actions:audience=" + audience},
+			}))
+			assert.Equal(t, int32(1), httpCalls.Load())
+			assert.Equal(t, int32(1), authCalls.Load())
+			token, err := d.GetSessionToken("example.invalid")
+			require.NoError(t, err)
+			assert.Equal(t, "access", token.AccessToken)
+			assert.Equal(t, "refresh", token.RefreshToken)
+		})
+	}
+}

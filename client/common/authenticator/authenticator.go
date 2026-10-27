@@ -647,9 +647,8 @@ func parseAssertion(arg string) (*parseAssertionRes, error) {
 		}
 	} else if slices.Contains(availableTypes, args[0]) {
 		ret.typ = args[0]
-		hasArgsMap = len(args) == 2
-		if hasArgsMap {
-			ret.argMap = getArgMap(args[1])
+		if _, opts, ok := strings.Cut(arg, ":"); ok {
+			ret.argMap = getArgMap(opts)
 		}
 	} else {
 		return nil, errors.Errorf("Could not get assertion type")
