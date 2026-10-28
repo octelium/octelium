@@ -234,7 +234,26 @@ func getMTLSCfgK8s(ctx context.Context, svc *corev1.Service, svcCfg *corev1.Serv
 			return nil, err
 		}
 
-		clstr := kubeconfig.GetCluster(k8sSpec.GetKubeconfig().Context)
+		contextName := k8sSpec.GetKubeconfig().Context
+		if contextName == "" {
+			contextName = kubeconfig.CurrentContext
+		}
+		kubeContext := kubeconfig.GetContext(contextName)
+		if kubeContext == nil {
+			return nil, errors.Errorf("Kubeconfig context %q was not found", contextName)
+		}
+
+		clstr := kubeconfig.GetCluster(contextName)
+		if clstr == nil {
+			return nil, errors.Errorf("Kubeconfig cluster %q referenced by context %q was not found",
+				kubeContext.Context.Cluster, contextName)
+		}
+
+		usr := kubeconfig.GetUser(contextName)
+		if usr == nil {
+			return nil, errors.Errorf("Kubeconfig user %q referenced by context %q was not found",
+				kubeContext.Context.User, contextName)
+		}
 
 		if clstr.Cluster.CertificateAuthorityData != "" {
 			ca, err := utils_cert.ParseBase64PEMCertificate(clstr.Cluster.CertificateAuthorityData)
@@ -246,8 +265,6 @@ func getMTLSCfgK8s(ctx context.Context, svc *corev1.Service, svcCfg *corev1.Serv
 			pool.AddCert(ca)
 			ret.RootCAs = pool
 		}
-
-		usr := kubeconfig.GetUser(k8sSpec.GetKubeconfig().Context)
 
 		if usr.User.ClientCertificateData != "" && usr.User.ClientKeyData != "" {
 			crtPEM, err := base64.StdEncoding.DecodeString(usr.User.ClientCertificateData)

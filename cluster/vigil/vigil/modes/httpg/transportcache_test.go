@@ -19,7 +19,10 @@ package httpg
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,9 +34,13 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
+	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -706,4 +713,110 @@ func TestTransportCacheKeyDrivenInvalidation(t *testing.T) {
 	assert.Equal(t, 1, c.Len())
 	_, ok := c.tstGetEntry(keyGen2)
 	assert.True(t, ok)
+}
+
+func TestKubeconfigTransportRejectsInvalidRotation(t *testing.T) {
+	ctx := t.Context()
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	var calls atomic.Int64
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+	kube := &k8sutils.KubeConfig{
+		APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+		Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{
+			Server: backend.URL, CertificateAuthorityData: base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{
+				Type: "CERTIFICATE", Bytes: backend.Certificate().Raw,
+			})),
+		}}},
+		Users:    []k8sutils.KubeConfigUser{{Name: "user"}},
+		Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: "cluster", User: "user"}}},
+	}
+	original, err := kube.MarshalToYAML()
+	require.Nil(t, err)
+	secret, err := tst.C.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: string(original)}},
+	})
+	require.Nil(t, err)
+	cfg := &corev1.Service_Spec_Config{
+		Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: backend.URL}},
+		Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+			Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+				Type:    &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{FromSecret: secret.Metadata.Name},
+				Context: "selected",
+			}},
+		}},
+	}
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}, Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_KUBERNETES, Config: cfg}}
+	vc, err := vcache.NewCache(ctx)
+	require.Nil(t, err)
+	vc.SetService(svc)
+	sm, err := secretman.New(ctx, tst.C.OcteliumC, vc)
+	require.Nil(t, err)
+	upstreamURL, err := url.Parse(backend.URL)
+	require.Nil(t, err)
+	r := &roundTripper{
+		upstream:  &loadbalancer.Upstream{URL: upstreamURL, HostPort: upstreamURL.Host},
+		secretMan: sm, transports: newTransportCache(),
+	}
+	defer r.transports.closeAll()
+	request := func() (*http.Response, error) {
+		req := httptest.NewRequest(http.MethodGet, backend.URL, nil)
+		req = req.WithContext(context.WithValue(ctx, middlewares.CtxRequestContext, &middlewares.RequestContext{
+			Service: svc, ServiceConfig: cfg,
+		}))
+		return r.RoundTrip(req)
+	}
+	expectSuccess := func(t *testing.T) {
+		t.Helper()
+		response, err := request()
+		require.Nil(t, err)
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+		assert.Equal(t, "ok", string(body))
+		assert.NotEmpty(t, response.TLS.VerifiedChains)
+	}
+	rotate := func(t *testing.T, data []byte) {
+		t.Helper()
+		next := pbutils.Clone(secret).(*corev1.Secret)
+		next.Data = &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: string(data)}}
+		secret, err = tst.C.OcteliumC.CoreC().UpdateSecret(ctx, next)
+		require.Nil(t, err)
+		sm.Set(secret)
+	}
+	expectSuccess(t)
+	assert.Equal(t, int64(1), calls.Load())
+	for _, tc := range []struct {
+		kind   string
+		change func(*k8sutils.KubeConfig)
+	}{
+		{kind: "context", change: func(k *k8sutils.KubeConfig) { k.Contexts = nil }},
+		{kind: "cluster", change: func(k *k8sutils.KubeConfig) { k.Clusters = nil }},
+		{kind: "user", change: func(k *k8sutils.KubeConfig) { k.Users = nil }},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			next, err := k8sutils.UnmarshalKubeConfigFromYAML(original)
+			require.Nil(t, err)
+			tc.change(next)
+			data, err := next.MarshalToYAML()
+			require.Nil(t, err)
+			rotate(t, data)
+			previous := calls.Load()
+			var response *http.Response
+			require.NotPanics(t, func() { response, err = request() })
+			require.ErrorContains(t, err, "Kubeconfig "+tc.kind)
+			assert.Nil(t, response)
+			assert.Equal(t, previous, calls.Load())
+			rotate(t, original)
+			expectSuccess(t)
+			assert.Equal(t, previous+1, calls.Load())
+		})
+	}
 }

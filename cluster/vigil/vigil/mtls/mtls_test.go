@@ -41,6 +41,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -842,5 +843,157 @@ func TestKubeconfigTLSMutualAuthentication(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestKubeconfigTLSMissingReferences(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	for _, customCA := range []bool{false, true} {
+		for _, tc := range []struct {
+			name      string
+			context   string
+			change    func(*k8sutils.KubeConfig)
+			kind      string
+			reference string
+		}{
+			{name: "EmptyConfig", change: func(k *k8sutils.KubeConfig) { *k = k8sutils.KubeConfig{} }, kind: "context"},
+			{name: "MissingCurrent", change: func(k *k8sutils.KubeConfig) { k.CurrentContext = "missing" }, kind: "context", reference: "missing"},
+			{name: "UnsetCurrent", change: func(k *k8sutils.KubeConfig) { k.CurrentContext = "" }, kind: "context"},
+			{name: "NoContexts", change: func(k *k8sutils.KubeConfig) { k.Contexts = nil }, kind: "context", reference: "selected"},
+			{name: "MissingExplicit", context: "missing", kind: "context", reference: "missing"},
+			{name: "MissingCluster", change: func(k *k8sutils.KubeConfig) { k.Contexts[0].Context.Cluster = "missing" }, kind: "cluster", reference: "missing"},
+			{name: "NoClusters", change: func(k *k8sutils.KubeConfig) { k.Clusters = nil }, kind: "cluster", reference: "cluster"},
+			{name: "EmptyClusterReference", change: func(k *k8sutils.KubeConfig) { k.Contexts[0].Context.Cluster = "" }, kind: "cluster"},
+			{name: "MissingUser", change: func(k *k8sutils.KubeConfig) { k.Contexts[0].Context.User = "missing" }, kind: "user", reference: "missing"},
+			{name: "NoUsers", change: func(k *k8sutils.KubeConfig) { k.Users = nil }, kind: "user", reference: "user"},
+			{name: "EmptyUserReference", change: func(k *k8sutils.KubeConfig) { k.Contexts[0].Context.User = "" }, kind: "user"},
+			{name: "ValidCurrent"},
+			{name: "ValidExplicitWithoutCurrent", context: "selected", change: func(k *k8sutils.KubeConfig) { k.CurrentContext = "" }},
+			{name: "ValidExplicitWithMissingCurrent", context: "selected", change: func(k *k8sutils.KubeConfig) { k.CurrentContext = "missing" }},
+			{name: "ValidExplicitIgnoresBrokenContext", context: "selected", change: func(k *k8sutils.KubeConfig) {
+				k.CurrentContext = "broken"
+				k.Contexts = append(k.Contexts, k8sutils.KubeConfigContext{Name: "broken", Context: k8sutils.KubeConfigContextConfig{Cluster: "missing", User: "missing"}})
+			}},
+		} {
+			t.Run(fmt.Sprintf("CustomCA%t/%s", customCA, tc.name), func(t *testing.T) {
+				kube := &k8sutils.KubeConfig{
+					APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+					Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{Server: "https://api.example.com"}}},
+					Users:    []k8sutils.KubeConfigUser{{Name: "user", User: k8sutils.KubeConfigUserConfig{Token: "kubeconfig-token"}}},
+					Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: "cluster", User: "user"}}},
+				}
+				if customCA {
+					kube.Clusters[0].Cluster.CertificateAuthorityData = base64.StdEncoding.EncodeToString(ca.MustGetCertPEM())
+				}
+				if tc.change != nil {
+					tc.change(kube)
+				}
+				svc := newTestKubeconfigService(t, tst, kube, tc.context)
+				var got *tls.Config
+				var err error
+				require.NotPanics(t, func() {
+					got, err = GetClientTLSCfg(t.Context(), svc, nil, sm, &loadbalancer.Upstream{})
+				})
+				if tc.kind == "" {
+					require.Nil(t, err)
+					require.NotNil(t, got)
+					assert.Equal(t, customCA, got.RootCAs != nil)
+					assert.Empty(t, got.Certificates)
+					assert.False(t, got.InsecureSkipVerify)
+					return
+				}
+				require.Error(t, err)
+				assert.Nil(t, got)
+				assert.ErrorContains(t, err, "Kubeconfig "+tc.kind)
+				assert.ErrorContains(t, err, fmt.Sprintf("%q", tc.reference))
+				if tc.kind != "context" {
+					assert.ErrorContains(t, err, "context \"selected\"")
+				}
+				assert.NotContains(t, err.Error(), "kubeconfig-token")
+			})
+		}
+	}
+}
+
+func TestKubeconfigTLSReferenceRotation(t *testing.T) {
+	ctx := t.Context()
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	sm, err := secretman.New(ctx, tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	crt, err := utils_cert.GenerateCertificateTmp("client", ca, false)
+	require.Nil(t, err)
+	for _, customCA := range []bool{false, true} {
+		t.Run(fmt.Sprintf("CustomCA%t", customCA), func(t *testing.T) {
+			kube := &k8sutils.KubeConfig{
+				APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+				Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{Server: "https://api.example.com"}}},
+				Users: []k8sutils.KubeConfigUser{{Name: "user", User: k8sutils.KubeConfigUserConfig{
+					ClientCertificateData: base64.StdEncoding.EncodeToString(crt.MustGetCertPEM()),
+					ClientKeyData:         base64.StdEncoding.EncodeToString(crt.MustGetPrivateKeyPEM()),
+				}}},
+				Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: "cluster", User: "user"}}},
+			}
+			if customCA {
+				kube.Clusters[0].Cluster.CertificateAuthorityData = base64.StdEncoding.EncodeToString(ca.MustGetCertPEM())
+			}
+			original, err := kube.MarshalToYAML()
+			require.Nil(t, err)
+			svc := newTestKubeconfigService(t, tst, kube, "selected")
+			secret, err := sm.GetByName(ctx, svc.Spec.Config.GetKubernetes().GetKubeconfig().GetFromSecret())
+			require.Nil(t, err)
+			cfg, err := GetClientTLSCfg(ctx, svc, nil, sm, &loadbalancer.Upstream{})
+			require.Nil(t, err)
+			require.NotNil(t, cfg)
+			require.Len(t, cfg.Certificates, 1)
+			rotate := func(t *testing.T, data []byte) {
+				t.Helper()
+				next := pbutils.Clone(secret).(*corev1.Secret)
+				next.Data = &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: string(data)}}
+				previous := sm.Generation()
+				secret, err = tst.C.OcteliumC.CoreC().UpdateSecret(ctx, next)
+				require.Nil(t, err)
+				sm.Set(secret)
+				assert.Greater(t, sm.Generation(), previous)
+			}
+			for _, tc := range []struct {
+				kind   string
+				change func(*k8sutils.KubeConfig)
+			}{
+				{kind: "context", change: func(k *k8sutils.KubeConfig) { k.Contexts = nil }},
+				{kind: "cluster", change: func(k *k8sutils.KubeConfig) { k.Clusters = nil }},
+				{kind: "user", change: func(k *k8sutils.KubeConfig) { k.Users = nil }},
+			} {
+				t.Run(tc.kind, func(t *testing.T) {
+					next, err := k8sutils.UnmarshalKubeConfigFromYAML(original)
+					require.Nil(t, err)
+					tc.change(next)
+					data, err := next.MarshalToYAML()
+					require.Nil(t, err)
+					rotate(t, data)
+					var got *tls.Config
+					require.NotPanics(t, func() { got, err = GetClientTLSCfg(ctx, svc, nil, sm, &loadbalancer.Upstream{}) })
+					require.ErrorContains(t, err, "Kubeconfig "+tc.kind)
+					assert.Nil(t, got)
+					rotate(t, original)
+					got, err = GetClientTLSCfg(ctx, svc, nil, sm, &loadbalancer.Upstream{})
+					require.Nil(t, err)
+					require.NotNil(t, got)
+					require.Len(t, got.Certificates, 1)
+					assert.Equal(t, crt.Certificate.Raw, got.Certificates[0].Certificate[0])
+					assert.Equal(t, customCA, got.RootCAs != nil)
+					assert.False(t, got.InsecureSkipVerify)
+				})
+			}
+		})
 	}
 }
