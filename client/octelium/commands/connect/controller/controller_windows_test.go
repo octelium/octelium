@@ -9,8 +9,10 @@ import (
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"golang.zx2c4.com/wireguard/windows/driver"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
@@ -283,4 +285,139 @@ func TestWindowsKnownIssues(t *testing.T) {
 			assert.Equal(t, uint16(25), cfg.Peers[0].PersistentKeepalive)
 		}
 	})
+}
+
+func TestWindowsWireGuardKeepaliveByIPMode(t *testing.T) {
+	for _, mode := range testControllerIPModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tt := range []struct {
+				name    string
+				seconds int32
+				want    uint16
+			}{
+				{name: "Disabled"},
+				{name: "Minimum", seconds: 1, want: 1},
+				{name: "Configured", seconds: 25, want: 25},
+				{name: "Default", seconds: 30, want: 30},
+				{name: "AboveSigned16Bit", seconds: 32768, want: 32768},
+				{name: "Maximum", seconds: 65535, want: 65535},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					c := newTestPlatformController(t, mode.mode)
+					c.c.Preferences.KeepAliveSeconds = tt.seconds
+					key := c.wgPrivateKey.PublicKey().String()
+					otherKey, err := wgtypes.GeneratePrivateKey()
+					require.NoError(t, err)
+					c.c.Connection.Gateways = []*userv1.Gateway{
+						nil,
+						{Id: "quic", Quicv0: &userv1.Gateway_QUICV0{Port: 443}},
+						{Id: "no-endpoint", Wireguard: &userv1.Gateway_WireGuard{PublicKey: key}},
+						{
+							Id:        "gw-1",
+							Addresses: []string{"192.0.2.1"},
+							CIDRs:     []string{"100.64.0.0/16", "fd00::/64"},
+							Wireguard: &userv1.Gateway_WireGuard{PublicKey: key, Port: 51820, KeepAliveSeconds: 60},
+						},
+						{
+							Id:        "gw-2",
+							Addresses: []string{"2001:db8::1"},
+							CIDRs:     []string{"100.65.0.0/16", "fd01::/64"},
+							Wireguard: &userv1.Gateway_WireGuard{PublicKey: otherKey.PublicKey().String(), Port: 51821, KeepAliveSeconds: 120},
+						},
+					}
+
+					cfg, err := c.getWgConf()
+					require.NoError(t, err)
+					require.Len(t, cfg.Peers, 2)
+					assert.Equal(t, key, cfg.Peers[0].PublicKey.String())
+					assert.Equal(t, otherKey.PublicKey().String(), cfg.Peers[1].PublicKey.String())
+					for _, peer := range cfg.Peers {
+						assert.Equal(t, tt.want, peer.PersistentKeepalive)
+						assert.Len(t, peer.AllowedIPs, len(cfg.Interface.Addresses))
+					}
+
+					config, size := cfg.ToDriverConfiguration()
+					require.NotZero(t, size)
+					require.Equal(t, uint32(2), config.PeerCount)
+					peer := config.FirstPeer()
+					for i := range cfg.Peers {
+						assert.Equal(t, tt.want, peer.PersistentKeepalive)
+						assert.Equal(t, driver.PeerHasPersistentKeepalive, peer.Flags&driver.PeerHasPersistentKeepalive)
+						assert.Equal(t, cfg.Peers[i].PublicKey[:], peer.PublicKey[:])
+						if i+1 < len(cfg.Peers) {
+							peer = peer.NextPeer()
+						}
+					}
+					assert.Equal(t, tt.seconds, c.c.Preferences.KeepAliveSeconds)
+				})
+			}
+		})
+	}
+}
+
+func TestWindowsWireGuardInvalidKeepaliveRemainsDisabled(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		seconds int32
+	}{
+		{name: "Negative", seconds: -1},
+		{name: "MinimumInt32", seconds: -2147483648},
+		{name: "AboveMaximum", seconds: 65536},
+		{name: "WouldWrapToOne", seconds: 65537},
+		{name: "WouldWrapToConfigured", seconds: 65561},
+		{name: "MaximumInt32", seconds: 2147483647},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+			c.c.Preferences.KeepAliveSeconds = tt.seconds
+			c.c.Connection.Gateways = []*userv1.Gateway{{
+				Id: "gw-1", Addresses: []string{"192.0.2.1"}, CIDRs: []string{"100.64.0.0/16", "fd00::/64"},
+				Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
+			}}
+			cfg, err := c.getWgConf()
+			require.NoError(t, err)
+			require.Len(t, cfg.Peers, 1)
+			assert.Zero(t, cfg.Peers[0].PersistentKeepalive)
+			config, _ := cfg.ToDriverConfiguration()
+			peer := config.FirstPeer()
+			assert.Zero(t, peer.PersistentKeepalive)
+			assert.Equal(t, driver.PeerHasPersistentKeepalive, peer.Flags&driver.PeerHasPersistentKeepalive)
+			assert.Equal(t, tt.seconds, c.c.Preferences.KeepAliveSeconds)
+		})
+	}
+}
+
+func TestWindowsWireGuardKeepaliveReconfigurationPreservesPreviousConfig(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Connection.Gateways = []*userv1.Gateway{{
+		Id: "gw-1", Addresses: []string{"192.0.2.1"}, CIDRs: []string{"100.64.0.0/16", "fd00::/64"},
+		Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
+	}}
+	c.c.Preferences.KeepAliveSeconds = 25
+	enabled, err := c.getWgConf()
+	require.NoError(t, err)
+	require.Len(t, enabled.Peers, 1)
+	enabledDriver, _ := enabled.ToDriverConfiguration()
+	c.c.Preferences.KeepAliveSeconds = 0
+	disabled, err := c.getWgConf()
+	require.NoError(t, err)
+	require.Len(t, disabled.Peers, 1)
+	disabledDriver, _ := disabled.ToDriverConfiguration()
+	c.c.Preferences.KeepAliveSeconds = 45
+	updated, err := c.getWgConf()
+	require.NoError(t, err)
+	require.Len(t, updated.Peers, 1)
+	updatedDriver, _ := updated.ToDriverConfiguration()
+
+	assert.Equal(t, uint16(25), enabled.Peers[0].PersistentKeepalive)
+	assert.Equal(t, uint16(25), enabledDriver.FirstPeer().PersistentKeepalive)
+	assert.Zero(t, disabled.Peers[0].PersistentKeepalive)
+	assert.Zero(t, disabledDriver.FirstPeer().PersistentKeepalive)
+	assert.Equal(t, driver.PeerHasPersistentKeepalive, disabledDriver.FirstPeer().Flags&driver.PeerHasPersistentKeepalive)
+	assert.Equal(t, uint16(45), updated.Peers[0].PersistentKeepalive)
+	assert.Equal(t, uint16(45), updatedDriver.FirstPeer().PersistentKeepalive)
+	assert.Equal(t, enabled.Peers[0].PublicKey, updated.Peers[0].PublicKey)
+	assert.Equal(t, enabled.Peers[0].AllowedIPs, updated.Peers[0].AllowedIPs)
+	assert.Equal(t, enabled.Peers[0].Endpoint, updated.Peers[0].Endpoint)
+	assert.Equal(t, enabled.Interface, updated.Interface)
 }

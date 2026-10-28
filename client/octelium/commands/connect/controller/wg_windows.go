@@ -24,6 +24,11 @@ import (
 
 func (c *Controller) getWgConf() (*conf.Config, error) {
 
+	var keepalive uint16
+	if seconds := c.c.Preferences.KeepAliveSeconds; seconds > 0 && seconds <= 65535 {
+		keepalive = uint16(seconds)
+	}
+
 	pk, err := conf.NewPrivateKeyFromString(c.wgPrivateKey.String())
 	if err != nil {
 		return nil, err
@@ -90,8 +95,9 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 		}
 
 		peers = append(peers, conf.Peer{
-			PublicKey:  *key,
-			AllowedIPs: allowedIPs,
+			PublicKey:           *key,
+			AllowedIPs:          allowedIPs,
+			PersistentKeepalive: keepalive,
 			Endpoint: conf.Endpoint{
 				Host: gw.Addresses[0],
 				Port: uint16(gw.Wireguard.Port),
