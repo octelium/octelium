@@ -26,11 +26,49 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
 )
 
 const consoleOrigin = "https://console.example.com"
+
+func TestCORSOriginNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		origin string
+		want   string
+		valid  bool
+	}{
+		{"https://EXAMPLE.com:443", "https://example.com", true},
+		{"http://EXAMPLE.com:80", "http://example.com", true},
+		{"https://example.com:8443", "https://example.com:8443", true},
+		{"https://[2001:db8::1]", "https://[2001:db8::1]", true},
+		{"https://[2001:db8::1]:443", "https://[2001:db8::1]", true},
+		{"https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443", true},
+		{"null", "", false},
+		{"https://example.com/", "", false},
+		{"https://user@example.com", "", false},
+		{"https://example.com?q=value", "", false},
+		{"https://example.com#fragment", "", false},
+		{"https://example.com https://other.example.com", "", false},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			got, ok := httputils.NormalizeOrigin(tc.origin)
+			assert.Equal(t, tc.valid, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCORSRejectsMultipleOriginHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodOptions, "https://service.example.com/", nil)
+	req.Header["Origin"] = []string{consoleOrigin, "https://other.example.com"}
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	origin, ok := httputils.GetRequestOrigin(req)
+	assert.False(t, ok)
+	assert.Empty(t, origin)
+	assert.False(t, httputils.IsCORSPreflight(req))
+}
 
 func newCORSService(mode corev1.Service_Spec_Mode,
 	cors *corev1.Service_Spec_Config_HTTP_CORS) *corev1.Service {

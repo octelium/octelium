@@ -46,6 +46,7 @@ import (
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -61,6 +62,58 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
 
 	return reader
+}
+
+func TestTCPHalfCloseAllowsDelayedResponse(t *testing.T) {
+	newPair := func() (*net.TCPConn, *net.TCPConn) {
+		lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		require.Nil(t, err)
+		defer lis.Close()
+		client, err := net.DialTCP("tcp4", nil, lis.Addr().(*net.TCPAddr))
+		require.Nil(t, err)
+		server, err := lis.AcceptTCP()
+		require.Nil(t, err)
+		t.Cleanup(func() { client.Close(); server.Close() })
+		require.Nil(t, client.SetDeadline(time.Now().Add(3*time.Second)))
+		require.Nil(t, server.SetDeadline(time.Now().Add(3*time.Second)))
+		return client, server
+	}
+	client, downstream := newPair()
+	upstream, backend := newPair()
+	p := &proxy{dctx: &dctx{id: "half-close"}}
+	proxyDone := make(chan struct{})
+	go func() {
+		defer close(proxyDone)
+		p.doServe(downstream, upstream)
+	}()
+	backendDone := make(chan struct{})
+	go func() {
+		defer close(backendDone)
+		defer backend.CloseWrite()
+		body, err := io.ReadAll(backend)
+		assert.Nil(t, err)
+		assert.Equal(t, "request", string(body))
+		timer := time.NewTimer(750 * time.Millisecond)
+		defer timer.Stop()
+		<-timer.C
+		backend.Write([]byte("response after processing"))
+	}()
+	_, err := client.Write([]byte("request"))
+	require.Nil(t, err)
+	require.Nil(t, client.CloseWrite())
+	body, err := io.ReadAll(client)
+	require.Nil(t, err)
+	assert.Equal(t, "response after processing", string(body))
+	select {
+	case <-proxyDone:
+	case <-time.After(3 * time.Second):
+		t.Error("The TCP proxy did not stop")
+	}
+	select {
+	case <-backendDone:
+	case <-time.After(3 * time.Second):
+		t.Error("The TCP backend did not stop")
+	}
 }
 
 func findSumDataPointByState(t *testing.T, rm *metricdata.ResourceMetrics, name, state string) (metricdata.DataPoint[int64], bool) {

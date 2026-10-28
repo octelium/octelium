@@ -20,14 +20,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 )
 
@@ -247,5 +250,60 @@ func TestHandleUnauthorized(t *testing.T) {
 
 		assert.Equal(t, http.StatusForbidden, rw.Code)
 		assert.Equal(t, "true", rw.Header().Get("X-Octelium-Unauthorized"))
+	}
+}
+
+func TestLoginRedirectPreservesEscapedPath(t *testing.T) {
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "app.default"},
+		Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, IsPublic: true},
+		Status:   &corev1.Service_Status{NamespaceRef: &metav1.ObjectReference{Name: "default"}},
+	}
+	m := &middleware{domain: "example.com"}
+	for _, path := range []string{"/items/plain?q=value", "/items/a%2Fb?q=one%2Ftwo", "/items/a%3Fb%23c?q=value"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://app.example.com"+path, nil)
+			req.Header.Set("Accept", "text/html")
+			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+			rw := httptest.NewRecorder()
+			m.handleUnauthorized(rw, req, &middlewares.RequestContext{Service: svc})
+			require.Equal(t, http.StatusSeeOther, rw.Code)
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			assert.Equal(t, "https://"+vutils.GetServicePublicFQDN(svc, m.domain)+path, location.Query().Get("redirect"))
+		})
+	}
+}
+
+func TestLoginRedirectRejectsMalformedForwardedHost(t *testing.T) {
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "app.default"},
+		Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, IsPublic: true},
+		Status: &corev1.Service_Status{
+			NamespaceRef:   &metav1.ObjectReference{Name: "default"},
+			ManagedService: &corev1.Service_Status_ManagedService{ForwardHost: true},
+		},
+	}
+	m := &middleware{domain: "example.com"}
+	for _, host := range []string{"custom.example.com", "example.com", "attacker.test/path.example.com", "attacker.test?next=.example.com", "attacker.test#fragment.example.com"} {
+		t.Run(host, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://app.example.com/private", nil)
+			req.Header.Set("Accept", "text/html")
+			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+			req.Header.Set("X-Forwarded-Host", host)
+			rw := httptest.NewRecorder()
+			m.handleUnauthorized(rw, req, &middlewares.RequestContext{Service: svc})
+			require.Equal(t, http.StatusSeeOther, rw.Code)
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			redirect, err := url.Parse(location.Query().Get("redirect"))
+			require.Nil(t, err)
+			wantHost := vutils.GetServicePublicFQDN(svc, m.domain)
+			if host == "custom.example.com" || host == "example.com" {
+				wantHost = host
+			}
+			assert.Equal(t, wantHost, redirect.Hostname())
+			assert.Nil(t, redirect.User)
+		})
 	}
 }

@@ -171,6 +171,202 @@ func newVigilCtx(t *testing.T, h *harness.H) *vigilCtx {
 	return &vigilCtx{h: h, svc: svc, upstream: upstream, conn: conn}
 }
 
+func VigilRegressionPhases() []Phase {
+	return []Phase{
+		{"VigilRetryReplay", testVigilRetryReplay},
+		{"VigilCacheResponseSafety", testVigilCacheResponseSafety},
+		{"VigilEscapedPathRewrite", testVigilEscapedPathRewrite},
+	}
+}
+
+func testVigilRetryReplay(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	v := newVigilCtx(t, h)
+	v.svc.Spec.IsAnonymous = true
+	v.svc = h.UpdateService(t, v.svc)
+	var mu sync.Mutex
+	bodies := make(map[string][]string)
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		mu.Lock()
+		bodies[r.URL.Path] = append(bodies[r.URL.Path], string(body))
+		attempt := len(bodies[r.URL.Path])
+		mu.Unlock()
+		w.Header().Set("X-Upstream-Attempt", fmt.Sprint(attempt))
+		if attempt == 1 {
+			w.Header().Set("X-Failed-Attempt", "true")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("failed attempt"))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write(body)
+	})
+	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Retry: &corev1.Service_Spec_Config_HTTP_Retry{
+			MaxRetries:      3,
+			InitialInterval: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 1}},
+		},
+	})
+	h.Eventually(t, "Vigil to retry an idempotent request", harness.DecisionBudget, func(ctx context.Context) error {
+		res, err := h.HTTPNoRetry().R().SetContext(ctx).SetBody("probe").Put(v.url("/ready-" + h.Name()))
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusCreated {
+			return errUnexpectedStatus(res.StatusCode(), http.StatusCreated)
+		}
+		return nil
+	})
+	for _, route := range []struct {
+		name string
+		url  string
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+		t.Run(route.name, func(t *testing.T) {
+			for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodPatch} {
+				t.Run(method, func(t *testing.T) {
+					path := "/request-" + h.Name()
+					payload := strings.Repeat("replayed body ", 256)
+					res, err := h.HTTPNoRetry().R().SetContext(t.Context()).SetBody(payload).Execute(method, route.url+path)
+					require.Nil(t, err)
+					wantStatus, wantAttempts := http.StatusServiceUnavailable, 1
+					if method == http.MethodPut {
+						wantStatus, wantAttempts = http.StatusCreated, 2
+						assert.Equal(t, payload, string(res.Body()))
+						assert.Empty(t, res.Header().Get("X-Failed-Attempt"))
+					}
+					assert.Equal(t, wantStatus, res.StatusCode())
+					mu.Lock()
+					got := append([]string(nil), bodies[path]...)
+					mu.Unlock()
+					require.Len(t, got, wantAttempts)
+					for _, body := range got {
+						assert.Equal(t, payload, body)
+					}
+				})
+			}
+		})
+	}
+}
+
+func testVigilCacheResponseSafety(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	v := newVigilCtx(t, h)
+	v.svc.Spec.IsAnonymous = true
+	v.svc = h.UpdateService(t, v.svc)
+	cases := []struct {
+		name   string
+		header http.Header
+		cached bool
+	}{
+		{name: "Cacheable", cached: true},
+		{name: "Private", header: http.Header{"Cache-Control": {"private"}}},
+		{name: "NoStore", header: http.Header{"Cache-Control": {"no-store"}}},
+		{name: "Cookie", header: http.Header{"Set-Cookie": {"session=private"}}},
+		{name: "Vary", header: http.Header{"Vary": {"X-Tenant"}}},
+		{name: "EmptyFirstVary", header: http.Header{"Vary": {"", "X-Tenant"}}},
+	}
+	var mu sync.Mutex
+	calls := make(map[string]int)
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls[r.URL.RequestURI()]++
+		mu.Unlock()
+		for _, tc := range cases {
+			if tc.name == r.URL.Query().Get("case") {
+				for key, values := range tc.header {
+					w.Header()[key] = append([]string(nil), values...)
+				}
+			}
+		}
+		w.Write([]byte(r.Header.Get("X-Tenant")))
+	})
+	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+		{Name: "response-cache", Phase: corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+			Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+			Type:      &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
+	}})
+	h.Eventually(t, "Vigil to apply the response cache plugin", harness.DecisionBudget, func(ctx context.Context) error {
+		res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/ready"))
+		if err != nil {
+			return err
+		}
+		if res.StatusCode() != http.StatusOK || res.Header().Get("X-Cache") == "" {
+			return errors.New("the response cache plugin is not active yet")
+		}
+		return nil
+	})
+	for _, route := range []struct {
+		name string
+		url  string
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+		t.Run(route.name, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					path := "/cached-" + h.Name() + "?case=" + tc.name
+					for i, tenant := range []string{"tenant-one", "tenant-two"} {
+						res, err := h.HTTPNoRetry().R().SetContext(t.Context()).SetHeader("X-Tenant", tenant).Get(route.url + path)
+						require.Nil(t, err)
+						assert.Equal(t, http.StatusOK, res.StatusCode())
+						if tc.cached && i == 1 {
+							assert.Equal(t, "HIT", res.Header().Get("X-Cache"))
+							assert.Equal(t, "tenant-one", string(res.Body()))
+						} else {
+							assert.Equal(t, tenant, string(res.Body()))
+						}
+					}
+					mu.Lock()
+					got := calls[path]
+					mu.Unlock()
+					want := 2
+					if tc.cached {
+						want = 1
+					}
+					assert.Equal(t, want, got)
+				})
+			}
+		})
+	}
+}
+
+func testVigilEscapedPathRewrite(t *testing.T, h *harness.H) {
+	h.Require(t, capHostPortIngress)
+	v := newVigilCtx(t, h)
+	v.svc.Spec.IsAnonymous = true
+	v.svc = h.UpdateService(t, v.svc)
+	v.upstream.SetServeFn(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.RequestURI))
+	})
+	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{Path: &corev1.Service_Spec_Config_HTTP_Path{
+		RemovePrefix: "/api/v1", AddPrefix: "/backend",
+	}})
+	h.Eventually(t, "Vigil to apply the path rewrite", harness.DecisionBudget, func(ctx context.Context) error {
+		res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/api/v1/probe"))
+		if err != nil {
+			return err
+		}
+		if string(res.Body()) != "/backend/probe" {
+			return errors.Errorf("got path %q", res.Body())
+		}
+		return nil
+	})
+	for _, route := range []struct {
+		name string
+		url  string
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+		t.Run(route.name, func(t *testing.T) {
+			for _, path := range []string{"/api/v1/item%2Fpart?q=a%2Fb", "/api%2Fv1/item%2Fpart?q=a%2Fb"} {
+				res, err := h.HTTPNoRetry().R().SetContext(t.Context()).Get(route.url + path)
+				require.Nil(t, err)
+				assert.Equal(t, http.StatusOK, res.StatusCode())
+				assert.Equal(t, "/backend/item%2Fpart?q=a%2Fb", string(res.Body()), path)
+			}
+		})
+	}
+}
+
 func testVigilRequestLimitsLoad(t *testing.T, h *harness.H) {
 	const limit = 4096
 	const total = 96

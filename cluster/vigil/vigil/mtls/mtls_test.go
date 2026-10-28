@@ -18,20 +18,26 @@ package mtls
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"net/url"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetClientTLSCfg(t *testing.T) {
@@ -144,6 +150,205 @@ users:
 	assert.Nil(t, err)
 	assert.NotNil(t, tlscfg)
 
+}
+
+func TestTLSConfigDefaultsAndOverrides(t *testing.T) {
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}
+	for _, tc := range []struct {
+		name string
+		cfg  *corev1.Service_Spec_Config
+		user bool
+		want bool
+	}{
+		{name: "ExternalDefault"},
+		{name: "ClientServedDefault", user: true, want: true},
+		{name: "ExplicitTLS", cfg: &corev1.Service_Spec_Config{Tls: &corev1.Service_Spec_Config_TLS{}}, want: true},
+		{name: "InsecureTLS", cfg: &corev1.Service_Spec_Config{Tls: &corev1.Service_Spec_Config_TLS{InsecureSkipVerify: true}}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc.Spec.Config = tc.cfg
+			got, err := GetClientTLSCfg(t.Context(), svc, nil, nil, &loadbalancer.Upstream{
+				URL: &url.URL{Scheme: "https", Host: "virtual.example.com"}, SNIHost: "virtual.example.com", IsUser: tc.user,
+			})
+			require.Nil(t, err)
+			if !tc.want {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, uint16(tls.VersionTLS12), got.MinVersion)
+			assert.Equal(t, uint16(tls.VersionTLS13), got.MaxVersion)
+			assert.Equal(t, "virtual.example.com", got.ServerName)
+			assert.Equal(t, tc.cfg.GetTls().GetInsecureSkipVerify(), got.InsecureSkipVerify)
+		})
+	}
+	explicit := &corev1.Service_Spec_Config{Tls: &corev1.Service_Spec_Config_TLS{TrustedCAs: []string{"invalid PEM"}}}
+	got, err := GetClientTLSCfg(t.Context(), svc, explicit, nil, &loadbalancer.Upstream{})
+	assert.NotNil(t, err)
+	assert.Nil(t, got)
+}
+
+func TestClientServedSecureWebSocketSNI(t *testing.T) {
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}
+	got, err := GetClientTLSCfg(t.Context(), svc, nil, nil, &loadbalancer.Upstream{
+		URL: &url.URL{Scheme: "wss", Host: "virtual.example.com"}, SNIHost: "virtual.example.com", IsUser: true,
+	})
+	require.Nil(t, err)
+	if assert.NotNil(t, got) {
+		assert.Equal(t, "virtual.example.com", got.ServerName)
+	}
+}
+
+func TestDeprecatedClientCertificatePreservesSNI(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	crt, err := utils_cert.GenerateCertificateTmp("virtual.example.com", ca, false)
+	require.Nil(t, err)
+	secret := &corev1.Secret{Metadata: &metav1.Metadata{Name: "client-certificate"}}
+	ucorev1.ToSecret(secret).SetCertificate(string(crt.MustGetCertPEM()), string(crt.MustGetPrivateKeyPEM()))
+	secret, err = tst.C.OcteliumC.CoreC().CreateSecret(t.Context(), secret)
+	require.Nil(t, err)
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	cfg := &corev1.Service_Spec_Config{ClientCertificate: &corev1.Service_Spec_Config_ClientCertificate{
+		Type: &corev1.Service_Spec_Config_ClientCertificate_FromSecret{FromSecret: secret.Metadata.Name},
+	}}
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, Config: cfg}}
+	tlsCfg, err := GetClientTLSCfg(t.Context(), svc, cfg, sm, &loadbalancer.Upstream{
+		URL: &url.URL{Scheme: "https", Host: "virtual.example.com"}, SNIHost: "virtual.example.com", IsUser: true,
+	})
+	require.Nil(t, err)
+	require.NotNil(t, tlsCfg)
+	assert.Len(t, tlsCfg.Certificates, 1)
+	assert.Equal(t, "virtual.example.com", tlsCfg.ServerName)
+}
+
+func TestKubernetesTLSCredentialSources(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	crt, err := utils_cert.GenerateCertificateTmp("client", ca, false)
+	require.Nil(t, err)
+	secret := &corev1.Secret{Metadata: &metav1.Metadata{Name: "kubernetes-client"}}
+	ucorev1.ToSecret(secret).SetCertificate(string(crt.MustGetCertPEM()), string(crt.MustGetPrivateKeyPEM()))
+	_, err = tst.C.OcteliumC.CoreC().CreateSecret(t.Context(), secret)
+	require.Nil(t, err)
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		name   string
+		client bool
+		ca     string
+		secret string
+		fail   bool
+	}{
+		{name: "BearerSystemRoots"},
+		{name: "BearerCustomRoots", ca: string(ca.MustGetCertPEM())},
+		{name: "BearerInvalidCA", ca: "invalid PEM", fail: true},
+		{name: "ClientCertificate", client: true, secret: secret.Metadata.Name},
+		{name: "ClientCustomRoots", client: true, secret: secret.Metadata.Name, ca: string(ca.MustGetCertPEM())},
+		{name: "ClientMissingSecret", client: true, secret: "missing", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var roots []string
+			if tc.ca != "" {
+				roots = []string{tc.ca}
+			}
+			kube := &corev1.Service_Spec_Config_Kubernetes{Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_{
+				BearerToken: &corev1.Service_Spec_Config_Kubernetes_BearerToken{TrustedCAs: roots},
+			}}
+			if tc.client {
+				kube.Type = &corev1.Service_Spec_Config_Kubernetes_ClientCertificate{ClientCertificate: &corev1.Service_Spec_Config_ClientCertificate{
+					Type: &corev1.Service_Spec_Config_ClientCertificate_FromSecret{FromSecret: tc.secret}, TrustedCAs: roots,
+				}}
+			}
+			cfg := &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: kube}}
+			svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_KUBERNETES, Config: cfg}}
+			got, err := GetClientTLSCfg(t.Context(), svc, cfg, sm, &loadbalancer.Upstream{})
+			if tc.fail {
+				assert.NotNil(t, err)
+				return
+			}
+			require.Nil(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, uint16(tls.VersionTLS12), got.MinVersion)
+			assert.Equal(t, tc.ca != "", got.RootCAs != nil)
+			want := 0
+			if tc.client {
+				want = 1
+			}
+			assert.Len(t, got.Certificates, want)
+		})
+	}
+}
+
+func TestKubeconfigClientCertificatesAndInvalidReferences(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	crt, err := utils_cert.GenerateCertificateTmp("client", ca, false)
+	require.Nil(t, err)
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		name    string
+		ca      bool
+		cluster string
+		user    string
+		fail    bool
+	}{
+		{"CustomCA", true, "cluster", "user", false},
+		{"SystemCA", false, "cluster", "user", false},
+		{"MissingCluster", true, "missing", "user", true},
+		{"MissingUser", true, "cluster", "missing", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kube := &k8sutils.KubeConfig{
+				APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+				Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{Server: "https://api.example.com"}}},
+				Users: []k8sutils.KubeConfigUser{{Name: "user", User: k8sutils.KubeConfigUserConfig{
+					ClientCertificateData: base64.StdEncoding.EncodeToString(crt.MustGetCertPEM()),
+					ClientKeyData:         base64.StdEncoding.EncodeToString(crt.MustGetPrivateKeyPEM()),
+				}}},
+				Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: tc.cluster, User: tc.user}}},
+			}
+			if tc.ca {
+				kube.Clusters[0].Cluster.CertificateAuthorityData = base64.StdEncoding.EncodeToString(ca.MustGetCertPEM())
+			}
+			data, err := kube.MarshalToYAML()
+			require.Nil(t, err)
+			secret, err := tst.C.OcteliumC.CoreC().CreateSecret(t.Context(), &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: string(data)}},
+			})
+			require.Nil(t, err)
+			cfg := &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+				Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+					Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{FromSecret: secret.Metadata.Name},
+				}},
+			}}}
+			svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_KUBERNETES, Config: cfg}}
+			var got *tls.Config
+			if !assert.NotPanics(t, func() { got, err = GetClientTLSCfg(t.Context(), svc, cfg, sm, &loadbalancer.Upstream{}) }) {
+				return
+			}
+			if tc.fail {
+				assert.NotNil(t, err)
+				return
+			}
+			require.Nil(t, err)
+			require.NotNil(t, got)
+			assert.Len(t, got.Certificates, 1)
+			assert.Equal(t, tc.ca, got.RootCAs != nil)
+		})
+	}
 }
 
 func TestGetClientTLSCfgNew(t *testing.T) {

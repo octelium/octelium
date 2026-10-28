@@ -18,8 +18,11 @@ package httpg
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,14 +30,111 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
+	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type tstRoundTripper struct {
 	id     int
 	closed atomic.Int32
+}
+
+func TestTransportModeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    corev1.Service_Spec_Mode
+		url     string
+		http2   bool
+		upgrade bool
+		want    transportMode
+	}{
+		{"HTTP1", corev1.Service_Spec_HTTP, "http://upstream", false, false, transportModeHTTP1},
+		{"HTTP2TLS", corev1.Service_Spec_HTTP, "https://upstream", true, false, transportModeHTTP2TLS},
+		{"H2C", corev1.Service_Spec_HTTP, "h2c://upstream", false, false, transportModeH2},
+		{"GRPC", corev1.Service_Spec_GRPC, "https://upstream", false, false, transportModeH2},
+		{"Upgrade", corev1.Service_Spec_HTTP, "https://upstream", true, true, transportModeHTTP1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: tc.url}},
+				Type:     &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{IsUpstreamHTTP2: tc.http2}},
+			}
+			svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: tc.mode, Config: cfg}}
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.upgrade {
+				req.Header.Set("Connection", "keep-alive, Upgrade")
+			}
+			assert.Equal(t, tc.want, getTransportMode(req, svc, cfg))
+		})
+	}
+}
+
+func TestTransportKeyUsesRoutingAndSecretGeneration(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}, Spec: &corev1.Service_Spec{}}
+	vc.SetService(svc)
+	sm, err := secretman.New(t.Context(), nil, vc)
+	require.Nil(t, err)
+	r := &roundTripper{
+		secretMan: sm, transports: newTransportCache(),
+		upstream: &loadbalancer.Upstream{HostPort: "192.0.2.1:443", URL: &url.URL{Scheme: "https", Host: "virtual.example.com"}},
+	}
+	base, err := r.getTransportKey(svc, nil, transportModeHTTP1, true)
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		name   string
+		change func()
+	}{
+		{"Session", func() { r.upstream.SessionRef = &metav1.ObjectReference{Uid: "session"} }},
+		{"ClientServed", func() { r.upstream.IsUser = true }},
+		{"Address", func() { r.upstream.HostPort = "192.0.2.2:443" }},
+		{"VirtualHost", func() { r.upstream.URL.Host = "other.example.com" }},
+		{"Service", func() { svc.Metadata.Uid = "other-service" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.change()
+			got, err := r.getTransportKey(svc, nil, transportModeHTTP1, true)
+			require.Nil(t, err)
+			assert.NotEqual(t, base, got)
+			base = got
+		})
+	}
+	require.Nil(t, sm.ApplyService(t.Context()))
+	rotated, err := r.getTransportKey(svc, nil, transportModeHTTP1, true)
+	require.Nil(t, err)
+	assert.NotEqual(t, base, rotated)
+	for _, mode := range []transportMode{transportModeHTTP2TLS, transportModeH2} {
+		got, err := r.getTransportKey(svc, nil, mode, true)
+		require.Nil(t, err)
+		assert.NotEqual(t, rotated, got)
+	}
+	plain, err := r.getTransportKey(svc, nil, transportModeHTTP1, false)
+	require.Nil(t, err)
+	assert.NotEqual(t, rotated, plain)
+	configured, err := r.getTransportKey(svc, &corev1.Service_Spec_Config{Name: "dynamic"}, transportModeHTTP1, true)
+	require.Nil(t, err)
+	assert.NotEqual(t, rotated, configured)
+}
+
+func TestUpstreamTransportsCloneTLSConfig(t *testing.T) {
+	cfg := &tls.Config{ServerName: "original.example.com"}
+	http1 := newUpstreamTransportHTTP1(cfg)
+	http2 := newUpstreamTransportH2(cfg, true)
+	cleartext := newUpstreamTransportH2(nil, false)
+	cfg.ServerName = "changed.example.com"
+	assert.Equal(t, "original.example.com", http1.TLSClientConfig.ServerName)
+	assert.Equal(t, "original.example.com", http2.TLSClientConfig.ServerName)
+	assert.False(t, http2.AllowHTTP)
+	assert.True(t, cleartext.AllowHTTP)
+	assert.Positive(t, http1.MaxIdleConnsPerHost)
+	assert.Positive(t, http1.TLSHandshakeTimeout)
 }
 
 func (t *tstRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

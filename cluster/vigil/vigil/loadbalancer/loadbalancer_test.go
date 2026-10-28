@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,132 @@ import (
 
 type fakeCache struct {
 	s *corev1.Service
+}
+
+func TestUpstreamEndpointAddresses(t *testing.T) {
+	lb := NewLbManager(nil, nil)
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{}}
+	for _, tc := range []struct {
+		url  string
+		addr string
+		sni  string
+		path string
+	}{
+		{"http://example.com", "example.com:80", "example.com", ""},
+		{"https://example.com/base/?ignored=true", "example.com:443", "example.com", "/base"},
+		{"ssh://example.com", "example.com:22", "example.com", ""},
+		{"postgres://example.com", "example.com:5432", "example.com", ""},
+		{"mysql://example.com", "example.com:3306", "example.com", ""},
+		{"tcp://192.0.2.1:9000", "192.0.2.1:9000", "", ""},
+		{"https://[2001:db8::1]:8443/a", "[2001:db8::1]:8443", "", "/a"},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			got, err := lb.doGetUpstream(&corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{Url: tc.url}, svc)
+			require.Nil(t, err)
+			assert.Equal(t, tc.addr, got.HostPort)
+			assert.Equal(t, tc.sni, got.SNIHost)
+			assert.Equal(t, tc.path, got.GetPath())
+			assert.Empty(t, got.URL.RawQuery)
+			assert.False(t, got.IsUser)
+		})
+	}
+	got, err := lb.doGetUpstream(&corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{Url: "http://%zz"}, svc)
+	assert.NotNil(t, err)
+	assert.Nil(t, got)
+	var upstream *Upstream
+	assert.Empty(t, upstream.GetPath())
+	for _, path := range []string{"", "/", "relative"} {
+		assert.Empty(t, (&Upstream{Path: path}).GetPath())
+	}
+}
+
+func TestUpstreamSessionAddressFamilies(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}, Spec: &corev1.Service_Spec{}}
+	vc.SetService(svc)
+	for _, tc := range []struct {
+		name string
+		mode corev1.Session_Status_Connection_L3Mode
+		addr *metav1.DualStackNetwork
+		want string
+	}{
+		{"V4", corev1.Session_Status_Connection_V4, &metav1.DualStackNetwork{V4: "192.0.2.1/32"}, "192.0.2.1:8080"},
+		{"V6", corev1.Session_Status_Connection_V6, &metav1.DualStackNetwork{V6: "2001:db8::1/128"}, "[2001:db8::1]:8080"},
+		{"Both", corev1.Session_Status_Connection_BOTH, &metav1.DualStackNetwork{V4: "192.0.2.1/32", V6: "2001:db8::1/128"}, "[2001:db8::1]:8080"},
+		{"MissingV4", corev1.Session_Status_Connection_V4, &metav1.DualStackNetwork{V6: "2001:db8::1/128"}, ""},
+		{"MissingV6", corev1.Session_Status_Connection_V6, &metav1.DualStackNetwork{V4: "192.0.2.1/32"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lb := NewLbManager(nil, vc)
+			sess := newTestSession("session", "user", "service", 8080)
+			sess.Status.Connection.L3Mode = tc.mode
+			sess.Status.Connection.Addresses = []*metav1.DualStackNetwork{tc.addr}
+			sess.Status.Connection.Ed25519PublicKey = []byte("public-key")
+			lb.SetSession(sess)
+			got, err := lb.doGetUpstream(&corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
+				Url: "https://virtual.example.com/base", User: "user",
+			}, svc)
+			if tc.want == "" {
+				assert.ErrorIs(t, err, ErrNoUpstream)
+				assert.Nil(t, got)
+				return
+			}
+			require.Nil(t, err)
+			assert.Equal(t, tc.want, got.HostPort)
+			assert.Equal(t, "virtual.example.com", got.SNIHost)
+			assert.Equal(t, "session", got.SessionRef.Uid)
+			assert.Equal(t, []byte("public-key"), got.Ed25519PublicKey)
+			assert.True(t, got.IsUser)
+			assert.Equal(t, "/base", got.GetPath())
+			lb.DeleteSession(sess)
+			_, err = lb.doGetUpstream(&corev1.Service_Spec_Config_Upstream_Loadbalance_Endpoint{
+				Url: "https://virtual.example.com", User: "user",
+			}, svc)
+			assert.ErrorIs(t, err, ErrNoUpstream)
+		})
+	}
+}
+
+func TestSessionStopsServingService(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	svc := &corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}}
+	vc.SetService(svc)
+	lb := NewLbManager(nil, vc)
+	old := newTestSession("session", "user", "service", 80)
+	lb.SetSession(old)
+	updated := pbutils.Clone(old).(*corev1.Session)
+	updated.Status.Connection.Upstreams = nil
+	require.Nil(t, lb.OnUpdate(t.Context(), updated, old))
+	assert.Nil(t, lb.cache.getByUserName("user", svc))
+	unrelated := newTestSession("other", "user", "other-service", 80)
+	require.Nil(t, lb.onAdd(t.Context(), unrelated))
+	assert.Empty(t, lb.cache.sMap)
+}
+
+func TestManagedUpstreamSchemes(t *testing.T) {
+	for _, mode := range []corev1.Service_Spec_Mode{
+		corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC,
+		corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP, corev1.Service_Spec_LLM,
+		corev1.Service_Spec_SSH, corev1.Service_Spec_DNS, corev1.Service_Spec_UDP,
+		corev1.Service_Spec_TCP, corev1.Service_Spec_MYSQL, corev1.Service_Spec_POSTGRES,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: mode}}
+			want := "tcp"
+			switch mode {
+			case corev1.Service_Spec_HTTP, corev1.Service_Spec_WEB, corev1.Service_Spec_GRPC,
+				corev1.Service_Spec_KUBERNETES, corev1.Service_Spec_MCP, corev1.Service_Spec_LLM:
+				want = "http"
+			case corev1.Service_Spec_SSH:
+				want = "ssh"
+			case corev1.Service_Spec_DNS, corev1.Service_Spec_UDP:
+				want = "udp"
+			}
+			assert.Equal(t, want, getScheme(svc))
+		})
+	}
 }
 
 func newTestSession(uid, user, service string, port int32) *corev1.Session {

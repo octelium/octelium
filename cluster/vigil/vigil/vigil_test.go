@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -135,6 +136,93 @@ func TestServer(t *testing.T) {
 
 	err = srv.server.Close()
 	assert.Nil(t, err)
+}
+
+func TestResourceWatchersUpdateHTTPUpstreamAndCredentials(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { cancel(); tst.Destroy() })
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "first:"+r.Header.Get("Authorization"))
+	}))
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "second:"+r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: tst.C.OcteliumC, IsEmbedded: true})
+	secret, err := adminSrv.CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec:     &corev1.Secret_Spec{},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "original-token"}},
+	})
+	require.Nil(t, err)
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP, Port: uint32(tests.GetPort()), IsAnonymous: true, IsPublic: true,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: first.URL}},
+				Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+					Auth: &corev1.Service_Spec_Config_HTTP_Auth{Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_{
+						Bearer: &corev1.Service_Spec_Config_HTTP_Auth_Bearer{Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_FromSecret{FromSecret: secret.Metadata.Name}},
+					}},
+				}},
+			},
+		},
+	})
+	require.Nil(t, err)
+	srv, err := NewServer(ctx, &Opts{OcteliumC: tst.C.OcteliumC, Service: svc})
+	require.Nil(t, err)
+	t.Cleanup(func() { cancel(); srv.server.Close() })
+	require.Nil(t, srv.Run(ctx))
+	client := &http.Client{Timeout: time.Second}
+	t.Cleanup(client.CloseIdleConnections)
+	addr := fmt.Sprintf("http://127.0.0.1:%d", ucorev1.ToService(svc).RealPort())
+	waitResponse := func(t *testing.T, status int, body string) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			resp, err := client.Get(addr)
+			if err != nil {
+				return false
+			}
+			defer resp.Body.Close()
+			got, err := io.ReadAll(resp.Body)
+			return err == nil && resp.StatusCode == status && string(got) == body
+		}, 5*time.Second, 20*time.Millisecond, "expected status %d and body %q", status, body)
+	}
+	waitResponse(t, http.StatusOK, "first:Bearer original-token")
+	t.Run("SecretRotation", func(t *testing.T) {
+		secret.Data = &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "rotated-token"}}
+		secret, err = adminSrv.UpdateSecret(ctx, secret)
+		require.Nil(t, err)
+		waitResponse(t, http.StatusOK, "first:Bearer rotated-token")
+	})
+	t.Run("UpstreamChange", func(t *testing.T) {
+		svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{Url: second.URL}
+		svc, err = adminSrv.UpdateService(ctx, svc)
+		require.Nil(t, err)
+		waitResponse(t, http.StatusOK, "second:Bearer rotated-token")
+	})
+	t.Run("UnrelatedService", func(t *testing.T) {
+		unrelated := pbutils.Clone(svc).(*corev1.Service)
+		unrelated.Metadata.Uid = "other-service"
+		unrelated.Spec.IsDisabled = true
+		require.Nil(t, srv.svcCtl.OnUpdate(ctx, unrelated, svc))
+		assert.Equal(t, svc.Metadata.Uid, srv.vCache.GetService().Metadata.Uid)
+		waitResponse(t, http.StatusOK, "second:Bearer rotated-token")
+	})
+	t.Run("DisableAndEnable", func(t *testing.T) {
+		svc.Spec.IsDisabled = true
+		svc, err = adminSrv.UpdateService(ctx, svc)
+		require.Nil(t, err)
+		waitResponse(t, http.StatusServiceUnavailable, "")
+		svc.Spec.IsDisabled = false
+		svc, err = adminSrv.UpdateService(ctx, svc)
+		require.Nil(t, err)
+		waitResponse(t, http.StatusOK, "second:Bearer rotated-token")
+	})
 }
 
 func TestDisabledModes(t *testing.T) {

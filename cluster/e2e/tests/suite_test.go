@@ -36,3 +36,7 @@ func TestE2E(t *testing.T) {
 func TestChaos(t *testing.T) {
 	suite.RunChaos(t)
 }
+
+func TestE2EVigilRegression(t *testing.T) {
+	suite.Run(t, suite.VigilRegressionPhases())
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -158,5 +159,41 @@ func TestMiddleware(t *testing.T) {
 
 		assert.Equal(t, "/v2/path", path)
 		assert.Equal(t, "/v2/path", requestURI)
+	}
+}
+
+func TestPluginPathRewritePreservesEscapedSuffix(t *testing.T) {
+	engine, err := celengine.New(t.Context(), &celengine.Opts{})
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/api/v1/item%2Fpart?q=a%2Fb", "/backend/item%2Fpart?q=a%2Fb"},
+		{"/api%2Fv1/item%2Fpart?q=a%2Fb", "/backend/item%2Fpart?q=a%2Fb"},
+		{"/api/v1", "/backend"},
+		{"/unrelated/value", "/backend/unrelated/value"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			var got string
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.RequestURI()
+			}), engine, corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH)
+			require.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, &middlewares.RequestContext{
+				ReqCtxMap: map[string]any{},
+				ServiceConfig: &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+					Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{{
+						Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						Type: &corev1.Service_Spec_Config_HTTP_Plugin_Path_{Path: &corev1.Service_Spec_Config_HTTP_Plugin_Path{
+							RemovePrefix: "/api/v1", AddPrefix: "/backend",
+						}},
+					}},
+				}}},
+			}))
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }

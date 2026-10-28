@@ -80,3 +80,13 @@ func TestGetGRPCInfo(t *testing.T) {
 		assert.NotNil(t, err)
 	}
 }
+
+func TestGRPCInfoRejectsEmptyComponents(t *testing.T) {
+	for _, path := range []string{"/pkg./Method", "/.Service/Method", "/pkg.Service/", "/pkg..Service/Method"} {
+		t.Run(path, func(t *testing.T) {
+			got, err := GetGRPCInfo(path)
+			assert.NotNil(t, err)
+			assert.Nil(t, got)
+		})
+	}
+}

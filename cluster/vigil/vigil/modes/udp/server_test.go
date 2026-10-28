@@ -59,6 +59,56 @@ func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	return reader
 }
 
+func TestUDPDatagramBoundaries(t *testing.T) {
+	upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 65535)
+		for {
+			n, addr, err := upstream.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			body := buf[:n]
+			if string(body) == "large-reply" {
+				body = bytes.Repeat([]byte("r"), udpBufSize+1)
+			} else if string(body) == "empty-reply" {
+				body = nil
+			}
+			_, _ = upstream.WriteToUDP(body, addr)
+		}
+	}()
+	t.Cleanup(func() { upstream.Close(); <-done })
+	srv := newTestUDPServer(t, upstream.LocalAddr().String())
+	addr := fmt.Sprintf("127.0.0.1:%d", srv.lis.LocalAddr().(*net.UDPAddr).Port)
+	for _, tc := range []struct {
+		name string
+		body []byte
+		want []byte
+	}{
+		{"Empty", []byte{}, []byte{}},
+		{"EmptyReply", []byte("empty-reply"), []byte{}},
+		{"LargerThanMTU", bytes.Repeat([]byte("q"), udpBufSize+1), bytes.Repeat([]byte("q"), udpBufSize+1)},
+		{"LargeReply", []byte("large-reply"), bytes.Repeat([]byte("r"), udpBufSize+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, err := net.Dial("udp4", addr)
+			require.Nil(t, err)
+			defer conn.Close()
+			require.Nil(t, conn.SetDeadline(time.Now().Add(750*time.Millisecond)))
+			_, err = conn.Write(tc.body)
+			require.Nil(t, err)
+			buf := make([]byte, 65535)
+			n, err := conn.Read(buf)
+			require.Nil(t, err)
+			assert.Equal(t, len(tc.want), n)
+			assert.True(t, bytes.Equal(tc.want, buf[:n]), "The UDP datagram was changed")
+		})
+	}
+}
+
 func newTestUDPServer(t *testing.T, upstream string) *Server {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())

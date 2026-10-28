@@ -18,6 +18,7 @@ package vigilutils
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -185,5 +186,79 @@ func TestGetServiceConfig(t *testing.T) {
 			})
 			assert.True(t, pbutils.IsEqual(res, svc.Spec.DynamicConfig.Configs[1]))
 		}
+	}
+}
+
+func TestServiceConfigSelection(t *testing.T) {
+	base := &corev1.Service_Spec_Config{
+		Upstream: &corev1.Service_Spec_Config_Upstream{
+			Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "https://default.example.com"},
+		},
+		Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+			EnableRequestBuffering: true,
+		}},
+	}
+	child := &corev1.Service_Spec_Config{Name: "child", Parent: "default"}
+	svc := &corev1.Service{Spec: &corev1.Service_Spec{
+		Config: base,
+		DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+			Configs: []*corev1.Service_Spec_Config{child},
+		},
+	}}
+	original := pbutils.Clone(svc)
+	for _, name := range []string{"", "default", "missing", "child"} {
+		t.Run(name, func(t *testing.T) {
+			got := GetServiceConfig(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeResponse{
+				RequestContext: &corev1.RequestContext{Service: svc}, ServiceConfigName: name,
+			})
+			if assert.NotNil(t, got) {
+				assert.Equal(t, "https://default.example.com", got.GetUpstream().GetUrl())
+				assert.True(t, got.GetHttp().EnableRequestBuffering)
+			}
+		})
+	}
+	assert.True(t, pbutils.IsEqual(original, svc))
+	explicit := &corev1.Service_Spec_Config{Name: "resolved"}
+	assert.Same(t, explicit, GetServiceConfig(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeResponse{
+		RequestContext: &corev1.RequestContext{Service: svc}, ServiceConfigName: "child", Config: explicit,
+	}))
+	for _, resp := range []*coctovigilv1.AuthenticateAndAuthorizeResponse{
+		nil, {}, {RequestContext: &corev1.RequestContext{}},
+	} {
+		assert.Nil(t, GetServiceConfig(t.Context(), resp))
+	}
+	svc.Spec.DynamicConfig = nil
+	assert.Same(t, base, GetServiceConfig(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeResponse{
+		RequestContext: &corev1.RequestContext{Service: svc}, ServiceConfigName: "missing",
+	}))
+}
+
+type sourceTestConn struct {
+	net.Conn
+	addr net.Addr
+}
+
+func (c *sourceTestConn) RemoteAddr() net.Addr {
+	return c.addr
+}
+
+func TestDownstreamRequestSource(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conn net.Conn
+		ip   string
+		port int32
+	}{
+		{name: "nil"},
+		{name: "TCPv4", conn: &sourceTestConn{addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 1234}}, ip: "192.0.2.10", port: 1234},
+		{name: "TCPv6", conn: &sourceTestConn{addr: &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 65535}}, ip: "2001:db8::1", port: 65535},
+		{name: "UDP", conn: &sourceTestConn{addr: &net.UDPAddr{IP: net.ParseIP("192.0.2.20"), Port: 53}}, ip: "192.0.2.20", port: 53},
+		{name: "Unix", conn: &sourceTestConn{addr: &net.UnixAddr{Name: "/tmp/vigil.sock", Net: "unix"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GetDownstreamRequestSource(tc.conn)
+			assert.Equal(t, tc.ip, got.Address)
+			assert.Equal(t, tc.port, got.Port)
+		})
 	}
 }

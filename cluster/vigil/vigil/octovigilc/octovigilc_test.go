@@ -57,6 +57,62 @@ func (c *tstInternalErrC) Authorize(ctx context.Context,
 	return c.authorize(ctx, in)
 }
 
+func TestNewClientMissingOptions(t *testing.T) {
+	for _, opts := range []*Opts{nil, {}} {
+		c, err := NewClient(t.Context(), opts)
+		assert.NotNil(t, err)
+		assert.Nil(t, c)
+	}
+}
+
+func TestRemotePreservesParentDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	want, ok := ctx.Deadline()
+	require.True(t, ok)
+	internal := &tstInternalErrC{
+		authenticate: func(ctx context.Context, req *coctovigilv1.AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
+			got, ok := ctx.Deadline()
+			assert.True(t, ok)
+			assert.Equal(t, want, got)
+			assert.Nil(t, req.Request.Request)
+			return &coctovigilv1.AuthenticateAndAuthorizeResponse{IsAuthorized: true}, nil
+		},
+		authorize: func(ctx context.Context, req *coctovigilv1.AuthorizeRequest) (*coctovigilv1.AuthorizeResponse, error) {
+			got, ok := ctx.Deadline()
+			assert.True(t, ok)
+			assert.Equal(t, want, got)
+			return &coctovigilv1.AuthorizeResponse{IsAuthorized: true}, nil
+		},
+	}
+	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: internal}}
+	resp, err := c.AuthenticateAndAuthorize(ctx, &AuthenticateAndAuthorizeRequest{Request: &coctovigilv1.DownstreamRequest{}})
+	require.Nil(t, err)
+	assert.True(t, resp.IsAuthorized)
+	result, err := c.Authorize(ctx, &coctovigilv1.AuthorizeRequest{SessionUID: "session"})
+	require.Nil(t, err)
+	assert.True(t, result.IsAuthorized)
+	assert.Nil(t, c.GetCache())
+}
+
+func TestRemoteUnparsedBodyIsPreserved(t *testing.T) {
+	body := []byte("non-json payload")
+	h := &corev1.RequestContext_Request_HTTP{Body: body}
+	internal := &tstInternalErrC{authenticate: func(ctx context.Context, req *coctovigilv1.AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
+		assert.Equal(t, body, req.Request.Request.GetHttp().Body)
+		return &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{
+			Request: pbutils.Clone(req.Request.Request).(*corev1.RequestContext_Request),
+		}}, nil
+	}}
+	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: internal}}
+	resp, err := c.AuthenticateAndAuthorize(t.Context(), &AuthenticateAndAuthorizeRequest{Request: &coctovigilv1.DownstreamRequest{
+		Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{Http: h}},
+	}})
+	require.Nil(t, err)
+	assert.Equal(t, body, h.Body)
+	assert.Equal(t, body, resp.RequestContext.Request.GetHttp().Body)
+}
+
 func TestRemoteBodyRestoredOnError(t *testing.T) {
 	for _, tc := range []struct {
 		name string

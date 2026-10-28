@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,12 +36,162 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type tstOAuthSrv struct {
 	srv         *http.Server
 	port        int
 	accessToken string
+}
+
+func TestNamedKubernetesSecrets(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	for _, tc := range []struct {
+		name string
+		cfg  func(string) *corev1.Service_Spec_Config_Kubernetes
+	}{
+		{"Bearer", func(name string) *corev1.Service_Spec_Config_Kubernetes {
+			return &corev1.Service_Spec_Config_Kubernetes{Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_{
+				BearerToken: &corev1.Service_Spec_Config_Kubernetes_BearerToken{Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_FromSecret{FromSecret: name}},
+			}}
+		}},
+		{"Kubeconfig", func(name string) *corev1.Service_Spec_Config_Kubernetes {
+			return &corev1.Service_Spec_Config_Kubernetes{Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+				Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{FromSecret: name}},
+			}}
+		}},
+		{"ClientCertificate", func(name string) *corev1.Service_Spec_Config_Kubernetes {
+			return &corev1.Service_Spec_Config_Kubernetes{Type: &corev1.Service_Spec_Config_Kubernetes_ClientCertificate{
+				ClientCertificate: &corev1.Service_Spec_Config_ClientCertificate{Type: &corev1.Service_Spec_Config_ClientCertificate_FromSecret{FromSecret: name}},
+			}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vc, err := vcache.NewCache(t.Context())
+			require.Nil(t, err)
+			vc.SetService(&corev1.Service{Spec: &corev1.Service_Spec{
+				Config: &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: tc.cfg("default-secret")}},
+				DynamicConfig: &corev1.Service_Spec_DynamicConfig{Configs: []*corev1.Service_Spec_Config{
+					{Name: "alternate", Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: tc.cfg("alternate-secret")}},
+				}},
+			}})
+			sm, err := New(t.Context(), tst.C.OcteliumC, vc)
+			require.Nil(t, err)
+			require.Nil(t, sm.ApplyService(t.Context()))
+			assert.ElementsMatch(t, []string{"default-secret", "alternate-secret"}, sm.secretNames)
+		})
+	}
+}
+
+func TestOAuth2CacheKeyIsolation(t *testing.T) {
+	base := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: "https://issuer.example.com/token", Scopes: []string{"read-write", "admin"}}
+	for _, tc := range []struct {
+		name string
+		req  *GetOAuth2CCTokenReq
+	}{
+		{"Client", &GetOAuth2CCTokenReq{ClientID: "other", SecretName: base.SecretName, TokenURL: base.TokenURL, Scopes: base.Scopes}},
+		{"Secret", &GetOAuth2CCTokenReq{ClientID: base.ClientID, SecretName: "other", TokenURL: base.TokenURL, Scopes: base.Scopes}},
+		{"URL", &GetOAuth2CCTokenReq{ClientID: base.ClientID, SecretName: base.SecretName, TokenURL: "https://other.example.com/token", Scopes: base.Scopes}},
+		{"ScopeBoundaries", &GetOAuth2CCTokenReq{ClientID: base.ClientID, SecretName: base.SecretName, TokenURL: base.TokenURL, Scopes: []string{"read", "write-admin"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotEqual(t, base.getID(), tc.req.getID())
+		})
+	}
+	t.Run("TokenEndpoint", func(t *testing.T) {
+		sm, err := New(t.Context(), nil, nil)
+		require.Nil(t, err)
+		sm.c.Set("secret", &corev1.Secret{
+			Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+			Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+		}, 0)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !assert.Nil(t, r.ParseForm()) {
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"token_type": "Bearer", "access_token": strings.ReplaceAll(r.Form.Get("scope"), " ", "_"), "expires_in": 3600,
+			})
+		}))
+		defer srv.Close()
+		for _, tc := range []struct {
+			scopes []string
+			want   string
+		}{
+			{[]string{"read-write", "admin"}, "read-write_admin"},
+			{[]string{"read", "write-admin"}, "read_write-admin"},
+		} {
+			token, err := sm.GetOAuth2CCToken(t.Context(), &GetOAuth2CCTokenReq{
+				ClientID: "client", SecretName: "secret", TokenURL: srv.URL, Scopes: tc.scopes,
+			})
+			require.Nil(t, err)
+			assert.Equal(t, tc.want, token)
+		}
+	})
+}
+
+func TestOAuth2TokenRequestCancellation(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	sm.c.Set("secret", &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+	}, 0)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	defer close(release)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"token_type":"Bearer","access_token":"token","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := sm.GetOAuth2CCToken(ctx, &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("The token request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Error("The OAuth2 request did not stop after its caller was canceled")
+	}
+}
+
+func TestSecretGenerationLifecycle(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	secret := &corev1.Secret{Metadata: &metav1.Metadata{Name: "tracked"}}
+	assert.Zero(t, sm.Generation())
+	sm.Set(secret)
+	assert.Zero(t, sm.Generation())
+	sm.secretNames = []string{"tracked", "tracked", "other"}
+	sm.Set(secret)
+	assert.Equal(t, uint64(1), sm.Generation())
+	sm.Delete(secret)
+	assert.Equal(t, uint64(2), sm.Generation())
+	assert.Equal(t, []string{"other"}, sm.secretNames)
+	_, cached := sm.c.Get("tracked")
+	assert.False(t, cached)
+	sm.Delete(secret)
+	assert.Equal(t, uint64(2), sm.Generation())
 }
 
 func (s *tstOAuthSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {

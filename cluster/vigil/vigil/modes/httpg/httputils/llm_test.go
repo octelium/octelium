@@ -19,6 +19,7 @@ package httputils
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func parseLLM(t *testing.T, protocol corev1.Service_Spec_Config_LLM_Protocol,
@@ -930,6 +932,74 @@ func newLLMEventStreamMessage(t *testing.T, headers, payload []byte) []byte {
 	assert.Equal(t, total, len(ret))
 
 	return ret
+}
+
+func TestLLMEventStreamEventRoundTripAndFragmentation(t *testing.T) {
+	payload := []byte(`{"delta":{"text":"hello"}}`)
+	frame := EncodeLLMEventStreamEvent("contentBlockDelta", payload)
+	assert.Equal(t, crc32.ChecksumIEEE(frame[:8]), binary.BigEndian.Uint32(frame[8:12]))
+	assert.Equal(t, crc32.ChecksumIEEE(frame[:len(frame)-4]), binary.BigEndian.Uint32(frame[len(frame)-4:]))
+	for size := range len(frame) {
+		_, got, n := NextLLMEventStreamEvent(frame[:size])
+		assert.Zero(t, n, size)
+		assert.Nil(t, got)
+	}
+	joined := append(append([]byte(nil), frame...), frame...)
+	for range 2 {
+		eventType, got, n := NextLLMEventStreamEvent(joined)
+		require.Equal(t, len(frame), n)
+		assert.Equal(t, "contentBlockDelta", eventType)
+		assert.Equal(t, payload, got)
+		got[0] = '!'
+		assert.Equal(t, byte('{'), joined[llmEventStreamPreludeLen+int(binary.BigEndian.Uint32(joined[4:8]))])
+		joined = joined[n:]
+	}
+}
+
+func TestLLMEventStreamMalformedHeaders(t *testing.T) {
+	for _, headers := range [][]byte{
+		{1},
+		{10, 'a', llmEventStreamHeaderString},
+		{1, 'a', 0},
+		{1, 'a', llmEventStreamHeaderString, 0},
+		{1, 'a', llmEventStreamHeaderString, 0, 10, 'x'},
+	} {
+		frame := newLLMEventStreamMessage(t, headers, []byte("payload"))
+		_, _, n := NextLLMEventStreamEvent(frame)
+		assert.Equal(t, -1, n)
+	}
+}
+
+func TestLLMEventStreamHeaderCountLimit(t *testing.T) {
+	var headers []byte
+	for i := range maxLLMEventStreamHeaders + 1 {
+		name := fmt.Sprintf("header-%d", i)
+		headers = append(headers, byte(len(name)))
+		headers = append(headers, name...)
+		headers = append(headers, llmEventStreamHeaderString, 0, 1, 'x')
+		_, ok := parseLLMEventStreamHeaders(headers)
+		assert.Equal(t, i < maxLLMEventStreamHeaders, ok, "header count %d", i+1)
+	}
+}
+
+func TestLLMEventStreamRejectsCorruptChecksums(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pos  func([]byte) int
+	}{
+		{"PreludeCRC", func(frame []byte) int { return 8 }},
+		{"MessageCRC", func(frame []byte) int { return len(frame) - 1 }},
+		{"Payload", func(frame []byte) int { return len(frame) - 5 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := EncodeLLMEventStreamEvent("contentBlockDelta", []byte(`{"text":"hi"}`))
+			frame[tc.pos(frame)] ^= 1
+			_, _, n := NextLLMEventStreamEvent(frame)
+			assert.Equal(t, -1, n)
+			_, n = NextLLMEventStreamMessage(frame)
+			assert.Equal(t, -1, n)
+		})
+	}
 }
 
 func TestNextLLMEventStreamMessage(t *testing.T) {

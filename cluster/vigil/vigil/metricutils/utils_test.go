@@ -18,8 +18,10 @@ package metricutils
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +46,52 @@ func newTestSvc() *corev1.Service {
 			RegionRef:    &metav1.ObjectReference{Name: "region1"},
 		},
 	}
+}
+
+func TestBoundedCardinalityConcurrent(t *testing.T) {
+	b := NewBoundedValues(8)
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			for range 16 {
+				got := b.Get(fmt.Sprintf("route-%d", i))
+				assert.True(t, got == ValueOther || got == fmt.Sprintf("route-%d", i))
+			}
+		})
+	}
+	wg.Wait()
+	assert.Len(t, b.vals, 8)
+	for value := range b.vals {
+		assert.Equal(t, value, b.Get(value))
+	}
+	for _, max := range []int{0, -1} {
+		bounded := NewBoundedValues(max)
+		assert.Equal(t, "first", bounded.Get("first"))
+		assert.Equal(t, ValueOther, bounded.Get("second"))
+	}
+	assert.Equal(t, "allowed", Bounded("allowed", map[string]struct{}{"allowed": {}}))
+	assert.Equal(t, ValueOther, Bounded("unknown", nil))
+	assert.Equal(t, ValueUnset, Bounded("", nil))
+	assert.Equal(t, "allowed", BoundedSlice("allowed", []string{"allowed"}))
+	assert.Equal(t, ValueOther, BoundedSlice("unknown", nil))
+	assert.Equal(t, ValueUnset, BoundedSlice("", nil))
+}
+
+func TestPacketCountersSkipNonPositiveValues(t *testing.T) {
+	reader := setTestMeterProvider(t)
+	m, err := NewCommonMetrics(t.Context(), newTestSvc())
+	assert.Nil(t, err)
+	m.AddPacketsTransferred(3, 5, metric.WithAttributes(attribute.String("state", "ALLOWED")))
+	m.AddPacketsTransferred(0, -1)
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(t.Context(), &rm))
+	sent := findSumDataPoint(t, &rm, "req.packets_sent")
+	received := findSumDataPoint(t, &rm, "req.packets_received")
+	assert.Equal(t, int64(3), sent.Value)
+	assert.Equal(t, int64(5), received.Value)
+	value, ok := sent.Attributes.Value("state")
+	assert.True(t, ok)
+	assert.Equal(t, "ALLOWED", value.AsString())
 }
 
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {

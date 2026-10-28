@@ -34,6 +34,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -151,6 +152,45 @@ end
 		assert.Equal(t, 205, luaCtx.rw.statusCode)
 	}
 
+}
+
+func TestLuaModuleBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		fail   bool
+	}{
+		{"Base64", `assert(base64.decode(base64.encode("hello\000world")) == "hello\000world")`, false},
+		{"Base64URL", `assert(base64.encodeURL("\255\255") == "__8="); assert(base64.decodeURL("__8=") == "\255\255")`, false},
+		{"StringCase", `assert(strings.upper("café") == "CAFÉ"); assert(strings.lower("CAFÉ") == "café"); assert(strings.toUpper("a") == "A"); assert(strings.toLower("A") == "a")`, false},
+		{"StringPredicates", `assert(strings.hasPrefix("abc", "a")); assert(strings.hasSuffix("abc", "c")); assert(strings.contains("abc", "b")); assert(strings.containsAny("abc", "xzbc")); assert(strings.count("banana", "an") == 2)`, false},
+		{"StringTrimming", `assert(strings.trimSpace("  value\n") == "value"); assert(strings.trim("-value-", "-") == "value"); assert(strings.trimPrefix("prefix-value", "prefix-") == "value"); assert(strings.trimSuffix("value.txt", ".txt") == "value")`, false},
+		{"StringReplacement", `assert(strings.replace("aaa", "a", "b", 2) == "bba"); assert(strings.replaceAll("aaa", "a", "b") == "bbb")`, false},
+		{"StringSplitJoin", `assert(strings.join(strings.split("a,b,c", ","), ":") == "a:b:c"); assert(strings.compare("a", "b") == -1); assert(strings.index("abc", "b") == 1); assert(strings.index("abc", "z") == -1)`, false},
+		{"StringUnicode", `assert(strings.len("é😀") == 6); assert(strings.lenUnicode("é😀") == 2); assert(strings.truncateUnicode("é😀x", 2) == "é😀"); assert(strings.truncate("abcdef", 3) == "abc"); assert(strings.truncate("abc", 10) == "abc")`, false},
+		{"StringEmptyTruncate", `assert(strings.truncate("abc", 0) == ""); assert(strings.truncateUnicode("é", 0) == "")`, false},
+		{"TableInsertRemove", `local t = {}; table.insert(t, "b"); table.insert(t, 1, "a"); table.insert(t, "c"); assert(table.remove(t) == "c"); assert(table.remove(t, 1) == "a"); assert(t[1] == "b"); assert(#t == 1)`, false},
+		{"TableEmptyRemove", `local t = {}; assert(table.remove(t) == nil)`, false},
+		{"TableMissingValue", `table.insert({})`, true},
+		{"StringWrongType", `strings.upper({})`, true},
+		{"StringNegativeTruncate", `strings.truncate("abc", -1)`, true},
+		{"StringNegativeUnicodeTruncate", `strings.truncateUnicode("é", -1)`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &middleware{cMap: make(map[string]*lua.FunctionProto)}
+			fnProto, err := m.doGetAndSetLuaFnProto(tc.script)
+			require.Nil(t, err)
+			c, err := newCtx(&newCtxOpts{
+				req: httptest.NewRequest(http.MethodGet, "/", nil), rw: newResponseWriter(httptest.NewRecorder()), fnProto: fnProto,
+			})
+			if tc.fail {
+				assert.NotNil(t, err)
+				return
+			}
+			require.Nil(t, err)
+			defer c.close()
+		})
+	}
 }
 
 func TestJSON(t *testing.T) {

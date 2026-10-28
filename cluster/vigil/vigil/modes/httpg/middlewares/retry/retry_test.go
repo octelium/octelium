@@ -18,11 +18,13 @@ package retry
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -31,6 +33,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -149,6 +152,163 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, http.StatusBadGateway, rw.Result().StatusCode)
 	}
 
+}
+
+func TestRetryStatusPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		custom []int32
+		all5xx bool
+		want   int
+	}{
+		{"Success", 200, nil, false, 1},
+		{"ClientError", 400, nil, true, 1},
+		{"NotFound", 404, nil, false, 1},
+		{"InternalErrorDefault", 500, nil, false, 1},
+		{"BadGateway", 502, nil, false, 4},
+		{"Unavailable", 503, nil, false, 4},
+		{"GatewayTimeout", 504, nil, false, 4},
+		{"InternalErrorEnabled", 500, nil, true, 4},
+		{"CustomRateLimit", 429, []int32{429}, false, 4},
+		{"UnlistedClientError", 400, []int32{429}, false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reqCtx := newRetryReqCtx(nil)
+			retryCfg := reqCtx.ServiceConfig.GetHttp().Retry
+			retryCfg.StatusCodes = tc.custom
+			retryCfg.RetryOnServerErrors = tc.all5xx
+			attempts := 0
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				w.WriteHeader(tc.status)
+			}))
+			assert.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx))
+			rw := httptest.NewRecorder()
+			h.ServeHTTP(rw, req)
+			assert.Equal(t, tc.want, attempts)
+			assert.Equal(t, tc.status, rw.Code)
+		})
+	}
+}
+
+func TestRetryDiscardsFailedResponse(t *testing.T) {
+	reqCtx := newRetryReqCtx(nil)
+	var attempts int
+	h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("X-Failed-Attempt", "true")
+			w.WriteHeader(http.StatusBadGateway)
+			_, err := w.Write([]byte("failed"))
+			assert.Nil(t, err)
+			return
+		}
+		w.Header().Set("X-Success", "true")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("success"))
+	}))
+	assert.Nil(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("payload"))
+	req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx))
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, http.StatusCreated, rw.Code)
+	assert.Equal(t, "success", rw.Body.String())
+	assert.Empty(t, rw.Header().Get("X-Failed-Attempt"))
+	assert.Equal(t, "true", rw.Header().Get("X-Success"))
+}
+
+func TestRetryDiscardsImplicitRetriableBody(t *testing.T) {
+	reqCtx := newRetryReqCtx(nil)
+	reqCtx.ServiceConfig.GetHttp().Retry.StatusCodes = []int32{http.StatusOK}
+	var attempts int
+	h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 4 {
+			w.Write([]byte("discarded"))
+			return
+		}
+		w.Write([]byte("final"))
+	}))
+	require.Nil(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx))
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	assert.Equal(t, 4, attempts)
+	assert.Equal(t, "final", rw.Body.String())
+}
+
+func TestRetryPreservesImplicitResponseHeaders(t *testing.T) {
+	for _, flush := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Flush%t", flush), func(t *testing.T) {
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Empty-Response", "present")
+				if flush {
+					w.(http.Flusher).Flush()
+				}
+			}))
+			assert.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, newRetryReqCtx(nil)))
+			rw := httptest.NewRecorder()
+			h.ServeHTTP(rw, req)
+			assert.Equal(t, http.StatusOK, rw.Code)
+			assert.Equal(t, "present", rw.Result().Header.Get("X-Empty-Response"))
+			if flush {
+				assert.True(t, rw.Flushed)
+			}
+		})
+	}
+}
+
+func TestRetryCancellationStopsAttempts(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var attempts int
+	h, err := New(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadGateway)
+		cancel()
+	}))
+	assert.Nil(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(ctx, middlewares.CtxRequestContext, newRetryReqCtx(nil)))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, 1, attempts)
+}
+
+func TestRetryBodyReadError(t *testing.T) {
+	called := false
+	h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	assert.Nil(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/", iotest.ErrReader(io.ErrUnexpectedEOF))
+	req.ContentLength = 10
+	req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, newRetryReqCtx(nil)))
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	assert.False(t, called)
+	assert.Equal(t, http.StatusBadRequest, rw.Code)
+}
+
+func TestRetryBodySizeLimits(t *testing.T) {
+	assert.Equal(t, int64(defaultMaxBodySize), getMaxBodySize(nil))
+	cfg := &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Http{
+		Http: &corev1.Service_Spec_Config_HTTP{Body: &corev1.Service_Spec_Config_HTTP_Body{}},
+	}}
+	for _, tc := range []struct {
+		size uint32
+		want int64
+	}{{0, defaultMaxBodySize}, {1, 1}, {maxBodySize, maxBodySize}, {maxBodySize + 1, maxBodySize}, {^uint32(0), maxBodySize}} {
+		cfg.GetHttp().Body.MaxRequestSize = tc.size
+		assert.Equal(t, tc.want, getMaxBodySize(cfg))
+	}
 }
 
 func newRetryReqCtx(svc *corev1.Service) *middlewares.RequestContext {

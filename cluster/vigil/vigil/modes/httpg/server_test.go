@@ -123,6 +123,166 @@ func newTestHTTPServer(t *testing.T, handler http.Handler, cfg *corev1.Service_S
 	return srv, fmt.Sprintf("http://127.0.0.1:%d", ucorev1.ToService(svc).RealPort())
 }
 
+func TestHTTPRetryReplaysRequestAndIsolatesResponse(t *testing.T) {
+	var attempts atomic.Int32
+	payload := strings.Repeat("request payload ", 256)
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		assert.Equal(t, payload, string(body))
+		if attempts.Add(1) == 1 {
+			w.Header().Set("X-Failed-Attempt", "true")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("retry body"))
+			return
+		}
+		w.Header().Set("X-Upstream-Success", "true")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("created"))
+	}), &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Retry: &corev1.Service_Spec_Config_HTTP_Retry{
+			MaxRetries:      3,
+			InitialInterval: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 1}},
+		},
+	})
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, addr+"/resource", strings.NewReader(payload))
+	require.Nil(t, err)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.Nil(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.Nil(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, "created", string(body))
+	assert.Equal(t, "true", resp.Header.Get("X-Upstream-Success"))
+	assert.Empty(t, resp.Header.Get("X-Failed-Attempt"))
+	assert.Equal(t, int32(2), attempts.Load())
+}
+
+func TestHTTPPathRewritePreservesEscapedSuffix(t *testing.T) {
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.RequestURI))
+	}), &corev1.Service_Spec_Config_HTTP{Path: &corev1.Service_Spec_Config_HTTP_Path{
+		RemovePrefix: "/api/v1", AddPrefix: "/backend",
+	}})
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/api/v1/item%2Fpart?q=a%2Fb", "/backend/item%2Fpart?q=a%2Fb"},
+		{"/api%2Fv1/item%2Fpart?q=a%2Fb", "/backend/item%2Fpart?q=a%2Fb"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := client.Get(addr + tc.path)
+			require.Nil(t, err)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.Nil(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, tc.want, string(body))
+		})
+	}
+}
+
+func TestHTTPResponseCacheAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header http.Header
+		cached bool
+	}{
+		{name: "Cacheable", cached: true},
+		{name: "Private", header: http.Header{"Cache-Control": {"private"}}},
+		{name: "NoStore", header: http.Header{"Cache-Control": {"no-store"}}},
+		{name: "SetCookie", header: http.Header{"Set-Cookie": {"session=private"}}},
+		{name: "Vary", header: http.Header{"Vary": {"X-Tenant"}}},
+		{name: "EmptyFirstVary", header: http.Header{"Vary": {"", "X-Tenant"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				for key, values := range tc.header {
+					w.Header()[key] = append([]string(nil), values...)
+				}
+				w.Write([]byte(r.Header.Get("X-Tenant")))
+			}), &corev1.Service_Spec_Config_HTTP{Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{Name: "response-cache", Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
+			}})
+			client := &http.Client{Timeout: 5 * time.Second}
+			for i, tenant := range []string{"tenant-one", "tenant-two"} {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+"/cached", nil)
+				require.Nil(t, err)
+				req.Header.Set("X-Tenant", tenant)
+				resp, err := client.Do(req)
+				require.Nil(t, err)
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				require.Nil(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				if tc.cached && i == 1 {
+					assert.Equal(t, "HIT", resp.Header.Get("X-Cache"))
+					assert.Equal(t, "tenant-one", string(body))
+				} else {
+					assert.Equal(t, tenant, string(body))
+				}
+			}
+			want := int32(2)
+			if tc.cached {
+				want = 1
+			}
+			assert.Equal(t, want, calls.Load())
+		})
+	}
+}
+
+func TestHTTPClientCancellationReachesUpstream(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-r.Context().Done():
+			close(canceled)
+		case <-release:
+		}
+	}), &corev1.Service_Spec_Config_HTTP{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/slow", nil)
+	require.Nil(t, err)
+	done := make(chan error, 1)
+	go func() {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("The upstream request did not start")
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Error("The upstream request was not canceled")
+	}
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(3 * time.Second):
+		t.Error("The canceled client request did not finish")
+	}
+}
+
 func TestHTTPMalformedRequests(t *testing.T) {
 	var rejectedCalls atomic.Int64
 	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
