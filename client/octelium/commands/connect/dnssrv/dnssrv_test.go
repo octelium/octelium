@@ -17,13 +17,16 @@ package dnssrv
 import (
 	"context"
 	"net"
+	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestCachedMsg(domain string, ttl uint32) *dns.Msg {
@@ -890,4 +893,73 @@ func TestServerSingleLabelUsesFallbackOnUnsupportedQtype(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, dns.RcodeSuccess, r.Rcode)
 	assert.Equal(t, "172.18.0.3", r.Answer[0].(*dns.A).A.String())
+}
+
+func TestCacheExpirationCleanupAndCopyIsolation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newCache()
+		original := newTestCachedMsg("short.local.example.com.", 10)
+		c.set("short.local.example.com.", dns.TypeA, original)
+		c.set("long.local.example.com.", dns.TypeA, newTestCachedMsg("long.local.example.com.", 60))
+		original.Answer[0].(*dns.A).A = net.ParseIP("192.0.2.99")
+		require.Equal(t, "1.2.3.4", c.get("short.local.example.com.", dns.TypeA).Answer[0].(*dns.A).A.String())
+		time.Sleep(11 * time.Second)
+		assert.Nil(t, c.get("short.local.example.com.", dns.TypeA))
+		assert.NotNil(t, c.get("long.local.example.com.", dns.TypeA))
+		c.doCleanup()
+		assert.Len(t, c.cMap, 1)
+		time.Sleep(time.Minute)
+		c.doCleanup()
+		assert.Empty(t, c.cMap)
+	})
+}
+
+func TestCacheCleanupLoopStopsOnCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newCache()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			c.startCleanupLoop(ctx)
+			close(done)
+		}()
+		c.set("short.local.example.com.", dns.TypeA, newTestCachedMsg("short.local.example.com.", 10))
+		synctest.Wait()
+		time.Sleep(6 * time.Minute)
+		synctest.Wait()
+		assert.Empty(t, c.cMap)
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the DNS cache cleanup loop must stop when its context is canceled")
+		}
+	})
+}
+
+func TestDNSKnownIssues(t *testing.T) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-010 in tmp/client-test-report.md")
+	}
+	t.Run("CL-010-local-DNS-TCP-fallback", func(t *testing.T) {
+		reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
+		require.NoError(t, err)
+		addr := reserved.LocalAddr().String()
+		require.NoError(t, reserved.Close())
+		srv, err := NewDNSServer(&Opts{
+			ClusterDomain: "example.com", ListenAddr: addr, HasV4: true, DNSGetter: &tstEmptyDNSGetter{},
+		})
+		require.NoError(t, err)
+		require.NoError(t, srv.Run())
+		defer srv.Close()
+		msg := new(dns.Msg)
+		msg.SetQuestion("web.local.example.com.", dns.TypeA)
+		udpClient := &dns.Client{Timeout: time.Second}
+		_, _, err = udpClient.Exchange(msg, addr)
+		require.NoError(t, err)
+		tcpClient := &dns.Client{Net: "tcp", Timeout: time.Second}
+		_, _, err = tcpClient.Exchange(msg, addr)
+		assert.NoError(t, err)
+	})
 }

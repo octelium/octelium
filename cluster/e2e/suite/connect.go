@@ -19,7 +19,9 @@ package suite
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -425,4 +427,99 @@ func testConnectTakeover(t *testing.T, h *harness.H) {
 				zap.String("tunnel", tunnel.name), zap.Duration("takeover", takeover))
 		})
 	}
+}
+
+func ClientRegressionPhases() []Phase {
+	return []Phase{
+		{"ConnectRepeatedAPIRestarts", testConnectRepeatedAPIRestarts},
+		{"ConnectPortReuse", testConnectPortReuse},
+		{"ConnectMissingPublishedServiceRecovery", testConnectMissingPublishedServiceRecovery},
+	}
+}
+
+func testConnectRepeatedAPIRestarts(t *testing.T, h *harness.H) {
+	for _, tunnel := range []string{"wg", "quicv0"} {
+		t.Run(tunnel, func(t *testing.T) {
+			if tunnel == "quicv0" {
+				h.Require(t, capQUICv0)
+			}
+			svc := h.NewPublicService(t, "default")
+			conn := h.Connect(t, harness.ConnectOpts{
+				TunnelMode: tunnel, Publish: map[string]int{svc.Metadata.Name: h.Port()},
+				Args: []string{"--no-dns", "--ip-mode v4", "--implementation gvisor"},
+			})
+			h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+			initial := h.Status(t).Session
+			require.NotNil(t, initial)
+			for range 3 {
+				previous := h.GetSession(t, initial.Metadata.Name).Status.TotalConnections
+				h.RestartService(t, "default.octelium-api")
+				h.Within(t, "the same client process to reconnect after another API restart", harness.ConnectBudget,
+					func(ctx context.Context) error {
+						if !conn.IsRunning() {
+							return errors.New("octelium connect exited during an API restart")
+						}
+						sess, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: initial.Metadata.Name})
+						if err != nil {
+							return err
+						}
+						if !sess.GetStatus().GetIsConnected() || sess.GetStatus().GetTotalConnections() <= previous {
+							return errors.New("the Session has not opened a new connection")
+						}
+						return nil
+					})
+				h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+				assert.Equal(t, initial.Metadata.Uid, h.Status(t).Session.Metadata.Uid)
+			}
+		})
+	}
+}
+
+func testConnectPortReuse(t *testing.T, h *harness.H) {
+	svc := h.NewPublicService(t, "default")
+	port := h.Port()
+	for range 3 {
+		conn := h.Connect(t, harness.ConnectOpts{
+			PublishOrdered: []harness.PublishSpec{{Service: svc.Metadata.Name, Address: "127.0.0.1", Port: port}},
+			Args:           []string{"--no-dns", "--implementation gvisor"},
+		})
+		h.WaitGetStatus(t, h.HTTP(), conn.URL(svc.Metadata.Name), http.StatusOK)
+		require.NoError(t, conn.Disconnect())
+		assert.False(t, conn.IsRunning())
+		lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		require.NoError(t, err, "a disconnected client must release its published port immediately")
+		require.NoError(t, lis.Close())
+	}
+}
+
+func testConnectMissingPublishedServiceRecovery(t *testing.T, h *harness.H) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run the CL-001 live-cluster regression in tmp/client-test-report.md")
+	}
+	removed := h.NewPublicService(t, "default")
+	healthy := h.NewPublicService(t, "default")
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{removed.Metadata.Name: h.Port(), healthy.Metadata.Name: h.Port()},
+		Args:    []string{"--no-dns", "--implementation gvisor"},
+	})
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
+	sessName := h.Status(t).Session.Metadata.Name
+	previous := h.GetSession(t, sessName).Status.TotalConnections
+	h.DeleteService(t, removed)
+	h.RestartService(t, "default.octelium-api")
+	h.Within(t, "the client to reconnect while a published Service is absent", harness.ConnectBudget,
+		func(ctx context.Context) error {
+			if !conn.IsRunning() {
+				return errors.New("the client exited because a published Service was deleted")
+			}
+			sess, err := h.CoreC().GetSession(ctx, &metav1.GetOptions{Name: sessName})
+			if err != nil {
+				return err
+			}
+			if !sess.GetStatus().GetIsConnected() || sess.GetStatus().GetTotalConnections() <= previous {
+				return errors.New("the missing Service prevents the entire connection from recovering")
+			}
+			return nil
+		})
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
 }

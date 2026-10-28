@@ -15,13 +15,292 @@
 package commands
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/miekg/dns"
+	"github.com/octelium/octelium/apis/client/daemonv1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/octelium/commands/connect"
+	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestCmds(t *testing.T) {
 	InitCmds()
 	assert.True(t, Cmd.HasSubCommands())
 	assert.False(t, Cmd.Runnable())
+}
+
+type testCommandAPI struct {
+	userv1.UnimplementedMainServiceServer
+	connectFn    func(userv1.MainService_ConnectServer) error
+	getServiceFn func(context.Context, *metav1.GetOptions) (*userv1.Service, error)
+}
+
+func (s *testCommandAPI) Connect(stream userv1.MainService_ConnectServer) error {
+	return s.connectFn(stream)
+}
+
+func (s *testCommandAPI) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+	return s.getServiceFn(ctx, req)
+}
+
+func newTestCommandSocket(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf(`\\.\pipe\octelium-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	}
+	dir, err := os.MkdirTemp("", "oct-cli-")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
+	return filepath.Join(dir, "api.sock")
+}
+
+func startTestCommandAPI(t *testing.T, srv *testCommandAPI) string {
+	t.Helper()
+	socket := newTestCommandSocket(t)
+	lis, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	grpcSrv := grpc.NewServer()
+	userv1.RegisterMainServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	t.Cleanup(grpcSrv.Stop)
+	return socket
+}
+
+type testCommandProcess struct {
+	cmd    *exec.Cmd
+	output bytes.Buffer
+	done   chan struct{}
+	err    error
+}
+
+func startTestCommand(t *testing.T, binary string, env []string, args ...string) *testCommandProcess {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	p := &testCommandProcess{done: make(chan struct{})}
+	p.cmd = exec.CommandContext(ctx, binary, args...)
+	for _, val := range os.Environ() {
+		if !strings.HasPrefix(val, "OCTELIUM_") {
+			p.cmd.Env = append(p.cmd.Env, val)
+		}
+	}
+	p.cmd.Env = append(p.cmd.Env, "OCTELIUM_PRODUCTION=true", "OCTELIUM_DEV=false", "OCTELIUM_USER_HOME="+t.TempDir())
+	p.cmd.Env = append(p.cmd.Env, env...)
+	p.cmd.Stdout, p.cmd.Stderr = &p.output, &p.output
+	require.NoError(t, p.cmd.Start())
+	go func() {
+		p.err = p.cmd.Wait()
+		close(p.done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-p.done
+		if t.Failed() {
+			t.Log(p.output.String())
+		}
+	})
+	return p
+}
+
+func (p *testCommandProcess) wait(t *testing.T, budget time.Duration) error {
+	t.Helper()
+	select {
+	case <-p.done:
+		return p.err
+	case <-time.After(budget):
+		t.Fatal("the octelium command did not exit within the test budget")
+		return nil
+	}
+}
+
+func testCommandInitialState() *userv1.ConnectResponse {
+	return &userv1.ConnectResponse{
+		CreatedAt: timestamppb.Now(),
+		Event: &userv1.ConnectResponse_State{State: &userv1.ConnectionState{
+			L3Mode: userv1.ConnectionState_V4, X25519Key: make([]byte, 32),
+			Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32"}},
+			Cidr:      &metav1.DualStackNetwork{V4: "100.64.0.0/16"},
+		}},
+	}
+}
+
+func testCommandDNSReady(addr string) bool {
+	for _, network := range []string{"udp"} {
+		cl := &dns.Client{Net: network, Timeout: 100 * time.Millisecond}
+		msg := new(dns.Msg)
+		msg.SetQuestion("missing.local.example.com.", dns.TypeA)
+		response, _, err := cl.Exchange(msg, addr)
+		if err != nil || response.Rcode != dns.RcodeServerFailure {
+			return false
+		}
+	}
+	return true
+}
+
+func TestClientCommandE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	t.Run("DaemonIPCSettingsRestartAndShutdown", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("this subprocess test uses Unix shutdown signals; Windows IPC is tested in the ipc package")
+		}
+		socket, dir := newTestCommandSocket(t), t.TempDir()
+		start := func() (*testCommandProcess, daemonv1.MainServiceClient) {
+			p := startTestCommand(t, binary, nil, "daemon", "--listen", socket, "--state-dir", dir, "--homedir", t.TempDir())
+			conn, err := grpc.NewClient("passthrough:///"+socket,
+				grpc.WithTransportCredentials(ipc.NewTransportCredentials()), grpc.WithContextDialer(ipc.Dial))
+			require.NoError(t, err)
+			t.Cleanup(func() { conn.Close() })
+			cl := daemonv1.NewMainServiceClient(conn)
+			require.Eventually(t, func() bool {
+				ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+				defer cancel()
+				_, err := cl.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+				return err == nil
+			}, 5*time.Second, 20*time.Millisecond)
+			return p, cl
+		}
+		first, cl := start()
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		info, err := cl.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+		require.NoError(t, err)
+		watch, err := cl.WatchStatus(ctx, &daemonv1.WatchStatusRequest{})
+		require.NoError(t, err)
+		initial, err := watch.Recv()
+		require.NoError(t, err)
+		assert.Empty(t, initial.Domains)
+		settings, err := cl.UpdateDomainSettings(ctx, &daemonv1.UpdateDomainSettingsRequest{
+			Domain: " EXAMPLE.COM. ", Settings: &daemonv1.DomainSettings{
+				ConnectionOptions: &daemonv1.ConnectionOptions{L3Mode: daemonv1.ConnectionOptions_V6, Mtu: 1280},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "example.com", settings.Domain)
+		updated, err := watch.Recv()
+		require.NoError(t, err)
+		assert.Greater(t, updated.Revision, initial.Revision)
+		require.Len(t, updated.Domains, 1)
+		assert.Equal(t, daemonv1.ConnectionStatus_DISCONNECTED, updated.Domains[0].Connection.State)
+		assert.NoError(t, first.cmd.Process.Signal(os.Interrupt))
+		require.NoError(t, first.wait(t, 3*time.Second))
+		_, err = watch.Recv()
+		assert.Error(t, err)
+		second, cl := start()
+		nextInfo, err := cl.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+		require.NoError(t, err)
+		assert.NotEqual(t, info.InstanceID, nextInfo.InstanceID)
+		snapshot, err := cl.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		require.NoError(t, err)
+		require.Len(t, snapshot.Domains, 1)
+		assert.Equal(t, daemonv1.ConnectionOptions_V6, snapshot.Domains[0].Settings.ConnectionOptions.L3Mode)
+		assert.Equal(t, int32(1280), snapshot.Domains[0].Settings.ConnectionOptions.Mtu)
+		assert.NoError(t, second.cmd.Process.Signal(os.Interrupt))
+		assert.NoError(t, second.wait(t, 3*time.Second))
+	})
+	t.Run("ConnectRejectedExitCodes", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("the authentication proxy transport uses Unix domain sockets")
+		}
+		for _, code := range []codes.Code{codes.InvalidArgument, codes.PermissionDenied, codes.NotFound} {
+			t.Run(code.String(), func(t *testing.T) {
+				socket := startTestCommandAPI(t, &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+					if _, err := stream.Recv(); err != nil {
+						return err
+					}
+					return status.Error(code, "request rejected")
+				}})
+				p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+					"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4")
+				err := p.wait(t, 5*time.Second)
+				var exitErr *exec.ExitError
+				require.ErrorAs(t, err, &exitErr)
+				assert.Equal(t, connect.ExitCodeRejected, exitErr.ExitCode())
+				assert.Contains(t, p.output.String(), "request rejected")
+			})
+		}
+	})
+	t.Run("ConnectRetriesAndReleasesListeners", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("this test forces the Linux gVisor implementation")
+		}
+		lis, err := net.ListenPacket("udp", "127.0.0.1:0")
+		require.NoError(t, err)
+		port := lis.LocalAddr().(*net.UDPAddr).Port
+		require.NoError(t, lis.Close())
+		var attempts atomic.Int32
+		release := make(chan struct{})
+		socket := startTestCommandAPI(t, &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+			attempt := attempts.Add(1)
+			if _, err := stream.Recv(); err != nil {
+				return err
+			}
+			if attempt == 1 {
+				return status.Error(codes.Unavailable, "API restarting")
+			}
+			if err := stream.Send(testCommandInitialState()); err != nil {
+				return err
+			}
+			select {
+			case <-release:
+				return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			}
+		}})
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+			"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+			"--no-dns", "--implementation", "gvisor", "--localdns", "--localdns-addr", addr)
+		require.Eventually(t, func() bool {
+			return testCommandDNSReady(addr)
+		}, 8*time.Second, 20*time.Millisecond)
+		assert.Equal(t, int32(2), attempts.Load())
+		close(release)
+		require.NoError(t, p.wait(t, 3*time.Second))
+		assert.Contains(t, p.output.String(), "Connected successfully")
+		packetConn, err := net.ListenPacket("udp", addr)
+		require.NoError(t, err, "disconnect must release the local DNS UDP listener")
+		assert.NoError(t, packetConn.Close())
+	})
+	t.Run("CL-009-CancelWithUnavailableAuthProxy", func(t *testing.T) {
+		if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+			t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-009 in tmp/client-test-report.md")
+		}
+		if runtime.GOOS == "windows" {
+			t.Skip("the authentication proxy transport uses Unix domain sockets")
+		}
+		p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + newTestCommandSocket(t)},
+			"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4")
+		time.Sleep(200 * time.Millisecond)
+		require.NoError(t, p.cmd.Process.Signal(os.Interrupt))
+		assert.NoError(t, p.wait(t, 2*time.Second))
+	})
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestOperation(t *testing.T) {
@@ -100,5 +101,30 @@ func TestOperation(t *testing.T) {
 		op := newOperation("example.com", daemonv1.Operation_DISCONNECT, nil)
 		op.setState(daemonv1.Operation_RUNNING)
 		assert.False(t, op.isCancellable())
+	}
+}
+
+func TestOperationTerminalStatesAreImmutable(t *testing.T) {
+	for _, state := range []daemonv1.Operation_State{
+		daemonv1.Operation_SUCCEEDED, daemonv1.Operation_FAILED, daemonv1.Operation_CANCELED,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			op := newOperation("example.com", daemonv1.Operation_CONNECT, func() {})
+			op.action = &daemonv1.Action{}
+			op.setState(state)
+			before := proto.Clone(op.toPB())
+			for _, next := range []daemonv1.Operation_State{
+				daemonv1.Operation_PENDING, daemonv1.Operation_RUNNING, daemonv1.Operation_WAITING_FOR_USER,
+				daemonv1.Operation_SUCCEEDED, daemonv1.Operation_FAILED, daemonv1.Operation_CANCELED,
+			} {
+				op.setState(next)
+				op.setCanceled("late cancellation")
+				op.setFailed(&daemonv1.Error{Code: daemonv1.Error_INTERNAL, Message: "late failure"})
+				assert.True(t, proto.Equal(before, op.toPB()))
+			}
+			assert.Nil(t, op.action)
+			assert.Nil(t, op.cancelFn)
+			assert.NotNil(t, op.completedAt)
+		})
 	}
 }

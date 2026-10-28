@@ -118,3 +118,28 @@ func TestCanonicalizeDomain(t *testing.T) {
 		assert.True(t, grpcerr.IsInvalidArg(err), "arg=%s", arg)
 	}
 }
+
+func TestGetErrorWrappedCausesPreserveClassification(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		err       error
+		code      daemonv1.Error_Code
+		retryable bool
+	}{
+		{"deadline", context.DeadlineExceeded, daemonv1.Error_AUTHENTICATION_FAILED, true},
+		{"canceled", context.Canceled, daemonv1.Error_OPERATION_CANCELED, false},
+		{"unreachable", status.Error(codes.Unavailable, "API restart"), daemonv1.Error_CLUSTER_UNREACHABLE, true},
+		{"unauthenticated", status.Error(codes.Unauthenticated, "expired"), daemonv1.Error_AUTHENTICATION_REQUIRED, false},
+		{"permission", status.Error(codes.PermissionDenied, "denied"), daemonv1.Error_PERMISSION_DENIED, false},
+		{"interactive-required", authenticator.ErrAuthenticationRequired, daemonv1.Error_AUTHENTICATION_REQUIRED, false},
+		{"browser-timeout", authenticator.ErrWebAuthenticationTimedOut, daemonv1.Error_AUTHENTICATION_TIMED_OUT, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := errors.Wrap(errors.Wrap(tt.err, "inner"), "outer")
+			got := getError(err, daemonv1.Error_AUTHENTICATION_FAILED)
+			assert.Equal(t, tt.code, got.Code)
+			assert.Equal(t, tt.retryable, got.Retryable)
+			assert.Equal(t, err.Error(), got.Message)
+		})
+	}
+}

@@ -296,3 +296,33 @@ func TestDarwinFullDNSUsesNetworkSetup(t *testing.T) {
 	}
 	assert.Nil(t, c.doUnsetDNS())
 }
+
+func TestDarwinSearchDomainFailureKeepsScutilResolverForCleanup(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{
+		"scutil": "/bin/cat > /dev/null", "networksetup": "printf 'network services unavailable'; exit 1",
+	})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	assert.NoError(t, c.doSetDNS())
+	assert.Equal(t, pbconfig.Connection_Preferences_MacOS_SCUTIL, c.c.Preferences.MacosPrefs.DnsMode)
+	assert.NoError(t, c.doUnsetDNS())
+	assert.Equal(t, [][]string{{"scutil"}, {"networksetup", "-listallnetworkservices"}, {"scutil"}}, commands.calls(t))
+}
+
+func TestDarwinNetworkSetupPartialReadCanBeRetried(t *testing.T) {
+	prefs := &pbconfig.Connection_Preferences_MacOS{}
+	var failed bool
+	read := func(name string) (*pbconfig.Connection_Preferences_MacOS_NetworkSetupConfig_Service, error) {
+		if name == "Ethernet" && !failed {
+			failed = true
+			return nil, errors.New("interface disappeared")
+		}
+		return testNetworkSetupService(name, "192.0.2.53"), nil
+	}
+	_, err := prepareNetworkSetupConfig(prefs, []string{"Wi-Fi", "Ethernet"}, read)
+	assert.Error(t, err)
+	assert.Len(t, prefs.NetworkSetupConfig.Services, 1)
+	cfg, err := prepareNetworkSetupConfig(prefs, []string{"Wi-Fi", "Ethernet"}, read)
+	assert.NoError(t, err)
+	assert.Len(t, cfg.Services, 2)
+	assert.Equal(t, []string{"192.0.2.53"}, getNetworkSetupService(cfg, "Wi-Fi").DnsServers)
+}

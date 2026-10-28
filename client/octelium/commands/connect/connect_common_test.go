@@ -16,21 +16,33 @@ package connect
 
 import (
 	"context"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestParsePublishService(t *testing.T) {
@@ -319,4 +331,897 @@ func TestRunRetriesBeforeConnecting(t *testing.T) {
 			assert.True(t, retried, "the client must keep connecting after %s", code)
 		})
 	}
+}
+
+type testConnectStream struct {
+	grpc.ClientStream
+	sendFn func(*userv1.ConnectRequest) error
+	recvFn func() (*userv1.ConnectResponse, error)
+}
+
+func (s *testConnectStream) Send(req *userv1.ConnectRequest) error {
+	return s.sendFn(req)
+}
+
+func (s *testConnectStream) Recv() (*userv1.ConnectResponse, error) {
+	return s.recvFn()
+}
+
+type testConnectAPI struct {
+	userv1.UnimplementedMainServiceServer
+	connectFn    func(userv1.MainService_ConnectServer) error
+	getServiceFn func(context.Context, *metav1.GetOptions) (*userv1.Service, error)
+	listFn       func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error)
+}
+
+func (s *testConnectAPI) Connect(stream userv1.MainService_ConnectServer) error {
+	return s.connectFn(stream)
+}
+
+func (s *testConnectAPI) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+	return s.getServiceFn(ctx, req)
+}
+
+func (s *testConnectAPI) ListService(ctx context.Context, req *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+	return s.listFn(ctx, req)
+}
+
+func newTestConnectAPIClient(t *testing.T, srv *testConnectAPI) userv1.MainServiceClient {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	grpcSrv := grpc.NewServer()
+	userv1.RegisterMainServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	t.Cleanup(grpcSrv.Stop)
+	conn, err := grpc.NewClient("passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
+	return userv1.NewMainServiceClient(conn)
+}
+
+func clearTestConnectEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"OCTELIUM_QUIC", "OCTELIUM_FULL_DNS", "OCTELIUM_KEEPALIVE", "OCTELIUM_MTU",
+		"OCTELIUM_ESSH", "OCTELIUM_ESSH_USER", "OCTELIUM_ESSH_PORT", "OCTELIUM_ESSH_IP_ADDRS",
+		"OCTELIUM_ESOCKS5", "OCTELIUM_ESOCKS5_PORT", "OCTELIUM_ESOCKS5_IP_ADDRS",
+		"OCTELIUM_LOCAL_DNS_SERVER",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+func testStateStream(state *userv1.ConnectionState) *testConnectStream {
+	return &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		return &userv1.ConnectResponse{
+			CreatedAt: timestamppb.Now(),
+			Event:     &userv1.ConnectResponse_State{State: state},
+		}, nil
+	}}
+}
+
+func TestConnectorDefaultsAndEvents(t *testing.T) {
+	_, err := NewConnector("", nil)
+	require.Error(t, err)
+	c, err := NewConnector("example.com", nil)
+	require.NoError(t, err)
+	require.NotNil(t, c.opts)
+	assert.NotPanics(t, func() { c.setEvent(&Event{Type: EventTypeConnecting}) })
+	var got *Event
+	c.opts.OnEvent = func(ev *Event) { got = ev }
+	ev := &Event{Type: EventTypeReconnecting, Err: io.EOF}
+	c.setEvent(ev)
+	assert.Same(t, ev, got)
+}
+
+func TestArgsToOptsPreservesPublishedServiceOrder(t *testing.T) {
+	a := &args{
+		L3Mode: "v6", IgnoreDNS: true, ServeServices: []string{"ssh.ns1"},
+		ImplementationMode: "gvisor", UseESSH: true, ESSHUser: "alice", UseESOCKS5: true,
+		UseLocalDNS: true, LocalDNSListenAddr: "[::1]:1053", UseFullDNS: true, TunnelMode: "quicv0",
+		PublishServices: []string{"web:65535", "dns.ns1:[::1]:1053", "web:127.0.0.1:8080"},
+	}
+	o, err := a.toOpts()
+	require.NoError(t, err)
+	assert.Equal(t, &Opts{
+		L3Mode: "v6", IgnoreDNS: true, ServeServices: []string{"ssh.ns1"},
+		ImplementationMode: "gvisor", UseESSH: true, ESSHUser: "alice", UseESOCKS5: true,
+		UseLocalDNS: true, LocalDNSListenAddr: "[::1]:1053", UseFullDNS: true, TunnelMode: "quicv0",
+		PublishServices: []*PublishedService{
+			{Name: "web", Address: "localhost", Port: 65535},
+			{Name: "dns.ns1", Address: "::1", Port: 1053},
+			{Name: "web", Address: "127.0.0.1", Port: 8080},
+		},
+	}, o)
+	for _, arg := range []string{"", "web:-1", "web:65536", "web:example.com:8080", "web:1.2.3.4:abc", "web:a:b:c"} {
+		t.Run(arg, func(t *testing.T) {
+			o, err := (&args{PublishServices: []string{"valid:8080", arg}}).toOpts()
+			assert.Error(t, err)
+			assert.Nil(t, o)
+		})
+	}
+}
+
+func TestSendInitializeRequestNegotiation(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, tt := range []struct {
+		mode string
+		want userv1.ConnectRequest_Initialize_L3Mode
+	}{
+		{"v4", userv1.ConnectRequest_Initialize_V4},
+		{"v6", userv1.ConnectRequest_Initialize_V6},
+		{"both", userv1.ConnectRequest_Initialize_BOTH},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			c, err := NewConnector("example.com", &Opts{
+				L3Mode: tt.mode, IgnoreDNS: true, TunnelMode: "quicv0",
+				ServeServices: []string{"web", "ssh.ns1"}, UseESSH: true, UseESOCKS5: true,
+			})
+			require.NoError(t, err)
+			var got *userv1.ConnectRequest
+			err = c.sendInitializeRequest(&testConnectStream{sendFn: func(req *userv1.ConnectRequest) error {
+				got = req
+				return nil
+			}}, []*cliconfigv1.Connection_Preferences_PublishedService{
+				{Name: "dns.ns1", HostAddress: "::1", HostPort: 1053},
+			})
+			require.NoError(t, err)
+			init := got.GetInitialize()
+			require.NotNil(t, init)
+			assert.Equal(t, tt.want, init.L3Mode)
+			assert.Equal(t, userv1.ConnectRequest_Initialize_QUICV0, init.ConnectionType)
+			assert.True(t, init.IgnoreDNS)
+			assert.True(t, init.ESSHEnable)
+			assert.True(t, init.ESOCKS5Enable)
+			assert.Equal(t, int32(defaultESSHPort), init.ESSHPort)
+			assert.Equal(t, int32(defaultESOCKS5Port), init.ESOCKS5Port)
+			assert.Equal(t, []*userv1.ConnectRequest_Initialize_PublishedService{
+				{Name: "dns.ns1", Address: "::1", Port: 1053},
+			}, init.PublishedServices)
+			assert.Equal(t, []*userv1.ConnectRequest_Initialize_ServiceOptions_Service{
+				{Name: "web.default"}, {Name: "ssh.ns1"},
+			}, init.ServiceOptions.Services)
+			assert.GreaterOrEqual(t, init.ServiceOptions.PortStart, int32(20000))
+			assert.LessOrEqual(t, init.ServiceOptions.PortStart, int32(24000))
+		})
+	}
+}
+
+func TestSendInitializeRequestServeAllAndErrors(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, serveAll := range []bool{false, true} {
+		c, err := NewConnector("example.com", &Opts{L3Mode: "v4", ServeAll: serveAll})
+		require.NoError(t, err)
+		err = c.sendInitializeRequest(&testConnectStream{sendFn: func(req *userv1.ConnectRequest) error {
+			assert.Equal(t, serveAll, req.GetInitialize().GetServiceOptions().GetServeAll())
+			if !serveAll {
+				assert.Nil(t, req.GetInitialize().ServiceOptions)
+			}
+			assert.Equal(t, userv1.ConnectRequest_Initialize_UNSET, req.GetInitialize().ConnectionType)
+			return io.ErrClosedPipe
+		}}, nil)
+		assert.ErrorIs(t, err, io.ErrClosedPipe)
+	}
+	c, err := NewConnector("example.com", &Opts{L3Mode: "v4", ServeServices: []string{"invalid.name.extra"}})
+	require.NoError(t, err)
+	assert.Error(t, c.sendInitializeRequest(&testConnectStream{sendFn: func(*userv1.ConnectRequest) error {
+		t.Fatal("invalid service names must be rejected before sending")
+		return nil
+	}}, nil))
+}
+
+func TestGetStateMsgSkipsUnknownEvents(t *testing.T) {
+	want := &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V6}
+	createdAt := timestamppb.Now()
+	messages := []*userv1.ConnectResponse{
+		nil, {}, {Event: &userv1.ConnectResponse_UpdateDNS_{}},
+		{CreatedAt: createdAt, Event: &userv1.ConnectResponse_State{State: want}},
+	}
+	var n int
+	stream := &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		msg := messages[n]
+		n++
+		return msg, nil
+	}}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	got, at, err := getStateMsg(ctx, stream)
+	require.NoError(t, err)
+	assert.Same(t, want, got)
+	assert.Same(t, createdAt, at)
+	assert.Equal(t, len(messages), n)
+}
+
+func TestGetStateMsgPreservesStreamErrors(t *testing.T) {
+	for _, code := range allCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			want := status.Error(code, "initialization failed")
+			state, at, err := getStateMsg(t.Context(), &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				return nil, want
+			}})
+			assert.Same(t, want, err)
+			assert.Nil(t, state)
+			assert.Nil(t, at)
+		})
+	}
+	_, _, err := getStateMsg(t.Context(), &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		return nil, io.EOF
+	}})
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestGetConnectionConfigPreferences(t *testing.T) {
+	clearTestConnectEnv(t)
+	t.Setenv("OCTELIUM_KEEPALIVE", "45")
+	t.Setenv("OCTELIUM_MTU", "1400")
+	t.Setenv("OCTELIUM_ESSH_PORT", "2222")
+	t.Setenv("OCTELIUM_ESSH_USER", "environment-user")
+	t.Setenv("OCTELIUM_ESSH_IP_ADDRS", "127.0.0.1, ::1")
+	t.Setenv("OCTELIUM_ESOCKS5_PORT", "1081")
+	t.Setenv("OCTELIUM_ESOCKS5_IP_ADDRS", "127.0.0.2, ::2")
+	c, err := NewConnector("example.com", &Opts{
+		L3Mode: "both", TunnelMode: "quicv0", IgnoreDNS: true, ServeAll: true,
+		UseESSH: true, ESSHUser: "option-user", UseESOCKS5: true,
+		MTU: 1280, UserHome: t.TempDir(), UseFullDNS: true, LocalDNSListenAddr: "::1",
+	})
+	require.NoError(t, err)
+	published := []*cliconfigv1.Connection_Preferences_PublishedService{{Name: "web.default"}}
+	state := &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V6}
+	cfg, at, err := c.getConnectionConfig(t.Context(), testStateStream(state), published)
+	require.NoError(t, err)
+	assert.Same(t, state, cfg.Connection)
+	assert.True(t, cfg.CreatedAt.IsValid())
+	assert.True(t, at.IsValid())
+	assert.Equal(t, "example.com", cfg.Info.Cluster.Domain)
+	p := cfg.Preferences
+	assert.Equal(t, int32(1280), p.Mtu)
+	assert.Equal(t, int32(45), p.KeepAliveSeconds)
+	assert.Equal(t, cliconfigv1.Connection_Preferences_V6, p.L3Mode)
+	assert.Equal(t, cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0, p.ConnectionType)
+	assert.Equal(t, published, p.PublishedServices)
+	assert.Equal(t, c.opts.UserHome, p.UserHome)
+	assert.True(t, p.IgnoreDNS)
+	assert.True(t, p.ServeOpts.IsEnabled)
+	assert.Equal(t, cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE, p.ServeOpts.ProxyMode)
+	assert.Equal(t, runtime.GOOS != "windows", p.ESSH.IsEnabled)
+	assert.Equal(t, "option-user", p.ESSH.User)
+	assert.Equal(t, int32(2222), p.ESSH.Port)
+	assert.Equal(t, []string{"127.0.0.1", "::1"}, p.ESSH.ListenIPAddresses)
+	assert.True(t, p.ESOCKS5.IsEnabled)
+	assert.Equal(t, int32(1081), p.ESOCKS5.Port)
+	assert.Equal(t, []string{"127.0.0.2", "::2"}, p.ESOCKS5.ListenIPAddresses)
+	assert.True(t, p.FullDNS)
+	assert.True(t, p.LocalDNS.IsEnabled)
+	assert.Equal(t, "[::1]:53", p.LocalDNS.ListenAddress)
+	switch runtime.GOOS {
+	case "linux":
+		require.NotNil(t, p.LinuxPrefs)
+		assert.Equal(t, cliutils.IsContainerRuntime(), p.RuntimeMode == cliconfigv1.Connection_Preferences_CONTAINER)
+		assert.False(t, p.LinuxPrefs.EnforceImplementationMode)
+		assert.Regexp(t, `^octelium-[a-z0-9]{6}$`, p.DeviceName)
+	case "darwin":
+		require.NotNil(t, p.MacosPrefs)
+		assert.Equal(t, "utun", p.DeviceName)
+	case "windows":
+		require.NotNil(t, p.WindowsPrefs)
+		assert.Equal(t, "octelium", p.DeviceName)
+	}
+}
+
+func TestGetConnectionConfigEnvironmentBoundaries(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, tt := range []struct {
+		value string
+		mtu   int32
+		ka    int32
+	}{
+		{"", 0, 30}, {"invalid", 0, 30}, {"-1", 0, 30}, {"0", 0, 30},
+		{"1500", 1500, 1500}, {"1501", 0, 1501}, {"2147483648", 0, 30},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("OCTELIUM_MTU", tt.value)
+			t.Setenv("OCTELIUM_KEEPALIVE", tt.value)
+			c, err := NewConnector("example.com", nil)
+			require.NoError(t, err)
+			cfg, _, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{}), nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.mtu, cfg.Preferences.Mtu)
+			assert.Equal(t, tt.ka, cfg.Preferences.KeepAliveSeconds)
+			assert.Equal(t, cliconfigv1.Connection_Preferences_BOTH, cfg.Preferences.L3Mode)
+			assert.False(t, cfg.Preferences.ServeOpts.IsEnabled)
+		})
+	}
+}
+
+func TestGetConnectionConfigDNSAndImplementationModes(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, tt := range []struct {
+		addr string
+		want string
+	}{
+		{"", ""}, {"127.0.0.1", "127.0.0.1:53"}, {"::1", "[::1]:53"},
+		{"[::1]:1053", "[::1]:1053"}, {"127.0.0.1:1053", "127.0.0.1:1053"},
+		{"invalid", ""},
+	} {
+		t.Run(tt.addr, func(t *testing.T) {
+			c, err := NewConnector("example.com", &Opts{UseLocalDNS: true, LocalDNSListenAddr: tt.addr})
+			require.NoError(t, err)
+			cfg, _, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4}), nil)
+			require.NoError(t, err)
+			assert.True(t, cfg.Preferences.LocalDNS.IsEnabled)
+			assert.Equal(t, tt.want, cfg.Preferences.LocalDNS.ListenAddress)
+			assert.Equal(t, cliconfigv1.Connection_Preferences_V4, cfg.Preferences.L3Mode)
+		})
+	}
+	if runtime.GOOS == "linux" {
+		for _, tt := range []struct {
+			mode string
+			want cliconfigv1.Connection_Preferences_Linux_ImplementationMode
+		}{
+			{"kernel", cliconfigv1.Connection_Preferences_Linux_WG_KERNEL},
+			{"tun", cliconfigv1.Connection_Preferences_Linux_WG_USERSPACE},
+			{"gvisor", cliconfigv1.Connection_Preferences_Linux_WG_NETSTACK},
+		} {
+			c, err := NewConnector("example.com", &Opts{ImplementationMode: tt.mode})
+			require.NoError(t, err)
+			cfg, _, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{}), nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.Preferences.LinuxPrefs.ImplementationMode)
+			assert.True(t, cfg.Preferences.LinuxPrefs.EnforceImplementationMode)
+		}
+	}
+}
+
+func TestConnectEnvironmentFeatureFlags(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, value := range []string{"true", "false", "TRUE", "1", ""} {
+		t.Run(value, func(t *testing.T) {
+			for _, key := range []string{"OCTELIUM_QUIC", "OCTELIUM_FULL_DNS", "OCTELIUM_ESSH", "OCTELIUM_ESOCKS5"} {
+				t.Setenv(key, value)
+			}
+			t.Setenv("OCTELIUM_ESSH_USER", "environment-user")
+			c, err := NewConnector("example.com", &Opts{L3Mode: "v4"})
+			require.NoError(t, err)
+			assert.Equal(t, value == "true", c.isQUICV0())
+			assert.Equal(t, value == "true", c.isFullDNS())
+			cfg, _, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{}), nil)
+			require.NoError(t, err)
+			assert.Equal(t, value == "true" && runtime.GOOS != "windows", cfg.Preferences.ESSH.IsEnabled)
+			assert.Equal(t, value == "true", cfg.Preferences.ESOCKS5.IsEnabled)
+			assert.Equal(t, "environment-user", cfg.Preferences.ESSH.User)
+			assert.Equal(t, value == "true", cfg.Preferences.FullDNS)
+		})
+	}
+}
+
+func TestPublishedServicesGRPCLookup(t *testing.T) {
+	for _, typ := range []userv1.Service_Spec_Type{
+		userv1.Service_Spec_TCP, userv1.Service_Spec_UDP, userv1.Service_Spec_DNS, userv1.Service_Spec_HTTP,
+	} {
+		t.Run(typ.String(), func(t *testing.T) {
+			var calls []string
+			cl := newTestConnectAPIClient(t, &testConnectAPI{
+				getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+					calls = append(calls, req.Name)
+					return &userv1.Service{
+						Metadata: &metav1.Metadata{Name: req.Name},
+						Spec:     &userv1.Service_Spec{Port: 443, Type: typ},
+						Status:   &userv1.Service_Status{Namespace: "default"},
+					}, nil
+				},
+			})
+			c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+				{Name: "web", Address: "localhost", Port: 8443},
+				{Name: "web", Address: "::1", Port: 9443},
+			}})
+			require.NoError(t, err)
+			got, err := c.getPublishedServices(t.Context(), cl)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"web.default", "web.default"}, calls)
+			require.Len(t, got, 2)
+			wantType := cliconfigv1.Connection_Preferences_PublishedService_TCP
+			if typ == userv1.Service_Spec_UDP || typ == userv1.Service_Spec_DNS {
+				wantType = cliconfigv1.Connection_Preferences_PublishedService_UDP
+			}
+			assert.Equal(t, &cliconfigv1.Connection_Preferences_PublishedService{
+				Name: "web.default", Namespace: "default", Fqdn: "web.default.local.example.com",
+				Port: 443, HostAddress: "localhost", HostPort: 8443, L4Type: wantType,
+			}, got[0])
+			assert.Equal(t, "::1", got[1].HostAddress)
+			assert.Equal(t, int32(9443), got[1].HostPort)
+		})
+	}
+}
+
+func TestPublishedServicesFallbackAndErrors(t *testing.T) {
+	for _, code := range allCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			var listCalls atomic.Int32
+			cl := newTestConnectAPIClient(t, &testConnectAPI{
+				getServiceFn: func(context.Context, *metav1.GetOptions) (*userv1.Service, error) {
+					return nil, status.Error(code, "lookup failed")
+				},
+				listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+					listCalls.Add(1)
+					return &userv1.ServiceList{Items: []*userv1.Service{{
+						Metadata: &metav1.Metadata{Name: "web.default"},
+						Spec:     &userv1.Service_Spec{Type: userv1.Service_Spec_TCP, Port: 80},
+						Status:   &userv1.Service_Status{Namespace: "default"},
+					}}}, nil
+				},
+			})
+			c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+				{Name: "web", Address: "127.0.0.1", Port: 8080},
+			}})
+			require.NoError(t, err)
+			got, err := c.getPublishedServices(t.Context(), cl)
+			if code == codes.Unimplemented {
+				require.NoError(t, err)
+				require.Len(t, got, 1)
+				assert.Equal(t, "web.default", got[0].Name)
+				assert.Equal(t, int32(1), listCalls.Load())
+			} else {
+				assert.Equal(t, code, status.Code(err))
+				assert.Nil(t, got)
+				assert.Zero(t, listCalls.Load())
+			}
+		})
+	}
+}
+
+func TestPublishedServicesLegacyLookup(t *testing.T) {
+	c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "web", Port: 8080}}})
+	require.NoError(t, err)
+	cl := newTestConnectAPIClient(t, &testConnectAPI{
+		listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+			return nil, status.Error(codes.Unavailable, "restarting")
+		},
+	})
+	_, err = c.getPublishedServicesWithList(t.Context(), cl)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	_, err = c.doGetPublishedServiceWithList(&userv1.ServiceList{}, c.opts.PublishServices[0])
+	assert.ErrorContains(t, err, "web does not exist")
+	c.opts.PublishServices = nil
+	got, err := c.getPublishedServices(t.Context(), nil)
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestConnectResponseTimestampOrdering(t *testing.T) {
+	initialized := time.Now().UTC()
+	c := &stateController{initAt: initialized}
+	for _, tt := range []struct {
+		name string
+		resp *userv1.ConnectResponse
+		want bool
+	}{
+		{"nil", nil, false}, {"missing", &userv1.ConnectResponse{}, false},
+		{"invalid", &userv1.ConnectResponse{CreatedAt: &timestamppb.Timestamp{Nanos: -1}}, false},
+		{"zero", &userv1.ConnectResponse{CreatedAt: timestamppb.New(time.Time{})}, false},
+		{"older", &userv1.ConnectResponse{CreatedAt: timestamppb.New(initialized.Add(-time.Nanosecond))}, true},
+		{"equal", &userv1.ConnectResponse{CreatedAt: timestamppb.New(initialized)}, false},
+		{"newer", &userv1.ConnectResponse{CreatedAt: timestamppb.New(initialized.Add(time.Nanosecond))}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, c.shouldSkipConnectResponseMessage(tt.resp))
+		})
+	}
+	c.initAt = time.Time{}
+	assert.False(t, c.shouldSkipConnectResponseMessage(&userv1.ConnectResponse{CreatedAt: timestamppb.Now()}))
+}
+
+func TestStateLoopSkipsStaleDisconnectAndUnknownEvents(t *testing.T) {
+	c := newTestStateController()
+	c.initAt = time.Now()
+	messages := []*userv1.ConnectResponse{
+		nil, {},
+		{CreatedAt: timestamppb.New(c.initAt.Add(-time.Second)), Event: &userv1.ConnectResponse_Disconnect_{}},
+		{CreatedAt: timestamppb.New(c.initAt), Event: &userv1.ConnectResponse_Disconnect_{}},
+	}
+	var n int
+	c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		msg := messages[n]
+		n++
+		return msg, nil
+	}}
+	c.doStartLoop(t.Context())
+	assert.Equal(t, len(messages), n)
+	select {
+	case <-c.apiserverDisconnectCh:
+	default:
+		t.Fatal("a current disconnect event must close the connection")
+	}
+	assert.Empty(t, c.getConnErrCh)
+}
+
+func TestStateLoopStreamErrorsAlwaysReconnect(t *testing.T) {
+	for _, code := range allCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			c := newTestStateController()
+			c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				return nil, status.Error(code, "stream interrupted")
+			}}
+			c.doStartLoop(t.Context())
+			ret := c.waitDisconnected(t.Context(), nil)
+			assert.Equal(t, code, status.Code(ret.err))
+			assert.True(t, ret.isConnected)
+			assert.True(t, ret.needsReconnect)
+			assert.True(t, shouldReconnect(ret, true))
+		})
+	}
+}
+
+func TestStateServiceEventsWithoutProxy(t *testing.T) {
+	for _, mode := range []cliconfigv1.Connection_Preferences_ServeOpts_ProxyMode{
+		cliconfigv1.Connection_Preferences_ServeOpts_NONE,
+		cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
+	} {
+		c := newStateController(&cliconfigv1.Connection{
+			Preferences: &cliconfigv1.Connection_Preferences{
+				ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{ProxyMode: mode},
+			},
+		}, nil, nil, nil)
+		for _, msg := range []*userv1.ConnectResponse{
+			{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{}}},
+			{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{}}},
+			{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: "removed.default"}}},
+			{},
+		} {
+			assert.NoError(t, c.handleState(t.Context(), msg))
+		}
+	}
+}
+
+func newTestRunningConnector(t *testing.T, srv *testConnectAPI) (*Connector, *db.DB) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the forced gVisor implementation is selected by Linux preferences")
+	}
+	clearTestConnectEnv(t)
+	t.Setenv("OCTELIUM_DEV", "false")
+	t.Setenv("OCTELIUM_PRODUCTION", "true")
+	dir, err := os.MkdirTemp("", "octelium-stream-")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
+	socket := filepath.Join(dir, "api.sock")
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", socket)
+	lis, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	grpcSrv := grpc.NewServer()
+	userv1.RegisterMainServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	t.Cleanup(grpcSrv.Stop)
+	dbC, err := db.Open("memory")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, dbC.Close()) })
+	c, err := NewConnector("example.com", &Opts{
+		L3Mode: "v4", IgnoreDNS: true, ImplementationMode: "gvisor",
+		LocalDNSListenAddr: "127.0.0.1:0", UserHome: t.TempDir(),
+	})
+	require.NoError(t, err)
+	return c, dbC
+}
+
+func testConnectInitialState() *userv1.ConnectResponse {
+	return &userv1.ConnectResponse{
+		CreatedAt: timestamppb.Now(),
+		Event: &userv1.ConnectResponse_State{State: &userv1.ConnectionState{
+			L3Mode: userv1.ConnectionState_V4, X25519Key: make([]byte, 32),
+			Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32"}},
+			Cidr:      &metav1.DualStackNetwork{V4: "100.64.0.0/16"},
+		}},
+	}
+}
+
+func TestRunGRPCReconnectAfterEstablishedStreamErrors(t *testing.T) {
+	for _, streamErr := range []error{io.EOF, status.Error(codes.Unavailable, "API restart"), status.Error(codes.NotFound, "service removed"), status.Error(codes.PermissionDenied, "policy updated")} {
+		t.Run(streamErr.Error(), func(t *testing.T) {
+			var attempts atomic.Int32
+			connected := make(chan struct{}, 1)
+			srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				req, err := stream.Recv()
+				if err != nil {
+					return err
+				}
+				if req.GetInitialize() == nil {
+					return status.Error(codes.InvalidArgument, "missing initialize")
+				}
+				if attempt == 2 {
+					return status.Error(codes.InvalidArgument, "temporary initialization error")
+				}
+				if err := stream.Send(testConnectInitialState()); err != nil {
+					return err
+				}
+				if attempt == 1 {
+					select {
+					case <-connected:
+					case <-stream.Context().Done():
+						return stream.Context().Err()
+					}
+					if streamErr == io.EOF {
+						return nil
+					}
+					return streamErr
+				}
+				<-stream.Context().Done()
+				return stream.Context().Err()
+			}}
+			c, dbC := newTestRunningConnector(t, srv)
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+			defer cancel()
+			var events []*Event
+			var successes int
+			c.opts.OnEvent = func(ev *Event) {
+				events = append(events, ev)
+				if ev.Type == EventTypeConnected {
+					successes++
+					if successes == 1 {
+						connected <- struct{}{}
+					} else {
+						cancel()
+					}
+				}
+			}
+			require.NoError(t, c.Run(ctx))
+			assert.Equal(t, int32(3), attempts.Load())
+			assert.Equal(t, 2, successes)
+			var reconnects int
+			for _, ev := range events {
+				if ev.Type == EventTypeReconnecting {
+					reconnects++
+				}
+			}
+			assert.Equal(t, 2, reconnects)
+			assert.Equal(t, EventTypeDisconnected, events[len(events)-1].Type)
+			_, err := dbC.GetConnectionCleanup("example.com")
+			assert.True(t, dbC.ErrorIsNotFound(err))
+		})
+	}
+}
+
+func TestRunGRPCExplicitDisconnectAndCancellation(t *testing.T) {
+	for _, disconnect := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cancel", true: "server-disconnect"}[disconnect], func(t *testing.T) {
+			connected := make(chan struct{})
+			var attempts atomic.Int32
+			c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempts.Add(1)
+				if _, err := stream.Recv(); err != nil {
+					return err
+				}
+				if err := stream.Send(testConnectInitialState()); err != nil {
+					return err
+				}
+				if disconnect {
+					select {
+					case <-connected:
+					case <-stream.Context().Done():
+						return stream.Context().Err()
+					}
+					if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}}); err != nil {
+						return err
+					}
+				}
+				<-stream.Context().Done()
+				return nil
+			}})
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+			defer cancel()
+			var types []EventType
+			c.opts.OnEvent = func(ev *Event) {
+				types = append(types, ev.Type)
+				if ev.Type == EventTypeConnected {
+					close(connected)
+					if !disconnect {
+						cancel()
+					}
+				}
+			}
+			require.NoError(t, c.Run(ctx))
+			assert.Equal(t, int32(1), attempts.Load())
+			assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeDisconnected}, types)
+		})
+	}
+}
+
+func TestRunCancellationInterruptsReconnectBackoff(t *testing.T) {
+	_, c, _ := runFakeConnect(t, status.Error(codes.Unavailable, "restarting"))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	c.opts.OnEvent = func(ev *Event) {
+		if ev.Type == EventTypeConnecting && ev.Err != nil {
+			cancel()
+		}
+	}
+	started := time.Now()
+	assert.NoError(t, c.Run(ctx))
+	assert.Less(t, time.Since(started), reconnectBackoffMin)
+}
+
+func TestGetConnectionConfigReturnsInitializationError(t *testing.T) {
+	c, err := NewConnector("example.com", nil)
+	require.NoError(t, err)
+	cfg, at, err := c.getConnectionConfig(t.Context(), &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		return nil, status.Error(codes.Unauthenticated, "refresh needed")
+	}}, nil)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.Nil(t, cfg)
+	assert.Nil(t, at)
+}
+
+func newTestConnectCtl(t *testing.T) (*ctl, *db.DB, context.Context) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the forced gVisor implementation is selected by Linux preferences")
+	}
+	clearTestConnectEnv(t)
+	c, err := NewConnector("example.com", &Opts{
+		IgnoreDNS: true, ImplementationMode: "gvisor", UserHome: t.TempDir(),
+		LocalDNSListenAddr: "127.0.0.1:0",
+	})
+	require.NoError(t, err)
+	cfg, at, err := c.getConnectionConfig(t.Context(), testStateStream(testConnectInitialState().GetState()), nil)
+	require.NoError(t, err)
+	dbC, err := db.Open("memory")
+	require.NoError(t, err)
+	t.Cleanup(func() { dbC.Close() })
+	ctx, cancel := context.WithCancel(cliutils.WithDB(t.Context(), dbC))
+	stream := &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	ret, err := newCtl(ctx, stream, cfg, at)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, ret.close())
+	})
+	return ret, dbC, ctx
+}
+
+func TestCtlCloseConcurrentAndIdempotent(t *testing.T) {
+	c, dbC, ctx := newTestConnectCtl(t)
+	require.NoError(t, c.start(ctx))
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, c.close())
+		}()
+	}
+	wg.Wait()
+	assert.ErrorContains(t, c.devCtl.Start(ctx), "already closed")
+	_, err := dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestNewCtlRejectsInvalidInitialKey(t *testing.T) {
+	clearTestConnectEnv(t)
+	c, err := NewConnector("example.com", nil)
+	require.NoError(t, err)
+	for _, n := range []int{0, 1, 31, 33, 64} {
+		cfg, at, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{X25519Key: make([]byte, n)}), nil)
+		require.NoError(t, err)
+		got, err := newCtl(t.Context(), nil, cfg, at)
+		assert.Error(t, err)
+		assert.Nil(t, got)
+	}
+}
+
+func TestStateControllerAppliesNetworkUpdates(t *testing.T) {
+	c, _, ctx := newTestConnectCtl(t)
+	require.NoError(t, c.devCtl.Start(ctx))
+	state := c.stateController
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	gw := &userv1.Gateway{
+		Id: "gw-test", Addresses: []string{"192.0.2.1"}, CIDRs: []string{"100.64.0.0/16"},
+		Wireguard: &userv1.Gateway_WireGuard{Port: 51820, PublicKey: key.PublicKey().String()},
+	}
+	require.NoError(t, state.handleState(ctx, &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddGateway_{
+		AddGateway: &userv1.ConnectResponse_AddGateway{Gateway: gw},
+	}}))
+	updated := proto.Clone(gw).(*userv1.Gateway)
+	updated.Addresses = []string{"192.0.2.2"}
+	require.NoError(t, state.handleState(ctx, &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateGateway_{
+		UpdateGateway: &userv1.ConnectResponse_UpdateGateway{Gateway: updated},
+	}}))
+	require.NoError(t, state.handleState(ctx, &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateDNS_{
+		UpdateDNS: &userv1.ConnectResponse_UpdateDNS{Dns: &userv1.DNS{Servers: []string{"100.64.0.54"}}},
+	}}))
+	assert.Equal(t, []string{"100.64.0.54"}, c.devCtl.GetClusterDNSServers())
+	require.NoError(t, state.handleState(ctx, &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteGateway_{
+		DeleteGateway: &userv1.ConnectResponse_DeleteGateway{Id: gw.Id},
+	}}))
+	assert.Empty(t, state.c.Connection.Gateways)
+	for _, msg := range []*userv1.ConnectResponse{
+		{Event: &userv1.ConnectResponse_AddGateway_{AddGateway: &userv1.ConnectResponse_AddGateway{}}},
+		{Event: &userv1.ConnectResponse_UpdateGateway_{UpdateGateway: &userv1.ConnectResponse_UpdateGateway{Gateway: gw}}},
+	} {
+		assert.Error(t, state.handleState(ctx, msg))
+	}
+	replacement := proto.Clone(testConnectInitialState().GetState()).(*userv1.ConnectionState)
+	replacement.Addresses[0].V4 = "100.64.0.3/32"
+	require.NoError(t, state.handleState(ctx, &userv1.ConnectResponse{Event: &userv1.ConnectResponse_State{State: replacement}}))
+}
+
+func TestConnectKnownIssues(t *testing.T) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run unresolved regressions listed in tmp/client-test-report.md")
+	}
+	t.Run("CL-001-published-service-not-found", func(t *testing.T) {
+		assert.True(t, shouldReconnect(tryConnectRet{
+			err: status.Error(codes.NotFound, "published Service is temporarily absent"), needsReconnect: true,
+		}, false))
+	})
+	t.Run("CL-002-empty-service-response", func(t *testing.T) {
+		c, err := NewConnector("example.com", nil)
+		require.NoError(t, err)
+		assert.NotPanics(t, func() {
+			c.getPublishedServiceFromService(&userv1.Service{}, &PublishedService{Name: "web", Port: 8080})
+		})
+	})
+	t.Run("CL-003-failed-state-update-needs-recovery", func(t *testing.T) {
+		c, _, parent := newTestConnectCtl(t)
+		ctx, cancel := context.WithCancel(parent)
+		defer cancel()
+		require.NoError(t, c.devCtl.Start(ctx))
+		bad := proto.Clone(testConnectInitialState().GetState()).(*userv1.ConnectionState)
+		bad.Addresses[0].V4 = "invalid"
+		processed, done := make(chan struct{}), make(chan struct{})
+		var received bool
+		c.stateController.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+			if !received {
+				received = true
+				return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_State{State: bad}}, nil
+			}
+			close(processed)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}}
+		go func() {
+			c.stateController.doStartLoop(ctx)
+			close(done)
+		}()
+		select {
+		case <-processed:
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("the state update was not processed")
+		}
+		assert.NotEmpty(t, c.stateController.getConnErrCh, "a failed full-state update must trigger recovery")
+		cancel()
+		<-done
+	})
+	t.Run("CL-004-canceled-initialization-cause", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, _, err := getStateMsg(ctx, &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+			return nil, context.Canceled
+		}})
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+	t.Run("CL-005-invalid-embedded-listener-ports", func(t *testing.T) {
+		clearTestConnectEnv(t)
+		t.Setenv("OCTELIUM_ESSH_PORT", "-1")
+		t.Setenv("OCTELIUM_ESOCKS5_PORT", "65536")
+		c, err := NewConnector("example.com", &Opts{L3Mode: "v4", UseESSH: true, UseESOCKS5: true})
+		require.NoError(t, err)
+		assert.Error(t, c.sendInitializeRequest(&testConnectStream{sendFn: func(req *userv1.ConnectRequest) error {
+			assert.Greater(t, req.GetInitialize().ESSHPort, int32(0))
+			assert.LessOrEqual(t, req.GetInitialize().ESOCKS5Port, int32(65535))
+			return nil
+		}}, nil))
+	})
+	t.Run("CL-006-invalid-explicit-IP-mode", func(t *testing.T) {
+		c, err := NewConnector("example.com", &Opts{L3Mode: "ipv5"})
+		require.NoError(t, err)
+		assert.Error(t, c.sendInitializeRequest(&testConnectStream{sendFn: func(*userv1.ConnectRequest) error { return nil }}, nil))
+	})
 }

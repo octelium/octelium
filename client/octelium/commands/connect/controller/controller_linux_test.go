@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -134,4 +135,41 @@ func TestLinuxNativeOperationsRejectInvalidConfigBeforeMutation(t *testing.T) {
 			assert.NotNil(t, c.SetDevAddrs())
 		})
 	}
+}
+
+func TestLinuxPreferencesSelectMainTableAndBoundedAuxiliaryTable(t *testing.T) {
+	for _, tt := range testControllerIPModes {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestPlatformController(t, tt.mode)
+			routes, err := netlink.RouteList(nil, c.getNetlinkFamily())
+			if !assert.NoError(t, err) {
+				return
+			}
+			want := int64(254)
+			for _, route := range routes {
+				if (route.Dst == nil || route.Dst.String() == "0.0.0.0/0" || route.Dst.String() == "::/0") && route.Src == nil {
+					want = int64(route.Table)
+					break
+				}
+			}
+			assert.NoError(t, c.SetPrefs())
+			assert.Equal(t, want, c.c.Preferences.LinuxPrefs.MainTableIndex)
+			assert.GreaterOrEqual(t, c.c.Preferences.LinuxPrefs.TableIndex, int64(10000))
+			assert.LessOrEqual(t, c.c.Preferences.LinuxPrefs.TableIndex, int64(30000))
+		})
+	}
+}
+
+func TestLinuxDeviceCloseContinuesAfterListenerFailure(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	lisErr, tunErr := errors.New("listener close failed"), errors.New("TUN close failed")
+	lis := &testControllerCloseListener{err: lisErr}
+	dev := &testControllerCloseTUN{err: tunErr}
+	c.uapi, c.tundev = lis, dev
+	err := c.doClose()
+	assert.ErrorIs(t, err, lisErr)
+	assert.ErrorIs(t, err, tunErr)
+	assert.Equal(t, 1, lis.calls)
+	assert.Equal(t, 1, dev.calls)
+	assert.Nil(t, c.tundev)
 }

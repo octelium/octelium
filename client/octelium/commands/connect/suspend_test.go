@@ -19,12 +19,14 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -340,4 +342,103 @@ func TestWaitDisconnected(t *testing.T) {
 		assert.False(t, ret.needsReconnect)
 		assert.False(t, ret.isResumed)
 	})
+}
+
+func TestKeepAliveLoopSendsTimestampAndStopsOnCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sent := make(chan *userv1.ConnectRequest, 4)
+		c := newTestStateController()
+		c.streamC = &testConnectStream{sendFn: func(req *userv1.ConnectRequest) error {
+			sent <- req
+			return nil
+		}}
+		done := make(chan struct{})
+		go func() {
+			c.doStartKeepAliveLoop(ctx)
+			close(done)
+		}()
+		synctest.Wait()
+		time.Sleep(5*time.Minute - time.Nanosecond)
+		synctest.Wait()
+		assert.Empty(t, sent)
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		require.Len(t, sent, 1)
+		req := <-sent
+		require.NotNil(t, req.GetKeepAlive())
+		assert.WithinDuration(t, time.Now(), req.GetKeepAlive().SetAt.AsTime(), time.Nanosecond)
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the keepalive loop must stop when its context is canceled")
+		}
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		assert.Empty(t, sent)
+	})
+}
+
+func TestSuspendLoopStopsOnCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		c := newTestStateController()
+		done := make(chan struct{})
+		go func() {
+			c.doStartSuspendLoop(ctx)
+			close(done)
+		}()
+		synctest.Wait()
+		time.Sleep(4 * suspendCheckInterval)
+		synctest.Wait()
+		assert.Empty(t, c.resumeCh)
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the suspend loop must stop when its context is canceled")
+		}
+	})
+}
+
+func TestResumeProbeGRPCErrorClasses(t *testing.T) {
+	for _, code := range allCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			srv := &testUserServer{getStatusFn: func(context.Context) (*userv1.GetStatusResponse, error) {
+				return nil, status.Error(code, "probe response")
+			}}
+			cl, _ := newTestUserClient(t, srv)
+			err := probeConnection(t.Context(), cl)
+			if code == codes.Unavailable || code == codes.DeadlineExceeded {
+				assert.Equal(t, code, status.Code(err))
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, int32(1), srv.calls.Load())
+		})
+	}
+}
+
+func TestRepeatedResumeProbesKeepLiveConnection(t *testing.T) {
+	c := newTestStateController()
+	c.resumeCh <- time.Hour
+	var probes int
+	ret := c.waitDisconnected(t.Context(), func(context.Context) error {
+		probes++
+		if probes < 3 {
+			c.resumeCh <- time.Hour
+		} else {
+			close(c.apiserverDisconnectCh)
+		}
+		return nil
+	})
+	assert.Equal(t, 3, probes)
+	assert.True(t, ret.isConnected)
+	assert.False(t, ret.needsReconnect)
+	assert.False(t, ret.isResumed)
+	assert.NoError(t, ret.err)
 }

@@ -3,12 +3,14 @@ package controller
 import (
 	"errors"
 	"net/netip"
+	"os"
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sys/windows"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
@@ -228,4 +230,57 @@ func TestWindowsNotFoundErrors(t *testing.T) {
 	}
 	assert.False(t, isWindowsNotFound(nil))
 	assert.False(t, isWindowsNotFound(windows.ERROR_ACCESS_DENIED))
+}
+
+func TestWindowsWireGuardConfigKeyRotationDoesNotMutatePreviousConfig(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Preferences.IgnoreDNS = true
+	first, err := c.getWgConf()
+	if !assert.NoError(t, err) {
+		return
+	}
+	old := first.Interface.PrivateKey
+	key, err := wgtypes.GeneratePrivateKey()
+	if !assert.NoError(t, err) {
+		return
+	}
+	c.wgPrivateKey = key
+	second, err := c.getWgConf()
+	if assert.NoError(t, err) {
+		assert.NotEqual(t, old, second.Interface.PrivateKey)
+		assert.Equal(t, key.String(), second.Interface.PrivateKey.String())
+		assert.Equal(t, old, first.Interface.PrivateKey)
+	}
+}
+
+func TestWindowsDeviceCloseContinuesAfterListenerFailure(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	lisErr, tunErr := errors.New("listener close failed"), errors.New("TUN close failed")
+	lis := &testControllerCloseListener{err: lisErr}
+	dev := &testControllerCloseTUN{err: tunErr}
+	c.uapi, c.tundev = lis, dev
+	err := c.doClose()
+	assert.ErrorIs(t, err, lisErr)
+	assert.ErrorIs(t, err, tunErr)
+	assert.Equal(t, 1, lis.calls)
+	assert.Equal(t, 1, dev.calls)
+	assert.Nil(t, c.tundev)
+}
+
+func TestWindowsKnownIssues(t *testing.T) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-011 in tmp/client-test-report.md")
+	}
+	t.Run("CL-011-native-WireGuard-keepalive", func(t *testing.T) {
+		c := newTestPlatformController(t, userv1.ConnectionState_V4)
+		c.c.Preferences.KeepAliveSeconds = 25
+		c.c.Connection.Gateways = []*userv1.Gateway{{
+			Id: "gw", Addresses: []string{"192.0.2.1"}, CIDRs: []string{"100.64.0.0/16"},
+			Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
+		}}
+		cfg, err := c.getWgConf()
+		if assert.NoError(t, err) && assert.Len(t, cfg.Peers, 1) {
+			assert.Equal(t, uint16(25), cfg.Peers[0].PersistentKeepalive)
+		}
+	})
 }

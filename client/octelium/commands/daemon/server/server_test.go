@@ -20,16 +20,21 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/common/db"
@@ -38,9 +43,11 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type testServer struct {
@@ -1306,4 +1313,204 @@ func TestGetAPICredentialRenew(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, "renewed", resp.AccessToken)
 	}
+}
+
+type testDaemonClusterAPI struct {
+	userv1.UnimplementedMainServiceServer
+	connectFn func(userv1.MainService_ConnectServer) error
+}
+
+func (s *testDaemonClusterAPI) Connect(stream userv1.MainService_ConnectServer) error {
+	return s.connectFn(stream)
+}
+
+func startTestDaemonClusterAPI(t *testing.T, srv *testDaemonClusterAPI) {
+	t.Helper()
+	lis, err := net.Listen("unix", newTestSocketPath(t))
+	require.NoError(t, err)
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", lis.Addr().String())
+	t.Setenv("OCTELIUM_DEV", "false")
+	t.Setenv("OCTELIUM_PRODUCTION", "true")
+	grpcSrv := grpc.NewServer()
+	userv1.RegisterMainServiceServer(grpcSrv, srv)
+	go grpcSrv.Serve(lis)
+	t.Cleanup(grpcSrv.Stop)
+}
+
+func testDaemonInitialState() *userv1.ConnectResponse {
+	return &userv1.ConnectResponse{
+		CreatedAt: timestamppb.Now(),
+		Event: &userv1.ConnectResponse_State{State: &userv1.ConnectionState{
+			L3Mode: userv1.ConnectionState_V4, X25519Key: make([]byte, 32),
+			Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32"}},
+			Cidr:      &metav1.DualStackNetwork{V4: "100.64.0.0/16"},
+		}},
+	}
+}
+
+func authenticateTestDaemonDomain(t *testing.T, srv *testServer) {
+	t.Helper()
+	_, err := srv.c.GetInfo(t.Context(), &daemonv1.GetInfoRequest{})
+	require.NoError(t, err)
+	require.NoError(t, srv.srv.principal.dbC.SetSessionToken("example.com", &authv1.SessionToken{
+		AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600, RefreshTokenExpiresIn: 7200,
+	}))
+	srv.srv.principal.reconcile()
+}
+
+func TestDaemonConnectRecoversStreamAndDisconnectsOverIPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	var attempts atomic.Int32
+	drop := make(chan struct{})
+	startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testDaemonInitialState()); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			select {
+			case <-drop:
+				return status.Error(codes.Unavailable, "API server restart")
+			case <-stream.Context().Done():
+				return nil
+			}
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := reserved.LocalAddr().String()
+	require.NoError(t, reserved.Close())
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	op, err := srv.c.Connect(ctx, &daemonv1.ConnectRequest{
+		Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+			L3Mode: daemonv1.ConnectionOptions_V4, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+			Dns: &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED, LocalServerListenAddress: addr},
+		},
+	})
+	require.NoError(t, err)
+	waitState := func(want daemonv1.ConnectionStatus_State) *daemonv1.DomainState {
+		t.Helper()
+		var got *daemonv1.DomainState
+		require.Eventually(t, func() bool {
+			snapshot, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+			if err != nil || len(snapshot.Domains) != 1 {
+				return false
+			}
+			got = snapshot.Domains[0]
+			return got.Connection.State == want
+		}, 8*time.Second, 10*time.Millisecond)
+		return got
+	}
+	first := waitState(daemonv1.ConnectionStatus_CONNECTED)
+	require.NotNil(t, first.Connection.ConnectedAt)
+	assert.Equal(t, daemonv1.Operation_SUCCEEDED, first.LastOperation.State)
+	close(drop)
+	reconnecting := waitState(daemonv1.ConnectionStatus_RECONNECTING)
+	assert.Equal(t, daemonv1.Error_CLUSTER_UNREACHABLE, reconnecting.LastError.Code)
+	assert.True(t, reconnecting.LastError.Retryable)
+	recovered := waitState(daemonv1.ConnectionStatus_CONNECTED)
+	assert.Nil(t, recovered.LastError)
+	assert.Equal(t, first.Connection.ConnectedAt.AsTime(), recovered.Connection.ConnectedAt.AsTime())
+	assert.Equal(t, int32(2), attempts.Load())
+	disconnect, err := srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: disconnect.Id})
+		return err == nil && got.State == daemonv1.Operation_SUCCEEDED
+	}, 5*time.Second, 10*time.Millisecond)
+	stopped := waitState(daemonv1.ConnectionStatus_DISCONNECTED)
+	assert.Nil(t, stopped.Connection.ConnectedAt)
+	assert.Nil(t, stopped.Connection.Options)
+	assert.Nil(t, stopped.LastError)
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, stopped.Authentication.State)
+	finished, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+	require.NoError(t, err)
+	assert.Equal(t, daemonv1.Operation_SUCCEEDED, finished.State)
+	_, err = srv.srv.principal.dbC.GetConnectionCleanup("example.com")
+	assert.True(t, srv.srv.principal.dbC.ErrorIsNotFound(err))
+}
+
+func TestDaemonConnectOutlivesRPCCancellation(t *testing.T) {
+	received, stopped := make(chan struct{}), make(chan struct{})
+	startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		close(received)
+		<-stream.Context().Done()
+		close(stopped)
+		return nil
+	}})
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	ctx, cancel := context.WithCancel(t.Context())
+	op, err := srv.c.Connect(ctx, &daemonv1.ConnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	cancel()
+	select {
+	case <-received:
+	case <-time.After(3 * time.Second):
+		t.Fatal("canceling the completed Connect RPC must not cancel its background operation")
+	}
+	got, err := srv.c.GetOperation(t.Context(), &daemonv1.GetOperationRequest{Id: op.Id})
+	require.NoError(t, err)
+	assert.Equal(t, daemonv1.Operation_RUNNING, got.State)
+	assert.True(t, got.Cancellable)
+	_, err = srv.c.CancelOperation(t.Context(), &daemonv1.CancelOperationRequest{Id: op.Id})
+	require.NoError(t, err)
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("canceling the operation must close its API stream")
+	}
+	require.Eventually(t, func() bool {
+		state, err := srv.c.GetStatus(t.Context(), &daemonv1.GetStatusRequest{})
+		return err == nil && len(state.Domains) == 1 && state.Domains[0].Connection.State == daemonv1.ConnectionStatus_DISCONNECTED
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestDaemonWatchStatusBroadcastsAndReleasesCanceledWatchers(t *testing.T) {
+	srv := newTestServer(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var streams []daemonv1.MainService_WatchStatusClient
+	var cancels []context.CancelFunc
+	for range 4 {
+		watchCtx, cancel := context.WithCancel(ctx)
+		cancels = append(cancels, cancel)
+		stream, err := srv.c.WatchStatus(watchCtx, &daemonv1.WatchStatusRequest{})
+		require.NoError(t, err)
+		_, err = stream.Recv()
+		require.NoError(t, err)
+		streams = append(streams, stream)
+	}
+	_, err := srv.c.UpdateDomainSettings(ctx, &daemonv1.UpdateDomainSettingsRequest{
+		Domain: "example.com", Settings: &daemonv1.DomainSettings{},
+	})
+	require.NoError(t, err)
+	for i, stream := range streams {
+		state, err := stream.Recv()
+		require.NoError(t, err)
+		require.Len(t, state.Domains, 1)
+		assert.Equal(t, "example.com", state.Domains[0].Domain)
+		cancels[i]()
+		_, err = stream.Recv()
+		assert.Equal(t, codes.Canceled, status.Code(err))
+	}
+	require.Eventually(t, func() bool {
+		p := srv.srv.principal
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.watchers) == 0
+	}, time.Second, 10*time.Millisecond)
 }

@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestGatewayCtl(gws []*userv1.Gateway) *Controller {
@@ -122,4 +124,19 @@ func TestGetClusterDNSServersWithoutDNS(t *testing.T) {
 	c := newTestGatewayCtl(nil)
 
 	assert.Nil(t, c.getClusterDNSServers())
+}
+
+func TestGatewayKnownIssues(t *testing.T) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-012 in tmp/client-test-report.md")
+	}
+	t.Run("CL-012-QUIC-gateway-update", func(t *testing.T) {
+		old := &userv1.Gateway{Id: "gw", Addresses: []string{"192.0.2.1"}, Quicv0: &userv1.Gateway_QUICV0{Port: 443}}
+		c := newTestGatewayCtl([]*userv1.Gateway{old})
+		c.isQUIC = true
+		updated := proto.Clone(old).(*userv1.Gateway)
+		updated.Addresses = []string{"192.0.2.2"}
+		assert.NoError(t, c.UpdateGateway(t.Context(), updated))
+		assert.Equal(t, updated.Addresses, c.c.Connection.Gateways[0].Addresses)
+	})
 }

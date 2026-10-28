@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"errors"
 	"net"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestDarwinRoutesByIPMode(t *testing.T) {
@@ -196,4 +199,73 @@ func TestDarwinDisconnectContinuesAfterRouteAndDNSFailures(t *testing.T) {
 	assert.Equal(t, 1, lis.calls)
 	assert.Nil(t, c.uapi)
 	assert.Len(t, commands.calls(t), 3)
+}
+
+func TestDarwinRoutesAreReappliedAfterReconnect(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{"route": "exit 0"})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.isNetstack = false
+	for range 3 {
+		assert.NoError(t, c.setRoutes())
+		assert.NoError(t, c.unsetRoutes())
+	}
+	calls := commands.calls(t)
+	if assert.Len(t, calls, 12) {
+		for i := range 3 {
+			assert.Equal(t, calls[:4], calls[i*4:i*4+4])
+		}
+	}
+}
+
+func TestDarwinMissingInterfaceDoesNotRunAddressCommands(t *testing.T) {
+	commands := newTestOSCommands(t, map[string]string{"ifconfig": "exit 0"})
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.isNetstack = false
+	c.c.Preferences.DeviceName = "oct-missing"
+	if _, err := net.InterfaceByName(c.c.Preferences.DeviceName); err == nil {
+		t.Skip("the test interface name already exists")
+	}
+	assert.Error(t, c.SetDevAddrs())
+	assert.Empty(t, commands.calls(t))
+}
+
+func TestDarwinDeviceCloseContinuesAfterListenerFailure(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	lisErr, tunErr := errors.New("listener close failed"), errors.New("TUN close failed")
+	lis := &testControllerCloseListener{err: lisErr}
+	dev := &testControllerCloseTUN{err: tunErr}
+	c.uapi, c.tundev = lis, dev
+	err := c.doClose()
+	assert.ErrorIs(t, err, lisErr)
+	assert.ErrorIs(t, err, tunErr)
+	assert.Equal(t, 1, lis.calls)
+	assert.Equal(t, 1, dev.calls)
+	assert.Nil(t, c.tundev)
+}
+
+func TestDarwinKnownIssues(t *testing.T) {
+	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
+		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-018 in tmp/client-test-report.md")
+	}
+	t.Run("CL-018-state-rollback-restores-routes", func(t *testing.T) {
+		commands := newTestOSCommands(t, map[string]string{"route": "exit 0", "ifconfig": "exit 0"})
+		c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+		c.isNetstack = false
+		c.c.Preferences.DeviceName = "oct-missing"
+		if _, err := net.InterfaceByName(c.c.Preferences.DeviceName); err == nil {
+			t.Skip("the test interface name already exists")
+		}
+		old := c.c.Connection
+		replacement := proto.Clone(old).(*userv1.ConnectionState)
+		assert.Error(t, c.SetConnectionState(replacement))
+		assert.Same(t, old, c.c.Connection)
+		var removed, restored bool
+		for _, call := range commands.calls(t) {
+			if len(call) > 5 && call[5] == old.Cidr.V4 {
+				removed = removed || call[3] == "delete"
+				restored = restored || call[3] == "add"
+			}
+		}
+		assert.True(t, !removed || restored, "rolling back a failed state update must preserve the working routes")
+	})
 }
