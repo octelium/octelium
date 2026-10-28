@@ -20,11 +20,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -58,6 +61,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
@@ -1139,4 +1143,301 @@ func TestServer(t *testing.T) {
 	}
 
 	time.Sleep(2 * time.Second)
+}
+
+func TestSupportsWildcardHostPrincipals(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"SSH-2.0-Go", false},
+		{"SSH-2.0-libssh_0.11.0", false},
+		{"SSH-2.0-OpenSSH_8.9p1", false},
+		{"SSH-2.0-OpenSSH_9.9p2", false},
+		{"SSH-2.0-OpenSSH_10.0p1", false},
+		{"SSH-2.0-OpenSSH_10.2p1", false},
+		{"SSH-2.0-OpenSSH_10.3", true},
+		{"SSH-2.0-OpenSSH_10.3p1 Ubuntu", true},
+		{"SSH-2.0-OpenSSH_10.5p1\r\n", true},
+		{"SSH-2.0-OpenSSH_11.0", true},
+		{"SSH-2.0-OpenSSH_for_Windows_9.5", false},
+		{"SSH-2.0-OpenSSH_for_Windows_10.2", false},
+		{"SSH-2.0-OpenSSH_for_Windows_10.4 Win32-OpenSSH-GitHub", true},
+		{"SSH-2.0-OpenSSH_", false},
+		{"SSH-2.0-OpenSSH_invalid", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			assert.Equal(t, tc.want, supportsWildcardHostPrincipals(tc.version))
+		})
+	}
+}
+
+func newTestHostCertificateServer(t *testing.T, legacy bool) (string, string) {
+	t.Helper()
+
+	ca, err := sshutils.GenerateSigner()
+	require.Nil(t, err)
+	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
+	require.Nil(t, err)
+	host, err := ssh.NewSignerFromKey(hostKey)
+	require.Nil(t, err)
+
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
+	require.Nil(t, os.WriteFile(knownHosts,
+		append([]byte("@cert-authority * "), ssh.MarshalAuthorizedKey(ca.PublicKey())...), 0600))
+
+	configs := make([]*ssh.ServerConfig, 0, 2)
+	for _, principals := range [][]string{nil, {"*"}} {
+		cert := &ssh.Certificate{
+			Key:             host.PublicKey(),
+			CertType:        ssh.HostCert,
+			ValidPrincipals: principals,
+			ValidAfter:      uint64(time.Now().Add(-time.Minute).Unix()),
+			ValidBefore:     uint64(time.Now().Add(time.Hour).Unix()),
+		}
+		require.Nil(t, cert.SignCert(rand.Reader, ca))
+		signer, err := ssh.NewCertSigner(cert, host)
+		require.Nil(t, err)
+		config := &ssh.ServerConfig{NoClientAuth: true, ServerVersion: "SSH-2.0-Octelium"}
+		config.AddHostKey(signer)
+		configs = append(configs, config)
+	}
+	srv := &Server{sshConfig: configs[0], sshConfigWildcard: configs[1]}
+	newConn := srv.newServerConn
+	if legacy {
+		newConn = func(c net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+			return ssh.NewServerConn(c, srv.sshConfig)
+		}
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.Nil(t, err)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			wg.Go(func() {
+				defer conn.Close()
+				if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+					return
+				}
+				peer, channels, requests, err := newConn(conn)
+				if err != nil {
+					return
+				}
+				defer peer.Close()
+				go ssh.DiscardRequests(requests)
+				for channel := range channels {
+					if channel.ChannelType() != "session" {
+						channel.Reject(ssh.UnknownChannelType, "unknown channel")
+						continue
+					}
+					ch, requests, err := channel.Accept()
+					if err != nil {
+						return
+					}
+					for req := range requests {
+						if req.Type == "exec" {
+							req.Reply(true, nil)
+							ch.SendRequest("exit-status", false, ssh.Marshal(&struct{ Status uint32 }{}))
+							ch.Close()
+						} else if req.WantReply {
+							req.Reply(false, nil)
+						}
+					}
+				}
+			})
+		}
+	})
+	t.Cleanup(func() {
+		lis.Close()
+		wg.Wait()
+	})
+	return lis.Addr().String(), knownHosts
+}
+
+func TestSSHHostCertificateCompatibility(t *testing.T) {
+	addr, knownHosts := newTestHostCertificateServer(t, false)
+	callback, err := knownhosts.New(knownHosts)
+	require.Nil(t, err)
+
+	for _, tc := range []struct {
+		version  string
+		wildcard bool
+	}{
+		{"SSH-2.0-Go", false},
+		{"SSH-2.0-OpenSSH_9.9p2", false},
+		{"SSH-2.0-OpenSSH_10.2p1", false},
+		{"SSH-2.0-OpenSSH_10.3p1", true},
+		{"SSH-2.0-OpenSSH_10.5p1", true},
+		{"SSH-2.0-OpenSSH_for_Windows_10.4", true},
+		{"SSH-2.0-other-client", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			t.Parallel()
+			for _, host := range []string{
+				"ssh-k8s-2",
+				"ssh-k8s-2.default.local.example.com",
+				"100.64.0.25",
+				"fdee:e61::2e6",
+				"localhost",
+				"127.0.0.1",
+				"::1",
+				"10.0.0.5",
+				"custom-client-alias",
+			} {
+				t.Run(host, func(t *testing.T) {
+					t.Parallel()
+					conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+					require.Nil(t, err)
+					defer conn.Close()
+					require.Nil(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+					_, err = conn.Write([]byte("client preamble\r\n"))
+					require.Nil(t, err)
+					cfg := &ssh.ClientConfig{
+						User:          "test",
+						ClientVersion: tc.version,
+						HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+							cert, ok := key.(*ssh.Certificate)
+							if !ok {
+								return errors.Errorf("Expected a host certificate")
+							}
+							if tc.wildcard {
+								assert.Equal(t, []string{"*"}, cert.ValidPrincipals)
+								return callback("*:22", remote, key)
+							}
+							assert.Empty(t, cert.ValidPrincipals)
+							return callback(hostname, remote, key)
+						},
+					}
+					peer, _, _, err := ssh.NewClientConn(conn, net.JoinHostPort(host, "22"), cfg)
+					require.Nil(t, err)
+					peer.Close()
+				})
+			}
+		})
+	}
+}
+
+func TestSSHHostCertificateOpenSSH(t *testing.T) {
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Skip("ssh is not available")
+	}
+	addr, knownHosts := newTestHostCertificateServer(t, false)
+	host, port, err := net.SplitHostPort(addr)
+	require.Nil(t, err)
+	for _, alias := range []string{
+		"ssh-k8s-2",
+		"ssh-k8s-2.default.local.example.com",
+		"100.64.0.25",
+		"fdee:e61::2e6",
+		"localhost",
+		"127.0.0.1",
+		"::1",
+		"10.0.0.5",
+		"custom-client-alias",
+	} {
+		t.Run(alias, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, sshPath,
+				"-F", os.DevNull,
+				"-o", "BatchMode=yes",
+				"-o", "StrictHostKeyChecking=yes",
+				"-o", "UserKnownHostsFile="+knownHosts,
+				"-o", "GlobalKnownHostsFile="+os.DevNull,
+				"-o", "HostKeyAlias="+alias,
+				"-o", "PreferredAuthentications=none",
+				"-o", "ConnectTimeout=5",
+				"-p", port, "test@"+host, "true").CombinedOutput()
+			assert.Nil(t, err, "%s", out)
+			assert.NotContains(t, string(out), "Certificate lacks principal list")
+			assert.NotContains(t, string(out), "authenticity of host")
+		})
+	}
+}
+
+func TestSSHHostCertificateLegacyCluster(t *testing.T) {
+	addr, knownHosts := newTestHostCertificateServer(t, true)
+	callback, err := knownhosts.New(knownHosts)
+	require.Nil(t, err)
+	for _, host := range []string{"ssh-k8s-2", "100.64.0.25", "fdee:e61::2e6", "localhost", "10.0.0.5", "custom-client-alias"} {
+		t.Run(host, func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			require.Nil(t, err)
+			defer conn.Close()
+			require.Nil(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+			peer, _, _, err := ssh.NewClientConn(conn, net.JoinHostPort(host, "22"), &ssh.ClientConfig{
+				User:            "test",
+				HostKeyCallback: callback,
+			})
+			require.Nil(t, err)
+			peer.Close()
+		})
+	}
+}
+
+func TestSSHClientVersionLimits(t *testing.T) {
+	for _, payload := range []string{
+		strings.Repeat("x", 255) + "\n",
+		strings.Repeat("preamble\r\n", 1024),
+	} {
+		server, client := net.Pipe()
+		require.Nil(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+		require.Nil(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+		srv := &Server{sshConfig: &ssh.ServerConfig{ServerVersion: "SSH-2.0-Octelium"}}
+		done := make(chan error, 1)
+		go func() {
+			defer server.Close()
+			_, _, _, err := srv.newServerConn(server)
+			done <- err
+		}()
+		banner := make([]byte, len("SSH-2.0-Octelium\r\n"))
+		_, err := io.ReadFull(client, banner)
+		require.Nil(t, err)
+		assert.Equal(t, "SSH-2.0-Octelium\r\n", string(banner))
+		client.Write([]byte(payload))
+		assert.NotNil(t, <-done)
+		client.Close()
+	}
+}
+
+func TestSSHVersionConn(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	require.Nil(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	require.Nil(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	conn := &sshVersionConn{
+		Conn:    server,
+		reader:  strings.NewReader("SSH-2.0-Go\r\npacket"),
+		version: []byte("SSH-2.0-Octelium\r\n"),
+	}
+	done := make(chan error, 1)
+	go func() {
+		for _, part := range []string{"SSH-", "2.0-Octelium\r", "\npacket"} {
+			if _, err := conn.Write([]byte(part)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	data := make([]byte, len("packet"))
+	_, err := io.ReadFull(client, data)
+	require.Nil(t, err)
+	assert.Equal(t, "packet", string(data))
+	require.Nil(t, <-done)
+	data, err = io.ReadAll(conn)
+	require.Nil(t, err)
+	assert.Equal(t, "SSH-2.0-Go\r\npacket", string(data))
+
+	conn.version = []byte("SSH-2.0-Octelium\r\n")
+	_, err = conn.Write([]byte("SSH-2.0-other\r\n"))
+	assert.NotNil(t, err)
 }

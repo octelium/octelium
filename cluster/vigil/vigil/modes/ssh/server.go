@@ -17,8 +17,12 @@
 package ssh
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"net"
+	"strings"
 	"time"
 
 	"sync"
@@ -53,7 +57,8 @@ type Server struct {
 
 	cancelFn context.CancelFunc
 
-	sshConfig *ssh.ServerConfig
+	sshConfig         *ssh.ServerConfig
+	sshConfigWildcard *ssh.ServerConfig
 
 	lbManager *loadbalancer.LBManager
 
@@ -112,6 +117,8 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		NoClientAuth:  true,
 		ServerVersion: "SSH-2.0-Octelium",
 	}
+	wildcardConfig := *server.sshConfig
+	server.sshConfigWildcard = &wildcardConfig
 
 	var err error
 	svc := opts.VCache.GetService()
@@ -131,6 +138,12 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		}
 
 		server.sshConfig.AddHostKey(hostSigner)
+
+		hostSignerWildcard, err := sshutils.GenerateHostSignerWithPrincipals(ctx, octeliumC, signerHost, "*")
+		if err != nil {
+			return nil, err
+		}
+		server.sshConfigWildcard.AddHostKey(hostSignerWildcard)
 	}
 
 	{
@@ -198,6 +211,82 @@ func (s *Server) Close() error {
 	return nil
 }
 
+func (s *Server) newServerConn(c net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	version := []byte(s.sshConfig.ServerVersion + "\r\n")
+	if n, err := c.Write(version); err != nil {
+		return nil, nil, nil, err
+	} else if n != len(version) {
+		return nil, nil, nil, io.ErrShortWrite
+	}
+
+	reader := bufio.NewReaderSize(c, 256)
+	var clientVersion []byte
+	for range 1024 {
+		line, err := reader.ReadSlice('\n')
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if len(line) > 255 {
+			return nil, nil, nil, fmt.Errorf("SSH client version is too long")
+		}
+		if bytes.HasPrefix(line, []byte("SSH-")) {
+			clientVersion = append([]byte(nil), line...)
+			break
+		}
+	}
+	if len(clientVersion) == 0 {
+		return nil, nil, nil, fmt.Errorf("Too many lines before SSH client version")
+	}
+
+	config := s.sshConfig
+	if supportsWildcardHostPrincipals(string(clientVersion)) {
+		config = s.sshConfigWildcard
+	}
+
+	return ssh.NewServerConn(&sshVersionConn{
+		Conn:    c,
+		reader:  io.MultiReader(bytes.NewReader(clientVersion), reader),
+		version: version,
+	}, config)
+}
+
+func supportsWildcardHostPrincipals(version string) bool {
+	const prefix = "SSH-2.0-OpenSSH_"
+	if !strings.HasPrefix(version, prefix) {
+		return false
+	}
+
+	var major, minor int
+	version = strings.TrimPrefix(strings.TrimPrefix(version, prefix), "for_Windows_")
+	if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err != nil {
+		return false
+	}
+	return major > 10 || (major == 10 && minor >= 3)
+}
+
+type sshVersionConn struct {
+	net.Conn
+	reader  io.Reader
+	version []byte
+}
+
+func (c *sshVersionConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
+func (c *sshVersionConn) Write(p []byte) (int, error) {
+	n := min(len(p), len(c.version))
+	if !bytes.Equal(p[:n], c.version[:n]) {
+		return 0, fmt.Errorf("Unexpected SSH server version")
+	}
+	c.version = c.version[n:]
+	if n == len(p) {
+		return n, nil
+	}
+	written, err := c.Conn.Write(p[n:])
+	return n + written, err
+}
+
 func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	defer modes.Recover()
 	defer c.Close()
@@ -221,7 +310,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	zap.L().Debug("Started handling a new conn", zap.String("remoteAddr", c.RemoteAddr().String()))
 
 	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-	sshConn, chans, reqs, err := ssh.NewServerConn(c, s.sshConfig)
+	sshConn, chans, reqs, err := s.newServerConn(c)
 	_ = c.SetDeadline(time.Time{})
 	if err != nil {
 		zap.L().Debug("Could not establish a newServerConn")

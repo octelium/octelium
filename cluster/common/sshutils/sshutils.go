@@ -75,11 +75,15 @@ func GenerateSigner() (ssh.Signer, error) {
 }
 
 func GenerateHostSigner(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer) (ssh.Signer, error) {
+	return GenerateHostSignerWithPrincipals(ctx, octeliumC, signer)
+}
+
+func GenerateHostSignerWithPrincipals(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer, principals ...string) (ssh.Signer, error) {
 	caSigner, err := getCASigner(ctx, octeliumC)
 	if err != nil {
 		return nil, err
 	}
-	return makeCertSigner(signer, caSigner, ssh.HostCert)
+	return makeCertSigner(signer, caSigner, ssh.HostCert, principals...)
 }
 
 func GenerateUserSigner(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer) (ssh.Signer, error) {
@@ -118,7 +122,7 @@ func getCASigner(ctx context.Context, octeliumC octeliumc.ClientInterface) (ssh.
 	return ca, nil
 }
 
-func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, error) {
+func makeCert(priv ssh.Signer, signer ssh.Signer, typ int, principals ...string) (*ssh.Certificate, error) {
 
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
@@ -126,13 +130,14 @@ func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, er
 	}
 
 	cert := &ssh.Certificate{
-		Nonce:        nonce,
-		KeyId:        vutils.UUIDv4(),
-		Key:          priv.PublicKey(),
-		CertType:     uint32(typ),
-		SignatureKey: signer.PublicKey(),
-		ValidAfter:   uint64(time.Now().Add(-5 * time.Minute).Unix()),
-		ValidBefore:  uint64(time.Now().Add(24 * 30 * 12 * 10 * time.Hour).Unix()),
+		Nonce:           nonce,
+		KeyId:           vutils.UUIDv4(),
+		Key:             priv.PublicKey(),
+		CertType:        uint32(typ),
+		SignatureKey:    signer.PublicKey(),
+		ValidPrincipals: principals,
+		ValidAfter:      uint64(time.Now().Add(-5 * time.Minute).Unix()),
+		ValidBefore:     uint64(time.Now().Add(24 * 30 * 12 * 10 * time.Hour).Unix()),
 	}
 
 	if typ == ssh.UserCert {
@@ -154,9 +159,9 @@ func makeCert(priv ssh.Signer, signer ssh.Signer, typ int) (*ssh.Certificate, er
 	return cert, nil
 }
 
-func makeCertSigner(signer, caSigner ssh.Signer, typ int) (ssh.Signer, error) {
+func makeCertSigner(signer, caSigner ssh.Signer, typ int, principals ...string) (ssh.Signer, error) {
 
-	cert, err := makeCert(signer, caSigner, typ)
+	cert, err := makeCert(signer, caSigner, typ, principals...)
 	if err != nil {
 		return nil, err
 	}
