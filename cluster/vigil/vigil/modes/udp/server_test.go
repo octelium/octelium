@@ -47,6 +47,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
+const udpBufSize = 1500
+
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
 	prevProvider := otel.GetMeterProvider()
 	t.Cleanup(func() {
@@ -504,4 +506,300 @@ func TestServer(t *testing.T) {
 
 	err = srv.Close()
 	assert.Nil(t, err)
+}
+
+func TestUDPLargeDatagrams(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		t.Run(network, func(t *testing.T) {
+			ip := net.IPv4(127, 0, 0, 1)
+			if network == "udp6" {
+				ip = net.IPv6loopback
+			}
+			upstream, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+			require.Nil(t, err)
+			defer upstream.Close()
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port}
+			for _, size := range []int{1, 1499, 1500, 1501, 8192, 32768, 65507} {
+				for _, direction := range []string{"Request", "Reply", "Both"} {
+					t.Run(fmt.Sprintf("%s/%d", direction, size), func(t *testing.T) {
+						client, err := net.DialUDP("udp4", nil, addr)
+						require.Nil(t, err)
+						defer client.Close()
+						require.Nil(t, client.SetDeadline(time.Now().Add(3*time.Second)))
+						require.Nil(t, upstream.SetDeadline(time.Now().Add(3*time.Second)))
+						requestSize, replySize := 19, 29
+						if direction != "Reply" {
+							requestSize = size
+						}
+						if direction != "Request" {
+							replySize = size
+						}
+						request := utilrand.GetRandomBytesMust(requestSize)
+						reply := utilrand.GetRandomBytesMust(replySize)
+						buf := make([]byte, 65535)
+						exchange := func(request, reply []byte) {
+							_, err := client.Write(request)
+							require.Nil(t, err)
+							n, source, err := upstream.ReadFromUDP(buf)
+							require.Nil(t, err)
+							require.Equal(t, len(request), n)
+							require.True(t, bytes.Equal(request, buf[:n]), "The UDP request was changed")
+							_, err = upstream.WriteToUDP(reply, source)
+							require.Nil(t, err)
+							n, err = client.Read(buf)
+							require.Nil(t, err)
+							require.Equal(t, len(reply), n)
+							require.True(t, bytes.Equal(reply, buf[:n]), "The UDP reply was changed")
+						}
+						exchange(request, reply)
+						srv.dctxMap.mu.Lock()
+						dctx := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+						srv.dctxMap.mu.Unlock()
+						require.NotNil(t, dctx)
+						exchange([]byte("small request"), []byte("small reply"))
+						assert.Eventually(t, func() bool {
+							return dctx.bytesFromClient.Load() == int64(len(request)+len("small request")) &&
+								dctx.bytesToClient.Load() == int64(len(reply)+len("small reply")) &&
+								dctx.packetsFromClient.Load() == 2 && dctx.packetsToClient.Load() == 2
+						}, time.Second, time.Millisecond)
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestUDPOversizedIPv6ReplyIsDropped(t *testing.T) {
+	upstream, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6loopback})
+	require.Nil(t, err)
+	defer upstream.Close()
+	srv := newTestUDPServer(t, upstream.LocalAddr().String())
+	client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+		IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+	})
+	require.Nil(t, err)
+	defer client.Close()
+	require.Nil(t, client.SetDeadline(time.Now().Add(3*time.Second)))
+	require.Nil(t, upstream.SetDeadline(time.Now().Add(3*time.Second)))
+	request := []byte("request")
+	_, err = client.Write(request)
+	require.Nil(t, err)
+	buf := make([]byte, 65535)
+	n, source, err := upstream.ReadFromUDP(buf)
+	require.Nil(t, err)
+	require.Equal(t, request, buf[:n])
+	srv.dctxMap.mu.Lock()
+	dctx := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+	srv.dctxMap.mu.Unlock()
+	require.NotNil(t, dctx)
+	_, err = upstream.WriteToUDP(utilrand.GetRandomBytesMust(65527), source)
+	require.Nil(t, err)
+	require.Nil(t, client.SetReadDeadline(time.Now().Add(150*time.Millisecond)))
+	n, err = client.Read(buf)
+	require.Error(t, err)
+	var netErr net.Error
+	require.ErrorAs(t, err, &netErr)
+	assert.True(t, netErr.Timeout())
+	assert.Zero(t, n)
+	assert.Zero(t, dctx.bytesToClient.Load())
+	assert.Zero(t, dctx.packetsToClient.Load())
+	require.Eventually(t, func() bool {
+		srv.dctxMap.mu.Lock()
+		defer srv.dctxMap.mu.Unlock()
+		return len(srv.dctxMap.dctxMap) == 0
+	}, time.Second, time.Millisecond)
+	require.Nil(t, client.SetDeadline(time.Now().Add(3*time.Second)))
+	_, err = client.Write(request)
+	require.Nil(t, err)
+	n, source, err = upstream.ReadFromUDP(buf)
+	require.Nil(t, err)
+	require.Equal(t, request, buf[:n])
+	_, err = upstream.WriteToUDP([]byte("reply"), source)
+	require.Nil(t, err)
+	n, err = client.Read(buf)
+	require.Nil(t, err)
+	assert.Equal(t, "reply", string(buf[:n]))
+}
+
+func newUDPTestPair(t *testing.T, network string) (*net.UDPConn, *net.UDPConn) {
+	t.Helper()
+	ip := net.IPv4(127, 0, 0, 1)
+	if network == "udp6" {
+		ip = net.IPv6loopback
+	}
+	lis, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+	require.Nil(t, err)
+	t.Cleanup(func() { lis.Close() })
+	conn, err := net.DialUDP(network, nil, lis.LocalAddr().(*net.UDPAddr))
+	require.Nil(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.Nil(t, lis.SetDeadline(time.Now().Add(3*time.Second)))
+	require.Nil(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+	return lis, conn
+}
+
+func TestReadUDPDatagramSizes(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		for _, connected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Connected%t", network, connected), func(t *testing.T) {
+				lis, conn := newUDPTestPair(t, network)
+				receiver, peer := lis, conn
+				send := conn.Write
+				if connected {
+					receiver, peer = conn, lis
+					send = func(buf []byte) (int, error) {
+						return lis.WriteToUDP(buf, conn.LocalAddr().(*net.UDPAddr))
+					}
+				}
+				maxSize := 65507
+				if network == "udp6" {
+					maxSize = 65527
+				}
+				buf := make([]byte, 64*1024)
+				for _, size := range []int{0, 1, 1500, 1501, maxSize} {
+					body := utilrand.GetRandomBytesMust(size)
+					_, err := send(body)
+					require.Nil(t, err)
+					n, source, err := readUDPDatagram(receiver, buf)
+					require.Nil(t, err)
+					require.Equal(t, size, n)
+					assert.True(t, bytes.Equal(body, buf[:n]), "The UDP datagram was changed")
+					require.NotNil(t, source)
+					assert.Equal(t, peer.LocalAddr().String(), source.String())
+				}
+			})
+		}
+	}
+}
+
+func TestReadUDPDatagramDropsTruncated(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		for _, connected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Connected%t", network, connected), func(t *testing.T) {
+				lis, conn := newUDPTestPair(t, network)
+				receiver, peer := lis, conn
+				send := conn.Write
+				if connected {
+					receiver, peer = conn, lis
+					send = func(buf []byte) (int, error) {
+						return lis.WriteToUDP(buf, conn.LocalAddr().(*net.UDPAddr))
+					}
+				}
+				buf := make([]byte, 32)
+				for _, size := range []int{33, 128} {
+					_, err := send(bytes.Repeat([]byte("d"), size))
+					require.Nil(t, err)
+				}
+				body := bytes.Repeat([]byte("v"), len(buf))
+				_, err := send(body)
+				require.Nil(t, err)
+				n, source, err := readUDPDatagram(receiver, buf)
+				require.Nil(t, err)
+				assert.Equal(t, body, buf[:n])
+				require.NotNil(t, source)
+				assert.Equal(t, peer.LocalAddr().String(), source.String())
+				require.Nil(t, receiver.SetReadDeadline(time.Now().Add(30*time.Millisecond)))
+				n, _, err = readUDPDatagram(receiver, buf)
+				require.Error(t, err)
+				var netErr net.Error
+				require.ErrorAs(t, err, &netErr)
+				assert.True(t, netErr.Timeout())
+				assert.Zero(t, n)
+			})
+		}
+	}
+}
+
+func TestReadUDPDatagramErrors(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Closed%t", closed), func(t *testing.T) {
+			lis, conn := newUDPTestPair(t, "udp4")
+			if closed {
+				require.Nil(t, lis.Close())
+			} else {
+				_, err := conn.Write(bytes.Repeat([]byte("x"), 64))
+				require.Nil(t, err)
+				require.Nil(t, lis.SetReadDeadline(time.Now().Add(30*time.Millisecond)))
+			}
+			n, _, err := readUDPDatagram(lis, make([]byte, 32))
+			require.Error(t, err)
+			assert.Zero(t, n)
+			if closed {
+				assert.ErrorIs(t, err, net.ErrClosed)
+			} else {
+				var netErr net.Error
+				require.ErrorAs(t, err, &netErr)
+				assert.True(t, netErr.Timeout())
+			}
+		})
+	}
+}
+
+func TestUDPDatagramBufferIsolation(t *testing.T) {
+	upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	defer upstream.Close()
+	srv := newTestUDPServer(t, upstream.LocalAddr().String())
+	client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+		IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+	})
+	require.Nil(t, err)
+	defer client.Close()
+	require.Nil(t, client.SetDeadline(time.Now().Add(3*time.Second)))
+	require.Nil(t, upstream.SetDeadline(time.Now().Add(3*time.Second)))
+	bodies := make([][]byte, 12)
+	for i := range bodies {
+		size := []int{17, 1501, 8192, 16384}[i%4]
+		bodies[i] = utilrand.GetRandomBytesMust(size)
+		bodies[i][0] = byte(i)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 65535)
+		seen := make(map[byte]bool)
+		for range bodies {
+			n, addr, err := upstream.ReadFromUDP(buf)
+			if !assert.Nil(t, err) || !assert.Positive(t, n) {
+				return
+			}
+			id := buf[0]
+			if !assert.Less(t, int(id), len(bodies)) || !assert.False(t, seen[id]) {
+				return
+			}
+			seen[id] = true
+			if !assert.True(t, bytes.Equal(bodies[id], buf[:n]), "The UDP request was changed") {
+				return
+			}
+			_, err = upstream.WriteToUDP(buf[:n], addr)
+			if !assert.Nil(t, err) {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		upstream.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("The UDP upstream did not stop")
+		}
+	})
+	for _, body := range bodies {
+		_, err := client.Write(body)
+		require.Nil(t, err)
+	}
+	buf := make([]byte, 65535)
+	seen := make(map[byte]bool)
+	for range bodies {
+		n, err := client.Read(buf)
+		require.Nil(t, err)
+		require.Positive(t, n)
+		id := buf[0]
+		require.Less(t, int(id), len(bodies))
+		require.False(t, seen[id])
+		seen[id] = true
+		require.True(t, bytes.Equal(bodies[id], buf[:n]), "The UDP reply was changed")
+	}
 }

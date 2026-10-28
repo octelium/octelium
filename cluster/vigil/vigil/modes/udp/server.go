@@ -17,9 +17,11 @@
 package udp
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -43,10 +45,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	udpConnTrackTimeout = 30 * time.Second
-	udpBufSize          = 1500
-)
+const udpReadBufferSize = 64 * 1024
+
+var udpConnTrackTimeout = 30 * time.Second
 
 type Server struct {
 	octovigilC *octovigilc.Client
@@ -193,10 +194,10 @@ func (s *Server) replyLoop(dctx *dctx) {
 	}
 	otelutils.EmitAccessLog(logE)
 
-	readBuf := make([]byte, udpBufSize)
+	readBuf := make([]byte, udpReadBufferSize)
 	for {
 		dctx.connUpstream.SetReadDeadline(time.Now().Add(udpConnTrackTimeout))
-		read, err := dctx.connUpstream.Read(readBuf)
+		read, _, err := readUDPDatagram(dctx.connUpstream, readBuf)
 		if err != nil {
 			return
 		}
@@ -214,13 +215,13 @@ func (s *Server) replyLoop(dctx *dctx) {
 
 func (s *Server) doRun(ctx context.Context) {
 	zap.L().Debug("Starting running the run loop")
+	readBuf := make([]byte, udpReadBufferSize)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			readBuf := make([]byte, udpBufSize)
-			n, addr, err := s.lis.ReadFromUDP(readBuf)
+			n, addr, err := readUDPDatagram(s.lis, readBuf)
 			if err != nil {
 				time.Sleep(100 * time.Millisecond)
 				continue
@@ -232,7 +233,19 @@ func (s *Server) doRun(ctx context.Context) {
 				if err := s.handlePacket(ctx, buf, length, source); err != nil {
 					zap.L().Warn("Could not handle packet", zap.Error(err))
 				}
-			}(readBuf, n, addr)
+			}(bytes.Clone(readBuf[:n]), n, addr)
+		}
+	}
+}
+
+func readUDPDatagram(conn *net.UDPConn, buf []byte) (int, *net.UDPAddr, error) {
+	for {
+		n, _, flags, addr, err := conn.ReadMsgUDP(buf, nil)
+		if err != nil {
+			return 0, nil, err
+		}
+		if flags&syscall.MSG_TRUNC == 0 {
+			return n, addr, nil
 		}
 	}
 }
