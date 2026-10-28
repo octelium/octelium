@@ -21,8 +21,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -489,5 +493,106 @@ func TestGetClientTLSCfgNew(t *testing.T) {
 		assert.True(t, tlscfg.RootCAs.Equal(tlscfg.RootCAs))
 		assert.Equal(t, crt.Certificate.Raw, tlscfg.Certificates[0].Leaf.Raw)
 		assert.False(t, tlscfg.InsecureSkipVerify)
+	}
+}
+
+func TestGeneratedTLSConfigSchemes(t *testing.T) {
+	for _, scheme := range []string{"https", "tls", "wss", "http", "ws", "tcp", ""} {
+		for _, isUser := range []bool{false, true} {
+			for _, selected := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/ClientServed%t/SelectedConfig%t", scheme, isUser, selected), func(t *testing.T) {
+					svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}
+					var cfg *corev1.Service_Spec_Config
+					if selected {
+						cfg = &corev1.Service_Spec_Config{Name: "selected"}
+					} else {
+						svc.Spec.Config = &corev1.Service_Spec_Config{}
+					}
+					got, err := GetClientTLSCfg(t.Context(), svc, cfg, nil, &loadbalancer.Upstream{
+						URL:      &url.URL{Scheme: scheme, Host: "url.example.com:8443"},
+						HostPort: "192.0.2.1:8443", SNIHost: "certificate.example.com", IsUser: isUser,
+					})
+					require.Nil(t, err)
+					if !isUser || (scheme != "https" && scheme != "tls" && scheme != "wss") {
+						assert.Nil(t, got)
+						return
+					}
+					require.NotNil(t, got)
+					assert.Equal(t, "certificate.example.com", got.ServerName)
+					assert.Equal(t, uint16(tls.VersionTLS12), got.MinVersion)
+					assert.Equal(t, uint16(tls.VersionTLS13), got.MaxVersion)
+					assert.False(t, got.InsecureSkipVerify)
+					assert.Nil(t, got.RootCAs)
+					assert.Empty(t, got.Certificates)
+				})
+			}
+		}
+	}
+}
+
+func TestWSSCertificateVerification(t *testing.T) {
+	crt, err := utils_cert.GenerateSelfSignedCert("virtual.example.com", []string{"virtual.example.com"}, time.Hour)
+	require.Nil(t, err)
+	certificate, err := tls.X509KeyPair(crt.MustGetCertPEM(), crt.MustGetPrivateKeyPEM())
+	require.Nil(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(crt.Certificate)
+	sni := make(chan string, 3)
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	backend.TLS = &tls.Config{
+		Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12,
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			sni <- hello.ServerName
+			return nil, nil
+		},
+	}
+	backend.StartTLS()
+	defer backend.Close()
+	for _, tc := range []struct {
+		name       string
+		serverName string
+		trusted    bool
+	}{
+		{name: "TrustedName", serverName: "virtual.example.com", trusted: true},
+		{name: "WrongName", serverName: "other.example.com", trusted: true},
+		{name: "Untrusted", serverName: "virtual.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP}}
+			cfg, err := GetClientTLSCfg(t.Context(), svc, nil, nil, &loadbalancer.Upstream{
+				URL: &url.URL{Scheme: "wss", Host: tc.serverName}, SNIHost: tc.serverName, IsUser: true,
+			})
+			require.Nil(t, err)
+			require.NotNil(t, cfg)
+			cfg.RootCAs = x509.NewCertPool()
+			if tc.trusted {
+				cfg.RootCAs = roots
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			conn, err := (&tls.Dialer{Config: cfg}).DialContext(ctx, "tcp", backend.Listener.Addr().String())
+			switch tc.name {
+			case "TrustedName":
+				require.Nil(t, err)
+				defer conn.Close()
+				state := conn.(*tls.Conn).ConnectionState()
+				assert.NotEmpty(t, state.VerifiedChains)
+				assert.Equal(t, tc.serverName, state.ServerName)
+			case "WrongName":
+				var hostnameErr x509.HostnameError
+				assert.ErrorAs(t, err, &hostnameErr)
+				assert.Nil(t, conn)
+			case "Untrusted":
+				var authorityErr x509.UnknownAuthorityError
+				assert.ErrorAs(t, err, &authorityErr)
+				assert.Nil(t, conn)
+			}
+			select {
+			case name := <-sni:
+				assert.Equal(t, tc.serverName, name)
+			case <-ctx.Done():
+				t.Fatal("The TLS backend did not receive a client hello")
+			}
+		})
 	}
 }

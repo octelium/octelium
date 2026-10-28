@@ -38,6 +38,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gorilla/websocket"
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -48,6 +49,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
@@ -4294,6 +4296,127 @@ func TestRemoveH2CUpgrade(t *testing.T) {
 
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestClientServedWSSUpgrade(t *testing.T) {
+	crt, err := utils_cert.GenerateSelfSignedCert("virtual.example.com", []string{"virtual.example.com"}, time.Hour)
+	require.Nil(t, err)
+	certificate, err := tls.X509KeyPair(crt.MustGetCertPEM(), crt.MustGetPrivateKeyPEM())
+	require.Nil(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(crt.Certificate)
+	for _, explicitTLS := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ExplicitTLS%t", explicitTLS), func(t *testing.T) {
+			sni := make(chan string, 2)
+			done := make(chan struct{}, 2)
+			upgrader := websocket.Upgrader{}
+			backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer func() { done <- struct{}{} }()
+				assert.Equal(t, "virtual.example.com", r.TLS.ServerName)
+				assert.Equal(t, "virtual.example.com", r.Host)
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if !assert.Nil(t, err) {
+					return
+				}
+				defer conn.Close()
+				conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+				kind, body, err := conn.ReadMessage()
+				if !assert.Nil(t, err) {
+					return
+				}
+				assert.Nil(t, conn.WriteMessage(kind, body))
+			}))
+			backend.TLS = &tls.Config{
+				Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12,
+				GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+					sni <- hello.ServerName
+					return nil, nil
+				},
+			}
+			backend.StartTLS()
+			defer backend.Close()
+			srv, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("The original upstream should not receive the WebSocket request")
+			}), &corev1.Service_Spec_Config_HTTP{IsUpstreamHTTP2: true})
+			svc := pbutils.Clone(srv.vCache.GetService()).(*corev1.Service)
+			svc.Spec.Config.Upstream = &corev1.Service_Spec_Config_Upstream{
+				Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "wss://virtual.example.com/socket"},
+				User: "serving-user",
+			}
+			if explicitTLS {
+				svc.Spec.Config.Tls = &corev1.Service_Spec_Config_TLS{TrustedCAs: []string{string(crt.MustGetCertPEM())}}
+			}
+			srv.vCache.SetService(svc)
+			srv.lbManager.SetSession(&corev1.Session{
+				Metadata: &metav1.Metadata{Uid: "serving-session"},
+				Status: &corev1.Session_Status{
+					Type: corev1.Session_Status_CLIENT, UserRef: &metav1.ObjectReference{Name: "serving-user"},
+					Connection: &corev1.Session_Status_Connection{
+						L3Mode:    corev1.Session_Status_Connection_V4,
+						Addresses: []*metav1.DualStackNetwork{{V4: "127.0.0.1/32"}},
+						Upstreams: []*corev1.Session_Status_Connection_Upstream{{
+							ServiceRef: &metav1.ObjectReference{Uid: svc.Metadata.Uid},
+							Port:       int32(backend.Listener.Addr().(*net.TCPAddr).Port),
+						}},
+					},
+				},
+			})
+			upstream, err := srv.lbManager.GetUpstream(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeResponse{
+				RequestContext: &corev1.RequestContext{Service: svc},
+			})
+			require.Nil(t, err)
+			require.True(t, upstream.IsUser)
+			require.Equal(t, "virtual.example.com", upstream.SNIHost)
+			require.Equal(t, backend.Listener.Addr().String(), upstream.HostPort)
+			roundTripper, err := srv.getRoundTripper(upstream)
+			require.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, "https://"+upstream.HostPort+"/socket", nil)
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, &middlewares.RequestContext{
+				Service: svc, ServiceConfig: svc.Spec.Config,
+			}))
+			rt, err := roundTripper.getRoundTripper(req)
+			require.Nil(t, err)
+			transport, ok := rt.(*http.Transport)
+			require.True(t, ok)
+			if !explicitTLS {
+				if transport.TLSClientConfig == nil {
+					transport.TLSClientConfig = &tls.Config{}
+				}
+				transport.TLSClientConfig.RootCAs = roots
+			}
+			assert.False(t, transport.TLSClientConfig.InsecureSkipVerify)
+			for _, kind := range []int{websocket.TextMessage, websocket.BinaryMessage} {
+				dialer := websocket.Dialer{HandshakeTimeout: 3 * time.Second}
+				conn, response, err := dialer.DialContext(t.Context(), strings.Replace(addr, "http://", "ws://", 1)+"/socket", nil)
+				require.Nil(t, err)
+				t.Cleanup(func() { conn.Close() })
+				assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
+				require.Nil(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+				require.Nil(t, conn.SetWriteDeadline(time.Now().Add(3*time.Second)))
+				body := []byte("payload through a client-served secure WebSocket")
+				require.Nil(t, conn.WriteMessage(kind, body))
+				gotKind, got, err := conn.ReadMessage()
+				require.Nil(t, err)
+				assert.Equal(t, kind, gotKind)
+				assert.Equal(t, body, got)
+				conn.Close()
+				select {
+				case name := <-sni:
+					assert.Equal(t, "virtual.example.com", name)
+				case <-time.After(3 * time.Second):
+					t.Fatal("The TLS backend did not receive a client hello")
+				}
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("The WebSocket backend did not finish")
+				}
+			}
 		})
 	}
 }

@@ -282,7 +282,7 @@ func getGenTLSCfg(ctx context.Context, svc *corev1.Service, secretMan *secretman
 		return nil, nil
 	}
 	switch upstream.URL.Scheme {
-	case "https", "tls":
+	case "https", "tls", "wss":
 	default:
 		return nil, nil
 	}
