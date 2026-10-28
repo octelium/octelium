@@ -62,6 +62,12 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 		return
 	}
 
+	stop := context.AfterFunc(ctx, func() {
+		conn.Close()
+		upstreamConn.Close()
+	})
+	defer stop()
+
 	p.doServe(conn, upstreamConn)
 	zap.L().Debug("Done serving",
 		zap.String("id", p.dctx.id),
@@ -131,21 +137,28 @@ func (p *proxy) doServe(clientConn, backendConn net.Conn) {
 
 func (p *proxy) connCopy(dst, src net.Conn, isToDownstream bool) {
 	defer p.wg.Done()
-	defer modes.Recover()
+	defer modes.Recover(func(any) {
+		dst.Close()
+		src.Close()
+	})
 
-	n, _ := io.Copy(dst, src)
+	n, err := io.Copy(dst, src)
 	if isToDownstream {
 		p.bytesToDownstream = n
 	} else {
 		p.bytesFromDownstream = n
 	}
 
-	if err := closeWrite(dst); err != nil {
-		zap.L().Debug("Could not closeWrite dst", zap.String("id", p.dctx.id), zap.Error(err))
+	if err != nil {
+		dst.Close()
+		src.Close()
+		return
 	}
 
-	if err := dst.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-		zap.L().Debug("Could not set read deadline", zap.String("id", p.dctx.id), zap.Error(err))
+	if err := closeWrite(dst); err != nil {
+		zap.L().Debug("Could not closeWrite dst", zap.String("id", p.dctx.id), zap.Error(err))
+		dst.Close()
+		src.Close()
 	}
 }
 
@@ -153,7 +166,7 @@ func closeWrite(conn net.Conn) error {
 	if cw, ok := conn.(closeWriter); ok {
 		return cw.CloseWrite()
 	}
-	return nil
+	return conn.Close()
 }
 
 type closeWriter interface {

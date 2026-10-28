@@ -29,6 +29,7 @@ import (
 
 	"context"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	v1 "github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -846,4 +847,382 @@ func TestUpstreamTLSFromConfigTLS(t *testing.T) {
 	n, err := c.Read(buf)
 	assert.Nil(t, err, "%+v", err)
 	assert.Equal(t, msg, buf[:n])
+}
+
+func newTCPProxyTestPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	t.Helper()
+	lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	defer lis.Close()
+	client, err := net.DialTCP("tcp4", nil, lis.Addr().(*net.TCPAddr))
+	require.Nil(t, err)
+	t.Cleanup(func() { client.Close() })
+	require.Nil(t, lis.SetDeadline(time.Now().Add(5*time.Second)))
+	server, err := lis.AcceptTCP()
+	require.Nil(t, err)
+	t.Cleanup(func() { server.Close() })
+	require.Nil(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.Nil(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	return client, server
+}
+
+func TestTCPProxyHalfCloseDirections(t *testing.T) {
+	crt, err := utils_cert.GenerateSelfSignedCert("localhost", []string{"localhost"}, time.Hour)
+	require.Nil(t, err)
+	certificate, err := tls.X509KeyPair(crt.MustGetCertPEM(), crt.MustGetPrivateKeyPEM())
+	require.Nil(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(crt.Certificate)
+	for _, tc := range []struct {
+		name       string
+		downstream bool
+		upstream   bool
+	}{
+		{name: "Plain"},
+		{name: "DownstreamTLS", downstream: true},
+		{name: "UpstreamTLS", upstream: true},
+		{name: "BothTLS", downstream: true, upstream: true},
+	} {
+		for _, clientFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/ClientFirst%t", tc.name, clientFirst), func(t *testing.T) {
+				newPair := func(isTLS bool) (net.Conn, net.Conn) {
+					client, server := newTCPProxyTestPair(t)
+					if !isTLS {
+						return client, server
+					}
+					tlsClient := tls.Client(client, &tls.Config{RootCAs: roots, ServerName: "localhost", MinVersion: tls.VersionTLS12})
+					tlsServer := tls.Server(server, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
+					done := make(chan error, 1)
+					go func() { done <- tlsServer.HandshakeContext(t.Context()) }()
+					require.Nil(t, tlsClient.HandshakeContext(t.Context()))
+					require.Nil(t, <-done)
+					return tlsClient, tlsServer
+				}
+				client, downstream := newPair(tc.downstream)
+				upstream, backend := newPair(tc.upstream)
+				p := &proxy{dctx: &dctx{id: t.Name()}}
+				done := make(chan struct{})
+				go func() { defer close(done); p.doServe(downstream, upstream) }()
+				t.Cleanup(func() {
+					downstream.Close()
+					upstream.Close()
+					select {
+					case <-done:
+					case <-time.After(3 * time.Second):
+						t.Error("The TCP proxy did not stop after closing its connections")
+					}
+				})
+				first, second := client, backend
+				if !clientFirst {
+					first, second = backend, client
+				}
+				_, err := first.Write([]byte("first"))
+				require.Nil(t, err)
+				require.Nil(t, first.(closeWriter).CloseWrite())
+				body, err := io.ReadAll(second)
+				require.Nil(t, err)
+				assert.Equal(t, "first", string(body))
+				timer := time.NewTimer(750 * time.Millisecond)
+				defer timer.Stop()
+				<-timer.C
+				_, err = second.Write([]byte("second"))
+				require.Nil(t, err)
+				require.Nil(t, second.(closeWriter).CloseWrite())
+				body, err = io.ReadAll(first)
+				require.Nil(t, err)
+				assert.Equal(t, "second", string(body))
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("The TCP proxy did not stop after both half-closes")
+				}
+				toClient, fromClient := int64(6), int64(5)
+				if !clientFirst {
+					toClient, fromClient = 5, 6
+				}
+				assert.Equal(t, toClient, p.bytesToDownstream)
+				assert.Equal(t, fromClient, p.bytesFromDownstream)
+			})
+		}
+	}
+}
+
+func TestTCPProxyCancellation(t *testing.T) {
+	for _, halfClosed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("HalfClosed%t", halfClosed), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.Nil(t, err)
+			defer lis.Close()
+			require.Nil(t, lis.SetDeadline(time.Now().Add(3*time.Second)))
+			client, downstream := newTCPProxyTestPair(t)
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{Uid: "service"},
+				Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_TCP, Config: &corev1.Service_Spec_Config{
+					Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "tcp://" + lis.Addr().String()}},
+				}},
+				Status: &corev1.Service_Status{},
+			}
+			vc, err := vcache.NewCache(ctx)
+			require.Nil(t, err)
+			vc.SetService(svc)
+			p := newProxy(&dctx{
+				id: t.Name(), conn: downstream, svcConfig: svc.Spec.Config,
+				authResp: &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{Service: svc}},
+			}, loadbalancer.NewLbManager(nil, vc))
+			done := make(chan struct{})
+			go func() { defer close(done); p.serve(ctx, svc, nil) }()
+			backend, err := lis.AcceptTCP()
+			require.Nil(t, err)
+			t.Cleanup(func() {
+				cancel()
+				client.Close()
+				downstream.Close()
+				backend.Close()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Error("The TCP proxy did not stop during cleanup")
+				}
+			})
+			require.Nil(t, backend.SetDeadline(time.Now().Add(3*time.Second)))
+			if halfClosed {
+				_, err := client.Write([]byte("request"))
+				require.Nil(t, err)
+				require.Nil(t, client.CloseWrite())
+				body, err := io.ReadAll(backend)
+				require.Nil(t, err)
+				assert.Equal(t, "request", string(body))
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("The TCP proxy did not stop after cancellation")
+			}
+			assert.Nil(t, p.upstreamErr)
+			require.Nil(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err = client.Read(make([]byte, 1))
+			assert.ErrorIs(t, err, io.EOF)
+		})
+	}
+}
+
+type tstTCPProxyFaultConn struct {
+	net.Conn
+	readErr   error
+	writeErr  error
+	panicRead bool
+}
+
+func (c *tstTCPProxyFaultConn) Read(buf []byte) (int, error) {
+	if c.panicRead {
+		panic("TCP read failed")
+	}
+	if c.readErr != nil {
+		return 0, c.readErr
+	}
+	return c.Conn.Read(buf)
+}
+
+func (c *tstTCPProxyFaultConn) Write(buf []byte) (int, error) {
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
+	return c.Conn.Write(buf)
+}
+
+type tstTCPProxyCloseWriteErrorConn struct {
+	net.Conn
+}
+
+func (c *tstTCPProxyCloseWriteErrorConn) CloseWrite() error {
+	return io.ErrClosedPipe
+}
+
+func TestTCPProxyCopyFailureClosesBothConnections(t *testing.T) {
+	for _, name := range []string{"ReadError", "WriteError", "CloseWriteError", "ReadPanic"} {
+		t.Run(name, func(t *testing.T) {
+			client, downstream := net.Pipe()
+			upstream, backend := net.Pipe()
+			require.Nil(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+			require.Nil(t, backend.SetReadDeadline(time.Now().Add(2*time.Second)))
+			var front, back net.Conn = downstream, upstream
+			switch name {
+			case "ReadError":
+				front = &tstTCPProxyFaultConn{Conn: downstream, readErr: io.ErrUnexpectedEOF}
+			case "WriteError":
+				back = &tstTCPProxyFaultConn{Conn: upstream, writeErr: io.ErrClosedPipe}
+			case "CloseWriteError":
+				front = &tstTCPProxyFaultConn{Conn: downstream, readErr: io.EOF}
+				back = &tstTCPProxyCloseWriteErrorConn{Conn: upstream}
+			case "ReadPanic":
+				front = &tstTCPProxyFaultConn{Conn: downstream, panicRead: true}
+			}
+			p := &proxy{dctx: &dctx{id: name}}
+			done := make(chan struct{})
+			go func() { defer close(done); p.doServe(front, back) }()
+			t.Cleanup(func() {
+				client.Close()
+				downstream.Close()
+				upstream.Close()
+				backend.Close()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Error("The TCP proxy did not stop during cleanup")
+				}
+			})
+			if name == "WriteError" {
+				require.Nil(t, client.SetWriteDeadline(time.Now().Add(time.Second)))
+				_, err := client.Write([]byte("request"))
+				require.Nil(t, err)
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("The TCP proxy did not stop after a copy failure")
+			}
+			for _, peer := range []net.Conn{client, backend} {
+				_, err := peer.Read(make([]byte, 1))
+				assert.ErrorIs(t, err, io.EOF)
+			}
+		})
+	}
+}
+
+func TestCloseWriteFallbackClosesConnection(t *testing.T) {
+	peer, conn := net.Pipe()
+	defer peer.Close()
+	defer conn.Close()
+	require.Nil(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+	require.Nil(t, closeWrite(conn))
+	_, err := peer.Read(make([]byte, 1))
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestServerHalfCloseSessionMetrics(t *testing.T) {
+	ctx := t.Context()
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	fakeC := tst.C
+	cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	require.Nil(t, err)
+	cc.Status.Network.ClusterNetwork = &metav1.DualStackNetwork{V4: "127.0.0.0/8", V6: "::1/128"}
+	_, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+	require.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: fakeC.OcteliumC, IsEmbedded: true})
+	usrSrv := user.NewServer(fakeC.OcteliumC)
+	lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	defer lis.Close()
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(6)},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()), Mode: corev1.Service_Spec_TCP,
+			Config: &corev1.Service_Spec_Config{Upstream: &corev1.Service_Spec_Config_Upstream{
+				Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "tcp://" + lis.Addr().String()},
+			}},
+			Authorization: &corev1.Service_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{{
+				Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{
+					Effect:    corev1.Policy_Spec_Rule_ALLOW,
+					Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+				}}},
+			}}},
+		},
+	})
+	require.Nil(t, err)
+	svc, err = fakeC.OcteliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+	require.Nil(t, err)
+	vCache, err := vcache.NewCache(ctx)
+	require.Nil(t, err)
+	vCache.SetService(svc)
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{VCache: vCache, OcteliumC: fakeC.OcteliumC})
+	require.Nil(t, err)
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	require.Nil(t, err)
+	usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, usrSrv, nil)
+	require.Nil(t, err)
+	require.Nil(t, usr.Connect())
+	usr.Session.Status.Connection = &corev1.Session_Status_Connection{
+		Addresses: []*metav1.DualStackNetwork{{V4: "127.0.0.1/32", V6: "::1/128"}},
+		Type:      corev1.Session_Status_Connection_WIREGUARD,
+		L3Mode:    corev1.Session_Status_Connection_V4,
+	}
+	usr.Session, err = fakeC.OcteliumC.CoreC().UpdateSession(ctx, usr.Session)
+	require.Nil(t, err)
+	usr.Resync()
+	octovigilC.GetCache().SetSession(usr.Session)
+	metricsReader := setTestMeterProvider(t)
+	srv, err := New(ctx, &modes.Opts{
+		OcteliumC: fakeC.OcteliumC, VCache: vCache, OctovigilC: octovigilC,
+		SecretMan: secretMan, LBManager: loadbalancer.NewLbManager(fakeC.OcteliumC, vCache),
+	})
+	require.Nil(t, err)
+	t.Cleanup(func() { srv.Close() })
+	require.Nil(t, srv.Run(ctx))
+	client, err := net.DialTCP("tcp4", nil, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(svc.Spec.Port)})
+	require.Nil(t, err)
+	defer client.Close()
+	require.Nil(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	request, response := "request", "response after processing"
+	_, err = client.Write([]byte(request))
+	require.Nil(t, err)
+	require.Nil(t, client.CloseWrite())
+	require.Nil(t, lis.SetDeadline(time.Now().Add(5*time.Second)))
+	backend, err := lis.AcceptTCP()
+	require.Nil(t, err)
+	defer backend.Close()
+	require.Nil(t, backend.SetDeadline(time.Now().Add(5*time.Second)))
+	body, err := io.ReadAll(backend)
+	require.Nil(t, err)
+	require.Equal(t, request, string(body))
+	var rm metricdata.ResourceMetrics
+	findActive := func(name string) int64 {
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != name {
+					continue
+				}
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				require.True(t, ok)
+				for _, dp := range sum.DataPoints {
+					serviceName, ok := dp.Attributes.Value("octelium.vigil.svc.name")
+					if ok && serviceName.AsString() == svc.Metadata.Name {
+						return dp.Value
+					}
+				}
+			}
+		}
+		t.Fatalf("metric %s for service %s not found", name, svc.Metadata.Name)
+		return 0
+	}
+	require.Nil(t, metricsReader.Collect(ctx, &rm))
+	assert.Equal(t, int64(1), findActive("req.active"))
+	assert.Equal(t, int64(1), findActive("session.active"))
+	timer := time.NewTimer(750 * time.Millisecond)
+	defer timer.Stop()
+	<-timer.C
+	_, err = backend.Write([]byte(response))
+	require.Nil(t, err)
+	require.Nil(t, backend.CloseWrite())
+	body, err = io.ReadAll(client)
+	require.Nil(t, err)
+	assert.Equal(t, response, string(body))
+	require.Eventually(t, func() bool {
+		srv.dctxMap.mu.Lock()
+		defer srv.dctxMap.mu.Unlock()
+		return len(srv.dctxMap.dctxMap) == 0
+	}, 3*time.Second, 10*time.Millisecond)
+	rm = metricdata.ResourceMetrics{}
+	require.Nil(t, metricsReader.Collect(ctx, &rm))
+	dp, found := findSumDataPointByState(t, &rm, "req.total", "ALLOWED")
+	assert.True(t, found)
+	assert.Equal(t, int64(1), dp.Value)
+	assert.Equal(t, int64(0), findActive("req.active"))
+	assert.Equal(t, int64(0), findActive("session.active"))
+	assert.Equal(t, int64(len(response)), findSumDataPoint(t, &rm, "req.bytes_sent").Value)
+	assert.Equal(t, int64(len(request)), findSumDataPoint(t, &rm, "req.bytes_received").Value)
 }
