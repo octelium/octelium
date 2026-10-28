@@ -236,18 +236,16 @@ func getMTLSCfgK8s(ctx context.Context, svc *corev1.Service, svcCfg *corev1.Serv
 
 		clstr := kubeconfig.GetCluster(k8sSpec.GetKubeconfig().Context)
 
-		if clstr.Cluster.CertificateAuthorityData == "" {
-			return nil, nil
-		}
+		if clstr.Cluster.CertificateAuthorityData != "" {
+			ca, err := utils_cert.ParseBase64PEMCertificate(clstr.Cluster.CertificateAuthorityData)
+			if err != nil {
+				return nil, err
+			}
 
-		ca, err := utils_cert.ParseBase64PEMCertificate(clstr.Cluster.CertificateAuthorityData)
-		if err != nil {
-			return nil, err
+			pool := x509.NewCertPool()
+			pool.AddCert(ca)
+			ret.RootCAs = pool
 		}
-
-		pool := x509.NewCertPool()
-		pool.AddCert(ca)
-		ret.RootCAs = pool
 
 		usr := kubeconfig.GetUser(k8sSpec.GetKubeconfig().Context)
 

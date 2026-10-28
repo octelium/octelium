@@ -20,8 +20,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -594,5 +597,250 @@ func TestWSSCertificateVerification(t *testing.T) {
 				t.Fatal("The TLS backend did not receive a client hello")
 			}
 		})
+	}
+}
+
+func newTestKubeconfigService(t *testing.T, tst *tests.T, kube *k8sutils.KubeConfig, contextName string) *corev1.Service {
+	t.Helper()
+	data, err := kube.MarshalToYAML()
+	require.Nil(t, err)
+	secret, err := tst.C.OcteliumC.CoreC().CreateSecret(t.Context(), &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: string(data)}},
+	})
+	require.Nil(t, err)
+	return &corev1.Service{Spec: &corev1.Service_Spec{
+		Mode: corev1.Service_Spec_KUBERNETES,
+		Config: &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Kubernetes_{Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+			Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+				Type:    &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{FromSecret: secret.Metadata.Name},
+				Context: contextName,
+			}},
+		}}},
+	}}
+}
+
+func TestKubeconfigTLSCredentialsAndTrust(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	systemClient, err := utils_cert.GenerateCertificateTmp("system-client", ca, false)
+	require.Nil(t, err)
+	customClient, err := utils_cert.GenerateCertificateTmp("custom-client", ca, false)
+	require.Nil(t, err)
+	for _, credential := range []string{"ClientCertificate", "TokenOnly", "EmptyUser"} {
+		for _, tc := range []struct {
+			name     string
+			current  string
+			selected string
+			customCA bool
+		}{
+			{name: "CurrentSystemRoots", current: "system"},
+			{name: "SelectedSystemRoots", current: "custom", selected: "system"},
+			{name: "CurrentCustomRoots", current: "custom", customCA: true},
+			{name: "SelectedCustomRoots", current: "system", selected: "custom", customCA: true},
+		} {
+			t.Run(credential+"/"+tc.name, func(t *testing.T) {
+				kube := &k8sutils.KubeConfig{
+					APIVersion: "v1", Kind: "Config", CurrentContext: tc.current,
+					Clusters: []k8sutils.KubeConfigCluster{
+						{Name: "system", Cluster: k8sutils.KubeConfigClusterConfig{Server: "https://system.example.com"}},
+						{Name: "custom", Cluster: k8sutils.KubeConfigClusterConfig{
+							Server: "https://custom.example.com", CertificateAuthorityData: base64.StdEncoding.EncodeToString(ca.MustGetCertPEM()),
+						}},
+					},
+					Users: []k8sutils.KubeConfigUser{{Name: "system"}, {Name: "custom"}},
+					Contexts: []k8sutils.KubeConfigContext{
+						{Name: "system", Context: k8sutils.KubeConfigContextConfig{Cluster: "system", User: "system"}},
+						{Name: "custom", Context: k8sutils.KubeConfigContextConfig{Cluster: "custom", User: "custom"}},
+					},
+				}
+				for i, crt := range []*utils_cert.Cert{systemClient, customClient} {
+					switch credential {
+					case "ClientCertificate":
+						kube.Users[i].User.ClientCertificateData = base64.StdEncoding.EncodeToString(crt.MustGetCertPEM())
+						kube.Users[i].User.ClientKeyData = base64.StdEncoding.EncodeToString(crt.MustGetPrivateKeyPEM())
+					case "TokenOnly":
+						kube.Users[i].User.Token = fmt.Sprintf("token-%d", i)
+					}
+				}
+				svc := newTestKubeconfigService(t, tst, kube, tc.selected)
+				got, err := GetClientTLSCfg(t.Context(), svc, nil, sm, &loadbalancer.Upstream{})
+				require.Nil(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, uint16(tls.VersionTLS12), got.MinVersion)
+				assert.Equal(t, uint16(tls.VersionTLS13), got.MaxVersion)
+				assert.False(t, got.InsecureSkipVerify)
+				if tc.customCA {
+					pool := x509.NewCertPool()
+					pool.AddCert(ca.Certificate)
+					require.NotNil(t, got.RootCAs)
+					assert.True(t, pool.Equal(got.RootCAs))
+				} else {
+					assert.Nil(t, got.RootCAs)
+				}
+				if credential != "ClientCertificate" {
+					assert.Empty(t, got.Certificates)
+					return
+				}
+				require.Len(t, got.Certificates, 1)
+				want := systemClient
+				if tc.customCA {
+					want = customClient
+				}
+				assert.Equal(t, want.Certificate.Raw, got.Certificates[0].Certificate[0])
+			})
+		}
+	}
+}
+
+func TestKubeconfigTLSInvalidCredentials(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	crt, err := utils_cert.GenerateCertificateTmp("client", ca, false)
+	require.Nil(t, err)
+	other, err := utils_cert.GenerateCertificateTmp("other", ca, false)
+	require.Nil(t, err)
+	for _, customCA := range []bool{false, true} {
+		for _, name := range []string{"CertificateBase64", "KeyBase64", "CertificatePEM", "KeyPEM", "MismatchedKey", "AuthorityBase64", "AuthorityPEM"} {
+			if !customCA && (name == "AuthorityBase64" || name == "AuthorityPEM") {
+				continue
+			}
+			t.Run(fmt.Sprintf("CustomCA%t/%s", customCA, name), func(t *testing.T) {
+				caData := ""
+				if customCA {
+					caData = base64.StdEncoding.EncodeToString(ca.MustGetCertPEM())
+				}
+				user := k8sutils.KubeConfigUserConfig{
+					ClientCertificateData: base64.StdEncoding.EncodeToString(crt.MustGetCertPEM()),
+					ClientKeyData:         base64.StdEncoding.EncodeToString(crt.MustGetPrivateKeyPEM()),
+				}
+				switch name {
+				case "CertificateBase64":
+					user.ClientCertificateData = "%%%"
+				case "KeyBase64":
+					user.ClientKeyData = "%%%"
+				case "CertificatePEM":
+					user.ClientCertificateData = base64.StdEncoding.EncodeToString([]byte("invalid certificate"))
+				case "KeyPEM":
+					user.ClientKeyData = base64.StdEncoding.EncodeToString([]byte("invalid key"))
+				case "MismatchedKey":
+					user.ClientKeyData = base64.StdEncoding.EncodeToString(other.MustGetPrivateKeyPEM())
+				case "AuthorityBase64":
+					caData = "%%%"
+				case "AuthorityPEM":
+					caData = base64.StdEncoding.EncodeToString([]byte("invalid authority"))
+				}
+				kube := &k8sutils.KubeConfig{
+					APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+					Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{
+						Server: "https://api.example.com", CertificateAuthorityData: caData,
+					}}},
+					Users:    []k8sutils.KubeConfigUser{{Name: "user", User: user}},
+					Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: "cluster", User: "user"}}},
+				}
+				svc := newTestKubeconfigService(t, tst, kube, "")
+				got, err := GetClientTLSCfg(t.Context(), svc, nil, sm, &loadbalancer.Upstream{})
+				assert.NotNil(t, err)
+				assert.Nil(t, got)
+			})
+		}
+	}
+}
+
+func TestKubeconfigTLSMutualAuthentication(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	sm, err := secretman.New(t.Context(), tst.C.OcteliumC, nil)
+	require.Nil(t, err)
+	clientCA, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	serial, err := utils_cert.GenerateSerialNumber()
+	require.Nil(t, err)
+	clientCert, err := utils_cert.GenerateCertificate(&x509.Certificate{
+		SerialNumber: serial, Subject: pkix.Name{CommonName: "kubeconfig-client"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, clientCA.Certificate, clientCA.PrivateKey, false)
+	require.Nil(t, err)
+	clientRoots := x509.NewCertPool()
+	clientRoots.AddCert(clientCA.Certificate)
+	for _, customCA := range []bool{false, true} {
+		for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
+			t.Run(fmt.Sprintf("CustomCA%t/TLS%x", customCA, version), func(t *testing.T) {
+				backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if !assert.NotNil(t, r.TLS) || !assert.NotEmpty(t, r.TLS.PeerCertificates) {
+						return
+					}
+					assert.Equal(t, clientCert.Certificate.Raw, r.TLS.PeerCertificates[0].Raw)
+					assert.NotEmpty(t, r.TLS.VerifiedChains)
+					w.Write([]byte("authenticated"))
+				}))
+				backend.TLS = &tls.Config{
+					ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientRoots,
+					MinVersion: version, MaxVersion: version,
+				}
+				backend.StartTLS()
+				defer backend.Close()
+				kube := &k8sutils.KubeConfig{
+					APIVersion: "v1", Kind: "Config", CurrentContext: "selected",
+					Clusters: []k8sutils.KubeConfigCluster{{Name: "cluster", Cluster: k8sutils.KubeConfigClusterConfig{Server: backend.URL}}},
+					Users: []k8sutils.KubeConfigUser{{Name: "user", User: k8sutils.KubeConfigUserConfig{
+						ClientCertificateData: base64.StdEncoding.EncodeToString(clientCert.MustGetCertPEM()),
+						ClientKeyData:         base64.StdEncoding.EncodeToString(clientCert.MustGetPrivateKeyPEM()),
+					}}},
+					Contexts: []k8sutils.KubeConfigContext{{Name: "selected", Context: k8sutils.KubeConfigContextConfig{Cluster: "cluster", User: "user"}}},
+				}
+				if customCA {
+					kube.Clusters[0].Cluster.CertificateAuthorityData = base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{
+						Type: "CERTIFICATE", Bytes: backend.Certificate().Raw,
+					}))
+				}
+				svc := newTestKubeconfigService(t, tst, kube, "")
+				cfg, err := GetClientTLSCfg(t.Context(), svc, nil, sm, &loadbalancer.Upstream{})
+				require.Nil(t, err)
+				require.NotNil(t, cfg)
+				require.Len(t, cfg.Certificates, 1)
+				assert.False(t, cfg.InsecureSkipVerify)
+				if !customCA {
+					assert.Nil(t, cfg.RootCAs)
+					cfg.RootCAs = x509.NewCertPool()
+					cfg.RootCAs.AddCert(backend.Certificate())
+				}
+				for _, authenticated := range []bool{true, false} {
+					clientConfig := cfg.Clone()
+					if !authenticated {
+						clientConfig.Certificates = nil
+					}
+					transport := &http.Transport{TLSClientConfig: clientConfig}
+					defer transport.CloseIdleConnections()
+					client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+					response, err := client.Get(backend.URL)
+					if !authenticated {
+						assert.NotNil(t, err)
+						assert.Nil(t, response)
+						continue
+					}
+					require.Nil(t, err)
+					body, err := io.ReadAll(response.Body)
+					response.Body.Close()
+					require.Nil(t, err)
+					assert.Equal(t, http.StatusOK, response.StatusCode)
+					assert.Equal(t, "authenticated", string(body))
+					assert.Equal(t, version, response.TLS.Version)
+					assert.NotEmpty(t, response.TLS.VerifiedChains)
+				}
+			})
+		}
 	}
 }
