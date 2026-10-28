@@ -85,7 +85,7 @@ func (c *stateController) waitDisconnected(ctx context.Context,
 			}
 		case err := <-c.getConnErrCh:
 			return tryConnectRet{
-				err:            errors.Wrap(err, "Abruptly disconnected by API Server"),
+				err:            err,
 				needsReconnect: true,
 				isConnected:    true,
 			}
@@ -149,7 +149,7 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 			resp, err := c.streamC.Recv()
 			if err != nil {
 				zap.L().Debug("Error in receiving the stream", zap.Error(err))
-				c.getConnErrCh <- err
+				c.getConnErrCh <- errors.Wrap(err, "Abruptly disconnected by API Server")
 				return
 			}
 
@@ -171,6 +171,8 @@ func (c *stateController) doStartLoop(ctx context.Context) {
 
 			if err := c.handleState(ctx, resp); err != nil {
 				zap.L().Error("Could not handle state", zap.Error(err))
+				c.getConnErrCh <- errors.Wrap(err, "Could not apply connection state")
+				return
 			}
 		}
 	}

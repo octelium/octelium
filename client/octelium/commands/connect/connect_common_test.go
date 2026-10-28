@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
+	"github.com/octelium/octelium/client/octelium/commands/connect/proxy"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +44,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -1224,4 +1228,517 @@ func TestConnectKnownIssues(t *testing.T) {
 		require.NoError(t, err)
 		assert.Error(t, c.sendInitializeRequest(&testConnectStream{sendFn: func(*userv1.ConnectRequest) error { return nil }}, nil))
 	})
+}
+
+func newTestClosedStateController(t *testing.T) *stateController {
+	t.Helper()
+	cfg := &cliconfigv1.Connection{
+		Connection: &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4, X25519Key: make([]byte, 32)},
+		Info:       &cliconfigv1.Connection_Info{Cluster: &cliconfigv1.Connection_Info_Cluster{Domain: "example.com"}},
+		Preferences: &cliconfigv1.Connection_Preferences{
+			DeviceName: "invalid/state-test", IgnoreDNS: true, UserHome: t.TempDir(),
+			LinuxPrefs:   &cliconfigv1.Connection_Preferences_Linux{},
+			MacosPrefs:   &cliconfigv1.Connection_Preferences_MacOS{},
+			WindowsPrefs: &cliconfigv1.Connection_Preferences_Windows{},
+			ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{
+				IsEnabled: true, ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
+			},
+		},
+	}
+	dev, err := controller.NewController(cfg)
+	require.NoError(t, err)
+	_ = dev.Close()
+	require.ErrorContains(t, dev.Reconfigure(), "already closed")
+	svcProxy, err := proxy.NewController(t.Context(), cfg, nil)
+	require.NoError(t, err)
+	require.NoError(t, svcProxy.Close())
+	return newStateController(cfg, dev, svcProxy, nil)
+}
+
+func TestStateLoopApplicationErrorsRequestReconnect(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		msg  *userv1.ConnectResponse
+	}{
+		{"state", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_State{State: &userv1.ConnectionState{}}}},
+		{"add-gateway", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddGateway_{
+			AddGateway: &userv1.ConnectResponse_AddGateway{Gateway: &userv1.Gateway{Id: "gw"}},
+		}}},
+		{"update-gateway", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateGateway_{
+			UpdateGateway: &userv1.ConnectResponse_UpdateGateway{Gateway: &userv1.Gateway{Id: "gw"}},
+		}}},
+		{"delete-gateway", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteGateway_{
+			DeleteGateway: &userv1.ConnectResponse_DeleteGateway{Id: "gw"},
+		}}},
+		{"dns", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateDNS_{
+			UpdateDNS: &userv1.ConnectResponse_UpdateDNS{Dns: &userv1.DNS{Servers: []string{"100.64.0.53"}}},
+		}}},
+		{"add-service", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{
+			AddService: &userv1.ConnectResponse_AddService{Service: &userv1.HostedService{Name: "web.default"}},
+		}}},
+		{"update-service", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{
+			UpdateService: &userv1.ConnectResponse_UpdateService{Service: &userv1.HostedService{Name: "web.default"}},
+		}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestClosedStateController(t)
+			var reads int
+			c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				reads++
+				if reads == 1 {
+					return tt.msg, nil
+				}
+				return nil, io.EOF
+			}}
+			c.doStartLoop(t.Context())
+			assert.Equal(t, 1, reads, "no further events may be applied after a failed update")
+			require.Len(t, c.getConnErrCh, 1)
+			ret := c.waitDisconnected(t.Context(), nil)
+			assert.ErrorContains(t, ret.err, "Could not apply connection state")
+			assert.ErrorContains(t, ret.err, "already closed")
+			assert.NotContains(t, ret.err.Error(), "Abruptly disconnected by API Server")
+			assert.NotErrorIs(t, ret.err, io.EOF)
+			assert.True(t, ret.needsReconnect)
+			assert.True(t, ret.isConnected)
+			assert.False(t, ret.isResumed)
+			assert.True(t, shouldReconnect(ret, true))
+			assert.Empty(t, c.getConnErrCh)
+			select {
+			case <-c.apiserverDisconnectCh:
+				t.Fatal("an application failure must not become an explicit server disconnect")
+			default:
+			}
+		})
+	}
+}
+
+func TestStateLoopReceiveErrorsPreserveCauseAndContext(t *testing.T) {
+	for _, want := range []error{io.EOF, context.Canceled, status.Error(codes.Unavailable, "API restart")} {
+		t.Run(want.Error(), func(t *testing.T) {
+			c := newTestStateController()
+			c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) { return nil, want }}
+			c.doStartLoop(t.Context())
+			ret := c.waitDisconnected(t.Context(), nil)
+			assert.ErrorIs(t, ret.err, want)
+			assert.ErrorContains(t, ret.err, "Abruptly disconnected by API Server")
+			assert.NotContains(t, ret.err.Error(), "Could not apply connection state")
+			assert.Equal(t, status.Code(want), status.Code(ret.err))
+			assert.True(t, ret.needsReconnect)
+		})
+	}
+}
+
+func testUnknownConnectResponse(t *testing.T) *userv1.ConnectResponse {
+	t.Helper()
+	msg := &userv1.ConnectResponse{}
+	wire := protowire.AppendBytes(protowire.AppendTag(nil, 1000, protowire.BytesType), nil)
+	require.NoError(t, proto.Unmarshal(wire, msg))
+	require.Nil(t, msg.Event)
+	require.NotEmpty(t, msg.ProtoReflect().GetUnknown())
+	return msg
+}
+
+func TestStateLoopLegacyOptionalMessagesDoNotReconnect(t *testing.T) {
+	for _, mode := range []cliconfigv1.Connection_Preferences_ServeOpts_ProxyMode{
+		cliconfigv1.Connection_Preferences_ServeOpts_NONE,
+		cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg := &cliconfigv1.Connection{
+				Connection: &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4},
+				Preferences: &cliconfigv1.Connection_Preferences{
+					L3Mode:    cliconfigv1.Connection_Preferences_V4,
+					ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{ProxyMode: mode},
+				},
+			}
+			svcProxy, err := proxy.NewController(t.Context(), cfg, nil)
+			require.NoError(t, err)
+			require.NoError(t, svcProxy.Start(t.Context()))
+			t.Cleanup(func() { assert.NoError(t, svcProxy.Close()) })
+			c := newStateController(cfg, &controller.Controller{}, svcProxy, nil)
+			c.initAt = time.Now()
+			messages := []*userv1.ConnectResponse{
+				nil, {}, testUnknownConnectResponse(t),
+				{Event: &userv1.ConnectResponse_UpdateDNS_{UpdateDNS: &userv1.ConnectResponse_UpdateDNS{}}},
+				{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{
+					Service: &userv1.HostedService{Name: "legacy.default"},
+				}}},
+				{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{
+					Service: &userv1.HostedService{Name: "legacy.default", Upstream: &userv1.HostedService_Upstream{}},
+				}}},
+				{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: "absent.default"}}},
+				{CreatedAt: timestamppb.New(c.initAt.Add(-time.Second)), Event: &userv1.ConnectResponse_State{}},
+				{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}},
+			}
+			var reads int
+			c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				if reads >= len(messages) {
+					return nil, io.EOF
+				}
+				msg := messages[reads]
+				reads++
+				return msg, nil
+			}}
+			c.doStartLoop(t.Context())
+			assert.Equal(t, len(messages), reads)
+			assert.Empty(t, c.getConnErrCh)
+			ret := c.waitDisconnected(t.Context(), nil)
+			assert.NoError(t, ret.err)
+			assert.False(t, ret.needsReconnect)
+			assert.True(t, ret.isConnected)
+		})
+	}
+}
+
+func TestStateLoopCanceledBeforeReceivingDoesNotReconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	c := newTestStateController()
+	c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+		t.Fatal("the state loop must not receive after cancellation")
+		return nil, io.EOF
+	}}
+	c.doStartLoop(ctx)
+	assert.Empty(t, c.getConnErrCh)
+	ret := c.waitDisconnected(ctx, nil)
+	assert.NoError(t, ret.err)
+	assert.False(t, ret.needsReconnect)
+}
+
+func testInvalidStateUpdate() *userv1.ConnectResponse {
+	msg := testConnectInitialState()
+	msg.GetState().Addresses[0].V4 = "invalid"
+	return msg
+}
+
+func testPublishedPortIsListening(addr string) bool {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return errors.Is(err, syscall.EADDRINUSE)
+	}
+	lis.Close()
+	return false
+}
+
+func TestRunGRPCStateUpdateFailureRecoversWithFreshState(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "current"
+		if legacy {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, tt := range []struct {
+				name string
+				msg  func() *userv1.ConnectResponse
+			}{
+				{"state", testInvalidStateUpdate},
+				{"add-gateway", func() *userv1.ConnectResponse {
+					return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddGateway_{
+						AddGateway: &userv1.ConnectResponse_AddGateway{Gateway: &userv1.Gateway{
+							Id: "invalid-key", Addresses: []string{"192.0.2.1"},
+							Wireguard: &userv1.Gateway_WireGuard{Port: 51820, PublicKey: "invalid"},
+						}},
+					}}
+				}},
+				{"update-gateway", func() *userv1.ConnectResponse {
+					return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateGateway_{
+						UpdateGateway: &userv1.ConnectResponse_UpdateGateway{Gateway: &userv1.Gateway{Id: "missing"}},
+					}}
+				}},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					var attempts, getCalls, listCalls atomic.Int32
+					firstConnected, recovered, firstClosed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					initializations := make(chan *userv1.ConnectRequest, 2)
+					unknown := testUnknownConnectResponse(t)
+					newService := func() *userv1.Service {
+						return &userv1.Service{
+							Metadata: &metav1.Metadata{Name: "web.default"},
+							Spec:     &userv1.Service_Spec{Type: userv1.Service_Spec_TCP, Port: 80},
+							Status:   &userv1.Service_Status{Namespace: "default"},
+						}
+					}
+					srv := &testConnectAPI{
+						getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+							getCalls.Add(1)
+							if legacy {
+								return nil, status.Error(codes.Unimplemented, "legacy API")
+							}
+							if req.Name != "web.default" {
+								return nil, status.Error(codes.InvalidArgument, "unexpected service name")
+							}
+							return newService(), nil
+						},
+						listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+							listCalls.Add(1)
+							return &userv1.ServiceList{Items: []*userv1.Service{newService()}}, nil
+						},
+						connectFn: func(stream userv1.MainService_ConnectServer) error {
+							attempt := attempts.Add(1)
+							if attempt > 2 {
+								return status.Error(codes.Internal, "unexpected extra connection")
+							}
+							req, err := stream.Recv()
+							if err != nil {
+								return err
+							}
+							initializations <- req
+							send := func(msg *userv1.ConnectResponse) error {
+								if legacy {
+									msg.CreatedAt = nil
+								} else {
+									msg.CreatedAt = timestamppb.Now()
+								}
+								return stream.Send(msg)
+							}
+							state := testConnectInitialState()
+							if attempt == 2 {
+								select {
+								case <-firstClosed:
+								case <-stream.Context().Done():
+									return stream.Context().Err()
+								}
+								state.GetState().Addresses[0].V4 = "100.64.0.3/32"
+							}
+							if err := send(state); err != nil {
+								return err
+							}
+							if attempt == 1 {
+								defer close(firstClosed)
+								select {
+								case <-firstConnected:
+								case <-stream.Context().Done():
+									return stream.Context().Err()
+								}
+								if err := send(proto.Clone(unknown).(*userv1.ConnectResponse)); err != nil {
+									return err
+								}
+								update := testConnectInitialState()
+								update.GetState().Addresses[0].V4 = "100.64.0.4/32"
+								if err := send(update); err != nil {
+									return err
+								}
+								if err := send(tt.msg()); err != nil {
+									return err
+								}
+							} else {
+								select {
+								case <-recovered:
+								case <-stream.Context().Done():
+									return stream.Context().Err()
+								}
+								if err := send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{
+									Disconnect: &userv1.ConnectResponse_Disconnect{},
+								}}); err != nil {
+									return err
+								}
+							}
+							<-stream.Context().Done()
+							return nil
+						},
+					}
+					c, dbC := newTestRunningConnector(t, srv)
+					reserved, err := net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+					addr := reserved.Addr().String()
+					port := reserved.Addr().(*net.TCPAddr).Port
+					require.NoError(t, reserved.Close())
+					c.opts.PublishServices = []*PublishedService{{Name: "web", Address: "127.0.0.1", Port: port}}
+					ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 15*time.Second)
+					defer cancel()
+					var events []EventType
+					var successes int
+					c.opts.OnEvent = func(ev *Event) {
+						events = append(events, ev.Type)
+						switch ev.Type {
+						case EventTypeConnected:
+							successes++
+							assert.Eventually(t, func() bool {
+								return testPublishedPortIsListening(addr)
+							}, 2*time.Second, 10*time.Millisecond)
+							if successes == 1 {
+								close(firstConnected)
+							} else if successes == 2 {
+								assert.Equal(t, "100.64.0.3/32", ev.Connection.Connection.Addresses[0].V4)
+								assert.Empty(t, ev.Connection.Connection.Gateways)
+								close(recovered)
+							}
+						case EventTypeReconnecting:
+							assert.ErrorContains(t, ev.Err, "Could not apply connection state")
+							_, err := dbC.GetConnectionCleanup("example.com")
+							assert.True(t, dbC.ErrorIsNotFound(err), "the old controller must finish cleanup before retrying")
+							lis, err := net.Listen("tcp", addr)
+							if assert.NoError(t, err, "the old published listener must be released before reconnecting") {
+								assert.NoError(t, lis.Close())
+							}
+						}
+					}
+					require.NoError(t, c.Run(ctx))
+					assert.NoError(t, ctx.Err(), "recovery must finish before the test deadline")
+					assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeReconnecting, EventTypeConnected, EventTypeDisconnected}, events)
+					assert.Equal(t, int32(2), attempts.Load())
+					assert.Equal(t, 2, successes)
+					assert.Equal(t, int32(2), getCalls.Load())
+					if legacy {
+						assert.Equal(t, int32(2), listCalls.Load())
+					} else {
+						assert.Zero(t, listCalls.Load())
+					}
+					require.Len(t, initializations, 2)
+					first, second := <-initializations, <-initializations
+					assert.True(t, proto.Equal(first, second), "recovery must use the same initialization protocol and options")
+					require.NotNil(t, first.GetInitialize())
+					assert.Equal(t, userv1.ConnectRequest_Initialize_V4, first.GetInitialize().L3Mode)
+					require.Len(t, first.GetInitialize().PublishedServices, 1)
+					assert.Equal(t, "web.default", first.GetInitialize().PublishedServices[0].Name)
+					_, err = dbC.GetConnectionCleanup("example.com")
+					assert.True(t, dbC.ErrorIsNotFound(err))
+				})
+			}
+		})
+	}
+}
+
+func TestRunGRPCStateUpdateFailureHonorsCancellation(t *testing.T) {
+	var attempts atomic.Int32
+	ready := make(chan struct{})
+	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testConnectInitialState()); err != nil {
+			return err
+		}
+		select {
+		case <-ready:
+		case <-stream.Context().Done():
+			return nil
+		}
+		if err := stream.Send(testInvalidStateUpdate()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+	defer cancel()
+	var events []EventType
+	c.opts.OnEvent = func(ev *Event) {
+		events = append(events, ev.Type)
+		if ev.Type == EventTypeConnected {
+			close(ready)
+		}
+		if ev.Type == EventTypeReconnecting {
+			cancel()
+		}
+	}
+	require.NoError(t, c.Run(ctx))
+	assert.Equal(t, int32(1), attempts.Load())
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeReconnecting, EventTypeDisconnected}, events)
+	_, err := dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestRunGRPCStateUpdateFailureStopsIfCleanupFails(t *testing.T) {
+	var attempts atomic.Int32
+	ready := make(chan struct{})
+	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testConnectInitialState()); err != nil {
+			return err
+		}
+		select {
+		case <-ready:
+		case <-stream.Context().Done():
+			return nil
+		}
+		if err := stream.Send(testInvalidStateUpdate()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+	require.NoError(t, os.MkdirAll(filepath.Join(c.opts.UserHome, ".ssh", "known_hosts"), 0700))
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+	defer cancel()
+	var events []EventType
+	c.opts.OnEvent = func(ev *Event) {
+		events = append(events, ev.Type)
+		if ev.Type == EventTypeConnected {
+			close(ready)
+		}
+	}
+	err := c.Run(ctx)
+	assert.ErrorContains(t, err, "Could not apply connection state")
+	assert.Equal(t, int32(1), attempts.Load())
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeDisconnected}, events)
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+}
+
+func TestRunGRPCRepeatedStateUpdateFailuresKeepRetryingWithBackoff(t *testing.T) {
+	var attempts atomic.Int32
+	ready := make(chan struct{}, 1)
+	started := make(chan time.Time, 4)
+	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if attempt > 4 {
+			return status.Error(codes.Internal, "unexpected extra connection")
+		}
+		started <- time.Now()
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testConnectInitialState()); err != nil {
+			return err
+		}
+		select {
+		case <-ready:
+		case <-stream.Context().Done():
+			return nil
+		}
+		msg := testInvalidStateUpdate()
+		if attempt == 4 {
+			msg = &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{
+				Disconnect: &userv1.ConnectResponse_Disconnect{},
+			}}
+		}
+		if err := stream.Send(msg); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+	defer cancel()
+	var connected, reconnecting int
+	c.opts.OnEvent = func(ev *Event) {
+		if ev.Type == EventTypeConnected {
+			connected++
+			ready <- struct{}{}
+		}
+		if ev.Type == EventTypeReconnecting {
+			reconnecting++
+			assert.ErrorContains(t, ev.Err, "Could not apply connection state")
+			_, err := dbC.GetConnectionCleanup("example.com")
+			assert.True(t, dbC.ErrorIsNotFound(err))
+		}
+	}
+	require.NoError(t, c.Run(ctx))
+	assert.NoError(t, ctx.Err())
+	assert.Equal(t, int32(4), attempts.Load())
+	assert.Equal(t, 4, connected)
+	assert.Equal(t, 3, reconnecting)
+	require.Len(t, started, 4)
+	previous := <-started
+	for range 3 {
+		current := <-started
+		assert.GreaterOrEqual(t, current.Sub(previous), reconnectBackoffMin)
+		previous = current
+	}
 }

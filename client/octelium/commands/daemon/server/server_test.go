@@ -1514,3 +1514,97 @@ func TestDaemonWatchStatusBroadcastsAndReleasesCanceledWatchers(t *testing.T) {
 		return len(p.watchers) == 0
 	}, time.Second, 10*time.Millisecond)
 }
+
+func TestDaemonStateUpdateFailureRecoversOverIPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	var attempts atomic.Int32
+	ready := make(chan struct{})
+	startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		initial := testDaemonInitialState()
+		initial.CreatedAt = nil
+		if attempt > 1 {
+			initial.GetState().Addresses[0].V4 = "100.64.0.3/32"
+		}
+		if err := stream.Send(initial); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			select {
+			case <-ready:
+			case <-stream.Context().Done():
+				return nil
+			}
+			bad := testDaemonInitialState()
+			bad.CreatedAt = nil
+			bad.GetState().Addresses[0].V4 = "invalid"
+			if err := stream.Send(bad); err != nil {
+				return err
+			}
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := reserved.LocalAddr().String()
+	require.NoError(t, reserved.Close())
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	op, err := srv.c.Connect(ctx, &daemonv1.ConnectRequest{
+		Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+			L3Mode: daemonv1.ConnectionOptions_V4, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+			Dns: &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED, LocalServerListenAddress: addr},
+		},
+	})
+	require.NoError(t, err)
+	waitState := func(want daemonv1.ConnectionStatus_State) *daemonv1.DomainState {
+		t.Helper()
+		var got *daemonv1.DomainState
+		require.Eventually(t, func() bool {
+			snapshot, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+			if err != nil || len(snapshot.Domains) != 1 {
+				return false
+			}
+			got = snapshot.Domains[0]
+			return got.Connection.State == want
+		}, 8*time.Second, 10*time.Millisecond)
+		return got
+	}
+	first := waitState(daemonv1.ConnectionStatus_CONNECTED)
+	require.NotNil(t, first.Connection.ConnectedAt)
+	close(ready)
+	reconnecting := waitState(daemonv1.ConnectionStatus_RECONNECTING)
+	require.NotNil(t, reconnecting.LastError)
+	assert.Equal(t, daemonv1.Error_CONNECTION_FAILED, reconnecting.LastError.Code)
+	assert.True(t, reconnecting.LastError.Retryable)
+	assert.Contains(t, reconnecting.LastError.Message, "Could not apply connection state")
+	assert.NotContains(t, reconnecting.LastError.Message, "Abruptly disconnected by API Server")
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, reconnecting.Authentication.State)
+	assert.Equal(t, daemonv1.Operation_SUCCEEDED, reconnecting.LastOperation.State)
+	recovered := waitState(daemonv1.ConnectionStatus_CONNECTED)
+	assert.Equal(t, int32(2), attempts.Load())
+	assert.Nil(t, recovered.LastError)
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, recovered.Authentication.State)
+	assert.Equal(t, first.Connection.ConnectedAt.AsTime(), recovered.Connection.ConnectedAt.AsTime())
+	assert.Equal(t, daemonv1.ConnectionOptions_GVISOR, recovered.Connection.Options.ImplementationMode)
+	disconnect, err := srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		got, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: disconnect.Id})
+		return err == nil && got.State == daemonv1.Operation_SUCCEEDED
+	}, 5*time.Second, 10*time.Millisecond)
+	waitState(daemonv1.ConnectionStatus_DISCONNECTED)
+	finished, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+	require.NoError(t, err)
+	assert.Equal(t, daemonv1.Operation_SUCCEEDED, finished.State)
+	_, err = srv.srv.principal.dbC.GetConnectionCleanup("example.com")
+	assert.True(t, srv.srv.principal.dbC.ErrorIsNotFound(err))
+}
