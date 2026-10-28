@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/cluster/e2e/scenario"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -39,9 +39,13 @@ import (
 )
 
 func testConnect(t *testing.T, h *harness.H) {
-	t.Run("UnknownServiceFails", func(t *testing.T) {
-		h.MustFailWithin(t, fmt.Sprintf("octelium connect -p %s:%d",
-			utilrand.GetRandomStringCanonical(8), h.Port()), 2*time.Minute)
+	t.Run("UnknownServiceConnects", func(t *testing.T) {
+		port := h.Port()
+		conn := h.Connect(t, harness.ConnectOpts{Args: []string{
+			fmt.Sprintf("-p %s:%d", utilrand.GetRandomStringCanonical(8), port),
+		}})
+		assert.True(t, conn.IsRunning())
+		assert.True(t, h.Status(t).Session.Status.IsConnected)
 	})
 
 	t.Run("PublishedService", func(t *testing.T) {
@@ -434,6 +438,7 @@ func ClientRegressionPhases() []Phase {
 		{"ConnectRepeatedAPIRestarts", testConnectRepeatedAPIRestarts},
 		{"ConnectPortReuse", testConnectPortReuse},
 		{"ConnectMissingPublishedServiceRecovery", testConnectMissingPublishedServiceRecovery},
+		{"ConnectPublishedServiceCreatedWhileConnected", testConnectPublishedServiceCreatedWhileConnected},
 	}
 }
 
@@ -493,9 +498,6 @@ func testConnectPortReuse(t *testing.T, h *harness.H) {
 }
 
 func testConnectMissingPublishedServiceRecovery(t *testing.T, h *harness.H) {
-	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
-		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run the CL-001 live-cluster regression in tmp/client-test-report.md")
-	}
 	removed := h.NewPublicService(t, "default")
 	healthy := h.NewPublicService(t, "default")
 	conn := h.Connect(t, harness.ConnectOpts{
@@ -522,4 +524,40 @@ func testConnectMissingPublishedServiceRecovery(t *testing.T, h *harness.H) {
 			return nil
 		})
 	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
+	recovered := h.GetSession(t, sessName).Status.TotalConnections
+	recreated := h.CreateService(t, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: removed.Metadata.Name},
+		Spec:     pbutils.Clone(removed.Spec).(*corev1.Service_Spec),
+	})
+	assert.NotEqual(t, removed.Metadata.Uid, recreated.Metadata.Uid)
+	h.MustWaitService(t, recreated.Metadata.Name)
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(recreated.Metadata.Name), http.StatusOK)
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
+	assert.Equal(t, recovered, h.GetSession(t, sessName).Status.TotalConnections)
+	assert.True(t, conn.IsRunning())
+}
+
+func testConnectPublishedServiceCreatedWhileConnected(t *testing.T, h *harness.H) {
+	healthy := h.NewPublicService(t, "default")
+	missingName, missingPort := h.Name(), h.Port()
+	conn := h.Connect(t, harness.ConnectOpts{
+		Publish: map[string]int{healthy.Metadata.Name: h.Port()},
+		Args: []string{
+			"--no-dns", "--implementation gvisor",
+			fmt.Sprintf("-p %s:127.0.0.1:%d", missingName, missingPort),
+		},
+	})
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
+	sess := h.Status(t).Session
+	require.NotNil(t, sess)
+	previous := h.GetSession(t, sess.Metadata.Name).Status.TotalConnections
+	created := h.CreateService(t, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: missingName},
+		Spec:     pbutils.Clone(healthy.Spec).(*corev1.Service_Spec),
+	})
+	h.MustWaitService(t, created.Metadata.Name)
+	h.WaitGetStatus(t, h.HTTP(), fmt.Sprintf("http://127.0.0.1:%d", missingPort), http.StatusOK)
+	h.WaitGetStatus(t, h.HTTP(), conn.URL(healthy.Metadata.Name), http.StatusOK)
+	assert.Equal(t, previous, h.GetSession(t, sess.Metadata.Name).Status.TotalConnections)
+	assert.True(t, conn.IsRunning())
 }

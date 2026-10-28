@@ -131,7 +131,7 @@ func testConnectPublish(t *testing.T, h *harness.H) {
 			fmt.Sprintf("%s:notaport", svc.Metadata.Name),
 			fmt.Sprintf("%s:300.400.500.600:%d", svc.Metadata.Name, h.Port()),
 			fmt.Sprintf("%s:%d", harness.DNSServiceName, h.Port()),
-			fmt.Sprintf("%s.%s:%d", utilrand.GetRandomStringCanonical(8),
+			fmt.Sprintf("%s..%s:%d", utilrand.GetRandomStringCanonical(8),
 				utilrand.GetRandomStringCanonical(8), h.Port()),
 		} {
 			h.MustFailWithin(t, fmt.Sprintf("octelium connect -p %s", arg),

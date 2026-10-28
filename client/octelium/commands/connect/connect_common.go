@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +42,8 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -377,13 +380,38 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 
 func (c *Connector) getPublishedServices(ctx context.Context,
 	cl userv1.MainServiceClient) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+	return c.getPublishedServicesFor(ctx, cl, c.opts.PublishServices)
+}
+
+func (c *Connector) getPublishedServicesFor(ctx context.Context,
+	cl userv1.MainServiceClient, services []*PublishedService) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+	if len(services) > 128 {
+		return nil, status.Error(codes.InvalidArgument, "Too many published Services")
+	}
+	for _, svc := range services {
+		if svc == nil || svc.Port < 1 || svc.Port > 65535 {
+			return nil, status.Error(codes.InvalidArgument, "Invalid published Service port")
+		}
+		name, err := cliutils.ParseServiceNamespace(svc.Name)
+		if err != nil || name.Service == "" || name.Namespace == "" {
+			return nil, status.Errorf(codes.InvalidArgument, "Invalid published Service name: %s", svc.Name)
+		}
+		if svc.Address != "" && svc.Address != "localhost" && !govalidator.IsIP(svc.Address) {
+			return nil, status.Errorf(codes.InvalidArgument, "Invalid published Service address: %s", svc.Address)
+		}
+	}
+
 	var ret []*cliconfigv1.Connection_Preferences_PublishedService
 
-	for _, svc := range c.opts.PublishServices {
+	for _, svc := range services {
 		publishedService, err := c.doGetPublishedService(ctx, cl, svc)
 		if err != nil {
 			if grpcerr.IsUnimplemented(err) {
-				return c.getPublishedServicesWithList(ctx, cl)
+				return c.getPublishedServicesWithListFor(ctx, cl, services)
+			}
+			if grpcerr.IsNotFound(err) {
+				zap.L().Debug("The published Service does not exist yet", zap.String("svc", svc.Name))
+				continue
 			}
 			return nil, err
 		}
@@ -397,6 +425,8 @@ func (c *Connector) getPublishedServices(ctx context.Context,
 
 func (c *Connector) doGetPublishedService(ctx context.Context,
 	cl userv1.MainServiceClient, arg *PublishedService) (*cliconfigv1.Connection_Preferences_PublishedService, error) {
+	ctx, cancel := context.WithTimeout(ctx, publishedServiceLookupTimeout)
+	defer cancel()
 
 	svc, err := cl.GetService(ctx, &metav1.GetOptions{
 		Name: cliutils.GetServiceFullNameFromName(arg.Name),
@@ -404,8 +434,66 @@ func (c *Connector) doGetPublishedService(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	if svc.GetMetadata() == nil || svc.GetSpec() == nil || svc.GetStatus() == nil {
+		return nil, errors.Errorf("The published Service %s has an incomplete configuration", arg.Name)
+	}
 
 	return c.getPublishedServiceFromService(svc, arg), nil
+}
+
+const (
+	publishedServiceRetryInterval = 5 * time.Second
+	publishedServiceLookupTimeout = 10 * time.Second
+)
+
+func (c *Connector) getPendingPublishedServices(active []*cliconfigv1.Connection_Preferences_PublishedService) []*PublishedService {
+	var ret []*PublishedService
+	for _, svc := range c.opts.PublishServices {
+		if !slices.ContainsFunc(active, func(itm *cliconfigv1.Connection_Preferences_PublishedService) bool {
+			return cliutils.GetServiceFullNameFromName(itm.Name) == cliutils.GetServiceFullNameFromName(svc.Name) &&
+				itm.HostAddress == svc.Address && int(itm.HostPort) == svc.Port
+		}) {
+			ret = append(ret, svc)
+		}
+	}
+	return ret
+}
+
+func (c *Connector) retryPublishedServices(ctx context.Context, cl userv1.MainServiceClient,
+	addService func(*cliconfigv1.Connection_Preferences_PublishedService) error,
+	published []*cliconfigv1.Connection_Preferences_PublishedService) {
+	active := slices.Clone(published)
+	pending := c.getPendingPublishedServices(active)
+	ticker := time.NewTicker(publishedServiceRetryInterval)
+	defer ticker.Stop()
+
+	for len(pending) > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		resolved, err := c.getPublishedServicesFor(ctx, cl, pending)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			zap.L().Debug("Could not resolve pending published Services", zap.Error(err))
+			continue
+		}
+		for _, svc := range resolved {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := addService(svc); err != nil {
+				zap.L().Debug("Could not add a pending published Service", zap.String("svc", svc.Name), zap.Error(err))
+				continue
+			}
+			active = append(active, svc)
+			zap.L().Info("The pending Service is now published", zap.String("svc", svc.Name))
+		}
+		pending = c.getPendingPublishedServices(active)
+	}
 }
 
 func (c *Connector) getPublishedServiceFromService(svc *userv1.Service,
@@ -749,6 +837,21 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		Type:       EventTypeConnected,
 		Connection: connCfg,
 	})
+	if pending := c.getPendingPublishedServices(publishedServices); len(pending) > 0 {
+		for _, svc := range pending {
+			cliutils.LineWarn("The Service %s does not exist yet. Its published port will be retried while connected.\n", svc.Name)
+		}
+		retryCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.retryPublishedServices(retryCtx, cl, ctl.devCtl.AddPublishedService, publishedServices)
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
 
 	ret = ctl.stateController.waitDisconnected(ctx, func(ctx context.Context) error {
 		return probeConnection(ctx, cl)
@@ -758,21 +861,60 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 
 func (c *Connector) getPublishedServicesWithList(ctx context.Context,
 	cl userv1.MainServiceClient) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
-	var ret []*cliconfigv1.Connection_Preferences_PublishedService
+	return c.getPublishedServicesWithListFor(ctx, cl, c.opts.PublishServices)
+}
+
+func (c *Connector) getPublishedServicesWithListFor(ctx context.Context,
+	cl userv1.MainServiceClient, services []*PublishedService) ([]*cliconfigv1.Connection_Preferences_PublishedService, error) {
+	ctx, cancel := context.WithTimeout(ctx, publishedServiceLookupTimeout)
+	defer cancel()
 
 	zap.L().Debug("Listing available Services to publish ports")
-	svcList, err := cl.ListService(ctx, &userv1.ListServiceOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	for _, svc := range c.opts.PublishServices {
-		publishedService, err := c.doGetPublishedServiceWithList(svcList, svc)
+	found := make([]*cliconfigv1.Connection_Preferences_PublishedService, len(services))
+	var previous []string
+	for page := uint32(0); ; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		svcList, err := cl.ListService(ctx, &userv1.ListServiceOptions{Common: &metav1.CommonListOptions{Page: page}})
 		if err != nil {
 			return nil, err
 		}
-		zap.L().Debug("Published Service added", zap.Any("publisheSerice", publishedService))
-		ret = append(ret, publishedService)
+		if svcList == nil {
+			return nil, errors.Errorf("The API Server returned an empty Service list response")
+		}
+		var names []string
+		for _, svc := range svcList.Items {
+			names = append(names, svc.GetMetadata().GetName())
+		}
+		if page > 0 && len(names) > 0 && slices.Equal(previous, names) {
+			return nil, errors.Errorf("The API Server returned the same Service list page repeatedly")
+		}
+		previous = names
+		var missing int
+		for i, svc := range services {
+			if found[i] != nil {
+				continue
+			}
+			published, err := c.doGetPublishedServiceWithList(svcList, svc)
+			if grpcerr.IsNotFound(err) {
+				missing++
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			found[i] = published
+		}
+		if missing == 0 || !svcList.GetListResponseMeta().GetHasMore() {
+			break
+		}
+	}
+	var ret []*cliconfigv1.Connection_Preferences_PublishedService
+	for _, svc := range found {
+		if svc != nil {
+			ret = append(ret, svc)
+		}
 	}
 
 	return ret, nil
@@ -783,7 +925,7 @@ func (c *Connector) doGetPublishedServiceWithList(svcList *userv1.ServiceList,
 
 	getService := func(svcList *userv1.ServiceList, name string) *userv1.Service {
 		for _, itm := range svcList.Items {
-			if cliutils.GetServiceFullNameFromName(itm.Metadata.Name) == cliutils.GetServiceFullNameFromName(name) {
+			if itm.GetMetadata() != nil && cliutils.GetServiceFullNameFromName(itm.Metadata.Name) == cliutils.GetServiceFullNameFromName(name) {
 				return itm
 			}
 		}
@@ -792,7 +934,10 @@ func (c *Connector) doGetPublishedServiceWithList(svcList *userv1.ServiceList,
 
 	svc := getService(svcList, arg.Name)
 	if svc == nil {
-		return nil, errors.Errorf("The Service %s does not exist", arg.Name)
+		return nil, status.Errorf(codes.NotFound, "The Service %s does not exist", arg.Name)
+	}
+	if svc.GetSpec() == nil || svc.GetStatus() == nil {
+		return nil, errors.Errorf("The published Service %s has an incomplete configuration", arg.Name)
 	}
 
 	return c.getPublishedServiceFromService(svc, arg), nil

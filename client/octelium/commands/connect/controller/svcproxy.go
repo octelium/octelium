@@ -34,6 +34,7 @@ import (
 type serviceProxy struct {
 	listeners []*listener
 	ctl       *Controller
+	ctx       context.Context
 	cancelFn  context.CancelFunc
 	mu        sync.Mutex
 	isClosed  bool
@@ -53,8 +54,12 @@ func newServiceProxy(ctl *Controller) (*serviceProxy, error) {
 }
 
 func (s *serviceProxy) Start(ctx context.Context) error {
-	ctx, cancelFn := context.WithCancel(ctx)
-	s.cancelFn = cancelFn
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isClosed {
+		return nil
+	}
+	s.ctx, s.cancelFn = context.WithCancel(ctx)
 
 	if len(s.listeners) == 0 {
 		return nil
@@ -63,13 +68,50 @@ func (s *serviceProxy) Start(ctx context.Context) error {
 	for _, l := range s.listeners {
 		switch l.typ {
 		case cliconfigv1.Connection_Preferences_PublishedService_TCP:
-			l.startTCP(ctx)
+			l.startTCP(s.ctx)
 		case cliconfigv1.Connection_Preferences_PublishedService_UDP:
-			l.startUDP(ctx)
+			l.startUDP(s.ctx)
 		}
 	}
 
 	return nil
+}
+
+func (s *serviceProxy) AddService(svc *cliconfigv1.Connection_Preferences_PublishedService) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isClosed {
+		return errors.Errorf("The Service proxy is already closed")
+	}
+	if s.ctx == nil {
+		return errors.Errorf("The Service proxy is not started")
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if svc == nil || svc.Fqdn == "" || svc.Port < 1 || svc.Port > 65535 || svc.HostPort < 1 || svc.HostPort > 65535 {
+		return errors.Errorf("Invalid published Service configuration")
+	}
+	if svc.L4Type != cliconfigv1.Connection_Preferences_PublishedService_TCP &&
+		svc.L4Type != cliconfigv1.Connection_Preferences_PublishedService_UDP {
+		return errors.Errorf("Invalid published Service protocol")
+	}
+	l := newListener(svc, s.ctl)
+	for _, existing := range s.listeners {
+		if existing.hostAddress == l.hostAddress && existing.hostPort == l.hostPort && existing.typ == l.typ {
+			if existing.svcFQDN == l.svcFQDN && existing.port == l.port {
+				return nil
+			}
+			return errors.Errorf("The published Service address is already in use")
+		}
+	}
+	s.listeners = append(s.listeners, l)
+	switch l.typ {
+	case cliconfigv1.Connection_Preferences_PublishedService_TCP:
+		return l.startTCP(s.ctx)
+	default:
+		return l.startUDP(s.ctx)
+	}
 }
 
 func (s *serviceProxy) Close() error {

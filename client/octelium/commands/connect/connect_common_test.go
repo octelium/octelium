@@ -16,6 +16,7 @@ package connect
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -768,6 +770,10 @@ func TestPublishedServicesFallbackAndErrors(t *testing.T) {
 				require.Len(t, got, 1)
 				assert.Equal(t, "web.default", got[0].Name)
 				assert.Equal(t, int32(1), listCalls.Load())
+			} else if code == codes.NotFound {
+				assert.NoError(t, err)
+				assert.Empty(t, got)
+				assert.Zero(t, listCalls.Load())
 			} else {
 				assert.Equal(t, code, status.Code(err))
 				assert.Nil(t, got)
@@ -1160,9 +1166,14 @@ func TestConnectKnownIssues(t *testing.T) {
 		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run unresolved regressions listed in tmp/client-test-report.md")
 	}
 	t.Run("CL-001-published-service-not-found", func(t *testing.T) {
-		assert.True(t, shouldReconnect(tryConnectRet{
-			err: status.Error(codes.NotFound, "published Service is temporarily absent"), needsReconnect: true,
-		}, false))
+		cl := newTestConnectAPIClient(t, &testConnectAPI{getServiceFn: func(context.Context, *metav1.GetOptions) (*userv1.Service, error) {
+			return nil, status.Error(codes.NotFound, "published Service is temporarily absent")
+		}})
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "web", Port: 8080}}})
+		require.NoError(t, err)
+		published, err := c.getPublishedServices(t.Context(), cl)
+		assert.NoError(t, err)
+		assert.Empty(t, published)
 	})
 	t.Run("CL-002-empty-service-response", func(t *testing.T) {
 		c, err := NewConnector("example.com", nil)
@@ -1741,4 +1752,664 @@ func TestRunGRPCRepeatedStateUpdateFailuresKeepRetryingWithBackoff(t *testing.T)
 		assert.GreaterOrEqual(t, current.Sub(previous), reconnectBackoffMin)
 		previous = current
 	}
+}
+
+type testPublishedServiceClient struct {
+	userv1.MainServiceClient
+	getFn  func(context.Context, *metav1.GetOptions) (*userv1.Service, error)
+	listFn func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error)
+}
+
+func (c *testPublishedServiceClient) GetService(ctx context.Context, req *metav1.GetOptions, _ ...grpc.CallOption) (*userv1.Service, error) {
+	if c.getFn == nil {
+		return nil, status.Error(codes.Unimplemented, "legacy API")
+	}
+	return c.getFn(ctx, req)
+}
+
+func (c *testPublishedServiceClient) ListService(ctx context.Context, req *userv1.ListServiceOptions, _ ...grpc.CallOption) (*userv1.ServiceList, error) {
+	return c.listFn(ctx, req)
+}
+
+func testPublishedAPIService(name string, typ userv1.Service_Spec_Type, port uint32) *userv1.Service {
+	name = cliutils.GetServiceFullNameFromName(name)
+	_, namespace, _ := strings.Cut(name, ".")
+	return &userv1.Service{
+		Metadata: &metav1.Metadata{Name: name},
+		Spec:     &userv1.Service_Spec{Type: typ, Port: port},
+		Status:   &userv1.Service_Status{Namespace: namespace},
+	}
+}
+
+func TestPublishedServicesMissingDoNotDiscardHealthyMappings(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current", true: "legacy"}[legacy], func(t *testing.T) {
+			requested := []*PublishedService{
+				{Name: "missing", Address: "localhost", Port: 8081},
+				{Name: "web", Address: "127.0.0.1", Port: 8080},
+				{Name: "dns.ns1", Address: "::1", Port: 1053},
+				{Name: "also-missing.ns1", Address: "localhost", Port: 8082},
+				{Name: "web.default", Address: "::1", Port: 9090},
+			}
+			before := make([]PublishedService, len(requested))
+			for i, svc := range requested {
+				before[i] = *svc
+			}
+			var getCalls, listCalls int
+			cl := &testPublishedServiceClient{
+				getFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+					getCalls++
+					if legacy {
+						return nil, status.Error(codes.Unimplemented, "legacy API")
+					}
+					switch req.Name {
+					case "web.default":
+						return testPublishedAPIService("web", userv1.Service_Spec_HTTP, 80), nil
+					case "dns.ns1":
+						return testPublishedAPIService("dns.ns1", userv1.Service_Spec_DNS, 53), nil
+					default:
+						return nil, status.Error(codes.NotFound, "missing")
+					}
+				},
+				listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+					listCalls++
+					return &userv1.ServiceList{Items: []*userv1.Service{
+						testPublishedAPIService("web", userv1.Service_Spec_HTTP, 80),
+						testPublishedAPIService("dns.ns1", userv1.Service_Spec_DNS, 53),
+					}}, nil
+				},
+			}
+			c, err := NewConnector("example.com", &Opts{PublishServices: requested})
+			require.NoError(t, err)
+			got, err := c.getPublishedServices(t.Context(), cl)
+			require.NoError(t, err)
+			require.Len(t, got, 3)
+			assert.Equal(t, []string{"web.default", "dns.ns1", "web.default"}, []string{got[0].Name, got[1].Name, got[2].Name})
+			assert.Equal(t, int32(8080), got[0].HostPort)
+			assert.Equal(t, int32(9090), got[2].HostPort)
+			assert.Equal(t, cliconfigv1.Connection_Preferences_PublishedService_UDP, got[1].L4Type)
+			assert.Equal(t, []*PublishedService{requested[0], requested[3]}, c.getPendingPublishedServices(got))
+			for i, svc := range requested {
+				assert.Equal(t, before[i], *svc)
+			}
+			if legacy {
+				assert.Equal(t, 1, getCalls)
+				assert.Equal(t, 1, listCalls)
+			} else {
+				assert.Equal(t, len(requested), getCalls)
+				assert.Zero(t, listCalls)
+			}
+		})
+	}
+}
+
+func TestPublishedServicesListRPCErrorsAreNotMissingMappings(t *testing.T) {
+	for _, code := range allCodes {
+		t.Run(code.String(), func(t *testing.T) {
+			cl := &testPublishedServiceClient{listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+				return nil, status.Error(code, "list failed")
+			}}
+			c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "web", Port: 8080}}})
+			require.NoError(t, err)
+			got, err := c.getPublishedServices(t.Context(), cl)
+			assert.Nil(t, got)
+			assert.Equal(t, code, status.Code(err))
+		})
+	}
+}
+
+func TestPublishedServicesLegacyPaginationFindsLaterServices(t *testing.T) {
+	var pages []uint32
+	cl := &testPublishedServiceClient{listFn: func(_ context.Context, req *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+		page := req.GetCommon().GetPage()
+		pages = append(pages, page)
+		var items []*userv1.Service
+		switch page {
+		case 0:
+			items = []*userv1.Service{nil, {}, testPublishedAPIService("other", userv1.Service_Spec_TCP, 80)}
+		case 1:
+			items = []*userv1.Service{testPublishedAPIService("dns.ns1", userv1.Service_Spec_UDP, 5353)}
+		case 2:
+			items = []*userv1.Service{testPublishedAPIService("late.ns1", userv1.Service_Spec_TCP, 8443)}
+		default:
+			t.Fatal("lookup must stop after finding all requested services")
+		}
+		return &userv1.ServiceList{Items: items, ListResponseMeta: &metav1.ListResponseMeta{Page: page, HasMore: true}}, nil
+	}}
+	c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+		{Name: "late.ns1", Port: 8080}, {Name: "dns.ns1", Port: 1053},
+	}})
+	require.NoError(t, err)
+	got, err := c.getPublishedServices(t.Context(), cl)
+	require.NoError(t, err)
+	assert.Equal(t, []uint32{0, 1, 2}, pages)
+	require.Len(t, got, 2)
+	assert.Equal(t, "late.ns1", got[0].Name)
+	assert.Equal(t, "dns.ns1", got[1].Name)
+}
+
+func TestPublishedServicesLegacyRepeatedPageReturnsError(t *testing.T) {
+	var calls int
+	cl := &testPublishedServiceClient{listFn: func(context.Context, *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+		calls++
+		return &userv1.ServiceList{
+			Items:            []*userv1.Service{testPublishedAPIService("other", userv1.Service_Spec_TCP, 80)},
+			ListResponseMeta: &metav1.ListResponseMeta{HasMore: true},
+		}, nil
+	}}
+	c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "missing", Port: 8080}}})
+	require.NoError(t, err)
+	_, err = c.getPublishedServices(t.Context(), cl)
+	assert.ErrorContains(t, err, "same Service list page")
+	assert.Equal(t, 2, calls)
+	assert.False(t, isRejectedErr(err))
+}
+
+func TestPublishedServicesInvalidOptionsDoNotReachAPI(t *testing.T) {
+	for _, svc := range []*PublishedService{
+		nil, {Name: "web", Port: 0}, {Name: "web", Port: -1}, {Name: "web", Port: 65536},
+		{Name: "", Port: 8080}, {Name: "web..ns1", Port: 8080}, {Name: ".ns1", Port: 8080},
+		{Name: "web", Address: "not an IP", Port: 8080},
+	} {
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{svc}})
+		require.NoError(t, err)
+		_, err = c.getPublishedServices(t.Context(), &testPublishedServiceClient{getFn: func(context.Context, *metav1.GetOptions) (*userv1.Service, error) {
+			t.Fatal("invalid options must be rejected before service lookup")
+			return nil, nil
+		}})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+	c, err := NewConnector("example.com", &Opts{PublishServices: make([]*PublishedService, 129)})
+	require.NoError(t, err)
+	_, err = c.getPublishedServices(t.Context(), nil)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestPublishedServicesIncompleteResponsesReturnErrors(t *testing.T) {
+	for _, response := range []*userv1.Service{nil, {}, {Metadata: &metav1.Metadata{Name: "web.default"}}, {
+		Metadata: &metav1.Metadata{Name: "web.default"}, Spec: &userv1.Service_Spec{Port: 80},
+	}} {
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "web", Port: 8080}}})
+		require.NoError(t, err)
+		_, err = c.getPublishedServices(t.Context(), &testPublishedServiceClient{getFn: func(context.Context, *metav1.GetOptions) (*userv1.Service, error) {
+			return response, nil
+		}})
+		assert.Error(t, err)
+		assert.NotEqual(t, codes.NotFound, status.Code(err))
+	}
+}
+
+func TestPendingPublicationsMatchCanonicalNamesAndHostMappings(t *testing.T) {
+	c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+		{Name: "web", Address: "localhost", Port: 8080},
+		{Name: "web.default", Address: "localhost", Port: 8080},
+		{Name: "web", Address: "localhost", Port: 8081},
+		{Name: "web", Address: "::1", Port: 8080},
+	}})
+	require.NoError(t, err)
+	pending := c.getPendingPublishedServices([]*cliconfigv1.Connection_Preferences_PublishedService{
+		{Name: "web.default", HostAddress: "localhost", HostPort: 8080},
+	})
+	assert.Equal(t, c.opts.PublishServices[2:], pending)
+	assert.Empty(t, c.getPendingPublishedServices([]*cliconfigv1.Connection_Preferences_PublishedService{
+		{Name: "web", HostAddress: "localhost", HostPort: 8080},
+		{Name: "web", HostAddress: "localhost", HostPort: 8081},
+		{Name: "web", HostAddress: "::1", HostPort: 8080},
+	}))
+}
+
+func TestRetryPendingPublicationsLifecycle(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current", true: "legacy"}[legacy], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var calls atomic.Int32
+				var listCalls, additions int
+				resolve := func(ctx context.Context) (*userv1.Service, error) {
+					deadline, ok := ctx.Deadline()
+					assert.True(t, ok)
+					assert.LessOrEqual(t, deadline.Sub(time.Now()), publishedServiceLookupTimeout)
+					switch calls.Load() {
+					case 1:
+						return nil, status.Error(codes.NotFound, "not created")
+					case 2:
+						return nil, status.Error(codes.Unavailable, "API restarting")
+					default:
+						return testPublishedAPIService("late.ns1", userv1.Service_Spec_UDP, 5353), nil
+					}
+				}
+				cl := &testPublishedServiceClient{
+					getFn: func(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+						calls.Add(1)
+						assert.Equal(t, "late.ns1", req.Name)
+						if legacy {
+							return nil, status.Error(codes.Unimplemented, "legacy API")
+						}
+						return resolve(ctx)
+					},
+					listFn: func(ctx context.Context, _ *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+						listCalls++
+						svc, err := resolve(ctx)
+						if status.Code(err) == codes.NotFound {
+							return &userv1.ServiceList{}, nil
+						}
+						if err != nil {
+							return nil, err
+						}
+						return &userv1.ServiceList{Items: []*userv1.Service{svc}}, nil
+					},
+				}
+				c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+					{Name: "web", Address: "localhost", Port: 8080},
+					{Name: "late.ns1", Address: "127.0.0.1", Port: 1053},
+				}})
+				require.NoError(t, err)
+				active := []*cliconfigv1.Connection_Preferences_PublishedService{{Name: "web.default", HostAddress: "localhost", HostPort: 8080}}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					c.retryPublishedServices(ctx, cl, func(svc *cliconfigv1.Connection_Preferences_PublishedService) error {
+						additions++
+						assert.Equal(t, "late.ns1", svc.Name)
+						assert.Equal(t, int32(5353), svc.Port)
+						assert.Equal(t, int32(1053), svc.HostPort)
+						assert.Equal(t, cliconfigv1.Connection_Preferences_PublishedService_UDP, svc.L4Type)
+						if additions == 1 {
+							return errors.New("temporary local failure")
+						}
+						return nil
+					}, active)
+				}()
+				synctest.Wait()
+				for i := 1; i <= 4; i++ {
+					time.Sleep(publishedServiceRetryInterval)
+					synctest.Wait()
+					assert.Equal(t, int32(i), calls.Load())
+				}
+				select {
+				case <-done:
+				default:
+					t.Fatal("the retry task must finish once all pending publications are added")
+				}
+				time.Sleep(24 * time.Hour)
+				synctest.Wait()
+				assert.Equal(t, int32(4), calls.Load())
+				assert.Equal(t, 2, additions)
+				assert.Len(t, active, 1)
+				if legacy {
+					assert.Equal(t, 4, listCalls)
+				} else {
+					assert.Zero(t, listCalls)
+				}
+			})
+		})
+	}
+}
+
+func TestPendingPublicationLookupDeadlineAndCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "late", Port: 8080}}})
+		require.NoError(t, err)
+		cl := &testPublishedServiceClient{getFn: func(ctx context.Context, _ *metav1.GetOptions) (*userv1.Service, error) {
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}}
+		start := time.Now()
+		_, err = c.getPublishedServices(context.Background(), cl)
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+		assert.Equal(t, publishedServiceLookupTimeout, time.Since(start))
+	})
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		lookup := make(chan context.Context, 1)
+		cl := &testPublishedServiceClient{getFn: func(ctx context.Context, _ *metav1.GetOptions) (*userv1.Service, error) {
+			lookup <- ctx
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}}
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "late", Port: 8080}}})
+		require.NoError(t, err)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.retryPublishedServices(ctx, cl, func(*cliconfigv1.Connection_Preferences_PublishedService) error {
+				t.Error("a canceled lookup must not activate a publication")
+				return nil
+			}, nil)
+		}()
+		synctest.Wait()
+		time.Sleep(publishedServiceRetryInterval)
+		synctest.Wait()
+		lookupCtx := <-lookup
+		cancel()
+		synctest.Wait()
+		assert.ErrorIs(t, lookupCtx.Err(), context.Canceled)
+		select {
+		case <-done:
+		default:
+			t.Fatal("the retry task must stop promptly when its lookup is canceled")
+		}
+	})
+}
+
+func TestRunGRPCMissingPublicationsRecoverWhileConnected(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, scenario := range []string{"initial", "all-missing", "deleted-after-connect"} {
+			t.Run(fmt.Sprintf("%s/legacy=%t", scenario, legacy), func(t *testing.T) {
+				var available, recreated atomic.Bool
+				available.Store(scenario == "deleted-after-connect")
+				var attempts, healthyLookups atomic.Int32
+				restart := make(chan struct{})
+				requests := make(chan []string, 4)
+				withHealthy := scenario != "all-missing"
+				service := func(name string) (*userv1.Service, error) {
+					if name == "healthy.default" {
+						return testPublishedAPIService(name, userv1.Service_Spec_TCP, 8080), nil
+					}
+					if !available.Load() {
+						return nil, status.Error(codes.NotFound, "Service not found")
+					}
+					if recreated.Load() {
+						return testPublishedAPIService(name, userv1.Service_Spec_UDP, 5353), nil
+					}
+					return testPublishedAPIService(name, userv1.Service_Spec_TCP, 8081), nil
+				}
+				srv := &testConnectAPI{
+					getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+						if legacy {
+							return nil, status.Error(codes.Unimplemented, "legacy API")
+						}
+						if req.Name == "healthy.default" {
+							healthyLookups.Add(1)
+						}
+						return service(req.Name)
+					},
+					listFn: func(_ context.Context, req *userv1.ListServiceOptions) (*userv1.ServiceList, error) {
+						if req.GetCommon().GetPage() == 0 {
+							return &userv1.ServiceList{
+								Items:            []*userv1.Service{testPublishedAPIService("unrelated.default", userv1.Service_Spec_HTTP, 80)},
+								ListResponseMeta: &metav1.ListResponseMeta{HasMore: true},
+							}, nil
+						}
+						ret := &userv1.ServiceList{}
+						if withHealthy {
+							svc, _ := service("healthy.default")
+							ret.Items = append(ret.Items, svc)
+						}
+						if svc, err := service("late.ns1"); err == nil {
+							ret.Items = append(ret.Items, svc)
+						}
+						return ret, nil
+					},
+					connectFn: func(stream userv1.MainService_ConnectServer) error {
+						attempt := attempts.Add(1)
+						req, err := stream.Recv()
+						if err != nil {
+							return err
+						}
+						var names []string
+						for _, svc := range req.GetInitialize().PublishedServices {
+							names = append(names, svc.Name)
+						}
+						requests <- names
+						state := testConnectInitialState()
+						if legacy {
+							state.CreatedAt = nil
+						}
+						if err := stream.Send(state); err != nil {
+							return err
+						}
+						if scenario == "deleted-after-connect" && attempt == 1 {
+							select {
+							case <-restart:
+								return status.Error(codes.Unavailable, "API restarting")
+							case <-stream.Context().Done():
+								return stream.Context().Err()
+							}
+						}
+						<-stream.Context().Done()
+						return stream.Context().Err()
+					},
+				}
+				c, dbC := newTestRunningConnector(t, srv)
+				port := func() int {
+					lis, err := net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+					defer lis.Close()
+					return lis.Addr().(*net.TCPAddr).Port
+				}
+				healthyPort, latePort := port(), port()
+				if withHealthy {
+					c.opts.PublishServices = append(c.opts.PublishServices, &PublishedService{Name: "healthy", Address: "127.0.0.1", Port: healthyPort})
+				}
+				c.opts.PublishServices = append(c.opts.PublishServices, &PublishedService{Name: "late.ns1", Address: "127.0.0.1", Port: latePort})
+				connected := make(chan *cliconfigv1.Connection, 4)
+				c.opts.OnEvent = func(ev *Event) {
+					if ev.Type == EventTypeConnected {
+						connected <- proto.Clone(ev.Connection).(*cliconfigv1.Connection)
+					}
+				}
+				ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 30*time.Second)
+				var runErr error
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					runErr = c.Run(ctx)
+				}()
+				t.Cleanup(func() {
+					cancel()
+					select {
+					case <-done:
+						assert.NoError(t, runErr)
+					case <-time.After(5 * time.Second):
+						t.Error("the client did not stop after cancellation")
+					}
+				})
+				waitConnected := func(expectLate bool) *cliconfigv1.Connection {
+					select {
+					case cfg := <-connected:
+						var names []string
+						if withHealthy {
+							names = append(names, "healthy.default")
+						}
+						if expectLate {
+							names = append(names, "late.ns1")
+						}
+						assert.Equal(t, names, <-requests)
+						assert.Len(t, cfg.Preferences.PublishedServices, len(names))
+						return cfg
+					case <-done:
+						t.Fatalf("the client exited before connecting: %+v", runErr)
+					case <-time.After(10 * time.Second):
+						t.Fatal("the client did not connect while a publication was missing")
+					}
+					return nil
+				}
+				cfg := waitConnected(scenario == "deleted-after-connect")
+				if scenario == "deleted-after-connect" {
+					available.Store(false)
+					close(restart)
+					cfg = waitConnected(false)
+				}
+				connections := attempts.Load()
+				lateAddr := net.JoinHostPort("127.0.0.1", fmt.Sprint(latePort))
+				assert.False(t, testPublishedPortIsListening(lateAddr))
+				if withHealthy {
+					healthyAddr := net.JoinHostPort("127.0.0.1", fmt.Sprint(healthyPort))
+					require.Eventually(t, func() bool { return testPublishedPortIsListening(healthyAddr) }, time.Second, 10*time.Millisecond)
+				}
+				recreated.Store(true)
+				available.Store(true)
+				require.Eventually(t, func() bool {
+					conn, err := net.ListenPacket("udp", lateAddr)
+					if err == nil {
+						conn.Close()
+						return false
+					}
+					return errors.Is(err, syscall.EADDRINUSE)
+				}, publishedServiceRetryInterval+3*time.Second, 20*time.Millisecond)
+				assert.False(t, testPublishedPortIsListening(lateAddr), "the recreated UDP Service must not use the old TCP configuration")
+				assert.Equal(t, connections, attempts.Load(), "recovering a publication must preserve the established API stream")
+				if withHealthy && !legacy {
+					assert.Equal(t, connections, healthyLookups.Load())
+				}
+				select {
+				case <-done:
+					t.Fatalf("publication recovery stopped the connection: %+v", runErr)
+				default:
+				}
+				assert.NotNil(t, cfg)
+				cancel()
+				<-done
+				assert.NoError(t, runErr)
+				_, err := dbC.GetConnectionCleanup("example.com")
+				assert.True(t, dbC.ErrorIsNotFound(err))
+				conn, err := net.ListenPacket("udp", lateAddr)
+				require.NoError(t, err)
+				require.NoError(t, conn.Close())
+			})
+		}
+	}
+}
+
+func TestRunGRPCMissingPublicationPreservesControlRejections(t *testing.T) {
+	for _, code := range []codes.Code{codes.NotFound, codes.PermissionDenied, codes.InvalidArgument} {
+		t.Run(code.String(), func(t *testing.T) {
+			var attempts atomic.Int32
+			c, dbC := newTestRunningConnector(t, &testConnectAPI{
+				getServiceFn: func(context.Context, *metav1.GetOptions) (*userv1.Service, error) {
+					return nil, status.Error(codes.NotFound, "publication not found")
+				},
+				connectFn: func(stream userv1.MainService_ConnectServer) error {
+					attempts.Add(1)
+					req, err := stream.Recv()
+					if err != nil {
+						return err
+					}
+					assert.Empty(t, req.GetInitialize().PublishedServices)
+					return status.Error(code, "control connection rejected")
+				},
+			})
+			c.opts.PublishServices = []*PublishedService{{Name: "late", Port: 8080}}
+			c.opts.OnEvent = func(ev *Event) {
+				assert.NotEqual(t, EventTypeConnected, ev.Type)
+			}
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+			defer cancel()
+			err := c.Run(ctx)
+			assert.Equal(t, code, status.Code(err))
+			assert.Equal(t, int32(1), attempts.Load())
+		})
+	}
+}
+
+func TestPublishedServicesSlowSuccessfulLookupsHaveSeparateDeadlines(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+			{Name: "first", Port: 8081}, {Name: "second", Port: 8082}, {Name: "third", Port: 8083},
+		}})
+		require.NoError(t, err)
+		cl := &testPublishedServiceClient{getFn: func(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+			select {
+			case <-ctx.Done():
+				return nil, status.FromContextError(ctx.Err()).Err()
+			case <-time.After(6 * time.Second):
+				return testPublishedAPIService(req.Name, userv1.Service_Spec_TCP, 80), nil
+			}
+		}}
+		start := time.Now()
+		published, err := c.getPublishedServices(t.Context(), cl)
+		require.NoError(t, err)
+		assert.Len(t, published, 3)
+		assert.Equal(t, 18*time.Second, time.Since(start))
+	})
+}
+
+func TestRetryPendingPublicationsPreservesControlForAPIErrors(t *testing.T) {
+	for code := codes.Canceled; code <= codes.Unauthenticated; code++ {
+		if code == codes.NotFound || code == codes.Unimplemented {
+			continue
+		}
+		t.Run(code.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				var calls atomic.Int32
+				cl := &testPublishedServiceClient{getFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+					if calls.Add(1) == 1 {
+						return nil, status.Error(code, "pending lookup failed")
+					}
+					return testPublishedAPIService(req.Name, userv1.Service_Spec_TCP, 80), nil
+				}}
+				c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{{Name: "late", Port: 8080}}})
+				require.NoError(t, err)
+				var additions atomic.Int32
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					c.retryPublishedServices(ctx, cl, func(*cliconfigv1.Connection_Preferences_PublishedService) error {
+						additions.Add(1)
+						return nil
+					}, nil)
+				}()
+				synctest.Wait()
+				time.Sleep(publishedServiceRetryInterval)
+				synctest.Wait()
+				assert.Equal(t, int32(1), calls.Load())
+				assert.Zero(t, additions.Load())
+				assert.NoError(t, ctx.Err())
+				select {
+				case <-done:
+					t.Fatal("a pending lookup error must leave publication recovery running")
+				default:
+				}
+				time.Sleep(publishedServiceRetryInterval)
+				synctest.Wait()
+				<-done
+				assert.Equal(t, int32(2), calls.Load())
+				assert.Equal(t, int32(1), additions.Load())
+			})
+		})
+	}
+}
+
+func TestRetryPendingPublicationsResolveAtDifferentTimes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := NewConnector("example.com", &Opts{PublishServices: []*PublishedService{
+			{Name: "first", Port: 8081}, {Name: "second", Port: 8082},
+		}})
+		require.NoError(t, err)
+		var lookups, added []string
+		var secondLookups int
+		cl := &testPublishedServiceClient{getFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+			lookups = append(lookups, req.Name)
+			if req.Name == "second.default" {
+				secondLookups++
+				if secondLookups < 3 {
+					return nil, status.Error(codes.NotFound, "Service not created yet")
+				}
+			}
+			return testPublishedAPIService(req.Name, userv1.Service_Spec_TCP, 80), nil
+		}}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.retryPublishedServices(ctx, cl, func(svc *cliconfigv1.Connection_Preferences_PublishedService) error {
+				added = append(added, svc.Name)
+				return nil
+			}, nil)
+		}()
+		synctest.Wait()
+		for range 3 {
+			time.Sleep(publishedServiceRetryInterval)
+			synctest.Wait()
+		}
+		<-done
+		assert.Equal(t, []string{"first.default", "second.default", "second.default", "second.default"}, lookups)
+		assert.Equal(t, []string{"first.default", "second.default"}, added)
+	})
 }

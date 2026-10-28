@@ -318,6 +318,18 @@ func (c *Controller) Reconfigure() error {
 	return c.reconfigure()
 }
 
+func (c *Controller) AddPublishedService(svc *cliconfigv1.Connection_Preferences_PublishedService) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.isClosed {
+		return errors.Errorf("The controller is already closed")
+	}
+	if c.svcProxy == nil {
+		return errors.Errorf("The Service proxy is not initialized")
+	}
+	return c.svcProxy.AddService(svc)
+}
+
 func (c *Controller) reconfigure() error {
 
 	if err := c.setWGDev(); err != nil {

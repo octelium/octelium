@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1607,4 +1608,156 @@ func TestDaemonStateUpdateFailureRecoversOverIPC(t *testing.T) {
 	assert.Equal(t, daemonv1.Operation_SUCCEEDED, finished.State)
 	_, err = srv.srv.principal.dbC.GetConnectionCleanup("example.com")
 	assert.True(t, srv.srv.principal.dbC.ErrorIsNotFound(err))
+}
+
+type testDaemonPublishedServiceAPI struct {
+	testDaemonClusterAPI
+	getFn func(context.Context, *metav1.GetOptions) (*userv1.Service, error)
+}
+
+func (s *testDaemonPublishedServiceAPI) GetService(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+	return s.getFn(ctx, req)
+}
+
+func TestDaemonMissingPublicationLifecycleOverIPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	for _, scenario := range []string{"created-while-connected", "disconnect-during-lookup"} {
+		t.Run(scenario, func(t *testing.T) {
+			var calls, attempts atomic.Int32
+			var available atomic.Bool
+			lookupStarted, lookupCanceled := make(chan struct{}, 1), make(chan struct{}, 1)
+			api := &testDaemonPublishedServiceAPI{
+				testDaemonClusterAPI: testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+					attempts.Add(1)
+					req, err := stream.Recv()
+					if err != nil {
+						return err
+					}
+					assert.Empty(t, req.GetInitialize().PublishedServices)
+					if err := stream.Send(testDaemonInitialState()); err != nil {
+						return err
+					}
+					<-stream.Context().Done()
+					return stream.Context().Err()
+				}},
+				getFn: func(ctx context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+					call := calls.Add(1)
+					assert.Equal(t, "late.default", req.Name)
+					_, ok := ctx.Deadline()
+					assert.True(t, ok)
+					if call > 1 && scenario == "disconnect-during-lookup" {
+						lookupStarted <- struct{}{}
+						<-ctx.Done()
+						lookupCanceled <- struct{}{}
+						return nil, status.FromContextError(ctx.Err()).Err()
+					}
+					if !available.Load() {
+						return nil, status.Error(codes.NotFound, "Service not found")
+					}
+					return &userv1.Service{
+						Metadata: &metav1.Metadata{Name: req.Name},
+						Spec:     &userv1.Service_Spec{Type: userv1.Service_Spec_TCP, Port: 8080},
+						Status:   &userv1.Service_Status{Namespace: "default"},
+					}, nil
+				},
+			}
+			lis, err := net.Listen("unix", newTestSocketPath(t))
+			require.NoError(t, err)
+			t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", lis.Addr().String())
+			t.Setenv("OCTELIUM_DEV", "false")
+			t.Setenv("OCTELIUM_PRODUCTION", "true")
+			grpcSrv := grpc.NewServer()
+			userv1.RegisterMainServiceServer(grpcSrv, api)
+			go grpcSrv.Serve(lis)
+			t.Cleanup(grpcSrv.Stop)
+			srv := newTestServer(t)
+			authenticateTestDaemonDomain(t, srv)
+			reserved, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			addr := reserved.Addr().String()
+			port := uint32(reserved.Addr().(*net.TCPAddr).Port)
+			require.NoError(t, reserved.Close())
+			dnsSocket, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			dnsAddr := dnsSocket.LocalAddr().String()
+			require.NoError(t, dnsSocket.Close())
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			op, err := srv.c.Connect(ctx, &daemonv1.ConnectRequest{
+				Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+					L3Mode: daemonv1.ConnectionOptions_V4, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+					Dns: &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED, LocalServerListenAddress: dnsAddr},
+					ServiceOptions: &daemonv1.ConnectionOptions_ServiceOptions{
+						Publish: []*daemonv1.ConnectionOptions_PublishedService{{
+							Service: &daemonv1.ConnectionOptions_ServiceReference{Name: "late"}, Address: "127.0.0.1", Port: port,
+						}},
+					},
+				},
+			})
+			require.NoError(t, err)
+			var first *daemonv1.DomainState
+			require.Eventually(t, func() bool {
+				snapshot, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+				if err != nil || len(snapshot.Domains) != 1 {
+					return false
+				}
+				first = snapshot.Domains[0]
+				return first.Connection.State == daemonv1.ConnectionStatus_CONNECTED
+			}, 5*time.Second, 10*time.Millisecond)
+			assert.Equal(t, daemonv1.Operation_SUCCEEDED, first.LastOperation.State)
+			assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, first.Authentication.State)
+			assert.Nil(t, first.LastError)
+			if scenario == "created-while-connected" {
+				available.Store(true)
+				require.Eventually(t, func() bool {
+					probe, err := net.Listen("tcp", addr)
+					if err == nil {
+						probe.Close()
+						return false
+					}
+					return errors.Is(err, syscall.EADDRINUSE)
+				}, 8*time.Second, 20*time.Millisecond)
+			} else {
+				select {
+				case <-lookupStarted:
+				case <-time.After(8 * time.Second):
+					t.Fatal("the pending publication was not retried")
+				}
+			}
+			snapshot, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+			require.NoError(t, err)
+			require.Len(t, snapshot.Domains, 1)
+			current := snapshot.Domains[0]
+			assert.Equal(t, daemonv1.ConnectionStatus_CONNECTED, current.Connection.State)
+			assert.Equal(t, first.Connection.ConnectedAt.AsTime(), current.Connection.ConnectedAt.AsTime())
+			assert.Nil(t, current.LastError)
+			assert.Len(t, current.Connection.Options.ServiceOptions.Publish, 1)
+			assert.Equal(t, int32(1), attempts.Load())
+			started := time.Now()
+			disconnect, err := srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				got, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: disconnect.Id})
+				return err == nil && got.State == daemonv1.Operation_SUCCEEDED
+			}, 3*time.Second, 10*time.Millisecond)
+			assert.Less(t, time.Since(started), 3*time.Second)
+			if scenario == "disconnect-during-lookup" {
+				select {
+				case <-lookupCanceled:
+				case <-time.After(time.Second):
+					t.Error("disconnect did not cancel the pending Service RPC")
+				}
+			}
+			finished, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+			require.NoError(t, err)
+			assert.Equal(t, daemonv1.Operation_SUCCEEDED, finished.State)
+			_, err = srv.srv.principal.dbC.GetConnectionCleanup("example.com")
+			assert.True(t, srv.srv.principal.dbC.ErrorIsNotFound(err))
+			probe, err := net.Listen("tcp", addr)
+			require.NoError(t, err)
+			require.NoError(t, probe.Close())
+		})
+	}
 }

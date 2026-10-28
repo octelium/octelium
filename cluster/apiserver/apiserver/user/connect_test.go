@@ -642,6 +642,90 @@ func TestDoInitConnectPublishedServices(t *testing.T) {
 	}
 }
 
+func TestDoInitConnectMissingPublishedServicesPreserveOtherConnections(t *testing.T) {
+	ctx := context.Background()
+	tst, err := tests.Initialize(nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, tst.Destroy()) })
+	usrSrv, adminSrv := newFakeServers(tst.C)
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Spec: &corev1.Service_Spec{
+			Mode: corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{Upstream: &corev1.Service_Spec_Config_Upstream{
+				Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "https://example.com"},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	newUser := func() *tstuser.User {
+		usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, usrSrv, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		require.NoError(t, err)
+		return usr
+	}
+	getSession := func(usr *tstuser.User) *corev1.Session {
+		sess, err := tst.C.OcteliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: usr.Session.Metadata.Uid})
+		require.NoError(t, err)
+		return sess
+	}
+	existing := newUser()
+	_, err = usrSrv.DoInitConnect(existing.Ctx(), &userv1.ConnectRequest_Initialize{
+		PublishedServices: []*userv1.ConnectRequest_Initialize_PublishedService{{Name: svc.Metadata.Name, Port: 8080}},
+	})
+	require.NoError(t, err)
+	existingConnection := pbutils.MarshalMust(getSession(existing).Status.Connection)
+	missing := utilrand.GetRandomStringCanonical(8)
+	for _, tc := range []struct {
+		name      string
+		published []*userv1.ConnectRequest_Initialize_PublishedService
+		expected  int
+	}{
+		{
+			name: "legacy-request-with-missing-and-existing-services",
+			published: []*userv1.ConnectRequest_Initialize_PublishedService{
+				{Name: missing, Port: 8081},
+				{Name: svc.Metadata.Name, Port: 9090, Address: "127.0.0.1"},
+				{Name: missing + ".default", Port: 8082},
+			},
+			expected: 1,
+		},
+		{
+			name:      "legacy-request-with-only-missing-services",
+			published: []*userv1.ConnectRequest_Initialize_PublishedService{{Name: missing, Port: 8081}},
+		},
+		{
+			name:      "new-client-filters-missing-services",
+			published: []*userv1.ConnectRequest_Initialize_PublishedService{{Name: svc.Metadata.Name, Port: 9090, Address: "127.0.0.1"}},
+			expected:  1,
+		},
+		{
+			name: "new-client-filters-all-missing-services",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usr := newUser()
+			_, err := usrSrv.GetService(usr.Ctx(), &metav1.GetOptions{Name: missing})
+			assert.Equal(t, codes.NotFound, status.Code(err))
+			resp, err := usrSrv.DoInitConnect(usr.Ctx(), &userv1.ConnectRequest_Initialize{PublishedServices: tc.published})
+			require.NoError(t, err)
+			require.NotNil(t, resp.GetState())
+			sess := getSession(usr)
+			assert.True(t, sess.Status.IsConnected)
+			require.Len(t, sess.Status.Connection.PublishedServices, tc.expected)
+			if tc.expected > 0 {
+				published := sess.Status.Connection.PublishedServices[0]
+				assert.Equal(t, svc.Metadata.Uid, published.ServiceRef.Uid)
+				assert.Equal(t, int32(9090), published.Port)
+				assert.Equal(t, "127.0.0.1", published.Address)
+			}
+			unchanged := getSession(existing)
+			assert.True(t, unchanged.Status.IsConnected)
+			assert.Equal(t, existingConnection, pbutils.MarshalMust(unchanged.Status.Connection))
+		})
+	}
+}
+
 func TestDoInitConnectSessionStatus(t *testing.T) {
 	ctx := context.Background()
 
