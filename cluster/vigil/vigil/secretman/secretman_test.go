@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -720,4 +721,117 @@ func TestApplyServiceSurvivesMissingSecret(t *testing.T) {
 	sec2V, err := secretMan.GetByName(ctx, sec2.Metadata.Name)
 	assert.Nil(t, err)
 	assert.True(t, pbutils.IsEqual(sec2, sec2V))
+}
+
+func TestOAuth2CacheKeyFieldBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		left  *GetOAuth2CCTokenReq
+		right *GetOAuth2CCTokenReq
+	}{
+		{
+			name:  "ClientAndSecret",
+			left:  &GetOAuth2CCTokenReq{ClientID: "client:tenant", SecretName: "secret", TokenURL: "https://issuer.example.com/token"},
+			right: &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "tenant:secret", TokenURL: "https://issuer.example.com/token"},
+		},
+		{
+			name:  "URLAndScope",
+			left:  &GetOAuth2CCTokenReq{TokenURL: "https://issuer.example.com/token?aud=tenant:read", Scopes: []string{"write"}},
+			right: &GetOAuth2CCTokenReq{TokenURL: "https://issuer.example.com/token?aud=tenant", Scopes: []string{"read:write"}},
+		},
+		{
+			name:  "ScopeCount",
+			left:  &GetOAuth2CCTokenReq{Scopes: []string{"read-write"}},
+			right: &GetOAuth2CCTokenReq{Scopes: []string{"read", "write"}},
+		},
+		{
+			name:  "EmptyScope",
+			left:  &GetOAuth2CCTokenReq{},
+			right: &GetOAuth2CCTokenReq{Scopes: []string{""}},
+		},
+		{
+			name:  "EmptyScopeBoundary",
+			left:  &GetOAuth2CCTokenReq{Scopes: []string{"read", ""}},
+			right: &GetOAuth2CCTokenReq{Scopes: []string{"read-"}},
+		},
+		{
+			name:  "NULBoundary",
+			left:  &GetOAuth2CCTokenReq{Scopes: []string{"read\x00write"}},
+			right: &GetOAuth2CCTokenReq{Scopes: []string{"read", "write"}},
+		},
+		{
+			name:  "UTF8Bytes",
+			left:  &GetOAuth2CCTokenReq{ClientID: "\xff"},
+			right: &GetOAuth2CCTokenReq{ClientID: "\xfe"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotEqual(t, tc.left.getID(), tc.right.getID())
+		})
+	}
+}
+
+func TestOAuth2CacheKeyStableForEquivalentRequests(t *testing.T) {
+	req := &GetOAuth2CCTokenReq{
+		ClientID: "client", SecretName: "secret", TokenURL: "https://issuer.example.com/token",
+		Scopes: []string{"write", "read"},
+	}
+	copy := *req
+	copy.Scopes = append([]string(nil), req.Scopes...)
+	key := req.getID()
+	assert.NotEmpty(t, key)
+	assert.Equal(t, key, copy.getID())
+	assert.Equal(t, key, req.getID())
+	assert.Equal(t, []string{"write", "read"}, req.Scopes)
+	assert.Equal(t, (&GetOAuth2CCTokenReq{}).getID(), (&GetOAuth2CCTokenReq{Scopes: []string{}}).getID())
+}
+
+func TestOAuth2TokenCacheScopeIsolationAndReuse(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	sm.c.Set("secret", &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+	}, 0)
+	scopes := [][]string{{"read-write", "admin"}, {"read", "write-admin"}, {"read-write-admin"}}
+	tokens := make(map[string]string)
+	for i, scope := range scopes {
+		tokens[strings.Join(scope, " ")] = fmt.Sprintf("token-%d", i)
+	}
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assert.Nil(t, r.ParseForm()) {
+			return
+		}
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token_type": "Bearer", "access_token": tokens[r.Form.Get("scope")], "expires_in": 3600,
+		})
+	}))
+	defer srv.Close()
+	for _, i := range []int{0, 0, 1, 1, 0, 2, 2, 1} {
+		token, err := sm.GetOAuth2CCToken(t.Context(), &GetOAuth2CCTokenReq{
+			ClientID: "client", SecretName: "secret", TokenURL: srv.URL, Scopes: scopes[i],
+		})
+		require.Nil(t, err)
+		assert.Equal(t, fmt.Sprintf("token-%d", i), token)
+	}
+	assert.Equal(t, int32(3), calls.Load())
+}
+
+func FuzzOAuth2CacheKeyScopeBoundaries(f *testing.F) {
+	f.Add("read", "write", "admin")
+	f.Add("", "", "")
+	f.Add("a:b", "\x00", "x-y")
+	f.Add("é", "中", "🔒")
+	f.Add("read", strings.Repeat("x", 256), "write")
+	f.Fuzz(func(t *testing.T, first, middle, last string) {
+		if len(first)+len(middle)+len(last) > 16*1024 {
+			t.Skip()
+		}
+		left := &GetOAuth2CCTokenReq{Scopes: []string{first + "-" + middle, last}}
+		right := &GetOAuth2CCTokenReq{Scopes: []string{first, middle + "-" + last}}
+		assert.NotEqual(t, left.getID(), right.getID())
+	})
 }
