@@ -19,6 +19,7 @@ package httpg
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gorilla/websocket"
+	"github.com/klauspost/compress/zstd"
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -4551,6 +4553,166 @@ func TestHTTPIPv6CORS(t *testing.T) {
 					assert.Equal(t, before+1, calls.Load())
 				}
 			}
+		})
+	}
+}
+
+func TestHTTPResponseCacheCompression(t *testing.T) {
+	for _, phase := range []corev1.Service_Spec_Config_HTTP_Plugin_Phase{
+		corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH,
+		corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+	} {
+		t.Run(phase.String(), func(t *testing.T) {
+			body := strings.Repeat("cached compressible response ", 256)
+			var calls atomic.Int32
+			_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "text/plain")
+				w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+				w.Header().Set("X-Upstream", "cached")
+				w.Write([]byte(body))
+			}), &corev1.Service_Spec_Config_HTTP{Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{Name: "response-cache", Phase: phase,
+					Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					Type:      &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
+			}})
+			transport := &http.Transport{DisableCompression: true}
+			t.Cleanup(transport.CloseIdleConnections)
+			client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+			for _, tc := range []struct {
+				acceptEncoding string
+				encoding       string
+				cache          string
+				calls          int32
+			}{
+				{"", "", "MISS", 1},
+				{"gzip;q=0", "", "HIT", 1},
+				{"identity", "", "MISS", 2},
+				{"gzip", "gzip", "MISS", 3},
+				{"gzip", "gzip", "HIT", 3},
+				{"zstd", "zstd", "MISS", 4},
+				{"gzip;q=1,zstd;q=0.5", "gzip", "MISS", 5},
+				{"gzip;q=0.5,zstd;q=1", "zstd", "HIT", 5},
+				{"gzip;q=0,zstd;q=1", "zstd", "HIT", 5},
+				{"identity", "", "HIT", 5},
+				{"", "", "HIT", 5},
+			} {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+"/compressed-cache", nil)
+				require.Nil(t, err)
+				if tc.acceptEncoding != "" {
+					req.Header.Set("Accept-Encoding", tc.acceptEncoding)
+				}
+				resp, err := client.Do(req)
+				require.Nil(t, err)
+				raw, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				require.Nil(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.Equal(t, tc.cache, resp.Header.Get("X-Cache"), tc.acceptEncoding)
+				assert.Equal(t, tc.encoding, resp.Header.Get("Content-Encoding"), tc.acceptEncoding)
+				assert.Equal(t, "cached", resp.Header.Get("X-Upstream"))
+				assert.Contains(t, strings.Join(resp.Header.Values("Vary"), ","), "Accept-Encoding")
+				assert.Equal(t, tc.calls, calls.Load(), tc.acceptEncoding)
+				decoded := raw
+				switch tc.encoding {
+				case "gzip":
+					reader, err := gzip.NewReader(bytes.NewReader(raw))
+					require.Nil(t, err)
+					decoded, err = io.ReadAll(reader)
+					reader.Close()
+					require.Nil(t, err)
+				case "zstd":
+					reader, err := zstd.NewReader(nil)
+					require.Nil(t, err)
+					decoded, err = reader.DecodeAll(raw, nil)
+					reader.Close()
+					require.Nil(t, err)
+				}
+				assert.Equal(t, body, string(decoded), tc.acceptEncoding)
+			}
+		})
+	}
+}
+
+func TestHTTPResponseCacheEncodedUpstream(t *testing.T) {
+	body := strings.Repeat("upstream gzip response ", 256)
+	var encoded bytes.Buffer
+	writer := gzip.NewWriter(&encoded)
+	_, err := writer.Write([]byte(body))
+	require.Nil(t, err)
+	require.Nil(t, writer.Close())
+	var calls atomic.Int32
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", fmt.Sprint(encoded.Len()))
+		w.Header().Set("Vary", "Accept-Encoding")
+		w.Write(encoded.Bytes())
+	}), &corev1.Service_Spec_Config_HTTP{Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+		{Name: "response-cache", Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
+	}})
+	transport := &http.Transport{DisableCompression: true}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	for _, cache := range []string{"MISS", "HIT", "HIT"} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+"/encoded-cache", nil)
+		require.Nil(t, err)
+		req.Header.Set("Accept-Encoding", "gzip")
+		resp, err := client.Do(req)
+		require.Nil(t, err)
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, cache, resp.Header.Get("X-Cache"))
+		assert.Equal(t, "gzip", resp.Header.Get("Content-Encoding"))
+		assert.Equal(t, encoded.Bytes(), raw)
+		assert.Equal(t, int32(1), calls.Load())
+	}
+}
+
+func TestHTTPResponseCacheSensitiveHeaderLines(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header http.Header
+	}{
+		{name: "LaterCookie", header: http.Header{"Set-Cookie": {"", "session=private"}}},
+		{name: "LaterCookie2", header: http.Header{"Set-Cookie2": {"", "session=private"}}},
+		{name: "LaterContentRange", header: http.Header{"Content-Range": {"", "bytes 0-9/100"}}},
+		{name: "CombinedVary", header: http.Header{"Vary": {"Accept-Encoding, X-Tenant"}}},
+		{name: "LaterVary", header: http.Header{"Vary": {"Accept-Encoding", "X-Tenant"}}},
+		{name: "EmptyFirstVary", header: http.Header{"Vary": {"", "X-Tenant"}}},
+		{name: "LaterWildcard", header: http.Header{"Vary": {"", "*"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				for key, values := range tc.header {
+					w.Header()[key] = append([]string(nil), values...)
+				}
+				w.Write([]byte(r.Header.Get("X-Tenant")))
+			}), &corev1.Service_Spec_Config_HTTP{Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+				{Name: "response-cache", Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
+			}})
+			client := &http.Client{Timeout: 5 * time.Second}
+			for _, tenant := range []string{"tenant-one", "tenant-two"} {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+"/sensitive-cache", nil)
+				require.Nil(t, err)
+				req.Header.Set("X-Tenant", tenant)
+				resp, err := client.Do(req)
+				require.Nil(t, err)
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				require.Nil(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.Equal(t, "MISS", resp.Header.Get("X-Cache"))
+				assert.Equal(t, tenant, string(body))
+			}
+			assert.Equal(t, int32(2), calls.Load())
 		})
 	}
 }

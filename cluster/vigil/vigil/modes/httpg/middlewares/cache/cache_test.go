@@ -761,3 +761,49 @@ func TestPreAuthRefusesCredentialedRequests(t *testing.T) {
 			corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH))
 	}
 }
+
+func TestCacheResponseAdmissionAcceptEncoding(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []string
+		want   bool
+	}{
+		{name: "Absent", want: true},
+		{name: "Empty", values: []string{""}, want: true},
+		{name: "AcceptEncoding", values: []string{"Accept-Encoding"}, want: true},
+		{name: "CaseAndSpace", values: []string{"  aCcEpT-EnCoDiNg\t"}, want: true},
+		{name: "MultipleLines", values: []string{"Accept-Encoding", "accept-encoding"}, want: true},
+		{name: "Combined", values: []string{"Accept-Encoding, accept-encoding"}, want: true},
+		{name: "EmptyFirst", values: []string{"", "Accept-Encoding"}, want: true},
+		{name: "EmptyElements", values: []string{", Accept-Encoding, ,"}, want: true},
+		{name: "Wildcard", values: []string{"*"}},
+		{name: "Origin", values: []string{"Origin"}},
+		{name: "Tenant", values: []string{"X-Tenant"}},
+		{name: "CombinedTenant", values: []string{"Accept-Encoding, X-Tenant"}},
+		{name: "LaterTenant", values: []string{"Accept-Encoding", "X-Tenant"}},
+		{name: "LaterWildcard", values: []string{"Accept-Encoding", "*"}},
+		{name: "EmptyThenTenant", values: []string{"", "X-Tenant"}},
+		{name: "SimilarName", values: []string{"Accept-Encoding-Other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{"Vary": tc.values}
+			assert.Equal(t, tc.want, responseAllowsCache(headers))
+			assert.Equal(t, tc.values, headers.Values("Vary"))
+		})
+	}
+}
+
+func TestCacheResponseAdmissionSensitiveHeadersWithCompression(t *testing.T) {
+	for _, key := range []string{"Set-Cookie", "Set-Cookie2", "Content-Range", "Trailer"} {
+		t.Run(key, func(t *testing.T) {
+			for _, values := range [][]string{{"sensitive"}, {"", "sensitive"}, {"", "", "sensitive"}} {
+				headers := http.Header{"Vary": {"Accept-Encoding"}, key: values}
+				assert.False(t, responseAllowsCache(headers), values)
+			}
+		})
+	}
+	for _, directive := range []string{"private", "no-store", "no-cache", "max-age=0", "s-maxage=0"} {
+		headers := http.Header{"Vary": {"Accept-Encoding"}, "Cache-Control": {"public", directive}}
+		assert.False(t, responseAllowsCache(headers), directive)
+	}
+}

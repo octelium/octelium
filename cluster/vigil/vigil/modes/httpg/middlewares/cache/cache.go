@@ -649,22 +649,25 @@ func responseAllowsCache(headers http.Header) bool {
 		return true
 	}
 
-	if headers.Get("Set-Cookie") != "" ||
-		headers.Get("Set-Cookie2") != "" ||
-		headers.Get("Content-Range") != "" {
-		return false
-	}
-
-	if headers.Get("Trailer") != "" {
-		return false
+	for _, key := range []string{"Set-Cookie", "Set-Cookie2", "Content-Range", "Trailer"} {
+		for _, value := range headers.Values(key) {
+			if value != "" {
+				return false
+			}
+		}
 	}
 
 	if hasNoCacheDirective(headers.Values("Cache-Control")) {
 		return false
 	}
 
-	if strings.TrimSpace(headers.Get("Vary")) != "" {
-		return false
+	for _, value := range headers.Values("Vary") {
+		for _, field := range strings.Split(value, ",") {
+			field = strings.TrimSpace(field)
+			if field != "" && !strings.EqualFold(field, "Accept-Encoding") {
+				return false
+			}
+		}
 	}
 
 	return true
