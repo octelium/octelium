@@ -22,6 +22,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandleIndex(t *testing.T) {
@@ -241,6 +243,57 @@ func TestHandleLogin(t *testing.T) {
 		}
 	}
 
+}
+
+func TestHandleLoginPreservesEscapedRedirectTargets(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	clusterCfg, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(t.Context())
+	require.Nil(t, err)
+	srv, err := initServer(t.Context(), tst.C.OcteliumC, clusterCfg)
+	require.Nil(t, err)
+	adminSrv := admin.NewServer(&admin.Opts{OcteliumC: tst.C.OcteliumC, IsEmbedded: true})
+	usrT, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminSrv, nil, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENTLESS)
+	require.Nil(t, err)
+	usrT.Session.Status.IsBrowser = true
+	usrT.Session, err = tst.C.OcteliumC.CoreC().UpdateSession(t.Context(), usrT.Session)
+	require.Nil(t, err)
+	for _, tc := range []struct {
+		path    string
+		outside bool
+	}{
+		{path: "/items/a%2Fb?q=one%2Ftwo"},
+		{path: "/items/a%3Fb%23c?q=%26%3D%23"},
+		{path: "/items/a%252Fb%253Fc%2523d?q=%2526%253D"},
+		{path: "/items/a%2fb%3fc?q=%2f"},
+		{path: "/items/%E4%B8%AD?q=a+b&literal=a%2Bb"},
+		{path: "/items/item?"},
+		{path: "/items/item?z=1&a=2&a=&empty=&flag&value=%26redirect%3Dhttps%3A%2F%2Foutside.test"},
+		{path: "/%2F%2Foutside.test/%40name?q=value"},
+		{path: "/items/a%2Fb?q=value", outside: true},
+	} {
+		t.Run(fmt.Sprintf("%s/Outside=%t", tc.path, tc.outside), func(t *testing.T) {
+			target := "https://app." + srv.domain + tc.path
+			want := target
+			if tc.outside {
+				target = "https://outside.test" + tc.path
+				want = srv.getPortalURL()
+			}
+			query := url.Values{"redirect": {target}}
+			req := httptest.NewRequest(http.MethodGet, "https://"+srv.domain+"/login?"+query.Encode(), nil)
+			req.AddCookie(&http.Cookie{Name: "octelium_rt", Value: string(usrT.GetAccessToken().RefreshToken), Path: "/"})
+			rw := httptest.NewRecorder()
+			srv.handleLogin(rw, req)
+			require.Equal(t, http.StatusSeeOther, rw.Code)
+			assert.Equal(t, want, rw.Header().Get("Location"))
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			assert.Empty(t, location.Fragment)
+			assert.Nil(t, location.User)
+			assert.True(t, srv.isURLSameClusterOrigin(location.String()))
+		})
+	}
 }
 
 func TestHandleLoginClientRequest(t *testing.T) {

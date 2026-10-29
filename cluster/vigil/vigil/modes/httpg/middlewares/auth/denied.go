@@ -168,14 +168,14 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 						svc.Status.ManagedService.ForwardHost &&
 						(forwardedHost == m.domain || strings.HasSuffix(forwardedHost, "."+m.domain)) {
 
-						u := fmt.Sprintf("https://%s%s", forwardedHost, getDecodedPathWithQuery(req.URL))
+						u := fmt.Sprintf("https://%s%s", forwardedHost, getEscapedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
 						q.Set("redirect", u)
 						loginURL.RawQuery = q.Encode()
 					} else {
 						u := fmt.Sprintf("https://%s%s",
 							vutils.GetServicePublicFQDN(svc, m.domain),
-							getDecodedPathWithQuery(req.URL))
+							getEscapedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
 						q.Set("redirect", u)
 						loginURL.RawQuery = q.Encode()
@@ -195,9 +195,10 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 
 }
 
-func getDecodedPathWithQuery(u *url.URL) string {
-	if u.RawQuery == "" {
-		return u.Path
+func getEscapedPathWithQuery(u *url.URL) string {
+	path := u.EscapedPath()
+	if u.RawQuery == "" && !u.ForceQuery {
+		return path
 	}
-	return fmt.Sprintf("%s?%s", u.Path, u.RawQuery)
+	return path + "?" + u.RawQuery
 }

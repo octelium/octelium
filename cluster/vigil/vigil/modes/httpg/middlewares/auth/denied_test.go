@@ -307,3 +307,271 @@ func TestLoginRedirectRejectsMalformedForwardedHost(t *testing.T) {
 		})
 	}
 }
+
+func newLoginRedirectTestService() *corev1.Service {
+	return &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "app.default"},
+		Spec:     &corev1.Service_Spec{Mode: corev1.Service_Spec_HTTP, IsPublic: true},
+		Status:   &corev1.Service_Status{NamespaceRef: &metav1.ObjectReference{Name: "default"}},
+	}
+}
+
+func newLoginRedirectTestRequest(t *testing.T, target string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+	return req
+}
+
+func TestLoginRedirectEncodedTargets(t *testing.T) {
+	for _, forwarded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Forwarded=%t", forwarded), func(t *testing.T) {
+			for _, tc := range []struct {
+				path string
+				want string
+			}{
+				{"/", "/"},
+				{"/items/plain?q=value", "/items/plain?q=value"},
+				{"/items/a%2Fb?q=one%2Ftwo", "/items/a%2Fb?q=one%2Ftwo"},
+				{"/items/a%2fb%3fc%23d?q=%2f%3f%23", "/items/a%2fb%3fc%23d?q=%2f%3f%23"},
+				{"/items/a%3Fb%23c?q=value", "/items/a%3Fb%23c?q=value"},
+				{"/items/a%252Fb%253Fc%2523d?q=%2526%253D", "/items/a%252Fb%253Fc%2523d?q=%2526%253D"},
+				{"/items/a%20b?q=a+b&literal=a%2Bb", "/items/a%20b?q=a+b&literal=a%2Bb"},
+				{"/items/%E4%B8%AD/%F0%9F%94%92?q=%E2%9C%93", "/items/%E4%B8%AD/%F0%9F%94%92?q=%E2%9C%93"},
+				{"/items/café?q=%E2%9C%93", "/items/caf%C3%A9?q=%E2%9C%93"},
+				{"/items/100%25?q=%25", "/items/100%25?q=%25"},
+				{"/items/a%3Fb?redirect=https%3A%2F%2Foutside.test%2Fstart%3Fx%3D1%26y%3D2&redirect=second", "/items/a%3Fb?redirect=https%3A%2F%2Foutside.test%2Fstart%3Fx%3D1%26y%3D2&redirect=second"},
+				{"/items/item?z=1&a=2&a=&empty=&flag&encoded=%26key%3Dvalue&semi=x;y", "/items/item?z=1&a=2&a=&empty=&flag&encoded=%26key%3Dvalue&semi=x;y"},
+				{"/items/item?", "/items/item?"},
+				{"?q=value", "?q=value"},
+				{"?", "?"},
+				{"/items//a%2Fpart", "/items//a%2Fpart"},
+				{"/%2F%2Fattacker.test/%40name?q=value", "/%2F%2Fattacker.test/%40name?q=value"},
+				{"//attacker.test/path?q=value", "//attacker.test/path?q=value"},
+				{"/items/%5C%5Cattacker.test?q=value", "/items/%5C%5Cattacker.test?q=value"},
+			} {
+				t.Run(tc.path, func(t *testing.T) {
+					m := &middleware{domain: "example.com"}
+					svc := newLoginRedirectTestService()
+					req := newLoginRedirectTestRequest(t, "https://app.example.com"+tc.path)
+					wantHost := vutils.GetServicePublicFQDN(svc, m.domain)
+					if forwarded {
+						svc.Status.ManagedService = &corev1.Service_Status_ManagedService{ForwardHost: true}
+						req.Header.Set("X-Forwarded-Host", "custom.example.com")
+						wantHost = "custom.example.com"
+					}
+					original := *req.URL
+					rw := httptest.NewRecorder()
+					m.handleUnauthorized(rw, req, &middlewares.RequestContext{Service: svc})
+					require.Equal(t, http.StatusSeeOther, rw.Code)
+					assert.Equal(t, "true", rw.Header().Get("X-Octelium-Unauthorized"))
+					location, err := url.Parse(rw.Header().Get("Location"))
+					require.Nil(t, err)
+					assert.Equal(t, "https", location.Scheme)
+					assert.Equal(t, m.domain, location.Host)
+					assert.Equal(t, "/login", location.Path)
+					assert.Empty(t, location.Fragment)
+					query, err := url.ParseQuery(location.RawQuery)
+					require.Nil(t, err)
+					require.Len(t, query, 1)
+					require.Len(t, query["redirect"], 1)
+					assert.Equal(t, "https://"+wantHost+tc.want, query.Get("redirect"))
+					target, err := url.Parse(query.Get("redirect"))
+					require.Nil(t, err)
+					assert.Equal(t, "https", target.Scheme)
+					assert.Equal(t, wantHost, target.Host)
+					assert.Nil(t, target.User)
+					assert.Empty(t, target.Fragment)
+					assert.Equal(t, req.URL.Path, target.Path)
+					assert.Equal(t, req.URL.RawQuery, target.RawQuery)
+					assert.Equal(t, req.URL.ForceQuery, target.ForceQuery)
+					assert.Equal(t, original, *req.URL)
+				})
+			}
+		})
+	}
+}
+
+func TestLoginRedirectURLFields(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  *url.URL
+		want string
+	}{
+		{name: "EmptyPath", url: &url.URL{}, want: ""},
+		{name: "EmptyQuery", url: &url.URL{Path: "/items", ForceQuery: true}, want: "/items?"},
+		{name: "InvalidRawPath", url: &url.URL{Path: "/items/a?b#c", RawPath: "/items/a%zz"}, want: "/items/a%3Fb%23c"},
+		{name: "MismatchedRawPath", url: &url.URL{Path: "/items/a?b#c", RawPath: "//attacker.test/other"}, want: "/items/a%3Fb%23c"},
+		{name: "LiteralRawSeparators", url: &url.URL{Path: "/items/a?b#c", RawPath: "/items/a?b#c"}, want: "/items/a%3Fb%23c"},
+		{name: "ValidRawPath", url: &url.URL{Path: "/items/a/b?c", RawPath: "/items/a%2fb%3fc", RawQuery: "q=%26%3D%23"}, want: "/items/a%2fb%3fc?q=%26%3D%23"},
+		{name: "ControlCharacters", url: &url.URL{Path: "/items/\r\nLocation:evil"}, want: "/items/%0D%0ALocation:evil"},
+		{name: "UnrelatedURLFields", url: &url.URL{
+			Scheme: "http", Host: "attacker.test", User: url.UserPassword("attacker", "password"),
+			Opaque: "//attacker.test/other", Fragment: "client-side", RawFragment: "client-side",
+			Path: "/items/a?b#c", RawQuery: "redirect=https%3A%2F%2Foutside.test",
+		}, want: "/items/a%3Fb%23c?redirect=https%3A%2F%2Foutside.test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &middleware{domain: "example.com"}
+			svc := newLoginRedirectTestService()
+			req := newLoginRedirectTestRequest(t, "https://app.example.com/")
+			req.URL = tc.url
+			original := *req.URL
+			rw := httptest.NewRecorder()
+			m.handleUnauthorized(rw, req, &middlewares.RequestContext{Service: svc})
+			require.Equal(t, http.StatusSeeOther, rw.Code)
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			wantHost := vutils.GetServicePublicFQDN(svc, m.domain)
+			assert.Equal(t, "https://"+wantHost+tc.want, location.Query().Get("redirect"))
+			target, err := url.Parse(location.Query().Get("redirect"))
+			require.Nil(t, err)
+			assert.Equal(t, wantHost, target.Host)
+			assert.Nil(t, target.User)
+			assert.Empty(t, target.Fragment)
+			assert.Equal(t, req.URL.Path, target.Path)
+			assert.Equal(t, original, *req.URL)
+		})
+	}
+}
+
+func TestLoginRedirectHostSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed bool
+		forward bool
+		host    string
+		want    string
+	}{
+		{name: "OrdinaryService", host: "custom.example.com"},
+		{name: "ForwardingDisabled", managed: true, host: "custom.example.com"},
+		{name: "ManagedSubdomain", managed: true, forward: true, host: "custom.example.com", want: "custom.example.com"},
+		{name: "ManagedRoot", managed: true, forward: true, host: "example.com", want: "example.com"},
+		{name: "UnrelatedHost", managed: true, forward: true, host: "outside.test"},
+		{name: "SuffixBoundary", managed: true, forward: true, host: "notexample.com"},
+		{name: "EmptyHost", managed: true, forward: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &middleware{domain: "example.com"}
+			svc := newLoginRedirectTestService()
+			if tc.managed {
+				svc.Status.ManagedService = &corev1.Service_Status_ManagedService{ForwardHost: tc.forward}
+			}
+			req := newLoginRedirectTestRequest(t, "https://app.example.com/items/a%2Fb%3Fc%23d?q=%2F")
+			req.Header.Set("X-Forwarded-Host", tc.host)
+			rw := httptest.NewRecorder()
+			m.handleUnauthorized(rw, req, &middlewares.RequestContext{Service: svc})
+			require.Equal(t, http.StatusSeeOther, rw.Code)
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			wantHost := tc.want
+			if wantHost == "" {
+				wantHost = vutils.GetServicePublicFQDN(svc, m.domain)
+			}
+			assert.Equal(t, "https://"+wantHost+"/items/a%2Fb%3Fc%23d?q=%2F", location.Query().Get("redirect"))
+		})
+	}
+}
+
+func TestLoginRedirectEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		method        string
+		accept        string
+		userAgent     string
+		private       bool
+		anonymous     bool
+		authenticated bool
+		userType      corev1.User_Spec_Type
+		status        int
+		location      string
+	}{
+		{name: "Browser", status: http.StatusSeeOther, location: "/login"},
+		{name: "PrivateService", private: true, status: http.StatusSeeOther, location: "/login"},
+		{name: "AnonymousAuthorization", anonymous: true, status: http.StatusForbidden},
+		{name: "AuthenticatedHuman", authenticated: true, userType: corev1.User_Spec_HUMAN, status: http.StatusSeeOther, location: "/denied"},
+		{name: "AuthenticatedWorkload", authenticated: true, userType: corev1.User_Spec_WORKLOAD, status: http.StatusForbidden},
+		{name: "NonHTML", accept: "application/json", status: http.StatusUnauthorized},
+		{name: "NonBrowser", userAgent: "curl/8.0", status: http.StatusUnauthorized},
+		{name: "Post", method: http.MethodPost, status: http.StatusUnauthorized},
+		{name: "Head", method: http.MethodHead, status: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &middleware{domain: "example.com"}
+			svc := newLoginRedirectTestService()
+			svc.Spec.IsPublic = !tc.private
+			if tc.anonymous {
+				svc.Spec.IsAnonymous = true
+				svc.Spec.Authorization = &corev1.Service_Spec_Authorization{EnableAnonymous: true}
+			}
+			req := newLoginRedirectTestRequest(t, "https://app.example.com/items/a%3Fb%23c?q=value")
+			if tc.method != "" {
+				req.Method = tc.method
+			}
+			if tc.accept != "" {
+				req.Header.Set("Accept", tc.accept)
+			}
+			if tc.userAgent != "" {
+				req.Header.Set("User-Agent", tc.userAgent)
+			}
+			reqCtx := &middlewares.RequestContext{Service: svc, IsAuthenticated: tc.authenticated}
+			if tc.authenticated {
+				reqCtx.DownstreamInfo = &corev1.RequestContext{User: &corev1.User{Spec: &corev1.User_Spec{Type: tc.userType}}}
+			}
+			rw := httptest.NewRecorder()
+			m.handleUnauthorized(rw, req, reqCtx)
+			assert.Equal(t, tc.status, rw.Code)
+			if tc.location == "" {
+				assert.Empty(t, rw.Header().Get("Location"))
+				return
+			}
+			location, err := url.Parse(rw.Header().Get("Location"))
+			require.Nil(t, err)
+			assert.Equal(t, "https", location.Scheme)
+			assert.Equal(t, m.domain, location.Host)
+			assert.Equal(t, tc.location, location.Path)
+			if tc.private || tc.location == "/denied" {
+				assert.Empty(t, location.RawQuery)
+			} else {
+				assert.Equal(t, "https://"+vutils.GetServicePublicFQDN(svc, m.domain)+"/items/a%3Fb%23c?q=value", location.Query().Get("redirect"))
+			}
+		})
+	}
+}
+
+func FuzzLoginRedirectRequestTarget(f *testing.F) {
+	f.Add("a/b?c#d", "one+two&next=outside", false)
+	f.Add("a%2Fb%3Fc%23d", "%252F", true)
+	f.Add("", "", true)
+	f.Add("中/🔒", "é", false)
+	f.Add("\r\nLocation:https://outside.test", "?redirect=https://outside.test#fragment", false)
+	f.Fuzz(func(t *testing.T, path, query string, forceQuery bool) {
+		if len(path)+len(query) > 8*1024 {
+			t.Skip()
+		}
+		u := &url.URL{
+			Path: "/items/" + path, RawPath: "/items/" + url.PathEscape(path),
+			ForceQuery: forceQuery && query == "",
+		}
+		if query != "" {
+			u.RawQuery = "value=" + url.QueryEscape(query) + "&value=two+words&empty="
+		}
+		original := *u
+		queryValues := url.Values{"redirect": {"https://app.example.com" + getEscapedPathWithQuery(u)}}
+		login, err := url.Parse("https://example.com/login?" + queryValues.Encode())
+		require.Nil(t, err)
+		require.Len(t, login.Query(), 1)
+		target, err := url.Parse(login.Query().Get("redirect"))
+		require.Nil(t, err)
+		assert.Equal(t, "https", target.Scheme)
+		assert.Equal(t, "app.example.com", target.Host)
+		assert.Nil(t, target.User)
+		assert.Empty(t, target.Fragment)
+		assert.Equal(t, u.Path, target.Path)
+		assert.Equal(t, u.RawPath, target.EscapedPath())
+		assert.Equal(t, u.RawQuery, target.RawQuery)
+		assert.Equal(t, u.ForceQuery, target.ForceQuery)
+		assert.Equal(t, original, *u)
+	})
+}

@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4715,4 +4716,63 @@ func TestHTTPResponseCacheSensitiveHeaderLines(t *testing.T) {
 			assert.Equal(t, int32(2), calls.Load())
 		})
 	}
+}
+
+func TestHTTPLoginRedirectEncodedTargets(t *testing.T) {
+	var calls atomic.Int32
+	srv, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}), &corev1.Service_Spec_Config_HTTP{})
+	svc := pbutils.Clone(srv.vCache.GetService()).(*corev1.Service)
+	svc.Spec.IsAnonymous = false
+	svc, err := srv.octeliumC.CoreC().UpdateService(t.Context(), svc)
+	require.Nil(t, err)
+	srv.vCache.SetService(svc)
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	wantHost := vutils.GetServicePublicFQDN(svc, srv.domain)
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/items/plain?q=value", "/items/plain?q=value"},
+		{"/items/a%2Fb?q=%2F", "/items/a%2Fb?q=%2F"},
+		{"/items/a%3Fb%23c?q=value", "/items/a%3Fb%23c?q=value"},
+		{"/items/a%252Fb%253Fc%2523d?key=%252F", "/items/a%252Fb%253Fc%2523d?key=%252F"},
+		{"/items/%E4%B8%AD?q=a+b&value=a%2Bb", "/items/%E4%B8%AD?q=a+b&value=a%2Bb"},
+		{"/items/item?", "/items/item?"},
+		{"/items/100%25?flag&empty=&k=1&k=2", "/items/100%25?flag&empty=&k=1&k=2"},
+		{"/old/../items/a%3Fb%23c?q=%26%3D", "/items/a%3Fb%23c?q=%26%3D"},
+		{"/items/a%2fb%3fc?q=%2f", "/items/a%2fb%3fc?q=%2f"},
+		{"/%2F%2Fattacker.test/%40name?q=value", "/%2F%2Fattacker.test/%40name?q=value"},
+		{"/items/%5C%5Cattacker.test?q=value", "/items/%5C%5Cattacker.test?q=value"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+tc.path, nil)
+			require.Nil(t, err)
+			req.Header.Set("Accept", "text/html")
+			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+			resp, err := client.Do(req)
+			require.Nil(t, err)
+			_, err = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			require.Nil(t, err)
+			require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+			location, err := resp.Location()
+			require.Nil(t, err)
+			assert.Equal(t, "https", location.Scheme)
+			assert.Equal(t, srv.domain, location.Host)
+			assert.Equal(t, "/login", location.Path)
+			assert.Equal(t, "https://"+wantHost+tc.want, location.Query().Get("redirect"))
+			target, err := url.Parse(location.Query().Get("redirect"))
+			require.Nil(t, err)
+			assert.Equal(t, wantHost, target.Host)
+			assert.Empty(t, target.Fragment)
+		})
+	}
+	assert.Zero(t, calls.Load())
 }
