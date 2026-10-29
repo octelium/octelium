@@ -17,6 +17,8 @@
 package httputils
 
 import (
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -138,4 +140,55 @@ func CleanPath(path string) (string, error) {
 	cleanedPath, _ := RemoveDotSegments(path)
 
 	return cleanedPath, nil
+}
+
+func RewriteRequestPath(req *http.Request, removePrefix, addPrefix string) {
+	if removePrefix == "" && addPrefix == "" {
+		return
+	}
+
+	path := req.URL.Path
+	rawPath := req.URL.EscapedPath()
+	if removePrefix != "" {
+		if strings.HasPrefix(path, removePrefix) {
+			end := len(removePrefix)
+			if rawPath != path {
+				end = 0
+				for range len(removePrefix) {
+					if rawPath[end] == '%' {
+						end += 3
+					} else {
+						end++
+					}
+				}
+			}
+			path = path[len(removePrefix):]
+			rawPath = rawPath[end:]
+		}
+		path, rawPath = fixRewritePrefixSlash(path, rawPath)
+	}
+
+	if addPrefix != "" {
+		path = addPrefix + path
+		rawPath = (&url.URL{Path: addPrefix}).EscapedPath() + rawPath
+		path, rawPath = fixRewritePrefixSlash(path, rawPath)
+	}
+
+	if strings.HasPrefix(rawPath, "%2F") || strings.HasPrefix(rawPath, "%2f") {
+		rawPath = "/" + rawPath[3:]
+	}
+
+	req.URL.Path = path
+	req.URL.RawPath = rawPath
+	if (&url.URL{Path: path}).EscapedPath() == rawPath {
+		req.URL.RawPath = ""
+	}
+	req.RequestURI = req.URL.RequestURI()
+}
+
+func fixRewritePrefixSlash(path, rawPath string) (string, string) {
+	if path == "" || path[0] == '/' {
+		return path, rawPath
+	}
+	return "/" + path, "/" + rawPath
 }

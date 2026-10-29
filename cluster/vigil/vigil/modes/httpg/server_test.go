@@ -4420,3 +4420,76 @@ func TestClientServedWSSUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPPathRewriteEncodedVariants(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		remove   string
+		add      string
+		requests map[string]string
+	}{
+		{name: "Replace", remove: "/api/v1", add: "/backend", requests: map[string]string{
+			"/api/v1/probe":                            "/backend/probe",
+			"/api%2Fv1/item%2fpart?q=a%2Fb&v=%252F":    "/backend/item%2fpart?q=a%2Fb&v=%252F",
+			"/%61pi/v%31/%61%2fpart":                   "/backend/%61%2fpart",
+			"/api%2Fv1/%25value%3Fquery%23fragment":    "/backend/%25value%3Fquery%23fragment",
+			"/api%2Fv1//item%2Fpart?x=a+b&x=%2B&flag=": "/backend//item%2Fpart?x=a+b&x=%2B&flag=",
+			"/api%2Fv1?":                               "/backend?",
+		}},
+		{name: "RemoveOnly", remove: "/api", requests: map[string]string{
+			"/api%2Fitem%2fpart?q=a%2Fb": "/item%2fpart?q=a%2Fb",
+			"/api%2F%2fitem":             "/%2fitem",
+			"/api":                       "/",
+			"/api?":                      "/?",
+			"/apix%2Fy":                  "/x%2Fy",
+		}},
+		{name: "ReservedPrefix", remove: "/api", add: "/next%25", requests: map[string]string{
+			"/api/item%2Fpart":   "/next%2525/item%2Fpart",
+			"/api%2Fitem%2fpart": "/next%2525%2Fitem%2fpart",
+			"/api/item":          "/next%2525/item",
+			"/api?":              "/next%2525?",
+		}},
+	} {
+		for _, mode := range []string{"Service", "PreAuthPlugin", "PostAuthPlugin", "PluginThenService"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				cfg := &corev1.Service_Spec_Config_HTTP{}
+				if mode == "Service" {
+					cfg.Path = &corev1.Service_Spec_Config_HTTP_Path{RemovePrefix: tc.remove, AddPrefix: tc.add}
+				} else {
+					phase := corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH
+					if mode == "PreAuthPlugin" {
+						phase = corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH
+					}
+					add := tc.add
+					if mode == "PluginThenService" {
+						add = "/stage%25"
+						cfg.Path = &corev1.Service_Spec_Config_HTTP_Path{RemovePrefix: add, AddPrefix: tc.add}
+					}
+					cfg.Plugins = []*corev1.Service_Spec_Config_HTTP_Plugin{{
+						Name: "rewrite", Phase: phase,
+						Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						Type: &corev1.Service_Spec_Config_HTTP_Plugin_Path_{Path: &corev1.Service_Spec_Config_HTTP_Plugin_Path{
+							RemovePrefix: tc.remove, AddPrefix: add,
+						}},
+					}}
+				}
+				_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Write([]byte(r.RequestURI))
+				}), cfg)
+				client := &http.Client{Timeout: 3 * time.Second}
+				defer client.CloseIdleConnections()
+				for target, want := range tc.requests {
+					t.Run(target, func(t *testing.T) {
+						response, err := client.Get(addr + target)
+						require.Nil(t, err)
+						defer response.Body.Close()
+						body, err := io.ReadAll(response.Body)
+						require.Nil(t, err)
+						assert.Equal(t, http.StatusOK, response.StatusCode)
+						assert.Equal(t, want, string(body))
+					})
+				}
+			})
+		}
+	}
+}

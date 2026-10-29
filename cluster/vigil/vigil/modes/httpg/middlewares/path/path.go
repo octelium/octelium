@@ -19,10 +19,10 @@ package path
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/celengine"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -72,40 +72,11 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 
 			pth := plugin.GetPath()
-
-			if pth.RemovePrefix != "" {
-				req.URL.Path = fixPrefixSlash(strings.TrimPrefix(req.URL.Path, pth.RemovePrefix))
-				if req.URL.RawPath != "" {
-					req.URL.RawPath = fixPrefixSlash(strings.TrimPrefix(req.URL.RawPath, pth.RemovePrefix))
-				}
-
-				req.RequestURI = req.URL.RequestURI()
-			}
-
-			if pth.AddPrefix != "" {
-				req.URL.Path = fixPrefixSlash(pth.AddPrefix + req.URL.Path)
-				if req.URL.RawPath != "" {
-					req.URL.RawPath = fixPrefixSlash(pth.AddPrefix + req.URL.RawPath)
-				}
-
-				req.RequestURI = req.URL.RequestURI()
-			}
+			httputils.RewriteRequestPath(req, pth.RemovePrefix, pth.AddPrefix)
 		default:
 			continue
 		}
 	}
 
 	m.next.ServeHTTP(rw, req)
-}
-
-func fixPrefixSlash(arg string) string {
-	if arg == "" {
-		return arg
-	}
-
-	if arg[0] == '/' {
-		return arg
-	}
-
-	return "/" + arg
 }
