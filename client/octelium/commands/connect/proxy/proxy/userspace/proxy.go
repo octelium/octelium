@@ -17,7 +17,9 @@ package userspace
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -28,7 +30,11 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy/proxy/userspace/udp"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+)
+
+const (
+	listenerRetryMin = 250 * time.Millisecond
+	listenerRetryMax = 5 * time.Second
 )
 
 type listener struct {
@@ -52,6 +58,9 @@ type Proxy struct {
 	listeners []*listener
 	opts      *Opts
 	cancelFn  context.CancelFunc
+	mu        sync.Mutex
+	isClosed  bool
+	wg        sync.WaitGroup
 }
 
 type Opts struct {
@@ -126,36 +135,103 @@ func NewProxyFromServiceListener(listener *userv1.HostedService, addr *metav1.Du
 }
 
 func (p *Proxy) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.isClosed {
+		return errors.Errorf("The proxy is already closed")
+	}
+	if p.cancelFn != nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.opts.Upstream.Port > 65535 {
+		return errors.Errorf("Invalid upstream port: %d", p.opts.Upstream.Port)
+	}
+	for _, l := range p.listeners {
+		if l.port > 65535 {
+			return errors.Errorf("Invalid listener port: %d", l.port)
+		}
+		if l.address != "" {
+			if _, err := netip.ParseAddr(l.address); err != nil {
+				return errors.Wrapf(err, "Invalid listener address: %s", l.address)
+			}
+		}
+	}
 	ctx, cancelFn := context.WithCancel(ctx)
 	p.cancelFn = cancelFn
 
 	for _, l := range p.listeners {
-		if err := l.start(ctx); err != nil {
-			return err
-		}
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			l.start(ctx)
+		}()
 	}
 
 	return nil
 }
 
 func (p *Proxy) Close() error {
+	p.mu.Lock()
+	p.isClosed = true
+	if p.cancelFn != nil {
+		p.cancelFn()
+	}
+	p.mu.Unlock()
 
 	for _, l := range p.listeners {
 		l.close()
 	}
 
-	p.cancelFn()
+	p.wg.Wait()
 
 	return nil
 }
 
 func (l *listener) start(ctx context.Context) error {
-	switch l.opts.L4Type {
-	case userv1.HostedService_UDP:
-		return l.startUDP(ctx)
-	default:
-		return l.startTCP(ctx)
+	stop := context.AfterFunc(ctx, func() { l.close() })
+	defer stop()
+	defer l.close()
+	start := l.doStartTCP
+	if l.opts.L4Type == userv1.HostedService_UDP {
+		start = l.doStartUDP
 	}
+	delay := listenerRetryMin
+	var lastWarning time.Time
+	for {
+		if ctx.Err() != nil || l.closed() {
+			return nil
+		}
+		started := time.Now()
+		err := start(ctx)
+		if ctx.Err() != nil || l.closed() {
+			return nil
+		}
+		if time.Since(started) >= listenerRetryMax {
+			delay = listenerRetryMin
+		}
+		if lastWarning.IsZero() || time.Since(lastWarning) >= 30*time.Second {
+			zap.L().Warn("Service listener failed. Retrying",
+				zap.String("listener", l.name), zap.Error(err))
+			lastWarning = time.Now()
+		}
+		timer := time.NewTimer(delay/2 + time.Duration(rand.Int64N(int64(delay/2)+1)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+		delay = min(2*delay, listenerRetryMax)
+	}
+}
+
+func (l *listener) closed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.isClosed
 }
 
 func (l *listener) close() error {
@@ -224,75 +300,45 @@ func (l *listener) setUDPLis(lis *udp.Listener) bool {
 	return true
 }
 
-func (l *listener) startUDP(ctx context.Context) error {
-	go l.doStartUDP(ctx)
-	return nil
-}
-
-func (l *listener) startTCP(ctx context.Context) error {
-	go l.doStartTCP(ctx)
-	return nil
-}
-
 func (l *listener) doStartTCP(ctx context.Context) error {
 
 	pp, err := tcp.NewProxy(l.upstreamHost)
 	if err != nil {
-		zap.S().Errorf("Could not initialize new TCP proxy: %+v", err)
 		return err
 	}
 
 	listenerAddr := net.JoinHostPort(l.address, fmt.Sprintf("%d", l.port))
 
 	lis, err := func() (net.Listener, error) {
-		var err error
-		var listener net.Listener
-		for i := 0; i < 100; i++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-
-			gonet := l.opts.goNetCtl.GetGoNet()
-
-			if gonet != nil {
-
-				zap.L().Debug("Proxy listening in gvisor mode")
-				tcpAddr, err := net.ResolveTCPAddr("tcp", listenerAddr)
+		if l.opts.goNetCtl != nil {
+			if goNet := l.opts.goNetCtl.GetGoNet(); goNet != nil {
+				addr, err := net.ResolveTCPAddr("tcp", listenerAddr)
 				if err != nil {
 					return nil, err
 				}
-
-				listener, err = gonet.ListenTCP(tcpAddr)
-				if err == nil {
-					return listener, nil
-				}
-
-			} else {
-				zap.L().Debug("Proxy listening in host mode")
-				listener, err = net.Listen("tcp", listenerAddr)
-				if err == nil {
-					return listener, nil
-				}
+				return goNet.ListenTCP(addr)
 			}
-
-			zap.S().Warnf("Could not listen on TCP port on %s: %+v. Trying again (attempt %d).", listenerAddr, err, i)
-			time.Sleep(250 * time.Millisecond)
 		}
-		return nil, errors.Errorf("Could not listen on TCP port on %s:.", listenerAddr)
+		return net.Listen("tcp", listenerAddr)
 	}()
 	if err != nil {
-		zap.S().Errorf("Could not listen on TCP port on %s: %+v", listenerAddr, err)
 		return err
 	}
+	defer func() {
+		lis.Close()
+		l.mu.Lock()
+		if l.lis == lis {
+			l.lis = nil
+		}
+		l.mu.Unlock()
+	}()
 
-	if !l.setLis(lis) {
+	if ctx.Err() != nil || !l.setLis(lis) {
 		zap.S().Debugf("TCP listener %s was closed before it started", listenerAddr)
-		return lis.Close()
+		return nil
 	}
 
 	zap.S().Debugf("TCP listener %s successfully started", listenerAddr)
-
-	defer l.close()
 
 	for {
 		select {
@@ -302,9 +348,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 		default:
 			conn, err := lis.Accept()
 			if err != nil {
-				zap.S().Debugf("Could not accept conn: %+v", err)
-				time.Sleep(100 * time.Millisecond)
-				continue
+				return err
 			}
 
 			if !l.addConn(conn) {
@@ -330,13 +374,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 					return
 				}
 
-				kgonet := l.opts.goNetCtl.GetGoNet()
-
-				if kgonet != nil {
-					pp.ServeTCP(conn.(*gonet.TCPConn), connBackend)
-				} else {
-					pp.ServeTCP(conn.(*net.TCPConn), connBackend)
-				}
+				pp.ServeTCP(conn.(tcp.WriteCloser), connBackend)
 
 				zap.S().Debugf("Done serving connection on %s", listenerAddr)
 			}(conn)
@@ -361,16 +399,23 @@ func (l *listener) doStartUDP(ctx context.Context) error {
 
 	udpLis, err := udp.Listen("udp", addrL)
 	if err != nil {
-		zap.S().Errorf("Could not listen on UDP addr %s", listenerAddr)
 		return err
 	}
+	defer func() {
+		udpLis.Close()
+		l.mu.Lock()
+		if l.udpLis == udpLis {
+			l.udpLis = nil
+		}
+		l.mu.Unlock()
+	}()
 
-	if !l.setUDPLis(udpLis) {
+	if ctx.Err() != nil || !l.setUDPLis(udpLis) {
 		zap.S().Debugf("UDP listener %s was closed before it started", listenerAddr)
-		return udpLis.Close()
+		return nil
 	}
 
-	defer l.close()
+	zap.S().Debugf("UDP listener %s successfully started", listenerAddr)
 
 	for {
 		select {
@@ -380,9 +425,7 @@ func (l *listener) doStartUDP(ctx context.Context) error {
 		default:
 			conn, err := udpLis.Accept()
 			if err != nil {
-				zap.S().Debugf("Could not accept conn: %+v", err)
-				time.Sleep(100 * time.Millisecond)
-				continue
+				return err
 			}
 
 			go func() {

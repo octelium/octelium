@@ -1761,3 +1761,113 @@ func TestDaemonMissingPublicationLifecycleOverIPC(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	for _, recoverListener := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recover-%t", recoverListener), func(t *testing.T) {
+			backend, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				buf := make([]byte, 1024)
+				for {
+					n, addr, err := backend.ReadFrom(buf)
+					if err != nil {
+						return
+					}
+					backend.WriteTo(buf[:n], addr)
+				}
+			}()
+			t.Cleanup(func() { backend.Close(); <-done })
+			blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { blocker.Close() })
+			addr := blocker.LocalAddr().String()
+			port := uint32(blocker.LocalAddr().(*net.UDPAddr).Port)
+			var attempts atomic.Int32
+			startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempts.Add(1)
+				req, err := stream.Recv()
+				if err != nil {
+					return err
+				}
+				assert.True(t, req.GetInitialize().GetServiceOptions().GetServeAll())
+				initial := testDaemonInitialState()
+				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
+					Name: "served.default", Port: port, L4Type: userv1.HostedService_UDP,
+					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.LocalAddr().(*net.UDPAddr).Port)},
+				}}}
+				if err := stream.Send(initial); err != nil {
+					return err
+				}
+				<-stream.Context().Done()
+				return nil
+			}})
+			srv := newTestServer(t)
+			authenticateTestDaemonDomain(t, srv)
+			dnsSocket, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			dnsAddr := dnsSocket.LocalAddr().String()
+			require.NoError(t, dnsSocket.Close())
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			_, err = srv.c.Connect(ctx, &daemonv1.ConnectRequest{Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+				L3Mode: daemonv1.ConnectionOptions_V4, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+				Dns:            &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED, LocalServerListenAddress: dnsAddr},
+				ServiceOptions: &daemonv1.ConnectionOptions_ServiceOptions{ServeAll: true},
+			}})
+			require.NoError(t, err)
+			var first *daemonv1.DomainState
+			require.Eventually(t, func() bool {
+				state, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+				if err != nil || len(state.Domains) != 1 {
+					return false
+				}
+				first = state.Domains[0]
+				return first.Connection.State == daemonv1.ConnectionStatus_CONNECTED
+			}, 5*time.Second, 10*time.Millisecond)
+			if recoverListener {
+				require.NoError(t, blocker.Close())
+				require.Eventually(t, func() bool {
+					conn, err := net.Dial("udp", addr)
+					if err != nil {
+						return false
+					}
+					defer conn.Close()
+					conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+					if _, err := conn.Write([]byte("served through daemon IPC")); err != nil {
+						return false
+					}
+					buf := make([]byte, 128)
+					n, err := conn.Read(buf)
+					return err == nil && string(buf[:n]) == "served through daemon IPC"
+				}, 6*time.Second, 10*time.Millisecond)
+			}
+			state, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+			require.NoError(t, err)
+			require.Len(t, state.Domains, 1)
+			current := state.Domains[0]
+			assert.Equal(t, daemonv1.ConnectionStatus_CONNECTED, current.Connection.State)
+			assert.Equal(t, first.Connection.ConnectedAt.AsTime(), current.Connection.ConnectedAt.AsTime())
+			assert.Nil(t, current.LastError)
+			assert.Equal(t, int32(1), attempts.Load())
+			operation, err := srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				op, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: operation.Id})
+				return err == nil && op.State == daemonv1.Operation_SUCCEEDED
+			}, 3*time.Second, 10*time.Millisecond)
+			if !recoverListener {
+				require.NoError(t, blocker.Close())
+			}
+			probe, err := net.ListenPacket("udp", addr)
+			require.NoError(t, err, "disconnect must release and stop retrying the served listener")
+			assert.NoError(t, probe.Close())
+		})
+	}
+}

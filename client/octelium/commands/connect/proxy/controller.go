@@ -66,16 +66,27 @@ func NewController(ctx context.Context, c *cliconfigv1.Connection, goNetCtl ccom
 
 func (c *Controller) Start(ctx context.Context) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.isClosed {
-		c.mu.Unlock()
 		return errors.Errorf("The proxy controller is already closed")
 	}
+	if c.ctx != nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.ctx, c.cancelFn = context.WithCancel(ctx)
-	c.mu.Unlock()
 
 	zap.L().Debug("Starting proxy controller")
 
-	return c.ctl.Start(ctx)
+	if err := c.ctl.Start(c.ctx); err != nil {
+		c.cancelFn()
+		c.isClosed = true
+		c.ctl.Close()
+		return err
+	}
+	return nil
 }
 
 func (c *Controller) getCtx() (context.Context, error) {

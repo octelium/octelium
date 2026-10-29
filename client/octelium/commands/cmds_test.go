@@ -304,3 +304,196 @@ func TestClientCommandE2E(t *testing.T) {
 		assert.NoError(t, p.wait(t, 2*time.Second))
 	})
 }
+
+func newTestCommandServedBackend(t *testing.T) *net.UDPAddr {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1024)
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if _, err := conn.WriteTo(buf[:n], addr); err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { conn.Close(); <-done })
+	return conn.LocalAddr().(*net.UDPAddr)
+}
+
+func testCommandServedRoundTrip(addr string) bool {
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	msg := []byte("served by the octelium executable")
+	if _, err := conn.Write(msg); err != nil {
+		return false
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	return err == nil && string(buf[:n]) == string(msg)
+}
+
+func TestClientServedListenerRecoveryE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	for _, scenario := range []string{"InitialService", "LegacyInitialService", "StreamedAdd", "UpdateWhilePending", "APIReconnect", "CancelWhilePending", "DeleteWhilePending"} {
+		t.Run(scenario, func(t *testing.T) {
+			backend := newTestCommandServedBackend(t)
+			blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { blocker.Close() })
+			nextBlocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { nextBlocker.Close() })
+			free, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			healthyAddr := free.LocalAddr().String()
+			healthyPort := uint32(free.LocalAddr().(*net.UDPAddr).Port)
+			require.NoError(t, free.Close())
+			service := func(name string, port uint32) *userv1.HostedService {
+				return &userv1.HostedService{
+					Name: name, Port: port, L4Type: userv1.HostedService_UDP,
+					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+				}
+			}
+			healthy := service("healthy.default", healthyPort)
+			pending := service("pending.default", uint32(blocker.LocalAddr().(*net.UDPAddr).Port))
+			next := service(pending.Name, uint32(nextBlocker.LocalAddr().(*net.UDPAddr).Port))
+			messages := make(chan *userv1.ConnectResponse, 8)
+			restart, disconnect := make(chan struct{}), make(chan struct{})
+			var attempts atomic.Int32
+			socket := startTestCommandAPI(t, &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				req, err := stream.Recv()
+				if err != nil {
+					return err
+				}
+				if !req.GetInitialize().GetServiceOptions().GetServeAll() {
+					return status.Error(codes.InvalidArgument, "missing serve-all request")
+				}
+				initial := testCommandInitialState()
+				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{healthy}}
+				if scenario != "StreamedAdd" {
+					target := pending
+					if attempt > 1 {
+						target = next
+					}
+					initial.GetState().ServiceOptions.Services = append(initial.GetState().ServiceOptions.Services, target)
+				}
+				if scenario == "LegacyInitialService" {
+					initial.CreatedAt = nil
+				}
+				if err := stream.Send(initial); err != nil {
+					return err
+				}
+				restartCh := restart
+				if attempt > 1 {
+					restartCh = nil
+				}
+				for {
+					select {
+					case msg := <-messages:
+						if scenario != "LegacyInitialService" {
+							msg.CreatedAt = timestamppb.Now()
+						}
+						if err := stream.Send(msg); err != nil {
+							return err
+						}
+					case <-restartCh:
+						return status.Error(codes.Unavailable, "API server restart")
+					case <-disconnect:
+						return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+					case <-stream.Context().Done():
+						return nil
+					}
+				}
+			}})
+			p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+				"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+				"--no-dns", "--implementation", "gvisor", "--serve-all", "--localdns-addr", "127.0.0.1:0")
+			require.Eventually(t, func() bool { return testCommandServedRoundTrip(healthyAddr) }, 8*time.Second, 10*time.Millisecond)
+			if scenario == "StreamedAdd" {
+				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: pending}}}
+			}
+			time.Sleep(150 * time.Millisecond)
+			if scenario == "DeleteWhilePending" {
+				require.NoError(t, nextBlocker.Close())
+				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: pending.Name}}}
+				barrier := service("barrier.default", next.Port)
+				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: barrier}}}
+				require.Eventually(t, func() bool { return testCommandServedRoundTrip(nextBlocker.LocalAddr().String()) }, 3*time.Second, 10*time.Millisecond)
+				require.NoError(t, blocker.Close())
+				assert.False(t, testCommandServedRoundTrip(blocker.LocalAddr().String()))
+				require.True(t, testCommandServedRoundTrip(healthyAddr))
+				close(disconnect)
+				require.NoError(t, p.wait(t, 3*time.Second))
+			} else if scenario == "CancelWhilePending" {
+				require.NoError(t, p.cmd.Process.Signal(os.Interrupt))
+				require.NoError(t, p.wait(t, 3*time.Second))
+				require.NoError(t, blocker.Close())
+			} else {
+				targetAddr := blocker.LocalAddr().String()
+				if scenario == "APIReconnect" {
+					close(restart)
+					require.Eventually(t, func() bool { return attempts.Load() == 2 }, 8*time.Second, 10*time.Millisecond)
+					require.Eventually(t, func() bool { return testCommandServedRoundTrip(healthyAddr) }, 3*time.Second, 10*time.Millisecond)
+					require.NoError(t, blocker.Close())
+					require.NoError(t, nextBlocker.Close())
+					targetAddr = nextBlocker.LocalAddr().String()
+				} else if scenario == "UpdateWhilePending" {
+					require.NoError(t, nextBlocker.Close())
+					messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: next}}}
+					targetAddr = nextBlocker.LocalAddr().String()
+					require.NoError(t, blocker.Close())
+				} else {
+					messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: pending}}}
+					require.NoError(t, blocker.Close())
+				}
+				require.Eventually(t, func() bool { return testCommandServedRoundTrip(targetAddr) }, 6*time.Second, 10*time.Millisecond)
+				require.True(t, testCommandServedRoundTrip(healthyAddr))
+				if scenario == "APIReconnect" || scenario == "UpdateWhilePending" {
+					assert.False(t, testCommandServedRoundTrip(blocker.LocalAddr().String()), "an old controller must not restore its pending listener")
+				}
+				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: pending.Name}}}
+				require.Eventually(t, func() bool {
+					probe, err := net.ListenPacket("udp", targetAddr)
+					if err != nil {
+						return false
+					}
+					probe.Close()
+					return true
+				}, 3*time.Second, 10*time.Millisecond)
+				close(disconnect)
+				require.NoError(t, p.wait(t, 3*time.Second))
+			}
+			wantAttempts := int32(1)
+			if scenario == "APIReconnect" {
+				wantAttempts = 2
+			}
+			assert.Equal(t, wantAttempts, attempts.Load())
+			assert.Contains(t, p.output.String(), "Connected successfully")
+			probe, err := net.ListenPacket("udp", healthyAddr)
+			require.NoError(t, err, "disconnect must release healthy served listeners")
+			assert.NoError(t, probe.Close())
+		})
+	}
+}

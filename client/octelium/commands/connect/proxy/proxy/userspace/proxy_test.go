@@ -16,16 +16,26 @@ package userspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+	"golang.zx2c4.com/wireguard/tun/netstack"
+	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 )
 
 var testServerPort uint32 = 8090
@@ -203,4 +213,472 @@ func initTCPClient(addr string, port uint32) error {
 	}
 
 	return conn.Close()
+}
+
+type testRetryGoNet struct {
+	calls atomic.Int32
+}
+
+func (n *testRetryGoNet) GetGoNet() ccommon.GoNet {
+	return n
+}
+
+func (n *testRetryGoNet) ListenTCP(addr *net.TCPAddr) (*gonet.TCPListener, error) {
+	n.calls.Add(1)
+	return nil, errors.New("the interface is temporarily unavailable")
+}
+
+func TestServedTCPListenerKeepsRetryingAfterStartupWindow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := &testRetryGoNet{}
+		p := NewProxy(&Opts{
+			Name: "retry.default", L4Type: userv1.HostedService_TCP, goNetCtl: n,
+			Listeners: []OptsListener{{Address: "127.0.0.1", Port: 12345}},
+			Upstream:  OptsUpstream{Address: "127.0.0.1", Port: 12346},
+		})
+		require.NoError(t, p.Start(context.Background()))
+		synctest.Wait()
+		time.Sleep(30 * time.Second)
+		synctest.Wait()
+		before := n.calls.Load()
+		time.Sleep(60 * time.Second)
+		synctest.Wait()
+		assert.Greater(t, n.calls.Load(), before, "a configured Service must keep retrying after the old startup limit")
+		require.NoError(t, p.Close())
+		synctest.Wait()
+		closed := n.calls.Load()
+		time.Sleep(30 * time.Second)
+		synctest.Wait()
+		assert.Equal(t, closed, n.calls.Load())
+	})
+}
+
+func TestServedUDPListenerRecoversAfterPortReleased(t *testing.T) {
+	blocker, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	require.NoError(t, err)
+	t.Cleanup(func() { blocker.Close() })
+	p := NewProxy(&Opts{
+		Name: "retry.default", L4Type: userv1.HostedService_UDP, goNetCtl: &ccommon.TestGoNetCtl{},
+		Listeners: []OptsListener{{Address: "127.0.0.1", Port: uint32(blocker.LocalAddr().(*net.UDPAddr).Port)}},
+		Upstream:  OptsUpstream{Address: "127.0.0.1", Port: 12346},
+	})
+	require.NoError(t, p.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, p.Close()) })
+	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool {
+		l := p.listeners[0]
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.udpLis != nil
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func newTestServedBackend(t *testing.T, network string) net.Addr {
+	t.Helper()
+	if network == "udp" {
+		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+		require.NoError(t, err)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			buf := make([]byte, 1024)
+			for {
+				n, addr, err := conn.ReadFrom(buf)
+				if err != nil {
+					return
+				}
+				if _, err := conn.WriteTo(buf[:n], addr); err != nil {
+					return
+				}
+			}
+		}()
+		t.Cleanup(func() { conn.Close(); <-done })
+		return conn.LocalAddr()
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer conn.Close()
+				stop := context.AfterFunc(ctx, func() { conn.Close() })
+				defer stop()
+				io.Copy(conn, conn)
+			}()
+		}
+	}()
+	t.Cleanup(func() { cancel(); lis.Close(); wg.Wait() })
+	return lis.Addr()
+}
+
+func testServedEcho(conn net.Conn) error {
+	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	msg := []byte("served listener recovery")
+	if _, err := conn.Write(msg); err != nil {
+		return err
+	}
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return err
+	}
+	if string(buf) != string(msg) {
+		return errors.New("the served listener returned an unexpected response")
+	}
+	return nil
+}
+
+func testServedRoundTrip(network, addr string) bool {
+	conn, err := net.DialTimeout(network, addr, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	return testServedEcho(conn) == nil
+}
+
+func testServedListenerAddress(l *listener) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lis != nil {
+		return l.lis.Addr().String()
+	}
+	if l.udpLis != nil {
+		return l.udpLis.Addr().String()
+	}
+	return ""
+}
+
+func newTestServedOpts(t *testing.T, network string) *Opts {
+	t.Helper()
+	addr := newTestServedBackend(t, network)
+	host, port, err := net.SplitHostPort(addr.String())
+	require.NoError(t, err)
+	var number uint32
+	_, err = fmt.Sscan(port, &number)
+	require.NoError(t, err)
+	l4 := userv1.HostedService_TCP
+	if network == "udp" {
+		l4 = userv1.HostedService_UDP
+	}
+	return &Opts{
+		Name: "recovery.default", L4Type: l4,
+		Listeners: []OptsListener{{Address: "127.0.0.1"}},
+		Upstream:  OptsUpstream{Address: host, Port: number},
+	}
+}
+
+func TestServedTCPPortRecoveryPreservesHealthyListener(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { blocker.Close() })
+	opts := newTestServedOpts(t, "tcp")
+	opts.Listeners = append(opts.Listeners, OptsListener{
+		Address: "127.0.0.1", Port: uint32(blocker.Addr().(*net.TCPAddr).Port),
+	})
+	p := NewProxy(opts)
+	require.NoError(t, p.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, p.Close()) })
+	require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+	conn, err := net.Dial("tcp", testServedListenerAddress(p.listeners[0]))
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, testServedEcho(conn))
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t, testServedEcho(conn))
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool { return testServedRoundTrip("tcp", blocker.Addr().String()) }, 6*time.Second, 10*time.Millisecond)
+	require.NoError(t, testServedEcho(conn))
+}
+
+func TestServedUDPPortRecoveryForwardsTraffic(t *testing.T) {
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { blocker.Close() })
+	opts := newTestServedOpts(t, "udp")
+	opts.Listeners[0].Port = uint32(blocker.LocalAddr().(*net.UDPAddr).Port)
+	p := NewProxy(opts)
+	require.NoError(t, p.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, p.Close()) })
+	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool { return testServedRoundTrip("udp", blocker.LocalAddr().String()) }, 6*time.Second, 10*time.Millisecond)
+	require.NoError(t, p.Close())
+	conn, err := net.ListenPacket("udp", blocker.LocalAddr().String())
+	require.NoError(t, err)
+	assert.NoError(t, conn.Close())
+}
+
+func TestServedParentCancellationReleasesBlockedAccept(t *testing.T) {
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			p := NewProxy(newTestServedOpts(t, network))
+			require.NoError(t, p.Start(ctx))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+			addr := testServedListenerAddress(p.listeners[0])
+			cancel()
+			require.Eventually(t, func() bool { return p.listeners[0].closed() }, time.Second, time.Millisecond)
+			require.NoError(t, p.Close())
+			if network == "tcp" {
+				lis, err := net.Listen(network, addr)
+				require.NoError(t, err)
+				assert.NoError(t, lis.Close())
+			} else {
+				conn, err := net.ListenPacket(network, addr)
+				require.NoError(t, err)
+				assert.NoError(t, conn.Close())
+			}
+		})
+	}
+}
+
+func TestServedProxyStartAndCloseAreIdempotent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := &testRetryGoNet{}
+		p := NewProxy(&Opts{
+			Name: "repeat.default", goNetCtl: n,
+			Listeners: []OptsListener{{Address: "127.0.0.1", Port: 12345}},
+		})
+		for range 10 {
+			require.NoError(t, p.Start(context.Background()))
+		}
+		synctest.Wait()
+		assert.Equal(t, int32(1), n.calls.Load())
+		for range 10 {
+			require.NoError(t, p.Close())
+		}
+		synctest.Wait()
+		require.Error(t, p.Start(context.Background()))
+		before := n.calls.Load()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.Equal(t, before, n.calls.Load())
+		p = NewProxy(&Opts{Listeners: []OptsListener{{Address: "127.0.0.1"}}})
+		require.NoError(t, p.Close())
+		require.NoError(t, p.Close())
+		require.Error(t, p.Start(context.Background()))
+	})
+}
+
+func TestServedProxyConcurrentStartClose(t *testing.T) {
+	for range 20 {
+		p := NewProxy(&Opts{Listeners: []OptsListener{{Address: "127.0.0.1"}}})
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(func() { p.Start(t.Context()) })
+			wg.Go(func() { assert.NoError(t, p.Close()) })
+		}
+		wg.Wait()
+		require.NoError(t, p.Close())
+		require.Empty(t, testServedListenerAddress(p.listeners[0]))
+	}
+}
+
+func TestServedInvalidConfigurationDoesNotStartListeners(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		edit func(*Opts)
+	}{
+		{"ListenerPort", func(o *Opts) { o.Listeners[1].Port = 65536 }},
+		{"ListenerAddress", func(o *Opts) { o.Listeners[1].Address = "invalid address" }},
+		{"UpstreamPort", func(o *Opts) { o.Upstream.Port = 65536 }},
+		{"NegativeUpstreamPort", func(o *Opts) { o.Upstream.Port = 4294967295 }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			n := &testRetryGoNet{}
+			opts := &Opts{goNetCtl: n, Listeners: []OptsListener{{Address: "127.0.0.1"}, {Address: "::1"}}}
+			tt.edit(opts)
+			p := NewProxy(opts)
+			require.Error(t, p.Start(t.Context()))
+			require.NoError(t, p.Close())
+			assert.Zero(t, n.calls.Load())
+			for _, l := range p.listeners {
+				assert.Empty(t, testServedListenerAddress(l))
+			}
+		})
+	}
+}
+
+func TestServedCanceledStartDoesNotBind(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	p := NewProxy(&Opts{Listeners: []OptsListener{{Address: "127.0.0.1"}}})
+	require.ErrorIs(t, p.Start(ctx), context.Canceled)
+	require.NoError(t, p.Close())
+	assert.Empty(t, testServedListenerAddress(p.listeners[0]))
+}
+
+func TestServedUnexpectedListenerCloseRecovers(t *testing.T) {
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			p := NewProxy(newTestServedOpts(t, network))
+			require.NoError(t, p.Start(t.Context()))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			l := p.listeners[0]
+			require.Eventually(t, func() bool { return testServedListenerAddress(l) != "" }, time.Second, time.Millisecond)
+			addr := testServedListenerAddress(l)
+			require.True(t, testServedRoundTrip(network, addr))
+			var oldTCP net.Listener
+			l.mu.Lock()
+			oldTCP, oldUDP := l.lis, l.udpLis
+			l.mu.Unlock()
+			var active net.Conn
+			if network == "tcp" {
+				var err error
+				active, err = net.Dial(network, addr)
+				require.NoError(t, err)
+				defer active.Close()
+				require.NoError(t, testServedEcho(active))
+				require.NoError(t, oldTCP.Close())
+			} else {
+				require.NoError(t, oldUDP.Close())
+			}
+			require.Eventually(t, func() bool {
+				l.mu.Lock()
+				ready := l.lis != nil && l.lis != oldTCP || l.udpLis != nil && l.udpLis != oldUDP
+				l.mu.Unlock()
+				if !ready {
+					return false
+				}
+				return testServedRoundTrip(network, testServedListenerAddress(l))
+			}, 6*time.Second, 10*time.Millisecond)
+			if active != nil {
+				require.NoError(t, testServedEcho(active))
+			}
+		})
+	}
+}
+
+type testRecoveringGoNet struct {
+	goNet       ccommon.GoNet
+	unavailable atomic.Bool
+	calls       atomic.Int32
+	listen      func(*net.TCPAddr) (*gonet.TCPListener, error)
+}
+
+func (n *testRecoveringGoNet) GetGoNet() ccommon.GoNet { return n }
+
+func (n *testRecoveringGoNet) ListenTCP(addr *net.TCPAddr) (*gonet.TCPListener, error) {
+	n.calls.Add(1)
+	if n.unavailable.Load() {
+		return nil, errors.New("the interface is temporarily unavailable")
+	}
+	if n.listen != nil {
+		return n.listen(addr)
+	}
+	return n.goNet.ListenTCP(addr)
+}
+
+func TestServedGoNetInterfaceRecoveryCarriesTraffic(t *testing.T) {
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+			require.NoError(t, err)
+			t.Cleanup(func() { dev.Close() })
+			n := &testRecoveringGoNet{goNet: goNet}
+			n.unavailable.Store(true)
+			opts := newTestServedOpts(t, "tcp")
+			opts.goNetCtl = n
+			opts.Listeners[0] = OptsListener{Address: address, Port: 12345}
+			p := NewProxy(opts)
+			require.NoError(t, p.Start(t.Context()))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			require.Eventually(t, func() bool { return n.calls.Load() > 0 }, time.Second, time.Millisecond)
+			n.unavailable.Store(false)
+			require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, 6*time.Second, time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			conn, err := goNet.DialContextTCP(ctx, &net.TCPAddr{IP: net.ParseIP(address), Port: 12345})
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, testServedEcho(conn))
+		})
+	}
+}
+
+func TestServedCloseJoinsLateGoNetBind(t *testing.T) {
+	address := "100.64.0.2"
+	dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+	require.NoError(t, err)
+	defer dev.Close()
+	entered, release := make(chan struct{}), make(chan struct{})
+	n := &testRecoveringGoNet{listen: func(addr *net.TCPAddr) (*gonet.TCPListener, error) {
+		lis, err := goNet.ListenTCP(addr)
+		close(entered)
+		<-release
+		return lis, err
+	}}
+	p := NewProxy(&Opts{goNetCtl: n, Listeners: []OptsListener{{Address: address, Port: 12345}}})
+	require.NoError(t, p.Start(t.Context()))
+	var released sync.Once
+	defer func() {
+		released.Do(func() { close(release) })
+		p.Close()
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("the test bind did not begin")
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.Close() }()
+	require.Eventually(t, func() bool { return p.listeners[0].closed() }, time.Second, time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("Close returned before its in-flight bind finished")
+	default:
+	}
+	released.Do(func() { close(release) })
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after the bind returned")
+	}
+	assert.Empty(t, testServedListenerAddress(p.listeners[0]))
+	lis, err := goNet.ListenTCP(&net.TCPAddr{IP: net.ParseIP(address), Port: 12345})
+	require.NoError(t, err)
+	assert.NoError(t, lis.Close())
+}
+
+func TestServedRetriesAndWarningsStayBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		core, logs := observer.New(zap.WarnLevel)
+		undo := zap.ReplaceGlobals(zap.New(core))
+		defer undo()
+		n := &testRetryGoNet{}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		p := NewProxy(&Opts{goNetCtl: n, Listeners: []OptsListener{{Address: "127.0.0.1", Port: 12345}}})
+		require.NoError(t, p.Start(ctx))
+		synctest.Wait()
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		assert.Greater(t, n.calls.Load(), int32(100))
+		assert.Less(t, n.calls.Load(), int32(260))
+		assert.Greater(t, logs.Len(), 1)
+		assert.LessOrEqual(t, logs.Len(), 21)
+		cancel()
+		require.NoError(t, p.Close())
+		synctest.Wait()
+		before := n.calls.Load()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.Equal(t, before, n.calls.Load())
+	})
 }

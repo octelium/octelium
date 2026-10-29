@@ -106,6 +106,9 @@ func (c *Controller) Close() error {
 }
 
 func (c *Controller) doAddService(ctx context.Context, svc *userv1.HostedService) error {
+	if cur := c.getServiceProxy(svc); cur != nil && proto.Equal(cur.svc, svc) {
+		return nil
+	}
 
 	if err := c.addProxy(ctx, svc); err != nil {
 		return err
@@ -128,8 +131,12 @@ func (c *Controller) addProxy(ctx context.Context, listener *userv1.HostedServic
 		return nil
 	}
 
+	if err := p.start(ctx); err != nil {
+		p.close()
+		return err
+	}
 	c.proxies = append(c.proxies, p)
-	return p.start(ctx)
+	return nil
 }
 
 func (c *Controller) AddService(ctx context.Context, svc *userv1.HostedService) error {
