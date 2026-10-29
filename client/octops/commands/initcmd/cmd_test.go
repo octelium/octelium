@@ -15,18 +15,104 @@
 package initcmd
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"runtime"
 	"testing"
 
+	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newKubeConfigFile(t *testing.T) string {
 	ret := path.Join(t.TempDir(), "config")
 	assert.Nil(t, os.WriteFile(ret, []byte("apiVersion: v1\nkind: Config\n"), 0600))
 	return ret
+}
+
+func TestValidateBootstrap(t *testing.T) {
+	newBootstrap := func(t *testing.T) *cbootstrapv1.Config {
+		bs := &cbootstrapv1.Config{}
+		require.NoError(t, pbutils.UnmarshalYAML([]byte("spec:\n  primaryStorage:\n    postgresql: {host: postgres.storage.svc, username: installer, password: postgres-secret}\n  secondaryStorage:\n    redis: {host: redis.storage.svc, password: redis-secret}\n"), bs))
+		return bs
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*cbootstrapv1.Config)
+		want   string
+	}{
+		{"missing spec", func(bs *cbootstrapv1.Config) { bs.Spec = nil }, "Nil bootstrap spec"},
+		{"missing primary storage", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage = nil }, "No Postgres"},
+		{"missing postgres", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.Type = nil }, "No Postgres"},
+		{"empty postgres host", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.GetPostgresql().Host = "" }, "Empty postgres host"},
+		{"empty postgres username", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.GetPostgresql().Username = "" }, "Empty postgres user"},
+		{"missing postgres password", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.GetPostgresql().PasswordType = nil }, "either password or passwordFromSecret"},
+		{"empty postgres password", func(bs *cbootstrapv1.Config) {
+			bs.Spec.PrimaryStorage.GetPostgresql().PasswordType = &cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password{}
+		}, "Empty postgres password"},
+		{"invalid postgres port", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.GetPostgresql().Port = 65536 }, "Invalid postgres port"},
+		{"invalid postgres host", func(bs *cbootstrapv1.Config) { bs.Spec.PrimaryStorage.GetPostgresql().Host = "https://postgres:5432" }, "Invalid postgres host"},
+		{"missing secondary storage", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage = nil }, "No Redis"},
+		{"missing redis", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage.Type = nil }, "No Redis"},
+		{"empty redis host", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage.GetRedis().Host = "" }, "Empty redis host"},
+		{"missing redis password", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage.GetRedis().PasswordType = nil }, "either password or passwordFromSecret"},
+		{"empty redis password", func(bs *cbootstrapv1.Config) {
+			bs.Spec.SecondaryStorage.GetRedis().PasswordType = &cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password{}
+		}, "Empty redis password"},
+		{"invalid redis port", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage.GetRedis().Port = 65536 }, "Invalid redis port"},
+		{"invalid redis host", func(bs *cbootstrapv1.Config) { bs.Spec.SecondaryStorage.GetRedis().Host = "redis host" }, "Invalid redis host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bs := newBootstrap(t)
+			tc.change(bs)
+			require.ErrorContains(t, validateBootstrap(bs), tc.want)
+		})
+	}
+	assert.ErrorContains(t, validateBootstrap(nil), "Nil bootstrap spec")
+	for _, host := range []string{"localhost", "postgres.storage.svc", "192.0.2.10", "2001:db8::1"} {
+		for _, port := range []int32{0, 1, 5432, 65535} {
+			t.Run(fmt.Sprintf("%s:%d", host, port), func(t *testing.T) {
+				bs := newBootstrap(t)
+				bs.Spec.PrimaryStorage.GetPostgresql().Host = host
+				bs.Spec.SecondaryStorage.GetRedis().Host = host
+				bs.Spec.PrimaryStorage.GetPostgresql().Port = port
+				bs.Spec.SecondaryStorage.GetRedis().Port = port
+				assert.NoError(t, validateBootstrap(bs))
+			})
+		}
+	}
+	for _, ref := range []string{"{name: credentials}", "{name: credentials, namespace: storage, key: custom}"} {
+		bs := &cbootstrapv1.Config{}
+		require.NoError(t, pbutils.UnmarshalYAML([]byte(fmt.Sprintf("spec:\n  primaryStorage:\n    postgresql: {host: postgres, username: installer, passwordFromSecret: %s}\n  secondaryStorage:\n    redis: {host: redis, passwordFromSecret: %s}\n", ref, ref)), bs))
+		assert.NoError(t, validateBootstrap(bs))
+	}
+}
+
+func TestKubeConfigFallbackAndInvalidFiles(t *testing.T) {
+	t.Setenv("KUBECONFIG", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config := path.Join(home, ".kube", "config")
+	require.NoError(t, os.MkdirAll(path.Dir(config), 0700))
+	require.NoError(t, os.WriteFile(config, []byte("apiVersion: v1\nkind: Config\n"), 0600))
+	got, err := getKubeConfigFilePath("")
+	require.NoError(t, err)
+	assert.Equal(t, config, got)
+	for _, data := range []string{"[invalid yaml", "apiVersion: v1\nkind: Config\n", "apiVersion: v1\nkind: Config\ncurrent-context: missing\n"} {
+		require.NoError(t, os.WriteFile(config, []byte(data), 0600))
+		_, err := BuildConfigFromFlags("", "")
+		assert.Error(t, err)
+	}
+	_, err = BuildConfigFromFlags("", t.TempDir())
+	assert.Error(t, err)
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	_, err = getKubeConfigFilePath("")
+	assert.Error(t, err)
 }
 
 func TestGetKubeConfigFilePath(t *testing.T) {
