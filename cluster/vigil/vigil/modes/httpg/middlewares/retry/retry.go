@@ -146,6 +146,10 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 		m.next.ServeHTTP(crw, reqC)
 
+		if !crw.isWritten && !crw.isRetry {
+			crw.WriteHeader(crw.statusCode)
+		}
+
 		if !crw.isRetry {
 			return
 		}
@@ -233,12 +237,12 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 
 func (w *responseWriter) Write(buf []byte) (int, error) {
 
-	if w.isRetry {
-		return len(buf), nil
-	}
-
 	if !w.isWritten {
 		w.WriteHeader(w.statusCode)
+	}
+
+	if w.isRetry {
+		return len(buf), nil
 	}
 
 	return w.ResponseWriter.Write(buf)
@@ -257,7 +261,10 @@ func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *responseWriter) Flush() {
-	if w.isRetry || !w.isWritten {
+	if !w.isWritten {
+		w.WriteHeader(w.statusCode)
+	}
+	if w.isRetry {
 		return
 	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {

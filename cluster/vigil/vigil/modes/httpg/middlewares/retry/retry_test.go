@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -478,4 +480,242 @@ func TestBufferedBodyIsReusedAndReplayed(t *testing.T) {
 	assert.Equal(t, []string{
 		"buffered-body", "buffered-body", "buffered-body", "buffered-body",
 	}, bodies)
+}
+
+func TestRetryImplicitResponseModes(t *testing.T) {
+	for _, policy := range []struct {
+		name         string
+		retryOK      bool
+		firstFailure bool
+		wantAttempts int
+	}{
+		{name: "Default", wantAttempts: 1},
+		{name: "RetriableOK", retryOK: true, wantAttempts: 4},
+		{name: "GatewayThenImplicit", firstFailure: true, wantAttempts: 2},
+	} {
+		for _, mode := range []string{"HeadersOnly", "Write", "Flush", "FlushThenWrite", "WriteThenFlush", "EmptyWrite"} {
+			t.Run(policy.name+"/"+mode, func(t *testing.T) {
+				reqCtx := newRetryReqCtx(nil)
+				if policy.retryOK {
+					reqCtx.ServiceConfig.GetHttp().Retry.StatusCodes = []int32{http.StatusOK}
+				}
+				rw := httptest.NewRecorder()
+				attempts := 0
+				h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					attempts++
+					w.Header().Set("X-Attempt", fmt.Sprint(attempts))
+					if attempts < policy.wantAttempts {
+						w.Header().Set("X-Discarded", "true")
+						w.Header().Add("Set-Cookie", "discarded=1")
+					} else {
+						w.Header().Set("X-Final", "true")
+						w.Header().Add("Set-Cookie", "final=1")
+					}
+					if policy.firstFailure && attempts == 1 {
+						w.WriteHeader(http.StatusBadGateway)
+						_, err := w.Write([]byte("discarded"))
+						assert.Nil(t, err)
+						w.(http.Flusher).Flush()
+						assert.False(t, rw.Flushed)
+						assert.Empty(t, rw.Body.String())
+						return
+					}
+					write := func() {
+						for _, body := range []string{fmt.Sprintf("body-%d", attempts), "-tail"} {
+							n, err := w.Write([]byte(body))
+							assert.Nil(t, err)
+							assert.Equal(t, len(body), n)
+						}
+					}
+					switch mode {
+					case "Write":
+						write()
+					case "Flush":
+						w.(http.Flusher).Flush()
+					case "FlushThenWrite":
+						w.(http.Flusher).Flush()
+						write()
+					case "WriteThenFlush":
+						write()
+						w.(http.Flusher).Flush()
+					case "EmptyWrite":
+						n, err := w.Write(nil)
+						assert.Nil(t, err)
+						assert.Zero(t, n)
+					}
+					if attempts < policy.wantAttempts {
+						assert.Empty(t, rw.Body.String())
+						assert.False(t, rw.Flushed)
+					} else if strings.Contains(mode, "Flush") {
+						assert.True(t, rw.Flushed)
+					}
+				}))
+				require.Nil(t, err)
+				req := httptest.NewRequest(http.MethodGet, "/", nil)
+				req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx))
+				h.ServeHTTP(rw, req)
+				assert.Equal(t, policy.wantAttempts, attempts)
+				response := rw.Result()
+				defer response.Body.Close()
+				assert.Equal(t, http.StatusOK, response.StatusCode)
+				assert.Equal(t, fmt.Sprint(policy.wantAttempts), response.Header.Get("X-Attempt"))
+				assert.Equal(t, "true", response.Header.Get("X-Final"))
+				assert.Empty(t, response.Header.Get("X-Discarded"))
+				require.Len(t, response.Cookies(), 1)
+				assert.Equal(t, "final", response.Cookies()[0].Name)
+				want := ""
+				if mode == "Write" || mode == "FlushThenWrite" || mode == "WriteThenFlush" {
+					want = fmt.Sprintf("body-%d-tail", policy.wantAttempts)
+				}
+				assert.Equal(t, want, rw.Body.String())
+			})
+		}
+	}
+}
+
+func TestRetryFlushHonorsCommittedStatus(t *testing.T) {
+	for _, retryFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("RetryFirst%t", retryFirst), func(t *testing.T) {
+			attempts := 0
+			rw := httptest.NewRecorder()
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				if retryFirst && attempts == 1 {
+					w.Header().Set("X-Discarded", "true")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush()
+					w.Write([]byte("discarded"))
+					assert.False(t, rw.Flushed)
+					assert.Empty(t, rw.Body.String())
+					return
+				}
+				w.Header().Set("X-Final", "true")
+				w.WriteHeader(http.StatusCreated)
+				w.WriteHeader(http.StatusBadGateway)
+				w.(http.Flusher).Flush()
+				assert.True(t, rw.Flushed)
+				w.Write([]byte("final"))
+			}))
+			require.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, newRetryReqCtx(nil)))
+			h.ServeHTTP(rw, req)
+			wantAttempts := 1
+			if retryFirst {
+				wantAttempts = 2
+			}
+			assert.Equal(t, wantAttempts, attempts)
+			assert.Equal(t, http.StatusCreated, rw.Result().StatusCode)
+			assert.Equal(t, "true", rw.Result().Header.Get("X-Final"))
+			assert.Empty(t, rw.Result().Header.Get("X-Discarded"))
+			assert.Equal(t, "final", rw.Body.String())
+		})
+	}
+}
+
+type tstRetryWriteErrorWriter struct {
+	http.ResponseWriter
+	calls int
+}
+
+func (w *tstRetryWriteErrorWriter) Write(buf []byte) (int, error) {
+	w.calls++
+	return 0, io.ErrClosedPipe
+}
+
+func TestRetryImplicitWriteErrorPropagation(t *testing.T) {
+	reqCtx := newRetryReqCtx(nil)
+	reqCtx.ServiceConfig.GetHttp().Retry.StatusCodes = []int32{http.StatusOK}
+	rw := &tstRetryWriteErrorWriter{ResponseWriter: httptest.NewRecorder()}
+	attempts := 0
+	h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body := []byte("response")
+		n, err := w.Write(body)
+		if attempts < 4 {
+			assert.Equal(t, len(body), n)
+			assert.Nil(t, err)
+		} else {
+			assert.Zero(t, n)
+			assert.ErrorIs(t, err, io.ErrClosedPipe)
+		}
+	}))
+	require.Nil(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx))
+	h.ServeHTTP(rw, req)
+	assert.Equal(t, 4, attempts)
+	assert.Equal(t, 1, rw.calls)
+}
+
+func TestRetryFlushStreamsFinalResponse(t *testing.T) {
+	for _, retryOK := range []bool{false, true} {
+		t.Run(fmt.Sprintf("RetriableOK%t", retryOK), func(t *testing.T) {
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			var attempts atomic.Int32
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := attempts.Add(1)
+				w.Header().Set("X-Attempt", fmt.Sprint(attempt))
+				if retryOK && attempt < 4 {
+					w.Header().Set("X-Discarded", "true")
+					w.Write([]byte("discarded"))
+					w.(http.Flusher).Flush()
+					return
+				}
+				w.Header().Set("X-Final", "true")
+				w.(http.Flusher).Flush()
+				select {
+				case <-release:
+					w.Write([]byte("streamed response"))
+				case <-r.Context().Done():
+				}
+			}))
+			require.Nil(t, err)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reqCtx := newRetryReqCtx(nil)
+				if retryOK {
+					reqCtx.ServiceConfig.GetHttp().Retry.StatusCodes = []int32{http.StatusOK}
+				}
+				h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), middlewares.CtxRequestContext, reqCtx)))
+			}))
+			t.Cleanup(func() { unblock(); srv.Close() })
+			client := &http.Client{Timeout: 5 * time.Second}
+			defer client.CloseIdleConnections()
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+			require.Nil(t, err)
+			type result struct {
+				response *http.Response
+				err      error
+			}
+			done := make(chan result, 1)
+			go func() {
+				response, err := client.Do(req)
+				done <- result{response: response, err: err}
+			}()
+			var response *http.Response
+			select {
+			case got := <-done:
+				require.Nil(t, got.err)
+				response = got.response
+			case <-time.After(2 * time.Second):
+				t.Fatal("The response headers were not flushed before the handler returned")
+			}
+			defer response.Body.Close()
+			wantAttempts := int32(1)
+			if retryOK {
+				wantAttempts = 4
+			}
+			assert.Equal(t, wantAttempts, attempts.Load())
+			assert.Equal(t, http.StatusOK, response.StatusCode)
+			assert.Equal(t, fmt.Sprint(wantAttempts), response.Header.Get("X-Attempt"))
+			assert.Equal(t, "true", response.Header.Get("X-Final"))
+			assert.Empty(t, response.Header.Get("X-Discarded"))
+			unblock()
+			body, err := io.ReadAll(response.Body)
+			require.Nil(t, err)
+			assert.Equal(t, "streamed response", string(body))
+		})
+	}
 }
