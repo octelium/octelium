@@ -21,10 +21,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -159,6 +161,47 @@ func TestPeekAssertionIssuer(t *testing.T) {
 		res, err := peekAssertionIssuer(tknStr)
 		assert.Nil(t, err)
 		assert.Equal(t, issuer, res)
+	}
+}
+
+func TestPeekAssertionIssuerRSAJWKSize(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.Nil(t, err)
+
+	issuer := "https://issuer.example.com"
+
+	for _, tc := range []struct {
+		bits  uint
+		valid bool
+	}{
+		{2048, true},
+		{4096, true},
+		{4097, false},
+	} {
+		n := new(big.Int).Lsh(big.NewInt(1), tc.bits-1)
+		n.SetBit(n, 0, 1)
+
+		tkn := jwt.NewWithClaims(jwt.SigningMethodRS256, &jwt.RegisteredClaims{
+			Issuer: issuer,
+		})
+		tkn.Header["jwk"] = jose.JSONWebKey{
+			Key: &rsa.PublicKey{
+				N: n,
+				E: 65537,
+			},
+		}
+
+		tknStr, err := tkn.SignedString(priv)
+		assert.Nil(t, err)
+
+		res, err := peekAssertionIssuer(tknStr)
+		if tc.valid {
+			assert.Nil(t, err, "RSA modulus bits: %d", tc.bits)
+			assert.Equal(t, issuer, res)
+		} else {
+			assert.NotNil(t, err, "RSA modulus bits: %d", tc.bits)
+			assert.Empty(t, res)
+		}
 	}
 }
 
