@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -801,5 +802,395 @@ func TestUDPDatagramBufferIsolation(t *testing.T) {
 		require.False(t, seen[id])
 		seen[id] = true
 		require.True(t, bytes.Equal(bodies[id], buf[:n]), "The UDP reply was changed")
+	}
+}
+
+func exchangeUDPTestDatagram(t *testing.T, client, upstream *net.UDPConn, request, reply []byte) *net.UDPAddr {
+	t.Helper()
+	require.Nil(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	require.Nil(t, upstream.SetDeadline(time.Now().Add(2*time.Second)))
+	n, err := client.Write(request)
+	require.Nil(t, err)
+	require.Equal(t, len(request), n)
+	buf := make([]byte, 65535)
+	n, source, err := upstream.ReadFromUDP(buf)
+	require.Nil(t, err)
+	require.Equal(t, len(request), n)
+	require.True(t, bytes.Equal(request, buf[:n]), "The UDP request was changed")
+	n, err = upstream.WriteToUDP(reply, source)
+	require.Nil(t, err)
+	require.Equal(t, len(reply), n)
+	n, err = client.Read(buf)
+	require.Nil(t, err)
+	require.Equal(t, len(reply), n)
+	require.True(t, bytes.Equal(reply, buf[:n]), "The UDP reply was changed")
+	return source
+}
+
+func TestUDPEmptyDatagramSequences(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		t.Run(network, func(t *testing.T) {
+			reader := setTestMeterProvider(t)
+			ip := net.IPv4(127, 0, 0, 1)
+			if network == "udp6" {
+				ip = net.IPv6loopback
+			}
+			upstream, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+			require.Nil(t, err)
+			defer upstream.Close()
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+				IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+			})
+			require.Nil(t, err)
+			defer client.Close()
+			messages := []struct {
+				request []byte
+				reply   []byte
+			}{
+				{nil, nil},
+				{nil, []byte("reply to empty request")},
+				{[]byte("request for empty reply"), nil},
+				{[]byte{}, []byte{}},
+				{[]byte("nonempty request"), []byte("nonempty reply")},
+				{nil, nil},
+				{nil, nil},
+				{utilrand.GetRandomBytesMust(8192), nil},
+				{nil, utilrand.GetRandomBytesMust(8192)},
+				{[]byte("last request"), []byte("last reply")},
+			}
+			var current *dctx
+			var source *net.UDPAddr
+			var received, sent int64
+			for i, message := range messages {
+				peer := exchangeUDPTestDatagram(t, client, upstream, message.request, message.reply)
+				srv.dctxMap.mu.Lock()
+				active := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+				srv.dctxMap.mu.Unlock()
+				require.NotNil(t, active)
+				if current == nil {
+					current = active
+					source = peer
+				} else {
+					require.Same(t, current, active)
+					assert.Equal(t, source.String(), peer.String())
+				}
+				received += int64(len(message.request))
+				sent += int64(len(message.reply))
+				require.Eventually(t, func() bool {
+					return current.bytesFromClient.Load() == received && current.bytesToClient.Load() == sent &&
+						current.packetsFromClient.Load() == int64(i+1) && current.packetsToClient.Load() == int64(i+1)
+				}, time.Second, time.Millisecond)
+			}
+			for _, conn := range []*net.UDPConn{client, upstream} {
+				require.Nil(t, conn.SetReadDeadline(time.Now().Add(30*time.Millisecond)))
+				_, _, err := conn.ReadFromUDP(make([]byte, 65535))
+				var netErr net.Error
+				require.ErrorAs(t, err, &netErr)
+				assert.True(t, netErr.Timeout())
+			}
+			require.Nil(t, srv.Close())
+			var rm metricdata.ResourceMetrics
+			require.Eventually(t, func() bool {
+				if reader.Collect(t.Context(), &rm) != nil {
+					return false
+				}
+				var packetsSent, packetsReceived int64
+				for _, scope := range rm.ScopeMetrics {
+					for _, m := range scope.Metrics {
+						sum, ok := m.Data.(metricdata.Sum[int64])
+						if !ok {
+							continue
+						}
+						for _, point := range sum.DataPoints {
+							switch m.Name {
+							case "req.packets_sent":
+								packetsSent += point.Value
+							case "req.packets_received":
+								packetsReceived += point.Value
+							}
+						}
+					}
+				}
+				return packetsSent == int64(len(messages)) && packetsReceived == int64(len(messages))
+			}, time.Second, time.Millisecond)
+			assert.Equal(t, sent, findSumDataPoint(t, &rm, "req.bytes_sent").Value)
+			assert.Equal(t, received, findSumDataPoint(t, &rm, "req.bytes_received").Value)
+			activeMetrics := 0
+			for _, scope := range rm.ScopeMetrics {
+				for _, m := range scope.Metrics {
+					if m.Name != "req.active" && m.Name != "session.active" {
+						continue
+					}
+					sum, ok := m.Data.(metricdata.Sum[int64])
+					require.True(t, ok)
+					for _, point := range sum.DataPoints {
+						service, ok := point.Attributes.Value("octelium.vigil.svc.name")
+						if ok && service.AsString() == srv.vCache.GetService().Metadata.Name {
+							activeMetrics++
+							assert.Zero(t, point.Value, m.Name)
+						}
+					}
+				}
+			}
+			assert.Equal(t, 2, activeMetrics)
+		})
+	}
+}
+
+func TestUDPEmptyDatagramsConcurrentClients(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		t.Run(network, func(t *testing.T) {
+			ip := net.IPv4(127, 0, 0, 1)
+			if network == "udp6" {
+				ip = net.IPv6loopback
+			}
+			upstream, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+			require.Nil(t, err)
+			var calls atomic.Int64
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				buf := make([]byte, 65535)
+				for {
+					n, source, err := upstream.ReadFromUDP(buf)
+					if err != nil {
+						return
+					}
+					calls.Add(1)
+					if _, err := upstream.WriteToUDP(buf[:n], source); !assert.Nil(t, err) {
+						return
+					}
+				}
+			}()
+			t.Cleanup(func() { upstream.Close(); <-done })
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			results := make(chan *dctx, 8)
+			var wg sync.WaitGroup
+			for i := range 8 {
+				wg.Go(func() {
+					client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+						IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+					})
+					if !assert.Nil(t, err) {
+						return
+					}
+					t.Cleanup(func() { client.Close() })
+					buf := make([]byte, 65535)
+					for _, size := range []int{0, 1, 0, 32, 0, 8192, 0} {
+						if !assert.Nil(t, client.SetDeadline(time.Now().Add(2*time.Second))) {
+							return
+						}
+						body := bytes.Repeat([]byte{byte(i + 1)}, size)
+						if _, err := client.Write(body); !assert.Nil(t, err) {
+							return
+						}
+						n, err := client.Read(buf)
+						if !assert.Nil(t, err) || !assert.Equal(t, size, n) || !assert.True(t, bytes.Equal(body, buf[:n])) {
+							return
+						}
+					}
+					srv.dctxMap.mu.Lock()
+					current := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+					srv.dctxMap.mu.Unlock()
+					results <- current
+				})
+			}
+			wg.Wait()
+			close(results)
+			count := 0
+			for current := range results {
+				count++
+				require.NotNil(t, current)
+				require.Eventually(t, func() bool {
+					return current.packetsFromClient.Load() == 7 && current.packetsToClient.Load() == 7 &&
+						current.bytesFromClient.Load() == 8225 && current.bytesToClient.Load() == 8225
+				}, time.Second, time.Millisecond)
+			}
+			assert.Equal(t, 8, count)
+			assert.Equal(t, int64(56), calls.Load())
+		})
+	}
+}
+
+func TestUDPEmptyDatagramWriteFailures(t *testing.T) {
+	for _, direction := range []string{"Request", "Reply"} {
+		t.Run(direction, func(t *testing.T) {
+			upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.Nil(t, err)
+			defer upstream.Close()
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+				IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+			})
+			require.Nil(t, err)
+			defer client.Close()
+			source := exchangeUDPTestDatagram(t, client, upstream, []byte("request"), []byte("reply"))
+			srv.dctxMap.mu.Lock()
+			current := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+			srv.dctxMap.mu.Unlock()
+			require.NotNil(t, current)
+			require.Eventually(t, func() bool {
+				return current.packetsFromClient.Load() == 1 && current.packetsToClient.Load() == 1
+			}, time.Second, time.Millisecond)
+			if direction == "Request" {
+				require.Nil(t, current.connUpstream.SetWriteDeadline(time.Now().Add(-time.Second)))
+				err := srv.handlePacket(t.Context(), nil, 0, client.LocalAddr().(*net.UDPAddr))
+				var netErr net.Error
+				require.ErrorAs(t, err, &netErr)
+				assert.True(t, netErr.Timeout())
+				assert.Equal(t, int64(1), current.packetsFromClient.Load())
+				assert.Equal(t, int64(len("request")), current.bytesFromClient.Load())
+				require.Nil(t, current.connUpstream.SetWriteDeadline(time.Time{}))
+			} else {
+				require.Nil(t, srv.lis.SetWriteDeadline(time.Now().Add(-time.Second)))
+				_, err := upstream.WriteToUDP(nil, source)
+				require.Nil(t, err)
+				require.Eventually(t, func() bool {
+					srv.dctxMap.mu.Lock()
+					defer srv.dctxMap.mu.Unlock()
+					return srv.dctxMap.dctxMap[client.LocalAddr().String()] == nil
+				}, time.Second, time.Millisecond)
+				assert.Equal(t, int64(1), current.packetsToClient.Load())
+				assert.Equal(t, int64(len("reply")), current.bytesToClient.Load())
+				require.Nil(t, srv.lis.SetWriteDeadline(time.Time{}))
+			}
+			exchangeUDPTestDatagram(t, client, upstream, nil, nil)
+			srv.dctxMap.mu.Lock()
+			active := srv.dctxMap.dctxMap[client.LocalAddr().String()]
+			srv.dctxMap.mu.Unlock()
+			require.NotNil(t, active)
+			if direction == "Request" {
+				assert.Same(t, current, active)
+			} else {
+				assert.NotSame(t, current, active)
+			}
+		})
+	}
+}
+
+func TestReadUDPDatagramTruncatedThenEmpty(t *testing.T) {
+	for _, network := range []string{"udp4", "udp6"} {
+		for _, connected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/Connected%t", network, connected), func(t *testing.T) {
+				lis, conn := newUDPTestPair(t, network)
+				receiver, peer := lis, conn
+				send := conn.Write
+				if connected {
+					receiver, peer = conn, lis
+					send = func(body []byte) (int, error) {
+						return lis.WriteToUDP(body, conn.LocalAddr().(*net.UDPAddr))
+					}
+				}
+				for _, body := range [][]byte{bytes.Repeat([]byte("truncated"), 8), nil, []byte("next")} {
+					_, err := send(body)
+					require.Nil(t, err)
+				}
+				buf := make([]byte, 32)
+				n, source, err := readUDPDatagram(receiver, buf)
+				require.Nil(t, err)
+				assert.Zero(t, n)
+				require.NotNil(t, source)
+				assert.Equal(t, peer.LocalAddr().String(), source.String())
+				n, _, err = readUDPDatagram(receiver, buf)
+				require.Nil(t, err)
+				assert.Equal(t, "next", string(buf[:n]))
+			})
+		}
+	}
+}
+
+func TestUDPEmptyDatagramAuthorization(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Disabled%t", disabled), func(t *testing.T) {
+			upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.Nil(t, err)
+			defer upstream.Close()
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			client, err := net.DialUDP("udp4", nil, &net.UDPAddr{
+				IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port,
+			})
+			require.Nil(t, err)
+			defer client.Close()
+			original := srv.vCache.GetService()
+			svc := srv.vCache.GetService()
+			if disabled {
+				svc.Spec.IsDisabled = true
+			} else {
+				svc.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+			}
+			svc, err = srv.octeliumC.CoreC().UpdateService(t.Context(), svc)
+			require.Nil(t, err)
+			srv.vCache.SetService(svc)
+			require.Nil(t, srv.handlePacket(t.Context(), nil, 0, client.LocalAddr().(*net.UDPAddr)))
+			srv.dctxMap.mu.Lock()
+			count := len(srv.dctxMap.dctxMap)
+			srv.dctxMap.mu.Unlock()
+			assert.Zero(t, count)
+			require.Nil(t, upstream.SetReadDeadline(time.Now().Add(30*time.Millisecond)))
+			_, _, err = upstream.ReadFromUDP(make([]byte, 65535))
+			var netErr net.Error
+			require.ErrorAs(t, err, &netErr)
+			assert.True(t, netErr.Timeout())
+			svc.Spec = original.Spec
+			svc, err = srv.octeliumC.CoreC().UpdateService(t.Context(), svc)
+			require.Nil(t, err)
+			srv.vCache.SetService(svc)
+			exchangeUDPTestDatagram(t, client, upstream, nil, nil)
+		})
+	}
+}
+
+func TestUDPDatagramsReusedClientAddress(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Empty%t", empty), func(t *testing.T) {
+			upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.Nil(t, err)
+			defer upstream.Close()
+			srv := newTestUDPServer(t, upstream.LocalAddr().String())
+			addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: srv.lis.LocalAddr().(*net.UDPAddr).Port}
+			client, err := net.DialUDP("udp4", nil, addr)
+			require.Nil(t, err)
+			defer client.Close()
+			source := exchangeUDPTestDatagram(t, client, upstream, []byte("request"), []byte("reply"))
+			local := client.LocalAddr().(*net.UDPAddr)
+			srv.dctxMap.mu.Lock()
+			current := srv.dctxMap.dctxMap[local.String()]
+			srv.dctxMap.mu.Unlock()
+			require.NotNil(t, current)
+			require.Nil(t, client.Close())
+			replacement, err := net.DialUDP("udp4", local, addr)
+			require.Nil(t, err)
+			defer replacement.Close()
+			assert.Equal(t, local.String(), replacement.LocalAddr().String())
+			received, sent := int64(len("request")), int64(len("reply"))
+			messages := []struct {
+				request []byte
+				reply   []byte
+			}{
+				{[]byte("request"), []byte("reply")},
+				{[]byte("request"), []byte("reply")},
+				{[]byte("request"), []byte("reply")},
+			}
+			if empty {
+				messages[0].request, messages[0].reply = nil, nil
+				messages[1].reply = nil
+				messages[2].request = nil
+			}
+			for _, message := range messages {
+				peer := exchangeUDPTestDatagram(t, replacement, upstream, message.request, message.reply)
+				assert.Equal(t, source.String(), peer.String())
+				received += int64(len(message.request))
+				sent += int64(len(message.reply))
+			}
+			srv.dctxMap.mu.Lock()
+			active := srv.dctxMap.dctxMap[local.String()]
+			srv.dctxMap.mu.Unlock()
+			assert.Same(t, current, active)
+			require.Eventually(t, func() bool {
+				return current.packetsFromClient.Load() == 4 && current.packetsToClient.Load() == 4 &&
+					current.bytesFromClient.Load() == received && current.bytesToClient.Load() == sent
+			}, time.Second, time.Millisecond)
+		})
 	}
 }

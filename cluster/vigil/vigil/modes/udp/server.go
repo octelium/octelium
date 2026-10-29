@@ -201,14 +201,11 @@ func (s *Server) replyLoop(dctx *dctx) {
 		if err != nil {
 			return
 		}
-		for i := 0; i != read; {
-			written, err := s.lis.WriteToUDP(readBuf[i:read], dctx.addr)
-			if err != nil {
-				return
-			}
-			i += written
+		written, err := s.lis.WriteToUDP(readBuf[:read], dctx.addr)
+		if err != nil {
+			return
 		}
-		dctx.bytesToClient.Add(int64(read))
+		dctx.bytesToClient.Add(int64(written))
 		dctx.packetsToClient.Add(1)
 	}
 }
@@ -346,14 +343,11 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		zap.L().Debug("Got stored dctx", zap.String("addr", dctx.addr.String()))
 	}
 
-	for i := 0; i != n; {
-		written, err := dctx.connUpstream.Write(buf[i:n])
-		if err != nil {
-			break
-		}
-		i += written
+	written, err := dctx.connUpstream.Write(buf[:n])
+	if err != nil {
+		return err
 	}
-	dctx.bytesFromClient.Add(int64(n))
+	dctx.bytesFromClient.Add(int64(written))
 	dctx.packetsFromClient.Add(1)
 
 	return nil
