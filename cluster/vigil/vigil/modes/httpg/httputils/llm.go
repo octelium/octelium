@@ -1644,30 +1644,47 @@ const (
 	maxLLMEventStreamMessageLen = 24 * 1024 * 1024
 )
 
-func NextLLMEventStreamMessage(buf []byte) ([]byte, int) {
+func nextLLMEventStreamFrame(buf []byte) ([]byte, []byte, int) {
 	if len(buf) < llmEventStreamPreludeLen {
-		return nil, 0
+		return nil, nil, 0
 	}
 
-	totalLen := int(binary.BigEndian.Uint32(buf[0:4]))
-	headersLen := int(binary.BigEndian.Uint32(buf[4:8]))
+	if crc32.ChecksumIEEE(buf[:8]) != binary.BigEndian.Uint32(buf[8:12]) {
+		return nil, nil, -1
+	}
+
+	totalLen := binary.BigEndian.Uint32(buf[0:4])
+	headersLen := binary.BigEndian.Uint32(buf[4:8])
 
 	if totalLen < llmEventStreamPreludeLen+llmEventStreamCRCLen ||
 		totalLen > maxLLMEventStreamMessageLen {
-		return nil, -1
+		return nil, nil, -1
 	}
 
 	if headersLen > totalLen-llmEventStreamPreludeLen-llmEventStreamCRCLen {
-		return nil, -1
+		return nil, nil, -1
 	}
 
-	if len(buf) < totalLen {
-		return nil, 0
+	if len(buf) < int(totalLen) {
+		return nil, nil, 0
 	}
 
-	payload := buf[llmEventStreamPreludeLen+headersLen : totalLen-llmEventStreamCRCLen]
+	frame := buf[:totalLen]
+	messageEnd := len(frame) - llmEventStreamCRCLen
+	if crc32.ChecksumIEEE(frame[:messageEnd]) != binary.BigEndian.Uint32(frame[messageEnd:]) {
+		return nil, nil, -1
+	}
 
-	return bytes.Clone(payload), totalLen
+	headersEnd := llmEventStreamPreludeLen + int(headersLen)
+	return frame[llmEventStreamPreludeLen:headersEnd], frame[headersEnd:messageEnd], len(frame)
+}
+
+func NextLLMEventStreamMessage(buf []byte) ([]byte, int) {
+	_, payload, n := nextLLMEventStreamFrame(buf)
+	if n <= 0 {
+		return nil, n
+	}
+	return bytes.Clone(payload), n
 }
 
 func NextLLMJSONArrayMessage(buf []byte) ([]byte, int) {
@@ -1770,35 +1787,17 @@ const (
 )
 
 func NextLLMEventStreamEvent(buf []byte) (string, []byte, int) {
-	if len(buf) < llmEventStreamPreludeLen {
-		return "", nil, 0
+	headers, payload, n := nextLLMEventStreamFrame(buf)
+	if n <= 0 {
+		return "", nil, n
 	}
-
-	totalLen := int(binary.BigEndian.Uint32(buf[0:4]))
-	headersLen := int(binary.BigEndian.Uint32(buf[4:8]))
-
-	if totalLen < llmEventStreamPreludeLen+llmEventStreamCRCLen ||
-		totalLen > maxLLMEventStreamMessageLen {
-		return "", nil, -1
-	}
-
-	if headersLen > totalLen-llmEventStreamPreludeLen-llmEventStreamCRCLen {
-		return "", nil, -1
-	}
-
-	if len(buf) < totalLen {
-		return "", nil, 0
-	}
-
-	headers := buf[llmEventStreamPreludeLen : llmEventStreamPreludeLen+headersLen]
-	payload := buf[llmEventStreamPreludeLen+headersLen : totalLen-llmEventStreamCRCLen]
 
 	eventType, ok := parseLLMEventStreamHeaders(headers)
 	if !ok {
 		return "", nil, -1
 	}
 
-	return eventType, bytes.Clone(payload), totalLen
+	return eventType, bytes.Clone(payload), n
 }
 
 func parseLLMEventStreamHeaders(buf []byte) (string, bool) {

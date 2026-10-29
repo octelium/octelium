@@ -17,7 +17,9 @@
 package httputils
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash/crc32"
 	"net/http"
@@ -29,6 +31,307 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newChecksummedLLMEventStreamMessage(t *testing.T, headers, payload []byte) []byte {
+	t.Helper()
+	frame := newLLMEventStreamMessage(t, headers, payload)
+	binary.BigEndian.PutUint32(frame[8:12], crc32.ChecksumIEEE(frame[:8]))
+	binary.BigEndian.PutUint32(frame[len(frame)-4:], crc32.ChecksumIEEE(frame[:len(frame)-4]))
+	return frame
+}
+
+func TestLLMEventStreamChecksumWireVectors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		frame   string
+		payload []byte
+	}{
+		{name: "Empty", frame: "000000100000000005c248eb7d98c8ff"},
+		{name: "Payload", frame: "0000001d00000000fd528c5a7b27666f6f273a27626172277dc3653936", payload: []byte("{'foo':'bar'}")},
+		{name: "StringHeader", frame: "0000003d0000002007fd83960c636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e7b27666f6f273a27626172277d8d9c08b1", payload: []byte("{'foo':'bar'}")},
+		{name: "ZeroMessageCRC", frame: "0000001400000000f042ee2ba4b7197e00000000", payload: []byte{0xa4, 0xb7, 0x19, 0x7e}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := hex.DecodeString(tc.frame)
+			require.Nil(t, err)
+			original := bytes.Clone(frame)
+			for size := range len(frame) {
+				payload, n := NextLLMEventStreamMessage(frame[:size])
+				assert.Zero(t, n, size)
+				assert.Nil(t, payload, size)
+				eventType, payload, n := NextLLMEventStreamEvent(frame[:size])
+				assert.Zero(t, n, size)
+				assert.Empty(t, eventType, size)
+				assert.Nil(t, payload, size)
+			}
+			payload, n := NextLLMEventStreamMessage(frame)
+			require.Equal(t, len(frame), n)
+			assert.True(t, bytes.Equal(tc.payload, payload))
+			if len(payload) > 0 {
+				payload[0] ^= 1
+			}
+			eventType, payload, n := NextLLMEventStreamEvent(frame)
+			require.Equal(t, len(frame), n)
+			assert.Empty(t, eventType)
+			assert.True(t, bytes.Equal(tc.payload, payload))
+			if len(payload) > 0 {
+				payload[0] ^= 1
+			}
+			assert.Equal(t, original, frame)
+		})
+	}
+}
+
+func TestLLMEventStreamChecksumsRejectEveryBitFlip(t *testing.T) {
+	frame := EncodeLLMEventStreamEvent("contentBlockDelta", []byte(`{"delta":{"text":"hello"}}`))
+	for pos := range frame {
+		for bit := range 8 {
+			corrupt := bytes.Clone(frame)
+			corrupt[pos] ^= 1 << bit
+			payload, n := NextLLMEventStreamMessage(corrupt)
+			require.Equal(t, -1, n, "byte %d bit %d", pos, bit)
+			assert.Nil(t, payload)
+			eventType, payload, n := NextLLMEventStreamEvent(corrupt)
+			require.Equal(t, -1, n, "byte %d bit %d", pos, bit)
+			assert.Empty(t, eventType)
+			assert.Nil(t, payload)
+		}
+	}
+}
+
+func TestLLMEventStreamChecksumLayers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func([]byte)
+	}{
+		{name: "BadPreludeWithValidMessageCRC", mutate: func(frame []byte) {
+			frame[8] ^= 1
+			binary.BigEndian.PutUint32(frame[len(frame)-4:], crc32.ChecksumIEEE(frame[:len(frame)-4]))
+		}},
+		{name: "ZeroPreludeWithValidMessageCRC", mutate: func(frame []byte) {
+			binary.BigEndian.PutUint32(frame[8:12], 0)
+			binary.BigEndian.PutUint32(frame[len(frame)-4:], crc32.ChecksumIEEE(frame[:len(frame)-4]))
+		}},
+		{name: "LittleEndianPreludeWithValidMessageCRC", mutate: func(frame []byte) {
+			binary.LittleEndian.PutUint32(frame[8:12], crc32.ChecksumIEEE(frame[:8]))
+			binary.BigEndian.PutUint32(frame[len(frame)-4:], crc32.ChecksumIEEE(frame[:len(frame)-4]))
+		}},
+		{name: "ZeroMessageCRC", mutate: func(frame []byte) {
+			binary.BigEndian.PutUint32(frame[len(frame)-4:], 0)
+		}},
+		{name: "LittleEndianMessageCRC", mutate: func(frame []byte) {
+			binary.LittleEndian.PutUint32(frame[len(frame)-4:], crc32.ChecksumIEEE(frame[:len(frame)-4]))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := EncodeLLMEventStreamEvent("contentBlockDelta", []byte(`{"delta":{"text":"hello"}}`))
+			tc.mutate(frame)
+			payload, n := NextLLMEventStreamMessage(frame)
+			assert.Equal(t, -1, n)
+			assert.Nil(t, payload)
+			eventType, payload, n := NextLLMEventStreamEvent(frame)
+			assert.Equal(t, -1, n)
+			assert.Empty(t, eventType)
+			assert.Nil(t, payload)
+		})
+	}
+}
+
+func TestLLMEventStreamPreludeValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		total   uint32
+		headers uint32
+		badCRC  bool
+		want    int
+	}{
+		{name: "IncompleteMinimum", total: 16, want: 0},
+		{name: "IncompleteMaximum", total: maxLLMEventStreamMessageLen, want: 0},
+		{name: "IncompleteHeaders", total: 1024, headers: 1000, want: 0},
+		{name: "TooShort", total: 15, want: -1},
+		{name: "TooLarge", total: maxLLMEventStreamMessageLen + 1, want: -1},
+		{name: "Uint32Total", total: 0xffffffff, want: -1},
+		{name: "HeadersExceedFrame", total: 16, headers: 1, want: -1},
+		{name: "Uint32Headers", total: 16, headers: 0xffffffff, want: -1},
+		{name: "CorruptIncompletePrelude", total: 1024, badCRC: true, want: -1},
+		{name: "CorruptMaximumPrelude", total: maxLLMEventStreamMessageLen, badCRC: true, want: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := binary.BigEndian.AppendUint32(nil, tc.total)
+			frame = binary.BigEndian.AppendUint32(frame, tc.headers)
+			checksum := crc32.ChecksumIEEE(frame)
+			if tc.badCRC {
+				checksum ^= 1
+			}
+			frame = binary.BigEndian.AppendUint32(frame, checksum)
+			payload, n := NextLLMEventStreamMessage(frame)
+			assert.Equal(t, tc.want, n)
+			assert.Nil(t, payload)
+			eventType, payload, n := NextLLMEventStreamEvent(frame)
+			assert.Equal(t, tc.want, n)
+			assert.Empty(t, eventType)
+			assert.Nil(t, payload)
+		})
+	}
+}
+
+func TestLLMEventStreamChecksumFrameBoundaries(t *testing.T) {
+	first := EncodeLLMEventStreamEvent("first", []byte("one"))
+	second := EncodeLLMEventStreamEvent("second", []byte("two"))
+	corrupt := bytes.Clone(second)
+	corrupt[len(corrupt)-1] ^= 1
+	for _, tail := range [][]byte{second, corrupt, second[:len(second)-1], []byte("arbitrary tail")} {
+		joined := append(bytes.Clone(first), tail...)
+		payload, n := NextLLMEventStreamMessage(joined)
+		require.Equal(t, len(first), n)
+		assert.Equal(t, "one", string(payload))
+		eventType, payload, n := NextLLMEventStreamEvent(joined)
+		require.Equal(t, len(first), n)
+		assert.Equal(t, "first", eventType)
+		assert.Equal(t, "one", string(payload))
+	}
+	for _, tc := range []struct {
+		frame []byte
+		want  int
+	}{{second, len(second)}, {corrupt, -1}, {second[:len(second)-1], 0}} {
+		joined := append(bytes.Clone(first), tc.frame...)
+		_, n := NextLLMEventStreamMessage(joined[len(first):])
+		assert.Equal(t, tc.want, n)
+		_, _, n = NextLLMEventStreamEvent(joined[len(first):])
+		assert.Equal(t, tc.want, n)
+	}
+	joined := append(corrupt, first...)
+	_, n := NextLLMEventStreamMessage(joined)
+	assert.Equal(t, -1, n)
+	_, _, n = NextLLMEventStreamEvent(joined)
+	assert.Equal(t, -1, n)
+}
+
+func TestLLMEventStreamMalformedHeadersWithValidChecksums(t *testing.T) {
+	for _, headers := range [][]byte{
+		{1},
+		{10, 'a', llmEventStreamHeaderString},
+		{1, 'a', 0},
+		{1, 'a', llmEventStreamHeaderString, 0},
+		{1, 'a', llmEventStreamHeaderString, 0, 10, 'x'},
+	} {
+		frame := newChecksummedLLMEventStreamMessage(t, headers, []byte("payload"))
+		payload, n := NextLLMEventStreamMessage(frame)
+		assert.Equal(t, len(frame), n)
+		assert.Equal(t, "payload", string(payload))
+		eventType, payload, n := NextLLMEventStreamEvent(frame)
+		assert.Equal(t, -1, n)
+		assert.Empty(t, eventType)
+		assert.Nil(t, payload)
+	}
+}
+
+func TestLLMEventStreamInvalidAndIncompleteAllocations(t *testing.T) {
+	frame := EncodeLLMEventStreamEvent("contentBlockDelta", bytes.Repeat([]byte("x"), 64*1024))
+	badPrelude := bytes.Clone(frame[:12])
+	badPrelude[8] ^= 1
+	badMessage := bytes.Clone(frame)
+	badMessage[len(badMessage)-1] ^= 1
+	for _, tc := range []struct {
+		name  string
+		frame []byte
+	}{
+		{name: "ShortPrelude", frame: frame[:11]},
+		{name: "PreludeOnly", frame: frame[:12]},
+		{name: "IncompleteBody", frame: frame[:len(frame)-1]},
+		{name: "BadPrelude", frame: badPrelude},
+		{name: "BadMessage", frame: badMessage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Zero(t, testing.AllocsPerRun(100, func() {
+				NextLLMEventStreamMessage(tc.frame)
+			}))
+			assert.Zero(t, testing.AllocsPerRun(100, func() {
+				NextLLMEventStreamEvent(tc.frame)
+			}))
+		})
+	}
+}
+
+func FuzzLLMEventStreamChecksums(f *testing.F) {
+	f.Add("contentBlockDelta", []byte(`{"delta":{"text":"hello"}}`), uint32(8), byte(0))
+	f.Add("metadata", []byte{}, uint32(0), byte(7))
+	f.Add("", []byte{0, 1, 255}, uint32(12), byte(4))
+	f.Fuzz(func(t *testing.T, eventType string, payload []byte, pos uint32, bit byte) {
+		if len(eventType) > 256 || len(payload) > 16*1024 {
+			t.Skip()
+		}
+		frame := EncodeLLMEventStreamEvent(eventType, payload)
+		original := bytes.Clone(frame)
+		decoded, n := NextLLMEventStreamMessage(frame)
+		require.Equal(t, len(frame), n)
+		assert.True(t, bytes.Equal(payload, decoded))
+		kind, decoded, n := NextLLMEventStreamEvent(frame)
+		require.Equal(t, len(frame), n)
+		assert.Equal(t, eventType, kind)
+		assert.True(t, bytes.Equal(payload, decoded))
+		assert.Equal(t, original, frame)
+		cut := int(pos % uint32(len(frame)))
+		_, n = NextLLMEventStreamMessage(frame[:cut])
+		assert.Zero(t, n)
+		_, _, n = NextLLMEventStreamEvent(frame[:cut])
+		assert.Zero(t, n)
+		frame[cut] ^= 1 << (bit % 8)
+		decoded, n = NextLLMEventStreamMessage(frame)
+		assert.Equal(t, -1, n)
+		assert.Nil(t, decoded)
+		kind, decoded, n = NextLLMEventStreamEvent(frame)
+		assert.Equal(t, -1, n)
+		assert.Empty(t, kind)
+		assert.Nil(t, decoded)
+	})
+}
+
+func BenchmarkLLMEventStreamDecode(b *testing.B) {
+	for _, size := range []int{0, 128, 4096, 65536, 1024 * 1024} {
+		frame := EncodeLLMEventStreamEvent("contentBlockDelta", bytes.Repeat([]byte("x"), size))
+		b.Run(fmt.Sprintf("Message/%d", size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(frame)))
+			for b.Loop() {
+				NextLLMEventStreamMessage(frame)
+			}
+		})
+		b.Run(fmt.Sprintf("Event/%d", size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(frame)))
+			for b.Loop() {
+				NextLLMEventStreamEvent(frame)
+			}
+		})
+	}
+}
+
+func BenchmarkLLMEventStreamPartialFrame(b *testing.B) {
+	frame := EncodeLLMEventStreamEvent("contentBlockDelta", bytes.Repeat([]byte("x"), 1024*1024))
+	for _, size := range []int{12, 65536, len(frame) - 1} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				NextLLMEventStreamMessage(frame[:size])
+				NextLLMEventStreamEvent(frame[:size])
+			}
+		})
+	}
+}
+
+func BenchmarkLLMEventStreamFrameValidation(b *testing.B) {
+	for _, size := range []int{128, 4096, 65536, 1024 * 1024} {
+		frame := EncodeLLMEventStreamEvent("contentBlockDelta", bytes.Repeat([]byte("x"), size))
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(frame)))
+			for b.Loop() {
+				nextLLMEventStreamFrame(frame)
+			}
+		})
+	}
+}
 
 func parseLLM(t *testing.T, protocol corev1.Service_Spec_Config_LLM_Protocol,
 	method, path, body string) *LLMRequest {

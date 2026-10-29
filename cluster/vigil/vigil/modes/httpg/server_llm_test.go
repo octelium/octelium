@@ -17,14 +17,17 @@
 package httpg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,6 +41,8 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/llm"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
@@ -45,6 +50,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type tstSrvLLM struct {
@@ -68,6 +74,89 @@ type tstLLMErrResp struct {
 		Type    string `json:"type"`
 		Code    string `json:"code"`
 	} `json:"error"`
+}
+
+func TestServerLLMEventStreamChecksums(t *testing.T) {
+	var mode, calls atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		assert.Equal(t, "/model/corp-model/converse-stream", r.URL.Path)
+		w.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+		for i, event := range []struct {
+			kind    string
+			payload string
+		}{
+			{"messageStart", `{"role":"assistant"}`},
+			{"contentBlockStart", `{"contentBlockIndex":0,"start":{}}`},
+			{"contentBlockDelta", `{"contentBlockIndex":0,"delta":{"text":"verified text"}}`},
+			{"contentBlockDelta", `{"contentBlockIndex":0,"delta":{"text":" later text"}}`},
+			{"contentBlockStop", `{"contentBlockIndex":0}`},
+			{"messageStop", `{"stopReason":"end_turn"}`},
+			{"metadata", `{"usage":{"inputTokens":1,"outputTokens":2,"totalTokens":3}}`},
+		} {
+			frame := httputils.EncodeLLMEventStreamEvent(event.kind, []byte(event.payload))
+			if i == 2 {
+				switch mode.Load() {
+				case 1:
+					frame[8] ^= 1
+				case 2:
+					frame[len(frame)-1] ^= 1
+				case 3:
+					pos := bytes.Index(frame, []byte("verified text"))
+					if !assert.NotEqual(t, -1, pos) {
+						return
+					}
+					frame[pos] ^= 1
+				}
+			}
+			for len(frame) > 0 {
+				size := min(7, len(frame))
+				if _, err := w.Write(frame[:size]); !assert.Nil(t, err) {
+					return
+				}
+				w.(http.Flusher).Flush()
+				frame = frame[size:]
+			}
+		}
+	}))
+	t.Cleanup(backend.Close)
+	env := newLLMEnv(t, t.Context())
+	env.start(t, t.Context(), &corev1.Service_Spec_Config_LLM{
+		Protocol: corev1.Service_Spec_Config_LLM_OPENAI,
+		Translation: &corev1.Service_Spec_Config_LLM_Translation{
+			UpstreamProtocol: corev1.Service_Spec_Config_LLM_BEDROCK, DefaultMaxOutputTokens: 64,
+		},
+	}, "")
+	svc := env.vCache.GetService()
+	svc.Spec.Config.Upstream = &corev1.Service_Spec_Config_Upstream{
+		Type: &corev1.Service_Spec_Config_Upstream_Url{Url: backend.URL},
+	}
+	svc, err := env.fakeC.OcteliumC.CoreC().UpdateService(t.Context(), svc)
+	require.Nil(t, err)
+	env.vCache.SetService(svc)
+	for i, name := range []string{"Valid", "PreludeCRC", "MessageCRC", "Payload"} {
+		t.Run(name, func(t *testing.T) {
+			mode.Store(int32(i))
+			body := env.newChatBody("corp-model")
+			body["stream"] = true
+			resp, err := resty.New().SetTimeout(5*time.Second).R().SetContext(t.Context()).
+				SetHeader("Accept", "text/event-stream").SetBody(body).
+				Post(env.getURL("/v1/chat/completions"))
+			require.Nil(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode(), resp.String())
+			assert.Contains(t, resp.Header().Get("Content-Type"), "text/event-stream")
+			if i == 0 {
+				assert.Contains(t, resp.String(), "verified text")
+				assert.Contains(t, resp.String(), " later text")
+				assert.NotContains(t, resp.String(), llm.ErrCodeTranslation)
+			} else {
+				assert.Contains(t, resp.String(), llm.ErrCodeTranslation)
+				assert.NotContains(t, resp.String(), "verified text")
+				assert.NotContains(t, resp.String(), " later text")
+			}
+		})
+	}
+	assert.Equal(t, int32(4), calls.Load())
 }
 
 func newSrvLLM(t *testing.T, port int) *tstSrvLLM {

@@ -17,6 +17,7 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
@@ -952,5 +953,60 @@ func TestGuardrailBedrockResponseStream(t *testing.T) {
 		assert.True(t, res.isNext)
 		assert.Equal(t, http.StatusForbidden, res.code)
 		assert.NotContains(t, res.body, "all good")
+	}
+}
+
+func TestGuardrailBedrockResponseStreamChecksums(t *testing.T) {
+	for _, corruption := range []string{"Valid", "PreludeCRC", "MessageCRC", "Payload", "Secret"} {
+		t.Run(corruption, func(t *testing.T) {
+			payload := []byte(`{"contentBlockIndex":0,"delta":{"text":"all good"}}`)
+			if corruption == "Secret" {
+				payload = []byte(`{"contentBlockIndex":0,"delta":{"text":"AKIADEADBEEFDEADBEEF"}}`)
+			}
+			frame := httputils.EncodeLLMEventStreamEvent("contentBlockDelta", payload)
+			switch corruption {
+			case "PreludeCRC":
+				frame[8] ^= 1
+			case "MessageCRC":
+				frame[len(frame)-1] ^= 1
+			case "Payload":
+				frame[bytes.Index(frame, []byte("all good"))] ^= 1
+			}
+			o := newBedrockOpts(bedrockBody)
+			o.path = "/model/anthropic.claude-sonnet-4-5-v1:0/converse-stream"
+			o.upstream = func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+				for pos := range frame {
+					w.Write(frame[pos : pos+1])
+				}
+			}
+			o.plugins = []*corev1.Service_Spec_Config_LLM_Plugin{
+				newGuardrailPlugin("leak", corev1.Service_Spec_Config_LLM_Plugin_Guardrail_RESPONSE,
+					&corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+						Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets_{
+							Secrets: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Secrets{},
+						},
+					}),
+			}
+			res := servePlugins(t, o)
+			assert.True(t, res.isNext)
+			if corruption == "Valid" {
+				assert.Equal(t, http.StatusOK, res.code)
+				assert.Equal(t, string(frame), res.body)
+				assert.False(t, res.reqCtx.LLMResponseDenied)
+			} else {
+				assert.Equal(t, http.StatusForbidden, res.code)
+				assert.True(t, res.reqCtx.LLMResponseDenied)
+				if assert.Len(t, res.reqCtx.LLMGuardrails, 1) {
+					want := corev1.AccessLog_Entry_Info_LLM_Guardrail_ERROR
+					if corruption == "Secret" {
+						want = corev1.AccessLog_Entry_Info_LLM_Guardrail_DENIED
+					}
+					assert.Equal(t, want, res.reqCtx.LLMGuardrails[0].Result)
+				}
+				assert.NotContains(t, res.body, "all good")
+				assert.NotContains(t, res.body, "AKIADEADBEEFDEADBEEF")
+			}
+		})
 	}
 }

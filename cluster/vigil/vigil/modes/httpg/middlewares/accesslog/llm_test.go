@@ -17,6 +17,7 @@
 package accesslog
 
 import (
+	"bytes"
 	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const llmReqBody = `{"model":"gpt-4o","messages":[{"role":"user","content":"my s3cr3t prompt"}]}`
@@ -514,6 +516,57 @@ func TestLLMAccessLogEventStreamSplitWrites(t *testing.T) {
 
 	assert.Equal(t, int64(1), crw.eventCount())
 	assert.Equal(t, uint64(33), obs.usage.TotalTokens)
+}
+
+func TestLLMAccessLogEventStreamChecksums(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		for _, corruption := range []string{"Valid", "PreludeCRC", "MessageCRC", "Payload"} {
+			name := corruption
+			if split {
+				name += "/Bytewise"
+			}
+			t.Run(name, func(t *testing.T) {
+				frames := [][]byte{
+					httputils.EncodeLLMEventStreamEvent("metadata", []byte(`{"usage":{"inputTokens":11,"outputTokens":22,"totalTokens":33}}`)),
+					httputils.EncodeLLMEventStreamEvent("metadata", []byte(`{"usage":{"inputTokens":500,"outputTokens":500,"totalTokens":1000}}`)),
+					httputils.EncodeLLMEventStreamEvent("metadata", []byte(`{"usage":{"inputTokens":50000,"outputTokens":49999,"totalTokens":99999}}`)),
+				}
+				switch corruption {
+				case "PreludeCRC":
+					frames[1][8] ^= 1
+				case "MessageCRC":
+					frames[1][len(frames[1])-1] ^= 1
+				case "Payload":
+					frames[1][bytes.Index(frames[1], []byte("1000"))] ^= 1
+				}
+				rw := newResponseWriter(httptest.NewRecorder(), streamKindLLM)
+				obs := &llmObserver{}
+				rw.onEventMessage = obs.onEventMessage
+				rw.Header().Set("Content-Type", httputils.LLMEventStreamMediaType)
+				for _, frame := range frames {
+					if !split {
+						_, err := rw.Write(frame)
+						require.Nil(t, err)
+						continue
+					}
+					for pos := range frame {
+						_, err := rw.Write(frame[pos : pos+1])
+						require.Nil(t, err)
+					}
+				}
+				if corruption == "Valid" {
+					assert.False(t, rw.sseTruncated)
+					assert.Equal(t, int64(3), rw.eventCount())
+					assert.Equal(t, uint64(99999), obs.usage.TotalTokens)
+				} else {
+					assert.True(t, rw.sseTruncated)
+					assert.True(t, rw.sseDiscarding)
+					assert.Equal(t, int64(1), rw.eventCount())
+					assert.Equal(t, uint64(33), obs.usage.TotalTokens)
+				}
+			})
+		}
+	}
 }
 
 func TestLLMAccessLogEventStreamInvalid(t *testing.T) {

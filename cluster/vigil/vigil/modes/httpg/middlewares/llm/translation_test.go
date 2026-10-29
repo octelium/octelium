@@ -17,6 +17,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -2101,4 +2103,60 @@ func TestTranslationEventStreamRoundTrip(t *testing.T) {
 
 	_, _, n = httputils.NextLLMEventStreamEvent(frame[:len(frame)-1])
 	assert.Equal(t, 0, n)
+}
+
+func TestTranslationEventStreamChecksums(t *testing.T) {
+	for _, split := range []struct {
+		name string
+		size int
+	}{{"Whole", 0}, {"Bytewise", 1}, {"Chunks", 7}} {
+		for _, corruption := range []string{"Valid", "PreludeCRC", "MessageCRC", "Payload"} {
+			t.Run(split.name+"/"+corruption, func(t *testing.T) {
+				events := transUpstreamStream(corev1.Service_Spec_Config_LLM_BEDROCK)
+				require.Greater(t, len(events), 3)
+				frame := []byte(events[2])
+				switch corruption {
+				case "PreludeCRC":
+					frame[8] ^= 1
+				case "MessageCRC":
+					frame[len(frame)-1] ^= 1
+				case "Payload":
+					pos := bytes.Index(frame, []byte("It is "))
+					require.NotEqual(t, -1, pos)
+					frame[pos] ^= 1
+				}
+				events[2] = string(frame)
+				o := newTransOpts(corev1.Service_Spec_Config_LLM_OPENAI,
+					corev1.Service_Spec_Config_LLM_BEDROCK,
+					transStreamBody(corev1.Service_Spec_Config_LLM_OPENAI))
+				o.isStream = true
+				o.upstream = func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", transEventStreamMediaType)
+					for _, event := range events {
+						data := []byte(event)
+						if split.size == 0 {
+							w.Write(data)
+							continue
+						}
+						for len(data) > 0 {
+							size := min(split.size, len(data))
+							w.Write(data[:size])
+							data = data[size:]
+						}
+					}
+				}
+				res := serveTranslation(t, o)
+				assert.True(t, res.isNext)
+				assert.Equal(t, http.StatusOK, res.code)
+				if corruption == "Valid" {
+					assert.NotContains(t, res.body, ErrCodeTranslation)
+					assert.Equal(t, "It is 31 C.", transStreamText(t, corev1.Service_Spec_Config_LLM_OPENAI, res.events(t)))
+				} else {
+					assert.Contains(t, res.body, ErrCodeTranslation)
+					assert.NotContains(t, res.body, "It is ")
+					assert.NotContains(t, res.body, "31 C.")
+				}
+			})
+		}
+	}
 }
