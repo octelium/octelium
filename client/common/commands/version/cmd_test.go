@@ -86,7 +86,7 @@ func TestMain(m *testing.M) {
 		panic("could not load test certificate")
 	}
 	x509.SetFallbackRoots(roots)
-	for key, value := range map[string]string{"HTTPS_PROXY": proxy.URL, "https_proxy": "", "NO_PROXY": "", "no_proxy": ""} {
+	for key, value := range map[string]string{"HTTPS_PROXY": proxy.URL, "https_proxy": proxy.URL, "NO_PROXY": "", "no_proxy": ""} {
 		if err := os.Setenv(key, value); err != nil {
 			panic(err)
 		}
