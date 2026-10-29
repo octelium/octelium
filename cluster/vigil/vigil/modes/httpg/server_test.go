@@ -4493,3 +4493,64 @@ func TestHTTPPathRewriteEncodedVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPIPv6CORS(t *testing.T) {
+	var calls atomic.Int32
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write([]byte("upstream-response"))
+	}), &corev1.Service_Spec_Config_HTTP{
+		Cors: &corev1.Service_Spec_Config_HTTP_CORS{
+			AllowOriginStringMatch: []string{"https://[2001:db8::1]", "https://[2001:db8::1]:8443"},
+			AllowCredentials:       true,
+		},
+	})
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, tc := range []struct {
+		origin string
+		want   string
+	}{
+		{"https://[2001:db8::1]", "https://[2001:db8::1]"},
+		{"https://[2001:DB8::1]:443", "https://[2001:db8::1]"},
+		{"https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443"},
+		{"https://[2001:db8::1]:9443", ""},
+		{"https://[2001:db8::2]:8443", ""},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			for _, method := range []string{http.MethodOptions, http.MethodGet} {
+				before := calls.Load()
+				req, err := http.NewRequestWithContext(t.Context(), method, addr+"/ipv6-cors", nil)
+				require.Nil(t, err)
+				req.Header.Set("Origin", tc.origin)
+				if method == http.MethodOptions {
+					req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+				}
+				resp, err := client.Do(req)
+				require.Nil(t, err)
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				require.Nil(t, err)
+				assert.Equal(t, tc.want, resp.Header.Get("Access-Control-Allow-Origin"), method)
+				assert.Contains(t, resp.Header.Values("Vary"), "Origin", method)
+				if tc.want != "" {
+					assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), method)
+				} else {
+					assert.Empty(t, resp.Header.Get("Access-Control-Allow-Credentials"), method)
+				}
+				if method == http.MethodOptions {
+					wantStatus := http.StatusNoContent
+					if tc.want == "" {
+						wantStatus = http.StatusForbidden
+					}
+					assert.Equal(t, wantStatus, resp.StatusCode)
+					assert.Empty(t, body)
+					assert.Equal(t, before, calls.Load())
+				} else {
+					assert.Equal(t, http.StatusOK, resp.StatusCode)
+					assert.Equal(t, "upstream-response", string(body))
+					assert.Equal(t, before+1, calls.Load())
+				}
+			}
+		})
+	}
+}

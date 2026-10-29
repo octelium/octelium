@@ -17,7 +17,6 @@
 package httputils
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,12 +42,15 @@ func NormalizeOrigin(arg string) (string, bool) {
 	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
 		port = ""
 	}
-
-	if port == "" {
-		return fmt.Sprintf("%s://%s", scheme, host), true
+	if u.Host[0] == '[' {
+		host = "[" + host + "]"
 	}
 
-	return fmt.Sprintf("%s://%s:%s", scheme, host, port), true
+	if port == "" {
+		return scheme + "://" + host, true
+	}
+
+	return scheme + "://" + host + ":" + port, true
 }
 
 func IsSameOrigin(req *http.Request, origin string) bool {

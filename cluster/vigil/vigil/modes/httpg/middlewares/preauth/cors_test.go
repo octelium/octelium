@@ -346,3 +346,133 @@ func TestCORSAllowClusterServicesOtherOrigins(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
+
+func TestCORSOriginAuthorityNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		origin string
+		want   string
+	}{
+		{"http://[::1]", "http://[::1]"},
+		{"http://[::1]:80", "http://[::1]"},
+		{"http://[::1]:443", "http://[::1]:443"},
+		{"https://[::1]:80", "https://[::1]:80"},
+		{"https://[2001:DB8::ABCD]", "https://[2001:db8::abcd]"},
+		{"https://[2001:DB8::ABCD]:443", "https://[2001:db8::abcd]"},
+		{"https://[2001:DB8::ABCD]:8443", "https://[2001:db8::abcd]:8443"},
+		{"http://[::]:8080", "http://[::]:8080"},
+		{"https://[::ffff:192.0.2.1]", "https://[::ffff:192.0.2.1]"},
+		{"https://[::ffff:192.0.2.1]:8443", "https://[::ffff:192.0.2.1]:8443"},
+		{"http://192.0.2.1:80", "http://192.0.2.1"},
+		{"https://192.0.2.1:8443", "https://192.0.2.1:8443"},
+		{"http://LOCALHOST:8080", "http://localhost:8080"},
+		{"https://EXAMPLE.com:80", "https://example.com:80"},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			got, ok := httputils.NormalizeOrigin(tc.origin)
+			assert.True(t, ok)
+			assert.Equal(t, tc.want, got)
+			normalized, ok := httputils.NormalizeOrigin(got)
+			assert.True(t, ok)
+			assert.Equal(t, got, normalized)
+		})
+	}
+}
+
+func TestCORSIPv6Responses(t *testing.T) {
+	for _, mode := range []corev1.Service_Spec_Mode{
+		corev1.Service_Spec_HTTP,
+		corev1.Service_Spec_MCP,
+		corev1.Service_Spec_LLM,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			for _, tc := range []struct {
+				origin  string
+				allowed string
+				want    string
+			}{
+				{"https://[2001:db8::1]", "https://[2001:DB8::1]:443", "https://[2001:db8::1]"},
+				{"https://[2001:DB8::1]:443", "https://[2001:db8::1]", "https://[2001:db8::1]"},
+				{"https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443"},
+				{"http://[::1]:8080", "*", "http://[::1]:8080"},
+				{"https://[2001:db8::2]:8443", "https://[2001:db8::1]:8443", ""},
+				{"https://[2001:db8::1]:9443", "https://[2001:db8::1]:8443", ""},
+				{"https://[2001:db8::1]", "https://[2001:db8::1]:8443", ""},
+			} {
+				t.Run(tc.origin, func(t *testing.T) {
+					svc := newCORSService(mode, &corev1.Service_Spec_Config_HTTP_CORS{
+						AllowOriginStringMatch: []string{tc.allowed},
+						AllowCredentials:       true,
+						ExposeHeaders:          "x-response",
+					})
+					for _, method := range []string{http.MethodOptions, http.MethodPost} {
+						preflight := method == http.MethodOptions
+						resp := serveCORS(t, svc, method, tc.origin, preflight, nil)
+						defer resp.Body.Close()
+						wantStatus := http.StatusOK
+						if preflight {
+							wantStatus = http.StatusNoContent
+							if tc.want == "" {
+								wantStatus = http.StatusForbidden
+							}
+						}
+						assert.Equal(t, wantStatus, resp.StatusCode, method)
+						assert.Equal(t, tc.want, resp.Header.Get("Access-Control-Allow-Origin"), method)
+						assert.Contains(t, resp.Header.Values("Vary"), "Origin", method)
+						if tc.want != "" {
+							assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), method)
+							if preflight {
+								assert.Equal(t, http.MethodPost, resp.Header.Get("Access-Control-Allow-Methods"))
+							} else {
+								assert.Equal(t, "x-response", resp.Header.Get("Access-Control-Expose-Headers"))
+							}
+						} else {
+							assert.Empty(t, resp.Header.Get("Access-Control-Allow-Credentials"), method)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCORSIPv6SameOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		host   string
+		origin string
+		want   string
+	}{
+		{"[2001:db8::1]", "https://[2001:db8::1]", "https://[2001:db8::1]"},
+		{"[2001:db8::1]:443", "https://[2001:db8::1]", "https://[2001:db8::1]"},
+		{"[2001:db8::1]", "https://[2001:db8::1]:443", "https://[2001:db8::1]"},
+		{"[::1]:80", "http://[::1]", "http://[::1]"},
+		{"[::1]:8080", "http://[::1]:8080", "http://[::1]:8080"},
+		{"[2001:db8::1]:8443", "https://[2001:db8::1]:9443", ""},
+		{"[2001:db8::1]:8443", "https://[2001:db8::2]:8443", ""},
+	} {
+		t.Run(tc.host+"/"+tc.origin, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/", nil)
+			req.Header.Set("Origin", tc.origin)
+			svc := newCORSService(corev1.Service_Spec_HTTP, nil)
+			assert.Equal(t, tc.want, httputils.GetCORSOrigin(req, nil, svc, "example.com"))
+		})
+	}
+}
+
+func BenchmarkCORSOriginNormalization(b *testing.B) {
+	for _, origin := range []string{
+		"https://example.com",
+		"https://EXAMPLE.com:443",
+		"https://example.com:8443",
+		"http://192.0.2.1:8080",
+		"https://[2001:db8::1]",
+		"https://[2001:db8::1]:443",
+		"https://[2001:db8::1]:8443",
+	} {
+		b.Run(origin, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				httputils.NormalizeOrigin(origin)
+			}
+		})
+	}
+}
