@@ -30,10 +30,12 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/postgresutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 
@@ -55,6 +57,141 @@ import (
 type FakeClient struct {
 	K8sC kubernetes.Interface
 	NadC nadclientset.Interface
+}
+
+func resetOctopsStorageEnv(t *testing.T) {
+	t.Helper()
+	for _, prefix := range []string{"OCTELIUM_POSTGRES_", "OCTELIUM_REDIS_"} {
+		for _, suffix := range []string{"DATABASE", "USERNAME", "PASSWORD", "HOST", "PORT", "NOSSL", "USE_TLS"} {
+			t.Setenv(prefix+suffix, "")
+		}
+	}
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+}
+
+func TestOctopsStorageBootstrap(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace, key string
+		data                 map[string][]byte
+		password             string
+	}{
+		{"inline", "", "", nil, "inline-secret"},
+		{"default namespace password", "", "", map[string][]byte{"password": []byte("password-secret"), "data": []byte("other-secret")}, "password-secret"},
+		{"default namespace data", "", "", map[string][]byte{"data": []byte("data-secret")}, "data-secret"},
+		{"custom key", "storage", "custom", map[string][]byte{"custom": []byte("custom-secret"), "password": []byte("other-secret")}, "custom-secret"},
+	} {
+		for _, tls := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/tls=%t", tc.name, tls), func(t *testing.T) {
+				resetOctopsStorageEnv(t)
+				bs := &cbootstrapv1.Config{}
+				passwordSpec := "password: inline-secret"
+				if tc.data != nil {
+					passwordSpec = fmt.Sprintf("passwordFromSecret: {name: storage-auth, namespace: '%s', key: '%s'}", tc.namespace, tc.key)
+				}
+				require.NoError(t, pbutils.UnmarshalYAML([]byte(fmt.Sprintf("spec:\n  primaryStorage:\n    postgresql: {host: postgres.storage.svc, username: installer, database: octelium, port: 6432, isTLS: %t, %s}\n  secondaryStorage:\n    redis: {host: redis.storage.svc, username: redis-user, database: 7, port: 6380, isTLS: %t, %s}\n", tls, passwordSpec, tls, passwordSpec)), bs))
+				c := fakek8s.NewSimpleClientset()
+				if tc.data != nil {
+					namespace := tc.namespace
+					if namespace == "" {
+						namespace = "default"
+					}
+					require.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "storage-auth", Namespace: namespace}, Data: tc.data}))
+				}
+				g := &Genesis{k8sC: c}
+				require.NoError(t, g.initStorage(context.Background(), &genesisutils.InstallCtx{Bootstrap: bs}))
+				pg, err := c.CoreV1().Secrets("octelium").Get(context.Background(), "octelium-postgres", k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, map[string][]byte{"postgres-password": []byte(tc.password), "username": []byte("installer"), "database": []byte("octelium"), "host": []byte("postgres.storage.svc"), "port": []byte("6432"), "no_ssl": []byte(fmt.Sprint(!tls))}, pg.Data)
+				redis, err := c.CoreV1().Secrets("octelium").Get(context.Background(), "octelium-redis", k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, map[string][]byte{"password": []byte(tc.password), "username": []byte("redis-user"), "database": []byte("7"), "host": []byte("redis.storage.svc"), "port": []byte("6380"), "use_tls": []byte(fmt.Sprint(tls))}, redis.Data)
+				for key, want := range map[string]string{"OCTELIUM_POSTGRES_PASSWORD": tc.password, "OCTELIUM_POSTGRES_USERNAME": "installer", "OCTELIUM_POSTGRES_DATABASE": "octelium", "OCTELIUM_POSTGRES_HOST": "postgres.storage.svc", "OCTELIUM_POSTGRES_PORT": "6432", "OCTELIUM_REDIS_PASSWORD": tc.password, "OCTELIUM_REDIS_USERNAME": "redis-user", "OCTELIUM_REDIS_DATABASE": "7", "OCTELIUM_REDIS_HOST": "redis.storage.svc", "OCTELIUM_REDIS_PORT": "6380"} {
+					assert.Equal(t, want, os.Getenv(key), key)
+				}
+				if tls {
+					assert.Empty(t, os.Getenv("OCTELIUM_POSTGRES_NOSSL"))
+					assert.Equal(t, "true", os.Getenv("OCTELIUM_REDIS_USE_TLS"))
+				} else {
+					assert.Equal(t, "true", os.Getenv("OCTELIUM_POSTGRES_NOSSL"))
+					assert.Empty(t, os.Getenv("OCTELIUM_REDIS_USE_TLS"))
+				}
+			})
+		}
+	}
+}
+
+func TestOctopsStorageBootstrapErrors(t *testing.T) {
+	for _, data := range []string{"{}", "spec: {}", "spec: {primaryStorage: {postgresql: {}}}"} {
+		bs := &cbootstrapv1.Config{}
+		require.NoError(t, pbutils.UnmarshalYAML([]byte(data), bs))
+		g := &Genesis{k8sC: fakek8s.NewSimpleClientset()}
+		assert.Error(t, g.initStorage(context.Background(), &genesisutils.InstallCtx{Bootstrap: bs}))
+	}
+	for _, storage := range []string{"postgresql", "redis"} {
+		for _, failure := range []string{"missing reference", "missing secret", "forbidden", "create"} {
+			t.Run(storage+"/"+failure, func(t *testing.T) {
+				resetOctopsStorageEnv(t)
+				bs := &cbootstrapv1.Config{}
+				require.NoError(t, pbutils.UnmarshalYAML([]byte("spec:\n  primaryStorage:\n    postgresql: {host: postgres, username: installer, password: secret}\n  secondaryStorage:\n    redis: {host: redis, password: secret}"), bs))
+				c := fakek8s.NewSimpleClientset()
+				if failure != "create" {
+					name := "credentials"
+					if failure == "missing reference" {
+						name = ""
+					}
+					if storage == "postgresql" {
+						bs.Spec.PrimaryStorage.GetPostgresql().PasswordType = &cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_{PasswordFromSecret: &cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret{Name: name}}
+					} else {
+						bs.Spec.SecondaryStorage.GetRedis().PasswordType = &cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_{PasswordFromSecret: &cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret{Name: name}}
+					}
+					if failure == "forbidden" {
+						c.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+							return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "credentials", fmt.Errorf("not permitted"))
+						})
+					}
+				} else {
+					c.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+						secret := action.(k8stesting.CreateAction).GetObject().(*k8scorev1.Secret)
+						if (storage == "postgresql" && secret.Name == "octelium-postgres") || (storage == "redis" && secret.Name == "octelium-redis") {
+							return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), secret.Name, fmt.Errorf("not permitted"))
+						}
+						return false, nil, nil
+					})
+				}
+				g := &Genesis{k8sC: c}
+				err := g.initStorage(context.Background(), &genesisutils.InstallCtx{Bootstrap: bs})
+				require.Error(t, err)
+				switch failure {
+				case "missing reference":
+					assert.ErrorContains(t, err, "name of passwordFromSecret is empty")
+				case "missing secret":
+					assert.True(t, k8serr.IsNotFound(err))
+				default:
+					assert.True(t, k8serr.IsForbidden(err))
+				}
+			})
+		}
+	}
+}
+
+func TestOctopsNamespaceErrors(t *testing.T) {
+	for _, verb := range []string{"get", "delete", "create"} {
+		t.Run(verb, func(t *testing.T) {
+			c := fakek8s.NewSimpleClientset()
+			if verb == "delete" {
+				require.NoError(t, c.Tracker().Add(&k8scorev1.Namespace{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium"}}))
+			}
+			c.PrependReactor(verb, "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "octelium", fmt.Errorf("not permitted"))
+			})
+			g := &Genesis{k8sC: c}
+			assert.True(t, k8serr.IsForbidden(g.setNamespace(context.Background())))
+			actions := c.Actions()
+			assert.Equal(t, verb, actions[len(actions)-1].GetVerb())
+		})
+	}
 }
 
 func now() k8smetav1.Time {
