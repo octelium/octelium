@@ -372,7 +372,7 @@ func TestAuthFailureAuthenticator(t *testing.T) {
 
 func TestAuthFailureCallback(t *testing.T) {
 	ctx := context.Background()
-	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	srv, adminSrv := newCallbackTestEnv(t)
 	sub := newAuthFailureSub(t, srv)
 
 	usrReq := tstuser.GenUserHuman(nil)

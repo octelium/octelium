@@ -193,6 +193,7 @@ func (s *tstSrv) run(t *testing.T) {
 			}
 
 			go func(conn net.Conn) {
+				defer conn.Close()
 				for {
 					buf := make([]byte, 4096)
 					n, err := conn.Read(buf)

@@ -166,7 +166,7 @@ func TestIngressEnvoyDeploymentConfiguration(t *testing.T) {
 			assert.False(t, *spec.AutomountServiceAccountToken)
 			require.Len(t, spec.Containers, 1)
 			container := spec.Containers[0]
-			assert.Equal(t, "envoyproxy/envoy:v1.40.0", container.Image)
+			assert.Equal(t, "envoyproxy/envoy:v1.40.2", container.Image)
 			assert.Equal(t, []string{"envoy"}, container.Command)
 			if dev {
 				assert.Equal(t, []string{"-c", "/etc/envoy/envoy.yaml", "-l", "debug"}, container.Args)

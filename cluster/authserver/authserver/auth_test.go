@@ -2424,9 +2424,26 @@ func (p *callbackTestProvider) HandleCallback(r *http.Request,
 	return p.info, p.err
 }
 
+func newCallbackTestEnv(t *testing.T) (*server, *admin.Server) {
+	t.Helper()
+	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	return &server{
+		rootURL:    srv.rootURL,
+		domain:     srv.domain,
+		authDomain: srv.authDomain,
+		octeliumC:  srv.octeliumC,
+		genCache:   srv.genCache,
+		jwkCtl:     srv.jwkCtl,
+		ccCtl:      srv.ccCtl,
+		celEngine:  srv.celEngine,
+		geoipCtl:   srv.geoipCtl,
+		authEvents: srv.authEvents,
+	}, adminSrv
+}
+
 func TestHandleAuthCallback(t *testing.T) {
 	ctx := context.Background()
-	srv, _, adminSrv := newWebAuthnTestEnv(t)
+	srv, adminSrv := newCallbackTestEnv(t)
 
 	tests := []struct {
 		name   string

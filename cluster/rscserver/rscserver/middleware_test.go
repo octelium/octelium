@@ -625,16 +625,26 @@ func TestResourceGRPC(t *testing.T) {
 	defer cancel()
 	watch, err := client.WatchUser(watchCtx, &rmetav1.WatchOptions{})
 	require.Nil(t, err)
-	ev, err := watch.Recv()
-	require.Nil(t, err)
+	recv := func() *rmetav1.WatchEvent {
+		for {
+			ev, err := watch.Recv()
+			require.Nil(t, err)
+			if getEventItemUID(ev, &corev1.User{}) == created.Metadata.Uid {
+				return ev
+			}
+		}
+	}
+	ev := recv()
 	assert.Equal(t, eventTypeCreate, getEventType(ev))
 	assert.Equal(t, created.Metadata.Uid, getEventItemUID(ev, &corev1.User{}))
+
+	_, err = client.CreateUser(ctx, &corev1.User{Metadata: &metav1.Metadata{Name: "grpc-unrelated-user"}})
+	require.Nil(t, err)
 
 	got.Metadata.DisplayName = "updated"
 	updated, err := client.UpdateUser(ctx, got)
 	require.Nil(t, err)
-	ev, err = watch.Recv()
-	require.Nil(t, err)
+	ev = recv()
 	require.NotNil(t, ev.GetEvent().GetUpdate())
 	old := &corev1.User{}
 	require.Nil(t, ev.GetEvent().GetUpdate().OldItem.UnmarshalTo(old))
@@ -643,9 +653,8 @@ func TestResourceGRPC(t *testing.T) {
 
 	deleted, err := client.DeleteUser(ctx, &rmetav1.DeleteOptions{Uid: created.Metadata.Uid})
 	require.Nil(t, err)
-	ev, err = watch.Recv()
-	require.Nil(t, err)
-	assert.Equal(t, eventTypeDelete, getEventType(ev))
+	ev = recv()
+	require.Equal(t, eventTypeDelete, getEventType(ev))
 	actual := &corev1.User{}
 	require.Nil(t, ev.GetEvent().GetDelete().Item.UnmarshalTo(actual))
 	assert.NotNil(t, deleted)
