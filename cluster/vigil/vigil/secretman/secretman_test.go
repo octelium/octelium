@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 type tstOAuthSrv struct {
@@ -834,4 +836,501 @@ func FuzzOAuth2CacheKeyScopeBoundaries(f *testing.F) {
 		right := &GetOAuth2CCTokenReq{Scopes: []string{first, middle + "-" + last}}
 		assert.NotEqual(t, left.getID(), right.getID())
 	})
+}
+
+func TestOAuth2TokenCancellationAndRetry(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		for _, deadline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("Refresh=%t/Deadline=%t", refresh, deadline), func(t *testing.T) {
+				sm, err := New(t.Context(), nil, nil)
+				require.Nil(t, err)
+				sm.c.Set("secret", &corev1.Secret{
+					Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+					Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+				}, 0)
+				started := make(chan struct{})
+				canceled := make(chan struct{})
+				release := make(chan struct{})
+				defer close(release)
+				var calls atomic.Int32
+				blockedCall := int32(1)
+				if refresh {
+					blockedCall = 2
+				}
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if !assert.Nil(t, r.ParseForm()) {
+						return
+					}
+					call := calls.Add(1)
+					if call == blockedCall {
+						close(started)
+						select {
+						case <-r.Context().Done():
+							close(canceled)
+							return
+						case <-release:
+						}
+					}
+					expiresIn := 3600
+					if refresh && call == 1 {
+						expiresIn = 1
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{
+						"token_type": "Bearer", "access_token": fmt.Sprintf("token-%d", call), "expires_in": expiresIn,
+					})
+				}))
+				t.Cleanup(srv.Close)
+				req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL}
+				if refresh {
+					token, err := sm.GetOAuth2CCToken(t.Context(), req)
+					require.Nil(t, err)
+					assert.Equal(t, "token-1", token)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				wantErr := context.Canceled
+				if deadline {
+					cancel()
+					ctx, cancel = context.WithTimeout(t.Context(), 250*time.Millisecond)
+					wantErr = context.DeadlineExceeded
+				}
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					_, err := sm.GetOAuth2CCToken(ctx, req)
+					done <- err
+				}()
+				select {
+				case <-started:
+				case <-time.After(3 * time.Second):
+					t.Fatal("The token request did not start")
+				}
+				if !deadline {
+					cancel()
+				}
+				select {
+				case err := <-done:
+					require.ErrorIs(t, err, wantErr)
+				case <-time.After(time.Second):
+					t.Fatal("Token acquisition did not stop with its caller")
+				}
+				select {
+				case <-canceled:
+				case <-time.After(time.Second):
+					t.Fatal("The provider request was not canceled")
+				}
+				for range 2 {
+					token, err := sm.GetOAuth2CCToken(t.Context(), req)
+					require.Nil(t, err)
+					assert.Equal(t, fmt.Sprintf("token-%d", blockedCall+1), token)
+				}
+				assert.Equal(t, blockedCall+1, calls.Load())
+			})
+		}
+	}
+}
+
+func TestOAuth2TokenCacheCallerLifetime(t *testing.T) {
+	for _, expiresIn := range []int{1, 3600} {
+		t.Run(fmt.Sprintf("ExpiresIn=%d", expiresIn), func(t *testing.T) {
+			sm, err := New(t.Context(), nil, nil)
+			require.Nil(t, err)
+			sm.c.Set("secret", &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+			}, 0)
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				call := calls.Add(1)
+				expiry := 3600
+				if call == 1 {
+					expiry = expiresIn
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"token_type": "Bearer", "access_token": fmt.Sprintf("token-%d", call), "expires_in": expiry,
+				})
+			}))
+			defer srv.Close()
+			req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			token, err := sm.GetOAuth2CCToken(ctx, req)
+			require.Nil(t, err)
+			assert.Equal(t, "token-1", token)
+			cancel()
+			wantCalls := int32(1)
+			if expiresIn == 1 {
+				wantCalls = 2
+			}
+			for range 2 {
+				token, err = sm.GetOAuth2CCToken(t.Context(), req)
+				require.Nil(t, err)
+				assert.Equal(t, fmt.Sprintf("token-%d", wantCalls), token)
+			}
+			assert.Equal(t, wantCalls, calls.Load())
+		})
+	}
+}
+
+func TestOAuth2TokenConcurrentWaiters(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	sm.c.Set("secret", &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+	}, 0)
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	releaseRequest := sync.OnceFunc(func() { close(release) })
+	defer releaseRequest()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assert.Nil(t, r.ParseForm()) {
+			return
+		}
+		if r.URL.Path == "/blocked" {
+			if calls.Add(1) == 1 {
+				close(started)
+				select {
+				case <-r.Context().Done():
+					close(canceled)
+					return
+				case <-release:
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"token_type":"Bearer","access_token":"token","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+	req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL + "/blocked"}
+	type result struct {
+		token string
+		err   error
+	}
+	done := make(chan result, 9)
+	getToken := func() {
+		token, err := sm.GetOAuth2CCToken(t.Context(), req)
+		done <- result{token: token, err: err}
+	}
+	go getToken()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("The token request did not start")
+	}
+	for range 8 {
+		go getToken()
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := sm.GetOAuth2CCToken(ctx, req)
+		waiter <- err
+	}()
+	select {
+	case err := <-waiter:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("The canceled waiter remained blocked behind token acquisition")
+	}
+	select {
+	case <-canceled:
+		t.Fatal("Canceling a waiter canceled the active provider request")
+	case <-done:
+		t.Fatal("The active request completed before the provider was released")
+	default:
+	}
+	other := *req
+	other.TokenURL = srv.URL + "/independent"
+	independentCtx, independentCancel := context.WithTimeout(t.Context(), time.Second)
+	defer independentCancel()
+	token, err := sm.GetOAuth2CCToken(independentCtx, &other)
+	require.Nil(t, err)
+	assert.Equal(t, "token", token)
+	releaseRequest()
+	for range 9 {
+		select {
+		case ret := <-done:
+			require.Nil(t, ret.err)
+			assert.Equal(t, "token", ret.token)
+		case <-time.After(3 * time.Second):
+			t.Fatal("A waiting caller did not receive the token")
+		}
+	}
+	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestOAuth2TokenCanceledOwnerDoesNotPoisonWaiter(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	sm.c.Set("secret", &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+	}, 0)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assert.Nil(t, r.ParseForm()) {
+			return
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-r.Context().Done():
+				return
+			case <-release:
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"token_type":"Bearer","access_token":"fresh-token","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+	req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	owner := make(chan error, 1)
+	go func() {
+		_, err := sm.GetOAuth2CCToken(ctx, req)
+		owner <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("The token request did not start")
+	}
+	type result struct {
+		token string
+		err   error
+	}
+	waiter := make(chan result, 1)
+	go func() {
+		token, err := sm.GetOAuth2CCToken(t.Context(), req)
+		waiter <- result{token: token, err: err}
+	}()
+	cancel()
+	select {
+	case err := <-owner:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("The refresh owner did not stop after cancellation")
+	}
+	select {
+	case ret := <-waiter:
+		require.Nil(t, ret.err)
+		assert.Equal(t, "fresh-token", ret.token)
+	case <-time.After(3 * time.Second):
+		t.Fatal("The next caller did not retry with its own context")
+	}
+	assert.Equal(t, int32(2), calls.Load())
+}
+
+type tstOAuth2Transport func(*http.Request) (*http.Response, error)
+
+func (f tstOAuth2Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestOAuth2TokenRequestContext(t *testing.T) {
+	for _, callerDeadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("CallerDeadline=%t", callerDeadline), func(t *testing.T) {
+			sm, err := New(t.Context(), nil, nil)
+			require.Nil(t, err)
+			sm.c.Set("secret", &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+			}, 0)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if callerDeadline {
+				ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+			}
+			ctxKey := struct{}{}
+			ctx = context.WithValue(ctx, ctxKey, "caller-value")
+			start := time.Now()
+			calls := 0
+			client := &http.Client{Transport: tstOAuth2Transport(func(req *http.Request) (*http.Response, error) {
+				calls++
+				assert.Equal(t, "caller-value", req.Context().Value(ctxKey))
+				deadline, ok := req.Context().Deadline()
+				assert.True(t, ok)
+				if callerDeadline {
+					want, _ := ctx.Deadline()
+					assert.Equal(t, want, deadline)
+				} else {
+					assert.WithinDuration(t, start.Add(30*time.Second), deadline, time.Second)
+				}
+				rw := httptest.NewRecorder()
+				rw.Header().Set("Content-Type", "application/json")
+				rw.WriteString(`{"token_type":"Bearer","access_token":"token","expires_in":3600}`)
+				return rw.Result(), nil
+			})}
+			ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
+			req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: "https://issuer.example.com/token"}
+			token, err := sm.GetOAuth2CCToken(ctx, req)
+			require.Nil(t, err)
+			assert.Equal(t, "token", token)
+			assert.Equal(t, 1, calls)
+			cancel()
+			for _, clientID := range []string{"client", "uncached"} {
+				copy := *req
+				copy.ClientID = clientID
+				token, err := sm.GetOAuth2CCToken(ctx, &copy)
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Empty(t, token)
+			}
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestOAuth2TokenRotationDuringRetrieval(t *testing.T) {
+	sm, err := New(t.Context(), nil, nil)
+	require.Nil(t, err)
+	sm.c.Set("secret", &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "old-password"}},
+	}, 0)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	releaseRequest := sync.OnceFunc(func() { close(release) })
+	defer releaseRequest()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, secret, ok := r.BasicAuth()
+		if !assert.True(t, ok) {
+			return
+		}
+		if secret == "old-password" {
+			close(started)
+			select {
+			case <-r.Context().Done():
+				return
+			case <-release:
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"token_type": "Bearer", "access_token": "token-" + secret, "expires_in": 3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	req := &GetOAuth2CCTokenReq{ClientID: "client", SecretName: "secret", TokenURL: srv.URL}
+	done := make(chan error, 1)
+	go func() {
+		_, err := sm.GetOAuth2CCToken(t.Context(), req)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("The old credential request did not start")
+	}
+	sm.Set(&corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "2"},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "new-password"}},
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	token, err := sm.GetOAuth2CCToken(ctx, req)
+	require.Nil(t, err)
+	assert.Equal(t, "token-new-password", token)
+	releaseRequest()
+	select {
+	case err := <-done:
+		require.Nil(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("The old credential request did not finish")
+	}
+	token, err = sm.GetOAuth2CCToken(t.Context(), req)
+	require.Nil(t, err)
+	assert.Equal(t, "token-new-password", token)
+	assert.Equal(t, int32(2), calls.Load())
+}
+
+func TestApplyServiceOAuth2Cancellation(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	secret, err := tst.C.OcteliumC.CoreC().CreateSecret(t.Context(), &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: "oauth-secret"},
+		Spec:     &corev1.Secret_Spec{},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
+	})
+	require.Nil(t, err)
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !assert.Nil(t, r.ParseForm()) {
+			return
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-r.Context().Done():
+				close(canceled)
+				return
+			case <-release:
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"token_type":"Bearer","access_token":"token","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	vc.SetService(&corev1.Service{Spec: &corev1.Service_Spec{
+		Config: &corev1.Service_Spec_Config{Type: &corev1.Service_Spec_Config_Http{
+			Http: &corev1.Service_Spec_Config_HTTP{Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+				Type: &corev1.Service_Spec_Config_HTTP_Auth_Oauth2ClientCredentials{
+					Oauth2ClientCredentials: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials{
+						ClientID: "client", TokenURL: srv.URL,
+						ClientSecret: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret{
+							Type: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret_FromSecret{FromSecret: secret.Metadata.Name},
+						},
+					},
+				},
+			}},
+		}},
+	}})
+	sm, err := New(t.Context(), tst.C.OcteliumC, vc)
+	require.Nil(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- sm.ApplyService(ctx) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Service application did not start token retrieval")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Nil(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Service application remained blocked after cancellation")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("Service application did not cancel the provider request")
+	}
+	token, err := sm.GetOAuth2CCToken(t.Context(), &GetOAuth2CCTokenReq{
+		ClientID: "client", SecretName: secret.Metadata.Name, TokenURL: srv.URL,
+	})
+	require.Nil(t, err)
+	assert.Equal(t, "token", token)
+	require.Nil(t, sm.ApplyService(t.Context()))
+	assert.Equal(t, int32(2), calls.Load())
 }

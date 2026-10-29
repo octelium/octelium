@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,8 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+const oauth2TokenTimeout = 30 * time.Second
+
 type SecretManager struct {
 	mu          sync.Mutex
 	octeliumC   octeliumc.ClientInterface
@@ -51,7 +54,9 @@ type SecretManager struct {
 }
 
 type oauth2ClientCredentialsInfo struct {
-	TokenSource     oauth2.TokenSource
+	lock            chan struct{}
+	config          *clientcredentials.Config
+	token           *oauth2.Token
 	resourceVersion string
 }
 
@@ -145,7 +150,7 @@ func (s *SecretManager) ApplyService(ctx context.Context) error {
 	}
 
 	for _, req := range oauth2Reqs {
-		if _, err := s.setOAuth2CCToken(ctx, req); err != nil {
+		if _, err := s.GetOAuth2CCToken(ctx, req); err != nil {
 			zap.L().Warn("Could not set the OAuth2 client credentials token",
 				zap.String("secretName", req.SecretName), zap.Error(err))
 		}
@@ -363,68 +368,52 @@ func (s *SecretManager) setOAuth2ClientCredentialsSecret(ctx context.Context) er
 */
 
 func (s *SecretManager) GetOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTokenReq) (string, error) {
-
+	ctx, cancel := context.WithTimeout(ctx, oauth2TokenTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	secret, err := s.GetByName(ctx, req.SecretName)
 	if err != nil {
 		return "", err
 	}
 
-	tkn, err := s.getOAuth2CCToken(ctx, req, secret.Metadata.ResourceVersion)
-	if err == nil {
-		return tkn, nil
-	} else if errors.Is(err, errOAuth2CCNotFound) {
-		return s.setOAuth2CCToken(ctx, req)
-	} else {
-		return "", err
-	}
-}
-
-func (s *SecretManager) getOAuth2CCToken(ctx context.Context,
-	req *GetOAuth2CCTokenReq, resourceVersion string) (string, error) {
+	id := req.getID()
 	s.oauth2ccMap.Lock()
-	ret, ok := s.oauth2ccMap.oauth2ccMap[req.getID()]
-	s.oauth2ccMap.Unlock()
-
-	if !ok || ret.resourceVersion != resourceVersion {
-		return "", errOAuth2CCNotFound
-	}
-
-	tkn, err := ret.TokenSource.Token()
-	if err != nil {
-		return "", err
-	}
-	return tkn.AccessToken, nil
-}
-
-var errOAuth2CCNotFound = errors.New("cc info not found")
-
-func (s *SecretManager) setOAuth2CCToken(ctx context.Context, req *GetOAuth2CCTokenReq) (string, error) {
-	secret, err := s.GetByName(ctx, req.SecretName)
-	if err != nil {
-		return "", err
-	}
-
-	cfg := &clientcredentials.Config{
-		ClientID:     req.ClientID,
-		ClientSecret: ucorev1.ToSecret(secret).GetValueStr(),
-		TokenURL:     req.TokenURL,
-		Scopes:       req.Scopes,
-	}
-
-	tknSrc := cfg.TokenSource(context.Background())
-
-	s.oauth2ccMap.Lock()
-	s.oauth2ccMap.oauth2ccMap[req.getID()] = &oauth2ClientCredentialsInfo{
-		TokenSource:     tknSrc,
-		resourceVersion: secret.Metadata.ResourceVersion,
+	info, ok := s.oauth2ccMap.oauth2ccMap[id]
+	if !ok || info.resourceVersion != secret.Metadata.ResourceVersion {
+		info = &oauth2ClientCredentialsInfo{
+			lock: make(chan struct{}, 1),
+			config: &clientcredentials.Config{
+				ClientID:     req.ClientID,
+				ClientSecret: ucorev1.ToSecret(secret).GetValueStr(),
+				TokenURL:     req.TokenURL,
+				Scopes:       slices.Clone(req.Scopes),
+			},
+			resourceVersion: secret.Metadata.ResourceVersion,
+		}
+		s.oauth2ccMap.oauth2ccMap[id] = info
 	}
 	s.oauth2ccMap.Unlock()
 
-	tkn, err := tknSrc.Token()
+	select {
+	case info.lock <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-info.lock }()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if info.token.Valid() {
+		return info.token.AccessToken, nil
+	}
+
+	tkn, err := info.config.Token(ctx)
 	if err != nil {
 		return "", err
 	}
-
+	info.token = tkn
 	return tkn.AccessToken, nil
 }
 
