@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ghodss/yaml"
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-version"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
 )
 
 var cmdArgs args

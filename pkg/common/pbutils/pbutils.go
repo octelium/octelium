@@ -19,12 +19,12 @@ import (
 
 	"encoding/json"
 
-	"github.com/ghodss/yaml"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"sigs.k8s.io/yaml"
 )
 
 type Message = proto.Message

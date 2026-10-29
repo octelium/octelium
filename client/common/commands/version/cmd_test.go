@@ -22,12 +22,12 @@ import (
 
 	"bytes"
 	"github.com/fatih/color"
-	"github.com/ghodss/yaml"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 )
 
 type releaseHTTPResponse struct {
