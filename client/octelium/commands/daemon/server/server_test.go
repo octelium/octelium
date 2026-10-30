@@ -2027,3 +2027,19 @@ func TestDaemonConnectedConfigSnapshotWithImmediateGatewayEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestServerCloseReleasesListenerBeforeServing(t *testing.T) {
+	addr := newTestSocketPath(t)
+	for i := range 20 {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		srv, err := New(&Opts{ListenAddress: addr, StateDir: t.TempDir()})
+		require.NoError(t, err)
+		require.NoError(t, srv.Run(ctx))
+		require.NoError(t, srv.Close())
+		require.NoError(t, srv.Close())
+		lis, err := ipc.Listen(addr)
+		require.NoError(t, err, "attempt %d", i)
+		require.NoError(t, lis.Close())
+	}
+}

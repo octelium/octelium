@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,8 +54,10 @@ type Server struct {
 	instanceID string
 	stateDir   string
 
-	grpcSrv *grpc.Server
-	srvErrC chan error
+	grpcSrv    *grpc.Server
+	srvErrC    chan error
+	lis        net.Listener
+	serveDoneC chan struct{}
 
 	ctx      context.Context
 	cancelFn context.CancelFunc
@@ -124,7 +127,14 @@ func (s *Server) Run(ctx context.Context) error {
 		s: s,
 	})
 
+	serveDoneC := make(chan struct{})
+	s.mu.Lock()
+	s.lis = lis
+	s.serveDoneC = serveDoneC
+	s.mu.Unlock()
+
 	go func() {
+		defer close(serveDoneC)
 		zap.L().Debug("Running the daemon gRPC server",
 			zap.String("addr", s.opts.ListenAddress))
 		err := s.grpcSrv.Serve(lis)
@@ -168,6 +178,8 @@ func (s *Server) Close() error {
 	}
 	s.isClosed = true
 	p := s.principal
+	lis := s.lis
+	serveDoneC := s.serveDoneC
 	s.mu.Unlock()
 
 	if s.cancelFn != nil {
@@ -187,6 +199,13 @@ func (s *Server) Close() error {
 			zap.L().Debug("Timed out gracefully stopping the daemon gRPC server")
 			s.grpcSrv.Stop()
 		}
+	}
+
+	if lis != nil {
+		if err := lis.Close(); err != nil {
+			zap.L().Debug("Could not close the daemon IPC listener", zap.Error(err))
+		}
+		<-serveDoneC
 	}
 
 	if p != nil {
