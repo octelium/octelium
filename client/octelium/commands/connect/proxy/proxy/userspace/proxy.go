@@ -106,28 +106,31 @@ func NewProxy(opts *Opts) *Proxy {
 }
 
 func NewProxyFromServiceListener(listener *userv1.HostedService, addr *metav1.DualStackIP, goNetCtl ccommon.GoNetCtl, ipv4Supported, ipv6Supported bool) *Proxy {
+	if listener.GetName() == "" || listener.GetUpstream() == nil || addr == nil {
+		return nil
+	}
 
 	opts := &Opts{
-		Name:   listener.Name,
-		L4Type: listener.L4Type,
+		Name:   listener.GetName(),
+		L4Type: listener.GetL4Type(),
 		Upstream: OptsUpstream{
-			Address: listener.Upstream.Host,
-			Port:    uint32(listener.Upstream.Port),
+			Address: listener.GetUpstream().GetHost(),
+			Port:    uint32(listener.GetUpstream().GetPort()),
 		},
 		goNetCtl: goNetCtl,
 	}
 
-	if ipv4Supported && addr.Ipv4 != "" {
+	if ipv4Supported && addr.GetIpv4() != "" {
 		opts.Listeners = append(opts.Listeners, OptsListener{
-			Address: addr.Ipv4,
-			Port:    listener.Port,
+			Address: addr.GetIpv4(),
+			Port:    listener.GetPort(),
 		})
 	}
 
-	if ipv6Supported && addr.Ipv6 != "" {
+	if ipv6Supported && addr.GetIpv6() != "" {
 		opts.Listeners = append(opts.Listeners, OptsListener{
-			Address: addr.Ipv6,
-			Port:    listener.Port,
+			Address: addr.GetIpv6(),
+			Port:    listener.GetPort(),
 		})
 	}
 
@@ -135,6 +138,9 @@ func NewProxyFromServiceListener(listener *userv1.HostedService, addr *metav1.Du
 }
 
 func (p *Proxy) Start(ctx context.Context) error {
+	if p == nil {
+		return errors.Errorf("Cannot start a nil proxy")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.isClosed {
@@ -174,6 +180,9 @@ func (p *Proxy) Start(ctx context.Context) error {
 }
 
 func (p *Proxy) Close() error {
+	if p == nil {
+		return nil
+	}
 	p.mu.Lock()
 	p.isClosed = true
 	if p.cancelFn != nil {

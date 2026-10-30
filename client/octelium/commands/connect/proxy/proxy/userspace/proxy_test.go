@@ -682,3 +682,35 @@ func TestServedRetriesAndWarningsStayBounded(t *testing.T) {
 		assert.Equal(t, before, n.calls.Load())
 	})
 }
+
+func TestServedConstructorRejectsMissingProtobufMessages(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		svc  *userv1.HostedService
+		addr *metav1.DualStackIP
+	}{
+		{name: "NilService", addr: &metav1.DualStackIP{Ipv4: "127.0.0.1"}},
+		{name: "EmptyService", svc: &userv1.HostedService{}, addr: &metav1.DualStackIP{Ipv4: "127.0.0.1"}},
+		{name: "NilUpstream", svc: &userv1.HostedService{Name: "invalid.default"}, addr: &metav1.DualStackIP{Ipv4: "127.0.0.1"}},
+		{name: "NilAddress", svc: &userv1.HostedService{Name: "invalid.default", Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: 80}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var p *Proxy
+			require.NotPanics(t, func() { p = NewProxyFromServiceListener(tt.svc, tt.addr, nil, true, true) })
+			require.Nil(t, p)
+			require.Error(t, p.Start(t.Context()))
+			require.NoError(t, p.Close())
+		})
+	}
+}
+
+func TestServedConstructorPreservesLegacyDefaults(t *testing.T) {
+	p := NewProxyFromServiceListener(&userv1.HostedService{
+		Name: "legacy.default", Upstream: &userv1.HostedService_Upstream{},
+	}, &metav1.DualStackIP{}, nil, true, true)
+	require.NotNil(t, p)
+	require.NoError(t, p.Start(t.Context()))
+	require.NoError(t, p.Close())
+	assert.Empty(t, p.listeners)
+	assert.Equal(t, userv1.HostedService_L4_UNKNOWN, p.opts.L4Type)
+}

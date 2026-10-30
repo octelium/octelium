@@ -497,3 +497,88 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 		})
 	}
 }
+
+func TestClientMalformedServedStateE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	for _, scenario := range []string{"AddMissingService", "UpdateMissingService", "DeleteMissingName", "InitialNilService"} {
+		t.Run(scenario, func(t *testing.T) {
+			backend := newTestCommandServedBackend(t)
+			reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			addr := reserved.LocalAddr().String()
+			port := uint32(reserved.LocalAddr().(*net.UDPAddr).Port)
+			require.NoError(t, reserved.Close())
+			firstReady, disconnect := make(chan struct{}), make(chan struct{})
+			var attempts atomic.Int32
+			socket := startTestCommandAPI(t, &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				if _, err := stream.Recv(); err != nil {
+					return err
+				}
+				initial := testCommandInitialState()
+				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
+					Name: "healthy.default", Port: port, L4Type: userv1.HostedService_UDP,
+					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+				}}}
+				if attempt == 1 && scenario == "InitialNilService" {
+					initial.GetState().ServiceOptions.Services = append(initial.GetState().ServiceOptions.Services, nil)
+				}
+				if err := stream.Send(initial); err != nil {
+					return err
+				}
+				if attempt == 1 && scenario != "InitialNilService" {
+					select {
+					case <-firstReady:
+					case <-stream.Context().Done():
+						return nil
+					}
+					msg := &userv1.ConnectResponse{}
+					switch scenario {
+					case "AddMissingService":
+						msg.Event = &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{}}
+					case "UpdateMissingService":
+						msg.Event = &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{}}
+					case "DeleteMissingName":
+						msg.Event = &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{}}
+					}
+					if err := stream.Send(msg); err != nil {
+						return err
+					}
+				}
+				select {
+				case <-disconnect:
+					return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+				case <-stream.Context().Done():
+					return nil
+				}
+			}})
+			p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+				"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+				"--no-dns", "--implementation", "gvisor", "--serve-all", "--localdns-addr", "127.0.0.1:0")
+			if scenario != "InitialNilService" {
+				require.Eventually(t, func() bool { return testCommandServedRoundTrip(addr) }, 5*time.Second, 10*time.Millisecond)
+				close(firstReady)
+			}
+			require.Eventually(t, func() bool { return attempts.Load() == 2 }, 8*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool { return testCommandServedRoundTrip(addr) }, 3*time.Second, 10*time.Millisecond)
+			close(disconnect)
+			require.NoError(t, p.wait(t, 3*time.Second))
+			assert.Equal(t, int32(2), attempts.Load())
+			assert.NotContains(t, p.output.String(), "panic:")
+			assert.Contains(t, p.output.String(), "Connected successfully")
+			probe, err := net.ListenPacket("udp", addr)
+			require.NoError(t, err)
+			assert.NoError(t, probe.Close())
+		})
+	}
+}

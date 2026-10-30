@@ -43,10 +43,10 @@ type Controller struct {
 
 func NewController(ctx context.Context, c *cliconfigv1.Connection, goNetCtl ccommon.GoNetCtl) (*Controller, error) {
 
-	ipv4Supported := c.Connection.L3Mode == userv1.ConnectionState_BOTH ||
-		c.Connection.L3Mode == userv1.ConnectionState_V4
-	ipv6Supported := c.Connection.L3Mode == userv1.ConnectionState_BOTH ||
-		c.Connection.L3Mode == userv1.ConnectionState_V6
+	ipv4Supported := c.GetConnection().GetL3Mode() == userv1.ConnectionState_BOTH ||
+		c.GetConnection().GetL3Mode() == userv1.ConnectionState_V4
+	ipv6Supported := c.GetConnection().GetL3Mode() == userv1.ConnectionState_BOTH ||
+		c.GetConnection().GetL3Mode() == userv1.ConnectionState_V6
 
 	ret := &Controller{
 		c:             c,

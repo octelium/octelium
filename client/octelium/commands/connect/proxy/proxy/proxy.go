@@ -47,10 +47,10 @@ type goNet interface {
 }
 
 func NewController(ctx context.Context, c *cliconfigv1.Connection, goNetCtl ccommon.GoNetCtl) (*Controller, error) {
-	ipv4Supported := c.Preferences.L3Mode == cliconfigv1.Connection_Preferences_BOTH ||
-		c.Preferences.L3Mode == cliconfigv1.Connection_Preferences_V4
-	ipv6Supported := c.Preferences.L3Mode == cliconfigv1.Connection_Preferences_BOTH ||
-		c.Preferences.L3Mode == cliconfigv1.Connection_Preferences_V6
+	ipv4Supported := c.GetPreferences().GetL3Mode() == cliconfigv1.Connection_Preferences_BOTH ||
+		c.GetPreferences().GetL3Mode() == cliconfigv1.Connection_Preferences_V4
+	ipv6Supported := c.GetPreferences().GetL3Mode() == cliconfigv1.Connection_Preferences_BOTH ||
+		c.GetPreferences().GetL3Mode() == cliconfigv1.Connection_Preferences_V6
 
 	ret := &Controller{
 		c:             c,
@@ -72,13 +72,13 @@ func (c *Controller) Start(ctx context.Context) error {
 
 	zap.S().Debugf("Starting proxy controller")
 
-	sOpts := c.c.Connection.ServiceOptions
+	sOpts := c.c.GetConnection().GetServiceOptions()
 
 	if sOpts == nil {
 		return nil
 	}
 
-	for _, svc := range sOpts.Services {
+	for _, svc := range sOpts.GetServices() {
 		if err := c.doAddService(ctx, svc); err != nil {
 			return err
 		}
@@ -106,6 +106,9 @@ func (c *Controller) Close() error {
 }
 
 func (c *Controller) doAddService(ctx context.Context, svc *userv1.HostedService) error {
+	if svc.GetName() == "" {
+		return errors.Errorf("Cannot add a hosted Service without a name")
+	}
 	if cur := c.getServiceProxy(svc); cur != nil && proto.Equal(cur.svc, svc) {
 		return nil
 	}
@@ -118,12 +121,12 @@ func (c *Controller) doAddService(ctx context.Context, svc *userv1.HostedService
 }
 
 func (c *Controller) addProxy(ctx context.Context, listener *userv1.HostedService) error {
-	if listener.Upstream == nil || listener.Address == nil {
+	if listener.GetUpstream() == nil || listener.GetAddress() == nil {
 		return nil
 	}
 
 	zap.S().Debugf("adding proxy for listener: %+v", listener)
-	p, err := c.newProxy(listener, listener.Address, c.goNetCtl, c.ipv4Supported, c.ipv6Supported)
+	p, err := c.newProxy(listener, listener.GetAddress(), c.goNetCtl, c.ipv4Supported, c.ipv6Supported)
 	if err != nil {
 		return err
 	}
@@ -157,6 +160,9 @@ func (c *Controller) DeleteService(name string) error {
 	if c.isClosed {
 		return nil
 	}
+	if name == "" {
+		return errors.Errorf("Cannot delete a hosted Service without a name")
+	}
 
 	return c.deleteService(name)
 }
@@ -164,7 +170,7 @@ func (c *Controller) DeleteService(name string) error {
 func (c *Controller) deleteService(name string) error {
 
 	for idx := 0; idx < len(c.proxies); idx++ {
-		if c.proxies[idx].svc.Name == name {
+		if c.proxies[idx].svc.GetName() == name {
 			c.proxies[idx].close()
 			c.proxies = append(c.proxies[:idx], c.proxies[idx+1:]...)
 			idx--
@@ -199,6 +205,9 @@ func (c *Controller) UpdateService(ctx context.Context, svc *userv1.HostedServic
 }
 
 func (c *Controller) updateService(ctx context.Context, svc *userv1.HostedService) error {
+	if svc.GetName() == "" {
+		return errors.Errorf("Cannot update a hosted Service without a name")
+	}
 
 	zap.S().Debugf("Updating svc: %+v", svc)
 
@@ -232,7 +241,7 @@ func (c *Controller) updateService(ctx context.Context, svc *userv1.HostedServic
 func (c *Controller) getServiceProxy(svc *userv1.HostedService) *proxy {
 
 	for _, p := range c.proxies {
-		if p.svc.Name == svc.Name {
+		if p.svc.GetName() == svc.GetName() {
 			return p
 		}
 	}
@@ -256,10 +265,9 @@ func (c *Controller) newProxy(
 	addr *metav1.DualStackIP,
 	goNetCtl ccommon.GoNetCtl, ipv4Supported, ipv6Supported bool) (*proxy, error) {
 
-	if svc.Mode == userv1.HostedService_MODE_ESSH &&
-		c.c.Preferences.ESSH != nil &&
-		c.c.Preferences.ESSH.IsEnabled {
-		zap.S().Debugf("Service %s is served by the eSSH server. Skipping the proxy", svc.Name)
+	if svc.GetMode() == userv1.HostedService_MODE_ESSH &&
+		c.c.GetPreferences().GetESSH().GetIsEnabled() {
+		zap.S().Debugf("Service %s is served by the eSSH server. Skipping the proxy", svc.GetName())
 		return nil, nil
 	}
 

@@ -2561,3 +2561,253 @@ func TestServedTCPRecoveryOverGRPC(t *testing.T) {
 		})
 	}
 }
+
+func testMalformedServedResponses() []struct {
+	name string
+	msg  *userv1.ConnectResponse
+} {
+	return []struct {
+		name string
+		msg  *userv1.ConnectResponse
+	}{
+		{"AddNilWrapper", &userv1.ConnectResponse{Event: (*userv1.ConnectResponse_AddService_)(nil)}},
+		{"AddNilMessage", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{}}},
+		{"AddNilService", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{}}}},
+		{"AddEmptyService", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: &userv1.HostedService{}}}}},
+		{"UpdateNilWrapper", &userv1.ConnectResponse{Event: (*userv1.ConnectResponse_UpdateService_)(nil)}},
+		{"UpdateNilMessage", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{}}},
+		{"UpdateNilService", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{}}}},
+		{"UpdateEmptyService", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: &userv1.HostedService{}}}}},
+		{"DeleteNilWrapper", &userv1.ConnectResponse{Event: (*userv1.ConnectResponse_DeleteService_)(nil)}},
+		{"DeleteNilMessage", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{}}},
+		{"DeleteEmptyName", &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{}}}},
+	}
+}
+
+func newTestServingStateController(t *testing.T) *stateController {
+	t.Helper()
+	cfg := &cliconfigv1.Connection{
+		Connection: &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4},
+		Preferences: &cliconfigv1.Connection_Preferences{
+			L3Mode:    cliconfigv1.Connection_Preferences_V4,
+			ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{IsEnabled: true, ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE},
+		},
+	}
+	p, err := proxy.NewController(t.Context(), cfg, nil)
+	require.NoError(t, err)
+	require.NoError(t, p.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, p.Close()) })
+	return newStateController(cfg, nil, p, nil)
+}
+
+func TestServedMalformedStateEventsReturnErrors(t *testing.T) {
+	for _, tt := range testMalformedServedResponses() {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestServingStateController(t)
+			var err error
+			require.NotPanics(t, func() { err = c.handleState(t.Context(), tt.msg) })
+			require.Error(t, err)
+			require.NoError(t, c.handleState(t.Context(), &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{
+				AddService: &userv1.ConnectResponse_AddService{Service: &userv1.HostedService{Name: "legacy.default"}},
+			}}))
+			require.NoError(t, c.handleState(t.Context(), &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{
+				DeleteService: &userv1.ConnectResponse_DeleteService{Name: "legacy.default"},
+			}}))
+		})
+	}
+}
+
+func TestServedMalformedEventsIgnoredWhenNotServing(t *testing.T) {
+	for _, cfg := range []*cliconfigv1.Connection{nil, {}, {Preferences: &cliconfigv1.Connection_Preferences{}}, {
+		Preferences: &cliconfigv1.Connection_Preferences{ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{}},
+	}, {
+		Preferences: &cliconfigv1.Connection_Preferences{ServeOpts: &cliconfigv1.Connection_Preferences_ServeOpts{ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE}},
+	}} {
+		c := newStateController(cfg, nil, nil, nil)
+		for _, tt := range testMalformedServedResponses() {
+			require.NotPanics(t, func() { assert.NoError(t, c.handleState(t.Context(), tt.msg)) })
+		}
+	}
+	c := newTestServingStateController(t)
+	c.c.Preferences.ServeOpts.ProxyMode = cliconfigv1.Connection_Preferences_ServeOpts_NONE
+	for _, tt := range testMalformedServedResponses() {
+		require.NotPanics(t, func() { assert.NoError(t, c.handleState(t.Context(), tt.msg)) })
+	}
+	require.NoError(t, c.handleState(t.Context(), nil))
+}
+
+func TestServedMalformedStateEventsRequestResynchronization(t *testing.T) {
+	for _, tt := range testMalformedServedResponses() {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestServingStateController(t)
+			var reads int
+			c.streamC = &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				reads++
+				if reads == 1 {
+					return tt.msg, nil
+				}
+				return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{}}, nil
+			}}
+			require.NotPanics(t, func() { c.doStartLoop(t.Context()) })
+			assert.Equal(t, 1, reads)
+			ret := c.waitDisconnected(t.Context(), nil)
+			assert.ErrorContains(t, ret.err, "Could not apply connection state")
+			assert.True(t, ret.needsReconnect)
+			assert.True(t, ret.isConnected)
+			assert.True(t, shouldReconnect(ret, true))
+			select {
+			case <-c.apiserverDisconnectCh:
+				t.Fatal("a malformed Service event must not be an explicit server disconnect")
+			default:
+			}
+		})
+	}
+}
+
+func newTestMalformedServedBackend(t *testing.T) *net.UDPAddr {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1024)
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if _, err := conn.WriteTo(buf[:n], addr); err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { conn.Close(); <-done })
+	return conn.LocalAddr().(*net.UDPAddr)
+}
+
+func testMalformedServedRoundTrip(addr string) bool {
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	msg := []byte("recovered hosted Service")
+	if _, err := conn.Write(msg); err != nil {
+		return false
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	return err == nil && string(buf[:n]) == string(msg)
+}
+
+func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
+	for _, scenario := range []string{"AddMissingService", "UpdateMissingService", "DeleteMissingName", "InitialNilService", "InitialEmptyService"} {
+		t.Run(scenario, func(t *testing.T) {
+			backend := newTestMalformedServedBackend(t)
+			reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			addr := reserved.LocalAddr().String()
+			port := uint32(reserved.LocalAddr().(*net.UDPAddr).Port)
+			require.NoError(t, reserved.Close())
+			initialFailure := strings.HasPrefix(scenario, "Initial")
+			firstReady, recovered := make(chan struct{}), make(chan struct{})
+			var attempts atomic.Int32
+			srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				if attempt > 2 {
+					return status.Error(codes.Internal, "unexpected extra connection")
+				}
+				req, err := stream.Recv()
+				if err != nil {
+					return err
+				}
+				if !req.GetInitialize().GetServiceOptions().GetServeAll() {
+					return status.Error(codes.InvalidArgument, "missing serve-all request")
+				}
+				initial := testConnectInitialState()
+				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
+					Name: "healthy.default", Port: port, L4Type: userv1.HostedService_UDP,
+					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+				}}}
+				if attempt == 1 && initialFailure {
+					var bad *userv1.HostedService
+					if scenario == "InitialEmptyService" {
+						bad = &userv1.HostedService{}
+					}
+					initial.GetState().ServiceOptions.Services = append(initial.GetState().ServiceOptions.Services, bad)
+				}
+				if err := stream.Send(initial); err != nil {
+					return err
+				}
+				if attempt == 1 && !initialFailure {
+					select {
+					case <-firstReady:
+					case <-stream.Context().Done():
+						return nil
+					}
+					msg := &userv1.ConnectResponse{}
+					switch scenario {
+					case "AddMissingService":
+						msg.Event = &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{}}
+					case "UpdateMissingService":
+						msg.Event = &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{}}
+					case "DeleteMissingName":
+						msg.Event = &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{}}
+					}
+					if err := stream.Send(msg); err != nil {
+						return err
+					}
+				} else if attempt == 2 {
+					select {
+					case <-recovered:
+					case <-stream.Context().Done():
+						return nil
+					}
+					if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}}); err != nil {
+						return err
+					}
+				}
+				<-stream.Context().Done()
+				return nil
+			}}
+			c, dbC := newTestRunningConnector(t, srv)
+			c.opts.ServeAll = true
+			var connected, errorsSeen int
+			c.opts.OnEvent = func(event *Event) {
+				if event.Err != nil {
+					errorsSeen++
+					assert.ErrorContains(t, event.Err, "without a name")
+					_, err := dbC.GetConnectionCleanup("example.com")
+					assert.True(t, dbC.ErrorIsNotFound(err))
+				}
+				if event.Type != EventTypeConnected {
+					return
+				}
+				connected++
+				assert.Eventually(t, func() bool { return testMalformedServedRoundTrip(addr) }, 3*time.Second, 10*time.Millisecond)
+				if attempts.Load() == 1 {
+					close(firstReady)
+				} else {
+					close(recovered)
+				}
+			}
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 15*time.Second)
+			defer cancel()
+			require.NoError(t, c.Run(ctx))
+			assert.NoError(t, ctx.Err())
+			assert.Equal(t, int32(2), attempts.Load())
+			assert.Equal(t, 1, errorsSeen)
+			wantConnected := 2
+			if initialFailure {
+				wantConnected = 1
+			}
+			assert.Equal(t, wantConnected, connected)
+			probe, err := net.ListenPacket("udp", addr)
+			require.NoError(t, err, "the recovered connection must release its served listener")
+			assert.NoError(t, probe.Close())
+		})
+	}
+}

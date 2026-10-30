@@ -188,7 +188,7 @@ func (c *stateController) shouldSkipConnectResponseMessage(r *userv1.ConnectResp
 }
 
 func (c *stateController) isDisconnect(state *userv1.ConnectResponse) bool {
-	switch state.Event.(type) {
+	switch state.GetEvent().(type) {
 	case *userv1.ConnectResponse_Disconnect_:
 		return true
 	default:
@@ -198,7 +198,7 @@ func (c *stateController) isDisconnect(state *userv1.ConnectResponse) bool {
 
 func (c *stateController) handleState(ctx context.Context, state *userv1.ConnectResponse) error {
 
-	switch state.Event.(type) {
+	switch event := state.GetEvent().(type) {
 	case *userv1.ConnectResponse_AddGateway_:
 		gw := state.Event.(*userv1.ConnectResponse_AddGateway_).AddGateway.Gateway
 		zap.L().Debug("Adding Gateway", zap.Any("gw", gw))
@@ -227,47 +227,37 @@ func (c *stateController) handleState(ctx context.Context, state *userv1.Connect
 			return errors.Errorf("Could not set DNS: %+v", err)
 		}
 	case *userv1.ConnectResponse_AddService_:
-		svc := state.Event.(*userv1.ConnectResponse_AddService_).AddService.Service
-		zap.L().Debug("Adding Service", zap.Any("svc", svc))
-
-		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
+		if c.c.GetPreferences().GetServeOpts().GetProxyMode() == cliconfigv1.Connection_Preferences_ServeOpts_NONE || c.proxy == nil {
 			return nil
 		}
-
-		if c.proxy != nil {
-			if err := c.proxy.AddService(svc); err != nil {
-				return err
-			}
+		if event == nil {
+			return errors.Errorf("Missing add Service event")
 		}
+		svc := state.GetAddService().GetService()
+		zap.L().Debug("Adding Service", zap.Any("svc", svc))
+		return c.proxy.AddService(svc)
 
 	case *userv1.ConnectResponse_UpdateService_:
-		svc := state.Event.(*userv1.ConnectResponse_UpdateService_).UpdateService.Service
-		zap.L().Debug("Updating Service", zap.Any("svc", svc))
-
-		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
+		if c.c.GetPreferences().GetServeOpts().GetProxyMode() == cliconfigv1.Connection_Preferences_ServeOpts_NONE || c.proxy == nil {
 			return nil
 		}
-
-		if c.proxy != nil {
-			if err := c.proxy.UpdateService(svc); err != nil {
-				return err
-			}
+		if event == nil {
+			return errors.Errorf("Missing update Service event")
 		}
+		svc := state.GetUpdateService().GetService()
+		zap.L().Debug("Updating Service", zap.Any("svc", svc))
+		return c.proxy.UpdateService(svc)
 
 	case *userv1.ConnectResponse_DeleteService_:
-		svcName := state.Event.(*userv1.ConnectResponse_DeleteService_).DeleteService.Name
-
-		zap.L().Debug("Deleting Service", zap.String("svc", svcName))
-
-		if c.c.Preferences.ServeOpts.ProxyMode == cliconfigv1.Connection_Preferences_ServeOpts_NONE {
+		if c.c.GetPreferences().GetServeOpts().GetProxyMode() == cliconfigv1.Connection_Preferences_ServeOpts_NONE || c.proxy == nil {
 			return nil
 		}
-
-		if c.proxy != nil {
-			if err := c.proxy.DeleteService(svcName); err != nil {
-				return err
-			}
+		if event == nil {
+			return errors.Errorf("Missing delete Service event")
 		}
+		svcName := state.GetDeleteService().GetName()
+		zap.L().Debug("Deleting Service", zap.String("svc", svcName))
+		return c.proxy.DeleteService(svcName)
 
 	case *userv1.ConnectResponse_State:
 		zap.L().Debug("Setting the state")

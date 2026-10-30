@@ -454,3 +454,100 @@ func TestServedControllerInvalidAddDoesNotHideLaterErrors(t *testing.T) {
 	}
 	require.NoError(t, c.Close())
 }
+
+func TestServedMalformedServicePayloadsReturnErrors(t *testing.T) {
+	c := newTestServedController(t, t.Context(), nil)
+	require.NoError(t, c.Start(t.Context()))
+	for _, svc := range []*userv1.HostedService{nil, {}, {
+		Port: 12345, Address: &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+		Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: 80},
+	}} {
+		for _, operation := range []func(*userv1.HostedService) error{c.AddService, c.UpdateService} {
+			var err error
+			require.NotPanics(t, func() { err = operation(svc) })
+			require.Error(t, err)
+		}
+	}
+	var err error
+	require.NotPanics(t, func() { err = c.DeleteService("") })
+	require.Error(t, err)
+}
+
+func TestServedNilInitialServiceClosesPartialStartup(t *testing.T) {
+	for _, malformed := range []*userv1.HostedService{nil, {}} {
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		addr := free.Addr().String()
+		require.NoError(t, free.Close())
+		valid := newTestServedControllerService(t, "valid.default", "tcp", addr, "127.0.0.1:80")
+		c := newTestServedController(t, t.Context(), nil, valid, malformed)
+		require.NotPanics(t, func() { err = c.Start(t.Context()) })
+		require.ErrorContains(t, err, "without a name")
+		require.NoError(t, c.Close())
+		require.Error(t, c.Start(t.Context()))
+		lis, err := net.Listen("tcp", addr)
+		require.NoError(t, err, "failed startup must release the earlier Service's listener")
+		assert.NoError(t, lis.Close())
+	}
+}
+
+func TestServedMalformedEventsPreserveHealthyProxy(t *testing.T) {
+	backend := newTestServedControllerBackend(t, "tcp")
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := free.Addr().String()
+	require.NoError(t, free.Close())
+	svc := newTestServedControllerService(t, "healthy.default", "tcp", addr, backend)
+	c := newTestServedController(t, t.Context(), nil, svc)
+	require.NoError(t, c.Start(t.Context()))
+	require.Eventually(t, func() bool { return testServedControllerRoundTrip("tcp", addr) }, 2*time.Second, 10*time.Millisecond)
+	for _, bad := range []*userv1.HostedService{nil, {}} {
+		for range 2 {
+			require.Error(t, c.AddService(bad))
+			require.Error(t, c.UpdateService(bad))
+			require.Error(t, c.DeleteService(""))
+			require.True(t, testServedControllerRoundTrip("tcp", addr))
+		}
+	}
+	require.NoError(t, c.UpdateService(proto.Clone(svc).(*userv1.HostedService)))
+	require.True(t, testServedControllerRoundTrip("tcp", addr))
+	require.NoError(t, c.DeleteService(svc.GetName()))
+	lis, err := net.Listen("tcp", addr)
+	require.NoError(t, err)
+	assert.NoError(t, lis.Close())
+}
+
+func TestServedOptionalConfigurationMessagesAreSafe(t *testing.T) {
+	for _, cfg := range []*cliconfigv1.Connection{nil, {}, {
+		Connection: &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4},
+	}, {
+		Preferences: &cliconfigv1.Connection_Preferences{},
+	}} {
+		var c *Controller
+		var err error
+		require.NotPanics(t, func() { c, err = NewController(t.Context(), cfg, nil) })
+		require.NoError(t, err)
+		require.NoError(t, c.Start(t.Context()))
+		require.NoError(t, c.AddService(&userv1.HostedService{Name: "legacy.default"}))
+		require.NoError(t, c.UpdateService(&userv1.HostedService{Name: "legacy.default", Upstream: &userv1.HostedService_Upstream{}}))
+		require.NoError(t, c.DeleteService("legacy.default"))
+		require.NoError(t, c.Close())
+	}
+}
+
+func TestServedLegacyOptionalServiceMessagesRemainAccepted(t *testing.T) {
+	services := []*userv1.HostedService{
+		{Name: "name-only.default"},
+		{Name: "no-address.default", Upstream: &userv1.HostedService_Upstream{}},
+		{Name: "no-upstream.default", Address: &metav1.DualStackIP{Ipv4: "127.0.0.1"}},
+		{Name: "empty-optionals.default", Upstream: &userv1.HostedService_Upstream{}, Address: &metav1.DualStackIP{}},
+	}
+	c := newTestServedController(t, t.Context(), nil, services...)
+	require.NoError(t, c.Start(t.Context()))
+	for _, svc := range services {
+		require.NoError(t, c.AddService(proto.Clone(svc).(*userv1.HostedService)))
+		require.NoError(t, c.UpdateService(proto.Clone(svc).(*userv1.HostedService)))
+		require.NoError(t, c.DeleteService(svc.GetName()))
+	}
+	require.NoError(t, c.Close())
+}
