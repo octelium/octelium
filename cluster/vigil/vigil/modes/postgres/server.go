@@ -330,6 +330,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 						RequestedUser:     startupMessage.Parameters["user"],
 						RequestedDatabase: startupMessage.Parameters["database"],
 						ApplicationName:   startupMessage.Parameters["application_name"],
+						BackendPID:        dctx.upstreamHijackedConn.PID,
 					},
 				},
 			},
