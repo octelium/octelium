@@ -41,6 +41,7 @@ import (
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
+	"github.com/octelium/octelium/client/octelium/internal/testutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -1768,6 +1769,7 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 	}
 	for _, recoverListener := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recover-%t", recoverListener), func(t *testing.T) {
+			peer := testutils.NewWGPeer(t)
 			backend, err := net.ListenPacket("udp", "127.0.0.1:0")
 			require.NoError(t, err)
 			done := make(chan struct{})
@@ -1783,11 +1785,11 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 				}
 			}()
 			t.Cleanup(func() { backend.Close(); <-done })
-			blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
-			require.NoError(t, err)
+			blocker := peer.ReserveUDP("100.64.0.3", 22000)
 			t.Cleanup(func() { blocker.Close() })
 			addr := blocker.LocalAddr().String()
 			port := uint32(blocker.LocalAddr().(*net.UDPAddr).Port)
+			gatewayReady := make(chan struct{})
 			var attempts atomic.Int32
 			startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
 				attempts.Add(1)
@@ -1799,14 +1801,31 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 				initial := testDaemonInitialState()
 				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
 					Name: "served.default", Port: port, L4Type: userv1.HostedService_UDP,
-					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Address:  &metav1.DualStackIP{Ipv4: "100.64.0.3"},
 					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.LocalAddr().(*net.UDPAddr).Port)},
 				}}}
+				peer.Configure(initial.GetState())
 				if err := stream.Send(initial); err != nil {
 					return err
 				}
-				<-stream.Context().Done()
-				return nil
+				select {
+				case <-gatewayReady:
+				case <-stream.Context().Done():
+					return nil
+				}
+				if err := peer.SendGateway(stream); err != nil {
+					return err
+				}
+				for {
+					select {
+					case msg := <-peer.Updates:
+						if err := stream.Send(msg); err != nil {
+							return err
+						}
+					case <-stream.Context().Done():
+						return nil
+					}
+				}
 			}})
 			srv := newTestServer(t)
 			authenticateTestDaemonDomain(t, srv)
@@ -1831,21 +1850,11 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 				first = state.Domains[0]
 				return first.Connection.State == daemonv1.ConnectionStatus_CONNECTED
 			}, 5*time.Second, 10*time.Millisecond)
+			close(gatewayReady)
 			if recoverListener {
 				require.NoError(t, blocker.Close())
 				require.Eventually(t, func() bool {
-					conn, err := net.Dial("udp", addr)
-					if err != nil {
-						return false
-					}
-					defer conn.Close()
-					conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
-					if _, err := conn.Write([]byte("served through daemon IPC")); err != nil {
-						return false
-					}
-					buf := make([]byte, 128)
-					n, err := conn.Read(buf)
-					return err == nil && string(buf[:n]) == "served through daemon IPC"
+					return peer.RoundTrip(addr, []byte("served through daemon IPC"))
 				}, 6*time.Second, 10*time.Millisecond)
 			}
 			state, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
@@ -1865,9 +1874,7 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 			if !recoverListener {
 				require.NoError(t, blocker.Close())
 			}
-			probe, err := net.ListenPacket("udp", addr)
-			require.NoError(t, err, "disconnect must release and stop retrying the served listener")
-			assert.NoError(t, probe.Close())
+			assert.False(t, peer.RoundTrip(addr, []byte("served through daemon IPC")), "disconnect must stop forwarding and retrying the served listener")
 		})
 	}
 }

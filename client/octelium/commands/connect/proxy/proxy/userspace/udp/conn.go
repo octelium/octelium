@@ -36,7 +36,7 @@ var errClosedListener = errors.New("udp: listener closed")
 
 // Listener augments a session-oriented Listener over a UDP PacketConn.
 type Listener struct {
-	pConn *net.UDPConn
+	pConn net.PacketConn
 
 	mu    sync.RWMutex
 	conns map[string]*Conn
@@ -54,6 +54,10 @@ func Listen(network string, laddr *net.UDPAddr) (*Listener, error) {
 		return nil, err
 	}
 
+	return NewListener(conn), nil
+}
+
+func NewListener(conn net.PacketConn) *Listener {
 	l := &Listener{
 		pConn:     conn,
 		acceptCh:  make(chan *Conn, 1024),
@@ -63,7 +67,7 @@ func Listen(network string, laddr *net.UDPAddr) (*Listener, error) {
 
 	go l.readLoop()
 
-	return l, nil
+	return l
 }
 
 // Accept waits for and returns the next connection to the listener.

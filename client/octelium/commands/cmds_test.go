@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
+	"github.com/octelium/octelium/client/octelium/internal/testutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -356,22 +357,28 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	for _, scenario := range []string{"InitialService", "LegacyInitialService", "StreamedAdd", "UpdateWhilePending", "APIReconnect", "CancelWhilePending", "DeleteWhilePending"} {
 		t.Run(scenario, func(t *testing.T) {
+			peer := testutils.NewWGPeer(t)
+			roundTrip := func(addr string) bool { return peer.RoundTrip(addr, []byte("served by the octelium executable")) }
 			backend := newTestCommandServedBackend(t)
-			blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
-			require.NoError(t, err)
+			blocker := peer.ReserveUDP("100.64.0.3", 22000)
 			t.Cleanup(func() { blocker.Close() })
-			nextBlocker, err := net.ListenPacket("udp", "127.0.0.1:0")
-			require.NoError(t, err)
+			nextBlocker := peer.ReserveUDP("100.64.0.4", 22001)
 			t.Cleanup(func() { nextBlocker.Close() })
 			free, err := net.ListenPacket("udp", "127.0.0.1:0")
 			require.NoError(t, err)
-			healthyAddr := free.LocalAddr().String()
 			healthyPort := uint32(free.LocalAddr().(*net.UDPAddr).Port)
+			healthyAddr := net.JoinHostPort("100.64.0.2", fmt.Sprintf("%d", healthyPort))
 			require.NoError(t, free.Close())
 			service := func(name string, port uint32) *userv1.HostedService {
+				address := "100.64.0.2"
+				for _, blocked := range []*testutils.WGAddress{blocker, nextBlocker} {
+					if uint32(blocked.LocalAddr().(*net.UDPAddr).Port) == port {
+						address = blocked.LocalAddr().(*net.UDPAddr).IP.String()
+					}
+				}
 				return &userv1.HostedService{
 					Name: name, Port: port, L4Type: userv1.HostedService_UDP,
-					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Address:  &metav1.DualStackIP{Ipv4: address},
 					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
 				}
 			}
@@ -402,7 +409,7 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 				if scenario == "LegacyInitialService" {
 					initial.CreatedAt = nil
 				}
-				if err := stream.Send(initial); err != nil {
+				if err := peer.SendInitial(stream, initial); err != nil {
 					return err
 				}
 				restartCh := restart
@@ -411,6 +418,10 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 				}
 				for {
 					select {
+					case msg := <-peer.Updates:
+						if err := stream.Send(msg); err != nil {
+							return err
+						}
 					case msg := <-messages:
 						if scenario != "LegacyInitialService" {
 							msg.CreatedAt = timestamppb.Now()
@@ -430,7 +441,7 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 			p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
 				"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
 				"--no-dns", "--implementation", "gvisor", "--serve-all", "--localdns-addr", "127.0.0.1:0")
-			require.Eventually(t, func() bool { return testCommandServedRoundTrip(healthyAddr) }, 8*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool { return roundTrip(healthyAddr) }, 8*time.Second, 10*time.Millisecond)
 			if scenario == "StreamedAdd" {
 				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: pending}}}
 			}
@@ -440,10 +451,10 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: pending.Name}}}
 				barrier := service("barrier.default", next.Port)
 				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: barrier}}}
-				require.Eventually(t, func() bool { return testCommandServedRoundTrip(nextBlocker.LocalAddr().String()) }, 3*time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool { return roundTrip(nextBlocker.LocalAddr().String()) }, 3*time.Second, 10*time.Millisecond)
 				require.NoError(t, blocker.Close())
-				assert.False(t, testCommandServedRoundTrip(blocker.LocalAddr().String()))
-				require.True(t, testCommandServedRoundTrip(healthyAddr))
+				assert.False(t, roundTrip(blocker.LocalAddr().String()))
+				require.True(t, roundTrip(healthyAddr))
 				close(disconnect)
 				require.NoError(t, p.wait(t, 3*time.Second))
 			} else if scenario == "CancelWhilePending" {
@@ -455,7 +466,7 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 				if scenario == "APIReconnect" {
 					close(restart)
 					require.Eventually(t, func() bool { return attempts.Load() == 2 }, 8*time.Second, 10*time.Millisecond)
-					require.Eventually(t, func() bool { return testCommandServedRoundTrip(healthyAddr) }, 3*time.Second, 10*time.Millisecond)
+					require.Eventually(t, func() bool { return roundTrip(healthyAddr) }, 3*time.Second, 10*time.Millisecond)
 					require.NoError(t, blocker.Close())
 					require.NoError(t, nextBlocker.Close())
 					targetAddr = nextBlocker.LocalAddr().String()
@@ -468,20 +479,13 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 					messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: pending}}}
 					require.NoError(t, blocker.Close())
 				}
-				require.Eventually(t, func() bool { return testCommandServedRoundTrip(targetAddr) }, 6*time.Second, 10*time.Millisecond)
-				require.True(t, testCommandServedRoundTrip(healthyAddr))
+				require.Eventually(t, func() bool { return roundTrip(targetAddr) }, 6*time.Second, 10*time.Millisecond)
+				require.True(t, roundTrip(healthyAddr))
 				if scenario == "APIReconnect" || scenario == "UpdateWhilePending" {
-					assert.False(t, testCommandServedRoundTrip(blocker.LocalAddr().String()), "an old controller must not restore its pending listener")
+					assert.False(t, roundTrip(blocker.LocalAddr().String()), "an old controller must not restore its pending listener")
 				}
 				messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: pending.Name}}}
-				require.Eventually(t, func() bool {
-					probe, err := net.ListenPacket("udp", targetAddr)
-					if err != nil {
-						return false
-					}
-					probe.Close()
-					return true
-				}, 3*time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool { return !roundTrip(targetAddr) }, 3*time.Second, 10*time.Millisecond)
 				close(disconnect)
 				require.NoError(t, p.wait(t, 3*time.Second))
 			}
@@ -491,9 +495,7 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 			}
 			assert.Equal(t, wantAttempts, attempts.Load())
 			assert.Contains(t, p.output.String(), "Connected successfully")
-			probe, err := net.ListenPacket("udp", healthyAddr)
-			require.NoError(t, err, "disconnect must release healthy served listeners")
-			assert.NoError(t, probe.Close())
+			assert.False(t, roundTrip(healthyAddr), "disconnect must stop forwarding healthy served listeners")
 		})
 	}
 }
@@ -511,11 +513,13 @@ func TestClientMalformedServedStateE2E(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	for _, scenario := range []string{"AddMissingService", "UpdateMissingService", "DeleteMissingName", "InitialNilService"} {
 		t.Run(scenario, func(t *testing.T) {
+			peer := testutils.NewWGPeer(t)
+			roundTrip := func(addr string) bool { return peer.RoundTrip(addr, []byte("served by the octelium executable")) }
 			backend := newTestCommandServedBackend(t)
 			reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
 			require.NoError(t, err)
-			addr := reserved.LocalAddr().String()
 			port := uint32(reserved.LocalAddr().(*net.UDPAddr).Port)
+			addr := net.JoinHostPort("100.64.0.2", fmt.Sprintf("%d", port))
 			require.NoError(t, reserved.Close())
 			firstReady, disconnect := make(chan struct{}), make(chan struct{})
 			var attempts atomic.Int32
@@ -527,13 +531,13 @@ func TestClientMalformedServedStateE2E(t *testing.T) {
 				initial := testCommandInitialState()
 				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
 					Name: "healthy.default", Port: port, L4Type: userv1.HostedService_UDP,
-					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Address:  &metav1.DualStackIP{Ipv4: "100.64.0.2"},
 					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
 				}}}
 				if attempt == 1 && scenario == "InitialNilService" {
 					initial.GetState().ServiceOptions.Services = append(initial.GetState().ServiceOptions.Services, nil)
 				}
-				if err := stream.Send(initial); err != nil {
+				if err := peer.SendInitial(stream, initial); err != nil {
 					return err
 				}
 				if attempt == 1 && scenario != "InitialNilService" {
@@ -566,19 +570,17 @@ func TestClientMalformedServedStateE2E(t *testing.T) {
 				"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
 				"--no-dns", "--implementation", "gvisor", "--serve-all", "--localdns-addr", "127.0.0.1:0")
 			if scenario != "InitialNilService" {
-				require.Eventually(t, func() bool { return testCommandServedRoundTrip(addr) }, 5*time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool { return roundTrip(addr) }, 5*time.Second, 10*time.Millisecond)
 				close(firstReady)
 			}
 			require.Eventually(t, func() bool { return attempts.Load() == 2 }, 8*time.Second, 10*time.Millisecond)
-			require.Eventually(t, func() bool { return testCommandServedRoundTrip(addr) }, 3*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool { return roundTrip(addr) }, 3*time.Second, 10*time.Millisecond)
 			close(disconnect)
 			require.NoError(t, p.wait(t, 3*time.Second))
 			assert.Equal(t, int32(2), attempts.Load())
 			assert.NotContains(t, p.output.String(), "panic:")
 			assert.Contains(t, p.output.String(), "Connected successfully")
-			probe, err := net.ListenPacket("udp", addr)
-			require.NoError(t, err)
-			assert.NoError(t, probe.Close())
+			assert.False(t, roundTrip(addr), "disconnect must stop forwarding the served listener")
 		})
 	}
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy"
+	"github.com/octelium/octelium/client/octelium/internal/testutils"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2705,11 +2706,12 @@ func testMalformedServedRoundTrip(addr string) bool {
 func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
 	for _, scenario := range []string{"AddMissingService", "UpdateMissingService", "DeleteMissingName", "InitialNilService", "InitialEmptyService"} {
 		t.Run(scenario, func(t *testing.T) {
+			peer := testutils.NewWGPeer(t)
 			backend := newTestMalformedServedBackend(t)
 			reserved, err := net.ListenPacket("udp", "127.0.0.1:0")
 			require.NoError(t, err)
-			addr := reserved.LocalAddr().String()
 			port := uint32(reserved.LocalAddr().(*net.UDPAddr).Port)
+			addr := net.JoinHostPort("100.64.0.2", fmt.Sprintf("%d", port))
 			require.NoError(t, reserved.Close())
 			initialFailure := strings.HasPrefix(scenario, "Initial")
 			firstReady, recovered := make(chan struct{}), make(chan struct{})
@@ -2729,7 +2731,7 @@ func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
 				initial := testConnectInitialState()
 				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
 					Name: "healthy.default", Port: port, L4Type: userv1.HostedService_UDP,
-					Address:  &metav1.DualStackIP{Ipv4: "127.0.0.1"},
+					Address:  &metav1.DualStackIP{Ipv4: "100.64.0.2"},
 					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
 				}}}
 				if attempt == 1 && initialFailure {
@@ -2739,7 +2741,7 @@ func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
 					}
 					initial.GetState().ServiceOptions.Services = append(initial.GetState().ServiceOptions.Services, bad)
 				}
-				if err := stream.Send(initial); err != nil {
+				if err := peer.SendInitial(stream, initial); err != nil {
 					return err
 				}
 				if attempt == 1 && !initialFailure {
@@ -2787,7 +2789,7 @@ func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
 					return
 				}
 				connected++
-				assert.Eventually(t, func() bool { return testMalformedServedRoundTrip(addr) }, 3*time.Second, 10*time.Millisecond)
+				assert.Eventually(t, func() bool { return peer.RoundTrip(addr, []byte("recovered hosted Service")) }, 3*time.Second, 10*time.Millisecond)
 				if attempts.Load() == 1 {
 					close(firstReady)
 				} else {
@@ -2805,9 +2807,152 @@ func TestRunGRPCMalformedServedStateRecovers(t *testing.T) {
 				wantConnected = 1
 			}
 			assert.Equal(t, wantConnected, connected)
-			probe, err := net.ListenPacket("udp", addr)
-			require.NoError(t, err, "the recovered connection must release its served listener")
-			assert.NoError(t, probe.Close())
+			assert.False(t, peer.RoundTrip(addr, []byte("recovered hosted Service")), "the recovered connection must stop forwarding after disconnect")
 		})
+	}
+}
+
+func testServedGoNetUDPRoundTrip(c *ctl, address string, port int) bool {
+	conn, err := c.devCtl.GetNetstackNet().DialUDP(nil, &net.UDPAddr{IP: net.ParseIP(address), Port: port})
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	msg := []byte("served UDP over the API connection")
+	if _, err := conn.Write(msg); err != nil {
+		return false
+	}
+	buf := make([]byte, len(msg)+1)
+	n, err := conn.Read(buf)
+	return err == nil && string(buf[:n]) == string(msg)
+}
+
+func TestServedUDPRecoveryOverGRPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s-legacy-%t", address, legacy), func(t *testing.T) {
+				clearTestConnectEnv(t)
+				t.Setenv("OCTELIUM_DEV", "false")
+				t.Setenv("OCTELIUM_PRODUCTION", "true")
+				backend := newTestMalformedServedBackend(t)
+				mode := "v4"
+				if net.ParseIP(address).To4() == nil {
+					mode = "v6"
+				}
+				service := func(name string, port uint32) *userv1.HostedService {
+					addr := &metav1.DualStackIP{Ipv4: address}
+					if mode == "v6" {
+						addr = &metav1.DualStackIP{Ipv6: address}
+					}
+					return &userv1.HostedService{
+						Name: name, Port: port, L4Type: userv1.HostedService_UDP, Address: addr,
+						Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+					}
+				}
+				events := make(chan *userv1.ConnectResponse, 8)
+				api := newTestConnectAPIClient(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+					req, err := stream.Recv()
+					if err != nil {
+						return err
+					}
+					if !req.GetInitialize().GetServiceOptions().GetServeAll() {
+						return status.Error(codes.InvalidArgument, "missing serve-all request")
+					}
+					initial := testConnectInitialState()
+					initial.GetState().Addresses = []*metav1.DualStackNetwork{{V4: "100.64.0.2/32", V6: "fd00::2/128"}}
+					initial.GetState().Cidr = &metav1.DualStackNetwork{V4: "100.64.0.0/16", V6: "fd00::/64"}
+					if mode == "v6" {
+						initial.GetState().L3Mode = userv1.ConnectionState_V6
+					}
+					initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{service("healthy.default", 22001)}}
+					if legacy {
+						initial.CreatedAt = nil
+					}
+					if err := stream.Send(initial); err != nil {
+						return err
+					}
+					for {
+						select {
+						case msg := <-events:
+							if !legacy {
+								msg.CreatedAt = timestamppb.Now()
+							}
+							if err := stream.Send(msg); err != nil {
+								return err
+							}
+						case <-stream.Context().Done():
+							return nil
+						}
+					}
+				}})
+				dbC, err := db.Open("memory")
+				require.NoError(t, err)
+				defer dbC.Close()
+				ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+				defer cancel()
+				connector, err := NewConnector("example.com", &Opts{
+					L3Mode: mode, IgnoreDNS: true, ImplementationMode: "gvisor", ServeAll: true,
+					LocalDNSListenAddr: "127.0.0.1:0", UserHome: t.TempDir(),
+				})
+				require.NoError(t, err)
+				stream, err := api.Connect(ctx)
+				require.NoError(t, err)
+				require.NoError(t, connector.sendInitializeRequest(stream, nil))
+				cfg, initAt, err := connector.getConnectionConfig(ctx, stream, nil)
+				require.NoError(t, err)
+				c, err := newCtl(ctx, stream, cfg, initAt)
+				require.NoError(t, err)
+				defer func() { cancel(); assert.NoError(t, c.close()) }()
+				require.NoError(t, c.start(ctx))
+				require.Eventually(t, func() bool { return testServedGoNetUDPRoundTrip(c, address, 22001) }, 3*time.Second, time.Millisecond)
+				blocker, err := c.devCtl.GetNetstackNet().DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: 22000}, nil)
+				require.NoError(t, err)
+				defer blocker.Close()
+				pending := service("pending.default", 22000)
+				events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: pending}}}
+				events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: proto.Clone(pending).(*userv1.HostedService)}}}
+				events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{Service: service("barrier.default", 22002)}}}
+				require.Eventually(t, func() bool { return testServedGoNetUDPRoundTrip(c, address, 22002) }, 3*time.Second, time.Millisecond)
+				require.True(t, testServedGoNetUDPRoundTrip(c, address, 22001))
+				require.NoError(t, blocker.Close())
+				require.Eventually(t, func() bool { return testServedGoNetUDPRoundTrip(c, address, 22000) }, 6*time.Second, time.Millisecond)
+				updated := proto.Clone(pending).(*userv1.HostedService)
+				updated.Port = 22003
+				events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: updated}}}
+				require.Eventually(t, func() bool { return testServedGoNetUDPRoundTrip(c, address, 22003) }, 3*time.Second, time.Millisecond)
+				released := func(port int) bool {
+					probe, err := c.devCtl.GetNetstackNet().DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: port}, nil)
+					if err != nil {
+						return false
+					}
+					probe.Close()
+					return true
+				}
+				require.True(t, released(22000))
+				for range 2 {
+					events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteService_{DeleteService: &userv1.ConnectResponse_DeleteService{Name: updated.Name}}}
+				}
+				require.Eventually(t, func() bool { return released(22003) }, 3*time.Second, time.Millisecond)
+				require.True(t, testServedGoNetUDPRoundTrip(c, address, 22001))
+				select {
+				case err := <-c.stateController.getConnErrCh:
+					t.Fatalf("a served UDP event disrupted the control stream: %v", err)
+				default:
+				}
+				events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}}
+				result := c.stateController.waitDisconnected(ctx, func(context.Context) error { return nil })
+				assert.True(t, result.isConnected)
+				assert.False(t, result.needsReconnect)
+				assert.NoError(t, result.err)
+				cancel()
+				require.NoError(t, c.close())
+				_, err = dbC.GetConnectionCleanup("example.com")
+				assert.True(t, dbC.ErrorIsNotFound(err))
+			})
+		}
 	}
 }

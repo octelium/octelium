@@ -714,3 +714,259 @@ func TestServedConstructorPreservesLegacyDefaults(t *testing.T) {
 	assert.Empty(t, p.listeners)
 	assert.Equal(t, userv1.HostedService_L4_UNKNOWN, p.opts.L4Type)
 }
+
+type testServedUDPGoNet struct {
+	*netstack.Net
+	unavailable atomic.Bool
+	calls       atomic.Int32
+	listen      func(*net.UDPAddr, *net.UDPAddr) (*gonet.UDPConn, error)
+}
+
+func (n *testRetryGoNet) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {
+	n.calls.Add(1)
+	return nil, errors.New("the interface is temporarily unavailable")
+}
+
+func (n *testRecoveringGoNet) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {
+	return n.goNet.DialUDP(laddr, raddr)
+}
+
+func (n *testServedUDPGoNet) GetGoNet() ccommon.GoNet { return n }
+
+func (n *testServedUDPGoNet) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {
+	n.calls.Add(1)
+	if n.unavailable.Load() {
+		return nil, errors.New("the interface is temporarily unavailable")
+	}
+	if n.listen != nil {
+		return n.listen(laddr, raddr)
+	}
+	return n.Net.DialUDP(laddr, raddr)
+}
+
+func TestServedGoNetUDPBindingCarriesTraffic(t *testing.T) {
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+			require.NoError(t, err)
+			t.Cleanup(func() { dev.Close() })
+			n := &testServedUDPGoNet{Net: goNet}
+			opts := newTestServedOpts(t, "udp")
+			opts.goNetCtl = n
+			opts.Listeners[0] = OptsListener{Address: address, Port: 12345}
+			p := NewProxy(opts)
+			require.NoError(t, p.Start(t.Context()))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+			assert.Equal(t, int32(1), n.calls.Load())
+			clients := make([]*gonet.UDPConn, 0, 3)
+			for range 3 {
+				conn, err := goNet.DialUDP(nil, &net.UDPAddr{IP: net.ParseIP(address), Port: 12345})
+				require.NoError(t, err)
+				t.Cleanup(func() { conn.Close() })
+				clients = append(clients, conn)
+			}
+			for range 3 {
+				for _, conn := range clients {
+					require.NoError(t, testServedEcho(conn))
+				}
+			}
+			require.NoError(t, p.Close())
+			require.Empty(t, testServedListenerAddress(p.listeners[0]))
+			probe, err := goNet.DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: 12345}, nil)
+			require.NoError(t, err)
+			assert.NoError(t, probe.Close())
+		})
+	}
+}
+
+func TestServedGoNetUDPFailuresRetryUntilCanceled(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := &testServedUDPGoNet{}
+		n.unavailable.Store(true)
+		p := NewProxy(&Opts{
+			Name: "retry.default", L4Type: userv1.HostedService_UDP, goNetCtl: n,
+			Listeners: []OptsListener{{Address: "127.0.0.1", Port: 12345}},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, p.Start(ctx))
+		synctest.Wait()
+		require.Equal(t, int32(1), n.calls.Load())
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		assert.Greater(t, n.calls.Load(), int32(100))
+		assert.Less(t, n.calls.Load(), int32(260))
+		assert.Empty(t, testServedListenerAddress(p.listeners[0]), "a userspace bind failure must not create a host listener")
+		cancel()
+		require.NoError(t, p.Close())
+		synctest.Wait()
+		before := n.calls.Load()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.Equal(t, before, n.calls.Load())
+	})
+}
+
+func TestServedGoNetUDPRecoveryPreservesHealthyListener(t *testing.T) {
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+			require.NoError(t, err)
+			t.Cleanup(func() { dev.Close() })
+			n := &testServedUDPGoNet{Net: goNet}
+			n.unavailable.Store(true)
+			opts := newTestServedOpts(t, "udp")
+			opts.goNetCtl = n
+			opts.Listeners = []OptsListener{{Address: address, Port: 12345}, {Address: address, Port: 12346}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			p := NewProxy(opts)
+			require.NoError(t, p.Start(ctx))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			require.Eventually(t, func() bool { return n.calls.Load() >= 2 }, time.Second, time.Millisecond)
+			blocker, err := goNet.DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: 12345}, nil)
+			require.NoError(t, err)
+			defer blocker.Close()
+			n.unavailable.Store(false)
+			require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[1]) != "" }, 6*time.Second, time.Millisecond)
+			healthy, err := goNet.DialUDP(nil, &net.UDPAddr{IP: net.ParseIP(address), Port: 12346})
+			require.NoError(t, err)
+			defer healthy.Close()
+			require.NoError(t, testServedEcho(healthy))
+			require.NoError(t, blocker.Close())
+			require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, 6*time.Second, time.Millisecond)
+			conn, err := goNet.DialUDP(nil, &net.UDPAddr{IP: net.ParseIP(address), Port: 12345})
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, testServedEcho(conn))
+			l := p.listeners[0]
+			l.mu.Lock()
+			old := l.udpLis
+			l.mu.Unlock()
+			require.NoError(t, old.Close())
+			require.Eventually(t, func() bool {
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				return l.udpLis != nil && l.udpLis != old
+			}, 6*time.Second, time.Millisecond)
+			require.NoError(t, testServedEcho(conn))
+			require.NoError(t, testServedEcho(healthy))
+			cancel()
+			require.NoError(t, p.Close())
+			for _, port := range []int{12345, 12346} {
+				probe, err := goNet.DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: port}, nil)
+				require.NoError(t, err)
+				assert.NoError(t, probe.Close())
+			}
+		})
+	}
+}
+
+func TestServedGoNetUDPCloseJoinsLateBind(t *testing.T) {
+	address := "100.64.0.2"
+	dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+	require.NoError(t, err)
+	defer dev.Close()
+	entered, release := make(chan struct{}), make(chan struct{})
+	n := &testServedUDPGoNet{listen: func(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {
+		assert.Nil(t, raddr, "a served UDP socket must remain unconnected")
+		conn, err := goNet.DialUDP(laddr, raddr)
+		close(entered)
+		<-release
+		return conn, err
+	}}
+	p := NewProxy(&Opts{L4Type: userv1.HostedService_UDP, goNetCtl: n, Listeners: []OptsListener{{Address: address, Port: 12345}}})
+	require.NoError(t, p.Start(t.Context()))
+	var released sync.Once
+	defer func() {
+		released.Do(func() { close(release) })
+		p.Close()
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("the test bind did not begin")
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.Close() }()
+	require.Eventually(t, func() bool { return p.listeners[0].closed() }, time.Second, time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("Close returned before its in-flight bind finished")
+	default:
+	}
+	released.Do(func() { close(release) })
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after the bind returned")
+	}
+	assert.Empty(t, testServedListenerAddress(p.listeners[0]))
+	probe, err := goNet.DialUDP(&net.UDPAddr{IP: net.ParseIP(address), Port: 12345}, nil)
+	require.NoError(t, err)
+	assert.NoError(t, probe.Close())
+}
+
+func TestServedUDPNativeNetworkSelection(t *testing.T) {
+	for _, ctl := range []ccommon.GoNetCtl{nil, &ccommon.TestGoNetCtl{}} {
+		opts := newTestServedOpts(t, "udp")
+		opts.goNetCtl = ctl
+		p := NewProxy(opts)
+		require.NoError(t, p.Start(t.Context()))
+		t.Cleanup(func() { p.Close() })
+		require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+		addr := testServedListenerAddress(p.listeners[0])
+		require.True(t, testServedRoundTrip("udp", addr))
+		require.NoError(t, p.Close())
+		probe, err := net.ListenPacket("udp", addr)
+		require.NoError(t, err)
+		assert.NoError(t, probe.Close())
+	}
+}
+
+func TestServedGoNetUDPDualStackFactoryAndEphemeralPorts(t *testing.T) {
+	for _, mode := range []struct {
+		name   string
+		v4, v6 bool
+	}{
+		{"Both", true, true}, {"IPv4", true, false}, {"IPv6", false, true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("100.64.0.2"), netip.MustParseAddr("fd00::2")}, nil, 1280)
+			require.NoError(t, err)
+			t.Cleanup(func() { dev.Close() })
+			backend := newTestServedBackend(t, "udp").(*net.UDPAddr)
+			p := NewProxyFromServiceListener(&userv1.HostedService{
+				Name: "dual.default", L4Type: userv1.HostedService_UDP,
+				Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+			}, &metav1.DualStackIP{Ipv4: "100.64.0.2", Ipv6: "fd00::2"}, &testServedUDPGoNet{Net: goNet}, mode.v4, mode.v6)
+			require.NoError(t, p.Start(t.Context()))
+			t.Cleanup(func() { p.Close() })
+			want := 1
+			if mode.v4 && mode.v6 {
+				want = 2
+			}
+			require.Len(t, p.listeners, want)
+			addrs := make([]*net.UDPAddr, 0, want)
+			for _, l := range p.listeners {
+				require.Eventually(t, func() bool { return testServedListenerAddress(l) != "" }, time.Second, time.Millisecond)
+				addr, err := net.ResolveUDPAddr("udp", testServedListenerAddress(l))
+				require.NoError(t, err)
+				require.Positive(t, addr.Port)
+				addrs = append(addrs, addr)
+				conn, err := goNet.DialUDP(nil, addr)
+				require.NoError(t, err)
+				t.Cleanup(func() { conn.Close() })
+				require.NoError(t, testServedEcho(conn))
+			}
+			require.NoError(t, p.Close())
+			for _, addr := range addrs {
+				probe, err := goNet.DialUDP(addr, nil)
+				require.NoError(t, err)
+				assert.NoError(t, probe.Close())
+			}
+		})
+	}
+}

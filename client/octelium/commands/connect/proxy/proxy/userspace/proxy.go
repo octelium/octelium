@@ -406,10 +406,18 @@ func (l *listener) doStartUDP(ctx context.Context) error {
 		return err
 	}
 
-	udpLis, err := udp.Listen("udp", addrL)
+	conn, err := func() (net.PacketConn, error) {
+		if l.opts.goNetCtl != nil {
+			if goNet := l.opts.goNetCtl.GetGoNet(); goNet != nil {
+				return goNet.DialUDP(addrL, nil)
+			}
+		}
+		return net.ListenUDP("udp", addrL)
+	}()
 	if err != nil {
 		return err
 	}
+	udpLis := udp.NewListener(conn)
 	defer func() {
 		udpLis.Close()
 		l.mu.Lock()

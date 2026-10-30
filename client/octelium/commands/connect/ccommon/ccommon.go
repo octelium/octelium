@@ -22,6 +22,7 @@ import (
 
 type GoNet interface {
 	ListenTCP(addr *net.TCPAddr) (*gonet.TCPListener, error)
+	DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error)
 }
 
 type GoNetCtl interface {

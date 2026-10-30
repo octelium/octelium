@@ -551,3 +551,13 @@ func TestServedLegacyOptionalServiceMessagesRemainAccepted(t *testing.T) {
 	}
 	require.NoError(t, c.Close())
 }
+
+func (n *testServedControllerGoNet) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.calls == nil {
+		n.calls = make(map[int]int)
+	}
+	n.calls[laddr.Port]++
+	return nil, errors.New("the interface is unavailable")
+}

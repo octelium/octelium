@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 func newTestUDPListener(t *testing.T) *Listener {
@@ -262,4 +265,117 @@ func TestUDPKnownIssues(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, payload, buf[:n])
 	})
+}
+
+func TestUDPGoNetPacketConnPreservesSessionsAndDatagrams(t *testing.T) {
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(address)}, nil, 1280)
+			require.NoError(t, err)
+			t.Cleanup(func() { dev.Close() })
+			packetConn, err := goNet.DialUDP(&net.UDPAddr{IP: net.ParseIP(address)}, nil)
+			require.NoError(t, err)
+			l := NewListener(packetConn)
+			t.Cleanup(func() { l.Close() })
+			require.Equal(t, packetConn.LocalAddr().String(), l.Addr().String())
+			sessions := make([]*Conn, 0, 2)
+			for range 2 {
+				client, err := goNet.DialUDP(nil, l.Addr().(*net.UDPAddr))
+				require.NoError(t, err)
+				t.Cleanup(func() { client.Close() })
+				require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+				_, err = client.Write([]byte("first"))
+				require.NoError(t, err)
+				accepted := make(chan *Conn, 1)
+				go func() {
+					c, _ := l.Accept()
+					accepted <- c
+				}()
+				var c *Conn
+				select {
+				case c = <-accepted:
+					require.NotNil(t, c)
+				case <-time.After(time.Second):
+					t.Fatal("the userspace UDP listener did not accept a session")
+				}
+				sessions = append(sessions, c)
+				buf := make([]byte, receiveMTU)
+				n, err := c.Read(buf)
+				require.NoError(t, err)
+				require.Equal(t, "first", string(buf[:n]))
+				for _, payload := range [][]byte{[]byte("second"), {}, bytes.Repeat([]byte("a"), receiveMTU)} {
+					_, err := client.Write(payload)
+					require.NoError(t, err)
+					n, err := c.Read(buf)
+					require.NoError(t, err)
+					require.Equal(t, payload, buf[:n])
+					n, err = c.Write(buf[:n])
+					require.NoError(t, err)
+					require.Equal(t, len(payload), n)
+					n, err = client.Read(buf)
+					require.NoError(t, err)
+					require.Equal(t, payload, buf[:n])
+				}
+			}
+			require.NotSame(t, sessions[0], sessions[1])
+			addr := l.Addr().(*net.UDPAddr)
+			require.NoError(t, l.Close())
+			for _, c := range sessions {
+				_, err := c.Read(make([]byte, 1))
+				assert.ErrorIs(t, err, io.EOF)
+			}
+			probe, err := goNet.DialUDP(addr, nil)
+			require.NoError(t, err)
+			assert.NoError(t, probe.Close())
+		})
+	}
+}
+
+type testOwnedPacketConn struct {
+	net.PacketConn
+	closes atomic.Int32
+	done   chan struct{}
+}
+
+func (c *testOwnedPacketConn) ReadFrom(buf []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(buf)
+	if err != nil {
+		close(c.done)
+	}
+	return n, addr, err
+}
+
+func (c *testOwnedPacketConn) Close() error {
+	c.closes.Add(1)
+	return c.PacketConn.Close()
+}
+
+func TestUDPWrappedPacketConnCloseOwnsSocketAndUnblocksAccept(t *testing.T) {
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	wrapped := &testOwnedPacketConn{PacketConn: packetConn, done: make(chan struct{})}
+	l := NewListener(wrapped)
+	t.Cleanup(func() { l.Close() })
+	accepted := make(chan error, 1)
+	go func() {
+		_, err := l.Accept()
+		accepted <- err
+	}()
+	require.NoError(t, l.Close())
+	require.NoError(t, l.Close())
+	select {
+	case err := <-accepted:
+		require.ErrorIs(t, err, errClosedListener)
+	case <-time.After(time.Second):
+		t.Fatal("closing the packet listener did not unblock Accept")
+	}
+	select {
+	case <-wrapped.done:
+	case <-time.After(time.Second):
+		t.Fatal("closing the packet listener did not stop its packet read")
+	}
+	assert.Equal(t, int32(1), wrapped.closes.Load())
+	probe, err := net.ListenPacket("udp", l.Addr().String())
+	require.NoError(t, err)
+	assert.NoError(t, probe.Close())
 }
