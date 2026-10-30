@@ -39,11 +39,13 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 const (
 	netstackIncomingPacketQueue = 1024
 	netstackLookupGrace         = 250 * time.Millisecond
+	netstackListenBacklog       = 4096
 )
 
 type netTun struct {
@@ -470,8 +472,41 @@ func (net *Net) ListenTCP(addr *net.TCPAddr) (*gonet.TCPListener, error) {
 	if addr == nil {
 		panic("todo: deal with auto addr semantics for nil addr")
 	}
+	return listenTCP(net.stack, addr)
+}
+
+func listenTCP(s *stack.Stack, addr *net.TCPAddr) (*gonet.TCPListener, error) {
 	fa, pn := convertToFullAddr(addr.IP, addr.Port)
-	return gonet.ListenTCP(net.stack, fa, pn)
+
+	var wq waiter.Queue
+	ep, tcpipErr := s.NewEndpoint(tcp.ProtocolNumber, pn, &wq)
+	if tcpipErr != nil {
+		return nil, errors.New(tcpipErr.String())
+	}
+
+	ep.SocketOptions().SetReuseAddress(true)
+
+	if tcpipErr := ep.Bind(fa); tcpipErr != nil {
+		ep.Close()
+		return nil, &net.OpError{
+			Op:   "bind",
+			Net:  "tcp",
+			Addr: addr,
+			Err:  errors.New(tcpipErr.String()),
+		}
+	}
+
+	if tcpipErr := ep.Listen(netstackListenBacklog); tcpipErr != nil {
+		ep.Close()
+		return nil, &net.OpError{
+			Op:   "listen",
+			Net:  "tcp",
+			Addr: addr,
+			Err:  errors.New(tcpipErr.String()),
+		}
+	}
+
+	return gonet.NewTCPListener(s, &wq, ep), nil
 }
 
 func (net *Net) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.UDPConn, error) {

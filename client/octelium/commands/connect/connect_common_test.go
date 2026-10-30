@@ -2563,6 +2563,204 @@ func TestServedTCPRecoveryOverGRPC(t *testing.T) {
 	}
 }
 
+func newTestServedTaggedTCPBackend(t *testing.T, tag string) *net.TCPAddr {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			wg.Go(func() {
+				defer conn.Close()
+				stop := context.AfterFunc(ctx, func() { conn.Close() })
+				defer stop()
+				if _, err := conn.Write([]byte(tag)); err != nil {
+					return
+				}
+				io.Copy(conn, conn)
+			})
+		}
+	})
+	t.Cleanup(func() { cancel(); lis.Close(); wg.Wait() })
+	return lis.Addr().(*net.TCPAddr)
+}
+
+func testServedGoNetDialTag(ctx context.Context, c *ctl, port int, tag string) (net.Conn, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := c.devCtl.GetNetstackNet().DialContextTCP(dialCtx, &net.TCPAddr{IP: net.ParseIP("100.64.0.2"), Port: port})
+	if err != nil {
+		return nil, err
+	}
+	conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	buf := make([]byte, len(tag))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		conn.Close()
+		return nil, errors.Wrap(err, "could not read the backend tag")
+	}
+	if string(buf) != tag {
+		conn.Close()
+		return nil, errors.Errorf("the served Service reached %q, want %q", buf, tag)
+	}
+	conn.SetReadDeadline(time.Time{})
+	return conn, nil
+}
+
+func TestServedTCPBackendUpdateOverGRPC(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	clearTestConnectEnv(t)
+	t.Setenv("OCTELIUM_DEV", "false")
+	t.Setenv("OCTELIUM_PRODUCTION", "true")
+	const port = 22010
+	first := newTestServedTaggedTCPBackend(t, "first")
+	second := newTestServedTaggedTCPBackend(t, "second")
+	svc := &userv1.HostedService{
+		Name: "web.default", Port: port, L4Type: userv1.HostedService_TCP,
+		Address:  &metav1.DualStackIP{Ipv4: "100.64.0.2"},
+		Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(first.Port)},
+		Mode:     userv1.HostedService_MODE_DEFAULT,
+	}
+	events := make(chan *userv1.ConnectResponse, 8)
+	api := newTestConnectAPIClient(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if !req.GetInitialize().GetServiceOptions().GetServeAll() {
+			return status.Error(codes.InvalidArgument, "missing serve-all request")
+		}
+		initial := testConnectInitialState()
+		initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{
+			Services: []*userv1.HostedService{proto.Clone(svc).(*userv1.HostedService)},
+		}
+		if err := stream.Send(initial); err != nil {
+			return err
+		}
+		for {
+			select {
+			case msg := <-events:
+				msg.CreatedAt = timestamppb.Now()
+				if err := stream.Send(msg); err != nil {
+					return err
+				}
+			case <-stream.Context().Done():
+				return nil
+			}
+		}
+	}})
+	dbC, err := db.Open("memory")
+	require.NoError(t, err)
+	defer dbC.Close()
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+	defer cancel()
+	connector, err := NewConnector("example.com", &Opts{
+		L3Mode: "v4", IgnoreDNS: true, ImplementationMode: "gvisor", ServeAll: true,
+		LocalDNSListenAddr: "127.0.0.1:0", UserHome: t.TempDir(),
+	})
+	require.NoError(t, err)
+	stream, err := api.Connect(ctx)
+	require.NoError(t, err)
+	require.NoError(t, connector.sendInitializeRequest(stream, nil))
+	cfg, initAt, err := connector.getConnectionConfig(ctx, stream, nil)
+	require.NoError(t, err)
+	c, err := newCtl(ctx, stream, cfg, initAt)
+	require.NoError(t, err)
+	defer func() { cancel(); assert.NoError(t, c.close()) }()
+	require.NoError(t, c.start(ctx))
+
+	waitTag := func(tag string) net.Conn {
+		t.Helper()
+		var ret net.Conn
+		require.Eventually(t, func() bool {
+			conn, err := testServedGoNetDialTag(ctx, c, port, tag)
+			ret = conn
+			return err == nil
+		}, 3*time.Second, 10*time.Millisecond, "the served Service did not reach %q", tag)
+		t.Cleanup(func() { ret.Close() })
+		return ret
+	}
+	requireClosed := func(conn net.Conn) {
+		t.Helper()
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+		_, err := conn.Read(make([]byte, 1))
+		require.Error(t, err)
+		var netErr net.Error
+		require.False(t, errors.As(err, &netErr) && netErr.Timeout(), "the connection to the previous backend was not closed")
+		require.NoError(t, conn.Close())
+	}
+	update := func(next *userv1.HostedService) {
+		events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{
+			UpdateService: &userv1.ConnectResponse_UpdateService{Service: proto.Clone(next).(*userv1.HostedService)},
+		}}
+	}
+
+	conn := waitTag("first")
+
+	updated := proto.Clone(svc).(*userv1.HostedService)
+	updated.Upstream.Port = int32(second.Port)
+	var refused atomic.Int32
+	switched := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-switched:
+				return
+			default:
+			}
+			dialCtx, dialCancel := context.WithTimeout(ctx, 2*time.Second)
+			probe, err := c.devCtl.GetNetstackNet().DialContextTCP(dialCtx, &net.TCPAddr{IP: net.ParseIP("100.64.0.2"), Port: port})
+			dialCancel()
+			if err != nil {
+				refused.Add(1)
+				continue
+			}
+			probe.Close()
+		}
+	}()
+	update(updated)
+	requireClosed(conn)
+	conn = waitTag("second")
+	close(switched)
+	<-done
+	assert.Zero(t, refused.Load(), "the listener refused connections during a backend-only update")
+
+	replaced := proto.Clone(updated).(*userv1.HostedService)
+	replaced.Mode = userv1.HostedService_MODE_UNSET
+	update(replaced)
+	requireClosed(conn)
+	conn = waitTag("second")
+
+	restored := proto.Clone(replaced).(*userv1.HostedService)
+	restored.Upstream.Port = int32(first.Port)
+	update(restored)
+	requireClosed(conn)
+	waitTag("first")
+
+	select {
+	case err := <-c.stateController.getConnErrCh:
+		t.Fatalf("a served backend update disrupted the control stream: %v", err)
+	default:
+	}
+	events <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}}
+	result := c.stateController.waitDisconnected(ctx, func(context.Context) error { return nil })
+	assert.True(t, result.isConnected)
+	assert.False(t, result.needsReconnect)
+	assert.NoError(t, result.err)
+	cancel()
+	require.NoError(t, c.close())
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
 func testMalformedServedResponses() []struct {
 	name string
 	msg  *userv1.ConnectResponse

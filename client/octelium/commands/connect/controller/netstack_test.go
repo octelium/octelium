@@ -15,14 +15,19 @@
 package controller
 
 import (
+	"context"
+	"io"
+	"net"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.zx2c4.com/wireguard/tun"
 	bufferv2 "gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -435,4 +440,117 @@ func TestNetstackAddressUpdateRequiresInitializedTUN(t *testing.T) {
 	assert.EqualError(t, c.SetDevAddrs(), "The netstack TUN is not initialized")
 	assert.Nil(t, c.GetGoNet())
 	assert.Nil(t, c.GetNetstackNet())
+}
+
+func testNetstackAccept(t *testing.T, lis net.Listener) <-chan net.Conn {
+	t.Helper()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		defer close(accepted)
+		conn, err := lis.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+	return accepted
+}
+
+func testNetstackConnPair(t *testing.T, n *Net, lis net.Listener, addr *net.TCPAddr) (net.Conn, net.Conn) {
+	t.Helper()
+	accepted := testNetstackAccept(t, lis)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	client, err := n.DialContextTCP(ctx, addr)
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+	select {
+	case server := <-accepted:
+		require.NotNil(t, server)
+		t.Cleanup(func() { server.Close() })
+		return client, server
+	case <-ctx.Done():
+		t.Fatal("the netstack listener did not accept the connection")
+		return nil, nil
+	}
+}
+
+func testNetstackExchange(t *testing.T, src, dst net.Conn, msg string) {
+	t.Helper()
+	require.NoError(t, dst.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err := src.Write([]byte(msg))
+	require.NoError(t, err)
+	buf := make([]byte, len(msg))
+	_, err = io.ReadFull(dst, buf)
+	require.NoError(t, err)
+	assert.Equal(t, msg, string(buf))
+}
+
+func TestNetstackListenTCPRebindsAfterActiveClose(t *testing.T) {
+	c := newTestNetstackCtl(t)
+	t.Cleanup(func() { assert.Nil(t, c.Close()) })
+	n := c.GetNetstackNet()
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			addr := &net.TCPAddr{IP: net.ParseIP(address), Port: 12345}
+			for i := range 3 {
+				lis, err := n.ListenTCP(addr)
+				require.NoError(t, err, "attempt %d", i)
+				client, server := testNetstackConnPair(t, n, lis, addr)
+				testNetstackExchange(t, client, server, "request")
+				testNetstackExchange(t, server, client, "response")
+				require.NoError(t, server.Close())
+				require.NoError(t, client.SetReadDeadline(time.Now().Add(3*time.Second)))
+				_, err = client.Read(make([]byte, 1))
+				require.ErrorIs(t, err, io.EOF)
+				require.NoError(t, client.Close())
+				require.NoError(t, lis.Close())
+			}
+		})
+	}
+}
+
+func TestNetstackListenTCPRebindKeepsEstablishedConnections(t *testing.T) {
+	c := newTestNetstackCtl(t)
+	t.Cleanup(func() { assert.Nil(t, c.Close()) })
+	n := c.GetNetstackNet()
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			addr := &net.TCPAddr{IP: net.ParseIP(address), Port: 12346}
+			lis, err := n.ListenTCP(addr)
+			require.NoError(t, err)
+			oldClient, oldServer := testNetstackConnPair(t, n, lis, addr)
+			require.NoError(t, lis.Close())
+			lis, err = n.ListenTCP(addr)
+			require.NoError(t, err)
+			t.Cleanup(func() { lis.Close() })
+			newClient, newServer := testNetstackConnPair(t, n, lis, addr)
+			testNetstackExchange(t, oldClient, oldServer, "old request")
+			testNetstackExchange(t, oldServer, oldClient, "old response")
+			testNetstackExchange(t, newClient, newServer, "new request")
+			testNetstackExchange(t, newServer, newClient, "new response")
+		})
+	}
+}
+
+func TestNetstackListenTCPRejectsDuplicateListeners(t *testing.T) {
+	c := newTestNetstackCtl(t)
+	t.Cleanup(func() { assert.Nil(t, c.Close()) })
+	n := c.GetNetstackNet()
+	for _, address := range []string{"100.64.0.2", "fd00::2"} {
+		t.Run(address, func(t *testing.T) {
+			addr := &net.TCPAddr{IP: net.ParseIP(address), Port: 12347}
+			lis, err := n.ListenTCP(addr)
+			require.NoError(t, err)
+			_, err = n.ListenTCP(addr)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "bind tcp")
+			assert.Contains(t, err.Error(), "port is in use")
+			client, server := testNetstackConnPair(t, n, lis, addr)
+			testNetstackExchange(t, client, server, "request")
+			require.NoError(t, lis.Close())
+			lis, err = n.ListenTCP(addr)
+			require.NoError(t, err)
+			require.NoError(t, lis.Close())
+		})
+	}
 }

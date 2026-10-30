@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -31,6 +32,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 	"google.golang.org/protobuf/proto"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 )
@@ -560,4 +562,270 @@ func (n *testServedControllerGoNet) DialUDP(laddr, raddr *net.UDPAddr) (*gonet.U
 	}
 	n.calls[laddr.Port]++
 	return nil, errors.New("the interface is unavailable")
+}
+
+type testServedUpdateGoNet struct {
+	*netstack.Net
+	mu      sync.Mutex
+	listens map[string]int
+}
+
+func (n *testServedUpdateGoNet) GetGoNet() ccommon.GoNet { return n }
+
+func (n *testServedUpdateGoNet) ListenTCP(addr *net.TCPAddr) (*gonet.TCPListener, error) {
+	n.mu.Lock()
+	if n.listens == nil {
+		n.listens = make(map[string]int)
+	}
+	n.listens[addr.String()]++
+	n.mu.Unlock()
+	return n.Net.ListenTCP(addr)
+}
+
+func (n *testServedUpdateGoNet) count(addr string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.listens[addr]
+}
+
+func newTestServedControllerTaggedBackend(t *testing.T, network, tag string) int32 {
+	t.Helper()
+	if network == "udp" {
+		conn, err := net.ListenPacket(network, "127.0.0.1:0")
+		require.NoError(t, err)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			buf := make([]byte, 1024)
+			for {
+				n, addr, err := conn.ReadFrom(buf)
+				if err != nil {
+					return
+				}
+				if _, err := conn.WriteTo(append([]byte(tag), buf[:n]...), addr); err != nil {
+					return
+				}
+			}
+		}()
+		t.Cleanup(func() { conn.Close(); <-done })
+		return int32(conn.LocalAddr().(*net.UDPAddr).Port)
+	}
+	lis, err := net.Listen(network, "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			wg.Go(func() {
+				defer conn.Close()
+				stop := context.AfterFunc(ctx, func() { conn.Close() })
+				defer stop()
+				if _, err := conn.Write([]byte(tag)); err != nil {
+					return
+				}
+				io.Copy(conn, conn)
+			})
+		}
+	})
+	t.Cleanup(func() { cancel(); lis.Close(); wg.Wait() })
+	return int32(lis.Addr().(*net.TCPAddr).Port)
+}
+
+func testServedControllerReadTag(conn net.Conn, tag string) error {
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	buf := make([]byte, len(tag))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return err
+	}
+	if string(buf) != tag {
+		return fmt.Errorf("the served Service reached %q, want %q", buf, tag)
+	}
+	return conn.SetReadDeadline(time.Time{})
+}
+
+func testServedControllerDialTag(t *testing.T, dial func() (net.Conn, error), tag string) net.Conn {
+	t.Helper()
+	var ret net.Conn
+	require.Eventually(t, func() bool {
+		conn, err := dial()
+		if err != nil {
+			return false
+		}
+		if err := testServedControllerReadTag(conn, tag); err != nil {
+			conn.Close()
+			return false
+		}
+		ret = conn
+		return true
+	}, 3*time.Second, 10*time.Millisecond)
+	t.Cleanup(func() { ret.Close() })
+	return ret
+}
+
+func testServedControllerRequireClosed(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err := conn.Read(make([]byte, 1))
+	require.Error(t, err)
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(), "the connection to the previous backend was not closed")
+}
+
+func testServedControllerRequireOpen(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(time.Second)))
+	msg := []byte("still connected")
+	_, err := conn.Write(msg)
+	require.NoError(t, err)
+	buf := make([]byte, len(msg))
+	_, err = io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	assert.Equal(t, string(msg), string(buf))
+	require.NoError(t, conn.SetDeadline(time.Time{}))
+}
+
+func TestServedControllerBackendUpdateKeepsListener(t *testing.T) {
+	addresses := []string{"100.64.0.2", "fd00::2"}
+	dev, goNet, err := netstack.CreateNetTUN([]netip.Addr{
+		netip.MustParseAddr(addresses[0]), netip.MustParseAddr(addresses[1]),
+	}, nil, 1280)
+	require.NoError(t, err)
+	t.Cleanup(func() { dev.Close() })
+	n := &testServedUpdateGoNet{Net: goNet}
+	first := newTestServedControllerTaggedBackend(t, "tcp", "first")
+	second := newTestServedControllerTaggedBackend(t, "tcp", "second")
+	svc := &userv1.HostedService{
+		Name: "web.default", Port: 12345, L4Type: userv1.HostedService_TCP,
+		Address:  &metav1.DualStackIP{Ipv4: addresses[0], Ipv6: addresses[1]},
+		Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: first},
+	}
+	c := newTestServedController(t, t.Context(), n, svc)
+	require.NoError(t, c.Start(t.Context()))
+
+	dialer := func(address string, port int) func() (net.Conn, error) {
+		return func() (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			return goNet.DialContextTCP(ctx, &net.TCPAddr{IP: net.ParseIP(address), Port: port})
+		}
+	}
+	listenerAddr := func(address string, port int) string {
+		return (&net.TCPAddr{IP: net.ParseIP(address), Port: port}).String()
+	}
+
+	conns := make(map[string]net.Conn)
+	for _, address := range addresses {
+		conns[address] = testServedControllerDialTag(t, dialer(address, 12345), "first")
+	}
+
+	for i, next := range []struct {
+		port int32
+		tag  string
+	}{
+		{second, "second"},
+		{first, "first"},
+		{second, "second"},
+	} {
+		updated := proto.Clone(svc).(*userv1.HostedService)
+		updated.Upstream.Port = next.port
+		require.NoError(t, c.UpdateService(updated), "update %d", i)
+		for _, address := range addresses {
+			testServedControllerRequireClosed(t, conns[address])
+			conns[address] = testServedControllerDialTag(t, dialer(address, 12345), next.tag)
+			assert.Equal(t, 1, n.count(listenerAddr(address, 12345)), "update %d rebound %s", i, address)
+		}
+		svc = updated
+	}
+
+	require.NoError(t, c.UpdateService(proto.Clone(svc).(*userv1.HostedService)))
+	for _, address := range addresses {
+		testServedControllerRequireOpen(t, conns[address])
+		assert.Equal(t, 1, n.count(listenerAddr(address, 12345)))
+	}
+
+	moved := proto.Clone(svc).(*userv1.HostedService)
+	moved.Port = 12346
+	moved.Upstream.Port = first
+	require.NoError(t, c.UpdateService(moved))
+	for _, address := range addresses {
+		testServedControllerRequireClosed(t, conns[address])
+		conns[address] = testServedControllerDialTag(t, dialer(address, 12346), "first")
+		assert.Equal(t, 1, n.count(listenerAddr(address, 12346)))
+		_, err := dialer(address, 12345)()
+		assert.Error(t, err, "the previous listener port is still served")
+	}
+
+	require.NoError(t, c.DeleteService(moved.Name))
+	for _, address := range addresses {
+		testServedControllerRequireClosed(t, conns[address])
+		require.Eventually(t, func() bool {
+			conn, err := dialer(address, 12346)()
+			if err == nil {
+				conn.Close()
+			}
+			return err != nil
+		}, 3*time.Second, 10*time.Millisecond)
+	}
+}
+
+func TestServedControllerBackendUpdateRejectsInvalidUpstreams(t *testing.T) {
+	first := newTestServedControllerTaggedBackend(t, "tcp", "first")
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := free.Addr().String()
+	require.NoError(t, free.Close())
+	svc := newTestServedControllerService(t, "web.default", "tcp", addr, fmt.Sprintf("127.0.0.1:%d", first))
+	c := newTestServedController(t, t.Context(), nil, svc)
+	require.NoError(t, c.Start(t.Context()))
+	dial := func() (net.Conn, error) { return net.DialTimeout("tcp", addr, time.Second) }
+	testServedControllerDialTag(t, dial, "first")
+
+	for _, port := range []int32{-1, 65536} {
+		invalid := proto.Clone(svc).(*userv1.HostedService)
+		invalid.Upstream.Port = port
+		require.Error(t, c.UpdateService(invalid), "port %d", port)
+	}
+
+	require.NoError(t, c.UpdateService(svc))
+	testServedControllerDialTag(t, dial, "first")
+}
+
+func TestServedControllerUDPBackendUpdateReplacesListener(t *testing.T) {
+	first := newTestServedControllerTaggedBackend(t, "udp", "first")
+	second := newTestServedControllerTaggedBackend(t, "udp", "second")
+	free, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := free.LocalAddr().String()
+	require.NoError(t, free.Close())
+	svc := newTestServedControllerService(t, "dns.default", "udp", addr, fmt.Sprintf("127.0.0.1:%d", first))
+	c := newTestServedController(t, t.Context(), nil, svc)
+	require.NoError(t, c.Start(t.Context()))
+
+	roundTrip := func(tag string) bool {
+		conn, err := net.Dial("udp", addr)
+		if err != nil {
+			return false
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(250 * time.Millisecond))
+		msg := []byte("served UDP backend update")
+		if _, err := conn.Write(msg); err != nil {
+			return false
+		}
+		buf := make([]byte, len(tag)+len(msg)+1)
+		n, err := conn.Read(buf)
+		return err == nil && string(buf[:n]) == tag+string(msg)
+	}
+	require.Eventually(t, func() bool { return roundTrip("first") }, 3*time.Second, 10*time.Millisecond)
+
+	updated := proto.Clone(svc).(*userv1.HostedService)
+	updated.Upstream.Port = second
+	require.NoError(t, c.UpdateService(updated))
+	require.Eventually(t, func() bool { return roundTrip("second") }, 3*time.Second, 10*time.Millisecond)
 }

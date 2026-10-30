@@ -217,6 +217,11 @@ func (c *Controller) updateService(ctx context.Context, svc *userv1.HostedServic
 			return nil
 		}
 
+		if cur.updateUpstream(svc) {
+			zap.S().Debugf("Updated the upstream of hosted Service: %+v", svc)
+			return nil
+		}
+
 		zap.S().Debugf("Replacing listener %+v with %+v", cur.svc, svc)
 		zap.S().Debugf("Removing listener %+v", cur.svc)
 		c.deleteProxy(cur)
@@ -258,6 +263,7 @@ type proxy struct {
 type proxyImlementor interface {
 	Start(ctx context.Context) error
 	Close() error
+	UpdateUpstream(upstream userspace.OptsUpstream) error
 }
 
 func (c *Controller) newProxy(
@@ -289,4 +295,30 @@ func (p *proxy) close() error {
 		return nil
 	}
 	return p.p.Close()
+}
+
+func (p *proxy) updateUpstream(svc *userv1.HostedService) bool {
+	if p.p == nil || svc.GetUpstream() == nil || !isUpstreamOnlyChange(p.svc, svc) {
+		return false
+	}
+
+	if err := p.p.UpdateUpstream(userspace.OptsUpstream{
+		Address: svc.GetUpstream().GetHost(),
+		Port:    uint32(svc.GetUpstream().GetPort()),
+	}); err != nil {
+		zap.S().Debugf("Could not update the upstream of hosted Service %s in place: %+v", svc.GetName(), err)
+		return false
+	}
+
+	p.svc = svc
+	return true
+}
+
+func isUpstreamOnlyChange(cur, svc *userv1.HostedService) bool {
+	curSvc := proto.Clone(cur).(*userv1.HostedService)
+	newSvc := proto.Clone(svc).(*userv1.HostedService)
+	curSvc.Upstream = nil
+	newSvc.Upstream = nil
+
+	return proto.Equal(curSvc, newSvc)
 }

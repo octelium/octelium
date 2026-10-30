@@ -122,6 +122,7 @@ func Phases() []Phase {
 		{"ConnectTakeover", testConnectTakeover},
 		{"ConnectPublish", testConnectPublish},
 		{"ConnectServe", testConnectServe},
+		{"ConnectServeBackendSwitch", testConnectServeBackendSwitch},
 		{"ConnectESSH", testConnectESSH},
 		{"ConnectESOCKS5", testConnectESOCKS5},
 		{"ConnectIPMode", testConnectIPMode},

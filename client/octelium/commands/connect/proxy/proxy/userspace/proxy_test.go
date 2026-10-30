@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -968,5 +969,306 @@ func TestServedGoNetUDPDualStackFactoryAndEphemeralPorts(t *testing.T) {
 				assert.NoError(t, probe.Close())
 			}
 		})
+	}
+}
+
+func newTestServedTaggedBackend(t *testing.T, tag string) OptsUpstream {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			wg.Go(func() {
+				defer conn.Close()
+				stop := context.AfterFunc(ctx, func() { conn.Close() })
+				defer stop()
+				if _, err := conn.Write([]byte(tag)); err != nil {
+					return
+				}
+				io.Copy(conn, conn)
+			})
+		}
+	})
+	t.Cleanup(func() { cancel(); lis.Close(); wg.Wait() })
+	return OptsUpstream{Address: "127.0.0.1", Port: uint32(lis.Addr().(*net.TCPAddr).Port)}
+}
+
+func testServedReadTag(conn net.Conn, tag string) error {
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	buf := make([]byte, len(tag))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return err
+	}
+	if string(buf) != tag {
+		return fmt.Errorf("the served listener reached %q, want %q", buf, tag)
+	}
+	return conn.SetReadDeadline(time.Time{})
+}
+
+func testServedDialTag(t *testing.T, dial func() (net.Conn, error), tag string) net.Conn {
+	t.Helper()
+	conn, err := dial()
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.NoError(t, testServedReadTag(conn, tag))
+	return conn
+}
+
+func testServedRequireClosed(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err := conn.Read(make([]byte, 1))
+	require.Error(t, err)
+	var netErr net.Error
+	require.False(t, errors.As(err, &netErr) && netErr.Timeout(), "the stale connection was not closed")
+}
+
+func testServedRequireOpen(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, testServedEcho(conn))
+}
+
+func testServedTCPListener(l *listener) net.Listener {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lis
+}
+
+func TestServedTCPUpstreamUpdateKeepsListener(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		address string
+		port    uint32
+		gvisor  bool
+	}{
+		{"host", "127.0.0.1", 0, false},
+		{"gvisor-v4", "100.64.0.2", 12345, true},
+		{"gvisor-v6", "fd00::2", 12345, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := newTestServedTaggedBackend(t, "first")
+			second := newTestServedTaggedBackend(t, "second")
+			opts := &Opts{
+				Name: "update.default", L4Type: userv1.HostedService_TCP,
+				Listeners: []OptsListener{{Address: tc.address, Port: tc.port}},
+				Upstream:  first,
+			}
+			var goNet *netstack.Net
+			if tc.gvisor {
+				dev, n, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr(tc.address)}, nil, 1280)
+				require.NoError(t, err)
+				t.Cleanup(func() { dev.Close() })
+				goNet = n
+				opts.goNetCtl = &testRecoveringGoNet{goNet: n}
+			}
+			p := NewProxy(opts)
+			require.NoError(t, p.Start(t.Context()))
+			t.Cleanup(func() { assert.NoError(t, p.Close()) })
+			l := p.listeners[0]
+			require.Eventually(t, func() bool { return testServedListenerAddress(l) != "" }, 3*time.Second, time.Millisecond)
+			addr := testServedListenerAddress(l)
+			lis := testServedTCPListener(l)
+			dial := func() (net.Conn, error) {
+				if goNet == nil {
+					return net.DialTimeout("tcp", addr, time.Second)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+				if err != nil {
+					return nil, err
+				}
+				return goNet.DialContextTCP(ctx, tcpAddr)
+			}
+
+			current := testServedDialTag(t, dial, "first")
+			testServedRequireOpen(t, current)
+			for i, next := range []struct {
+				upstream OptsUpstream
+				tag      string
+			}{
+				{second, "second"},
+				{first, "first"},
+				{second, "second"},
+			} {
+				require.NoError(t, p.UpdateUpstream(next.upstream), "update %d", i)
+				testServedRequireClosed(t, current)
+				assert.Same(t, lis, testServedTCPListener(l), "update %d replaced the listener", i)
+				assert.Equal(t, addr, testServedListenerAddress(l))
+				current = testServedDialTag(t, dial, next.tag)
+				testServedRequireOpen(t, current)
+			}
+
+			require.NoError(t, p.UpdateUpstream(second))
+			testServedRequireOpen(t, current)
+			assert.Same(t, lis, testServedTCPListener(l))
+		})
+	}
+}
+
+func TestServedUpstreamUpdateClosesOnlyStaleConnections(t *testing.T) {
+	l := newListener("127.0.0.1", 0, &Opts{
+		Name: "stale.default", L4Type: userv1.HostedService_TCP,
+		Upstream: OptsUpstream{Address: "127.0.0.1", Port: 1},
+	})
+	pending, pendingPeer := net.Pipe()
+	assigned, assignedPeer := net.Pipe()
+	current, currentPeer := net.Pipe()
+	for _, conn := range []net.Conn{pending, pendingPeer, assigned, assignedPeer, current, currentPeer} {
+		t.Cleanup(func() { conn.Close() })
+	}
+	requirePeerOpen := func(conn net.Conn) {
+		t.Helper()
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(20*time.Millisecond)))
+		_, err := conn.Read(make([]byte, 1))
+		require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	}
+	requirePeerClosed := func(conn net.Conn) {
+		t.Helper()
+		if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			require.ErrorIs(t, err, io.ErrClosedPipe)
+			return
+		}
+		_, err := conn.Read(make([]byte, 1))
+		require.ErrorIs(t, err, io.EOF)
+	}
+
+	require.True(t, l.addConn(pending))
+	require.True(t, l.addConn(assigned))
+	host, ok := l.getConnUpstreamHost(assigned)
+	require.True(t, ok)
+	assert.Equal(t, "127.0.0.1:1", host)
+
+	l.setUpstreamHost("127.0.0.1:1")
+	requirePeerOpen(assignedPeer)
+
+	l.setUpstreamHost("127.0.0.1:2")
+	requirePeerClosed(assignedPeer)
+	requirePeerOpen(pendingPeer)
+	assert.Equal(t, "127.0.0.1:2", l.getUpstreamHost())
+
+	host, ok = l.getConnUpstreamHost(pending)
+	require.True(t, ok)
+	assert.Equal(t, "127.0.0.1:2", host)
+	require.True(t, l.addConn(current))
+	host, ok = l.getConnUpstreamHost(current)
+	require.True(t, ok)
+	assert.Equal(t, "127.0.0.1:2", host)
+
+	l.removeConn(assigned)
+	_, ok = l.getConnUpstreamHost(assigned)
+	assert.False(t, ok)
+
+	l.setUpstreamHost("[::1]:3")
+	requirePeerClosed(pendingPeer)
+	requirePeerClosed(currentPeer)
+
+	require.NoError(t, l.close())
+	_, ok = l.getConnUpstreamHost(pending)
+	assert.False(t, ok)
+	assert.False(t, l.addConn(pending))
+}
+
+func TestServedProxyUpdateUpstreamRejectsUnsupportedUpdates(t *testing.T) {
+	var nilProxy *Proxy
+	assert.Error(t, nilProxy.UpdateUpstream(OptsUpstream{Address: "127.0.0.1", Port: 80}))
+
+	first := newTestServedTaggedBackend(t, "first")
+	second := newTestServedTaggedBackend(t, "second")
+	p := NewProxy(&Opts{
+		Name: "rejected.default", L4Type: userv1.HostedService_TCP,
+		Listeners: []OptsListener{{Address: "127.0.0.1"}},
+		Upstream:  first,
+	})
+	require.Error(t, p.UpdateUpstream(OptsUpstream{Address: "127.0.0.1", Port: 65536}))
+	assert.Equal(t, joinUpstreamHost(first), p.listeners[0].getUpstreamHost())
+	assert.Equal(t, first, p.opts.Upstream)
+
+	require.NoError(t, p.UpdateUpstream(second))
+	require.NoError(t, p.Start(t.Context()))
+	require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+	addr := testServedListenerAddress(p.listeners[0])
+	testServedDialTag(t, func() (net.Conn, error) { return net.DialTimeout("tcp", addr, time.Second) }, "second")
+
+	require.NoError(t, p.Close())
+	require.Error(t, p.UpdateUpstream(first))
+	assert.Equal(t, joinUpstreamHost(second), p.listeners[0].getUpstreamHost())
+
+	udpOpts := newTestServedOpts(t, "udp")
+	udpProxy := NewProxy(udpOpts)
+	upstream := udpOpts.Upstream
+	require.Error(t, udpProxy.UpdateUpstream(OptsUpstream{Address: "127.0.0.1", Port: 1}))
+	assert.Equal(t, upstream, udpProxy.opts.Upstream)
+	assert.Equal(t, joinUpstreamHost(upstream), udpProxy.listeners[0].getUpstreamHost())
+	require.NoError(t, udpProxy.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, udpProxy.Close()) })
+	require.Eventually(t, func() bool { return testServedListenerAddress(udpProxy.listeners[0]) != "" }, time.Second, time.Millisecond)
+	assert.True(t, testServedRoundTrip("udp", testServedListenerAddress(udpProxy.listeners[0])))
+}
+
+func TestServedTCPUpstreamUpdatesDuringConcurrentConnections(t *testing.T) {
+	first := newTestServedTaggedBackend(t, "first")
+	second := newTestServedTaggedBackend(t, "second")
+	p := NewProxy(&Opts{
+		Name: "concurrent.default", L4Type: userv1.HostedService_TCP,
+		Listeners: []OptsListener{{Address: "127.0.0.1"}},
+		Upstream:  first,
+	})
+	require.NoError(t, p.Start(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, p.Close()) })
+	require.Eventually(t, func() bool { return testServedListenerAddress(p.listeners[0]) != "" }, time.Second, time.Millisecond)
+	addr := testServedListenerAddress(p.listeners[0])
+	lis := testServedTCPListener(p.listeners[0])
+
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	var served atomic.Int32
+	for range 8 {
+		wg.Go(func() {
+			for ctx.Err() == nil {
+				conn, err := net.DialTimeout("tcp", addr, time.Second)
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+				conn.SetReadDeadline(time.Now().Add(time.Second))
+				buf := make([]byte, len("second"))
+				n, err := io.ReadAtLeast(conn, buf, len("first"))
+				conn.Close()
+				if err != nil {
+					continue
+				}
+				if tag := string(buf[:n]); tag == "first" || tag == "second" {
+					served.Add(1)
+				} else {
+					assert.Fail(t, "unexpected upstream", tag)
+				}
+			}
+		})
+	}
+	for i := range 50 {
+		upstream := first
+		if i%2 == 0 {
+			upstream = second
+		}
+		require.NoError(t, p.UpdateUpstream(upstream))
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	wg.Wait()
+	assert.Positive(t, served.Load())
+
+	require.NoError(t, p.UpdateUpstream(second))
+	assert.Same(t, lis, testServedTCPListener(p.listeners[0]))
+	for range 5 {
+		testServedDialTag(t, func() (net.Conn, error) { return net.DialTimeout("tcp", addr, time.Second) }, "second")
 	}
 }

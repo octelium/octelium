@@ -220,3 +220,78 @@ func testConnectServe(t *testing.T, h *harness.H) {
 			return nil
 		})
 }
+
+func testConnectServeBackendSwitch(t *testing.T, h *harness.H) {
+	first := h.StartHTTPUpstream(t, nil)
+	first.SetServeFn(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("first"))
+	})
+
+	second := h.StartHTTPUpstream(t, nil)
+	second.SetServeFn(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("second"))
+	})
+
+	svc := newClientServedService(t, h, first.Port)
+
+	conn := h.Connect(t, harness.ConnectOpts{
+		Serve:   []string{svc.Metadata.Name},
+		Publish: map[string]int{svc.Metadata.Name: h.Port()},
+	})
+
+	sessName := h.Status(t).Session.Metadata.Name
+
+	client := h.HTTPNoRetry().SetBaseURL(conn.URL(svc.Metadata.Name))
+	t.Cleanup(client.GetClient().CloseIdleConnections)
+
+	var listenerPort int32
+	for i, tc := range []struct {
+		port int
+		body string
+	}{
+		{first.Port, "first"},
+		{second.Port, "second"},
+		{first.Port, "first"},
+		{second.Port, "second"},
+	} {
+		if i > 0 {
+			svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{
+				Url: fmt.Sprintf("http://localhost:%d", tc.port),
+			}
+			svc = h.UpdateService(t, svc)
+		}
+
+		waitConnectionState(t, h, sessName,
+			func(c *corev1.Session_Status_Connection) error {
+				upstream := connectionUpstream(c, svc)
+				if upstream == nil {
+					return errors.Errorf("the served Service is missing from the Session upstreams")
+				}
+				if upstream.Port == 0 {
+					return errors.Errorf("the served Service has no listener port")
+				}
+				if upstream.Backend == nil || upstream.Backend.Port != int32(tc.port) {
+					return errors.Errorf("the served Service has not received its backend yet")
+				}
+				if listenerPort != 0 && upstream.Port != listenerPort {
+					return errors.Errorf("the listener port changed from %d to %d",
+						listenerPort, upstream.Port)
+				}
+				listenerPort = upstream.Port
+				return nil
+			})
+
+		h.Eventually(t, fmt.Sprintf("the persistent client to reach the %s backend", tc.body),
+			propagationBudget, func(ctx context.Context) error {
+				res, err := client.R().SetContext(ctx).Get("/")
+				if err != nil {
+					return err
+				}
+				if res.StatusCode() != http.StatusOK || res.String() != tc.body {
+					return errors.Errorf("the served Service returned status %d and body %q, want %q",
+						res.StatusCode(), res.String(), tc.body)
+				}
+				return nil
+			})
+	}
+}

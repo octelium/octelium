@@ -51,7 +51,7 @@ type listener struct {
 	mu       sync.Mutex
 	lis      net.Listener
 	udpLis   *udp.Listener
-	conns    map[net.Conn]struct{}
+	conns    map[net.Conn]string
 }
 
 type Proxy struct {
@@ -89,7 +89,7 @@ func newListener(address string, port uint32, opts *Opts) *listener {
 		opts:         opts,
 		address:      address,
 		port:         port,
-		upstreamHost: net.JoinHostPort(opts.Upstream.Address, fmt.Sprintf("%d", opts.Upstream.Port)),
+		upstreamHost: joinUpstreamHost(opts.Upstream),
 	}
 }
 
@@ -177,6 +177,36 @@ func (p *Proxy) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (p *Proxy) UpdateUpstream(upstream OptsUpstream) error {
+	if p == nil {
+		return errors.Errorf("Cannot update a nil proxy")
+	}
+	if upstream.Port > 65535 {
+		return errors.Errorf("Invalid upstream port: %d", upstream.Port)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.isClosed {
+		return errors.Errorf("The proxy is already closed")
+	}
+	if p.opts.L4Type == userv1.HostedService_UDP {
+		return errors.Errorf("Cannot update the upstream of a UDP proxy in place")
+	}
+
+	p.opts.Upstream = upstream
+	upstreamHost := joinUpstreamHost(upstream)
+	for _, l := range p.listeners {
+		l.setUpstreamHost(upstreamHost)
+	}
+
+	return nil
+}
+
+func joinUpstreamHost(upstream OptsUpstream) string {
+	return net.JoinHostPort(upstream.Address, fmt.Sprintf("%d", upstream.Port))
 }
 
 func (p *Proxy) Close() error {
@@ -274,9 +304,9 @@ func (l *listener) addConn(conn net.Conn) bool {
 		return false
 	}
 	if l.conns == nil {
-		l.conns = make(map[net.Conn]struct{})
+		l.conns = make(map[net.Conn]string)
 	}
-	l.conns[conn] = struct{}{}
+	l.conns[conn] = ""
 
 	return true
 }
@@ -285,6 +315,39 @@ func (l *listener) removeConn(conn net.Conn) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.conns, conn)
+}
+
+func (l *listener) getUpstreamHost() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.upstreamHost
+}
+
+func (l *listener) getConnUpstreamHost(conn net.Conn) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.conns[conn]; !ok {
+		return "", false
+	}
+	l.conns[conn] = l.upstreamHost
+
+	return l.upstreamHost, true
+}
+
+func (l *listener) setUpstreamHost(upstreamHost string) {
+	l.mu.Lock()
+	l.upstreamHost = upstreamHost
+	var staleConns []net.Conn
+	for conn, connUpstreamHost := range l.conns {
+		if connUpstreamHost != "" && connUpstreamHost != upstreamHost {
+			staleConns = append(staleConns, conn)
+		}
+	}
+	l.mu.Unlock()
+
+	for _, conn := range staleConns {
+		conn.Close()
+	}
 }
 
 func (l *listener) setLis(lis net.Listener) bool {
@@ -311,7 +374,7 @@ func (l *listener) setUDPLis(lis *udp.Listener) bool {
 
 func (l *listener) doStartTCP(ctx context.Context) error {
 
-	pp, err := tcp.NewProxy(l.upstreamHost)
+	pp, err := tcp.NewProxy(l.getUpstreamHost())
 	if err != nil {
 		return err
 	}
@@ -369,16 +432,22 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 				defer l.removeConn(conn)
 
 				zap.S().Debugf("Starting serving connection on %s", listenerAddr)
-				tcpAddr, err := net.ResolveTCPAddr("tcp", l.upstreamHost)
+				upstreamHost, ok := l.getConnUpstreamHost(conn)
+				if !ok {
+					conn.Close()
+					return
+				}
+
+				tcpAddr, err := net.ResolveTCPAddr("tcp", upstreamHost)
 				if err != nil {
-					zap.S().Debugf("Could not resolve the upstream %s: %+v", l.upstreamHost, err)
+					zap.S().Debugf("Could not resolve the upstream %s: %+v", upstreamHost, err)
 					conn.Close()
 					return
 				}
 
 				connBackend, err := net.DialTCP("tcp", nil, tcpAddr)
 				if err != nil {
-					zap.S().Debugf("Could not dial the upstream %s: %+v", l.upstreamHost, err)
+					zap.S().Debugf("Could not dial the upstream %s: %+v", upstreamHost, err)
 					conn.Close()
 					return
 				}
@@ -394,7 +463,7 @@ func (l *listener) doStartTCP(ctx context.Context) error {
 
 func (l *listener) doStartUDP(ctx context.Context) error {
 
-	proxy, err := udp.NewProxy(l.upstreamHost)
+	proxy, err := udp.NewProxy(l.getUpstreamHost())
 	if err != nil {
 		return err
 	}
