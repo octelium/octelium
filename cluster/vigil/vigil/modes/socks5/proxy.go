@@ -30,6 +30,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
@@ -71,6 +72,7 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 	}
 
 	defer upstreamConn.Close()
+	p.dctx.network = logentry.WithUpstream(p.dctx.network, upstreamConn)
 
 	if err := gosocks5.SendReply(p.dctx.downstreamWriter, statute.RepSuccess, upstreamConn.LocalAddr()); err != nil {
 		return err

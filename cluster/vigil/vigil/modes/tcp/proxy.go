@@ -26,6 +26,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/mtls"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -61,6 +62,8 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 		p.upstreamErr = err
 		return
 	}
+
+	p.dctx.network = logentry.WithUpstream(p.dctx.network, upstreamConn)
 
 	stop := context.AfterFunc(ctx, func() {
 		conn.Close()

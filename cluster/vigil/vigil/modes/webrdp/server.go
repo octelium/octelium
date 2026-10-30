@@ -576,6 +576,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer handshake.TLSConn.Close()
+	reqCtx.SetUpstreamConnection(handshake.TLSConn)
 
 	zap.L().Debug("RDP handshake successful",
 		zap.String("requestedDestination", rdcpReq.Destination),

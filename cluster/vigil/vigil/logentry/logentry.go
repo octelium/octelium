@@ -36,6 +36,7 @@ type InitializeLogEntryOpts struct {
 	SessionID       string
 	Sequence        int64
 	Reason          *corev1.AccessLog_Entry_Common_Reason
+	Network         *corev1.AccessLog_Entry_Common_Network
 }
 
 func InitializeLogEntry(opts *InitializeLogEntryOpts) *corev1.AccessLog {
@@ -81,6 +82,7 @@ func InitializeLogEntry(opts *InitializeLogEntryOpts) *corev1.AccessLog {
 			ConnectionID: opts.ConnectionID,
 			SessionID:    opts.SessionID,
 			Sequence:     opts.Sequence,
+			Network:      opts.Network,
 		},
 		Info: &corev1.AccessLog_Entry_Info{},
 	}

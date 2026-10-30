@@ -117,6 +117,7 @@ func (t *recorder) setRecordLog(record *recordingChunk, typ corev1.AccessLog_Ent
 		ConnectionID:    t.dctx.id,
 		SessionID:       t.sessionID,
 		Sequence:        seq,
+		Network:         t.dctx.network,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{

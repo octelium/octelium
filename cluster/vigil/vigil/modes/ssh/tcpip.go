@@ -107,6 +107,7 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 			ReqCtx:          c.i,
 			ConnectionID:    c.id,
 			Reason:          c.reasonInit,
+			Network:         c.network,
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 			Ssh: &corev1.AccessLog_Entry_Info_SSH{
@@ -175,6 +176,7 @@ func (c *dctx) handleDirectTCPIP(_ context.Context, nch ssh.NewChannel) {
 			ReqCtx:          c.i,
 			ConnectionID:    c.id,
 			Reason:          c.reasonInit,
+			Network:         c.network,
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 			Ssh: &corev1.AccessLog_Entry_Info_SSH{

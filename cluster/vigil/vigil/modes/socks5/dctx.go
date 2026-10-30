@@ -28,10 +28,13 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 )
 
 type dctx struct {
+	network *corev1.AccessLog_Entry_Common_Network
+
 	id      string
 	sessUID string
 
@@ -65,6 +68,7 @@ func newDctx(
 	upstreamSession *corev1.Session,
 ) *dctx {
 	return &dctx{
+		network:          logentry.GetNetwork(conn.RemoteAddr()),
 		id:               vutils.GenerateLogID(),
 		sessUID:          authResp.RequestContext.Session.Metadata.Uid,
 		conn:             conn,

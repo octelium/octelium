@@ -151,6 +151,7 @@ func (s *Server) closeDctx(dctx *dctx) {
 		IsAuthorized:    true,
 		ReqCtx:          dctx.i,
 		ConnectionID:    dctx.id,
+		Network:         dctx.network,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Udp{
@@ -186,6 +187,7 @@ func (s *Server) replyLoop(dctx *dctx) {
 		IsAuthorized:    true,
 		ReqCtx:          dctx.i,
 		ConnectionID:    dctx.id,
+		Network:         dctx.network,
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Udp{
 		Udp: &corev1.AccessLog_Entry_Info_UDP{
@@ -290,6 +292,7 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 		IsAuthorized:    authResp.IsAuthorized,
 		ReqCtx:          authResp.RequestContext,
 		Reason:          authResp.AuthorizationDecisionReason,
+		Network:         logentry.GetNetwork(addr),
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Udp{
 		Udp: &corev1.AccessLog_Entry_Info_UDP{
@@ -326,6 +329,9 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 
 	if isNewlyCreated {
 		dctx.connUpstream, dctx.err = s.getUpstreamConn(ctx, authResp)
+		if dctx.err == nil {
+			dctx.network = logentry.WithUpstream(dctx.network, dctx.connUpstream)
+		}
 		close(dctx.ready)
 
 		if dctx.err != nil {

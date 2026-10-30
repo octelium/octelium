@@ -19,11 +19,14 @@ package middlewares
 import (
 	"context"
 	"crypto/sha256"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 )
@@ -80,6 +83,8 @@ const (
 )
 
 type RequestContext struct {
+	network atomic.Pointer[corev1.AccessLog_Entry_Common_Network]
+
 	Service *corev1.Service
 	// Conn      net.Conn
 	CreatedAt time.Time
@@ -126,6 +131,18 @@ type RequestContext struct {
 
 	OnResponse    []func()
 	onResponseRan bool
+}
+
+func (r *RequestContext) GetNetwork() *corev1.AccessLog_Entry_Common_Network {
+	return r.network.Load()
+}
+
+func (r *RequestContext) SetNetwork(network *corev1.AccessLog_Entry_Common_Network) {
+	r.network.Store(network)
+}
+
+func (r *RequestContext) SetUpstreamConnection(conn net.Conn) {
+	r.network.Store(logentry.WithUpstream(r.network.Load(), conn))
 }
 
 type MCPResponseInfo struct {

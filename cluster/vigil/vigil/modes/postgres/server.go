@@ -277,6 +277,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			IsAuthenticated: true,
 			ReqCtx:          authResp.RequestContext,
 			Reason:          authResp.AuthorizationDecisionReason,
+			Network:         logentry.GetNetwork(c.RemoteAddr()),
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
 			Postgres: &corev1.AccessLog_Entry_Info_Postgres{
@@ -317,6 +318,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			ReqCtx:          i,
 			ConnectionID:    dctx.id,
 			Reason:          authResp.AuthorizationDecisionReason,
+			Network:         dctx.network,
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
 			Postgres: &corev1.AccessLog_Entry_Info_Postgres{
@@ -370,6 +372,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			ReqCtx:          i,
 			ConnectionID:    dctx.id,
 			Reason:          authResp.AuthorizationDecisionReason,
+			Network:         dctx.network,
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
 			Postgres: &corev1.AccessLog_Entry_Info_Postgres{

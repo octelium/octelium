@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"time"
 
@@ -89,7 +90,14 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	return rt.RoundTrip(req)
+	reqCtx := middlewares.GetCtxRequestContext(req.Context())
+	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			reqCtx.SetUpstreamConnection(info.Conn)
+		},
+	}
+
+	return rt.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
 }
 
 func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, error) {

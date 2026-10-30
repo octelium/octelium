@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/sshutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/metricutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -43,6 +44,8 @@ import (
 )
 
 type dctx struct {
+	network *corev1.AccessLog_Entry_Common_Network
+
 	id        string
 	svc       *corev1.Service
 	createdAt time.Time
@@ -83,6 +86,7 @@ func newDctx(ctx context.Context, svc *corev1.Service, opts *modes.Opts, conn ne
 	sshMetrics *metricutils.SSHMetrics,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse, reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	ret := &dctx{
+		network:     logentry.GetNetwork(conn.RemoteAddr()),
 		id:          vutils.GenerateLogID(),
 		svc:         svc,
 		conn:        conn,
@@ -220,6 +224,7 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 
 	c.remoteConn.sshClient = ssh.NewClient(clientConn, clientChans, clientReqs)
 	c.remoteConn.netConn = conn
+	c.network = logentry.WithUpstream(c.network, conn)
 
 	zap.L().Debug("ssh client now connected",
 		zap.String("id", c.id), zap.String("upstream", upstream.HostPort))

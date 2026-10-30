@@ -78,6 +78,8 @@ func (c *countingConn) Write(b []byte) (int, error) {
 }
 
 type dctx struct {
+	network *corev1.AccessLog_Entry_Common_Network
+
 	id      string
 	sessUID string
 	conn    net.Conn
@@ -131,6 +133,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
 	reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 	return &dctx{
+		network:    logentry.GetNetwork(conn.RemoteAddr()),
 		id:         vutils.GenerateLogID(),
 		sessUID:    i.Session.Metadata.Uid,
 		conn:       conn,
@@ -322,6 +325,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		return err
 	}
 	c.upstreamConn = nil
+	c.network = logentry.WithUpstream(c.network, c.upstreamHijackedConn.Conn)
 
 	c.pgFrontend = c.upstreamHijackedConn.Frontend
 	c.pgFrontend.SetMaxBodyLen(maxMessageBodyLen)
@@ -711,6 +715,7 @@ func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.Access
 		ReqCtx:          c.reqCtx,
 		ConnectionID:    c.id,
 		Reason:          reason,
+		Network:         c.network,
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Postgres_{
 		Postgres: info,

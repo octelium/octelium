@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -109,6 +110,7 @@ func (p *proxy) serve(ctx context.Context, secretMan *secretman.SecretManager, t
 		return
 	}
 	defer handshake.TLSConn.Close()
+	p.dctx.network = logentry.WithUpstream(p.dctx.network, handshake.TLSConn)
 
 	if tlsCfg == nil {
 		p.fail(rejectReasonHandshake, errors.Errorf("missing downstream RDP TLS config"))
@@ -144,6 +146,7 @@ func (p *proxy) servePassthrough(ctx context.Context, upstream *loadbalancer.Ups
 		return
 	}
 	defer upstreamConn.Close()
+	p.dctx.network = logentry.WithUpstream(p.dctx.network, upstreamConn)
 
 	p.bytesFromDownstream += int64(len(p.dctx.clientX224))
 	p.bytesToDownstream += int64(len(x224Response))

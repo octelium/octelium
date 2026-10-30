@@ -137,6 +137,7 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 		ConnectionID:    c.id,
 		SessionID:       sessionID,
 		Reason:          c.reasonInit,
+		Network:         c.network,
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 		Ssh: &corev1.AccessLog_Entry_Info_SSH{
@@ -154,6 +155,7 @@ func (c *dctx) runSessionLoop(ctx context.Context,
 			ConnectionID:    c.id,
 			SessionID:       sessionID,
 			Reason:          c.reasonInit,
+			Network:         c.network,
 		})
 
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
@@ -361,6 +363,7 @@ func (c *dctx) setLogSessionDownstreamReq(req *ssh.Request, sessionID string) er
 		ReqCtx:          c.i,
 		SessionID:       sessionID,
 		Reason:          c.reasonInit,
+		Network:         c.network,
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 		Ssh: &corev1.AccessLog_Entry_Info_SSH{},

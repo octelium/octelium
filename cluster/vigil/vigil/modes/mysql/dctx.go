@@ -44,6 +44,8 @@ import (
 )
 
 type dctx struct {
+	network *corev1.AccessLog_Entry_Common_Network
+
 	id      string
 	sessUID string
 	conn    net.Conn
@@ -79,6 +81,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 	reasonInit *corev1.AccessLog_Entry_Common_Reason) *dctx {
 
 	return &dctx{
+		network:           logentry.GetNetwork(conn.RemoteAddr()),
 		id:                vutils.GenerateLogID(),
 		reqCtx:            i,
 		sessUID:           i.Session.Metadata.Uid,
@@ -196,6 +199,7 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	}
 
 	c.upstreamConnSQL = packet.NewConn(upstreamConn)
+	c.network = logentry.WithUpstream(c.network, upstreamConn)
 	zap.L().Debug("Connecting is successful", zap.String("id", c.id))
 
 	return nil
@@ -502,6 +506,7 @@ func (c *dctx) setLog(packet *mysqlPacket, isAuthorized bool,
 		ReqCtx:          c.reqCtx,
 		ConnectionID:    c.id,
 		Reason:          reason,
+		Network:         c.network,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Mysql{

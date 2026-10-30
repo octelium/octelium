@@ -317,6 +317,7 @@ func (m *middleware) getAccessLog(
 		Reason:          reqCtx.DecisionReason,
 		ConnectionID:    connID,
 		Sequence:        eventSeq,
+		Network:         reqCtx.GetNetwork(),
 	})
 
 	crwHeader := crw.Header()

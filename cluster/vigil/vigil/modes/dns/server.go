@@ -372,6 +372,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		IsAuthorized:    authResp.IsAuthorized,
 		ReqCtx:          authResp.RequestContext,
 		Reason:          authResp.AuthorizationDecisionReason,
+		Network:         logentry.GetNetwork(w.RemoteAddr()),
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Dns{
@@ -442,7 +443,13 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		Timeout: 5 * time.Second,
 	}
 
-	proxiedMsg, _, err := client.Exchange(clientReq, upstream.HostPort)
+	upstreamConn, err := client.Dial(upstream.HostPort)
+	var proxiedMsg *dns.Msg
+	if err == nil {
+		defer upstreamConn.Close()
+		logE.Entry.Common.Network = logentry.WithUpstream(logE.Entry.Common.Network, upstreamConn)
+		proxiedMsg, _, err = client.ExchangeWithConn(clientReq, upstreamConn)
+	}
 	if err != nil || proxiedMsg == nil {
 		zap.L().Warn("Could not do exchange", zap.Error(err), zap.String("upstream", upstream.HostPort))
 		rcodeClass = rcodeClassOf(dns.RcodeServerFailure)

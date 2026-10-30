@@ -343,7 +343,7 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 	}
 
 	if !authResp.IsAuthorized {
-		s.emitConnectLog(startTime, "", authResp, target, false)
+		s.emitConnectLog(startTime, "", authResp, target, false, logentry.GetNetwork(clientConn.RemoteAddr()))
 		s.metricsStore.AtRequestStart()
 		s.metricsStore.AtRequestEnd(startTime, metric.WithAttributeSet(attribute.NewSet(
 			attribute.String("state", "DENIED"),
@@ -379,7 +379,7 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 		s.dctxMap.mu.Unlock()
 	}()
 
-	s.emitConnectLog(startTime, dctx.id, authResp, target, true)
+	s.emitConnectLog(startTime, dctx.id, authResp, target, true, dctx.network)
 
 	socks5Attrs := metric.WithAttributes(
 		attribute.String("state", "ALLOWED"),
@@ -458,6 +458,7 @@ func (s *Server) emitConnectLog(
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
 	target *target,
 	isAuthorized bool,
+	network *corev1.AccessLog_Entry_Common_Network,
 ) {
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       startTime,
@@ -466,6 +467,7 @@ func (s *Server) emitConnectLog(
 		ReqCtx:          authResp.RequestContext,
 		ConnectionID:    connectionID,
 		Reason:          authResp.AuthorizationDecisionReason,
+		Network:         network,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Socks5{
@@ -493,6 +495,7 @@ func (s *Server) emitEndLog(
 		ReqCtx:          authResp.RequestContext,
 		ConnectionID:    dctx.id,
 		Reason:          authResp.AuthorizationDecisionReason,
+		Network:         dctx.network,
 	})
 
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Socks5{

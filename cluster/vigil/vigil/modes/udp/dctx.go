@@ -23,10 +23,13 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"go.uber.org/zap"
 )
 
 type dctx struct {
+	network *corev1.AccessLog_Entry_Common_Network
+
 	id           string
 	sessUID      string
 	addr         *net.UDPAddr
@@ -47,6 +50,7 @@ type dctx struct {
 
 func newDctx(addr *net.UDPAddr, i *corev1.RequestContext) *dctx {
 	return &dctx{
+		network:   logentry.GetNetwork(addr),
 		id:        vutils.GenerateLogID(),
 		sessUID:   i.Session.Metadata.Uid,
 		addr:      addr,

@@ -101,7 +101,19 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	m.scrubDownstreamIPHeader(req)
+	source, isFromClient := m.scrubDownstreamIPHeader(req)
+	if isFromClient && source.Port >= 0 && source.Port <= 65535 {
+		reqCtx.SetNetwork(&corev1.AccessLog_Entry_Common_Network{
+			Downstream: &corev1.AccessLog_Entry_Common_Network_Endpoint{
+				Ip:   source.Address,
+				Port: uint32(source.Port),
+			},
+		})
+	} else if ip, err := netip.ParseAddr(req.Header.Get(vutils.GetDownstreamIPHeaderCanonical())); err == nil {
+		reqCtx.SetNetwork(&corev1.AccessLog_Entry_Common_Network{
+			ForwardedClientIP: ip.String(),
+		})
+	}
 
 	corsCfg := ucorev1.ToServiceConfig(svc.Spec.Config).GetHTTPCors()
 	corsOrigin := httputils.GetCORSOrigin(req, corsCfg, svc, m.domain)
@@ -206,7 +218,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		reqCtx.SetBodyDigest()
 	}
 
-	downstreamReq, err := m.getDownstreamReq(req, reqCtx, additional)
+	downstreamReq, err := m.getDownstreamReq(req, reqCtx, additional, source)
 	if err != nil {
 		zap.L().Debug("Could not get downstreamReq", zap.Error(err))
 		if ucorev1.ToService(reqCtx.Service).IsGRPC() {
@@ -258,7 +270,8 @@ type additionalInfo struct {
 
 func (m *middleware) getDownstreamReq(req *http.Request,
 	reqCtx *middlewares.RequestContext,
-	additional *additionalInfo) (*coctovigilv1.DownstreamRequest, error) {
+	additional *additionalInfo,
+	source *coctovigilv1.DownstreamRequest_Source) (*coctovigilv1.DownstreamRequest, error) {
 
 	svc := reqCtx.Service
 
@@ -283,7 +296,6 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 		}
 	}
 
-	source := getDownstreamSource(req)
 	ip := req.Header.Get(vutils.GetDownstreamIPHeaderCanonical())
 
 	switch {
@@ -365,10 +377,13 @@ func (m *middleware) getDownstreamReq(req *http.Request,
 	}
 }
 
-func (m *middleware) scrubDownstreamIPHeader(req *http.Request) {
-	if m.isAddressFromClient(getDownstreamSource(req).GetAddress()) {
+func (m *middleware) scrubDownstreamIPHeader(req *http.Request) (*coctovigilv1.DownstreamRequest_Source, bool) {
+	source := getDownstreamSource(req)
+	isFromClient := m.isAddressFromClient(source.Address)
+	if isFromClient {
 		req.Header.Del(vutils.GetDownstreamIPHeaderCanonical())
 	}
+	return source, isFromClient
 }
 
 func (m *middleware) isAddressFromClient(addrStr string) bool {

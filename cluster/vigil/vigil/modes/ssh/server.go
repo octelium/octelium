@@ -347,6 +347,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			IsAuthenticated: true,
 			ReqCtx:          authResp.RequestContext,
 			Reason:          authResp.AuthorizationDecisionReason,
+			Network:         logentry.GetNetwork(c.RemoteAddr()),
 		})
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 			Ssh: &corev1.AccessLog_Entry_Info_SSH{
@@ -390,6 +391,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 				IsAuthenticated: true,
 				ReqCtx:          i,
 				Reason:          authResp.AuthorizationDecisionReason,
+				Network:         logentry.GetNetwork(c.RemoteAddr()),
 			})
 			otelutils.EmitAccessLog(logE)
 			s.metricsStore.AtRequestStart()
@@ -452,6 +454,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		ReqCtx:          i,
 		ConnectionID:    dctx.id,
 		Reason:          authResp.AuthorizationDecisionReason,
+		Network:         dctx.network,
 	})
 	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
 		Ssh: &corev1.AccessLog_Entry_Info_SSH{
@@ -483,6 +486,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			ReqCtx:          i,
 			ConnectionID:    dctx.id,
 			Reason:          authResp.AuthorizationDecisionReason,
+			Network:         dctx.network,
 		})
 
 		logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Ssh{
