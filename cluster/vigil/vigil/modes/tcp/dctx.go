@@ -68,7 +68,7 @@ func (c *dctx) close() error {
 }
 
 func (c *dctx) serve(ctx context.Context,
-	lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) {
+	lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager, startTime time.Time) {
 	c.proxy = newProxy(c, lbManager)
-	c.proxy.serve(ctx, svc, secretMan)
+	c.proxy.serve(ctx, svc, secretMan, startTime)
 }

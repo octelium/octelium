@@ -286,7 +286,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 			}
 		}()
 
-		dctx.serve(ctx, s.lbManager, svc, s.secretMan)
+		dctx.serve(ctx, s.lbManager, svc, s.secretMan, startTime)
 	}()
 
 	dctx.close()

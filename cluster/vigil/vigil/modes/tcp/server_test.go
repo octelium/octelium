@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
@@ -51,6 +52,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/protobuf/proto"
 )
 
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
@@ -973,7 +975,7 @@ func TestTCPProxyCancellation(t *testing.T) {
 				authResp: &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{Service: svc}},
 			}, loadbalancer.NewLbManager(nil, vc))
 			done := make(chan struct{})
-			go func() { defer close(done); p.serve(ctx, svc, nil) }()
+			go func() { defer close(done); p.serve(ctx, svc, nil, time.Now()) }()
 			backend, err := lis.AcceptTCP()
 			require.Nil(t, err)
 			t.Cleanup(func() {
@@ -1105,6 +1107,7 @@ func TestCloseWriteFallbackClosesConnection(t *testing.T) {
 
 func TestServerHalfCloseSessionMetrics(t *testing.T) {
 	ctx := t.Context()
+	records := newTCPLogRecorder(t)
 	tst, err := tests.Initialize(nil)
 	require.Nil(t, err)
 	t.Cleanup(func() { tst.Destroy() })
@@ -1180,6 +1183,20 @@ func TestServerHalfCloseSessionMetrics(t *testing.T) {
 	body, err := io.ReadAll(backend)
 	require.Nil(t, err)
 	require.Equal(t, request, string(body))
+	start := nextTCPAccessLog(t, records)
+	connected := nextTCPAccessLog(t, records)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_TCP_START, start.Entry.Info.GetTcp().Type)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_TCP_CONNECTED, connected.Entry.Info.GetTcp().Type)
+	assert.NotEmpty(t, start.Entry.Common.ConnectionID)
+	assert.Equal(t, start.Entry.Common.ConnectionID, connected.Entry.Common.ConnectionID)
+	assert.True(t, proto.Equal(start.Entry.Common.StartedAt, connected.Entry.Common.StartedAt))
+	assert.True(t, proto.Equal(start.Entry.Common.SessionRef, connected.Entry.Common.SessionRef))
+	assert.True(t, proto.Equal(start.Entry.Common.Reason, connected.Entry.Common.Reason))
+	assert.Nil(t, start.Entry.Common.Network.UpstreamLocal)
+	assert.Nil(t, start.Entry.Common.Network.UpstreamRemote)
+	assert.True(t, proto.Equal(logentry.GetEndpoint(client.LocalAddr()), connected.Entry.Common.Network.Downstream))
+	assert.True(t, proto.Equal(logentry.GetEndpoint(backend.RemoteAddr()), connected.Entry.Common.Network.UpstreamLocal))
+	assert.True(t, proto.Equal(logentry.GetEndpoint(backend.LocalAddr()), connected.Entry.Common.Network.UpstreamRemote))
 	var rm metricdata.ResourceMetrics
 	findActive := func(name string) int64 {
 		for _, sm := range rm.ScopeMetrics {
@@ -1217,6 +1234,15 @@ func TestServerHalfCloseSessionMetrics(t *testing.T) {
 		defer srv.dctxMap.mu.Unlock()
 		return len(srv.dctxMap.dctxMap) == 0
 	}, 3*time.Second, 10*time.Millisecond)
+	end := nextTCPAccessLog(t, records)
+	assert.Equal(t, corev1.AccessLog_Entry_Info_TCP_END, end.Entry.Info.GetTcp().Type)
+	assert.Equal(t, start.Entry.Common.ConnectionID, end.Entry.Common.ConnectionID)
+	assert.True(t, proto.Equal(start.Entry.Common.StartedAt, end.Entry.Common.StartedAt))
+	assert.True(t, proto.Equal(connected.Entry.Common.Network, end.Entry.Common.Network))
+	assert.Equal(t, uint64(len(request)), end.Entry.Info.GetTcp().ReceivedBytes)
+	assert.Equal(t, uint64(len(response)), end.Entry.Info.GetTcp().SentBytes)
+	assert.NotEqual(t, start.Metadata.Id, connected.Metadata.Id)
+	assert.NotEqual(t, connected.Metadata.Id, end.Metadata.Id)
 	rm = metricdata.ResourceMetrics{}
 	require.Nil(t, metricsReader.Collect(ctx, &rm))
 	dp, found := findSumDataPointByState(t, &rm, "req.total", "ALLOWED")

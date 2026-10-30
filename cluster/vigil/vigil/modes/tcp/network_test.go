@@ -16,12 +16,15 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestTCPNetwork(t *testing.T) {
 	for _, dialFailure := range []bool{false, true} {
 		for _, network := range []string{"tcp4", "tcp6"} {
 			t.Run(fmt.Sprintf("%s/DialFailure=%t", network, dialFailure), func(t *testing.T) {
+				records := newTCPLogRecorder(t)
+				startTime := time.Now()
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				ip := net.IPv4(127, 0, 0, 1)
@@ -60,26 +63,44 @@ func TestTCPNetwork(t *testing.T) {
 				}
 				d := newDctx(ctx, downstream, reqCtx, &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: reqCtx})
 				start := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
-					StartTime: time.Now(), ReqCtx: reqCtx, Network: d.network,
+					StartTime: startTime, ReqCtx: reqCtx, Network: d.network,
 				})
 				if dialFailure {
 					require.Nil(t, upstream.Close())
-					d.serve(ctx, loadbalancer.NewLbManager(nil, vc), svc, nil)
+					d.serve(ctx, loadbalancer.NewLbManager(nil, vc), svc, nil, startTime)
 					assert.NotNil(t, d.proxy.upstreamErr)
 					assert.Same(t, start.Entry.Common.Network, d.network)
 					assert.Nil(t, d.network.UpstreamLocal)
 					assert.Nil(t, d.network.UpstreamRemote)
+					select {
+					case logE := <-records:
+						t.Fatalf("Unexpected TCP access log for a failed dial: %s", logE)
+					default:
+					}
 					return
 				}
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					d.serve(ctx, loadbalancer.NewLbManager(nil, vc), svc, nil)
+					d.serve(ctx, loadbalancer.NewLbManager(nil, vc), svc, nil, startTime)
 				}()
 				backend, err := upstream.AcceptTCP()
 				require.Nil(t, err)
 				defer backend.Close()
 				require.Nil(t, backend.SetDeadline(time.Now().Add(5*time.Second)))
+				connected := nextTCPAccessLog(t, records)
+				assert.Equal(t, corev1.AccessLog_Entry_Info_TCP_CONNECTED, connected.Entry.Info.GetTcp().Type)
+				assert.Equal(t, d.id, connected.Entry.Common.ConnectionID)
+				assert.Equal(t, "session", connected.Entry.Common.SessionRef.Uid)
+				assert.True(t, startTime.Equal(connected.Entry.Common.StartedAt.AsTime()))
+				assert.True(t, proto.Equal(logentry.GetEndpoint(client.LocalAddr()), connected.Entry.Common.Network.Downstream))
+				assert.True(t, proto.Equal(logentry.GetEndpoint(backend.RemoteAddr()), connected.Entry.Common.Network.UpstreamLocal))
+				assert.True(t, proto.Equal(logentry.GetEndpoint(backend.LocalAddr()), connected.Entry.Common.Network.UpstreamRemote))
+				select {
+				case <-done:
+					t.Fatal("The connection closed before application traffic was sent")
+				default:
+				}
 				_, err = client.Write([]byte("request"))
 				require.Nil(t, err)
 				require.Nil(t, client.CloseWrite())
@@ -98,11 +119,16 @@ func TestTCPNetwork(t *testing.T) {
 					t.Fatal(ctx.Err())
 				}
 				require.Nil(t, d.close())
-				assert.Equal(t, logentry.GetEndpoint(client.LocalAddr()), d.network.Downstream)
-				assert.Equal(t, logentry.GetEndpoint(backend.RemoteAddr()), d.network.UpstreamLocal)
-				assert.Equal(t, logentry.GetEndpoint(backend.LocalAddr()), d.network.UpstreamRemote)
+				assert.True(t, proto.Equal(logentry.GetEndpoint(client.LocalAddr()), d.network.Downstream))
+				assert.True(t, proto.Equal(logentry.GetEndpoint(backend.RemoteAddr()), d.network.UpstreamLocal))
+				assert.True(t, proto.Equal(logentry.GetEndpoint(backend.LocalAddr()), d.network.UpstreamRemote))
 				assert.Nil(t, start.Entry.Common.Network.UpstreamLocal)
 				assert.Nil(t, start.Entry.Common.Network.UpstreamRemote)
+				select {
+				case logE := <-records:
+					t.Fatalf("Unexpected additional TCP access log: %s", logE)
+				default:
+				}
 			})
 		}
 	}

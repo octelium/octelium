@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/otelutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/logentry"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
@@ -53,7 +54,7 @@ func newProxy(dctx *dctx, lbManager *loadbalancer.LBManager) *proxy {
 	}
 }
 
-func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager) {
+func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secretman.SecretManager, startTime time.Time) {
 	conn := p.dctx.conn
 
 	upstreamConn, err := p.getUpstreamConn(ctx, svc, secretMan)
@@ -70,6 +71,22 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 		upstreamConn.Close()
 	})
 	defer stop()
+
+	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
+		StartTime:       startTime,
+		IsAuthenticated: true,
+		IsAuthorized:    true,
+		ReqCtx:          p.dctx.authResp.RequestContext,
+		ConnectionID:    p.dctx.id,
+		Reason:          p.dctx.authResp.AuthorizationDecisionReason,
+		Network:         p.dctx.network,
+	})
+	logE.Entry.Info.Type = &corev1.AccessLog_Entry_Info_Tcp{
+		Tcp: &corev1.AccessLog_Entry_Info_TCP{
+			Type: corev1.AccessLog_Entry_Info_TCP_CONNECTED,
+		},
+	}
+	otelutils.EmitAccessLog(logE)
 
 	p.doServe(conn, upstreamConn)
 	zap.L().Debug("Done serving",
