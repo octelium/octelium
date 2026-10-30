@@ -833,10 +833,12 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 
 	cliutils.LineNotify("Connected successfully...\n")
 
-	c.setEvent(&Event{
-		Type:       EventTypeConnected,
-		Connection: connCfg,
-	})
+	if c.opts.OnEvent != nil {
+		c.setEvent(&Event{
+			Type:       EventTypeConnected,
+			Connection: ctl.devCtl.GetConnectionConfig(),
+		})
+	}
 	if pending := c.getPendingPublishedServices(publishedServices); len(pending) > 0 {
 		for _, svc := range pending {
 			cliutils.LineWarn("The Service %s does not exist yet. Its published port will be retried while connected.\n", svc.Name)

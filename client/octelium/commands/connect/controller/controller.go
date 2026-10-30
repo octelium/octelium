@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/dnssrv"
 	"github.com/octelium/octelium/client/octelium/commands/connect/esocks5"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/device"
@@ -126,6 +127,13 @@ func NewControllerWithDB(c *cliconfigv1.Connection, dbC *db.DB) (*Controller, er
 	ret.wgPrivateKey = privK
 
 	return ret, nil
+}
+
+func (c *Controller) GetConnectionConfig() *cliconfigv1.Connection {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return pbutils.Clone(c.c).(*cliconfigv1.Connection)
 }
 
 func (c *Controller) Close() error {

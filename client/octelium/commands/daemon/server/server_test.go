@@ -49,6 +49,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1875,6 +1876,154 @@ func TestDaemonServedListenerRecoveryAndDisconnectOverIPC(t *testing.T) {
 				require.NoError(t, blocker.Close())
 			}
 			assert.False(t, peer.RoundTrip(addr, []byte("served through daemon IPC")), "disconnect must stop forwarding and retrying the served listener")
+		})
+	}
+}
+
+func TestDaemonConnectedConfigSnapshotWithImmediateGatewayEvents(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	for _, reconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconnect-%t", reconnect), func(t *testing.T) {
+			peer := testutils.NewWGPeer(t)
+			backend, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				buf := make([]byte, 1024)
+				for {
+					n, addr, err := backend.ReadFrom(buf)
+					if err != nil {
+						return
+					}
+					if _, err := backend.WriteTo(buf[:n], addr); err != nil {
+						return
+					}
+				}
+			}()
+			t.Cleanup(func() { backend.Close(); <-done })
+			restart := make(chan struct{})
+			var attempts atomic.Int32
+			startTestDaemonClusterAPI(t, &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				if attempt > 2 || attempt > 1 && !reconnect {
+					return status.Error(codes.Internal, "unexpected extra connection")
+				}
+				if _, err := stream.Recv(); err != nil {
+					return err
+				}
+				initial := testDaemonInitialState()
+				initial.GetState().Dns = &userv1.DNS{Servers: []string{fmt.Sprintf("100.64.0.%d", 52+attempt)}}
+				initial.GetState().ServiceOptions = &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
+					Name: "snapshot.default", Port: 24000, L4Type: userv1.HostedService_UDP,
+					Address:  &metav1.DualStackIP{Ipv4: "100.64.0.2"},
+					Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.LocalAddr().(*net.UDPAddr).Port)},
+				}}}
+				peer.Configure(initial.GetState())
+				if err := stream.Send(initial); err != nil {
+					return err
+				}
+				for i := range 32 {
+					gw := &userv1.Gateway{Id: fmt.Sprintf("early-%d", i), Addresses: []string{fmt.Sprintf("192.0.2.%d", i+1)}}
+					if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddGateway_{AddGateway: &userv1.ConnectResponse_AddGateway{Gateway: gw}}}); err != nil {
+						return err
+					}
+					if i%2 == 0 {
+						updated := proto.Clone(gw).(*userv1.Gateway)
+						updated.Addresses = []string{"192.0.2.200"}
+						if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateGateway_{UpdateGateway: &userv1.ConnectResponse_UpdateGateway{Gateway: updated}}}); err != nil {
+							return err
+						}
+					}
+					if i%4 == 0 {
+						if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_DeleteGateway_{DeleteGateway: &userv1.ConnectResponse_DeleteGateway{Id: gw.Id}}}); err != nil {
+							return err
+						}
+					}
+				}
+				if err := peer.SendGateway(stream); err != nil {
+					return err
+				}
+				if reconnect && attempt == 1 {
+					select {
+					case <-restart:
+						return status.Error(codes.Unavailable, "API restart")
+					case <-stream.Context().Done():
+						return nil
+					}
+				}
+				<-stream.Context().Done()
+				return nil
+			}})
+			srv := newTestServer(t)
+			authenticateTestDaemonDomain(t, srv)
+			dnsSocket, err := net.ListenPacket("udp", "127.0.0.1:0")
+			require.NoError(t, err)
+			dnsAddr := dnsSocket.LocalAddr().String()
+			require.NoError(t, dnsSocket.Close())
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			op, err := srv.c.Connect(ctx, &daemonv1.ConnectRequest{Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+				L3Mode: daemonv1.ConnectionOptions_V4, Mtu: 1280, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+				Dns:            &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED, LocalServerListenAddress: dnsAddr},
+				ServiceOptions: &daemonv1.ConnectionOptions_ServiceOptions{ServeAll: true},
+			}})
+			require.NoError(t, err)
+			statusForAttempt := func(want int32) *daemonv1.DomainState {
+				var domain *daemonv1.DomainState
+				require.Eventually(t, func() bool {
+					state, err := srv.c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+					if err != nil || len(state.Domains) != 1 || attempts.Load() != want {
+						return false
+					}
+					domain = state.Domains[0]
+					return domain.GetConnection().GetState() == daemonv1.ConnectionStatus_CONNECTED
+				}, 6*time.Second, 10*time.Millisecond)
+				return domain
+			}
+			readConfig := func() *cliconfigv1.Connection {
+				p := srv.srv.principal
+				p.mu.Lock()
+				defer p.mu.Unlock()
+				return proto.Clone(p.domains["example.com"].connCfg).(*cliconfigv1.Connection)
+			}
+			first := statusForAttempt(1)
+			require.Eventually(t, func() bool {
+				return peer.RoundTrip("100.64.0.2:24000", []byte("snapshot-safe daemon connection"))
+			}, 5*time.Second, 10*time.Millisecond)
+			retained := readConfig()
+			require.Equal(t, []string{"100.64.0.53"}, retained.GetConnection().GetDns().GetServers())
+			require.Positive(t, retained.GetPreferences().GetLinuxPrefs().GetTableIndex())
+			for _, gw := range retained.GetConnection().GetGateways() {
+				require.NotNil(t, gw)
+				require.NotEmpty(t, gw.GetId())
+				require.Len(t, gw.GetAddresses(), 1)
+			}
+			if reconnect {
+				close(restart)
+				second := statusForAttempt(2)
+				assert.Equal(t, first.GetConnection().GetConnectedAt().AsTime(), second.GetConnection().GetConnectedAt().AsTime())
+				require.Eventually(t, func() bool {
+					return peer.RoundTrip("100.64.0.2:24000", []byte("snapshot-safe daemon connection"))
+				}, 5*time.Second, 10*time.Millisecond)
+				current := readConfig()
+				assert.Equal(t, []string{"100.64.0.54"}, current.GetConnection().GetDns().GetServers())
+				assert.Equal(t, []string{"100.64.0.53"}, retained.GetConnection().GetDns().GetServers())
+			}
+			finished, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+			require.NoError(t, err)
+			assert.Equal(t, daemonv1.Operation_SUCCEEDED, finished.State)
+			disconnect, err := srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				finished, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: disconnect.Id})
+				return err == nil && finished.State == daemonv1.Operation_SUCCEEDED
+			}, 3*time.Second, 10*time.Millisecond)
+			_, err = srv.srv.principal.dbC.GetConnectionCleanup("example.com")
+			assert.True(t, srv.srv.principal.dbC.ErrorIsNotFound(err))
+			assert.NoError(t, ctx.Err())
 		})
 	}
 }

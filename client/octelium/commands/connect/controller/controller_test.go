@@ -21,6 +21,7 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -29,6 +30,7 @@ import (
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -590,4 +592,146 @@ func TestControllerSOCKSListenAddressesWithoutConfig(t *testing.T) {
 	} {
 		assert.Empty(t, getESOCKS5ListenAddrs(cfg))
 	}
+}
+
+func TestControllerConnectionConfigSnapshotIsDetached(t *testing.T) {
+	cfg := &cliconfigv1.Connection{
+		Info: &cliconfigv1.Connection_Info{Cluster: &cliconfigv1.Connection_Info_Cluster{Domain: "example.com"}},
+		Connection: &userv1.ConnectionState{
+			X25519Key: []byte{1, 2, 3},
+			Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32", V6: "fd00::2/128"}},
+			Gateways:  []*userv1.Gateway{{Id: "initial", Addresses: []string{"192.0.2.1"}, CIDRs: []string{"100.64.0.0/16"}}},
+			Dns:       &userv1.DNS{Servers: []string{"100.64.0.53"}},
+			ServiceOptions: &userv1.ConnectionState_ServiceOptions{Services: []*userv1.HostedService{{
+				Name: "served.default", Address: &metav1.DualStackIP{Ipv4: "100.64.0.2"},
+				Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: 8080},
+			}}},
+		},
+		Preferences: &cliconfigv1.Connection_Preferences{
+			DeviceName: "initialized-device", Mtu: 1400, IgnoreDNS: true,
+			LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{IsEnabled: true},
+			PublishedServices: []*cliconfigv1.Connection_Preferences_PublishedService{{
+				Name: "published.default", Fqdn: "published.default.local.example.com", Port: 80, HostPort: 8080,
+			}},
+		},
+	}
+	c := &Controller{c: cfg}
+	before := proto.Clone(cfg).(*cliconfigv1.Connection)
+	snapshot := c.GetConnectionConfig()
+	require.True(t, proto.Equal(before, snapshot))
+	require.NotSame(t, cfg, snapshot)
+	snapshot.Info.Cluster.Domain = "consumer.example"
+	snapshot.Connection.X25519Key[0] = 9
+	snapshot.Connection.Addresses[0].V4 = "100.64.0.9/32"
+	snapshot.Connection.Gateways[0].Addresses[0] = "192.0.2.9"
+	snapshot.Connection.Gateways[0].CIDRs[0] = "192.0.2.0/24"
+	snapshot.Connection.Dns.Servers[0] = "100.64.0.59"
+	snapshot.Connection.ServiceOptions.Services[0].Address.Ipv4 = "100.64.0.9"
+	snapshot.Connection.ServiceOptions.Services[0].Upstream.Host = "consumer.example"
+	snapshot.Preferences.DeviceName = "consumer-device"
+	snapshot.Preferences.LocalDNS.IsEnabled = false
+	snapshot.Preferences.PublishedServices[0].HostPort = 9090
+	require.True(t, proto.Equal(before, cfg), "the event consumer must not mutate controller configuration")
+	retained := proto.Clone(snapshot).(*cliconfigv1.Connection)
+	cfg.Connection.X25519Key[1] = 8
+	cfg.Connection.Addresses[0].V6 = "fd00::8/128"
+	cfg.Connection.Gateways[0].Addresses[0] = "192.0.2.8"
+	cfg.Connection.ServiceOptions.Services[0].Name = "changed.default"
+	cfg.Preferences.PublishedServices[0].Name = "changed.default"
+	assert.True(t, proto.Equal(retained, snapshot), "later controller mutations must not alter a retained event")
+	assert.True(t, proto.Equal(cfg, c.GetConnectionConfig()), "a later snapshot must reflect the current configuration")
+}
+
+func TestControllerConnectionConfigSnapshotPreservesPlatformPreferences(t *testing.T) {
+	for _, platform := range []string{"linux", "macos", "windows"} {
+		t.Run(platform, func(t *testing.T) {
+			cfg := &cliconfigv1.Connection{Preferences: &cliconfigv1.Connection_Preferences{DeviceName: "effective-device"}}
+			var live proto.Message
+			switch platform {
+			case "linux":
+				cfg.Preferences.LinuxPrefs = &cliconfigv1.Connection_Preferences_Linux{
+					ResolvConf: []byte("original"), TableIndex: 2001, MainTableIndex: 2002,
+					ImplementationMode: cliconfigv1.Connection_Preferences_Linux_WG_NETSTACK,
+				}
+				live = cfg.Preferences.LinuxPrefs
+			case "macos":
+				cfg.Preferences.MacosPrefs = &cliconfigv1.Connection_Preferences_MacOS{
+					ResolvConf: []byte("original"), DnsMode: cliconfigv1.Connection_Preferences_MacOS_NETWORKSETUP,
+				}
+				live = cfg.Preferences.MacosPrefs
+			case "windows":
+				cfg.Preferences.WindowsPrefs = &cliconfigv1.Connection_Preferences_Windows{}
+				live = cfg.Preferences.WindowsPrefs
+			}
+			live.ProtoReflect().SetUnknown([]byte{0x08, 0x01})
+			before := proto.Clone(cfg)
+			c := &Controller{c: cfg}
+			snapshot := c.GetConnectionConfig()
+			require.True(t, proto.Equal(cfg, snapshot))
+			var copied proto.Message
+			switch platform {
+			case "linux":
+				copied = snapshot.Preferences.LinuxPrefs
+				snapshot.Preferences.LinuxPrefs.ResolvConf[0] = 'x'
+				snapshot.Preferences.LinuxPrefs.TableIndex++
+			case "macos":
+				copied = snapshot.Preferences.MacosPrefs
+				snapshot.Preferences.MacosPrefs.ResolvConf[0] = 'x'
+				snapshot.Preferences.MacosPrefs.DnsMode = cliconfigv1.Connection_Preferences_MacOS_RESOLVCONF
+			case "windows":
+				copied = snapshot.Preferences.WindowsPrefs
+			}
+			require.NotSame(t, live, copied)
+			copied.ProtoReflect().GetUnknown()[1] = 2
+			assert.True(t, proto.Equal(before, cfg), "platform settings and unknown protobuf fields must be owned by the snapshot")
+		})
+	}
+}
+
+func TestControllerConnectionConfigSnapshotPreservesOptionalMessages(t *testing.T) {
+	for _, cfg := range []*cliconfigv1.Connection{nil, {}, {
+		Connection: &userv1.ConnectionState{},
+	}, {
+		Preferences: &cliconfigv1.Connection_Preferences{},
+	}} {
+		c := &Controller{c: cfg}
+		var snapshot *cliconfigv1.Connection
+		require.NotPanics(t, func() { snapshot = c.GetConnectionConfig() })
+		assert.True(t, proto.Equal(cfg, snapshot))
+		if cfg == nil {
+			assert.Nil(t, snapshot)
+		} else {
+			assert.NotSame(t, cfg, snapshot)
+		}
+	}
+}
+
+func TestControllerConnectionConfigSnapshotsDuringDNSUpdates(t *testing.T) {
+	c := &Controller{c: &cliconfigv1.Connection{
+		Info:       &cliconfigv1.Connection_Info{Cluster: &cliconfigv1.Connection_Info_Cluster{Domain: "example.com"}},
+		Connection: &userv1.ConnectionState{Dns: &userv1.DNS{Servers: []string{"192.0.2.1", "192.0.2.1"}}},
+		Preferences: &cliconfigv1.Connection_Preferences{
+			IgnoreDNS: true, LocalDNS: &cliconfigv1.Connection_Preferences_LocalDNS{},
+		},
+	}}
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := range 256 {
+			server := fmt.Sprintf("192.0.2.%d", i%250+1)
+			assert.NoError(t, c.UpdateDNS(&userv1.DNS{Servers: []string{server, server}}))
+			runtime.Gosched()
+		}
+	})
+	t.Cleanup(wg.Wait)
+	for range 256 {
+		snapshot := c.GetConnectionConfig()
+		servers := snapshot.GetConnection().GetDns().GetServers()
+		require.Len(t, servers, 2)
+		assert.Equal(t, servers[0], servers[1], "a snapshot must contain one coherent DNS update")
+		servers[0] = "consumer.example"
+		runtime.Gosched()
+	}
+	wg.Wait()
+	servers := c.GetConnectionConfig().GetConnection().GetDns().GetServers()
+	assert.Equal(t, servers[0], servers[1])
 }

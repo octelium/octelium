@@ -2956,3 +2956,199 @@ func TestServedUDPRecoveryOverGRPC(t *testing.T) {
 		}
 	}
 }
+
+func TestRunGRPCConnectedEventSnapshotSurvivesStateUpdates(t *testing.T) {
+	for _, scenario := range []string{"Gateway", "DNS", "FullState"} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s-legacy-%t", scenario, legacy), func(t *testing.T) {
+				ready := make(chan struct{})
+				var attempts atomic.Int32
+				c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+					attempts.Add(1)
+					if _, err := stream.Recv(); err != nil {
+						return err
+					}
+					initial := testConnectInitialState()
+					initial.GetState().Dns = &userv1.DNS{Servers: []string{"100.64.0.53"}}
+					if legacy {
+						initial.CreatedAt = nil
+					}
+					if err := stream.Send(initial); err != nil {
+						return err
+					}
+					select {
+					case <-ready:
+					case <-stream.Context().Done():
+						return nil
+					}
+					msg := &userv1.ConnectResponse{}
+					switch scenario {
+					case "Gateway":
+						msg.Event = &userv1.ConnectResponse_AddGateway_{AddGateway: &userv1.ConnectResponse_AddGateway{
+							Gateway: &userv1.Gateway{Id: "after-connected", Addresses: []string{"192.0.2.1"}},
+						}}
+					case "DNS":
+						msg.Event = &userv1.ConnectResponse_UpdateDNS_{UpdateDNS: &userv1.ConnectResponse_UpdateDNS{
+							Dns: &userv1.DNS{Servers: []string{"100.64.0.54"}},
+						}}
+					case "FullState":
+						replacement := proto.Clone(initial.GetState()).(*userv1.ConnectionState)
+						replacement.Addresses[0].V4 = "100.64.0.3/32"
+						replacement.Dns.Servers[0] = "100.64.0.55"
+						msg.Event = &userv1.ConnectResponse_State{State: replacement}
+					}
+					if !legacy {
+						msg.CreatedAt = timestamppb.Now()
+					}
+					if err := stream.Send(msg); err != nil {
+						return err
+					}
+					return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+				}})
+				c.opts.MTU = 1280
+				var got, expected *cliconfigv1.Connection
+				c.opts.OnEvent = func(ev *Event) {
+					if ev.Type != EventTypeConnected {
+						return
+					}
+					got = ev.Connection
+					expected = proto.Clone(got).(*cliconfigv1.Connection)
+					close(ready)
+				}
+				ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 8*time.Second)
+				defer cancel()
+				require.NoError(t, c.Run(ctx))
+				require.NoError(t, ctx.Err())
+				require.NotNil(t, got)
+				assert.True(t, proto.Equal(expected, got), "a retained connected event must not change when the live stream applies an update")
+				assert.Equal(t, int32(1), attempts.Load())
+				_, err := dbC.GetConnectionCleanup("example.com")
+				assert.True(t, dbC.ErrorIsNotFound(err))
+			})
+		}
+	}
+}
+
+func TestRunGRPCConnectedEventCallbackDoesNotBlockStateUpdates(t *testing.T) {
+	peer := testutils.NewWGPeer(t)
+	backend := newTestMalformedServedBackend(t)
+	ready, forwarded := make(chan struct{}), make(chan struct{})
+	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		initial := testConnectInitialState()
+		peer.Configure(initial.GetState())
+		if err := stream.Send(initial); err != nil {
+			return err
+		}
+		select {
+		case <-ready:
+		case <-stream.Context().Done():
+			return nil
+		}
+		if err := peer.SendGateway(stream); err != nil {
+			return err
+		}
+		if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{AddService: &userv1.ConnectResponse_AddService{
+			Service: &userv1.HostedService{
+				Name: "during-callback.default", Port: 23000, L4Type: userv1.HostedService_UDP,
+				Address:  &metav1.DualStackIP{Ipv4: "100.64.0.2"},
+				Upstream: &userv1.HostedService_Upstream{Host: "127.0.0.1", Port: int32(backend.Port)},
+			},
+		}}}); err != nil {
+			return err
+		}
+		select {
+		case <-forwarded:
+		case <-stream.Context().Done():
+			return nil
+		}
+		return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+	}})
+	c.opts.ServeAll = true
+	c.opts.MTU = 1280
+	var snapshot *cliconfigv1.Connection
+	c.opts.OnEvent = func(ev *Event) {
+		if ev.Type != EventTypeConnected {
+			return
+		}
+		snapshot = ev.Connection
+		assert.Empty(t, snapshot.GetConnection().GetGateways())
+		assert.Positive(t, snapshot.GetPreferences().GetLinuxPrefs().GetTableIndex(), "runtime-selected preferences must be included")
+		assert.Positive(t, snapshot.GetPreferences().GetLinuxPrefs().GetMainTableIndex())
+		close(ready)
+		assert.Eventually(t, func() bool {
+			return peer.RoundTrip("100.64.0.2:23000", []byte("stream progress during connected callback"))
+		}, 3*time.Second, 10*time.Millisecond)
+		assert.Empty(t, snapshot.GetConnection().GetGateways(), "the callback must retain its own snapshot while the stream makes progress")
+		close(forwarded)
+	}
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 8*time.Second)
+	defer cancel()
+	require.NoError(t, c.Run(ctx))
+	require.NoError(t, ctx.Err())
+	require.NotNil(t, snapshot)
+	assert.Empty(t, snapshot.GetConnection().GetGateways())
+	_, err := dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestRunGRPCConnectedEventSnapshotsRemainIndependentAcrossReconnect(t *testing.T) {
+	ready := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	var attempts atomic.Int32
+	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if attempt > 2 {
+			return status.Error(codes.Internal, "unexpected extra connection")
+		}
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		initial := testConnectInitialState()
+		initial.GetState().Dns = &userv1.DNS{Servers: []string{fmt.Sprintf("100.64.0.%d", 52+attempt)}}
+		if err := stream.Send(initial); err != nil {
+			return err
+		}
+		select {
+		case <-ready[attempt-1]:
+		case <-stream.Context().Done():
+			return nil
+		}
+		if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateDNS_{UpdateDNS: &userv1.ConnectResponse_UpdateDNS{
+			Dns: &userv1.DNS{Servers: []string{"100.64.0.99"}},
+		}}}); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			return status.Error(codes.Unavailable, "API restart")
+		}
+		return stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{Disconnect: &userv1.ConnectResponse_Disconnect{}}})
+	}})
+	c.opts.MTU = 1280
+	var snapshots, expected []*cliconfigv1.Connection
+	var types []EventType
+	c.opts.OnEvent = func(ev *Event) {
+		types = append(types, ev.Type)
+		if ev.Type != EventTypeConnected {
+			return
+		}
+		snapshots = append(snapshots, ev.Connection)
+		expected = append(expected, proto.Clone(ev.Connection).(*cliconfigv1.Connection))
+		close(ready[len(snapshots)-1])
+	}
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 12*time.Second)
+	defer cancel()
+	require.NoError(t, c.Run(ctx))
+	require.NoError(t, ctx.Err())
+	require.Len(t, snapshots, 2)
+	assert.NotSame(t, snapshots[0], snapshots[1])
+	for idx, snapshot := range snapshots {
+		assert.True(t, proto.Equal(expected[idx], snapshot), "a completed connection's snapshot must survive later updates, cleanup, and reconnect")
+		assert.Equal(t, []string{fmt.Sprintf("100.64.0.%d", 53+idx)}, snapshot.GetConnection().GetDns().GetServers())
+	}
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeReconnecting, EventTypeConnected, EventTypeDisconnected}, types)
+	assert.Equal(t, int32(2), attempts.Load())
+	_, err := dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
