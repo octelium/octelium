@@ -284,8 +284,12 @@ func IsClusterCertAndReady(sec *corev1.Secret) bool {
 	return IsCertReady(sec)
 }
 
+func IsClusterCertWithNamespace(sec *corev1.Secret, ns string) bool {
+	return sec.Metadata.Name == fmt.Sprintf("crt-ns-%s", ns)
+}
+
 func IsClusterCertAndReadyWithNamespace(sec *corev1.Secret, ns string) bool {
-	if sec.Metadata.Name != fmt.Sprintf("crt-ns-%s", ns) {
+	if !IsClusterCertWithNamespace(sec, ns) {
 		return false
 	}
 
