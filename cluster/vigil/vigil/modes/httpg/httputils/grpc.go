@@ -17,6 +17,7 @@
 package httputils
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -43,12 +44,16 @@ func GetGRPCInfo(path string) (*GRPCInfo, error) {
 	ret.FullServiceName = slashParts[1]
 	ret.Method = slashParts[2]
 
+	if ret.Method == "" {
+		return nil, errors.Errorf("gRPC method name cannot be empty")
+	}
+
 	idx := strings.LastIndex(ret.FullServiceName, ".")
 	if idx < 0 {
 		return nil, errors.Errorf("Invalid full gRPC service name")
 	}
-	if idx >= len(ret.FullServiceName) {
-		return nil, errors.Errorf("gRPC service name cannot end with a .")
+	if slices.Contains(strings.Split(ret.FullServiceName, "."), "") {
+		return nil, errors.Errorf("gRPC service name cannot have an empty component")
 	}
 
 	ret.Package = ret.FullServiceName[:idx]

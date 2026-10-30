@@ -1227,10 +1227,10 @@ func newLLMEventStreamMessage(t *testing.T, headers, payload []byte) []byte {
 
 	ret = binary.BigEndian.AppendUint32(ret, uint32(total))
 	ret = binary.BigEndian.AppendUint32(ret, uint32(len(headers)))
-	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret))
 	ret = append(ret, headers...)
 	ret = append(ret, payload...)
-	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret))
 
 	assert.Equal(t, total, len(ret))
 

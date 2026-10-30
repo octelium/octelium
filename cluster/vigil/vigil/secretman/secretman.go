@@ -271,7 +271,7 @@ func (s *SecretManager) applyService(ctx context.Context) ([]*GetOAuth2CCTokenRe
 		}
 
 		if cfg.GetKubernetes() != nil {
-			k8sC := svc.Spec.GetConfig().GetKubernetes()
+			k8sC := cfg.GetKubernetes()
 
 			if k8sC.GetClientCertificate() != nil &&
 				k8sC.GetClientCertificate().GetFromSecret() != "" {

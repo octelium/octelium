@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -166,7 +167,7 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 					if ucorev1.ToService(svc).IsManagedService() &&
 						svc.Status.ManagedService != nil &&
 						svc.Status.ManagedService.ForwardHost &&
-						(forwardedHost == m.domain || strings.HasSuffix(forwardedHost, "."+m.domain)) {
+						isClusterHost(forwardedHost, m.domain) {
 
 						u := fmt.Sprintf("https://%s%s", forwardedHost, getEscapedPathWithQuery(req.URL))
 						zap.L().Debug("Adding redirect URL to login", zap.String("redirectURL", u))
@@ -193,6 +194,11 @@ func (m *middleware) handleUnauthorized(w http.ResponseWriter, req *http.Request
 
 	w.WriteHeader(httpStatusCode)
 
+}
+
+func isClusterHost(host, domain string) bool {
+	return govalidator.IsDNSName(host) &&
+		(host == domain || strings.HasSuffix(host, "."+domain))
 }
 
 func getEscapedPathWithQuery(u *url.URL) string {

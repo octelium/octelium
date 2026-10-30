@@ -136,6 +136,7 @@ func getClientTLSCfgWithDeprecatedClientCert(ctx context.Context, svc *corev1.Se
 	ret := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS13,
+		ServerName: upstream.SNIHost,
 		Certificates: []tls.Certificate{
 			*crt,
 		},

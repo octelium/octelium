@@ -575,3 +575,32 @@ func FuzzLoginRedirectRequestTarget(f *testing.F) {
 		assert.Equal(t, original, *u)
 	})
 }
+
+func TestIsClusterHost(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"example.com", true},
+		{"custom.example.com", true},
+		{"a.b.example.com", true},
+		{"", false},
+		{"example.org", false},
+		{"badexample.com", false},
+		{"example.com.attacker.test", false},
+		{"attacker.test/path.example.com", false},
+		{"attacker.test?next=.example.com", false},
+		{"attacker.test#fragment.example.com", false},
+		{"attacker.test@custom.example.com", false},
+		{"attacker.test\\custom.example.com", false},
+		{"custom.example.com:8443", false},
+		{"custom.example.com/", false},
+		{" custom.example.com", false},
+		{"custom..example.com", false},
+		{"192.0.2.1", false},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			assert.Equal(t, tc.want, isClusterHost(tc.host, "example.com"))
+		})
+	}
+}

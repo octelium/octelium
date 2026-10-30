@@ -1804,7 +1804,7 @@ func parseLLMEventStreamHeaders(buf []byte) (string, bool) {
 	var ret string
 
 	for i := 0; len(buf) > 0; i++ {
-		if i > maxLLMEventStreamHeaders {
+		if i >= maxLLMEventStreamHeaders {
 			return "", false
 		}
 

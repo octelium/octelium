@@ -997,6 +997,13 @@ func TestTCPProxyCancellation(t *testing.T) {
 				body, err := io.ReadAll(backend)
 				require.Nil(t, err)
 				assert.Equal(t, "request", string(body))
+			} else {
+				_, err := client.Write([]byte("ready"))
+				require.Nil(t, err)
+				buf := make([]byte, len("ready"))
+				_, err = io.ReadFull(backend, buf)
+				require.Nil(t, err)
+				assert.Equal(t, "ready", string(buf))
 			}
 			cancel()
 			select {

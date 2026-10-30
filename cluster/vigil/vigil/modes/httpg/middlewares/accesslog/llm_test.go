@@ -19,6 +19,7 @@ package accesslog
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -444,9 +445,9 @@ func newEventStreamMessage(payload []byte) []byte {
 	ret := make([]byte, 0, total)
 	ret = binary.BigEndian.AppendUint32(ret, uint32(total))
 	ret = binary.BigEndian.AppendUint32(ret, 0)
-	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret))
 	ret = append(ret, payload...)
-	ret = binary.BigEndian.AppendUint32(ret, 0)
+	ret = binary.BigEndian.AppendUint32(ret, crc32.ChecksumIEEE(ret))
 
 	return ret
 }

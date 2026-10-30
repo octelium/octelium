@@ -77,19 +77,26 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Secret) erro
 }
 
 func (c *Controller) OnDelete(ctx context.Context, secret *corev1.Secret) error {
-	if c.isReadyClusterCrt(secret) {
+	c.secretMan.Delete(secret)
+
+	if c.isClusterCrt(secret) {
 		return c.srv.SetClusterCertificate(nil)
 	}
-
-	c.secretMan.Delete(secret)
 
 	return nil
 }
 
+func (c *Controller) isClusterCrt(crt *corev1.Secret) bool {
+	return vutils.IsClusterCertWithNamespace(crt, c.getNamespace())
+}
+
 func (c *Controller) isReadyClusterCrt(crt *corev1.Secret) bool {
-	ns := "default"
+	return vutils.IsClusterCertAndReadyWithNamespace(crt, c.getNamespace())
+}
+
+func (c *Controller) getNamespace() string {
 	if c.serviceGetter != nil {
-		ns = c.serviceGetter.GetService().Status.NamespaceRef.Name
+		return c.serviceGetter.GetService().Status.NamespaceRef.Name
 	}
-	return vutils.IsClusterCertAndReadyWithNamespace(crt, ns)
+	return "default"
 }

@@ -118,3 +118,37 @@ func TestDeletedUnreadyClusterCertificateClearsListener(t *testing.T) {
 	require.Nil(t, c.OnDelete(t.Context(), unready))
 	assert.Equal(t, []*corev1.Secret{first, nil}, srv.certs)
 }
+
+func TestClusterCertificateDeletionMatchesNamespace(t *testing.T) {
+	srv := &testServer{}
+	sm := &testSecretManager{}
+	c := NewController(srv, sm, &testServiceGetter{namespace: "team"})
+	for _, secret := range []*corev1.Secret{
+		{Metadata: &metav1.Metadata{Name: "crt-ns-default"}},
+		{Metadata: &metav1.Metadata{Name: "crt-ns-team-extra"}},
+		newTestCertificate(t, "other"),
+	} {
+		require.Nil(t, c.OnDelete(t.Context(), secret))
+	}
+	assert.Empty(t, srv.certs)
+	assert.Len(t, sm.deletes, 3)
+
+	unready := &corev1.Secret{Metadata: &metav1.Metadata{Name: "crt-ns-team"}}
+	require.Nil(t, c.OnDelete(t.Context(), unready))
+	assert.Equal(t, []*corev1.Secret{nil}, srv.certs)
+	assert.Equal(t, unready, sm.deletes[3])
+}
+
+func TestUnreadyClusterCertificateUpdateKeepsListener(t *testing.T) {
+	srv := &testServer{}
+	sm := &testSecretManager{}
+	c := NewController(srv, sm, nil)
+	first := newTestCertificate(t, "default")
+	require.Nil(t, c.OnAdd(t.Context(), first))
+	unready := &corev1.Secret{Metadata: &metav1.Metadata{Name: first.Metadata.Name}}
+	require.Nil(t, c.OnUpdate(t.Context(), unready, first))
+	assert.Equal(t, []*corev1.Secret{first}, srv.certs)
+	second := newTestCertificate(t, "default")
+	require.Nil(t, c.OnUpdate(t.Context(), second, unready))
+	assert.Equal(t, []*corev1.Secret{first, second}, srv.certs)
+}
