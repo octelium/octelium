@@ -5,11 +5,11 @@ import { getPortalURL, isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
 import { getResourceRef } from "@/utils/pb";
 import { Button, Loader, PinInput, TextInput } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
-import toast from "react-hot-toast";
 import { twMerge } from "tailwind-merge";
 
 const isUserCancellation = (err: unknown) =>
@@ -43,7 +43,10 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
       setURL(response.challengeRequest.type.totp.url);
     },
     onError: () => {
-      toast.error("Could not start registration. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not start registration. Please try again.",
+      });
     },
   });
   const { mutate: startTotp } = mutation;
@@ -69,7 +72,10 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
     },
     onError: () => {
       setOtp("");
-      toast.error("Could not verify the code. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not verify the code. Please try again.",
+      });
     },
   });
 
@@ -199,7 +205,10 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
     },
     onError: (err) => {
       if (!isUserCancellation(err)) {
-        toast.error("Could not register your security key. Please try again.");
+        notifications.show({
+          color: "red",
+          message: "Could not register your security key. Please try again.",
+        });
       }
     },
   });
@@ -276,7 +285,10 @@ const Page = () => {
       setAuthn(r);
     },
     onError: () => {
-      toast.error("Could not create the Authenticator. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not create the Authenticator. Please try again.",
+      });
     },
   });
 

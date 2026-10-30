@@ -5,7 +5,7 @@ import { twMerge } from "tailwind-merge";
 import LogoMain from "@/components/LogoMain";
 import { getDomain, getSafeRedirectURL } from "@/utils";
 import { Loader } from "@mantine/core";
-import { toast } from "react-hot-toast";
+import { notifications } from "@mantine/notifications";
 
 interface approvalResponse {
   redirectURL: string;
@@ -45,7 +45,10 @@ const Page = () => {
       })
       .catch(() => {
         setPending(false);
-        toast.error("Could not complete the request. Please try again.");
+        notifications.show({
+          color: "red",
+          message: "Could not complete the request. Please try again.",
+        });
       });
   };
 

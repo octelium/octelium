@@ -16,11 +16,11 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import * as Auth from "@octelium/apis/main/authv1";
 import { DeleteOptions } from "@octelium/apis/main/metav1";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import toast from "react-hot-toast";
 import { IoMdSend } from "react-icons/io";
 import { MdEdit, MdEditOff } from "react-icons/md";
 import { Link, useSearchParams } from "react-router-dom";
@@ -72,7 +72,10 @@ const TOTP = (props: {
     },
     onError: () => {
       setOtp("");
-      toast.error("Could not verify the code. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not verify the code. Please try again.",
+      });
     },
   });
 
@@ -162,7 +165,10 @@ const Fido = (props: {
     },
     onError: (err) => {
       if (!isUserCancellation(err)) {
-        toast.error("Could not verify your security key. Please try again.");
+        notifications.show({
+          color: "red",
+          message: "Could not verify your security key. Please try again.",
+        });
       }
     },
   });
@@ -235,7 +241,10 @@ export const Authenticator = (props: {
       });
     },
     onError: () => {
-      toast.error("Could not delete the Authenticator. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not delete the Authenticator. Please try again.",
+      });
     },
   });
 
@@ -256,7 +265,10 @@ export const Authenticator = (props: {
       setIsEdit(false);
     },
     onError: () => {
-      toast.error("Could not update the Authenticator. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Could not update the Authenticator. Please try again.",
+      });
     },
   });
 

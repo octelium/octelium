@@ -3,6 +3,7 @@ import {
   createTheme,
   localStorageColorSchemeManager,
   MultiSelect,
+  Notification,
   NumberInput,
   PinInput,
   Select,
@@ -56,6 +57,23 @@ const theme = createTheme({
   // focusRing: "never",
 
   components: {
+    Notification: Notification.extend({
+      defaultProps: {
+        withBorder: true,
+        closeButtonProps: {
+          "aria-label": "Dismiss notification",
+        },
+      },
+      styles: {
+        root: {
+          backgroundColor: "var(--portal-surface)",
+          borderColor: "var(--portal-line)",
+        },
+        title: { color: "var(--portal-fg)" },
+        description: { color: "var(--portal-fg)" },
+        closeButton: { color: "var(--portal-fg-muted)" },
+      },
+    }),
     Button: Button.extend({
       defaultProps: {
         variant: "filled",

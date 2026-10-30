@@ -2,7 +2,7 @@ import Footer from "@/components/Footer";
 import TopBar from "@/components/TopBar";
 import { Outlet } from "react-router-dom";
 
-import { Toaster } from "react-hot-toast";
+import { Notifications } from "@mantine/notifications";
 
 const Root = () => {
   return (
@@ -21,7 +21,7 @@ const Root = () => {
           </div>
         </div>
 
-        <Toaster position="bottom-center" toastOptions={{ style: { background: "var(--portal-surface)", color: "var(--portal-fg)" } }} />
+        <Notifications position="bottom-center" autoClose={4000} />
         <Footer />
       </div>
     </div>

@@ -7,9 +7,9 @@ import LogoMain from "@/components/LogoMain";
 import { getSafeRedirectURL, isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
 import { Divider, Loader } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
-import { toast } from "react-hot-toast";
 import { IoIosFingerPrint } from "react-icons/io";
 
 import type { IconType } from "react-icons";
@@ -168,7 +168,10 @@ const Passkey = (props: {
     onError: () => {
       props.setPending(null);
 
-      toast.error("Passkey sign-in failed. Please try again.");
+      notifications.show({
+        color: "red",
+        message: "Passkey sign-in failed. Please try again.",
+      });
     },
   });
 
@@ -254,7 +257,10 @@ const Page = () => {
       })
       .catch(() => {
         setPending(null);
-        toast.error("Could not login. Please try again.");
+        notifications.show({
+          color: "red",
+          message: "Could not login. Please try again.",
+        });
       });
   };
 
