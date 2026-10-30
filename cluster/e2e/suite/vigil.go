@@ -210,20 +210,23 @@ func testVigilRetryReplay(t *testing.T, h *harness.H) {
 			InitialInterval: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 1}},
 		},
 	})
-	h.Eventually(t, "Vigil to retry an idempotent request", harness.DecisionBudget, func(ctx context.Context) error {
-		res, err := h.HTTPNoRetry().R().SetContext(ctx).SetBody("probe").Put(v.url("/ready-" + h.Name()))
-		if err != nil {
-			return err
-		}
-		if res.StatusCode() != http.StatusCreated {
-			return errUnexpectedStatus(res.StatusCode(), http.StatusCreated)
-		}
-		return nil
-	})
-	for _, route := range []struct {
+	routes := []struct {
 		name string
 		url  string
-	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}}
+	for _, route := range routes {
+		h.Eventually(t, fmt.Sprintf("Vigil to retry an idempotent %s request", route.name), harness.DecisionBudget, func(ctx context.Context) error {
+			res, err := h.HTTPNoRetry().R().SetContext(ctx).SetBody("probe").Put(route.url + "/ready-" + route.name + "-" + h.Name())
+			if err != nil {
+				return err
+			}
+			if res.StatusCode() != http.StatusCreated {
+				return errUnexpectedStatus(res.StatusCode(), http.StatusCreated)
+			}
+			return nil
+		})
+	}
+	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
 			for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodPatch} {
 				t.Run(method, func(t *testing.T) {
@@ -288,20 +291,23 @@ func testVigilCacheResponseSafety(t *testing.T, h *harness.H) {
 			Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
 			Type:      &corev1.Service_Spec_Config_HTTP_Plugin_Cache_{Cache: &corev1.Service_Spec_Config_HTTP_Plugin_Cache{UseXCacheHeader: true}}},
 	}})
-	h.Eventually(t, "Vigil to apply the response cache plugin", harness.DecisionBudget, func(ctx context.Context) error {
-		res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/ready"))
-		if err != nil {
-			return err
-		}
-		if res.StatusCode() != http.StatusOK || res.Header().Get("X-Cache") == "" {
-			return errors.New("the response cache plugin is not active yet")
-		}
-		return nil
-	})
-	for _, route := range []struct {
+	routes := []struct {
 		name string
 		url  string
-	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}}
+	for _, route := range routes {
+		h.Eventually(t, fmt.Sprintf("Vigil to apply the response cache plugin to %s requests", route.name), harness.DecisionBudget, func(ctx context.Context) error {
+			res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(route.url + "/ready")
+			if err != nil {
+				return err
+			}
+			if res.StatusCode() != http.StatusOK || res.Header().Get("X-Cache") == "" {
+				return errors.New("the response cache plugin is not active yet")
+			}
+			return nil
+		})
+	}
+	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -342,20 +348,23 @@ func testVigilEscapedPathRewrite(t *testing.T, h *harness.H) {
 	v.setHTTP(t, &corev1.Service_Spec_Config_HTTP{Path: &corev1.Service_Spec_Config_HTTP_Path{
 		RemovePrefix: "/api/v1", AddPrefix: "/backend",
 	}})
-	h.Eventually(t, "Vigil to apply the path rewrite", harness.DecisionBudget, func(ctx context.Context) error {
-		res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(v.url("/api/v1/probe"))
-		if err != nil {
-			return err
-		}
-		if string(res.Body()) != "/backend/probe" {
-			return errors.Errorf("got path %q", res.Body())
-		}
-		return nil
-	})
-	for _, route := range []struct {
+	routes := []struct {
 		name string
 		url  string
-	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}} {
+	}{{"Published", v.url("")}, {"Ingress", h.ServiceURL(v.svc)}}
+	for _, route := range routes {
+		h.Eventually(t, fmt.Sprintf("Vigil to apply the path rewrite to %s requests", route.name), harness.DecisionBudget, func(ctx context.Context) error {
+			res, err := h.HTTPNoRetry().R().SetContext(ctx).Get(route.url + "/api/v1/probe")
+			if err != nil {
+				return err
+			}
+			if string(res.Body()) != "/backend/probe" {
+				return errors.Errorf("got path %q", res.Body())
+			}
+			return nil
+		})
+	}
+	for _, route := range routes {
 		t.Run(route.name, func(t *testing.T) {
 			for _, path := range []string{"/api/v1/item%2Fpart?q=a%2Fb", "/api%2Fv1/item%2Fpart?q=a%2Fb"} {
 				res, err := h.HTTPNoRetry().R().SetContext(t.Context()).Get(route.url + path)
