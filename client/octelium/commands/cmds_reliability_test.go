@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -28,8 +29,13 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/apis/client/daemonv1"
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/db"
+	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -523,4 +529,124 @@ func TestClientSSHConfigLockE2E(t *testing.T) {
 	}
 	assert.Equal(t, original, readFile(knownHosts))
 	assert.Equal(t, original, readFile(authorizedKeys))
+}
+
+func TestDaemonCrashCleanupE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("these tests force the Linux gVisor implementation and use Unix signals")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+
+	var attempts atomic.Int32
+	apiSocket := newTestCommandSocket(t)
+	startTestReliabilityCommandAPI(t, apiSocket, &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testCommandInitialState()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}})
+
+	stateDir := t.TempDir()
+	dbC, err := db.OpenWithOpts(&db.Opts{Path: filepath.Join(stateDir, "users", strconv.Itoa(os.Getuid()))})
+	require.NoError(t, err)
+	t.Cleanup(func() { dbC.Close() })
+	require.NoError(t, dbC.Migrate())
+	require.NoError(t, dbC.SetSessionToken("example.com", &authv1.SessionToken{
+		AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600, RefreshTokenExpiresIn: 7200,
+	}))
+
+	startDaemon := func() (*testCommandProcess, daemonv1.MainServiceClient) {
+		socket := newTestCommandSocket(t)
+		p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + apiSocket},
+			"daemon", "--listen", socket, "--state-dir", stateDir, "--homedir", t.TempDir())
+		conn, err := grpc.NewClient("passthrough:///"+socket,
+			grpc.WithTransportCredentials(ipc.NewTransportCredentials()), grpc.WithContextDialer(ipc.Dial))
+		require.NoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+		cl := daemonv1.NewMainServiceClient(conn)
+		require.Eventually(t, func() bool {
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			_, err := cl.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+			return err == nil
+		}, 10*time.Second, 20*time.Millisecond)
+		return p, cl
+	}
+	waitState := func(cl daemonv1.MainServiceClient, want daemonv1.ConnectionStatus_State) {
+		require.Eventually(t, func() bool {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			snapshot, err := cl.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+			return err == nil && len(snapshot.Domains) == 1 && snapshot.Domains[0].Connection.State == want
+		}, 10*time.Second, 20*time.Millisecond, "the domain did not reach the %s state", want)
+	}
+	connectDomain := func(cl daemonv1.MainServiceClient) {
+		_, err := cl.Connect(t.Context(), &daemonv1.ConnectRequest{
+			Domain: "example.com", Options: &daemonv1.ConnectionOptions{
+				L3Mode: daemonv1.ConnectionOptions_V4, ImplementationMode: daemonv1.ConnectionOptions_GVISOR,
+				Dns: &daemonv1.ConnectionOptions_DNS{Mode: daemonv1.ConnectionOptions_DNS_DISABLED},
+			},
+		})
+		require.NoError(t, err)
+		waitState(cl, daemonv1.ConnectionStatus_CONNECTED)
+	}
+	readFile := func(path string) string {
+		b, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return string(b)
+	}
+
+	first, cl := startDaemon()
+	connectDomain(cl)
+	crashed, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(first.cmd.Process.Pid), crashed.Metadata["pid"])
+	require.NoError(t, first.cmd.Process.Kill())
+	assert.Error(t, first.wait(t, 5*time.Second))
+
+	original := "example.net ssh-ed25519 AAAA\n"
+	sshDir := t.TempDir()
+	var paths []string
+	for _, name := range []string{"known_hosts", "authorized_keys"} {
+		filePath := filepath.Join(sshDir, name)
+		require.NoError(t, os.WriteFile(filePath,
+			[]byte(original+"@cert-authority *.example.com ssh-ed25519 AAAA octelium-managed:example.com\n"), 0600))
+		paths = append(paths, filePath)
+	}
+	crashed, err = dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_ACTIVE, crashed.Phase)
+	crashed.Ssh = &cliconfigv1.ConnectionCleanup_SSH{Marker: "octelium-managed:example.com", FilePaths: paths}
+	require.NoError(t, dbC.SetConnectionCleanup("example.com", crashed))
+
+	second, cl := startDaemon()
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err), "the restarted daemon must reconcile the journal of the crashed daemon")
+	for _, filePath := range paths {
+		assert.Equal(t, original, readFile(filePath))
+	}
+	connectDomain(cl)
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.NotEqual(t, crashed.Id, journal.Id)
+	assert.Equal(t, strconv.Itoa(second.cmd.Process.Pid), journal.Metadata["pid"])
+	_, err = cl.Disconnect(t.Context(), &daemonv1.DisconnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	waitState(cl, daemonv1.ConnectionStatus_DISCONNECTED)
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err), "the Connection after the crash must be journaled and cleaned up")
+	require.NoError(t, second.cmd.Process.Signal(os.Interrupt))
+	assert.NoError(t, second.wait(t, 5*time.Second))
+	assert.Equal(t, int32(2), attempts.Load())
 }

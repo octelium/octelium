@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
@@ -444,6 +445,8 @@ func (d *domainCtl) startConnect(opts *daemonv1.ConnectionOptions) (*daemonv1.Op
 
 	go func() {
 		defer cancelFn()
+
+		controller.ReconcileConnectionCleanup(d.p.dbC, d.domain)
 
 		err := conn.Run(ctx)
 

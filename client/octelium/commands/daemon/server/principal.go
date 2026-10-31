@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/octelium/octelium/client/octelium/commands/daemon/ipc"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"go.uber.org/zap"
@@ -249,6 +250,16 @@ func (p *principal) loadDomains() error {
 		d.setAuthenticationFromState(itm)
 
 		p.domains[domain] = d
+	}
+
+	for domain, itm := range domainMap {
+		if itm.GetConnectionCleanup() == nil {
+			continue
+		}
+
+		zap.L().Debug("Reconciling the connection cleanup state of a previous process",
+			zap.String("principal", p.id), zap.String("domain", domain))
+		controller.ReconcileConnectionCleanup(p.dbC, domain)
 	}
 
 	return nil
