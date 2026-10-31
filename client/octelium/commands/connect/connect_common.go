@@ -523,6 +523,8 @@ const (
 	reconnectBackoffMax = 5 * time.Second
 )
 
+const maxRejectedAttempts = 5
+
 type ctl struct {
 	devCtl          *controller.Controller
 	proxyCtl        *proxy.Controller
@@ -648,6 +650,7 @@ func (c *Connector) Run(ctx context.Context) error {
 
 	var isConnected bool
 	var attempt int
+	var rejectedAttempts int
 
 	for {
 		ret := make(chan tryConnectRet, 1)
@@ -681,7 +684,11 @@ func (c *Connector) Run(ctx context.Context) error {
 				attempt = 0
 			}
 
-			if !shouldReconnect(ret, isConnected) {
+			if !isConnected && isRejectedErr(ret.err) {
+				rejectedAttempts++
+			}
+
+			if !shouldReconnect(ret, isConnected) && !shouldRetryRejection(ret, rejectedAttempts) {
 				zap.L().Debug("No reconnection needed. Exiting...", zap.Error(ret.err))
 
 				c.setEvent(&Event{
@@ -755,6 +762,16 @@ func shouldReconnect(ret tryConnectRet, wasConnected bool) bool {
 	}
 
 	return wasConnected || !isRejectedErr(ret.err)
+}
+
+func isTransientRejectedErr(err error) bool {
+	return grpcerr.IsPermissionDenied(err) ||
+		grpcerr.IsNotFound(err)
+}
+
+func shouldRetryRejection(ret tryConnectRet, rejectedAttempts int) bool {
+	return ret.needsReconnect && isTransientRejectedErr(ret.err) &&
+		rejectedAttempts < maxRejectedAttempts
 }
 
 func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {

@@ -293,7 +293,11 @@ func TestRunStopsOnRejectionBeforeConnecting(t *testing.T) {
 			err := c.Run(ctx)
 			assert.Equal(t, code, status.Code(err))
 			assert.True(t, isRejectedErr(err))
-			assert.Equal(t, 1, srv.getAttempts())
+			if code == codes.InvalidArgument {
+				assert.Equal(t, 1, srv.getAttempts())
+			} else {
+				assert.Equal(t, maxRejectedAttempts, srv.getAttempts())
+			}
 
 			require.NotEmpty(t, *events)
 			last := (*events)[len(*events)-1]
@@ -327,7 +331,7 @@ func TestRunRetriesBeforeConnecting(t *testing.T) {
 
 			err := c.Run(ctx)
 			assert.Equal(t, codes.NotFound, status.Code(err))
-			assert.Equal(t, 2, srv.getAttempts())
+			assert.Equal(t, 1+maxRejectedAttempts, srv.getAttempts())
 
 			var retried bool
 			for _, ev := range *events {
@@ -2312,11 +2316,15 @@ func TestRunGRPCMissingPublicationPreservesControlRejections(t *testing.T) {
 			c.opts.OnEvent = func(ev *Event) {
 				assert.NotEqual(t, EventTypeConnected, ev.Type)
 			}
-			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 30*time.Second)
 			defer cancel()
 			err := c.Run(ctx)
 			assert.Equal(t, code, status.Code(err))
-			assert.Equal(t, int32(1), attempts.Load())
+			if code == codes.InvalidArgument {
+				assert.Equal(t, int32(1), attempts.Load())
+			} else {
+				assert.Equal(t, int32(maxRejectedAttempts), attempts.Load())
+			}
 		})
 	}
 }

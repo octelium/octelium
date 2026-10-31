@@ -240,7 +240,7 @@ func TestClientCommandE2E(t *testing.T) {
 				}})
 				p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
 					"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4")
-				err := p.wait(t, 5*time.Second)
+				err := p.wait(t, 25*time.Second)
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, err, &exitErr)
 				assert.Equal(t, connect.ExitCodeRejected, exitErr.ExitCode())

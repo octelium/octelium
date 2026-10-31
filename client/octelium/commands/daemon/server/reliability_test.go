@@ -569,6 +569,86 @@ func TestDaemonAutoConnectsWithFreshCleanupAfterCrash(t *testing.T) {
 	assert.Equal(t, int32(1), attempts.Load())
 }
 
+func TestDaemonConnectRetriesTransientRejection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	var attempts atomic.Int32
+	api := &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			return status.Error(codes.NotFound, "Session UID not Found")
+		}
+		if err := stream.Send(testDaemonInitialState()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	socket := setTestDaemonReliabilityAPISocket(t)
+	startTestDaemonReliabilityAPI(t, socket, api)
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	setTestDaemonReliabilityUserHome(t, srv)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	op := connectTestDaemonReliabilityDomain(t, ctx, srv)
+	connected := waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_CONNECTED, 15*time.Second)
+	assert.Nil(t, connected.LastError)
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, connected.Authentication.State)
+	getOp, err := srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+	require.NoError(t, err)
+	assert.Equal(t, daemonv1.Operation_SUCCEEDED, getOp.State)
+	assert.Equal(t, int32(2), attempts.Load())
+	_, err = srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_DISCONNECTED, 10*time.Second)
+}
+
+func TestDaemonConnectFailsAfterRepeatedRejections(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	if testing.Short() {
+		t.Skip("waiting for the bounded rejection retries")
+	}
+	var attempts atomic.Int32
+	api := &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		return status.Error(codes.PermissionDenied, "The request is denied")
+	}}
+	socket := setTestDaemonReliabilityAPISocket(t)
+	startTestDaemonReliabilityAPI(t, socket, api)
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	setTestDaemonReliabilityUserHome(t, srv)
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	op := connectTestDaemonReliabilityDomain(t, ctx, srv)
+	var getOp *daemonv1.Operation
+	require.Eventually(t, func() bool {
+		var err error
+		getOp, err = srv.c.GetOperation(ctx, &daemonv1.GetOperationRequest{Id: op.Id})
+		return err == nil && getOp.State == daemonv1.Operation_FAILED
+	}, 35*time.Second, 50*time.Millisecond, "a rejection that keeps coming back must end the Connect Operation")
+	require.NotNil(t, getOp.Error)
+	assert.Equal(t, daemonv1.Error_PERMISSION_DENIED, getOp.Error.Code)
+	disconnected := waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_DISCONNECTED, time.Second)
+	require.NotNil(t, disconnected.LastError)
+	assert.Equal(t, daemonv1.Error_PERMISSION_DENIED, disconnected.LastError.Code)
+	assert.Equal(t, daemonv1.AuthenticationStatus_AUTHENTICATED, disconnected.Authentication.State)
+	stopped := attempts.Load()
+	assert.Greater(t, stopped, int32(1), "a rejection must be retried before the Operation fails")
+	time.Sleep(3 * time.Second)
+	assert.Equal(t, stopped, attempts.Load(), "a failed Connect Operation must stop retrying")
+}
+
 func TestDaemonReliabilityKnownIssues(t *testing.T) {
 	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
 		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run unresolved regressions listed in tmp/client-reliability-report.md")

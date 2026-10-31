@@ -650,3 +650,52 @@ func TestDaemonCrashCleanupE2E(t *testing.T) {
 	assert.NoError(t, second.wait(t, 5*time.Second))
 	assert.Equal(t, int32(2), attempts.Load())
 }
+
+func TestClientTransientRejectionE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("these tests force the Linux gVisor implementation and use Unix signals")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	dnsAddr, _ := getTestReliabilityCommandAddrs(t)
+	var attempts atomic.Int32
+	srv := &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		switch attempt {
+		case 1:
+			return status.Error(codes.NotFound, "Session UID not Found")
+		case 2:
+			return status.Error(codes.PermissionDenied, "The request is denied")
+		}
+		if err := stream.Send(testCommandInitialState()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	socket := newTestCommandSocket(t)
+	startTestReliabilityCommandAPI(t, socket, srv)
+	p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+		"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+		"--no-dns", "--implementation", "gvisor", "--localdns", "--localdns-addr", dnsAddr)
+	require.Eventually(t, func() bool {
+		return attempts.Load() == 3 && testCommandDNSReady(dnsAddr)
+	}, 20*time.Second, 20*time.Millisecond, "a transient rejection during a Cluster upgrade must not stop the client")
+	requireTestReliabilityCommandRunning(t, p)
+	require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, p.wait(t, 5*time.Second))
+	output := p.output.String()
+	assert.Equal(t, 1, strings.Count(output, "Connected successfully"))
+	assert.Contains(t, output, "Session UID not Found")
+	assert.Contains(t, output, "The request is denied")
+	assert.Equal(t, int32(3), attempts.Load())
+	assertTestReliabilityCommandReleased(t, dnsAddr, "")
+}

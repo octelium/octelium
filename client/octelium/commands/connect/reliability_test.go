@@ -33,6 +33,7 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -765,6 +766,135 @@ func TestRunGRPCCleanupFailureRebuildsLocalListeners(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return runtime.NumGoroutine() <= baseline+8
 	}, 10*time.Second, 50*time.Millisecond, "repeated reconnections after incomplete cleanups must not leak goroutines")
+}
+
+func TestShouldRetryRejection(t *testing.T) {
+	for _, code := range allCodes {
+		err := status.Error(code, "err")
+		isTransient := code == codes.NotFound || code == codes.PermissionDenied
+		for _, rejectedAttempts := range []int{0, 1, maxRejectedAttempts - 1, maxRejectedAttempts, maxRejectedAttempts + 1} {
+			want := isTransient && rejectedAttempts < maxRejectedAttempts
+			assert.False(t, shouldRetryRejection(tryConnectRet{err: err}, rejectedAttempts),
+				"%s: a stop requested by the Cluster, the user or a failed cleanup is final", code)
+			assert.Equal(t, want, shouldRetryRejection(tryConnectRet{err: err, needsReconnect: true}, rejectedAttempts),
+				"%s after %d rejected attempts", code, rejectedAttempts)
+			assert.Equal(t, want, shouldRetryRejection(tryConnectRet{
+				err: errors.Wrap(err, "Could not connect to API Server"), needsReconnect: true,
+			}, rejectedAttempts), "%s after %d rejected attempts", code, rejectedAttempts)
+		}
+	}
+	assert.False(t, shouldRetryRejection(tryConnectRet{needsReconnect: true}, 0))
+	assert.False(t, shouldRetryRejection(tryConnectRet{err: errors.New("Could not initialize controller"), needsReconnect: true}, 0))
+}
+
+func TestRunGRPCRetriesTransientRejectionsBeforeFirstConnection(t *testing.T) {
+	for _, code := range []codes.Code{codes.NotFound, codes.PermissionDenied} {
+		t.Run(code.String(), func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := int(attempts.Add(1))
+				if _, err := stream.Recv(); err != nil {
+					return err
+				}
+				if attempt < maxRejectedAttempts {
+					return status.Error(code, "the Cluster is still starting up")
+				}
+				if err := stream.Send(testConnectInitialState()); err != nil {
+					return err
+				}
+				<-stream.Context().Done()
+				return nil
+			}}
+			c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+			startTestReliabilityAPI(t, socket, srv)
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 40*time.Second)
+			defer cancel()
+			events, done := runTestReliabilityConnector(t, ctx, c)
+			for range maxRejectedAttempts - 1 {
+				ev := waitTestReliabilityEvent(t, events, EventTypeConnecting, 15*time.Second)
+				for ev.Err == nil {
+					ev = waitTestReliabilityEvent(t, events, EventTypeConnecting, 15*time.Second)
+				}
+				assert.Equal(t, code, status.Code(ev.Err))
+			}
+			waitTestReliabilityEvent(t, events, EventTypeConnected, 15*time.Second)
+			assert.Equal(t, int32(maxRejectedAttempts), attempts.Load())
+			cancel()
+			require.NoError(t, <-done)
+		})
+	}
+}
+
+func TestRunGRPCRejectionsBeforeFirstConnectionStayBounded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waiting for the bounded rejection retries")
+	}
+	errs := []codes.Code{codes.NotFound, codes.Unavailable, codes.NotFound, codes.PermissionDenied, codes.NotFound, codes.NotFound}
+	var attempts atomic.Int32
+	srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := int(attempts.Add(1))
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if attempt <= len(errs) {
+			return status.Error(errs[attempt-1], "rejected")
+		}
+		if err := stream.Send(testConnectInitialState()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+	startTestReliabilityAPI(t, socket, srv)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 45*time.Second)
+	defer cancel()
+	events, done := runTestReliabilityConnector(t, ctx, c)
+	var err error
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		require.FailNow(t, "a rejection that keeps coming back must eventually stop the client")
+	}
+	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.True(t, isRejectedErr(err))
+	assert.Equal(t, int32(len(errs)), attempts.Load(),
+		"errors other than rejections must not reset the rejection budget")
+	var last *Event
+	for {
+		select {
+		case ev := <-events:
+			assert.NotEqual(t, EventTypeConnected, ev.Type)
+			last = ev
+			continue
+		default:
+		}
+		break
+	}
+	require.NotNil(t, last)
+	assert.Equal(t, EventTypeDisconnected, last.Type)
+	assert.Equal(t, codes.NotFound, status.Code(last.Err))
+}
+
+func TestRunGRPCInvalidArgumentStopsRejectionRetries(t *testing.T) {
+	var attempts atomic.Int32
+	srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			return status.Error(codes.NotFound, "Session UID not Found")
+		}
+		return status.Error(codes.InvalidArgument, "The Cluster does not support v6 only networking")
+	}}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+	startTestReliabilityAPI(t, socket, srv)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 30*time.Second)
+	defer cancel()
+	err := c.Run(ctx)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, int32(2), attempts.Load())
 }
 
 func TestReliabilityKnownIssues(t *testing.T) {
