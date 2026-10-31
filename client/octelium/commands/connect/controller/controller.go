@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -81,6 +82,9 @@ type Controller struct {
 	localDNSSrv  *dnssrv.Server
 	dbC          *db.DB
 	cleanup      *cliconfigv1.ConnectionCleanup
+
+	localDNSRetryCancel context.CancelFunc
+	localDNSRetryDoneCh chan struct{}
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {
@@ -137,6 +141,8 @@ func (c *Controller) GetConnectionConfig() *cliconfigv1.Connection {
 }
 
 func (c *Controller) Close() error {
+	c.stopLocalDNSRetry()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isClosed {
@@ -145,6 +151,9 @@ func (c *Controller) Close() error {
 	zap.L().Debug("Closing dev controller")
 
 	c.isClosed = true
+	if c.localDNSRetryCancel != nil {
+		c.localDNSRetryCancel()
+	}
 	c.setCleanupPhase(cliconfigv1.ConnectionCleanup_CLEANING)
 	var retErr error
 	if c.svcProxy != nil {
@@ -275,6 +284,8 @@ func (c *Controller) startLocalDNSServer() {
 		return
 	}
 
+	isIgnoreDNS := c.c.Preferences.IgnoreDNS
+
 	disable := func(err error) {
 		c.c.Preferences.LocalDNS.IsEnabled = false
 		c.localDNSSrv = nil
@@ -308,11 +319,94 @@ func (c *Controller) startLocalDNSServer() {
 	c.localDNSSrv = localDNSServer
 
 	if err := c.localDNSSrv.Run(); err != nil {
-		if err := localDNSServer.Close(); err != nil {
+		disable(err)
+		c.startLocalDNSRetry(localDNSServer, isIgnoreDNS)
+	}
+}
+
+const (
+	localDNSRetryBackoffMin = time.Second
+	localDNSRetryBackoffMax = 30 * time.Second
+)
+
+func getLocalDNSRetryBackoff(attempt int) time.Duration {
+	return min(localDNSRetryBackoffMin<<min(attempt-1, 5), localDNSRetryBackoffMax)
+}
+
+func (c *Controller) startLocalDNSRetry(srv *dnssrv.Server, isIgnoreDNS bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan struct{})
+
+	c.localDNSRetryCancel = cancel
+	c.localDNSRetryDoneCh = doneCh
+
+	go func() {
+		defer close(doneCh)
+		c.retryLocalDNSServer(ctx, srv, isIgnoreDNS)
+	}()
+}
+
+func (c *Controller) retryLocalDNSServer(ctx context.Context, srv *dnssrv.Server, isIgnoreDNS bool) {
+	closeSrv := func() {
+		if err := srv.Close(); err != nil {
 			zap.L().Debug("Could not close the local DNS server", zap.Error(err))
 		}
-		disable(err)
 	}
+
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			closeSrv()
+			return
+		case <-time.After(getLocalDNSRetryBackoff(attempt)):
+		}
+
+		if err := srv.Run(); err != nil {
+			zap.L().Debug("Could not start the local DNS server yet. Retrying...",
+				zap.Int("attempt", attempt), zap.Error(err))
+			continue
+		}
+
+		if !c.setLocalDNSServer(ctx, srv, isIgnoreDNS) {
+			closeSrv()
+		}
+		return
+	}
+}
+
+func (c *Controller) setLocalDNSServer(ctx context.Context, srv *dnssrv.Server, isIgnoreDNS bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isClosed || ctx.Err() != nil {
+		return false
+	}
+
+	zap.L().Info("The local DNS server is now listening. Setting the DNS to use it")
+
+	c.localDNSSrv = srv
+	c.c.Preferences.LocalDNS.IsEnabled = true
+	c.c.Preferences.IgnoreDNS = isIgnoreDNS
+
+	if err := c.setDNS(); err != nil {
+		zap.L().Warn("Could not set the DNS to use the local DNS server", zap.Error(err))
+	}
+
+	return true
+}
+
+func (c *Controller) stopLocalDNSRetry() {
+	c.mu.Lock()
+	cancel := c.localDNSRetryCancel
+	doneCh := c.localDNSRetryDoneCh
+	c.mu.Unlock()
+
+	if cancel == nil {
+		return
+	}
+
+	cancel()
+	<-doneCh
 }
 
 func (c *Controller) Reconfigure() error {

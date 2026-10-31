@@ -515,6 +515,45 @@ func TestServerBootstrapAnswersWithoutClusterDNSServers(t *testing.T) {
 	assert.Nil(t, srv.Close())
 }
 
+func TestServerRunRetriesAfterBindFailureWithFirstBootstrapAnswers(t *testing.T) {
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := blocker.LocalAddr().String()
+
+	var lookups []string
+	answer := "5.6.7.8"
+	srv, err := NewDNSServer(&Opts{
+		ClusterDomain: "example.com",
+		ListenAddr:    addr,
+		HasV4:         true,
+		DNSGetter:     &tstEmptyDNSGetter{},
+		IsFullDNS:     true,
+		LookupIPFn: func(ctx context.Context, host string) ([]net.IP, error) {
+			lookups = append(lookups, host)
+			return []net.IP{net.ParseIP(answer)}, nil
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.Nil(t, srv.Close()) })
+
+	assert.NotNil(t, srv.Run())
+	assert.ElementsMatch(t, []string{"example.com", "octelium-api.example.com"}, lookups)
+
+	require.NoError(t, blocker.Close())
+	answer = "192.0.2.1"
+	require.NoError(t, srv.Run())
+	assert.Len(t, lookups, 2, "a retry must keep the bootstrap answers resolved before the DNS was changed")
+
+	c := dns.Client{Timeout: 5 * time.Second}
+	m := dns.Msg{}
+	m.SetQuestion("example.com.", dns.TypeA)
+	r, _, err := c.Exchange(&m, addr)
+	require.NoError(t, err)
+	assert.Equal(t, dns.RcodeSuccess, r.Rcode)
+	require.Len(t, r.Answer, 1)
+	assert.Equal(t, "5.6.7.8", r.Answer[0].(*dns.A).A.String())
+}
+
 func TestServerBootstrapAnswersOnUpstreamFailure(t *testing.T) {
 	srv := newTestFullDNSServer(t, "127.0.0.1:18058", &tstDNSGetter{})
 	srv.setBootstrapAnswers(context.Background())

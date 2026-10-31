@@ -699,3 +699,59 @@ func TestClientTransientRejectionE2E(t *testing.T) {
 	assert.Equal(t, int32(3), attempts.Load())
 	assertTestReliabilityCommandReleased(t, dnsAddr, "")
 }
+
+func TestClientLocalDNSBindRetryE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("these tests force the Linux gVisor implementation and use Unix signals")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	dnsAddr, publishedAddr := getTestReliabilityCommandAddrs(t)
+	_, publishedPort, err := net.SplitHostPort(publishedAddr)
+	require.NoError(t, err)
+	blocker, err := net.ListenPacket("udp", dnsAddr)
+	require.NoError(t, err)
+	t.Cleanup(func() { blocker.Close() })
+	var attempts atomic.Int32
+	srv := &testCommandAPI{
+		connectFn: func(stream userv1.MainService_ConnectServer) error {
+			attempts.Add(1)
+			if _, err := stream.Recv(); err != nil {
+				return err
+			}
+			if err := stream.Send(testCommandInitialState()); err != nil {
+				return err
+			}
+			<-stream.Context().Done()
+			return nil
+		},
+		getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+			return testReliabilityCommandService(req), nil
+		},
+	}
+	socket := newTestCommandSocket(t)
+	startTestReliabilityCommandAPI(t, socket, srv)
+	p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket},
+		"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+		"--no-dns", "--implementation", "gvisor", "--localdns", "--localdns-addr", dnsAddr,
+		"-p", "web:127.0.0.1:"+publishedPort)
+	require.Eventually(t, func() bool {
+		return testReliabilityCommandListening(publishedAddr)
+	}, 15*time.Second, 20*time.Millisecond)
+	assert.False(t, testCommandDNSReady(dnsAddr))
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool {
+		return testCommandDNSReady(dnsAddr)
+	}, 15*time.Second, 50*time.Millisecond, "the local DNS server must start while connected once its port is free")
+	assert.Equal(t, int32(1), attempts.Load(), "the local DNS server must start without a reconnect")
+	requireTestReliabilityCommandRunning(t, p)
+	require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, p.wait(t, 5*time.Second))
+	assert.Equal(t, 1, strings.Count(p.output.String(), "Connected successfully"))
+	assertTestReliabilityCommandReleased(t, dnsAddr, publishedAddr)
+}

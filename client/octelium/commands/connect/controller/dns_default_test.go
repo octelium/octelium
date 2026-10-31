@@ -646,6 +646,7 @@ func TestStartLocalDNSServerBindFailureInContainerMode(t *testing.T) {
 	listenAddr := blocker.LocalAddr().String()
 	c, filePath := newTestContainerCtl(t, listenAddr)
 	assert.Nil(t, os.WriteFile(filePath, []byte("nameserver 10.96.0.10\n"), 0644))
+	t.Cleanup(c.stopLocalDNSRetry)
 
 	c.startLocalDNSServer()
 

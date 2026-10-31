@@ -565,6 +565,133 @@ func TestControllerConcurrentSSHServiceConfigsKeepEveryDomain(t *testing.T) {
 	assert.Equal(t, original, string(b))
 }
 
+func TestGetLocalDNSRetryBackoff(t *testing.T) {
+	var got []time.Duration
+	for attempt := 1; attempt <= 8; attempt++ {
+		got = append(got, getLocalDNSRetryBackoff(attempt))
+	}
+	assert.Equal(t, []time.Duration{
+		time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
+		16 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second,
+	}, got)
+	assert.Equal(t, localDNSRetryBackoffMax, getLocalDNSRetryBackoff(1000))
+}
+
+func TestControllerLocalDNSServerStartsOnceItsPortIsFree(t *testing.T) {
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := blocker.LocalAddr().String()
+	c, err := newTestReliabilityNetstackController(t, addr)
+	require.NoError(t, err)
+	cfg := c.GetConnectionConfig()
+	assert.False(t, cfg.Preferences.LocalDNS.IsEnabled)
+	assert.True(t, cfg.Preferences.IgnoreDNS)
+	time.Sleep(1500 * time.Millisecond)
+	assert.False(t, testReliabilityLocalDNSReady(addr))
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool {
+		return testReliabilityLocalDNSReady(addr)
+	}, 10*time.Second, 50*time.Millisecond, "the local DNS server must start once its port is free")
+	cfg = c.GetConnectionConfig()
+	assert.True(t, cfg.Preferences.LocalDNS.IsEnabled)
+	assert.True(t, cfg.Preferences.IgnoreDNS, "the DNS preference of the user must be kept")
+	assert.True(t, net.ParseIP("127.0.0.1").Equal(c.getCurrentDNS()))
+	require.NoError(t, c.Close())
+	lis, err := net.ListenPacket("udp", addr)
+	require.NoError(t, err, "a closed controller must release a local DNS port it bound late")
+	require.NoError(t, lis.Close())
+}
+
+func TestControllerLocalDNSRetryStopsOnClose(t *testing.T) {
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := blocker.LocalAddr().String()
+	c, err := newTestReliabilityNetstackController(t, addr)
+	require.NoError(t, err)
+	time.Sleep(1500 * time.Millisecond)
+	started := time.Now()
+	require.NoError(t, c.Close())
+	assert.Less(t, time.Since(started), 3*time.Second)
+	select {
+	case <-c.localDNSRetryDoneCh:
+	default:
+		require.FailNow(t, "closing the controller must stop the local DNS retry")
+	}
+	require.NoError(t, blocker.Close())
+	time.Sleep(3 * time.Second)
+	lis, err := net.ListenPacket("udp", addr)
+	require.NoError(t, err, "a closed controller must never take the local DNS port later")
+	require.NoError(t, lis.Close())
+	assert.Nil(t, c.localDNSSrv)
+}
+
+func TestControllerLocalDNSRetryAppliesContainerResolvConf(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("This test sets the Linux container resolv.conf")
+	}
+	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := blocker.LocalAddr().String()
+	c := newTestPlatformController(t, userv1.ConnectionState_V4)
+	c.isNetstack = false
+	c.c.Preferences.IgnoreDNS = false
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+	c.c.Preferences.LocalDNS = &cliconfigv1.Connection_Preferences_LocalDNS{
+		IsEnabled: true, ListenAddress: addr,
+	}
+	filePath := c.resolvConf.path
+	original := "nameserver 10.96.0.10\nsearch default.svc.cluster.local\noptions ndots:5\n"
+	require.NoError(t, os.WriteFile(filePath, []byte(original), 0644))
+	t.Cleanup(func() {
+		c.stopLocalDNSRetry()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.localDNSSrv != nil {
+			assert.NoError(t, c.localDNSSrv.Close())
+		}
+	})
+	c.mu.Lock()
+	c.startLocalDNSServer()
+	require.NoError(t, c.setDNS())
+	c.mu.Unlock()
+	cfg := c.GetConnectionConfig()
+	assert.False(t, cfg.Preferences.LocalDNS.IsEnabled)
+	assert.True(t, cfg.Preferences.IgnoreDNS)
+	content, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(content))
+	require.NoError(t, blocker.Close())
+	require.Eventually(t, func() bool {
+		content, err := os.ReadFile(filePath)
+		return err == nil && strings.Contains(string(content), "nameserver 127.0.0.1\n")
+	}, 10*time.Second, 50*time.Millisecond, "the container resolv.conf must be set once the local DNS server listens")
+	cfg = c.GetConnectionConfig()
+	assert.True(t, cfg.Preferences.LocalDNS.IsEnabled)
+	assert.False(t, cfg.Preferences.IgnoreDNS)
+	content, err = os.ReadFile(filePath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(content), "10.96.0.10")
+	assert.Contains(t, string(content), "options ndots:5")
+	_, err = net.ListenPacket("udp", addr)
+	assert.Error(t, err, "the local DNS server must hold its port")
+	require.NoError(t, c.UnsetDNS())
+	content, err = os.ReadFile(filePath)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(content))
+}
+
+func TestControllerLocalDNSInvalidAddressIsNotRetried(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.c.Preferences.LocalDNS = &cliconfigv1.Connection_Preferences_LocalDNS{
+		IsEnabled: true, ListenAddress: "invalid",
+	}
+	c.startLocalDNSServer()
+	assert.Nil(t, c.localDNSSrv)
+	assert.Nil(t, c.localDNSRetryCancel)
+	assert.Nil(t, c.localDNSRetryDoneCh)
+	assert.False(t, c.c.Preferences.LocalDNS.IsEnabled)
+}
+
 func TestControllerReliabilityKnownIssues(t *testing.T) {
 	if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
 		t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to run unresolved regressions listed in tmp/client-reliability-report.md")

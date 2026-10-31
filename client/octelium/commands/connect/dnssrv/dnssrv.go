@@ -65,6 +65,8 @@ type Server struct {
 	lookupIPFn  func(ctx context.Context, host string) ([]net.IP, error)
 	bootstrap   *bootstrapCache
 
+	isBootstrapped bool
+
 	fallbackServerAddrs []string
 	fallbackDomains     []string
 }
@@ -580,7 +582,14 @@ func (c *bootstrapCache) get(domain string, typ uint16) *dns.Msg {
 func (s *Server) Run() error {
 	zap.L().Debug("Starting running local DNS server", zap.String("addr", s.listenAddr))
 
-	s.setBootstrapAnswers(context.Background())
+	s.mu.Lock()
+	isBootstrapped := s.isBootstrapped
+	s.isBootstrapped = true
+	s.mu.Unlock()
+
+	if !isBootstrapped {
+		s.setBootstrapAnswers(context.Background())
+	}
 
 	s.mu.Lock()
 	if s.isClosed {
